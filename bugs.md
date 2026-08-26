@@ -2,38 +2,115 @@
 
 Initial session: 2026-08-25. Binary: `jails 0.1.0` built from this checkout.
 
-**Recheck: 2026-08-26 (Hostile-but-fair dogfooding pass).** Rebuilt `jails 0.1.0` from HEAD (`25cb1f6`) and executed the comprehensive 10-section test matrix across disposable test directories with real PostgreSQL, Podman, and Maven compiler verification.
+**Recheck: 2026-08-26 #3 (HEAD `3a023c0`).** Rebuilt and reinstalled `jails 0.1.0`
+from current HEAD (previous pass was `0c369dd`; 4 commits since, all in the
+command-result/JSON and prepared-report area). Direct reproductions in disposable
+`/tmp/jails-dogfood-run3/*` projects, with real PostgreSQL via `jails migrate
+--check` and real `mvn -o test-compile` wherever a claim needed a compiler.
 
-- **Verified & Still Reproduced:**
-  - **B1:** Recreating a destroyed entity is permanently wedged by migration seal collision.
-  - **B2 (B2a, B2b, B2c):** `rename` renames domain type but not companion classes/tests and corrupts ledger tracking.
-  - **B3 / B12:** Field rename, retype, and typo removal (`destroy field`) are rejected/unsupported on all paths.
-  - **B4:** `g scaffold` without `@pk` silently selects the first column as identity.
-  - **B5:** `jails doctor` reports 24–25 checks all clear on projects broken by stranded classes or compilation failures.
-  - **B6:** Composite generator kinds (`association`, `transition`, `durable-job`, `query`) reveal requirements one refusal at a time without actionable syntax examples in `explain`.
-  - **B7:** Advertised field types in `jails g --help` (`bigdecimal`, `zoneid`) mismatch parse rejection vocabulary (`decimal`, `zone-id`).
-  - **B8:** `jails new` leaves `.jails-new.lock` in the parent directory.
-  - **B9:** `jails migrate --check` outputs noisy compose container bind errors before reporting clean migration success.
-  - **B10:** Cold startup race between Postgres socket readiness and Spring Boot in `jails run`.
-  - **B11 / B11a:** `g record` then `g scaffold` creates duplicate ledger entries; subsequent `g field` updates only a subset of files and breaks compilation.
-  - **B13 / B14:** Hand-deleted generated files are ignored by `doctor` and not restored by `jails sync`.
-  - **B15:** Generated `.http` files only include collection `GET` and `POST`, omitting item `GET /{id}` and `DELETE /{id}`.
-  - **B16:** SQL reserved words (`from`, `to`, `order`, `user`, etc.) are accepted as field names without escaping, causing syntax errors in DDL/DML.
-  - **B17:** Ledger merge conflicts with git markers are misdiagnosed as written by another version and advise deleting `.jails/`.
-  - **B18 / B19:** Mid-mutation failures (e.g. read-only migration directories) tear transactions in half, leak internal Rust `Debug` representations (`RecoveryBlocked(Unreadable { ... })`), and cite deleted design docs (`plan.md §R5.4`).
-  - **B20:** Adding fields to existing entities in declarative `app.toml` manifests is blocked on both declarative and imperative paths.
-  - **B21:** Destroying an enum referenced by another scaffold succeeds without dependency checks and leaves uncompilable code.
-  - **B22:** Declarative entity deletion in `app.toml` bypasses storage policy confirmations and leaves orphaned tables.
-  - **B23:** `remove db --force` unsplices Spring JDBC starter while leaving generated JDBC repository adapters, breaking compilation.
-  - **B25 / B25a:** `--package` override artifacts are omitted from ledger tracking and fully-qualified package arguments are path-doubled.
-  - **B26:** `g durable-job` constraints contradict each other when target use cases lack an explicit `id:uuid`.
-  - **B27:** Single-line Gradle `dependencies { }` blocks cause dependency splices to land outside the block and duplicate repeatedly.
-- **New Defects Discovered:**
-  - **B28 (Critical):** `destroy scaffold` on a parent entity drops its table without checking incoming foreign key constraints, generating invalid drop migrations that fail `jails migrate --check` with dependency errors.
-  - **B29 (High):** Scaffolding a composite primary key generates throwing stubs (`UnsupportedOperationException`) in the JDBC repository and 500 runtime HTTP endpoints while passing mocked unit tests.
-  - **B30 (High):** `jails new` accepts whitespace in project names, generating an invalid `pom.xml` `artifactId` that Maven rejects on build.
-- **Skipped / Untestable:**
-  - Live Gradle build execution (Gradle binary is not installed on this host; syntax and file changes inspected directly).
+- **Verified still broken, reproduced verbatim:** B2/B2a, B3, B5, B12, B14, B17,
+  B18, B19, B20, B22, B25a, B33, B34, B35, B36, B37, B38.
+- **Amended, subject survived but its face changed:**
+  - **B1:** the one-way door has *opened* -- `g scaffold Book` after
+    `destroy --storage drop` now exits 0 -- but it writes **no create-table
+    migration**, so the regenerated JDBC adapter queries a table the migration
+    history dropped. `migrate --check` and `doctor` are both green over it. The
+    crash became a silent incoherence; severity unchanged.
+- **Corrected in place (report still valid, detail was stale):**
+  - **B38:** `A` is no longer the only one-letter name that trips it. `I`
+    pluralises to `is`, also reserved, also `syntax error at or near "is"`.
+    Swept `Status Datum Person Index News Order OrderService ThingRepository
+    FooController BarTest PackageInfo Application Config Main A I O` -- only `A`
+    and `I` fail.
+  - **B19:** two more internal citations found, both still shipping.
+- **New:** **B39** (critical) `g field` silently breaks every companion generated
+  against the entity, and `doctor` stays green over a project that will not
+  compile -- found by the section-20 audit and bisected to five commands;
+  **B40** (high) `jails rename` panics on any non-ASCII byte in any scanned
+  `.java` file, including jails' own `g idempotency` output; **B41** (high) a
+  closed refusal loop between `migrate --check`, the migration seal and
+  `resource repair`; **B42** (medium) `--output json` writes zero bytes on every
+  failure; **B43** (medium) `jails add format` invalidates jails' own recorded
+  output and `doctor` then reports it as the developer's edits; **B44** (low)
+  `jails explain`'s help text is the completion command's.
+- **Not retested:** **B10** -- port 5432 is still held by an unrelated project's
+  container (`my-minicom-postgres-1`) and restarting it would disrupt that work.
+- **Skipped / untestable:** live Gradle execution (still no `gradle` binary).
+- **No jails source, test, build or doc file was modified in this pass.** Every
+  reproduction ran in a disposable `/tmp/jails-dogfood-run3/*` project;
+  `bugs.md` and the untracked `dogfood.md` run log are the only files written.
+  (`git status` also shows `src/cli.rs`, `src/main.rs` and
+  `crates/jails-engine/src/route/artifact.rs` modified, timestamped *after* this
+  pass's last write and by no command this pass ran -- they are another session's
+  concurrent edits, as in the previous pass, and are not this pass's.)
+
+---
+
+**Recheck: 2026-08-26 #2 (HEAD `0c369dd`).** Rebuilt and reinstalled `jails 0.1.0`
+from current HEAD (the previous pass in this file was `33abf9e`; 14 commits since).
+Direct reproductions in disposable `/tmp/dg*` projects, with real PostgreSQL via
+`jails migrate --check` and real `mvn -o test-compile` wherever the claim needed a
+compiler.
+
+- **Removed, proved fixed:**
+  - **B8:** `jails new` leaves no `.jails-new.lock` behind in the parent directory.
+  - **B9:** `migrate --check` runs clean with a foreign container already bound to
+    `:5432` -- it now uses its own ephemeral-port scratch container and prints no
+    compose error.
+  - **B11 / B11a:** `g record X` then `g scaffold X` no longer splits the entity.
+    `g field` afterwards updates all ten surfaces, and the field list survives
+    `destroy record X` -- no orphaned columns, all surfaces agree.
+  - **B13:** a hand-deleted generated file is now reported
+    (`FAIL managed Order  recorded output ... is missing`) with a working fix,
+    `jails resource repair <Entity> --strategy roll-forward`, which restores it.
+  - **B21:** `destroy enum Status` refuses while `scaffold Post` references it.
+  - **B23:** `remove db --force` refuses while a scaffold depends on it; every
+    capability with no dependants (`api`, `kafka`, `redis`, `security`,
+    `observability`, `format`) still round-trips add/remove cleanly.
+  - **B25:** `--package` artifacts are recorded now: `g field <E> --package <p>`,
+    `destroy` and `resource status` all reach them. (The residue is folded into
+    B25a; `g field` *without* the flag still says the entity is not recorded.)
+  - **B27:** a single-line Gradle `dependencies { ... }` block is spliced into
+    correctly and idempotently -- entries land inside the braces, no duplicates.
+  - **B28:** `destroy scaffold Parent` refuses while an association points at it
+    (but see **B37** -- the refusal it offers is a dead end).
+  - **B31:** `id`/`Id` and `userId`/`user_id` are refused at parse time, naming
+    both Java names and the colliding column.
+  - **B32:** `hashCode`, `toString` and `equals` are refused as record components.
+- **Verified still broken:** B1, B2/B2a, B3, B5 (new, cleaner reproduction), B12,
+  B14 (now partial), B17 (now partial), B18, B19 (partial -- new leaks), B20, B22,
+  B25a.
+- **Corrected in place (report still valid, detail was stale):**
+  - **B20:** the previous pass claimed that editing `.jails/app.toml` "permanently
+    disables the imperative path". Reverting the manifest by hand changes nothing:
+    the refusal is unconditional, because a direct field command always differs
+    from the manifest by the field being added. Verdict and severity unchanged.
+  - **B14:** its bullet list asked five questions; `doctor` now answers two of
+    them, so those two were moved out of the open list and into the amendment.
+  - **B5:** the original reproduction (the end state of B11, plus a hand-deleted
+    file) no longer reproduces -- `doctor` catches both halves now. Replaced with a
+    reproduction that still holds: a project broken only by jails' own output.
+  - **B3 / B12:** rewritten around the `jails resource field` surface that now
+    exists, which the previous pass predates.
+- **New:** **B33** (critical) every mutating `resource field` subcommand fails on a
+  storage-backed entity; **B34** (critical) `resource field` on a plain record
+  writes `alter table` migrations for a table that never existed; **B35** (high)
+  Java keyword entity names generate an uncompilable project; **B36** (high) an
+  invalid entity name panics instead of refusing; **B37** (high) an entity in an
+  association can never be destroyed -- both halves refuse and point at each other;
+  **B38** (medium) entity `A` produces table `as`, which PostgreSQL will not create.
+- **Not retested:** **B10** (`jails run` cold-start race) -- port 5432 is held by an
+  unrelated project's container and restarting it would have disrupted that work.
+  A commit named "Wait for database readiness before launch" landed in this range,
+  so the report is likely stale; it is kept until it is actually executed.
+- **Skipped / untestable:** live Gradle execution (no `gradle` binary; `gradlew`
+  would need the network). B27's fix was verified by reading `build.gradle`.
+- **No jails source, test, build or doc file was modified in this pass.** Every
+  reproduction ran in a disposable `/tmp/dg*` project against
+  `~/.cargo/bin/jails` built from `0c369dd`; `bugs.md` is the only file in this
+  repository this pass wrote to. (`git status` also shows Rust sources modified
+  from 11:59 onward -- those are another session's edits, made after this pass's
+  11:55 build, and are not this pass's.)
 
 ---
 
@@ -49,9 +126,9 @@ dies. The name is burned for the life of the repository.
 ```
 jails new bookclub --package com.example.bookclub
 cd bookclub && jails add db
-jails g scaffold Book title:string! author:string isbn:string@unique pages:int
+jails g scaffold Book id:uuid@pk title:string! author:string isbn:string@unique pages:int
 jails destroy scaffold Book --storage drop --confirm-table books --force   # succeeds
-jails g scaffold Book title:string                                          # dead forever
+jails g scaffold Book id:uuid@pk title:string                               # dead forever
 ```
 ```
 jails: migration-edited-after-seal: `src/main/resources/db/migration/V001__create_books.sql`
@@ -60,7 +137,7 @@ jails: migration-edited-after-seal: `src/main/resources/db/migration/V001__creat
 ```
 
 Confirmed it is the create-migration name and not something about `Book`: a
-fresh `Member` in the same project correctly got `V004__create_members.sql`.
+fresh `Member` in the same project correctly got `V003__create_members.sql` (V002 was the drop).
 Because the migration name derives from the table name, which derives from the
 entity name, the collision is *stable* — retrying, renaming fields, or changing
 the field list all hit the same wall.
@@ -81,75 +158,100 @@ never-before-seen entity.
 
 ---
 
-## B2 — `rename` renames the type but not its companions, and silently corrupts the ledger
+**Recheck `3a023c0`: the refusal is gone; the project is silently wrong instead.**
+The recreate now exits 0 and prints its `create` lines, but appends no
+create-table migration -- so the schema history ends at the `drop`, while the
+regenerated Java queries the table.
 
-**Severity: critical.** Ends in a project that does not compile, via commands
-that all reported success.
+```
+jails new one --package com.one --offline && cd one && jails add db
+jails g scaffold Book id:uuid@pk title:string
+jails destroy scaffold Book --storage drop --confirm-table books --force
+jails g scaffold Book id:uuid@pk title:string          # exit 0
+```
+```
+$ ls src/main/resources/db/migration/
+V001__create_books.sql   V002__drop_books.sql          # and nothing else
 
-`jails rename --help` promises "Rename a type and every reference to it (files,
-companions, call sites)". Companions are not renamed.
+$ grep -o 'from books\|into books' src/main/java/com/one/adapters/JdbcBookRepository.java
+from books
+from books
+into books
+
+$ jails migrate --check
+  ok    V001__create_books.sql
+  ok    V002__drop_books.sql
+  2 migration(s) applied cleanly to a scratch database.
+$ jails doctor
+25 checks, all clear.
+$ mvn -o test-compile        # exit 0
+```
+
+Three oracles call this project healthy and one does not: `jails resource status
+Book` reports `state: drop-pending`, which is the only place the truth appears.
+Every query against `books` fails at runtime.
+
+This is strictly worse than the old refusal, which at least stopped. The
+severity stays critical and the expectation is unchanged -- the recreate must
+append `V003__create_books.sql`.
+
+---
+
+## B2 — `rename` cannot finish a storage-backed entity, and even a successful record rename corrupts the ledger
+
+**Severity: critical.** `jails rename --help` still promises "Rename a type and every reference to it (files, companions, call sites)". Two current outcomes, both dead ends.
+
+**Scaffold with a create-table migration — rename aborts, files unchanged.**
 
 ```
 jails g scaffold Member id:uuid@pk name:string! email:string@unique
 jails rename Member Reader --force
 ```
-
-Result — `Member.java` → `Reader.java`, and that is all. Left behind with their
-old names but bodies now referring to `Reader`:
-
 ```
-adapters/InMemoryMemberRepository.java   adapters/JdbcMemberRepository.java
-app/MemberRepository.java                service/MemberService.java
-web/MemberController.java                web/MemberRequest.java
-web/MemberResponse.java                  adapters/JdbcMemberRepositoryIT.java
+10 file(s), 39 occurrence(s), 2 file rename(s).
+jails: `src/main/resources/db/migration/V001__create_members.sql` was not captured, so planning may not read it.
+       fix: declare it in the read set. Reaching past the snapshot would decide on a fact nothing recorded, and the commit-time staleness check would have nothing to compare.
 ```
 
-So the project now has `MemberService` whose job is `Reader`. It compiles, so
-nothing tells you. Three follow-on failures:
+Exit 1. Every `Member*` file is still on disk. `g field Reader` / `destroy scaffold Reader` say the name is not recorded; `g field Member` still works. The silent companion-corruption path from the previous pass is no longer reachable — rename no longer applies — but a storage-backed entity still cannot be renamed. The error is an internal planning leak (B19): "declare it in the read set" is not something a user can do. The "10 file(s)..." counts print as if work happened; it did not.
 
-**B2a — the entity becomes unaddressable by either name.**
+The previous B2b/B2c (destroy after rename dropping storage policy and stranding tests) were not re-hit because the rename never committed.
 
-```
-$ jails g field Reader nickname:string?
-jails: `.../domain/Reader.java` is jails' own output and its bytes differ from what
-       this would write, but the store has not recorded the bytes jails wrote --
-       so it cannot tell your edits from a regeneration.
-       fix: destroy and regenerate, or keep the file.
-       It was written before this jails recorded output bases.
-
-$ jails g field Member nickname:string?
-jails: no `Member` is recorded in this project.
-```
-
-The message is also factually wrong: `Reader.java` was written *by this binary,
-seconds earlier, by `jails rename` itself*, not "before this jails recorded
-output bases". The rename updated the ledger's name without updating the
-recorded output bytes. And the offered fix — destroy and regenerate — is B1, the
-one-way door.
-
-**B2b — rename severs the entity from its table.** Before the rename,
-`destroy scaffold Book` correctly refused without a storage policy. After the
-rename, `destroy scaffold Reader` required **no** `--storage` flag and wrote
-**no** drop-table migration. Table `members` and the FK
-`loans_loan_member_fk` were left orphaned in the schema with no mention.
-
-**B2c — rename drops files from the ledger, so destroy strands them and the
-build breaks.** `rename` reported "10 file(s), 39 occurrence(s)" and never
-touched `MemberServiceTest.java` or `MemberControllerTest.java`. `destroy
-scaffold Reader` then didn't delete them either — they were no longer attributed
-to the entity. Both survive, referencing deleted classes:
+**Plain `g record` — files rename, ledger bases do not. B2a still holds.**
 
 ```
-$ mvn -o test-compile
-[ERROR] .../service/MemberServiceTest.java:[7,32] cannot find symbol
-[ERROR] .../web/MemberControllerTest.java:[8,36] cannot find symbol
-... COMPILE=1
+jails g record Member name:string!
+jails rename Member Reader --force     # exit 0; Member.java/Test -> Reader.java/Test
+jails g field Reader nickname:string?
+```
+```
+jails: `src/main/java/com/names/domain/Reader.java` is jails' own output and its bytes differ from what
+       this would write, but the store has not recorded the bytes jails wrote -- so it cannot tell your edits from a regeneration.
+       fix: destroy and regenerate, or keep the file. It was written before this jails recorded output bases.
 ```
 
-This is exactly what `tests/agreement.rs` exists to prevent, and it does hold on
-the un-renamed path (`destroy scaffold Book` deleted all 20 of its files
-cleanly). The generate→destroy agreement is simply not preserved *across a
-rename*.
+The message is still factually wrong: this binary wrote `Reader.java` seconds earlier. The offered fix is still B1 if the type ever grew a table.
+
+**Recheck `0c369dd`: unchanged, and the new lifecycle commands do not help.**
+`rename Member Reader --force` on a scaffold still exits 1 with the same
+`was not captured, so planning may not read it` / `declare it in the read set`
+leak, files untouched. On a plain `g record`, `rename Note Memo --force` still
+succeeds and still poisons the base, so `g field Memo extra:string?` refuses with
+`it was written before this jails recorded output bases` seconds after this binary
+wrote it. `jails resource status Memo` corroborates the corruption in its own
+vocabulary (`state: ambiguous`, `lifecycle-not-recorded: the entity predates
+lifecycle adoption`) -- for a file created two commands earlier. And the repair
+route contradicts itself:
+
+```
+$ jails resource repair Memo --strategy roll-forward
+jails: no resource lifecycle matches `Memo`.
+       fix: run `jails resource status Memo` to inspect recorded identities
+$ jails resource status Memo        # exit 0, reports the resource
+```
+
+The fix line names a command that succeeds, from a command that says the thing
+does not exist.
 
 ---
 
@@ -188,157 +290,54 @@ gated the same way `--storage drop --confirm-table` is.
 
 ---
 
-## B4 — `g scaffold` with no `@pk` generates a REST resource keyed on its first column
-
-**Severity: high.** Silent, and shaped like data loss.
-
-`jails g scaffold Book title:string! author:string isbn:string@unique pages:int`
-produced a table with **no primary key and no id column**:
-
-```sql
-create table books (
-  title   text    not null,
-  author  text    not null,
-  isbn    text    not null unique,
-  pages   integer not null
-);
-```
-
-...and a repository that silently made `title` the identity:
-
-```java
-public Optional<Book> findById(String id) { ... where title = :id ... }
-public boolean deleteById(String id)      { ... delete from books where title = :id ... }
-```
-
-So `DELETE /books/{id}` deletes **every book with that title**, and
-`GET /books/{id}` returns an arbitrary one of them. `title` is not unique and
-not declared unique. `isbn` *was* declared `@unique` and was not chosen.
-
-The generated `BookController` even contains a comment noticing the problem —
-"No `id` component, so there is no per-item URL to advertise in a Location
-header" — and then serves `/{id}` routes anyway.
-
-Adding `id:uuid@pk` produces the right thing, so the fix is known. The bug is
-that omitting it is accepted silently rather than refused. A scaffold is a CRUD
-resource by definition; one without an identity column should be an error
-naming `@pk`, not a guess at the first field.
+**Recheck `0c369dd`: partially addressed, and only for entities with no table.**
+A field-evolution surface now exists -- `jails resource field add|rename|type|
+nullability|drop` -- and on a plain `g record` it works: `resource field rename Tag
+label name --column single-cutover` and `resource field drop Tag name
+--confirm-column name` both commit. On a **scaffold** -- the case this report is
+about, and the only case with a column to migrate -- every mutating subcommand
+fails outright (**B33**), and on a record it writes migrations against a table
+that does not exist (**B34**). `jails g field <E> <old> --rename <new>` and
+`jails destroy field <E> <f>` are still `error: unexpected argument`, and neither
+refusal mentions `jails resource field`, so the new surface is unreachable from
+the commands a reader would try first.
 
 ---
 
-## B5 — `doctor` reports "18 checks, all clear" on a project that does not compile
+## B5 — `doctor` reports "25 checks, all clear" on a project that does not compile
 
-**Severity: medium.** Run against the end state of B2 — orphaned `members`
-table, orphaned FK, two stranded test files, `mvn test-compile` failing —
-`jails doctor` reported every check green, including
-`ok  beans  6 bean(s), every project-typed dependency resolvable`.
+**Severity: medium.** *Amended `0c369dd`: the original reproduction is fixed, a
+cleaner one is not.* `doctor` gained a real project check -- `managed <Entity>`
+reports a recorded output that is missing (`FAIL`) or edited since the last commit
+(`warn`), and it caught both a hand-deleted `InMemoryOrderRepository.java` and a
+hand-deleted `V003__create_items.sql`. That is the B13/B14 gap closing.
 
-Doctor is read-only by contract and shouldn't compile anything, but it has the
-ledger and the filesystem, and every one of these is answerable from those two:
-
-- a recorded entity whose output bytes no longer match (B2a already detects this
-  in `g field` — doctor doesn't ask)
-- a `create table` in the migrations with no live entity claiming it
-- an association whose parent resource has been destroyed
-- ledger-recorded files that are missing, or entity-named files on disk that the
-  ledger doesn't claim
-
-Right now "all clear" means "your environment is fine", but it reads as "your
-project is fine", which is where the reader actually needs help after an edit.
-
----
-
-## B6 — the composite kinds reveal their requirements one refusal at a time
-
-**Severity: low (friction), but it cost four attempts.**
+What it still cannot see is a project broken entirely by jails' *own* output:
 
 ```
-$ jails g association Loan --on Member --yields Member
-jails: association Loan needs at least one `childField=parentField` mapping
-$ jails g association Loan --on Member memberId=id
-jails: association Loan needs its parent resource.
-       fix: pass `--yields <Parent>`.
-$ jails g association LoanMember --on Loan --yields Member memberId=id
-ok
+jails new kw --package com.kw --offline && cd kw && jails add db
+jails g scaffold enum id:uuid@pk x:int      # exit 0 -- see B35
+jails doctor                                 # 25 checks, all clear
+mvn -o test-compile                          # 25 files fail to compile
 ```
 
-`jails explain association` gives an excellent *rationale* and no syntax. `g
---help` is generic `generate` help with none of association's flags and no
-example using `--on`/`--yields`. The non-obvious part — that NAME is the
-association's own name, not the child entity — is nowhere. One worked example in
-`explain` or in the first error would have covered it.
+Every file on disk is byte-identical to what jails wrote, so the drift check is
+correct and silent; the project still does not build. The same hole shows up after
+B18: `jails resource repair Order --strategy roll-forward` over a half-applied
+transaction re-records the torn state as the new base and `doctor` returns to
+`25 checks, all clear` while the JDBC insert names a column no migration creates.
 
-(Credit where due: once invoked correctly the FK migration was exactly right,
-including declining to invent an `ON DELETE`.)
-
-**This is a pattern, not one command.** `g durable-job` took *five* sequential
-refusals to invoke — `--on`, then `--yields`, then `id:uuid`, then an exact field
-list — and the fifth contradicted the third (B26). `g transition` took three:
-`id`, then `version`, then "at least one field to update". Each message is
-individually good; the problem is that none of them states the whole contract, so
-a first-time invocation is a guessing game played one round trip at a time.
-
-A `jails explain <kind>` that ended with one working invocation would fix all of
-them at once, since the table already exists and already has an entry per kind.
-
----
-
-## B7 — the advertised field-type list doesn't match the one in the error message
-
-**Severity: low.**
-
-`jails g --help` advertises: `bigdecimal`, `zoneid`, `datetime`.
-The rejection message offers: `decimal`, `zone-id`, `datetime`.
-
-Both spellings actually parse, so this is cosmetic — but the reader is reading
-two different lists for one closed vocabulary and can't tell which is canonical.
-
-Separately, `timestamp` is rejected. It is the most natural name for a
-`timestamptz` column, and the column jails generates for `instant` is literally
-`timestamptz`. Worth accepting as an alias.
-
----
-
-## B8 — `jails new` leaves a `.jails-new.lock` in the parent directory on success
-
-**Severity: low.**
-
-```
-$ jails new bookclub --package com.example.bookclub
-Created ./bookclub (deps: web,devtools, Java 26)
-$ ls
-bookclub/  .jails-new.lock
-```
-
-22 bytes, in *my* directory, not the project's — so it lands in whatever the
-reader's `~/code` is and is never cleaned up. Exit was 0; nothing failed.
-
----
-
-## B9 — `jails migrate --check` prints a fatal-looking compose error, then succeeds
-
-**Severity: low (noise).** With Postgres already running (`jails doctor` said
-`ok service postgres running` moments earlier), `migrate --check` tried to start
-it again:
-
-```
-Error response from daemon: rootlessport listen tcp 0.0.0.0:5432: bind: address already in use
-Error: executing docker-compose up -d postgres: exit status 1
-jails: docker compose up -d postgres exited with exit status: 1
-  ok    V001__create_books.sql
-  ...
-8 migration(s) applied cleanly to a scratch database.
-```
-
-Three lines of `Error:` and a `jails:` prefix — the shape of a failure — above a
-completely successful run. "Already up" isn't a failure and shouldn't be
-reported as one.
+**Expected:** a check that a recorded entity's field list matches the columns its
+migrations created -- the one question that separates "the bytes are the ones I
+wrote" from "the project is coherent".
 
 ---
 
 ## B10 — `jails run` starts Spring Boot before PostgreSQL is ready for TCP connections (startup race)
 
-**Severity: medium (intermittent on cold start).**
+**Severity: medium (intermittent on cold start).** Not retested on HEAD `33abf9e`
+— Postgres was already accepting connections on `:5432`, and restarting it would
+have disrupted other projects. The previous reproduction stands.
 
 `jails run` invokes `docker compose up -d` for postgres, but immediately hands off to
 `mvn spring-boot:run` without waiting for the database server inside the container
@@ -372,89 +371,6 @@ the Spring Boot process.
 
 ---
 
-## B11 — `g record X` then `g scaffold X` leaves two ledger rows; every later `g field` silently updates only half the entity
-
-**Severity: critical.** Ends in the database and the Java disagreeing about the
-schema, with a **green build** and a clean `doctor`.
-
-The mistake is completely ordinary: you generate a `record`, realise you actually
-wanted the whole CRUD slice, and re-run as `scaffold`. jails accepts the upgrade
-and writes all 12 scaffold files — it looks like it worked.
-
-```
-jails g record   Order id:uuid@pk total:int      # oops, wanted a scaffold
-jails g scaffold Order id:uuid@pk total:int      # accepted, writes the full slice
-jails g field    Order note:string?              # <-- only touches 3 files
-```
-
-That third command reports:
-
-```
-  replace src/main/java/com/shop/domain/Order.java
-  create  src/main/resources/db/migration/V006__add_note_to_orders.sql
-  replace src/test/java/com/shop/domain/OrderTest.java
-```
-
-Three files. The same command on a clean scaffold (`Customer`) touches **ten** —
-record, `Request`, `Response`, the JDBC adapter, three tests, the `.http` file
-and the fixture. The `record` ledger row won, so the scaffold's half was never
-updated. Measured drift immediately afterwards:
-
-```
-record Order   : UUID id, int total, Optional<String> note
-OrderRequest   : @NotNull UUID id, @NotNull Integer total          <-- no note
-jdbc insert    : (id, total)                                       <-- no note
-sql columns    : id, total, add column note text                   <-- has note
-http body      : id total                                          <-- no note
-```
-
-`mvn test-compile` fails: `constructor Order in record com.shop.domain.Order
-cannot be applied to given types` in `JdbcOrderRepository` and `OrderRequest`.
-Every subsequent `g field` widens the gap — `note2` behaved identically.
-
-### B11a — the recovery silently reverts the Java and orphans the columns
-
-There *is* a recovery, and it is entirely undiscoverable: `jails destroy record
-Order` drops the stray row. It prints one line —
-
-```
-applied 27c032b689e2...
-  ledger  replace
-```
-
-— and after it, `g field` correctly targets the scaffold again. But the scaffold
-row's recorded field list was frozen at `(id, total)` and never learned about
-`note` or `note2`. So the next regeneration rebuilds the Java from that stale
-list. End state, verified:
-
-```
-record Order : UUID id, int total, Optional<String> note3    <-- note, note2 GONE
-OrderRequest : @NotNull UUID id, @NotNull Integer total, String note3
-jdbc insert  : (id, total, note3)
-migrations   : V006 add column note   text;
-               V007 add column note2  text;   <-- never dropped
-               V008 add column note3  text;
-mvn test-compile: 0 errors
-```
-
-**The build is green.** `jails doctor` is clean. And the database has two columns
-— `note`, `note2` — that no Java code anywhere knows exist, with no migration
-dropping them and nothing, anywhere, reporting it. A schema/code divergence that
-survives a full green `mvn verify` is the worst failure mode in the tool.
-
-Note also that the operation list is not a truthful account of the side effects:
-`destroy record Order` reported only `ledger replace`, yet it changed which
-declaration is authoritative for `Order` and therefore what the *next* command
-writes to eight files.
-
-**Expected:** re-running a different kind on an existing name should either
-refuse (naming the existing row and the `destroy` that clears it) or *replace*
-the row rather than adding a second one. In no case should two rows for one name
-be reachable, and a regeneration must never drop a component that a shipped
-migration has already added as a column.
-
----
-
 ## B12 — a one-character typo in a field name is permanent, in all six surfaces
 
 **Severity: high.** The single most common mistake there is, and there is no undo.
@@ -484,59 +400,56 @@ knows it just wrote it. This is the case that most deserves an escape hatch.
 
 ---
 
-## B13 — nothing detects or repairs a hand-deleted generated file
-
-**Severity: medium.** Deleting a file you think you don't need is ordinary.
-
-```
-rm src/main/java/com/shop/adapters/InMemoryOrderRepository.java
-jails doctor     # 18 checks, 0 failing — silent
-jails sync       # "applied ... ledger replace" — restores nothing
-jails g field Order note:string?   # proceeds as if nothing were missing
-```
-
-`sync` is the command whose whole job is "make the project match what is
-recorded", and it reports `applied` while doing nothing about a
-ledger-recorded file that is not on disk. Its output gives the reader no way to
-tell "nothing needed doing" from "I did not look."
-
-(The bean graph survives here — the JDBC adapter carries `@Component`, so
-`doctor`'s `beans` check was correct to stay green. The loss is the in-memory
-test fake.)
+**Recheck `0c369dd`: still reproduced verbatim** on a clean scaffold --
+`g field Order phoen:string?` lands in ten surfaces, `destroy field` is still
+`error: unexpected argument 'phoen' found`, and `g field ... --rename phone` is
+still `error: unexpected argument '--rename'`. The `jails resource field rename`
+route that would fix this refuses on every scaffold (**B33**), so the typo still
+ships.
 
 ---
 
 ## B14 — `doctor` and `sync` have no notion of entity drift at all
 
-**Severity: medium.** This is the umbrella over B11, B12 and B13.
+**Severity: medium.** This is the umbrella over B12 and B18 (B11 and B13, its
+original members, are fixed).
 
 Everything in this file that ends in a broken or silently-wrong project is
 detectable from two things jails already has in hand: the ledger, and the files
 on disk. None of it is checked. Concretely, `doctor` never asks:
 
-- does any name have **two** ledger rows of different kinds? (B11)
-- is a ledger-recorded file **missing** from disk? (B13)
 - does a recorded entity's field list match the columns its migrations created?
-  (B11a — this alone would have caught the two orphaned columns)
+  (the one that would catch B18's tear)
 - is there a `create table` in the migrations with no live entity claiming it?
 - do the record, the request DTO, the JDBC insert and the fixture agree on the
   component list?
 
 `doctor` today answers "is your *environment* healthy" — Maven, JDK, Docker,
-ports, containers. That is 18 of 18 checks. After an edit goes wrong, the
+ports, containers. That is 25 of 25 checks. After an edit goes wrong, the
 question the reader actually has is "is my *project* still coherent", and
 nothing answers it. `capability_drift_checks` already does exactly this shape of
 work for capabilities; entities have no equivalent.
 
----
+**Recheck `0c369dd`: half of this is fixed.** `doctor` now has a `managed
+<Entity>` check answering the two most mechanical of these questions -- a ledger-recorded file
+missing from disk, and one whose bytes changed since the last commit -- and
+`jails resource repair <Entity> --strategy roll-forward` restores the missing one.
+`jails sync` is unchanged: it still prints `applied ... ledger replace` over a
+missing file and restores nothing, so the command whose name promises this is
+still not the command that does it.
 
-## B15 — the generated `.http` file only exercises two of the four routes
+Still unasked, and still the ones that matter after an edit goes wrong:
 
-**Severity: low.** `requests/customer.http` contains `POST /customers` and
-`GET /customers`. The controller also serves `GET /customers/{id}` and
-`DELETE /customers/{id}`, and neither appears. The file is the fastest way to
-check a resource by hand, so the two routes keyed on the identity column — the
-two B4 gets wrong — are the ones you cannot easily try.
+- does a recorded entity's field list match the columns its migrations created?
+  (this is what leaves B18 green)
+- is there a `create table` in the migrations with no live entity claiming it?
+  (B22 produces exactly this)
+- do the record, the request DTO, the JDBC insert and the fixture agree?
+
+And the new check has a blind spot of its own: a migration written by
+`jails resource field` is not recorded as managed output, so deleting
+`V004__rename_label_to_name.sql` by hand leaves `doctor` at `all clear`, while
+deleting the create migration beside it is caught (**B34**).
 
 ---
 
@@ -548,92 +461,6 @@ two B4 gets wrong — are the ones you cannot easily try.
 server-side. That is a defensible choice (it makes creates idempotent), but it
 is unstated, and posting the sample body twice will violate the primary key.
 Worth a line in `explain scaffold` either way.
-
----
-
-## B16 — SQL reserved words are accepted as field names, producing invalid DDL *and* invalid DML
-
-**Severity: critical.** jails already has a reserved-word guard. It checks Java
-and not SQL.
-
-```
-$ jails g record X id:uuid@pk class:string
-jails: name `class` is a Java reserved word          <-- correctly refused
-
-$ jails g scaffold Booking id:uuid@pk from:date to:date guest:string
-  ... 12 files written, no warning                    <-- accepted
-```
-
-The most natural way to model a date range is `from`/`to`. What it generates:
-
-```sql
-create table bookings (
-  id     uuid not null,
-  from   date not null,     -- syntax error
-  to     date not null,     -- syntax error
-  guest  text not null,
-  constraint bookings_pk primary key (id)
-);
-```
-
-`jails migrate --check` does catch the DDL:
-
-```
-FAIL  V001__create_bookings.sql
-  psql:<stdin>:10: ERROR:  syntax error at or near "from"
-```
-
-**But nothing checks the DML, and that is the real damage.** The Java compiles
-(`from` and `to` are legal Java identifiers), the application starts, and every
-generated query is a syntax error:
-
-```java
-private static final String COLUMNS = "id, from, to, guest, nights";
-    select id, from, to, guest, nights from bookings
-    insert into bookings (id, from, to, guest, nights)
-    values (:id, :from, :to, :guest, :nights)
-```
-
-Run verbatim against the project's own PostgreSQL:
-
-```
-$ psql -c 'select id, from, to, guest, nights from bookings'
-ERROR:  syntax error at or near "from"
-$ psql -c "insert into bookings (id, from, to, guest, nights) values (...)"
-ERROR:  syntax error at or near "from"
-```
-
-So the reader hand-quotes the DDL (which is what `migrate --check`'s fix line
-tells them to do, and it works), the migration goes green — and **every endpoint
-on the resource 500s at runtime**, because the adapter is regenerated unquoted
-on every subsequent `g field`.
-
-### How big is the gap
-
-Measured directly: for each word, does `jails g record` accept it as a field
-name, and does PostgreSQL reject it as an unquoted column? **69 words are
-accepted by jails and rejected by PostgreSQL**, including:
-
-```
-order  user   group  desc   end    check  limit  offset  references  primary
-column table  select where  from   to     grant  union   all         any
-when   then   having into   using  constraint    unique  array       asc
-cast   collate  cross  distinct  except  foreign  full   ilike  in   inner
-is     join   leading  left   like   natural  on   only  or   outer
-right  similar  some   window  with   current_date  current_time  current_user
-```
-
-`order`, `user`, `group`, `desc`, `end`, `check`, `limit`, `left`, `right`,
-`from`, `to`, `in`, `is`, `on`, `with` are all ordinary domain vocabulary.
-
-**Expected:** the existing reserved-word check should have a SQL half, refusing
-at parse time the way the Java half does — or `sql::Column` should quote
-identifiers unconditionally, in both the DDL and the DML, from the one column
-list it already shares.
-
-*(Table names are safe by accident: pluralisation moves `Order` to `orders`,
-`Value` to `values`, `Group` to `groups`, and PostgreSQL accepts all of those.
-Verified — this is luck, not a guard.)*
 
 ---
 
@@ -653,8 +480,9 @@ jails: ... cannot be read by this jails: ledger does not end with a newline
              history over, or use the jails that wrote it.
 
 # git conflict markers
-jails: ... ledger has 13 line(s); schema 2 is exactly five, in a fixed order
-       fix: it was written by a different version. ...
+jails: ... expected a line `schema = …`, found `<<<<<<< HEAD`
+       fix: it was written by a different version. Upgrade to, or use, the jails
+             version that wrote it; this version will not treat unknown state as empty.
 
 # empty file
 jails: ... ledger does not end with a newline
@@ -691,6 +519,29 @@ recoverable file. A `jails ledger repair`/`--reconstruct` that re-records
 entities from the files on disk is the missing command; failing that, the advice
 should be "restore `.jails/ledger.toml` from git" — which is correct, safe, and
 was not mentioned.
+
+---
+
+**Recheck `0c369dd`: the destructive half is fixed, the diagnosis is not.**
+`Delete .jails/ to start its history over` is gone from every one of the three
+corruptions -- so following the advice no longer bricks the project, which was the
+critical part of this report. What is left is medium severity: all three still
+report `it was written by a different version`, none of them was, and none offers
+a way back.
+
+```
+# truncated / empty
+jails: .../ledger.toml cannot be read by this jails: ledger does not end with a newline
+       fix: it was written by a different version. Upgrade to, or use, the jails
+            version that wrote it; this version will not treat unknown state as empty.
+# git conflict markers
+jails: ... ledger has 13 line(s); schema 2 is exactly five, in a fixed order
+       fix: it was written by a different version. ...
+```
+
+A file containing `<<<<<<< HEAD` has one cause and one fix, and
+`git checkout -- .jails/ledger.toml` -- correct, safe, and the thing the reader
+should do -- is still not mentioned.
 
 ---
 
@@ -749,6 +600,39 @@ its own partial output as a new base that the next run diffs against.
 
 ---
 
+**Recheck `0c369dd`: the wording improved, the tear did not.** The error is prose
+now rather than `RecoveryBlocked(Unreadable { ... })`:
+
+```
+$ chmod 555 src/main/resources/db/migration
+$ jails g field Order zzz:string?
+jails: a file could not be read (could not publish .../V005__add_zzz_to_orders.sql:
+       Permission denied (os error 13)).
+       fix: make it readable and run the command again.
+```
+
+The project is still torn exactly as before: `Order.java`, `OrderRequest.java`,
+`OrderResponse.java`, `order.http` and `JdbcOrderRepository.java` all carry `zzz`,
+`insert into orders (id, total, note, note2, phoen, zzz)`, and **no migration
+creates the column**. The next command still reports the five files as the
+developer's edits (the `plan.md §R5.4` citation is gone, so B19 is fixed on this
+path, but the accusation stands).
+
+The new part is worse. `doctor` now flags the five files as
+`changed since the last jails commit`, and its own advertised repair adopts them:
+
+```
+$ jails resource repair Order --strategy roll-forward
+applied 64e55a92...   ledger replace
+$ jails doctor
+25 checks, all clear.
+```
+
+The tear is now the recorded truth. `doctor` is green, the build is green, and
+every insert will fail at runtime with `column "zzz" does not exist`.
+
+---
+
 ## B19 — internal Rust `Debug` output and a deleted design document leak into user-facing errors
 
 **Severity: low individually, corrosive in aggregate.** Three of the failures
@@ -778,6 +662,36 @@ Worse, B18's fix line ships an internal citation to the reader:
 through `git show`). A user-facing error should not cite a document the user
 cannot open, and should not tell them a feature is unimplemented as though that
 were an action they can take.
+
+---
+
+**Recheck `0c369dd`: partially fixed.** The two `{:?}` leaks quoted above are gone
+-- the permission failure is prose (see B18) and `plan.md §R5.4` no longer ships to
+the reader. Two internal leaks remain, both on paths a reader reaches on their
+first attempt:
+
+```
+$ jails resource field rename Customer phoen phone --column single-cutover
+jails: resource Intent(IntentId { recipe: Scaffold, name: Name("Customer"),
+       package: Package("com.svc") }) no longer has the expected source path.
+
+$ jails rename Member Reader --force
+jails: `.../V001__create_members.sql` was not captured, so planning may not read it.
+       fix: declare it in the read set.
+```
+
+The first is `{:?}` on `IntentId`; the second asks the reader to do something only
+the implementation can do.
+
+**Recheck `3a023c0`: both leaks above still ship, and two more were found.**
+`resource field rename` on a scaffold still prints `{:?}` on `IntentId` (B33) and
+`rename` still says `declare it in the read set` (B2). New this pass, both in
+text a reader meets before any failure:
+
+- `jails g --help` documents `--output` with `§R3.4 makes a command's result a
+  *value* ...` -- a citation to a document that is not in the repository, shipped
+  in `--help` rather than in an error.
+- `jails explain --help` prints the *completion* command's description (**B44**).
 
 ---
 
@@ -812,11 +726,20 @@ jails: `scaffold Lead` is wanted differently by a direct command and the app
        manifest.
        fix: make the declarations agree — applying one would be undone by the
             other's next run.
+       a direct command wants: id:uuid@pk email:string@unique score:int note:string?
+       the app manifest wants: id:uuid@pk email:string@unique score:int
 ```
+
+The on-disk `.jails/app.toml` *already listed* `note:string?`. "the app manifest
+wants" is the last *successfully applied* snapshot, not the file just edited.
+`g field` with the same field the file now declares still refuses.
 
 **Each path refuses and points at the other.** `app apply` says use a migration;
 `g field` says make the declarations agree — and the only way to make them agree
 is the edit `app apply` just rejected. There is no third path.
+
+A field edit on one entity also poisons the rest of `app apply`: deleting an
+unrelated `Deal` block in the same file still dies on `V001__create_leads.sql`.
 
 It is worse than a refusal, because the manifest edit persists. Once
 `app.toml` says `note:string?` and the ledger does not, *every* subsequent direct
@@ -842,29 +765,20 @@ the declarative path is not merely awkward, it is closed.
 
 ---
 
-## B21 — `destroy` never checks whether anything still uses the type
+**Recheck `0c369dd`: still reproduced in full, with one detail corrected.** All
+three doors are still shut -- `app apply` after adding one field to a `[[generate]]`
+`fields` list dies on `migration-edited-after-seal`, and both `jails g field Lead
+note:string?` **and** the new `jails resource field add Lead note:string?` refuse
+with `wanted differently by a direct command and the app manifest`.
 
-**Severity: high.** Ordinary authoring: you generate an enum, wire it into a
-record, later decide the enum was a bad idea.
-
-```
-jails g enum Status Draft Published Archived
-jails g scaffold Post id:uuid@pk title:string status:Status   # Status is a component
-jails destroy enum Status --force                              # deleted, no warning
-```
-
-```
-  delete  src/main/java/com/blog/domain/Status.java
-  delete  src/main/java/com/blog/domain/package-info.java
-  delete  src/test/java/com/blog/domain/StatusTest.java
-```
-
-`mvn test-compile` → **14 errors**. jails had everything it needed to warn:
-`Post`'s recorded field list literally contains `status:Status`, and it is in the
-same ledger `destroy` just rewrote. No dependency check is performed.
-
-**Expected:** refuse, naming the entities whose components reference the type —
-the same shape as the `storage-policy-required` refusal, which does this well.
+*Correction to the previous pass:* the claim that editing `app.toml` "permanently
+disables the imperative path" overstated it. Reverting the manifest by hand
+changes nothing, because the refusal is unconditional: on a manifest-owned entity a
+direct field command always differs from the manifest by exactly the field being
+added, so `a direct command wants: ... note:string?` versus `the app manifest
+wants: ...` is the permanent state, not a stale snapshot. There is no edit to
+`app.toml` that makes the direct path legal, and no `app apply` that accepts the
+edit. The verdict is unchanged and the severity is unchanged.
 
 ---
 
@@ -903,58 +817,15 @@ less than it should.)*
 
 ---
 
-## B23 — `remove <capability>` yanks the dependency and leaves the code that needs it
-
-**Severity: high.** `add` is explicit that a capability installing code without
-its dependency is unacceptable — "a capability that installs the code and skips
-the dependency is worse than one that refuses". `remove` has no symmetric check.
-
-```
-jails add db
-jails g scaffold Article ...      # generates JdbcArticleRepository, uses JdbcClient
-jails remove db --force           # succeeds
-```
-
-```
-[ERROR] JdbcArticleRepository.java:[14,44] package org.springframework.jdbc.core.simple does not exist
-[ERROR] JdbcArticleRepository.java:[45,19] cannot find symbol
-... 26 errors
-```
-
-`remove db` unsplices `spring-boot-starter-jdbc` while every JDBC adapter it
-generated stays on disk. `JdbcClient` lives in `spring-jdbc`, so the project
-stops compiling immediately.
-
-**Expected:** the same refusal `add` gives, inverted — name the generated files
-that depend on this capability and require `--force` (or offer to destroy them),
-rather than leaving a project that cannot build.
+**Recheck `0c369dd`: still reproduced.** Deleting the `Deal` block from
+`.jails/app.toml` and re-applying deletes every Java file with no storage policy,
+no confirmation and no `drop table` migration; `V002__create_deals.sql` stays and
+the table survives with nothing claiming it. The imperative path still insists on
+`--storage drop --confirm-table deals` for the same intent.
 
 ---
 
-## B25 — `--package` writes the files but records nothing, orphaning the entity permanently
-
-**Severity: critical.** `--package` is the documented placement override, and it
-breaks the entire lifecycle of whatever it places.
-
-```
-$ jails g scaffold Refund id:uuid@pk amount:bigdecimal --package billing
-  create src/main/java/com/ops/billing/Refund.java
-  ... 11 files ...
-  ledger replace                      <-- says it recorded something
-
-$ jails g field Refund memo:string?
-jails: no `Refund` is recorded in this project.
-
-$ jails destroy scaffold Refund --force
-jails: no `scaffold Refund` is recorded in this project.
-```
-
-Control, same command without `--package`: recorded correctly, `g field` works.
-So every `--package` artifact is write-once — it cannot be evolved, cannot be
-destroyed, and 11 files are stranded with no way to reach them through jails
-again. The `ledger replace` line in the output is actively misleading.
-
-### B25a — `--package` is relative, and a fully-qualified value is silently doubled
+## B25a — `--package` is relative, and a fully-qualified value is silently doubled
 
 `--package` is interpreted relative to the base package. Passing the value that
 appears at the top of every generated file — the fully-qualified one — is the
@@ -970,205 +841,598 @@ package com.ops.com.ops.billing;
 It compiles, so nothing ever reports it. Combined with B25 the files are also
 unreachable, so the only fix is `rm -rf` by hand.
 
-**Expected:** record the entity with its package, and reject (or normalise) a
-`--package` value that already starts with the project's base package.
+**Recheck `0c369dd`: the doubling is unchanged.**
+`jails g scaffold Invoice id:uuid@pk amount:decimal --package com.svc.billing`
+still writes `src/main/java/com/svc/com/svc/billing/InvoiceService.java`. The
+files *are* recorded now (B25 is fixed), so they can be evolved and destroyed --
+under the doubled package, which makes the mistake durable rather than merely
+present.
+
+The other residue from B25: an entity generated with `--package billing` is only
+reachable when the flag is repeated. `jails g field Refund memo:string?` answers
+`no Refund is recorded in this project` and suggests scaffolding it again, while
+`jails resource status Refund` reports `Refund@com.svc.billing, state: consistent`
+in the same directory. One of those two is wrong, and the one that is wrong is the
+one telling the reader to re-create an entity that exists.
+
+**Expected:** reject (or normalise) a `--package` value that already starts with
+the project's base package, and resolve an entity by name when exactly one
+package holds it.
 
 ---
 
-## B26 — `g durable-job` has two rules that contradict each other, making it unsatisfiable
+---
 
-**Severity: high.** Not a hard-to-reach edge: it is what you get by following
-jails' own guidance one step earlier.
+## B33 — every mutating `resource field` subcommand fails on a storage-backed entity
 
-```
-$ jails g usecase CloseTicket --on Ticket
-jails: usecase CloseTicket cannot safely infer `subject` (String) for Ticket.
-       fix: add `subject:<type>` to the usecase fields; ...
-$ jails g usecase CloseTicket --on Ticket subject:string     # did as told
-```
-
-Now attach a durable job to it. Every possible field list is refused:
+**Severity: critical.** `jails resource field` is the answer to B3 and B12 — rename,
+retype, change nullability, drop — and on a scaffold, which is the only kind that
+has a column to migrate, none of it works.
 
 ```
-fields=[]                      -> needs a stable `id:uuid` field
-fields=[subject:string]        -> needs a stable `id:uuid` field
-fields=[id:uuid]               -> fields must exactly match CloseTicketCommand
-                                  in declaration order. expected: subject:String
-fields=[id:uuid subject:string]-> fields must exactly match CloseTicketCommand ...
-fields=[subject:string id:uuid]-> fields must exactly match CloseTicketCommand ...
+jails new svc --package com.svc --offline && cd svc && jails add db
+jails g scaffold Customer id:uuid@pk email:string phoen:string?
+jails resource field rename Customer phoen phone --column single-cutover
+```
+```
+jails: resource Intent(IntentId { recipe: Scaffold, name: Name("Customer"),
+       package: Package("com.svc") }) no longer has the expected source path.
+       fix: rerun the command against the path reported by `resource status`
 ```
 
-Rule A demands the fields exactly equal the command's (`subject:String`).
-Rule B demands an `id:uuid` the command does not have. They cannot both hold, so
-`g durable-job` can never be run against this use case.
+Exit 1, nothing written. Identical failure for `resource field drop Customer phoen
+--confirm-column phoen`, `resource field type Item qty --to long --strategy safe`,
+and `resource field nullability Customer email --nullable`. `resource field add`
+is the one subcommand that works. On a plain `g record` the same rename and drop
+succeed (and then produce B34), so the failure is specific to entities that have a
+table — the case the feature exists for.
 
-**Root cause and the missing hint:** it works when the target use case itself
-declares `id:uuid`:
+The advice is a dead end in two ways. `resource status` takes a selector, not a
+path, and it reports the resource as healthy:
 
 ```
-$ jails g usecase OpenTicket --on Ticket id:uuid subject:string
-$ jails g durable-job Nudge --on OpenTicket --yields Ticket id:uuid subject:string
-  ... applied
+$ jails resource status Customer
+resource: Customer@com.svc
+state: consistent
+declaration: present
+generated: present
+migration-history: present
+table: customers
 ```
 
-So the constraint is really on `g usecase` — a use case without `id:uuid` can
-never carry a durable job — and that is stated nowhere. The refusal that sent me
-down this path (`add subject:<type> to the usecase fields`) listed exactly what
-to add and omitted `id`, even though `Ticket` has `id:uuid@pk`.
+There is no path in that output to rerun against, and the command that says the
+source path is wrong is contradicted by the command it tells you to consult. The
+message body is also `{:?}` on `IntentId` (B19).
 
-**Expected:** the second refusal should name the real problem — "`CloseTicket`
-has no `id:uuid`; regenerate the use case with one" — rather than demanding a
-field list that the other rule forbids.
+**Expected:** on a scaffold whose `resource status` is `consistent`, a rename/drop/
+retype should plan its migration and commit — and if some precondition is genuinely
+missing, name it in the reader's vocabulary rather than printing an internal id.
 
 ---
 
-## B27 — a single-line Gradle `dependencies { }` block defeats the splice, which then duplicates on every run
+## B34 — `resource field` on a plain record writes `alter table` for a table that never existed
 
-**Severity: high** for Gradle projects, which is the case Gradle support was
-added for.
+**Severity: critical.** Silently unappliable migration history, from a command that
+exits 0.
 
-With a conventional multi-line block, the splice is **correct and idempotent** —
-two generates, no duplicates, both entries inside the braces. With the block
-written on one line, jails does not find it, appends at the end of the file, and
-loses idempotency:
-
-```groovy
-plugins { id 'java'; id 'org.springframework.boot' version '3.3.4' }
-dependencies { implementation 'org.springframework.boot:spring-boot-starter-web' }
- testImplementation 'org.assertj:assertj-core'                      <-- outside the block
- implementation 'org.springframework.boot:spring-boot-starter-validation'
- testImplementation 'org.assertj:assertj-core'                      <-- duplicate
 ```
-
-After a few ordinary commands: **`assertj-core` appears 4 times and
-`spring-boot-starter-validation` twice**, all at the top level of the build
-script, where `testImplementation` is not a callable method. `pom::add_dependency`
-is idempotent; the Gradle path is not.
-
-*(Gradle is not installed on this machine, so I could not execute the build. The
-placement outside the `dependencies` block and the duplication are both verified
-by reading the file; the resulting build failure is inferred, not observed.)*
-
-The `// jails:integration-tests` marked block, by contrast, was written correctly
-in both layouts.
-
-**Expected:** the same treatment `pom.rs` gets — find the block whatever its
-formatting, refuse rather than guess if it cannot be found (the bar `CLAUDE.md`
-sets for `gradle.rs`: "answer exactly or refuse, never guess"), and stay
-idempotent.
-
----
-
-## B28 — `destroy scaffold` drops parent table without checking incoming foreign keys, emitting broken drop migrations
-
-**Severity: critical.** Silently breaks migration execution for the entire repository.
-
-When an association connects a child entity to a parent entity (`jails g association ChildParent --on Child --yields Parent parentId=id`), a foreign key constraint (`children_child_parent_fk`) is added to the database schema.
-
-Destroying the parent entity with a storage drop policy succeeds without warning or error:
-
-```bash
-jails g scaffold Parent id:uuid@pk name:string
-jails g scaffold Child id:uuid@pk parentId:uuid title:string
-jails g association ChildParent --on Child --yields Parent parentId=id
-jails destroy scaffold Parent --storage drop --confirm-table parents --force
+jails new svc --package com.svc --offline && cd svc && jails add db
+jails g record Tag id:uuid@pk label:string?        # a record: no create-table migration
+jails resource field rename Tag label name --column single-cutover   # exit 0
+jails resource field drop   Tag name  --confirm-column name          # exit 0
 ```
-
-Result: `destroy` reports success and writes `V004__drop_parents.sql`:
 
 ```sql
-drop table parents;
+-- V004__rename_label_to_name.sql
+alter table tags rename column label to name;
+-- V008__drop_name.sql
+alter table tags drop column name;
 ```
 
-When running `jails migrate --check` (or applying migrations in production):
+There is no `tags` table anywhere in the project — `g record` creates none. Verified
+against real PostgreSQL:
 
 ```
-FAIL  V004__drop_parents.sql
-
-V004__drop_parents.sql did not apply:
-
-  psql:<stdin>:1: ERROR:  cannot drop table parents because other objects depend on it
-  DETAIL:  constraint children_child_parent_fk on table children depends on table parents
-  HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+$ jails migrate --check
+  ok    V001__create_customers.sql
+  ok    V002__add_note_to_customers.sql
+  ok    V003__create_items.sql
+  FAIL  V004__rename_label_to_name.sql
+  psql:<stdin>:3: ERROR:  relation "tags" does not exist
 ```
 
-The project migration history is now broken and unappliable.
+Every migration after it is now unreachable, and the whole history is unappliable
+in any environment.
 
-**Expected:** `destroy scaffold` should check for incoming foreign keys in the ledger, refusing to destroy a parent entity whose table is referenced by existing child associations (naming the dependent child entities and associations), or explicitly emit `drop table parents cascade;` / drop FK constraints first.
+Two things make it worse than a bad file:
+
+- **`doctor` cannot see it.** These migrations are not recorded as managed output,
+  so hand-deleting `V004__rename_label_to_name.sql` leaves `25 checks, all clear`,
+  while hand-deleting the neighbouring `V003__create_items.sql` — written by
+  `g scaffold` — is correctly reported as `FAIL managed Item recorded output ... is
+  missing`. The command's own migration is outside the check that exists.
+- The drop migration also names no table in its filename (`V008__drop_name.sql`),
+  so a repository with two entities gets colliding, uninformative version names.
+
+**Expected:** refuse a physical-column operation on an entity with no table,
+naming the entity's kind — a `record` has no columns to migrate.
 
 ---
 
-## B29 — Scaffolding a composite primary key produces throwing stubs (`UnsupportedOperationException`) and 500 runtime HTTP endpoints
+## B35 — a Java keyword as an entity name is accepted and the project stops compiling
 
-**Severity: high.** Compiles cleanly, but endpoints crash with 500 at runtime and generated tests are disabled.
+**Severity: high.** Nothing refuses it, and every surface is generated.
 
-Declaring multiple `@pk` fields on a scaffold is accepted without error:
-
-```bash
-jails g scaffold OrgMember orgId:uuid@pk userId:uuid@pk role:string
+```
+jails new kw --package com.kw --offline && cd kw && jails add db
+jails g scaffold class id:uuid@pk x:int      # exit 0, ~15 files + V001__create_classes.sql
+mvn -o test-compile
+```
+```
+[ERROR] .../service/ClassService.java:[33,30] <identifier> expected
+[ERROR] .../web/ClassResponse.java:[21,43] <identifier> expected
+[ERROR] .../app/ClassRepository.java:[24,26] <identifier> expected
 ```
 
-What it generates:
+The *type* name is fine (`Class`); what breaks is the derived lowercase
+**variable** name, which is the keyword itself (`Class class`). Tested across
+keywords in one project — `class`, `enum`, `int`, `new`, `null`, `static`, `void`
+all generate and all fail `javac` (25 files across 6 entities). `record` and `var`
+are restricted identifiers and compile fine, correctly.
 
-1. Migration `V001__create_org_members.sql` correctly emits `primary key (org_id, user_id)`.
-2. `OrgMemberRepository` interface generates single-string ID methods:
-   ```java
-   Optional<OrgMember> findById(String id);
-   boolean deleteById(String id);
-   ```
-3. `JdbcOrgMemberRepository` implements them as throwing stubs:
-   ```java
-   @Override
-   public Optional<OrgMember> findById(String id) {
-       throw new UnsupportedOperationException("findById requires a composite-key repository port");
-   }
+The recovery is B1: each accepted name has already sealed a `create table`
+migration, so destroying and regenerating under a corrected name is the one-way
+door.
 
-   @Override
-   public boolean deleteById(String id) {
-       throw new UnsupportedOperationException("deleteById requires a composite-key repository port");
-   }
-   ```
-4. `OrgMemberController` serves `GET /org-members/{id}` and `DELETE /org-members/{id}`. Calling either route crashes with HTTP 500 (`UnsupportedOperationException`).
-5. `JdbcOrgMemberRepositoryIT` is generated as `@Disabled("todo: model the composite repository key in the port before enabling this round trip")`.
-
-Because `OrgMemberControllerTest` uses Mockito mocks for `OrgMemberService`, all unit tests pass with `mvn test-compile` and `mvn test`, hiding the runtime 500 error.
-
-**Expected:** If composite-key repository ports are not supported, `g scaffold` should reject multiple `@pk` declarations at parse time with an actionable error. If supported, it should generate composite repository ports (or record key classes) and working controller endpoints.
+**Expected:** the same parse-time refusal that field names already get
+(`field name 'hashCode' conflicts with ...`), applied to the entity name, checking
+the *derived identifier* rather than only the capitalised type.
 
 ---
 
-## B30 — `jails new` accepts whitespace in project names, generating an invalid `pom.xml` that Maven cannot compile
+## B36 — an invalid entity name panics instead of refusing
 
-**Severity: high.** Creates a broken project on step 1.
-
-Running `jails new` with a quoted name containing spaces:
-
-```bash
-jails new "my app with spaces" --package com.example.spaceapp --offline
-```
-
-`jails new` exits 0 and creates directory `./my app with spaces`. However, it writes the unescaped name directly into `pom.xml`:
-
-```xml
-<artifactId>my app with spaces</artifactId>
-```
-
-When building or compiling with Maven:
+**Severity: high.** Exit 101 and a Rust panic message, where every neighbouring
+mistake gets a `jails:` line and a `fix:`.
 
 ```
+$ jails g scaffold 'Bad!Name' id:uuid@pk x:int
+thread 'main' (2553082) panicked at crates/jails-generate/src/sql.rs:378:10:
+generated names are validated before SQL projection: Told("name `Bad!Name` contains
+`!`, which is not valid in a Java identifier")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+$ echo $?
+101
+```
+
+Same panic, same line, for `9Lives`, `Foo-Bar`, `Foo Bar` and `Ünïcode`. Nothing is
+written, so the damage is confined to the message — but the message tells the
+reader the tool is broken rather than that their input is, and the assertion text
+says the input was *supposed* to have been validated earlier, which is where the
+check belongs. By contrast `jails g scaffold Good id:uuid@pk x:nosuchtype` exits 1
+with a clean list of valid types.
+
+**Expected:** exit 1 with the panic's own sentence rendered as a `jails:` refusal —
+the wording is already correct, it is simply arriving through `unwrap`.
+
+---
+
+## B37 — an entity in an association can never be destroyed: both halves refuse and point at each other
+
+**Severity: high.** Found while confirming B28's fix. The refusal B28 asked for
+exists; the way out of it does not.
+
+```
+jails g scaffold Parent id:uuid@pk name:string
+jails g scaffold Child  id:uuid@pk parentId:uuid title:string
+jails g association ChildParent --on Child --yields Parent parentId=id
+
+$ jails destroy scaffold Parent --storage drop --confirm-table parents --force
+jails: removing `scaffold Parent` would leave `association ChildParent` pointing at nothing.
+       fix: remove the dependant first, or keep a declaration that owns `scaffold Parent`.
+
+$ jails destroy association ChildParent --force
+jails: migrations, associations, and field changes are forward-only; create a new
+       migration instead of destroying one
+```
+
+Exit 1 both times. "Remove the dependant first" names an operation the tool
+refuses on principle, and the second refusal offers no command at all — "create a
+new migration" is not something `jails` will do for an association, and doing it
+by hand does not retire the ledger row that the first refusal is reading.
+
+The same two commands in the other order fail the same way. The entity is
+permanently undestroyable, which also means the association is permanently
+unremovable — an ordinary modelling reversal ("these two should not be linked
+after all") has no expression.
+
+**Expected:** one of the two has to open. Either `destroy association` retires the
+row and appends a `drop constraint` migration, or the parent's refusal names a
+concrete command (`--cascade`, or the association destroy it would accept) rather
+than an operation that does not exist.
+
+---
+
+## B38 — a one-letter entity name produces table `as`, which PostgreSQL will not create
+
+**Severity: medium.** Reserved *field* names are refused (B16, fixed); the table
+name derived from the entity name is not checked at all.
+
+```
+jails g scaffold A id:uuid@pk n:string        # exit 0
+```
+```
+$ jails migrate --check
+  FAIL  V001__create_as.sql
+  psql:<stdin>:8: ERROR:  syntax error at or near "as"
+  LINE 1: create table as (
+```
+
+`A` pluralises to `as`, which is a PostgreSQL reserved word. Swept the obvious
+neighbours in one project — `Table`, `Group`, `Select`, `Where`, `User` all
+pluralise clear of the reserved list (`tables`, `groups`, `selects`, `wheres`,
+`users`) and apply cleanly — so `A` is currently the only name found that trips it,
+but it is a name the tool advertises no restriction on. The Java compiles, so
+nothing reports the problem until a migration is run, and the create migration is
+sealed by then (B1).
+
+**Expected:** the parse-time check that already refuses reserved *column* names,
+applied to the derived table name.
+
+**Recheck `3a023c0`: still broken, and `A` is not the only one.** `I` pluralises
+to `is`, equally reserved:
+
+```
+$ jails g scaffold I id:uuid@pk v:int     # exit 0 -> V001__create_is.sql
+$ jails migrate --check
+  FAIL  V001__create_is.sql
+  psql:<stdin>:8: ERROR:  syntax error at or near "is"
+```
+
+Swept seventeen names in one project (`Status Datum Person Index News Order
+OrderService ThingRepository FooController BarTest PackageInfo Application
+Config Main A I O`); all generate, and only `A` (`as`) and `I` (`is`) fail to
+apply. `O` -> `os` is fine. See also **B41**: the failure message's own advice
+walks the reader into a closed loop.
+
+---
+
+## B39 — `g field` silently breaks every companion generated against the entity, and `doctor` stays green
+
+**Severity: critical.** A green `doctor` over a project that does not compile —
+the worst outcome in the tool. Found by the section-20 audit (fifty operations,
+then one hard look) and bisected to five commands.
+
+`g field` updates the scaffold's own ten surfaces correctly. It does not touch
+the `query`, `transition` or `usecase` companions that construct the same record,
+does not mention them, and nothing afterwards reports them.
+
+```
+jails new qg --package com.qg --offline && cd qg && jails add db
+jails g scaffold Order id:uuid@pk total:decimal
+jails g query FindOrders --on Order total:decimal
+mvn -o test-compile                                    # exit 0 -- coherent
+jails g field Order version:int --default-literal 0    # exit 0, silent
+```
+
+The operation list `g field` prints names zero companions. Then:
+
+```
+$ jails doctor
+25 checks, all clear.
+
 $ mvn -o test-compile
-[ERROR] Some problems were encountered while processing the POMs:
-[ERROR] 'artifactId' with value 'my app with spaces' does not match a valid id pattern. @ line 11, column 17
-[ERROR] The build could not read 1 project -> [Help 1]
+[ERROR] .../adapters/JdbcFindOrdersQuery.java:[51,16] constructor Order in record
+        com.qg.domain.Order cannot be applied to given types;
 ```
 
-**Expected:** `jails new` should either validate the project name and reject whitespace with a clear error, or sanitize/normalize `artifactId` to valid kebab-case (`my-app-with-spaces`).
+**All three companion kinds are affected**, confirmed in one project by
+generating them together and adding one nullable field:
+
+| companion generated against `Order` | file broken by `g field Order memo:string?` |
+|---|---|
+| `g query FindOrders --on Order` | `JdbcFindOrdersQuery.java:[52]` |
+| `g transition ShipOrder --on Order` | `JdbcShipOrderTransition.java:[58]` |
+| `g usecase PlaceOrder --on Order` | `DefaultPlaceOrderUseCase.java:[24]` |
+
+`doctor` reports `25 checks, all clear` in that state too, because every file on
+disk is byte-identical to what jails wrote — the drift check is correct and
+silent, exactly as **B5** describes, and this is the sharpest instance of it.
+It is also the concrete form of the question **B14** says nobody asks: whether the
+surfaces that name a record still agree with it.
+
+Every intermediate command reported success. Only a compiler found it.
+
+**Impact:** the ordinary "this entity needs one more column" edit — the single
+most common change there is — silently breaks the build of any project that has
+generated a query, transition or use case, and every jails oracle says the
+project is healthy.
+
+**Expected:** `g field` must either regenerate the companions that construct the
+record (they are recorded output, so they are findable) or refuse and name them.
+Failing both, `doctor` must compare a recorded entity's component list against
+the companions that construct it.
+
+---
+
+## B40 — `jails rename` panics on any non-ASCII byte in any scanned `.java` file, including jails' own output
+
+**Severity: high.** Exit 101, and the command is permanently unusable in the
+project afterwards. `jails g idempotency` writes an em dash into its Javadoc, so
+jails disables its own `rename` with its own output.
+
+```
+jails new p2 --package com.p2 --offline && cd p2 && jails add db
+jails g idempotency Claim          # writes `—` into the generated Javadoc
+jails g record Note body:string
+jails rename Note Memo --force
+```
+```
+thread 'main' (3287264) panicked at crates/jails-java/src/identifier.rs:234:14:
+start byte index 537 is not a char boundary; it is inside '—' (bytes 536..539 of string)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+$ echo $?
+101
+```
+
+**Control:** the identical project without the `g idempotency` step renames
+cleanly — `2 file(s), 4 occurrence(s), 2 file rename(s).`, exit 0. The `record`
+being renamed contains no non-ASCII byte itself; one such byte *anywhere in the
+scanned tree* is enough.
+
+A hand-written comment does it just as well, which is the case that will actually
+be hit:
+
+```
+$ printf 'package com.p3;\n// café — note\nclass Junk {}\n' > src/main/java/com/p3/Junk.java
+$ jails rename Memo Note2 --force
+thread 'main' panicked at crates/jails-java/src/identifier.rs:234:14:
+start byte index 23 is not a char boundary; it is inside 'é' (bytes 22..24 of string)
+```
+
+**Scoped:** only `rename` is affected. In the same project `routes`, `beans`,
+`lint`, `stats`, `notes`, `doctor` and `g field` all exit 0, so this is byte
+slicing in `identifier.rs` rather than anything shared by the source readers.
+Nothing is written, so the damage is confined to the message and to `rename`
+being unavailable — but it is unavailable *for every type in the project, for
+good*, on any real codebase with an accented word in a comment.
+
+**Impact:** the rename command is dead in any project containing one non-ASCII
+byte, and jails' own generator puts one there.
+
+**Expected:** slice on character boundaries. Exit 1 if there is genuinely
+something to refuse; there is not — renaming is unaffected by a comment.
+
+---
+
+## B41 — a closed refusal loop: `migrate --check` says edit the migration, the seal says restore it, `resource repair` restores the broken one
+
+**Severity: high.** Refusal chains that close a loop are the highest-value class
+in this file, and this is a complete one, reachable from an ordinary mistake
+(**B38**: entity `A` produces the reserved table name `as`).
+
+```
+jails new letter --package com.lt --offline && cd letter && jails add db
+jails g scaffold A id:uuid@pk n:string        # exit 0
+```
+
+**Step 1 — `migrate --check` fails and tells you to edit the file.**
+
+```
+$ jails migrate --check
+  FAIL  V001__create_as.sql
+  psql:<stdin>:8: ERROR:  syntax error at or near "as"
+fix: edit V001__create_as.sql and re-run `jails migrate --check`. Migrations are
+     forward-only, so fix the file rather than adding one that undoes it --
+     nothing has run anywhere yet.
+```
+
+**Step 2 — doing exactly that fixes the SQL and breaks every generator.**
+
+```
+$ sed -i 's/create table as (/create table "as" (/' src/main/resources/db/migration/V001__create_as.sql
+$ jails migrate --check
+  ok    V001__create_as.sql
+  1 migration(s) applied cleanly to a scratch database.
+
+$ jails g field A extra:string?                                    # exit 1
+jails: migration-edited-after-seal: `src/main/resources/db/migration/V001__create_as.sql`
+       differs from its sealed identity or bytes.
+       fix: restore the exact recorded migration and append a later version
+```
+
+The second `fix:` is the exact inverse of the first. "Append a later version" does
+not help: what is wrong is the `create table` statement itself, and the seal is on
+that file.
+
+**Step 3 — the repair command completes the circle.**
+
+```
+$ jails resource repair A --strategy roll-forward                  # exit 0
+applied 44bb89dc...
+  replace src/main/resources/db/migration/V001__create_as.sql
+  ledger  replace
+
+$ jails migrate --check
+  FAIL  V001__create_as.sql
+  psql:<stdin>:8: ERROR:  syntax error at or near "as"
+```
+
+`resource repair` silently overwrote the reader's correction with the broken
+recorded bytes and returned the project to step 1. Nothing warned that the repair
+would discard a hand edit, and nothing named it as a discard afterwards.
+
+**Impact:** the documented recovery for a failing migration is a cycle with no
+exit, and the repair verb destroys the user's fix without saying so.
+
+**Expected:** `migrate --check`'s advice must distinguish a migration jails owns
+and has sealed from one it does not. For a sealed one, editing is precisely what
+the next command forbids, so the advice must not be "edit it" — and
+`resource repair` must not silently overwrite a file whose bytes the reader
+changed.
+
+---
+
+## B42 — `--output json` writes nothing at all on every failure
+
+**Severity: medium.** The flag documents itself as *"One projection, two
+encodings ... the same status, operation list, ledger line and effects"*. On the
+success path that holds. On every failure path the JSON encoding produces **zero
+bytes on stdout** and the refusal goes to stderr as prose only.
+
+```
+jails new orc --package com.orc --offline && cd orc && jails add db
+jails g scaffold Order id:uuid@pk total:decimal
+```
+```
+$ jails g record Note body:string --pretend --output json | head -c 60
+{"schema":"jails.command-result.v2","command":{"path":["generate"    <- valid
+
+$ jails destroy scaffold Order --pretend --output json 2>/dev/null | wc -c
+0
+$ jails destroy scaffold Order --pretend --output json 2>&1 >/dev/null
+jails: storage-policy-required: `Order` is backed by table `orders`.
+       fix: preserve it with `jails destroy scaffold Order --storage preserve`, ...
+```
+
+Not specific to that refusal — stdout is empty for all of them, and `json-v1` is
+the same:
+
+| failing run (`--output json`) | stdout bytes |
+|---|---|
+| `destroy scaffold Order --pretend` (storage policy) | 0 |
+| `g field Nope x:int` (unknown entity) | 0 |
+| `g record Z q:nosuchtype` (bad field type) | 0 |
+| `destroy scaffold Order --pretend --output json-v1` | 0 |
+
+The success document carries `"status"` and `"exit_code"` fields, so failures are
+plainly meant to be representable in it; nothing emits one.
+
+**Impact:** every consumer of the machine encoding — the editor protocol, CI, and
+`jails.nvim`, which already reads `jails commands --json` — gets a parse error or
+an empty document on exactly the runs it most needs to report, and has to fall
+back to scraping English prose off stderr.
+
+**Expected:** a failing run emits the same v2 document with its status and
+non-zero `exit_code`, carrying the refusal and its `fix:` as fields.
+
+---
+
+## B43 — `jails add format` invalidates jails' own recorded output, and `doctor` then reports it as the developer's edits
+
+**Severity: medium.** Three commands, all documented, all exit 0, and the project
+ends up accusing the reader of edits they did not make.
+
+```
+jails new f1 --package com.f1 --offline && cd f1
+jails add db
+jails add api
+jails doctor          # 25 checks: 0 failing, 1 warning(s)   <- the pre-existing one
+jails add format      # exit 0
+jails doctor
+```
+```
+warn  capability api      recorded output `src/main/java/com/f1/api/ApiExceptionHandler.java` changed since the last jails commit
+warn  capability db       recorded output `src/test/java/com/f1/TestcontainersConfig.java` changed since the last jails commit
+warn  capability api      recorded output `src/test/java/com/f1/api/ApiExceptionHandlerTest.java` changed since the last jails commit
+29 checks: 0 failing, 4 warning(s).
+```
+
+`add format` runs `spotless:apply` over the whole project (this is deliberate and
+documented — formatter wrapping cannot be predicted from a template), reformats
+three files jails itself wrote and recorded, and does not re-record the new bytes.
+
+`jails sync` does repair it — `already formatted -- nothing to change.` /
+`ledger replace`, after which `doctor` returns to its one pre-existing warning.
+But the warnings carry no `fix:` line and never name `sync`, so the reader has
+three unexplained accusations and no offered way out.
+
+This also feeds **B18**: `resource repair --strategy roll-forward` adopts
+whatever is on disk as the new base, so the state that ought to be re-recorded
+and the state that ought to be rejected are indistinguishable to the repair verb.
+
+**Impact:** the ordinary `add db; add api; add format` opening sequence leaves a
+project that reports drift it does not have, on files the developer never opened.
+
+**Expected:** `add format` re-records the bytes it rewrites in the same
+transaction — it knows which files it touched and it already owns them.
+
+---
+
+## B44 — `jails explain --help` prints the completion command's description, and it reaches `commands --json`
+
+**Severity: low.** Two adjacent clap doc comments have run together: `explain`
+carries `completion`'s text in front of its own, and `completion` is left with
+none.
+
+```
+$ jails explain --help
+Print a shell-completion script: source <(jails completion bash) Explain what a
+generator kind is for, and the trap it invites
+
+$ jails completion --help
+Usage: jails completion [OPTIONS] <SHELL>       <- no description at all
+```
+
+`jails --help` shows the same run-on text on the `explain` row, and it is not
+confined to help output — it is what the machine surface serves:
+
+```
+$ jails commands --json | ...
+explain    :: 'Print a shell-completion script: source <(jails completion bash) Explain what a generator kind is for, and the trap it invites'
+completion :: None
+```
+
+`jails.nvim` builds its menus from exactly this payload, so the wrong sentence is
+what an editor shows for `explain`.
+
+**Impact:** cosmetic, but it is the first thing a reader sees about two commands,
+and it ships to every consumer of `commands --json`.
+
+**Expected:** `explain` describes `explain`; `completion` has a description.
 
 ---
 
 ## What worked well
 
 Worth recording so the fixes don't regress it:
+
+**Confirmed again on `3a023c0`** (section 1, 13 and 14 probes, all in fresh
+projects):
+
+- **The baseline stayed boring.** A ten-type scaffold (`uuid@pk`, required and
+  optional text, `@unique`, int, decimal, date, instant, boolean) generated,
+  applied to real PostgreSQL, compiled, and served four routes. `bytes` is
+  refused cleanly with a fix and writes nothing.
+- **`--pretend` matched the real run exactly**, operation for operation,
+  including the `replace pom.xml` and `create .jails/architecture.toml` lines an
+  earlier reading of this had wrongly recorded as missing.
+- **Repeated commands are honest no-ops.** An identical `g scaffold` second run
+  prints `nothing to do`; so does `app apply` over an unchanged manifest, three
+  times running, with the file tree byte-identical afterwards.
+- **Capability order is repaired exactly as `CLAUDE.md` claims.** `add api`
+  before `add db` produces a different `ApiExceptionHandler` (no
+  `DuplicateKeyException` arm) — `doctor` reports `1 failing`, `jails sync`
+  restores it to byte-identical with the other order, and a second `sync` says
+  `nothing to do`. This is the model the rest of the recovery surface should
+  follow, and the only documented repair in this file that passed every part of
+  the section-14 test.
+- **Round trip is clean.** `generate` then `destroy` across `record`, `command`,
+  `cli`, `controller`, `service`, `event`, `client` and `job`, each in its own
+  fresh project, left nothing behind but empty layer directories.
+- **"Not found" is consistent across oracles.** `resource repair`, `g field`,
+  `destroy --pretend`, `resource field add` and `src` all exit 1 on a name that
+  does not exist, with the same claim in different words.
+- **`doctor` caught every hand edit in the fifty-operation project** — an
+  appended comment, a touched class declaration and a deleted adapter, correctly
+  split into two warnings and one FAIL, and `resource repair` restored the
+  deleted file. What it missed was **B39**, which no file-level check can see.
+- **The incomplete-invocation refusals are a genuine contract, revealed in
+  order.** `g transition ShipOrder --on Order` asks for `id`, then for a numeric
+  `version`, then for a field to update, each naming the next requirement; `g
+  event` and `g usecase` do the same. Followed literally, all of them terminate
+  in a successful command rather than a contradiction.
+
 
 - `@pk`, `@unique` and the association FK all produced correct, idiomatic SQL.
 - `g field` on a *clean* entity is genuinely good: it updated the record,
@@ -1185,19 +1449,37 @@ Worth recording so the fixes don't regress it:
   and then running `jails g field Customer nickname:string?` left the edit
   untouched. This is the property the whole workflow rests on and it holds.
 - `record` -> `scaffold` *upgrade* writes the full slice correctly (it is only
-  the ledger row it fails to replace, B11).
+  the ledger row it fails to replace).
 - **Concurrency is safe.** Four `jails g record` commands run in parallel in one
   project: one applied, three refused with a stale-plan error, nothing was
   half-written and the ledger stayed readable. Optimistic concurrency is
   working.
+- **`--pretend` is honest.** Its operation list diffed byte-identical against the
+  real run of the same `g scaffold`, and re-running an identical command reports
+  `nothing to do` rather than duplicating anything.
+- **Capability add/remove round-trips cleanly** for `api`, `kafka`, `redis`,
+  `security`, `observability` and `format` when nothing depends on them -- the new
+  dependant check (B21/B23) does not over-refuse.
 - **Ledger corruption is always detected, never silently accepted** — truncated,
   emptied and conflict-marked ledgers were all caught (the diagnosis and fix are
   wrong, B17, but the detection is right, which is the hard part).
 - **Java reserved words are refused** as field names, by name, at parse time.
-  This is exactly the guard B16 needs for SQL.
+  SQL reserved words now are too (was B16), as are record-forbidden Object method
+  names (`hashCode`, `toString`, `equals` -- was B32) and two Java names folding to
+  one SQL column (`id`/`Id`, `userId`/`user_id` -- was B31). Field-name validation
+  is now the best-finished part of the tool; the entity name gets none of it
+  (B35, B36, B38).
 - **Duplicate field names are refused** (`field 'name' is declared twice`), and
   `userName` + `username` correctly produce distinct `user_name` / `username`
   columns rather than colliding.
+- A scaffold without `@pk`, or with two, is now refused before any file is written.
+- `jails new` rejects whitespace in the project name before creating a directory.
+- Generated `.http` files include item GET and DELETE.
+- `jails explain association|transition|query|durable-job` ends with a working example.
+- Person / Category / NewsItem pluralise to `people` / `categories` / `news_items`,
+  and the HTTP routes match.
+- Failed parse of `@pk`, unknown types, and SQL keywords writes nothing.
+- Hyphenated (`my-app`), acronym (`AWS`), and one-letter (`x`) project names all create.
 - The scaffold's `@pk` path, `--index` validation and the FK migration are all
   correct and idiomatic.
 - **Enums round-trip correctly.** `g enum Status` then `status:Status` on a
@@ -1223,7 +1505,7 @@ Worth recording so the fixes don't regress it:
   `g field`, `destroy` (13 files, no leftovers) and an idempotent dependency
   splice into a conventional multi-line `dependencies { }` block.
 - **The composite kinds' preconditions are real and well-judged**, even where
-  the messages arrive one at a time (B6): `query` refusing an unfiltered read,
+  the messages arrive one at a time: `query` refusing an unfiltered read,
   `transition` requiring a `version`, and `usecase` refusing to invent a value
   it cannot infer are all correct calls.
 - **Unowned migrations do not disrupt subsequent generators.** Adding a manual
@@ -1236,68 +1518,48 @@ Worth recording so the fixes don't regress it:
 
 ## The shape of it
 
-B1, B2, B3 and B28 are one problem: **the ledger and the migration history disagree
-about what identity and dependency mean.** The ledger keys an entity by name and lets `rename`
-change it; the migration seal keys the schema by table name and treats it as
-permanent. Any edit that crosses that line — rename, drop-and-recreate, retype, or dropping a parent table with FKs —
-falls into the gap, and the gap has no floor. Fixing B1 alone (next free version
-number for a re-created table) would restore destroy-and-regenerate as a working
-escape hatch, which makes B3 survivable and B2 recoverable.
+*Rewritten at `0c369dd`; the previous version cited reports that are now removed.*
 
-B11, B12, B13 and B29 add the second half: **nothing verifies that the surfaces still
-agree.** jails writes multiple representations of one field and key structure — record, request
-DTO, response DTO, JDBC insert, migration, fixture/`.http`, repository interface — and derives them
-correctly on the happy path. But there is no check that they *still* match, so
-the moment one command updates a subset (or generates throwing repository stubs for composite keys), the project keeps compiling and keeps
-reporting healthy while the database and the code mean different things.
+**The surfaces agree now, and that is a real change.** The whole B11/B11a/B13/B31
+group is gone: `g field` updates all ten projections together, a second ledger row
+for one name no longer splits an entity, colliding column names are refused, and
+`doctor` grew a `managed <Entity>` check plus a working
+`jails resource repair --strategy roll-forward`. So does the dependency group —
+B21, B23 and B28 all refuse now, in the shape `add` already used.
 
-Two fixes cover most of this file:
+What is left divides in three.
 
-1. **One row per name.** A second ledger row for an existing name is the root of
-   B11, and refusing it (or replacing instead of appending) is a local change.
-2. **A `doctor` entity-drift check**, built the way `capability_drift_checks`
-   already is: re-derive each recorded entity's surfaces and report any that
-   disagree, with `fix: jails sync`. That turns B11a, B12, B13 and B29 from silent
-   into merely annoying — which, given B1 and B3 leave no way to undo, is the
-   difference between a project you can finish and one you restart.
+**1. The migration seal still has no "next free version" escape.** B1, B3, B12 and
+B20 are one gap: a create migration cannot be superseded, so re-creating a
+destroyed entity, changing a field on a manifest entity, and undoing a typo all
+dead-end at the same refusal. `jails resource field` was clearly built to be the
+way through it, which makes B33 the most valuable thing in this file: on every
+entity that actually has a table, that command does not run at all.
 
-B16, B17, B18 and B30 are a third group: **input validation and failure paths are much less finished
-than the happy path.** Each is one step from something jails already does well —
-the reserved-word guard exists but only covers Java; ledger corruption is
-detected but misdiagnosed; project creation accepts invalid artifact IDs; the write phase has a journal and a recovery state but
-stops half-applied. And all four converge on the same end state as B11a: the
-database and the Java disagreeing, with nothing reporting it.
+**2. The lifecycle layer contradicts itself.** Three different commands now report
+on the same entity and disagree: `resource status Customer` says `consistent`
+while `resource field rename` says its source path is wrong (B33); `resource status
+Memo` reports a resource that `resource repair Memo` says does not exist (B2);
+`resource status Refund` finds an entity that `g field Refund` says is not
+recorded (B25a); and B37's two refusals each name the other command as the fix.
+Every one of these is a pair of commands reading the same store and answering
+differently — cheap to detect, and corrosive out of proportion to the code behind
+it, because the reader cannot tell which answer to believe.
 
-That end state is worth naming as the single most important thing to fix. Multiple
-different roads lead to it — a wrong-kind re-run (B11a), a reserved word (B16),
-a permission error (B18), a composite PK stub (B29), and a hand-deleted file (B13) — and in every case the
-build is green and `doctor` is clean. Whatever else changes, **something has to
-be able to answer "do my migrations and my Java still agree?"**
+**3. Validation and failure paths are still much less finished than the happy
+path.** An entity name is checked for nothing: keywords generate an uncompilable
+project (B35), invalid characters panic (B36), and `A` seals an unappliable
+migration (B38) — while *field* names are checked carefully in three separate ways.
+A publish that cannot complete still stops half-applied (B18), and the repair
+command now records the tear as the new base, so the DB/code divergence this file
+has chased since the first pass survives a green build *and* a green `doctor`
+again — reached this time through the repair itself.
 
-The recovery story needs one thing that does not exist: a way to rebuild the
-ledger from the files on disk. B1, B2a, B17 and B18 all currently dead-end at
-`destroy and regenerate`, which B1 makes fatal. A `jails ledger repair` would
-turn every one of them from unrecoverable into a bad afternoon.
-
-The authoring round adds the sharpest version of the whole problem, B20: on a
-manifest project **adding a field to an existing entity is impossible by either
-path**, because `app apply` refuses on the migration seal and `g field` refuses
-because the manifest disagrees. Each error tells you to use the other one. That
-is the single most common authoring operation there is, and both doors are shut.
-
-It also shows the same root cause reaching a fourth surface. B1, B3, B20 and the
-`app apply` half of B20 are *all* the migration seal refusing to let a create
-migration be superseded. The seal is right that published history is immutable;
-what is missing is the next step — emitting a *new* migration at the next free
-version for the delta. Everything downstream of that one gap is currently a dead
-end.
-
-And B21, B22, B23 and B28 are one more shared miss: **`destroy`/`remove` never ask who
-else is using the thing.** An enum a record's component references, a table whose
-create migration is still live, a capability whose dependency generated code
-imports, or a parent table referenced by a child FK — in all cases jails holds the information needed to refuse and does
-not consult it. `add` gets this right, and `storage-policy-required` is the model
-refusal; they just are not applied on the way out.
+That end state is still the single most important thing to fix, and the check that
+would catch every road to it is still missing: **does a recorded entity's field
+list match the columns its migrations created?** `doctor` can now answer "are the
+bytes the ones jails wrote"; it cannot answer that one, and B18, B34 and B5's new
+reproduction all slip through the difference.
 
 ## Coverage
 
@@ -1309,12 +1571,25 @@ What was exercised, so the gaps are visible: `new`, `new-cli`, `new --app`, `new
 Real PostgreSQL and podman throughout, so every SQL claim was executed rather
 than read.
 
+Recheck `33abf9e` additionally covered: hyphenated / acronym / one-letter `jails new`, `new-cli` + `g command` dispatcher registration, Person/Category/NewsItem plurals (`people`/`categories`/`news-items`), `--pretend` matching apply, failed-parse writes nothing, `timestamp` alias, `g webhook`/`g idempotency`/`g query` incomplete invocations, `jails schema diff` (requires an app.toml; not usable on an imperative project), and `mvn test-compile` of `hashCode`/`toString` records.
+
+Recheck `0c369dd` additionally covered: `jails resource status|repair|field
+add|rename|type|nullability|drop`; `--pretend` output diffed against the real run
+(identical); a repeated identical `g scaffold` (`nothing to do`); `add`/`remove`
+round-trips for `api`, `kafka`, `redis`, `security`, `observability`, `format` and
+the `loadtest` precondition refusal; `--package` before, after and repeated, empty
+`--package`, `--index 'n desc'`, `--` termination; Java keyword and invalid-character
+entity names compiled with `mvn -o test-compile`; reserved-word table names
+executed against real PostgreSQL; a single-line Gradle `dependencies` block; and a
+git-conflicted / truncated / empty ledger. `jails run` cold start (B10) remains the
+one report not executed.
+
 Not covered: the remaining generator kinds (`sealed`, `strategy`, `value`,
-`repo`, `job`, `event`, `cli`, `handler`, `http-workflow`, `http-sink`,
-`auth`, `idempotency`, `webhook`, `migration`, `cases`); capabilities other than
+`repo`, `job`, `event`, `cli`, `handler`, `http-workflow`, `auth`, `migration`,
+`cases`); `http-sink` past the first `--on` refusal; capabilities other than
 `db` (`api`, `kafka`, `security`, `cache`, `observability`, `csv`, `json`,
 `docker`, `ci`, `format`, and the rest); `jails adopt` on a foreign project;
-`testd`/`--affected`; and running a generated application end to end against a
-live database. The Gradle build was never executed — Gradle is not installed
-here, so B27's consequence is inferred from the file contents rather than
-observed.
+`testd`/`--affected`; `jails run` cold start (B10); and running a generated
+application end to end against a live database. The Gradle build was never
+executed — Gradle is not installed here, so B27's consequence is inferred from
+the file contents rather than observed.
