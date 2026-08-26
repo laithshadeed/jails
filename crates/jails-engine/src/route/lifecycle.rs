@@ -122,14 +122,7 @@ pub fn revive(run: &Run, selector: &str, table: &str) -> Result<Outcome> {
 
 /// Restore content-addressed migration history and reconcile owned projections.
 pub fn repair(run: &Run, selector: &str, datasource: Option<&str>) -> Result<Outcome> {
-    if let Some(datasource) = datasource {
-        return Err(format!(
-            "live repair evidence for datasource `{datasource}` is not available yet.\n       fix: \
-             omit `--datasource` to repair from sealed local authority, or inspect it with \
-             `jails resource status {selector} --datasource {datasource}`."
-        )
-        .into());
-    }
+    let datasource_ref = datasource.map(DatasourceRef::parse).transpose()?;
     let project = run.project();
     let store = observed(project)?;
     let lifecycle = selected_lifecycle(&store, selector)?.clone();
@@ -139,6 +132,15 @@ pub fn repair(run: &Run, selector: &str, datasource: Option<&str>) -> Result<Out
              fix: use `jails resource revive {selector} --table <recorded-table>` first."
         )
         .into());
+    }
+    if let Some(datasource) = &datasource_ref {
+        validate_live_repair(
+            project,
+            selector,
+            &lifecycle,
+            datasource.as_str(),
+            run.debug,
+        )?;
     }
     let EntityId::Intent(id) = &lifecycle.entity else {
         return Err("only a generated intent can be repaired.\n       fix: select a scaffold lifecycle identity".into());
@@ -243,7 +245,7 @@ pub fn repair(run: &Run, selector: &str, datasource: Option<&str>) -> Result<Out
         entity: lifecycle.entity.clone(),
         expected_path: lifecycle.expected_path.clone(),
         strategy: RepairStrategy::RollForward,
-        datasource: datasource.map(DatasourceRef::parse).transpose()?,
+        datasource: datasource_ref,
     };
     let mut options = BTreeMap::from([("strategy".to_string(), vec!["roll-forward".to_string()])]);
     if let Some(datasource) = datasource {
@@ -263,6 +265,103 @@ pub fn repair(run: &Run, selector: &str, datasource: Option<&str>) -> Result<Out
         &asked,
         PlannedSubject::RepairResource(Box::new(canonical)),
     )
+}
+
+fn validate_live_repair(
+    project: &Project,
+    selector: &str,
+    lifecycle: &ResourceLifecycleV1,
+    datasource: &str,
+    debug: bool,
+) -> Result<()> {
+    use jails_protocol::resource_status::ResourceConsistency;
+
+    let history = jails_drive::live_sql::observe_flyway(
+        project,
+        datasource,
+        jails_drive::live_sql::LiveServices::Existing,
+        debug,
+    )?;
+    let catalog = jails_drive::live_sql::observe(
+        project,
+        datasource,
+        jails_drive::live_sql::LiveServices::Existing,
+        "public",
+        debug,
+    )?;
+    let report =
+        jails_report::lifecycle_status::inspect_live(project, selector, &history, &catalog);
+    if matches!(
+        report.state,
+        ResourceConsistency::Ambiguous | ResourceConsistency::RuntimeSchemaBehind
+    ) {
+        let evidence = report
+            .findings
+            .iter()
+            .map(|finding| format!("{}: {}", finding.code, finding.message))
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(format!(
+            "live-repair-refused: datasource evidence is {}{}{}\n       fix: reconcile the live schema with its forward migrations, then retry repair.",
+            report.state.label(),
+            if evidence.is_empty() { "" } else { " (" },
+            if evidence.is_empty() {
+                String::new()
+            } else {
+                format!("{evidence})")
+            }
+        )
+        .into());
+    }
+
+    let objects = jails_commit::store::Store::at(project.root()).objects();
+    for seal in &lifecycle.migrations {
+        let mut matching = history
+            .applied
+            .iter()
+            .filter(|row| row.version == Some(seal.version));
+        let Some(applied) = matching.next() else {
+            continue;
+        };
+        if matching.next().is_some() {
+            return Err(format!(
+                "flyway-version-divergent: datasource `{datasource}` records migration version {} more than once.\n       fix: reconcile Flyway history manually before retrying repair.",
+                seal.version.get()
+            )
+            .into());
+        }
+        let expected_script = seal.path.as_str().rsplit('/').next().unwrap_or_default();
+        if !applied.success || applied.script != expected_script {
+            return Err(format!(
+                "flyway-version-divergent: applied version {} names `{}` instead of sealed `{expected_script}`.\n       fix: reconcile the datasource and sealed history manually; repair will not bless a different migration.",
+                seal.version.get(), applied.script
+            )
+            .into());
+        }
+        let bytes = jails_commit::store::read_object(&objects, &seal.content_digest).map_err(|_| {
+            format!(
+                "sealed bytes for `{}` are missing or corrupt.\n       fix: restore object `{}` under `.jails/objects` from backup, then retry.",
+                seal.path, seal.content_digest
+            )
+        })?;
+        let sealed_checksum = jails_drive::live_sql::flyway_checksum(&bytes)?;
+        if applied.checksum != Some(sealed_checksum) {
+            let current = std::fs::read(project.root().join(seal.path.as_str()))
+                .ok()
+                .and_then(|bytes| jails_drive::live_sql::flyway_checksum(&bytes).ok());
+            let relation = if current == applied.checksum {
+                "the live checksum matches the edited source image but not the sealed image"
+            } else {
+                "the live checksum matches neither the sealed nor current source image"
+            };
+            return Err(format!(
+                "flyway-checksum-divergent: applied `{expected_script}` has checksum {:?}; {relation}.\n       fix: reconcile the datasource manually from known-good evidence; jails will not invoke Flyway repair or rewrite its checksum.",
+                applied.checksum
+            )
+            .into());
+        }
+    }
+    Ok(())
 }
 
 fn selected_lifecycle<'a>(

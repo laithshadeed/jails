@@ -1100,6 +1100,91 @@ fn resource_repair_restores_sealed_history_and_missing_owned_projections() {
 }
 
 #[test]
+fn live_resource_repair_requires_the_applied_flyway_checksum_to_match_the_seal() {
+    fn write_psql(bin: &Path, checksum: i32) {
+        let ignored_log = bin.join("ignored.log");
+        write_fake_maven(bin, &["psql"], &ignored_log);
+        fs::write(
+            bin.join("psql"),
+            format!(
+                "#!/bin/sh\ninput=''\nwhile IFS= read -r line; do input=\"${{input}}${{line}}\"; done\ncase \"$input\" in\n  *server_version_num*) printf '170000\\n' ;;\n  *to_regclass*) printf 't\\n' ;;\n  *flyway_schema_history*) printf '1\\t1\\t637265617465207461736b73\\t563030315f5f6372656174655f7461736b732e73716c\\t{checksum}\\tt\\n' ;;\n  *\"FROM observed\"*) printf 'table\\t7075626c6963\\t7461736b73\\t\\t\\t\\t\\t\\t\\t\\t\\n' ;;\n  *) printf '' ;;\nesac\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    let root = temp_dir("live-repair-flyway-checksum");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let migration = root.join("src/main/resources/db/migration/V001__create_tasks.sql");
+    let sealed = fs::read(&migration).unwrap();
+    let sealed_checksum = jails_drive::live_sql::flyway_checksum(&sealed).unwrap();
+    fs::write(&migration, b"-- locally edited after application\n").unwrap();
+
+    let fake = temp_dir("live-repair-psql-bin");
+    write_psql(&fake, sealed_checksum);
+    let repaired = jails_cmd(&root, Some(&fake))
+        .env(
+            "DATABASE_URL",
+            "postgresql://app:secret@127.0.0.1:5432/demo",
+        )
+        .args([
+            "resource",
+            "repair",
+            "Task",
+            "--strategy",
+            "roll-forward",
+            "--datasource",
+            "DATABASE_URL",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        repaired.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&repaired.stdout),
+        String::from_utf8_lossy(&repaired.stderr)
+    );
+    assert_eq!(fs::read(&migration).unwrap(), sealed);
+
+    let edited = b"-- a different image was applied elsewhere\n";
+    fs::write(&migration, edited).unwrap();
+    write_psql(
+        &fake,
+        jails_drive::live_sql::flyway_checksum(edited).unwrap(),
+    );
+    let before = snapshot_tree(&root);
+    let refused = jails_cmd(&root, Some(&fake))
+        .env(
+            "DATABASE_URL",
+            "postgresql://app:secret@127.0.0.1:5432/demo",
+        )
+        .args([
+            "resource",
+            "repair",
+            "Task",
+            "--strategy",
+            "roll-forward",
+            "--datasource",
+            "DATABASE_URL",
+        ])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success(), "{refused:?}");
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("flyway-checksum-divergent"), "{stderr}");
+    assert!(stderr.contains("will not invoke Flyway repair"), "{stderr}");
+    assert_eq!(snapshot_tree(&root), before, "refused repair wrote files");
+}
+
+#[test]
 fn task_drop_keeps_v001_and_appends_an_exact_forward_migration() {
     let root = temp_dir("task-drop-migration");
     write_spring_fixture(&root);

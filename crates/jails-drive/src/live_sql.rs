@@ -118,6 +118,24 @@ pub fn observe_flyway(
     FlywayHistoryV1::new(database.resolved, applied)
 }
 
+/// Flyway's SQL migration checksum: IEEE CRC-32 over UTF-8 lines with line
+/// endings removed and an optional leading BOM ignored.
+pub fn flyway_checksum(bytes: &[u8]) -> Result<i32> {
+    let text = std::str::from_utf8(bytes).map_err(|_| {
+        "a Flyway SQL migration is not UTF-8.\n       fix: restore the encoded migration bytes before comparing live history."
+            .to_string()
+    })?;
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut crc = u32::MAX;
+    for byte in text.lines().flat_map(str::bytes) {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            crc = (crc >> 1) ^ (0xedb8_8320 & 0_u32.wrapping_sub(crc & 1));
+        }
+    }
+    Ok((!crc) as i32)
+}
+
 fn flyway_unavailable(resolved: &ResolvedDatasource) -> jails_support::Failure {
     format!(
         "service-unavailable: Flyway history at {} could not be observed from the jails command consumer.\n       fix: make the endpoint reachable and grant read access to `flyway_schema_history`, then retry.",
@@ -804,5 +822,16 @@ mod flyway_tests {
     fn noninteger_flyway_versions_refuse_as_unsupported_evidence() {
         let error = parse_flyway_history("1\t1.2\t61\t62\t\tt\n").unwrap_err();
         assert!(error.contains("integer version policy"), "{error}");
+    }
+
+    #[test]
+    fn flyway_checksum_is_crc32_with_normalised_lines_and_bom() {
+        let expected = -873_187_034_i32;
+        assert_eq!(flyway_checksum(b"123456789").unwrap(), expected);
+        assert_eq!(flyway_checksum(b"123\n456\r\n789\n").unwrap(), expected);
+        assert_eq!(
+            flyway_checksum("\u{feff}123\n456\n789".as_bytes()).unwrap(),
+            expected
+        );
     }
 }
