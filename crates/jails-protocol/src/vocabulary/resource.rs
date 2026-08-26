@@ -26,6 +26,7 @@
 
 use crate::Result;
 use crate::coordinate::{DependencySpec, MavenCoordinate, PluginSpec};
+use crate::database::QueryId;
 use crate::entity::{CapabilitySpec, EntityId, OneShotId};
 use crate::feature::BuildFeature;
 use crate::identity::{JavaType, MarkerId, ProjectPath, PropertyKey, ServiceName, VolumeName};
@@ -194,6 +195,9 @@ pub enum ResourceKey {
     /// has to see -- not a last-writer-wins that decides in silence which of
     /// two `main` methods the jar starts.
     MavenMainClass(ProjectPath),
+    /// One reader-owned named SQL contract. Query identity survives moving the
+    /// source file; generated files are projections of this claim.
+    Query(QueryId),
 }
 
 impl ResourceKey {
@@ -209,6 +213,7 @@ impl ResourceKey {
             Self::HumanConfigCapability(_) => 7,
             Self::SpringTestImport { .. } => 8,
             Self::MavenMainClass(_) => 9,
+            Self::Query(_) => 10,
         }
     }
 
@@ -252,6 +257,7 @@ impl Codec for ResourceKey {
                 class.encode(encoder)
             }
             Self::MavenMainClass(path) => path.encode(encoder),
+            Self::Query(id) => id.encode(encoder),
         }
     }
 
@@ -279,6 +285,7 @@ impl Codec for ResourceKey {
                 class: JavaType::decode(decoder)?,
             },
             9 => Self::MavenMainClass(ProjectPath::decode(decoder)?),
+            10 => Self::Query(QueryId::decode(decoder)?),
             other => Err(format!("unknown resource key tag {other}"))?,
         })
     }
@@ -391,6 +398,9 @@ pub enum ResourceValue {
         class: JavaType,
         previous: JavaType,
     },
+    /// The contract's bytes live in an owned whole-file projection. This unit
+    /// value records the shared semantic claim without duplicating them.
+    Query,
 }
 
 impl ResourceValue {
@@ -406,6 +416,7 @@ impl ResourceValue {
             Self::HumanConfigCapability(_) => 7,
             Self::SpringTestImport { .. } => 8,
             Self::MavenMainClass { .. } => 9,
+            Self::Query => 10,
         }
     }
 
@@ -487,6 +498,7 @@ impl Codec for ResourceValue {
                 class.encode(encoder)?;
                 previous.encode(encoder)
             }
+            Self::Query => Ok(()),
         }
     }
 
@@ -510,6 +522,7 @@ impl Codec for ResourceValue {
                 class: JavaType::decode(decoder)?,
                 previous: JavaType::decode(decoder)?,
             },
+            10 => Self::Query,
             other => Err(format!("unknown resource value tag {other}"))?,
         })
     }
@@ -524,6 +537,7 @@ pub enum ResourceOwner {
     Entity(EntityId),
     OneShot(OneShotId),
     SchemaHistory,
+    Query(QueryId),
 }
 
 impl Codec for ResourceOwner {
@@ -541,6 +555,10 @@ impl Codec for ResourceOwner {
                 encoder.tag(2);
                 Ok(())
             }
+            Self::Query(id) => {
+                encoder.tag(3);
+                id.encode(encoder)
+            }
         }
     }
 
@@ -549,6 +567,7 @@ impl Codec for ResourceOwner {
             0 => Self::Entity(EntityId::decode(decoder)?),
             1 => Self::OneShot(OneShotId::decode(decoder)?),
             2 => Self::SchemaHistory,
+            3 => Self::Query(QueryId::decode(decoder)?),
             other => Err(format!("unknown resource owner tag {other}"))?,
         })
     }
@@ -708,6 +727,7 @@ impl Codec for OneShotLifecycle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::{QueryId, QueryName, SliceName};
     use crate::entity::{IntentId, Recipe};
     use crate::identity::{Name, Package};
 
@@ -765,6 +785,22 @@ mod tests {
             ResourceOwner::SchemaHistory
         );
         decoder.finish().unwrap();
+    }
+
+    #[test]
+    fn query_claims_append_tag_ten_without_moving_existing_tags() {
+        let id = QueryId::new(
+            SliceName::parse("Billing").unwrap(),
+            QueryName::parse("FindPayableOrders").unwrap(),
+        );
+        let resource = DesiredResource::new(
+            ResourceKey::Query(id.clone()),
+            BTreeSet::from([ResourceOwner::Query(id)]),
+            ResourceValue::Query,
+        )
+        .unwrap();
+        assert_eq!(resource.key.tag(), 10);
+        assert_eq!(round_trip(&resource), resource);
     }
 
     #[test]

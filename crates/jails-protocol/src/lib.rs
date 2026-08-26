@@ -44,6 +44,8 @@ mod vocabulary;
 pub use durable::{conflict, envelope, lifecycle, pending, record};
 pub use intent::{change, edit, effect, ownership, plan, render, request, testing, transition};
 pub use observe::{bootstrap, context, fact, provenance, resource_status, snapshot};
-pub use vocabulary::{coordinate, declaration, entity, feature, identity, recipe, resource};
+pub use vocabulary::{
+    application, coordinate, database, declaration, entity, feature, identity, recipe, resource,
+};
 
 pub(crate) use jails_support::Result;

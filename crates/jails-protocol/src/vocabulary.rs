@@ -8,7 +8,9 @@
 //!
 //! Nothing in this group touches a disk or knows what a plan is.
 
+pub mod application;
 pub mod coordinate;
+pub mod database;
 pub mod declaration;
 pub mod entity;
 pub mod feature;

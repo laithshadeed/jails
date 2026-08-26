@@ -449,6 +449,9 @@ impl ProjectedProject {
                  absence, which is what the executor can guard a preimage for."
             )
             .into()),
+            // The contract claim has no splice of its own. Its generated
+            // whole-file projections retire through their guarded absences.
+            ResourceKey::Query(_) => Ok(None),
         }
     }
 }
