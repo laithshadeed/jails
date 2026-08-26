@@ -179,6 +179,98 @@ fn app_plan_names_an_entity_the_manifest_no_longer_declares() {
     );
 }
 
+/// Appending a component to a `[[generate]]` block is a forward migration.
+///
+/// The most common shape change there is, and the declarative path could not
+/// express it: re-planning the scaffold at the new list re-rendered
+/// `V001__create_deals.sql` with the extra column, the append-only seal
+/// refused, and the offered fix named something the manifest has no syntax
+/// for. `jails resource field add` was not an escape either -- it works on the
+/// imperative identity, so the manifest and the entity disagreed about the
+/// field list on the very next apply.
+#[test]
+fn a_manifest_field_appended_to_a_scaffold_becomes_a_forward_migration() {
+    let root = temp_dir("app-field-evolution");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    let manifest = root.join(".jails/app.toml");
+    let write = |fields: &str| {
+        fs::write(
+            &manifest,
+            format!(
+                "schema = 1\ncapabilities = [\"db\"]\n\n                 [[generate]]\nkind = \"scaffold\"\nname = \"Deal\"\nfields = [{fields}]\n"
+            ),
+        )
+        .unwrap();
+    };
+    let apply = |root: &std::path::Path| {
+        jails_cmd(root, None)
+            .args(["app", "apply", "--no-start"])
+            .output()
+            .unwrap()
+    };
+
+    write("\"id:uuid@pk\", \"amount:decimal\"");
+    let applied = apply(&root);
+    assert!(
+        applied.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&applied.stdout),
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    let create = root.join("src/main/resources/db/migration/V001__create_deals.sql");
+    let sealed = fs::read(&create).unwrap();
+
+    write("\"id:uuid@pk\", \"amount:decimal\", \"memo:string?\"");
+    let evolved = apply(&root);
+    assert!(
+        evolved.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&evolved.stdout),
+        String::from_utf8_lossy(&evolved.stderr)
+    );
+    assert_eq!(fs::read(&create).unwrap(), sealed, "V001 is append-only");
+    let added = fs::read_to_string(
+        root.join("src/main/resources/db/migration/V002__add_memo_to_deals.sql"),
+    )
+    .unwrap();
+    assert!(added.contains("alter table deals"), "{added}");
+    assert!(added.contains("add column memo text"), "{added}");
+    let record =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Deal.java")).unwrap();
+    assert!(record.contains("Optional<String> memo"), "{record}");
+
+    // Re-applying the same manifest changes nothing, which is what makes the
+    // evolution a state the manifest describes rather than an event it fires.
+    let again = apply(&root);
+    assert!(again.status.success(), "{again:?}");
+    assert!(
+        String::from_utf8_lossy(&again.stdout).contains("nothing to do"),
+        "{}",
+        String::from_utf8_lossy(&again.stdout)
+    );
+
+    // A required component has no backfill the manifest can carry.
+    write("\"id:uuid@pk\", \"amount:decimal\", \"memo:string?\", \"note:string\"");
+    let refused = apply(&root);
+    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("required component `note`"), "{stderr}");
+    assert!(stderr.contains("--default-literal"), "{stderr}");
+
+    // And a change that is not an append is refused by name: dropping one
+    // component and adding another reads exactly like renaming it.
+    write("\"id:uuid@pk\", \"total:decimal\", \"memo:string?\"");
+    let refused = apply(&root);
+    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("cannot say which change it is"), "{stderr}");
+    assert!(
+        stderr.contains("jails resource field rename|type|nullability|drop Deal"),
+        "{stderr}"
+    );
+}
+
 /// Removing a table-backed row from the manifest demands the same care the
 /// imperative destroy does.
 ///

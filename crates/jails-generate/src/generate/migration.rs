@@ -20,6 +20,16 @@ use super::*;
 ///
 /// The listing is the projection, not disk, so two rows of one transition
 /// cannot both take the next number.
+/// The path a forward migration with this description should take.
+///
+/// Public because the manifest route allocates one too: an added component in
+/// a `[[generate]]` block becomes the same `alter table ... add column` the
+/// imperative verb writes, and it has to land at the next free version through
+/// the same projection-aware allocation.
+pub fn migration_path(project: &Project, description: &str) -> Result<std::path::PathBuf> {
+    migration_file(project, description)
+}
+
 pub(crate) fn migration_file(project: &Project, description: &str) -> Result<std::path::PathBuf> {
     const DIR: &str = "src/main/resources/db/migration";
     let names = project.projected_names_in(DIR);

@@ -59,7 +59,7 @@ Closed by `e3c7041`, mid-pass:
 - **B43** `jails add format` re-records the bytes `spotless:apply` rewrites, so
   `doctor` goes from eight unexplained drift warnings to `26 checks, all clear`.
 
-**Still broken, re-reproduced verbatim at `e3c7041`:** B5, B14, B18, B20.
+**Still broken, re-reproduced verbatim at `e3c7041`:** B5, B14, B18.
 
 Closed after that pass, in the same session:
 
@@ -68,6 +68,13 @@ Closed after that pass, in the same session:
   used to throw the failure out of the publish-by-rename, discarding the whole
   scratch tree -- so a compose service that would not start left `ledger
   create` in the report and no directory at all.
+- **B20** appending a component to a `[[generate]]` block keeps the sealed
+  create migration and writes the *delta* as `alter table ... add column` --
+  the same SQL and the same projection-aware version allocation `jails
+  resource field add` produces. A required component (no backfill the manifest
+  can carry) and any change that is not an append (a list diff cannot tell a
+  rename from a drop-plus-add) are refused by name, pointing at the verbs that
+  take the intent explicitly.
 - **B22** deleting a table-backed `[[generate]]` block is refused with
   `storage-policy-required`, naming both retirement commands -- the same
   ceremony the imperative `destroy` insists on. The manifest still has no
@@ -192,41 +199,6 @@ $ jails doctor
 
 `jails sync` is also still not the command its name promises: it prints
 `applied … ledger replace` over a missing file and restores nothing.
-
----
-
-## B20 — on a manifest project, adding a field to an existing entity is impossible
-
-**Severity: high.** The declarative path has no field-evolution route at all.
-
-```
-.jails/app.toml:
-  [[generate]]
-  kind = "scaffold"
-  name = "Deal"
-  fields = ["id:uuid@pk", "amount:decimal"]
-```
-
-`jails app apply` — fine. Now add one field to that list and re-apply:
-
-```
-$ jails app apply
-jails: migration-edited-after-seal: `src/main/resources/db/migration/V001__create_deals.sql`
-       is published append-only schema history and cannot be replaced or deleted.
-       fix: keep its recorded bytes and append the next migration for the desired
-       schema change.
-```
-
-The seal is right. The fix is unusable: **the manifest has no syntax for
-appending a migration**, and `jails resource field add` operates on an imperative
-identity, so the manifest and the entity immediately disagree about the field
-list on the next `app apply`. The one command whose entire purpose is "declare
-the shape you want and let reconciliation work out the difference" cannot express
-the most common shape change there is.
-
-**Expected:** `app apply` routes an added/changed field in a `[[generate]]` block
-to the same canonical field-evolution request `jails resource field add` builds,
-and appends the forward migration itself.
 
 ---
 

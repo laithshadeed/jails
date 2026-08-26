@@ -163,6 +163,15 @@ fn declare(
             jails_generate::generate::plan_recipe(&planned, &recipe, intent.package.as_deref())?,
         );
         let Declared { id, spec } = super::declared(&planned, &recipe, intent.package.as_deref())?;
+        let mut change = change;
+        evolve_declared_storage(
+            &planned,
+            &store,
+            &id,
+            &spec,
+            intent.package.as_deref(),
+            &mut change,
+        )?;
         let owner = ResourceOwner::Entity(EntityId::Intent(id.clone()));
         let mut desired = desire::contribution(&owner, &change, &planned)?;
         provenance::stamp_files(
@@ -322,4 +331,133 @@ fn refuse_undeclared_storage(
          re-run `jails app apply`."
     )
     .into())
+}
+
+/// Turn an edited field list in a `[[generate]]` block into forward
+/// migrations, instead of re-rendering the sealed `create table`.
+///
+/// Adding one field to a declared entity is the most common shape change
+/// there is, and it was the one thing the declarative path could not express.
+/// Re-planning the scaffold at the new list re-renders
+/// `V001__create_deals.sql` with the extra column, the append-only seal
+/// refuses it, and the offered fix -- "append the next migration for the
+/// desired schema change" -- names something the manifest has no syntax for.
+/// `jails resource field add` is not an escape either: it operates on the
+/// imperative identity, so the manifest and the entity disagree about the
+/// field list on the very next `app apply`.
+///
+/// So the create migration is kept exactly as sealed and the *delta* becomes
+/// new `alter table ... add column` migrations -- the same SQL, and the same
+/// version allocation through the projection, that `jails resource field add`
+/// produces.
+///
+/// **Appending only.** A removed, renamed, retyped or reordered component is
+/// not derivable from a list diff: dropping `amount` and adding `total` reads
+/// identically to renaming it, and one of those destroys data. Those are
+/// refused by name, pointing at the verbs that take the intent explicitly.
+fn evolve_declared_storage(
+    project: &Project,
+    store: &ObservedStore,
+    id: &jails_protocol::entity::IntentId,
+    spec: &IntentSpec,
+    package: Option<&str>,
+    change: &mut jails_project::model::Change,
+) -> Result<()> {
+    let entity = EntityId::Intent(id.clone());
+    let Some(lifecycle) = store
+        .lifecycles()
+        .iter()
+        .find(|lifecycle| lifecycle.entity == entity)
+    else {
+        return Ok(());
+    };
+    let Some(table) = lifecycle.table.as_ref() else {
+        return Ok(());
+    };
+    let EntitySpec::Intent(recorded) = &lifecycle.last_spec else {
+        return Ok(());
+    };
+    let before = recorded.fields();
+    let after = spec.fields();
+    if before
+        .iter()
+        .map(FieldSpec::canonical)
+        .eq(after.iter().map(FieldSpec::canonical))
+        && recorded.indexes == spec.indexes
+    {
+        return Ok(());
+    }
+    let appended = after.len() > before.len()
+        && before
+            .iter()
+            .zip(after)
+            .all(|(held, wanted)| held.canonical() == wanted.canonical());
+    if !appended || recorded.indexes != spec.indexes {
+        return Err(format!(
+            "the manifest changes `{}`'s existing shape, and a list diff cannot say which change \
+             it is -- dropping one component and adding another reads exactly like renaming it, \
+             and one of those destroys data.\n       fix: state it explicitly with `jails \
+             resource field rename|type|nullability|drop {}`, then bring the manifest's `fields` \
+             back into line. Appending a component to the end is the shape `app apply` can \
+             derive on its own.",
+            id.name, id.name
+        )
+        .into());
+    }
+
+    // The sealed create migration is kept exactly as it is. Every other
+    // projection re-renders at the new spec, which is what carries the added
+    // component into the record, the DTOs, the adapter and the fixtures.
+    change.files.retain(|artifact| {
+        !artifact
+            .path
+            .strip_prefix(project.root())
+            .is_ok_and(|path| {
+                path.to_string_lossy()
+                    .replace('\\', "/")
+                    .starts_with("src/main/resources/db/migration/")
+            })
+    });
+
+    let domain = project.package_named(jails_spec::spec::layout::DOMAIN, package);
+    for added in &after[before.len()..] {
+        let column = jails_generate::sql::columns(
+            &[added.projected()?],
+            project,
+            &domain,
+            &jails_generate::generate::lower_first(id.name.as_str()),
+        )
+        .pop()
+        .expect("one field produces one column");
+        // A required component with no default cannot be added to a table
+        // that may already hold rows, and the manifest has nowhere to put a
+        // backfill. Say so against the component rather than letting Flyway
+        // discover it.
+        if added.optionality != jails_protocol::declaration::Optionality::Nullable {
+            return Err(format!(
+                "`{}` adds required component `{}` to table `{}`, and existing rows have no \
+                 value for it.\n       fix: declare it optional (`{}?`) in the manifest, or add \
+                 it with `jails resource field add {} {} --default-literal <value>` and then \
+                 record it in `fields`.",
+                id.name,
+                added.name,
+                table.table.as_str(),
+                added.canonical(),
+                id.name,
+                added.canonical(),
+            )
+            .into());
+        }
+        let body = jails_generate::sql::add_column(id.name.as_str(), &column)?;
+        let path = jails_generate::generate::migration_path(
+            project,
+            &format!("add_{}_to_{}", column.name, table.table.as_str()),
+        )?;
+        change.files.push(jails_project::model::Artifact {
+            kind: "migration",
+            path,
+            contents: body,
+        });
+    }
+    Ok(())
 }
