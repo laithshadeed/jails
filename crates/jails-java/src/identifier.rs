@@ -46,6 +46,42 @@ pub fn replace_identifier(source: &str, old: &str, new: &str) -> (String, usize)
     (out, count)
 }
 
+/// Replace a logical-name component inside Java identifiers, outside literals.
+/// This is for generator-owned projections only: `Task`, `TaskController`,
+/// `JdbcTaskRepository`, and method references such as `toTask` are all
+/// derived from the same entity name and move together.
+pub fn replace_owned_identifier_component(source: &str, old: &str, new: &str) -> (String, usize) {
+    let mut out = String::with_capacity(source.len());
+    let mut count = 0;
+    let mut i = 0;
+    while i < source.len() {
+        if let Some(end) = literal_end(source, i) {
+            out.push_str(&source[i..end]);
+            i = end;
+            continue;
+        }
+        let ch = source[i..].chars().next().unwrap_or('\0');
+        if ch.is_alphabetic() || ch == '_' || ch == '$' {
+            let start = i;
+            i += ch.len_utf8();
+            while i < source.len() {
+                let next = source[i..].chars().next().unwrap_or('\0');
+                if !(next.is_alphanumeric() || next == '_' || next == '$') {
+                    break;
+                }
+                i += next.len_utf8();
+            }
+            let (token, hits) = replace_bounded_component(&source[start..i], old, new);
+            out.push_str(&token);
+            count += hits;
+            continue;
+        }
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    (out, count)
+}
+
 /// Where a file ends up. A Java file is named for the type it declares, and
 /// jails' own companions extend that name with a fixed suffix -- so
 /// `Reward.java`, `RewardTest.java` and `RewardIT.java` all move together,
@@ -78,6 +114,116 @@ pub fn literal_mentions(source: &str, old: &str) -> usize {
         i += 1;
     }
     count
+}
+
+/// Replace a whole SQL identifier, but only inside Java string literals and
+/// text blocks. This is intentionally narrower than general text replacement:
+/// coordinated storage cutovers use it only for generator-owned Java files,
+/// where SQL is data embedded in a known projection. Code, comments, and
+/// longer identifiers remain byte-identical.
+pub fn replace_literal_sql_identifier(source: &str, old: &str, new: &str) -> (String, usize) {
+    let mut out = String::with_capacity(source.len());
+    let mut count = 0;
+    let mut i = 0;
+    while i < source.len() {
+        let Some(end) = literal_end(source, i) else {
+            let ch = source[i..].chars().next().unwrap_or('\0');
+            out.push(ch);
+            i += ch.len_utf8();
+            continue;
+        };
+        let literal = &source[i..end];
+        if looks_like_sql(literal) {
+            let (replaced, hits) = replace_bounded(literal, old, new);
+            out.push_str(&replaced);
+            count += hits;
+        } else {
+            out.push_str(literal);
+        }
+        i = end;
+    }
+    (out, count)
+}
+
+fn looks_like_sql(literal: &str) -> bool {
+    let lower = literal.to_ascii_lowercase();
+    [
+        "select ",
+        "insert ",
+        "update ",
+        "delete ",
+        " from ",
+        " join ",
+        "alter table ",
+    ]
+    .iter()
+    .any(|keyword| lower.contains(keyword))
+}
+
+fn replace_bounded_component(source: &str, old: &str, new: &str) -> (String, usize) {
+    let mut out = String::with_capacity(source.len());
+    let mut count = 0;
+    let mut at = 0;
+    while let Some(relative) = source[at..].find(old) {
+        let start = at + relative;
+        let end = start + old.len();
+        let before = source[..start].chars().next_back();
+        let after = source[end..].chars().next();
+        let starts_component = before.is_none_or(|character| {
+            !character.is_alphanumeric()
+                || character == '_'
+                || (character.is_lowercase() && old.chars().next().is_some_and(char::is_uppercase))
+        });
+        let ends_component =
+            after.is_none_or(|character| !character.is_alphanumeric() || character.is_uppercase());
+        out.push_str(&source[at..start]);
+        if starts_component && ends_component {
+            out.push_str(new);
+            count += 1;
+        } else {
+            out.push_str(old);
+        }
+        at = end;
+    }
+    out.push_str(&source[at..]);
+    (out, count)
+}
+
+/// Count whole identifier mentions without assigning them a meaning. The
+/// resource planner uses this to conservatively block reader-owned SQL and
+/// embedded SQL before a physical cutover.
+pub fn bounded_mentions(source: &str, identifier: &str) -> usize {
+    let mut count = 0;
+    let mut at = 0;
+    while let Some(relative) = source[at..].find(identifier) {
+        let start = at + relative;
+        let end = start + identifier.len();
+        if is_boundary(source, start, end) {
+            count += 1;
+        }
+        at = end;
+    }
+    count
+}
+
+fn replace_bounded(source: &str, old: &str, new: &str) -> (String, usize) {
+    let mut out = String::with_capacity(source.len());
+    let mut count = 0;
+    let mut at = 0;
+    while let Some(relative) = source[at..].find(old) {
+        let start = at + relative;
+        let end = start + old.len();
+        out.push_str(&source[at..start]);
+        if is_boundary(source, start, end) {
+            out.push_str(new);
+            count += 1;
+        } else {
+            out.push_str(old);
+        }
+        at = end;
+    }
+    out.push_str(&source[at..]);
+    (out, count)
 }
 
 /// If a literal starts at `at`, the offset just past its closing quote.
@@ -193,5 +339,26 @@ mod tests {
         let dir = Path::new("/p/src/main/java");
         let path = dir.join("RewardHistoryService.java");
         assert_eq!(renamed_path(&path, "Reward", "Bonus"), path);
+    }
+
+    #[test]
+    fn a_cutover_rewrites_only_whole_identifiers_inside_literals() {
+        let src = "// tasks stays documentation\nclass Task { String sql = \"select * from tasks where task_status = ?\"; String block = \"\"\"\ninsert into tasks(id) values (?)\n\"\"\"; }";
+        let (out, count) = replace_literal_sql_identifier(src, "tasks", "work_items");
+        assert_eq!(count, 2, "{out}");
+        assert!(out.contains("// tasks stays documentation"), "{out}");
+        assert!(out.contains("from work_items where task_status"), "{out}");
+        assert!(out.contains("insert into work_items"), "{out}");
+    }
+
+    #[test]
+    fn owned_projection_components_move_as_java_tokens() {
+        let src = "class TaskController { JdbcTaskRepository repository; Task task; String route = \"/tasks\"; }";
+        let (out, count) = replace_owned_identifier_component(src, "Task", "WorkItem");
+        assert_eq!(count, 3, "{out}");
+        assert!(out.contains("class WorkItemController"), "{out}");
+        assert!(out.contains("JdbcWorkItemRepository"), "{out}");
+        assert!(out.contains("WorkItem task"), "{out}");
+        assert!(out.contains("\"/tasks\""), "{out}");
     }
 }

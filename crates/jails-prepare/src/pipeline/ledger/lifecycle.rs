@@ -89,7 +89,7 @@ pub(in crate::pipeline) fn record_lifecycle(
     mut context: LifecycleContext<'_>,
 ) -> Result<()> {
     if let PlannedSubject::RenameResource(request) = context.subject {
-        return record_resource_rename(store, &context, request);
+        return record_resource_rename(store, &mut context, request);
     }
     let Some(target) = Target::from_subject(context.subject) else {
         return adopt_new_scaffolds(store, &mut context);
@@ -260,7 +260,7 @@ fn owned_scaffold_type(
 
 fn record_resource_rename(
     store: &mut jails_protocol::envelope::LedgerV2,
-    context: &LifecycleContext<'_>,
+    context: &mut LifecycleContext<'_>,
     request: &jails_protocol::request::RenameResourceRequestV1,
 ) -> Result<()> {
     use jails_protocol::request::RenameStrategy;
@@ -312,7 +312,22 @@ fn record_resource_rename(
                 return Err("preserve-table may not replace the physical binding.\n       fix: omit the target table and prepare the rename again".into());
             }
         }
-        RenameStrategy::SingleCutover | RenameStrategy::Rolling => {
+        RenameStrategy::SingleCutover => {
+            let target = request.target_table.clone().ok_or(
+                "single-cutover has no resolved target table.\n       fix: prepare the resource rename again",
+            )?;
+            let published =
+                seal_migrations(&renamed.id, &mut lifecycle.migrations, store, context)?;
+            if published.len() != 1 {
+                return Err(format!(
+                    "single-cutover expected one new forward migration, found {}.\n       fix: prepare exactly one table-rename migration",
+                    published.len()
+                )
+                .into());
+            }
+            lifecycle.table = Some(TableBinding { table: target });
+        }
+        RenameStrategy::Rolling => {
             return Err("storage rename state reached the preserve-only lifecycle recorder.\n       fix: prepare the coordinated storage plan again".into());
         }
     }

@@ -517,6 +517,113 @@ fn coordinated_preserve_table_rename_keeps_storage_and_moves_lifecycle_lineage()
 }
 
 #[test]
+fn coordinated_single_cutover_appends_one_migration_and_switches_the_binding() {
+    let root = temp_dir("resource-rename-single-cutover");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+
+    let generated = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success(), "{generated:?}");
+    let first = root.join("src/main/resources/db/migration/V001__create_tasks.sql");
+    let sealed = fs::read(&first).unwrap();
+
+    let renamed = jails_cmd(&root, None)
+        .args([
+            "rename",
+            "resource",
+            "Billing.Task",
+            "WorkItem",
+            "--strategy",
+            "single-cutover",
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(renamed.status.success(), "{renamed:?}");
+    let stdout = String::from_utf8_lossy(&renamed.stdout);
+    assert!(
+        stdout.contains("physical-table-cutover: tasks -> work_items"),
+        "{stdout}"
+    );
+    assert_eq!(fs::read(first).unwrap(), sealed);
+    let cutover = root.join("src/main/resources/db/migration/V002__rename_tasks_to_work_items.sql");
+    assert_eq!(
+        fs::read_to_string(&cutover).unwrap(),
+        "alter table public.\"tasks\" rename to \"work_items\";\n"
+    );
+    let adapter = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/adapters/JdbcWorkItemRepository.java"),
+    )
+    .unwrap();
+    assert!(adapter.contains("work_items"), "{adapter}");
+    assert!(!adapter.contains("from tasks"), "{adapter}");
+    assert!(!adapter.contains("into tasks"), "{adapter}");
+    let controller =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/web/WorkItemController.java"))
+            .unwrap();
+    assert!(controller.contains("/tasks"), "{controller}");
+
+    let store = jails_commit::store::Store::at(&root)
+        .observe()
+        .unwrap()
+        .ledger
+        .unwrap();
+    let [lifecycle] = store.lifecycles.as_slice() else {
+        panic!("expected one lifecycle: {:?}", store.lifecycles);
+    };
+    assert_eq!(lifecycle.expected_path.name().as_str(), "WorkItem");
+    assert_eq!(
+        lifecycle.table.as_ref().unwrap().table.as_str(),
+        "work_items"
+    );
+    assert_eq!(
+        lifecycle
+            .migrations
+            .iter()
+            .map(|seal| seal.version.get())
+            .collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+}
+
+#[test]
+fn single_cutover_reports_reader_owned_sql_without_writing() {
+    let root = temp_dir("resource-rename-manual-sql");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    let generated = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success(), "{generated:?}");
+    let query = root.join("src/main/resources/db/queries/manual.sql");
+    fs::create_dir_all(query.parent().unwrap()).unwrap();
+    fs::write(&query, "select id from tasks where id = :id;\n").unwrap();
+    let before = snapshot_tree(&root);
+
+    let refused = jails_cmd(&root, None)
+        .args([
+            "rename",
+            "resource",
+            "Billing.Task",
+            "WorkItem",
+            "--strategy",
+            "single-cutover",
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success(), "{refused:?}");
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("manual-edit-required"), "{stderr}");
+    assert!(stderr.contains("manual.sql"), "{stderr}");
+    assert_eq!(snapshot_tree(&root), before, "refusal wrote project files");
+}
+
+#[test]
 fn coordinated_resource_rename_reports_reader_owned_java_without_rewriting_it() {
     let root = temp_dir("resource-rename-manual-java");
     write_spring_fixture(&root);

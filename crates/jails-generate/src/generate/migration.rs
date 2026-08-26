@@ -61,6 +61,25 @@ pub fn drop_table_change(project: &Project, table: &str) -> Result<Change> {
     })
 }
 
+/// Plan the one forward PostgreSQL migration for a coordinated physical
+/// table cutover. Both identifiers have already crossed the protocol's
+/// `SqlName` boundary, so quoting them here is deterministic and cannot turn
+/// caller input into an SQL fragment.
+pub fn rename_table_change(project: &Project, current: &str, target: &str) -> Result<Change> {
+    if current == target {
+        return Err("a table rename needs distinct current and target names.\n       fix: preserve the current table or choose a different target".into());
+    }
+    let path = migration_file(project, &format!("rename_{current}_to_{target}"))?;
+    Ok(Change {
+        files: vec![Artifact {
+            kind: "migration",
+            path,
+            contents: format!("alter table public.\"{current}\" rename to \"{target}\";\n"),
+        }],
+        ..Change::default()
+    })
+}
+
 pub fn next_migration_version(dir: &Path) -> Result<u32> {
     if !dir.exists() {
         return Ok(1);

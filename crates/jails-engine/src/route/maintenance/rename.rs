@@ -3,6 +3,9 @@
 
 use super::*;
 
+mod cutover;
+use cutover::{prepare_cutover, validate_cutover_sql};
+
 /// Rename a Java type across the project, as one transition.
 ///
 /// **Reach for the language server first.** Neovim's `grn` (jdt.ls rename)
@@ -58,12 +61,24 @@ fn rename_with(
     let from = jails_protocol::identity::JavaType::parse(old)?;
     let to = jails_protocol::identity::JavaType::parse(new)?;
     let store = observed(project)?;
+    let cutover = prepare_cutover(project, &store, resource_request.as_ref())?;
 
     // The walk that finds the sources is not itself a read the snapshot can
     // guard -- something has to look first. What it finds is then declared,
     // directories included, so the recheck covers both the contents of every
     // file considered and the membership of every directory walked.
     let mut reads = capture::capability_reads()?;
+    if let Some(cutover) = &cutover {
+        reads = reads
+            .directory(ProjectPath::parse("src/main/resources/db/migration")?)
+            .file(cutover.migration.clone());
+        for source in &cutover.sql_sources {
+            reads = reads.file(source.clone());
+        }
+        for directory in walked_directories(&cutover.sql_sources) {
+            reads = reads.directory(directory);
+        }
+    }
     let mut sources = Vec::new();
     for absolute in jails_java::java::source_files(&project.root().join("src")) {
         let relative = super::relative_path(project, &absolute)?;
@@ -89,6 +104,9 @@ fn rename_with(
         reads = reads.directory(directory);
     }
     let (snapshot, _) = capture::projected(project, &reads)?;
+    if let Some(cutover) = &cutover {
+        validate_cutover_sql(&snapshot, cutover)?;
+    }
 
     // Which entities this rename is an identity transition *for*. An entity
     // is named by its `IntentId`, and the name is half of that -- so
@@ -134,14 +152,27 @@ fn rename_with(
         let Ok(text) = std::str::from_utf8(&file.bytes) else {
             continue;
         };
-        let (updated, hits) = jails_java::identifier::replace_identifier(text, old, new);
+        let (mut updated, hits) = match resource_request {
+            Some(_) => jails_java::identifier::replace_owned_identifier_component(text, old, new),
+            None => jails_java::identifier::replace_identifier(text, old, new),
+        };
         let literal_hits = jails_java::identifier::literal_mentions(text, old);
-        if let Some((_, request)) = &resource_request
-            && !owned_by(&store, source, &request.entity)
-            && (hits > 0 || literal_hits > 0)
-        {
-            manual_java.insert(source.clone());
-            continue;
+        if let Some((_, request)) = &resource_request {
+            let owned = owned_by(&store, source, &request.entity);
+            let table_hits = cutover.as_ref().map_or(0, |cutover| {
+                jails_java::identifier::bounded_mentions(text, cutover.current.as_str())
+            });
+            if !owned && (hits > 0 || literal_hits > 0 || table_hits > 0) {
+                manual_java.insert(source.clone());
+                continue;
+            }
+            if owned && let Some(cutover) = &cutover {
+                (updated, _) = jails_java::identifier::replace_literal_sql_identifier(
+                    &updated,
+                    cutover.current.as_str(),
+                    cutover.target.as_str(),
+                );
+            }
         }
         let destination = rename_destination(
             &store,
@@ -197,6 +228,36 @@ fn rename_with(
             resource: claim.map(|(key, _)| key),
             renderer: None,
         });
+    }
+
+    if let Some(cutover) = &cutover {
+        let (_, request) = resource_request
+            .as_ref()
+            .expect("a storage cutover always has a resource request");
+        let renamed = renamed_entities
+            .get(&request.entity)
+            .map(|(entity, _, _)| entity.clone())
+            .ok_or("resource cutover did not resolve the renamed durable identity.\n       fix: prepare the rename again from the adopted entity")?;
+        let key = ResourceKey::WholeFile(cutover.migration.clone());
+        let owner = ResourceOwner::Entity(renamed);
+        change.resources.push(DesiredResource::new(
+            key.clone(),
+            BTreeSet::from([owner]),
+            ResourceValue::WholeFile,
+        )?);
+        change.files.push(DesiredFile {
+            path: cutover.migration.clone(),
+            body: DesiredBody::Bytes(cutover.artifact.contents.as_bytes().into()),
+            mode: None,
+            resource: Some(key),
+            renderer: None,
+        });
+        println!(
+            "physical-table-cutover: {} -> {} ({})",
+            cutover.current.as_str(),
+            cutover.target.as_str(),
+            cutover.migration
+        );
     }
 
     if !manual_java.is_empty() {
@@ -442,10 +503,39 @@ pub fn rename_resource(run: &Run, invocation: RenameResourceInvocation<'_>) -> R
                 Some((selector.to_string(), request)),
             )
         }
-        jails_protocol::request::RenameStrategy::SingleCutover => Err(
-            "`single-cutover` requires the coordinated storage planner.\n       fix: use `--strategy preserve-table`, or prepare the cutover after upgrading jails"
-                .into(),
-        ),
+        jails_protocol::request::RenameStrategy::SingleCutover => {
+            let conventional_current =
+                jails_protocol::identity::SqlName::conventional_table(&Name::parse(current)?);
+            let target = match target_table {
+                Some(target) => target,
+                None if current_table.table == conventional_current => {
+                    jails_protocol::identity::SqlName::conventional_table(&Name::parse(new)?)
+                }
+                None => {
+                    return Err(format!(
+                        "`{selector}` has explicit table binding `{}`.\n       fix: pass `--table <target-table>` or use `--strategy preserve-table`",
+                        current_table.table.as_str()
+                    )
+                    .into());
+                }
+            };
+            if target == current_table.table {
+                return Err(format!(
+                    "target table `{}` is already the current binding.\n       fix: choose a distinct target table or use `--strategy preserve-table`",
+                    target.as_str()
+                )
+                .into());
+            }
+            let mut request = request;
+            request.target_table = Some(target);
+            rename_with(
+                run,
+                current,
+                new,
+                force,
+                Some((selector.to_string(), request)),
+            )
+        }
         jails_protocol::request::RenameStrategy::Rolling => Err(
             "`rolling` requires a durable expand/contract campaign.\n       fix: use `--strategy preserve-table`, or prepare the rolling campaign after upgrading jails"
                 .into(),
