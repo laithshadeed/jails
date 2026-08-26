@@ -242,9 +242,10 @@ fn routes_json_is_machine_readable() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.starts_with(r#"{"schema_version":3,"routes":["#),
+        stdout.starts_with(r#"{"schema_version":3,"evidence":{"kind":"static-inference"#),
         "{stdout}"
     );
+    assert!(stdout.contains(r#""limitations":["#), "{stdout}");
     assert!(stdout.contains(r#""verb":"GET""#), "{stdout}");
     assert!(stdout.contains(r#""line":"#), "{stdout}");
 }
@@ -261,9 +262,10 @@ fn beans_json_is_versioned_and_reports_source_lines() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.starts_with(r#"{"schema_version":3,"beans":["#),
+        stdout.starts_with(r#"{"schema_version":3,"evidence":{"kind":"static-inference"#),
         "{stdout}"
     );
+    assert!(stdout.contains(r#""limitations":["#), "{stdout}");
     assert!(stdout.contains(r#""line":"#), "{stdout}");
 }
 

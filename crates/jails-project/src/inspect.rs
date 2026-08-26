@@ -43,6 +43,9 @@ const VERB_ANNOTATIONS: [(&str, &str); 5] = [
 
 const CONTROLLER_ANNOTATIONS: [&str; 2] = ["RestController", "Controller"];
 
+const STATIC_EVIDENCE_KIND: &str = "static-inference";
+const STATIC_EVIDENCE_LIMITATION: &str = "profiles, conditions, post-processors, proxies, and programmatic runtime registrations are not evaluated";
+
 pub fn routes(json: bool) -> Result<()> {
     let root = find_project_root()?;
     let found = collect_routes(&root);
@@ -68,6 +71,8 @@ pub fn routes(json: bool) -> Result<()> {
     }
     println!();
     println!("{} route(s), read from source.", found.len());
+    println!("evidence: {STATIC_EVIDENCE_KIND}");
+    println!("limitation: {STATIC_EVIDENCE_LIMITATION}");
     Ok(())
 }
 
@@ -231,7 +236,12 @@ fn routes_json(routes: &[Route]) -> String {
             )
         })
         .collect();
-    format!(r#"{{"schema_version":3,"routes":[{}]}}"#, items.join(","))
+    format!(
+        r#"{{"schema_version":3,"evidence":{{"kind":{},"limitations":[{}]}},"routes":[{}]}}"#,
+        crate::json::string(STATIC_EVIDENCE_KIND),
+        crate::json::string(STATIC_EVIDENCE_LIMITATION),
+        items.join(",")
+    )
 }
 
 /// One registered component and what its constructor asks for.
@@ -350,6 +360,8 @@ pub fn beans(pattern: Option<&str>, json: bool) -> Result<()> {
 
     println!();
     println!("{} bean(s), read from source.", filtered.len());
+    println!("evidence: {STATIC_EVIDENCE_KIND}");
+    println!("limitation: {STATIC_EVIDENCE_LIMITATION}");
     if unsatisfied > 0 {
         println!(
             "{unsatisfied} dependency/dependencies name a type this project declares but never\n\
@@ -501,7 +513,12 @@ fn beans_json(beans: &[&Bean]) -> String {
             )
         })
         .collect();
-    format!(r#"{{"schema_version":3,"beans":[{}]}}"#, items.join(","))
+    format!(
+        r#"{{"schema_version":3,"evidence":{{"kind":{},"limitations":[{}]}},"beans":[{}]}}"#,
+        crate::json::string(STATIC_EVIDENCE_KIND),
+        crate::json::string(STATIC_EVIDENCE_LIMITATION),
+        items.join(",")
+    )
 }
 
 fn line_of(source: &str, needle: &str) -> usize {

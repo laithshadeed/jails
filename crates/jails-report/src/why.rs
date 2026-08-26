@@ -520,16 +520,18 @@ fn diagnoses_json(found: &[Diagnosis]) -> String {
                 .collect::<Vec<_>>()
                 .join(",");
             format!(
-                "{{\"headline\":{},\"because\":{},\"fixes\":[{}]}}",
+                "{{\"headline\":{},\"because\":{},\"fixes\":[{}],\"cause_graph\":{{\"nodes\":[{{\"id\":\"symptom\",\"kind\":\"symptom\",\"label\":{}}},{{\"id\":\"cause\",\"kind\":\"framework-cause\",\"label\":{}}}],\"edges\":[{{\"from\":\"symptom\",\"to\":\"cause\",\"relation\":\"caused-by\"}}]}}}}",
                 crate::json::string(&diagnosis.headline),
                 crate::json::string(&diagnosis.because),
-                fixes
+                fixes,
+                crate::json::string(&diagnosis.headline),
+                crate::json::string(&diagnosis.because)
             )
         })
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "{{\"schema_version\":3,\"recognized\":{},\"diagnoses\":[{}]}}",
+        "{{\"schema_version\":3,\"recognized\":{},\"evidence\":{{\"kind\":\"live-observation\",\"source\":\"captured-output\",\"limitations\":[\"only the supplied or captured process output was evaluated\"]}},\"diagnoses\":[{}]}}",
         !found.is_empty(),
         diagnoses
     )
@@ -541,6 +543,7 @@ fn print_report(found: &[Diagnosis]) {
             println!();
         }
         println!("{}", diagnosis.headline);
+        println!("  evidence: live-observation (captured output)");
         println!();
         for line in wrap(&diagnosis.because, 76) {
             println!("  {line}");
@@ -888,6 +891,8 @@ mod tests {
         );
         assert!(json.contains("\"headline\":"), "{json}");
         assert!(json.contains("\"fixes\":["), "{json}");
+        assert!(json.contains("\"kind\":\"live-observation\""), "{json}");
+        assert!(json.contains("\"cause_graph\":"), "{json}");
         assert!(json.contains("8081"), "{json}");
     }
 
@@ -895,7 +900,7 @@ mod tests {
     fn unknown_json_is_an_empty_machine_readable_result() {
         assert_eq!(
             diagnoses_json(&[]),
-            "{\"schema_version\":3,\"recognized\":false,\"diagnoses\":[]}"
+            "{\"schema_version\":3,\"recognized\":false,\"evidence\":{\"kind\":\"live-observation\",\"source\":\"captured-output\",\"limitations\":[\"only the supplied or captured process output was evaluated\"]},\"diagnoses\":[]}"
         );
     }
 
