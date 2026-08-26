@@ -7,6 +7,7 @@ use jails_prepare::review::{
     FileReview, PreparedReview, Reconciliation, ReviewFileKind, ReviewSelection,
 };
 use jails_protocol::identity::TransactionId;
+use jails_protocol::resource::ResourceOwner;
 use jails_support::Result;
 
 pub(crate) fn history(limit: usize, output: Output) -> Result<()> {
@@ -23,12 +24,14 @@ pub(crate) fn history(limit: usize, output: Output) -> Result<()> {
             for receipt in receipts {
                 let (eligible, reason) = undo_eligibility(&receipt);
                 println!(
-                    "{} generation={} operation={} files={} effects={} undo={}{}",
+                    "{} generation={} operation={} reason={} files={} risk={} external={} undo={}{}",
                     receipt.transaction,
                     receipt.generation,
                     receipt.prepared.operation_id,
+                    receipt_reason(&receipt),
                     receipt.prepared.operations.len(),
-                    receipt.post_commit.len(),
+                    receipt_risks(&receipt).join(","),
+                    external_effect_classification(&receipt),
                     if eligible { "eligible" } else { "refused" },
                     reason
                         .as_deref()
@@ -61,6 +64,12 @@ pub(crate) fn show(transaction: &str, diff: bool, why: bool, output: Output) -> 
             println!("transaction: {}", receipt.transaction);
             println!("operation: {}", receipt.prepared.operation_id);
             println!("generation: {}", receipt.generation);
+            println!("reason: {}", receipt_reason(&receipt));
+            println!("risk: {}", receipt_risks(&receipt).join(","));
+            println!(
+                "external-effect: {}",
+                external_effect_classification(&receipt)
+            );
             println!(
                 "undo: {}{}",
                 if eligible { "eligible" } else { "refused" },
@@ -71,7 +80,21 @@ pub(crate) fn show(transaction: &str, diff: bool, why: bool, output: Output) -> 
             );
             println!("files:");
             for operation in &receipt.prepared.operations {
-                println!("  {:7} {}", operation_kind(operation), operation.target());
+                let evidence = operation_evidence(operation);
+                println!(
+                    "  {:7} {} before={} after={} mode={} owners={}",
+                    operation_kind(operation),
+                    operation.target(),
+                    evidence.before.as_deref().unwrap_or("absent"),
+                    evidence.after.as_deref().unwrap_or("absent"),
+                    evidence.mode,
+                    evidence
+                        .contributors
+                        .iter()
+                        .map(owner_label)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                );
             }
             println!("effects: {}", receipt.post_commit.len());
             if why {
@@ -83,6 +106,10 @@ pub(crate) fn show(transaction: &str, diff: bool, why: bool, output: Output) -> 
                 println!(
                     "preconditions: {}",
                     receipt.prepared.input_preconditions.len()
+                );
+                println!(
+                    "toolchain-records: {}",
+                    receipt.prepared.preparation.tools.len()
                 );
                 println!("kind: {}", prepared_kind(&receipt.prepared.kind));
                 println!(
@@ -106,12 +133,13 @@ pub(crate) fn show(transaction: &str, diff: bool, why: bool, output: Output) -> 
         Output::Json => {
             let why_json = if why {
                 format!(
-                    "{{\"snapshot\":{},\"proposed_generation\":{},\"preconditions\":{},\"kind\":{},\"semantics\":{}}}",
+                    "{{\"snapshot\":{},\"proposed_generation\":{},\"preconditions\":{},\"toolchain_records\":{},\"kind\":{},\"semantics\":{}}}",
                     jails_support::json::string(
                         &receipt.prepared.operation_identity.snapshot.to_hex()
                     ),
                     receipt.prepared.operation_identity.proposed_generation,
                     receipt.prepared.input_preconditions.len(),
+                    receipt.prepared.preparation.tools.len(),
                     jails_support::json::string(prepared_kind(&receipt.prepared.kind)),
                     jails_support::json::string(semantics_kind(
                         &receipt.prepared.operation_identity.semantics
@@ -217,19 +245,47 @@ fn receipt_json(receipt: &jails_commit::journal::ReceiptV1) -> String {
         .operations
         .iter()
         .map(|operation| {
+            let evidence = operation_evidence(operation);
+            let owners = evidence
+                .contributors
+                .iter()
+                .map(|owner| jails_support::json::string(&owner_label(owner)))
+                .collect::<Vec<_>>()
+                .join(",");
             format!(
-                "{{\"path\":{},\"kind\":{}}}",
+                "{{\"path\":{},\"kind\":{},\"before\":{},\"after\":{},\"mode\":{},\"owners\":[{owners}]}}",
                 jails_support::json::string(operation.target().as_str()),
-                jails_support::json::string(operation_kind(operation))
+                jails_support::json::string(operation_kind(operation)),
+                evidence
+                    .before
+                    .as_deref()
+                    .map(jails_support::json::string)
+                    .unwrap_or_else(|| "null".to_string()),
+                evidence
+                    .after
+                    .as_deref()
+                    .map(jails_support::json::string)
+                    .unwrap_or_else(|| "null".to_string()),
+                evidence.mode,
             )
         })
         .collect::<Vec<_>>()
         .join(",");
+    let risks = receipt_risks(receipt)
+        .iter()
+        .map(|risk| jails_support::json::string(risk))
+        .collect::<Vec<_>>()
+        .join(",");
     format!(
-        "{{\"transaction_id\":{},\"operation_id\":{},\"generation\":{},\"files\":[{files}],\"effects\":{},\"undo_eligible\":{},\"undo_reason\":{}}}",
+        "{{\"transaction_id\":{},\"operation_id\":{},\"generation\":{},\"reason\":{},\"risk\":[{risks}],\"external_effect\":{},\"evidence\":{{\"snapshot\":{},\"preconditions\":{},\"toolchain_records\":{}}},\"files\":[{files}],\"effects\":{},\"undo_eligible\":{},\"undo_reason\":{}}}",
         jails_support::json::string(&receipt.transaction.to_hex()),
         jails_support::json::string(&receipt.prepared.operation_id.to_hex()),
         receipt.generation,
+        jails_support::json::string(receipt_reason(receipt)),
+        jails_support::json::string(external_effect_classification(receipt)),
+        jails_support::json::string(&receipt.prepared.operation_identity.snapshot.to_hex()),
+        receipt.prepared.input_preconditions.len(),
+        receipt.prepared.preparation.tools.len(),
         receipt.post_commit.len(),
         eligible,
         reason
@@ -237,6 +293,126 @@ fn receipt_json(receipt: &jails_commit::journal::ReceiptV1) -> String {
             .map(jails_support::json::string)
             .unwrap_or_else(|| "null".to_string())
     )
+}
+
+struct OperationEvidence<'a> {
+    before: Option<String>,
+    after: Option<String>,
+    mode: u32,
+    contributors: &'a std::collections::BTreeSet<ResourceOwner>,
+}
+
+fn operation_evidence(operation: &FileOp) -> OperationEvidence<'_> {
+    match operation {
+        FileOp::Create {
+            after,
+            mode,
+            contributors,
+            ..
+        } => OperationEvidence {
+            before: None,
+            after: Some(after.id.to_hex()),
+            mode: mode.bits(),
+            contributors,
+        },
+        FileOp::Replace {
+            before,
+            after,
+            mode,
+            contributors,
+            ..
+        } => OperationEvidence {
+            before: Some(before.object.id.to_hex()),
+            after: Some(after.id.to_hex()),
+            mode: mode.bits(),
+            contributors,
+        },
+        FileOp::Delete {
+            before,
+            contributors,
+            ..
+        } => OperationEvidence {
+            before: Some(before.object.id.to_hex()),
+            after: None,
+            mode: before.mode.bits(),
+            contributors,
+        },
+    }
+}
+
+fn owner_label(owner: &ResourceOwner) -> String {
+    match owner {
+        ResourceOwner::Entity(id) => format!("entity:{id:?}"),
+        ResourceOwner::OneShot(id) => format!("one-shot:{id:?}"),
+        ResourceOwner::SchemaHistory => "schema-history".to_string(),
+        ResourceOwner::Query(id) => format!("query:{id:?}"),
+        ResourceOwner::ProjectArchitecture => "project-architecture".to_string(),
+    }
+}
+
+fn receipt_reason(receipt: &jails_commit::journal::ReceiptV1) -> &'static str {
+    let OperationSemanticsV1::Apply(apply) = &receipt.prepared.operation_identity.semantics else {
+        return semantics_kind(&receipt.prepared.operation_identity.semantics);
+    };
+    use jails_protocol::plan::PlannedSubject;
+    match &apply.subject {
+        PlannedSubject::Reconcile(_) => "reconcile",
+        PlannedSubject::ApplyOneShot { .. } => "apply-one-shot",
+        PlannedSubject::DestroyCases { .. } => "destroy-cases",
+        PlannedSubject::AppInit { .. } => "app-init",
+        PlannedSubject::Rename { .. } => "rename-type",
+        PlannedSubject::RenameResource(_) => "rename-resource",
+        PlannedSubject::CompleteStorageRename(_) => "complete-storage-rename",
+        PlannedSubject::AdoptLayout => "adopt-layout",
+        PlannedSubject::Format { .. } => "format",
+        PlannedSubject::EvolveField(_) => "evolve-field",
+        PlannedSubject::DestroyResourceV2(_) => "destroy-resource",
+        PlannedSubject::ReviveResource(_) => "revive-resource",
+        PlannedSubject::RepairResource(_) => "repair-resource",
+        PlannedSubject::GenerateQueries { .. } => "generate-queries",
+        PlannedSubject::ContractProjection { .. } => "contract-projection",
+        PlannedSubject::UndoFiles(_) => "undo-files",
+    }
+}
+
+fn receipt_risks(receipt: &jails_commit::journal::ReceiptV1) -> Vec<&'static str> {
+    let mut risks = std::collections::BTreeSet::new();
+    if receipt
+        .prepared
+        .operations
+        .iter()
+        .any(|operation| matches!(operation, FileOp::Delete { .. }))
+    {
+        risks.insert("destructive");
+    }
+    if receipt.prepared.operations.iter().any(|operation| {
+        jails_protocol::resource::ResourceKey::WholeFile(operation.target().clone())
+            .is_migration_history()
+    }) {
+        risks.insert("deployment-incompatible");
+    }
+    if !receipt.prepared.post_commit.is_empty() {
+        risks.insert("external-effect");
+    }
+    if risks.is_empty() {
+        risks.insert("ordinary");
+    }
+    risks.into_iter().collect()
+}
+
+fn external_effect_classification(receipt: &jails_commit::journal::ReceiptV1) -> &'static str {
+    if receipt.prepared.post_commit.is_empty() {
+        return "none";
+    }
+    if receipt
+        .post_commit
+        .iter()
+        .all(|effect| matches!(effect.state, jails_protocol::effect::EffectState::Succeeded))
+    {
+        "resolved"
+    } else {
+        "unresolved"
+    }
 }
 
 fn operation_kind(operation: &FileOp) -> &'static str {

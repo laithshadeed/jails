@@ -20,6 +20,15 @@ fn history_and_show_project_authenticated_receipts() {
     let receipts = value["receipts"].as_array().unwrap();
     assert_eq!(receipts.len(), 1);
     assert_eq!(receipts[0]["undo_eligible"], true);
+    assert_eq!(receipts[0]["reason"], "reconcile");
+    assert_eq!(receipts[0]["risk"], serde_json::json!(["ordinary"]));
+    assert_eq!(receipts[0]["external_effect"], "none");
+    assert_eq!(
+        receipts[0]["evidence"]["snapshot"].as_str().unwrap().len(),
+        64
+    );
+    assert!(receipts[0]["files"][0]["owners"].is_array());
+    assert_eq!(receipts[0]["files"][0]["after"].as_str().unwrap().len(), 64);
     let transaction = receipts[0]["transaction_id"].as_str().unwrap();
 
     let shown = jails_cmd(&root, None)
@@ -31,6 +40,11 @@ fn history_and_show_project_authenticated_receipts() {
     assert_eq!(shown["schema_version"], 1);
     assert_eq!(shown["receipt"]["transaction_id"], transaction);
     assert_eq!(shown["receipt"]["files"][0]["kind"], "create");
+    assert_eq!(
+        shown["receipt"]["files"][0]["before"],
+        serde_json::Value::Null
+    );
+    assert!(shown["why"]["toolchain_records"].is_number());
     assert!(shown["diff"].as_str().unwrap().contains("Note.java"));
     assert_eq!(shown["why"]["semantics"], "apply");
 }
