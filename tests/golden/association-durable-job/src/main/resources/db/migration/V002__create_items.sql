@@ -2,7 +2,7 @@
 create table items (
   id          uuid        not null,
   owner_id    uuid        not null,
-  name        text        not null,
+  name        text        not null check (length(btrim(name)) > 0),
   created_at  timestamptz not null,
 
   constraint items_pk

@@ -1128,6 +1128,7 @@ mod repository_test_generation_tests {
                 java_type: field.java_type.clone(),
                 constraints: field.constraints,
                 closed_set: Vec::new(),
+                non_blank: false,
             })
             .collect()
     }

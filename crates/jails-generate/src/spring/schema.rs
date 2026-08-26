@@ -129,7 +129,22 @@ pub(crate) fn association_files(
         String::new()
     };
     let migration = format!(
-        "{unique_index_ddl}alter table {child_table}\n  add constraint {constraint}\n  foreign key ({}) references {parent_table} ({})\n  on update no action on delete no action\n  deferrable initially deferred;\n",
+        "{unique_index_ddl}\
+         -- Two deliberate choices, stated because neither is the obvious one.\n\
+         --\n\
+         -- `deferrable initially deferred`: the check happens at commit rather\n\
+         -- than at the statement, so a transaction may insert a child before its\n\
+         -- parent and a batch may load in any order. What it costs is where the\n\
+         -- error surfaces -- at `commit`, naming this constraint rather than the\n\
+         -- statement that broke it. Say `not deferrable` here if you would rather\n\
+         -- pay for insert order and get the statement back.\n\
+         --\n\
+         -- `on delete no action`: deleting a parent row is a decision about the\n\
+         -- child rows, and jails cannot see enough of this domain to make it.\n\
+         -- `cascade` deletes them and `restrict` refuses the delete outright --\n\
+         -- note `restrict` is never deferred, so choosing it also gives up the\n\
+         -- line above.\n\
+         alter table {child_table}\n  add constraint {constraint}\n  foreign key ({}) references {parent_table} ({})\n  on update no action on delete no action\n  deferrable initially deferred;\n",
         local_columns.join(", "),
         parent_columns.join(", ")
     );

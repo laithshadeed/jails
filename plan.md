@@ -470,11 +470,23 @@ commit as the change that causes it.
       match warns about `statuses_note`. It also closed the hole P1.3 left:
       `AppliedReceipt` carries the warnings now, because one that appears on
       `--pretend` and vanishes on the real run is one nobody sees.
-- [ ] **P5.4** The schema's remaining non-negotiables (modern §4.7):
+- [x] **P5.4** The schema's remaining non-negotiables (modern §4.7):
       case-insensitive unique index on an email-shaped `@unique`, a
       `check (length(btrim(x)) > 0)` where the Java constructor rejects blank,
       and either an explicit reason for `deferrable initially deferred` on
-      every generated FK or a different default (§13.10).
+      every generated FK or a different default (§13.10). Took the *explain*
+      branch on the foreign key, and for a measured reason rather than
+      taste: switching to an immediate check turned three generated
+      integration tests red at once, because a `@Transactional` test that
+      inserts a child and rolls back never reaches the commit where a
+      deferred violation surfaces. That is worth knowing — those tests were
+      green over rows PostgreSQL would never have accepted — but it is a
+      question about what a generated child test should seed, not about the
+      constraint, so the constraint keeps the default and states both what
+      the deferral buys and what it costs. `on delete no action` is stated
+      the same way, including that `restrict` is never deferred and so gives
+      up the other line. Only §4.7's `--timestamps` bullet survives, and it
+      is an input problem.
 
 ## P6 — the prose, and the real bugs behind it (cause E)
 

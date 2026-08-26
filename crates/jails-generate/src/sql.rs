@@ -16,8 +16,10 @@
 //! column rather than a plausible-looking wrong mapping, and the generated
 //! Javadoc names it.
 
+mod ddl;
+pub use ddl::*;
+
 use crate::generate::{Field, Optionality};
-use jails_support::Result;
 
 /// How one record component crosses the JDBC boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +54,14 @@ pub struct Column {
     /// The table constraints declared on the field spec. Carried through
     /// unchanged -- `create_table` is the only reader.
     pub constraints: crate::generate::Constraints,
+    /// True when the field spec said `!`: the Java constructor rejects a
+    /// blank value, so the column should too.
+    ///
+    /// plan.md P5.4, modern.md §4.7: the constructor enforced it and the
+    /// database did not, so any import path -- a `copy`, a backfill, another
+    /// service -- put a blank row in a column the application believes cannot
+    /// hold one.
+    pub non_blank: bool,
     /// The constants of the project enum this column stores, if it stores one.
     ///
     /// **The closed set, carried into the schema.** plan.md P5.1: the reader
@@ -218,6 +228,7 @@ fn column(field: &Field, project: &crate::model::Project, pkg: &str, receiver: &
             java_type: field.java_type.clone(),
             constraints: field.constraints,
             closed_set: Vec::new(),
+            non_blank: field.optionality == Optionality::NonBlank,
         };
     }
 
@@ -237,6 +248,7 @@ fn column(field: &Field, project: &crate::model::Project, pkg: &str, receiver: &
                 java_type: inner.clone(),
                 constraints: field.constraints,
                 closed_set: Vec::new(),
+                non_blank: field.optionality == Optionality::NonBlank,
             },
             optional,
         );
@@ -261,6 +273,7 @@ fn column(field: &Field, project: &crate::model::Project, pkg: &str, receiver: &
                 write: Some(write),
                 java_type: inner.clone(),
                 constraints: field.constraints,
+                non_blank: field.optionality == Optionality::NonBlank,
                 closed_set: crate::generate::enum_constants(project, pkg, &inner)
                     .unwrap_or_default(),
             },
@@ -278,6 +291,7 @@ fn column(field: &Field, project: &crate::model::Project, pkg: &str, receiver: &
         java_type: inner,
         constraints: field.constraints,
         closed_set: Vec::new(),
+        non_blank: field.optionality == Optionality::NonBlank,
     }
 }
 
@@ -301,6 +315,7 @@ fn finish(column: Column, optional: bool) -> Column {
         java_type: inner,
         constraints,
         closed_set,
+        non_blank,
         ..
     } = column;
     let read = read.expect("a mapped column carries its read expression");
@@ -333,6 +348,7 @@ fn finish(column: Column, optional: bool) -> Column {
         java_type: inner.to_string(),
         constraints,
         closed_set,
+        non_blank,
     }
 }
 
@@ -481,458 +497,6 @@ pub(crate) fn imports(columns: &[Column]) -> Vec<&'static str> {
 /// Empty when jails cannot see the constants, which is the same rule
 /// `sample_value` follows: a guessed list would reject a value the Java enum
 /// accepts, at `flyway migrate`, on whichever machine runs it first.
-/// **Named**, and at the table level rather than on the column, because
-/// adding a constant to the enum has to be able to replace it:
-/// `alter table … drop constraint …` needs a name, and PostgreSQL's automatic
-/// one is an implementation detail. plan.md P5.2 is the command that uses it.
-pub(crate) fn closed_set_constraint(table: &str, column: &Column) -> Option<(String, String)> {
-    if column.closed_set.is_empty() {
-        return None;
-    }
-    let values = column
-        .closed_set
-        .iter()
-        .map(|constant| format!("'{constant}'"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    Some((
-        format!("{table}_{}_allowed", column.name),
-        format!("check ({} in ({values}))", column.name),
-    ))
-}
-
-/// The `order by` clause a list of this table's rows gets.
-///
-/// **Not the key.** `order by id` over a random UUID is a stable *random*
-/// order presented to a reader as their data, which modern.md §4.4 calls the
-/// defect a reader is most likely to notice as a user and least likely to
-/// find in the code. `backend.md` §5 is the same point from the schema side.
-///
-/// So: the newest first, by whichever timestamp the table actually has --
-/// `createdAt` where the scaffold was written with `--timestamps`, otherwise
-/// the first required timestamp component declared. The key is appended as
-/// the tiebreak rather than used as the sort, because two rows written in the
-/// same instant otherwise come back in whatever order the plan happens to
-/// produce, and a list that reorders between two identical requests is worse
-/// than one ordered by something arbitrary but fixed.
-///
-/// A table with no timestamp at all falls back to the key, and the caller
-/// says so in a comment: there is nothing else to order by, and SQL promises
-/// no order without a clause.
-pub(crate) fn ordering(columns: &[Column]) -> String {
-    let key = key_column(columns).map(|column| column.name.as_str());
-    let timestamp = columns
-        .iter()
-        .filter(|column| column.not_null && is_timestamp(&column.sql_type))
-        .min_by_key(|column| match column.component.as_str() {
-            "createdAt" => 0,
-            _ => 1,
-        })
-        .map(|column| column.name.as_str());
-    match (timestamp, key) {
-        (Some(timestamp), Some(key)) => format!("{timestamp} desc, {key}"),
-        (Some(timestamp), None) => format!("{timestamp} desc"),
-        (None, Some(key)) => key.to_string(),
-        // No key and no timestamp. With columns, the first is the only thing
-        // left to name; with none, jails was given no field spec at all and
-        // `id` is the same convention the rest of the adapter falls back on.
-        (None, None) => columns
-            .first()
-            .map(|column| column.name.clone())
-            .unwrap_or_else(|| "id".to_string()),
-    }
-}
-
-/// Whether this column carries a point in time, in either dialect's spelling.
-fn is_timestamp(sql_type: &str) -> bool {
-    matches!(
-        sql_type,
-        "timestamptz" | "timestamp" | "timestamp with time zone" | "date"
-    )
-}
-
-/// The table a type maps to: snake_case plus conservative regular-English
-/// pluralisation.
-///
-/// **One owner, because three things derive from it**: the table name, the
-/// route path (`web::resource_path`) and the fixture filename. A second
-/// pluraliser somewhere else does not stay in step -- `g handler Category`
-/// served `/categorys` while its table was `categories`, from two functions
-/// forty lines apart.
-///
-/// Suffixes whose spelling rule is deterministic are applied; irregular
-/// forms are **not guessed**, with two exceptions kept deliberately short:
-/// a handful of English irregulars common enough in a schema that `persons`
-/// and `childs` would look like a bug, and a handful of uncountables where
-/// appending `s` is simply wrong. `jails.toml` gets no override for either:
-/// derivability is what lets `destroy` find what `generate` wrote.
-pub fn table_name(type_name: &str) -> String {
-    let entity = jails_protocol::identity::Name::parse(type_name)
-        .expect("generated type names are validated before SQL projection");
-    jails_protocol::identity::SqlName::conventional_table(&entity)
-        .as_str()
-        .to_string()
-}
-
-/// `transactionId` -> `transaction_id`. Runs of capitals stay together
-/// (`customerURL` -> `customer_url`) so an acronym does not explode into
-/// one underscore per letter.
-pub fn snake_case(name: &str) -> String {
-    let component = jails_protocol::identity::Name::parse(name)
-        .expect("generated names are validated before SQL projection");
-    jails_protocol::identity::SqlName::conventional_column(&component)
-        .as_str()
-        .to_string()
-}
-
-/// The `create table` for a scaffolded type, as a Flyway migration body.
-///
-/// The primary key is whichever columns are marked `@pk`, in declaration
-/// order, so a composite key is just several of them. Failing that it is a
-/// column named `id`, and failing *that* it is nothing -- jails will not
-/// invent a surrogate key, because a record whose components are its natural
-/// key (the common case for the value types jails generates) does not want
-/// one.
-///
-/// `@unique`, `@positive`/`@nonnegative` and `@index` come from the same
-/// field spec, which is the point: a generated schema that cannot express
-/// the constraints the table actually has gets hand-edited the moment it is
-/// written, and then the field spec and the schema disagree forever.
-///
-/// `extra_indexes` carries what a per-column marker cannot: a composite or
-/// ordered index (`customer_id, created_at desc`). Passed through as written
-/// after its column names are checked against the table, because index
-/// ordering is a real schema decision with no shorthand worth inventing.
-pub(crate) fn create_table(
-    type_name: &str,
-    columns: &[Column],
-    extra_indexes: &[String],
-) -> String {
-    let table = table_name(type_name);
-    let width = columns
-        .iter()
-        .map(|c| c.name.len())
-        .max()
-        .unwrap_or(0)
-        .max(4);
-    let type_width = columns
-        .iter()
-        .map(|c| c.sql_type.len())
-        .max()
-        .unwrap_or(0)
-        .max(4);
-
-    let generated = generated_key(columns).map(|column| column.name.as_str());
-    let mut body = String::new();
-    for column in columns {
-        let null = if column.not_null { " not null" } else { "" };
-        // `always`, not `by default`: the insert this schema is generated
-        // beside omits the column entirely, so an explicit value reaching it
-        // is a caller working around the policy rather than exercising it.
-        let identity = if generated == Some(column.name.as_str()) {
-            " generated always as identity"
-        } else {
-            ""
-        };
-        let check = match column.constraints.check {
-            Some(check) => format!(" check ({})", check.predicate(&column.name)),
-            None => String::new(),
-        };
-        let unique = if column.constraints.unique {
-            " unique"
-        } else {
-            ""
-        };
-        // Trimmed before the comma: a nullable column would otherwise carry
-        // the padding that only exists to line `not null` up.
-        let declaration = format!(
-            "{:type_width$}{identity}{null}{unique}{check}",
-            column.sql_type
-        );
-        body.push_str(&format!(
-            "  {:width$}  {},\n",
-            column.name,
-            declaration.trim_end()
-        ));
-    }
-
-    let marked: Vec<&Column> = columns
-        .iter()
-        .filter(|c| c.constraints.primary_key)
-        .collect();
-    let key_columns: Vec<&str> = if marked.is_empty() {
-        columns
-            .iter()
-            .filter(|c| c.name == "id")
-            .map(|c| c.name.as_str())
-            .collect()
-    } else {
-        marked.iter().map(|c| c.name.as_str()).collect()
-    };
-    // The closed set the reader already declared, said in the schema. Named
-    // and table-level so `g enum` adding a constant can replace it.
-    let mut constraint = columns
-        .iter()
-        .filter_map(|column| closed_set_constraint(&table, column))
-        .map(|(name, predicate)| format!("\n  constraint {name}\n    {predicate},\n"))
-        .collect::<String>();
-    if !key_columns.is_empty() {
-        constraint.push_str(&format!(
-            "\n  constraint {table}_pk\n    primary key ({})\n",
-            key_columns.join(", ")
-        ));
-    }
-    // The last one carries no comma, whichever it is.
-    let constraint = match constraint.strip_suffix(",\n") {
-        Some(trimmed) => format!("{trimmed}\n"),
-        None => constraint,
-    };
-    // Trailing comma removed only when no constraint follows it.
-    let body = if constraint.is_empty() {
-        body.trim_end().trim_end_matches(',').to_string() + "\n"
-    } else {
-        body
-    };
-
-    let unmapped: Vec<&str> = columns
-        .iter()
-        .filter(|c| !c.mapped())
-        .map(|c| c.name.as_str())
-        .collect();
-    let note = if unmapped.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "-- jails could not derive a column type for: {}.\n\
-             -- Those are guesses; correct them before this runs anywhere real.\n",
-            unmapped.join(", ")
-        )
-    };
-
-    // Every statement is terminated. An unterminated `create table` followed
-    // by a `create index` is one unparseable statement, and Flyway reports it
-    // as a syntax error somewhere in the middle of the file.
-    let mut out = format!(
-        "-- Forward-only migration, generated from the field spec.\n\
-         {note}create table {table} (\n{body}{constraint});\n"
-    );
-
-    for column in columns.iter().filter(|c| c.constraints.indexed) {
-        out.push_str(&format!(
-            "\ncreate index {table}_{}_idx\n  on {table} ({});\n",
-            column.name, column.name
-        ));
-    }
-    for (n, spec) in extra_indexes.iter().enumerate() {
-        // Named by position rather than by content: an index over
-        // `created_at desc` cannot go in an identifier, and a name derived by
-        // stripping the ordering would collide with the plain one.
-        out.push_str(&format!(
-            "\ncreate index {table}_idx{}\n  on {table} ({});\n",
-            n + 1,
-            spec.trim()
-        ));
-    }
-    out
-}
-
-/// A forward-only migration for one newly introduced component.
-///
-/// Required columns carry a deterministic backfill default so this migration
-/// is valid on a populated table, then drop that default: application code,
-/// not the database, remains responsible for every future value.
-pub fn add_column(type_name: &str, column: &Column) -> Result<String> {
-    if !column.mapped() {
-        return Err(format!(
-            "field `{}` has project type `{}` and cannot be mapped to one column.\n       \
-             fix: generate an association for a project record, or use a built-in/enum field type.",
-            column.name, column.java_type
-        )
-        .into());
-    }
-    if column.constraints.primary_key {
-        return Err(format!(
-            "field `{}` cannot be added as a primary key to an existing table.\n       \
-             fix: add a nullable/unique field, backfill it deliberately, then write a migration for the key change.",
-            column.name
-        ).into());
-    }
-
-    let table = table_name(type_name);
-    let check = column
-        .constraints
-        .check
-        .map(|check| format!(" check ({})", check.predicate(&column.name)))
-        .unwrap_or_default();
-    let unique = if column.constraints.unique {
-        " unique"
-    } else {
-        ""
-    };
-    let default = if column.not_null {
-        Some(match column.sql_type.as_str() {
-            "uuid" => "gen_random_uuid()",
-            "integer" | "bigint" | "numeric" | "double precision"
-                if column.constraints.check == Some(crate::generate::NumericCheck::Positive) =>
-            {
-                "1"
-            }
-            "integer" | "bigint" | "numeric" | "double precision" => "0",
-            "boolean" => "false",
-            "date" => "current_date",
-            "timestamp" | "timestamptz" => "current_timestamp",
-            "bytea" => r"'\x'::bytea",
-            "text" if column.constraints.unique => {
-                return Err(format!(
-                    "required unique text field `{}` has no safe automatic backfill.\n       \
-                     fix: add it as nullable first, backfill distinct values, then add not-null in a deliberate migration.",
-                    column.name
-                ).into());
-            }
-            "text" => "''",
-            other => {
-                return Err(format!(
-                    "field `{}` maps to `{other}`, for which jails has no safe backfill default.\n       \
-                     fix: make the field nullable, or write the data migration explicitly.",
-                    column.name
-                ).into());
-            }
-        })
-    } else {
-        None
-    };
-
-    let mut out = format!(
-        "-- Forward-only migration generated for a new record component.\n\
-         alter table {table}\n\
-           add column {} {}",
-        column.name, column.sql_type
-    );
-    if let Some(default) = default {
-        out.push_str(&format!(" default {default} not null"));
-    }
-    out.push_str(unique);
-    out.push_str(&check);
-    out.push_str(";\n");
-    if default.is_some() {
-        out.push_str(&format!(
-            "\n-- The default only backfilled rows that pre-date this field.\n\
-             alter table {table}\n\
-               alter column {} drop default;\n",
-            column.name
-        ));
-    }
-    // A column added later gets the same closed set a column declared at
-    // create time does. Without this the schema's guarantee depends on when
-    // the field was declared, which is not a fact about the domain.
-    // plan.md P5.1.
-    if let Some((name, predicate)) = closed_set_constraint(&table, column) {
-        out.push_str(&format!(
-            "\nalter table {table}\n  add constraint {name}\n  {predicate};\n"
-        ));
-    }
-    if column.constraints.indexed {
-        out.push_str(&format!(
-            "\ncreate index {table}_{}_idx\n  on {table} ({});\n",
-            column.name, column.name
-        ));
-    }
-    Ok(out)
-}
-
-/// Add a required column through the safe populated-table sequence.
-///
-/// `backfill` is either a typed `update` produced by the planner or exact SQL
-/// from a declared reader-owned input. The column is nullable until that data
-/// step has completed, and only then becomes required.
-pub fn add_required_column_with_backfill(
-    type_name: &str,
-    column: &Column,
-    backfill: &str,
-) -> Result<String> {
-    let mut nullable = column.clone();
-    nullable.not_null = false;
-    let mut out = add_column(type_name, &nullable)?;
-    if !out.ends_with('\n') {
-        out.push('\n');
-    }
-    out.push_str("\n-- Data plan supplied for rows that pre-date this field.\n");
-    out.push_str(backfill.trim_end());
-    out.push_str("\n\n");
-    out.push_str(&set_column_nullable(type_name, &column.name, false));
-    Ok(out)
-}
-
-/// Rename one physical column in a forward-only migration.
-pub fn rename_column(type_name: &str, from: &str, to: &str) -> String {
-    format!(
-        "-- Forward-only column rename generated by jails.\n\
-         alter table {}\n\
-           rename column {from} to {to};\n",
-        table_name(type_name)
-    )
-}
-
-/// Change one physical column to a type already proven safe by the planner.
-pub fn change_column_type(type_name: &str, column: &str, sql_type: &str) -> String {
-    format!(
-        "-- Forward-only safe type widening generated by jails.\n\
-         alter table {}\n\
-           alter column {column} type {sql_type};\n",
-        table_name(type_name)
-    )
-}
-
-/// Change whether one physical column accepts null values.
-pub fn set_column_nullable(type_name: &str, column: &str, nullable: bool) -> String {
-    let action = if nullable {
-        "drop not null"
-    } else {
-        "set not null"
-    };
-    format!(
-        "-- Forward-only nullability change generated by jails.\n\
-         alter table {}\n\
-           alter column {column} {action};\n",
-        table_name(type_name)
-    )
-}
-
-/// Drop exactly one confirmed physical column.
-pub fn drop_column(type_name: &str, column: &str) -> String {
-    format!(
-        "-- Forward-only column removal generated by jails.\n\
-         alter table {}\n\
-           drop column {column};\n",
-        table_name(type_name)
-    )
-}
-
-/// Check an `--index` spec against the table before it is written into a
-/// migration.
-///
-/// A typo here fails at `flyway migrate` with "column does not exist", which
-/// is a slow way to find out and happens on whichever machine runs it first.
-pub(crate) fn validate_index(spec: &str, columns: &[Column]) -> Result<()> {
-    let known: Vec<&str> = columns.iter().map(|c| c.name.as_str()).collect();
-    for part in spec.split(',') {
-        // `created_at desc` -- the column is the first word, the rest is
-        // ordering that Postgres parses and jails does not.
-        let column = part.split_whitespace().next().unwrap_or("");
-        if column.is_empty() {
-            return Err(format!("--index '{spec}': empty column name").into());
-        }
-        if !known.contains(&column) {
-            return Err(format!(
-                "--index '{spec}': no column '{column}' in this table. Columns: {}",
-                known.join(", ")
-            )
-            .into());
-        }
-    }
-    Ok(())
-}
-
 /// Two rows of sample data for `src/test/resources/fixtures`, keyed by the
 /// same column names as the table and the adapter.
 ///
