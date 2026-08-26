@@ -11,10 +11,11 @@ import java.util.UUID;
  * any instance that exists is a valid one and callers downstream do not
  * have to re-check.
  */
-public record MessageReceivedEvent(UUID id, Instant occurredAt) {
+public record MessageReceivedEvent(UUID id, UUID messageId, Instant occurredAt) {
 
     public MessageReceivedEvent {
         Objects.requireNonNull(id, "id");
+        Objects.requireNonNull(messageId, "messageId");
         Objects.requireNonNull(occurredAt, "occurredAt");
     }
 }

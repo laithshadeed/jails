@@ -519,12 +519,17 @@ pub const SCENARIOS: &[Scenario] = &[
                 "body:string!",
                 "createdAt:instant",
             ],
+            // `--on Message` is what makes the topic ordered per message
+            // rather than per event: the partition key becomes `messageId`.
             &[
                 "g",
                 "event",
                 "MessageReceived",
                 "id:uuid",
+                "messageId:uuid",
                 "occurredAt:instant",
+                "--on",
+                "Message",
             ],
             &[
                 "g",

@@ -13,11 +13,7 @@ import org.springframework.stereotype.Component;
  * a local broker, a shared staging one and production, and those rarely agree
  * on names.
  *
- * <p>The key is the event id, which is what gives ordering per entity --
- * Kafka only guarantees order within a partition, and a null key round-robins
- * across all of them. Getting this wrong produces a system that works until
- * it has traffic.
- */
+{{ordering}} */
 @Component
 public class {{name}}Publisher {
 
@@ -33,6 +29,6 @@ public class {{name}}Publisher {
 
     /** The returned acknowledgement lets durable callers mark success only after Kafka accepts it. */
     public CompletableFuture<SendResult<String, {{name}}Event>> publish({{name}}Event event) {
-        return kafka.send(topic, event.id(), event);
+        return kafka.send(topic, {{key}}, event);
     }
 }

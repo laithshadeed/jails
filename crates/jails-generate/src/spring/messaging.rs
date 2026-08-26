@@ -195,6 +195,7 @@ pub(crate) fn event_files(
     slice: &Slice,
     name: &str,
     fields: &[crate::generate::Field],
+    entity: Option<&str>,
 ) -> Result<Vec<Artifact>> {
     let root: &Path = slice.project().root();
     let pkg: &str = &slice.placed(Layer::Messaging);
@@ -214,10 +215,7 @@ pub(crate) fn event_files(
             "an event `id` cannot be optional: a null key loses per-entity ordering".to_string(),
         ));
     }
-    let key = id
-        .filter(|field| field.java_type != "String")
-        .map(|_| "String.valueOf(event.id())")
-        .unwrap_or("event.id()");
+    let ordering = partition_key(name, fields, entity)?;
     Ok(vec![
         Artifact {
             kind: "event",
@@ -227,7 +225,7 @@ pub(crate) fn event_files(
         Artifact {
             kind: "publisher",
             path: main.join(format!("{name}Publisher.java")),
-            contents: publisher_java(pkg, name, &topic, key),
+            contents: publisher_java(pkg, name, &topic, &ordering),
         },
         Artifact {
             kind: "listener",
@@ -271,15 +269,105 @@ fn event_java(pkg: &str, domain: &str, name: &str, fields: &[crate::generate::Fi
     )
 }
 
-fn publisher_java(pkg: &str, name: &str, topic: &str, key: &str) -> String {
-    let source = crate::template::render(
+fn publisher_java(pkg: &str, name: &str, topic: &str, ordering: &PartitionKey) -> String {
+    crate::template::render(
         crate::template_here!("spring/publisher_java.java"),
-        &[("pkg", pkg), ("name", name), ("topic", topic)],
-    );
-    source.replace(
-        "kafka.send(topic, event.id(), event)",
-        &format!("kafka.send(topic, {key}, event)"),
+        &[
+            ("pkg", pkg),
+            ("name", name),
+            ("topic", topic),
+            ("key", &ordering.expression),
+            ("ordering", &ordering.javadoc),
+        ],
     )
+}
+
+/// Which component of the payload decides the partition, and the paragraph of
+/// Javadoc that says so truthfully.
+///
+/// Kafka orders records *within a partition only*, so the key is the whole
+/// ordering guarantee. Keying on the event's own `id` -- which is what this
+/// generator did, under a comment claiming it "gives ordering per entity" --
+/// spreads every record about one entity across every partition, which is the
+/// exact behaviour the comment said it prevented. A wrong comment on a
+/// distributed-systems default is worse than no comment: it is the reason
+/// nobody looks.
+///
+/// `--on <Entity>` is how the caller says which entity's order the topic
+/// preserves, and the component is `<entity>Id` -- the same convention the
+/// outbox, `association` and `durable-job` already read. Without it the key
+/// stays the event id and the Javadoc says plainly that there is no
+/// per-entity order, naming the flag that would give one. jails does not pick
+/// a component by looking for one that ends in `Id`: an event carrying both
+/// `userId` and `accountId` has two defensible answers and only the caller
+/// knows which.
+struct PartitionKey {
+    expression: String,
+    javadoc: String,
+}
+
+fn partition_key(
+    name: &str,
+    fields: &[crate::generate::Field],
+    entity: Option<&str>,
+) -> Result<PartitionKey> {
+    let Some(entity) = entity else {
+        return Ok(PartitionKey {
+            expression: key_expression("id", fields),
+            javadoc: format!(
+                " * <p>The key is the event id, which is unique per record -- so records spread\n\
+                 \x20* across every partition and two events about the same entity have no order\n\
+                 \x20* between them. Kafka only guarantees order within a partition.\n\
+                 \x20*\n\
+                 \x20* <p>If this topic needs per-entity order, carry that entity's id as a\n\
+                 \x20* component and regenerate with `jails g event {name} --on <Entity>`.\n"
+            ),
+        });
+    };
+    let component = format!("{}Id", crate::generate::lower_first(entity));
+    let Some(field) = fields.iter().find(|field| field.name == component) else {
+        return Err(format!(
+            "event {name} is ordered per {entity} but carries no `{component}` component.\n\
+             \x20      fix: add `{component}:<type>` to \
+             `jails g event {name} ... --on {entity}`."
+        )
+        .into());
+    };
+    if field.optionality == crate::generate::Optionality::Nullable {
+        return Err(jails_support::Failure::Told(format!(
+            "event {name}'s `{component}` cannot be optional: a null key round-robins across \
+             every partition, which is the ordering `--on {entity}` asks for.\n\
+             \x20      fix: declare it `{component}:<type>`, with no `?` suffix."
+        )));
+    }
+    Ok(PartitionKey {
+        expression: key_expression(&component, fields),
+        javadoc: format!(
+            " * <p>The key is {component}, so every record about one {entity} lands on one\n\
+             \x20* partition and Kafka's per-partition order is that {entity}'s order. The\n\
+             \x20* component is required for that reason: a null key round-robins across all\n\
+             \x20* of them. Getting this wrong produces a system that works until it has\n\
+             \x20* traffic.\n"
+        ),
+    })
+}
+
+/// A Kafka key is a `String`; anything else is rendered as one at the call
+/// site rather than by changing the payload's own type.
+///
+/// An absent component means the default payload, whose own `id` is already a
+/// `String` -- `event_files` has already refused any other list that names no
+/// `id`.
+fn key_expression(component: &str, fields: &[crate::generate::Field]) -> String {
+    let rendered = fields
+        .iter()
+        .find(|field| field.name == component)
+        .is_some_and(|field| field.java_type != "String");
+    if rendered {
+        format!("String.valueOf(event.{component}())")
+    } else {
+        format!("event.{component}()")
+    }
 }
 
 fn listener_java(pkg: &str, name: &str, topic: &str) -> String {

@@ -490,10 +490,21 @@ commit as the change that causes it.
 
 ## P6 — the prose, and the real bugs behind it (cause E)
 
-- [ ] **P6.1** The Kafka partition key is unique per record and the Javadoc
+- [x] **P6.1** The Kafka partition key is unique per record and the Javadoc
       claims it gives "ordering per entity" — the exact behaviour it prevents
       (modern §8.1). Key on the entity id. `backend.md` §4: *"The partition key
       is the design decision."*
+      *Done:* `g event <Name> --on <Entity>` keys the publisher on the
+      payload's `<entity>Id` component — the same convention `usecase
+      --yields`, `association` and `durable-job` already read — and refuses
+      when that component is missing or optional. No `--on` means the key
+      stays the event id and the Javadoc now *says* there is no per-entity
+      order, naming the flag that would give one, rather than claiming one the
+      code never had. jails does not pick a component by looking for a name
+      ending in `Id`: an event carrying both `userId` and `accountId` has two
+      defensible answers and only the caller knows which. The
+      `outbox-http-sink` scenario carries `--on Message` so the ordered branch
+      is in the goldens.
 - [ ] **P6.2** The event id **is** the message id, and the outbox stages
       `on conflict (id) do nothing`, so a second event about the same entity is
       silently discarded (modern §8.2).

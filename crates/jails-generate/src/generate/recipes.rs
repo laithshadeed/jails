@@ -361,8 +361,24 @@ pub(crate) fn artifacts_for(
         }
         ArtifactKind::Event => {
             require_spring_project(project, "event")?;
+            if strategy_yields.is_some() {
+                return Err(jails_support::Failure::Told(
+                    "`--yields` is not valid for an event; an event is the payload a use case \
+                     yields, not a producer of one.\n       fix: drop `--yields` here and name \
+                     this event on the use case instead."
+                        .to_string(),
+                ));
+            }
             let parsed = parse_fields(fields)?;
-            crate::spring::event_files(&crate::model::Slice::new(project, package), name, &parsed)?
+            // `--on` names the entity whose order this topic preserves, which
+            // is the Kafka partition key and nothing else -- see
+            // `messaging::partition_key`.
+            crate::spring::event_files(
+                &crate::model::Slice::new(project, package),
+                name,
+                &parsed,
+                strategy_on.map(capitalize).as_deref(),
+            )?
         }
         ArtifactKind::Dto => {
             let domain = place(layout::DOMAIN);

@@ -28,6 +28,7 @@ public class OutboxReceiveMessageUseCase implements ReceiveMessageUseCase {
         var result = delegate.execute(command);
         outbox.stage(new MessageReceivedEvent(
                 result.id(),
+                result.id(),
                 Instant.now()));
         return result;
     }

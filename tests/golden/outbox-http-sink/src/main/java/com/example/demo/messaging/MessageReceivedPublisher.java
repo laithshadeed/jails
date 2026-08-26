@@ -13,10 +13,11 @@ import org.springframework.stereotype.Component;
  * a local broker, a shared staging one and production, and those rarely agree
  * on names.
  *
- * <p>The key is the event id, which is what gives ordering per entity --
- * Kafka only guarantees order within a partition, and a null key round-robins
- * across all of them. Getting this wrong produces a system that works until
- * it has traffic.
+ * <p>The key is messageId, so every record about one Message lands on one
+ * partition and Kafka's per-partition order is that Message's order. The
+ * component is required for that reason: a null key round-robins across all
+ * of them. Getting this wrong produces a system that works until it has
+ * traffic.
  */
 @Component
 public class MessageReceivedPublisher {
@@ -33,6 +34,6 @@ public class MessageReceivedPublisher {
 
     /** The returned acknowledgement lets durable callers mark success only after Kafka accepts it. */
     public CompletableFuture<SendResult<String, MessageReceivedEvent>> publish(MessageReceivedEvent event) {
-        return kafka.send(topic, String.valueOf(event.id()), event);
+        return kafka.send(topic, String.valueOf(event.messageId()), event);
     }
 }

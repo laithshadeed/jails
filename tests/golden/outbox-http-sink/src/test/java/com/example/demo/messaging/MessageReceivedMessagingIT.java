@@ -46,6 +46,7 @@ class MessageReceivedMessagingIT {
     @Test
     void aPublishedEventIsConsumed() throws InterruptedException {
         MessageReceivedEvent event = new MessageReceivedEvent(UUID.fromString("00000000-0000-0000-0000-000000000001"),
+                UUID.fromString("00000000-0000-0000-0000-000000000001"),
                 Instant.parse("2024-01-01T00:00:00Z"));
 
         publisher.publish(event);

@@ -13,10 +13,12 @@ import org.springframework.stereotype.Component;
  * a local broker, a shared staging one and production, and those rarely agree
  * on names.
  *
- * <p>The key is the event id, which is what gives ordering per entity --
- * Kafka only guarantees order within a partition, and a null key round-robins
- * across all of them. Getting this wrong produces a system that works until
- * it has traffic.
+ * <p>The key is the event id, which is unique per record -- so records spread
+ * across every partition and two events about the same entity have no order
+ * between them. Kafka only guarantees order within a partition.
+ *
+ * <p>If this topic needs per-entity order, carry that entity's id as a
+ * component and regenerate with `jails g event Transaction --on <Entity>`.
  */
 @Component
 public class TransactionPublisher {

@@ -240,19 +240,12 @@ three separate defects in the *read* and *command* endpoints:
 
 ## 8. Correctness bugs, ranked
 
-1. **The Kafka partition key is unique per record.**
-   `MessageCreatedPublisher` keys on `event.id()`, and its Javadoc claims *"The
-   key is the event id, which is what gives ordering per entity."* An id that is
-   unique per event round-robins across every partition — the exact behaviour
-   the comment says it prevents. Ordering must key on `user_id`. `backend.md` §4:
-   *"The partition key is the design decision."*
-
-2. **The event id *is* the message id.**
+1. **The event id *is* the message id.**
    `OutboxSendMessageUseCase` passes `result.id()` as both `id` and `messageId`.
    The outbox stages `on conflict (id) do nothing`, so a second event about the
    same message is **silently discarded**.
 
-3. **`InMemoryUserRepository` cannot work.**
+2. **`InMemoryUserRepository` cannot work.**
    ```java
    public Optional<User> findById(UUID id) {
        // TODO: this type has no `id` component …
@@ -267,13 +260,13 @@ three separate defects in the *read* and *command* endpoints:
    `User`'s first component is `UUID id`. The file was generated before `id`
    existed and never regenerated, and nothing detected the contradiction.
 
-4. **The outbox relay ceiling is one event per second.**
+3. **The outbox relay ceiling is one event per second.**
    `claim()` is `limit 1`; the worker runs on `fixedDelay=PT1S` and processes
    one claim per tick. There is also no jitter on the backoff (`backend.md` §3:
    *"Exponential backoff with jitter"*), and a multi-sink partial failure
    retries every sink, so a Kafka publish that succeeded is re-sent.
 
-5. **`MessageCreatedListener` is a `TODO`.**
+4. **`MessageCreatedListener` is a `TODO`.**
    It logs an id and drops the event. Shipped.
 
 ---

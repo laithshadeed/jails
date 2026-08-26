@@ -505,15 +505,24 @@ there the unit is a whole service block rather than a setting.)
   and silently unsets everything the tests did not restate. This is how a
   project gets a test-only datasource without the suite writing to whatever
   the application's own URL points at.
-- `jails generate|g event <Name>` — a Kafka slice: the payload record, a
-  publisher keyed by event id (ordering is per partition; a null key
-  round-robins), a listener that deliberately does not catch (swallowing
+- `jails generate|g event <Name> [--on <Entity>]` — a Kafka slice: the payload
+  record, a publisher, a listener that deliberately does not catch (swallowing
   commits an offset for a message never processed), and an `IT` that publishes
   through a real broker via Testcontainers and waits on a latch. Field
   declarations use the same typed model as the other generators (for example,
   `id:uuid crawlRunId:uuid url:uri occurredAt:instant`); a typed event requires
-  a non-optional `id`, and the generated publisher key, samples, and assertions
-  derive from those fields. With no fields, the legacy `String id, Instant
+  a non-optional `id`, and the generated samples and assertions derive from
+  those fields.
+
+  **`--on <Entity>` is what makes the topic ordered.** Kafka guarantees order
+  within a partition and nothing across partitions, so the key is the whole
+  guarantee — and the event's own `id` is unique per record, which spreads
+  every event about one entity across every partition. `--on Message` keys on
+  the payload's `messageId` component instead (required, and refused if it is
+  missing or optional), which is the same `<entity>Id` convention `usecase
+  --yields`, `association` and `durable-job` already read. Without `--on` the
+  key stays the event id and the generated Javadoc says so, rather than
+  claiming an ordering the code does not have. With no fields, the legacy `String id, Instant
   occurredAt` contract remains available. `jails add
   kafka` on Spring now also writes the properties that make this work at all —
   `auto-offset-reset=earliest` (a new consumer group otherwise starts at the

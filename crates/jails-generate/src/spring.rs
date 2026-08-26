@@ -659,7 +659,8 @@ mod event_tests {
         ])
         .unwrap();
         let (_root, project) = scratch_jdbc_project("event-field");
-        let files = event_files(&Slice::new(&project, None), "PageDiscovered", &fields).unwrap();
+        let files =
+            event_files(&Slice::new(&project, None), "PageDiscovered", &fields, None).unwrap();
 
         let event = &files[0].contents;
         assert!(event.contains("record PageDiscoveredEvent(UUID id, URI url, Instant occurredAt)"));
@@ -689,8 +690,55 @@ mod event_tests {
         let fields = crate::generate::parse_fields(&["occurredAt:instant".to_string()]).unwrap();
         let (_root, project) = scratch_jdbc_project("event-no-id");
         let error =
-            event_files(&Slice::new(&project, None), "PageDiscovered", &fields).unwrap_err();
+            event_files(&Slice::new(&project, None), "PageDiscovered", &fields, None).unwrap_err();
         assert!(error.contains("stable `id`"), "{error}");
+    }
+
+    #[test]
+    fn an_event_ordered_per_entity_keys_on_that_entitys_id() {
+        let fields = crate::generate::parse_fields(&[
+            "id:uuid".to_string(),
+            "pageId:uuid".to_string(),
+            "occurredAt:instant".to_string(),
+        ])
+        .unwrap();
+        let (_root, project) = scratch_jdbc_project("event-ordered");
+        let files = event_files(
+            &Slice::new(&project, None),
+            "PageDiscovered",
+            &fields,
+            Some("Page"),
+        )
+        .unwrap();
+
+        let publisher = &files[1].contents;
+        assert!(
+            publisher.contains("kafka.send(topic, String.valueOf(event.pageId()), event)"),
+            "{publisher}"
+        );
+        assert!(publisher.contains("The key is pageId"), "{publisher}");
+        assert!(
+            !publisher.contains("The key is the event id"),
+            "{publisher}"
+        );
+    }
+
+    #[test]
+    fn an_event_ordered_per_entity_refuses_without_that_entitys_id() {
+        let fields = crate::generate::parse_fields(&[
+            "id:uuid".to_string(),
+            "occurredAt:instant".to_string(),
+        ])
+        .unwrap();
+        let (_root, project) = scratch_jdbc_project("event-ordered-missing");
+        let error = event_files(
+            &Slice::new(&project, None),
+            "PageDiscovered",
+            &fields,
+            Some("Page"),
+        )
+        .unwrap_err();
+        assert!(error.contains("no `pageId` component"), "{error}");
     }
 }
 // ---------------------------------------------------------------------------
