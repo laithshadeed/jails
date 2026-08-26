@@ -111,7 +111,7 @@ pub fn literal_mentions(source: &str, old: &str) -> usize {
             i = end;
             continue;
         }
-        i += 1;
+        i += source[i..].chars().next().map_or(1, char::len_utf8);
     }
     count
 }
@@ -306,6 +306,15 @@ mod tests {
         let (out, count) = replace_identifier(src, "Reward", "Bonus");
         assert_eq!(count, 2);
         assert!(out.contains("/** A Bonus. */"), "{out}");
+    }
+
+    #[test]
+    fn unicode_outside_literals_keeps_every_scan_on_character_boundaries() {
+        let src = "// café — Reward\nclass Reward {}";
+        assert_eq!(literal_mentions(src, "Reward"), 0);
+        let (out, count) = replace_identifier(src, "Reward", "Bonus");
+        assert_eq!(count, 2, "{out}");
+        assert!(out.contains("// café — Bonus"), "{out}");
     }
 
     #[test]
