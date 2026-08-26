@@ -904,6 +904,88 @@ fn add_cors_on_the_default_boot_version_compiles_and_runs_its_own_test() {
     );
 }
 
+/// `add db` had no Boot floor and produced an unresolvable build.
+///
+/// missing.md M2. `add api` refuses Boot 2 by name and precisely; `add db` did
+/// not check at all, and on the Boot 2.7 Gradle server four of the six
+/// checkouts actually ship it succeeded and then failed to resolve
+/// `org.springframework.boot:spring-boot-flyway:` -- note the trailing colon
+/// with nothing after it, because the coordinate was spliced with no version
+/// on a parent that does not manage it. Every goal fails from there, so the
+/// project is worse off than before the command ran.
+///
+/// Three boundaries, each checked in `deps/spring-boot`:
+/// `spring-boot-testcontainers` and `spring-boot-docker-compose` appear at
+/// 3.1, `flyway-database-postgresql` becomes managed at 3.3, and
+/// `spring-boot-flyway` exists only at 4.0. Below 4 the auto-configuration is
+/// still in `spring-boot-autoconfigure`, so the module must not be named at
+/// all; below 3.1 there is no honest answer and `db` refuses.
+#[test]
+fn add_db_matches_the_modules_this_boot_version_has_or_refuses_by_name() {
+    let parent = temp_dir("add-db-boot-floor");
+    let build = |name: &str, boot: &str| {
+        let created = jails_cmd(&parent, None)
+            .args([
+                "new",
+                name,
+                "--gradle",
+                "--offline",
+                "--boot",
+                boot,
+                "--java",
+                "21",
+                "--package",
+                "com.acme.svc",
+                "--no-devtools",
+                "--no-git",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            created.status.success(),
+            "{}",
+            String::from_utf8_lossy(&created.stderr)
+        );
+        parent.join(name)
+    };
+
+    let old = build("two", "2.7.18");
+    let refused = jails_cmd(&old, None)
+        .args(["add", "db", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let said = String::from_utf8_lossy(&refused.stderr);
+    assert!(said.contains("spring-boot-testcontainers"), "{said}");
+    assert!(said.contains("Spring Boot 2.7"), "{said}");
+    assert!(said.contains("jails add sqlite"), "{said}");
+    assert!(
+        !old.join("build.gradle").exists()
+            || !fs::read_to_string(old.join("build.gradle"))
+                .unwrap()
+                .contains("flyway"),
+        "the refusal still spliced a dependency"
+    );
+
+    // A supported Boot 3: Flyway's auto-configuration is where it always was,
+    // so the split-out module must not be named -- and both Flyway artifacts
+    // are pinned to one version, which is correct whether or not this
+    // project's parent manages them and keeps the pair moving together.
+    let supported = build("three", "3.3.5");
+    assert!(
+        jails_cmd(&supported, None)
+            .args(["add", "db", "--no-start"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let gradle = fs::read_to_string(supported.join("build.gradle")).unwrap();
+    assert!(!gradle.contains("spring-boot-flyway"), "{gradle}");
+    assert!(gradle.contains("flyway-core:"), "{gradle}");
+    assert!(gradle.contains("flyway-database-postgresql:"), "{gradle}");
+    assert!(gradle.contains("spring-boot-testcontainers"), "{gradle}");
+}
+
 /// The Spring flavor branch: `add json` must *omit* the version so Spring
 /// Boot's parent supplies its curated Jackson, and the result must still
 /// compile. The shared Spring fixture stays pinned at an older release (it

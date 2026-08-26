@@ -812,6 +812,24 @@ fn indent_block(body: &str, indent: &str) -> String {
 ///
 /// `Project` caches the pom once; re-reading it per renderer is exactly the
 /// information leakage abstract.md §4.3 names.
+/// The Boot `(major, minor)` this pom's parent declares, when it declares one.
+///
+/// The major alone is enough to choose an import; it is not enough to choose a
+/// *module set*. Boot split `spring-boot-testcontainers` out at 3.1, began
+/// managing `flyway-database-postgresql` at 3.3, and only moved Flyway's
+/// auto-configuration into `spring-boot-flyway` at 4.0 -- three boundaries
+/// inside two majors, and `add db` needs all three. `None` means the parent is
+/// absent or unreadable, which is a different answer from "old".
+pub fn spring_boot_version_of(pom: &str) -> Option<(u32, u32)> {
+    let after = &pom[pom.find("spring-boot-starter-parent")?..];
+    let start = after.find("<version>")? + "<version>".len();
+    let end = after[start..].find("</version>")?;
+    let mut parts = after[start..start + end].split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next().and_then(|part| part.parse().ok()).unwrap_or(0);
+    Some((major, minor))
+}
+
 pub fn spring_boot_major_of(pom: &str) -> u32 {
     let Some(idx) = pom.find("spring-boot-starter-parent") else {
         return 3;

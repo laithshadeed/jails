@@ -99,18 +99,72 @@ pub(super) const SPRING_TESTCONTAINERS: Dependency = Dependency {
 pub(super) const POSTGRES_IMAGE: &str = "postgres:17-alpine";
 pub(super) const TESTCONTAINERS_CONFIG: &str = "TestcontainersConfig";
 
-pub(super) fn db_plan(slice: &Slice) -> Result<Change> {
-    let root: &Path = slice.root();
-    let flavor: Flavor = slice.flavor();
-    let pkg: &str = &slice.root_package();
-    let mut deps = match flavor {
-        Flavor::SpringBoot => vec![
+/// The Boot modules this project's version actually has.
+///
+/// `add api` refuses Boot 2 by name and precisely; `add db` did not check at
+/// all, and produced an **unresolvable build** -- `Could not find
+/// org.springframework.boot:spring-boot-flyway:` with nothing after the colon,
+/// because the coordinate was spliced with no version on a parent that does
+/// not manage it. Every goal then fails, `validate` included, so the project
+/// is worse off than before the command ran. That is the outcome
+/// `CLAUDE.md`'s bar exists to prevent: a tool that half-understands a build
+/// file is the worst thing available.
+///
+/// Three boundaries, each verified in `deps/spring-boot` rather than recalled:
+/// `spring-boot-testcontainers` and `spring-boot-docker-compose` appear at
+/// **3.1**; Boot manages `flyway-database-postgresql` from **3.3**; and
+/// `spring-boot-flyway` -- Flyway's auto-configuration, split out when Boot 4
+/// broke `spring-boot-autoconfigure` into ~130 modules -- exists only at
+/// **4.0**. Below 4 the auto-configuration is in `spring-boot-autoconfigure`
+/// where it always was, so naming the module would be asking for a jar that
+/// does not exist; and pinning both Flyway artifacts to one version is what
+/// keeps 3.1 and 3.3 from needing separate answers, since a pin is correct
+/// whether or not the parent manages it and the two artifacts must move
+/// together.
+fn spring_dependencies(slice: &Slice) -> Result<Vec<Dependency>> {
+    const FLOOR: (u32, u32) = (3, 1);
+    let version = slice.project().boot_version();
+    match version {
+        Some(version) if version >= (4, 0) => Ok(vec![
             SPRING_JDBC,
             POSTGRES_MANAGED,
             SPRING_BOOT_FLYWAY,
             FLYWAY_CORE_MANAGED,
             FLYWAY_POSTGRES_MANAGED,
-        ],
+        ]),
+        Some(version) if version >= FLOOR => Ok(vec![
+            SPRING_JDBC,
+            POSTGRES_MANAGED,
+            FLYWAY_CORE_PINNED,
+            FLYWAY_POSTGRES_PINNED,
+        ]),
+        Some((major, minor)) => Err(format!(
+            "`db` wires Testcontainers through `spring-boot-testcontainers`, and this project \
+             is Spring Boot {major}.{minor}.\n       \
+             That module and `spring-boot-docker-compose` arrived in Spring Boot 3.1; on this \
+             project the spliced coordinates would resolve to nothing and the build would \
+             stop resolving altogether -- a worse state than before the command ran.\n       \
+             fix: `jails add sqlite`, `jails add h2`, `jails g migration` and `jails g repo` \
+             work on this project. Raising the Boot version is the other way."
+        )
+        .into()),
+        None => Err(
+            "`db` needs this project's Spring Boot version and cannot read one.\n       \
+             fix: declare `spring-boot-starter-parent` with a version, or add the \
+             dependencies by hand -- jails refuses rather than guessing a module set, \
+             because a coordinate spliced with no version stops the build resolving at all."
+                .to_string()
+                .into(),
+        ),
+    }
+}
+
+pub(super) fn db_plan(slice: &Slice) -> Result<Change> {
+    let root: &Path = slice.root();
+    let flavor: Flavor = slice.flavor();
+    let pkg: &str = &slice.root_package();
+    let mut deps = match flavor {
+        Flavor::SpringBoot => spring_dependencies(slice)?,
         Flavor::PlainMaven => vec![POSTGRES_PINNED, FLYWAY_CORE_PINNED, FLYWAY_POSTGRES_PINNED],
     };
     deps.extend([TESTCONTAINERS_POSTGRES, TESTCONTAINERS_JUNIT]);

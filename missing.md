@@ -25,7 +25,12 @@ no hand-written Java, no hand-edited pom. Sources are at
 
 A seventh check ran `jails` inside the *unmodified* `mc-01-06-2026/spring`
 tree — Gradle 8.5, Spring Boot 2.7.18, Java 21 — to test the foreign-project
-path. That is M2.
+path. That was M2, **now closed**: `add db` reads the project's Boot version
+and picks the module set that version has. Boot 4 gets `spring-boot-flyway`;
+Boot 3.1 upwards gets Flyway's auto-configuration where it always was, with
+both Flyway artifacts pinned to one version; below 3.1 it refuses by name,
+saying which module is missing and which capabilities do work. Each of the
+three boundaries was checked in `deps/spring-boot`, not recalled.
 
 **M1 is closed.** The port stays in `domain` and its beans moved to `service`,
 so the ArchUnit rule `g scaffold` writes and the `@Component` `g strategy`
@@ -43,102 +48,6 @@ The domain modelling held up well. `g scaffold`, `g enum`, `g association`,
 and `set` covered most of every app's schema and CRUD surface, and five of six
 reached `BUILD SUCCESS` with no file touched by hand. What follows is the
 remainder.
-
----
-
-## M2 — `add db` has no Spring Boot floor, and produces an unresolvable build on Boot 2
-
-`add api` refuses Boot 2 by name, precisely and helpfully:
-
-```
-jails: `api` generates code that uses ProblemDetail, and this project is Spring Boot 2.
-       fix: `jails g controller`, `jails g scaffold`, … work on this project.
-```
-
-`add db` does not check at all. Run in `mc-01-06-2026/spring` (Boot 2.7.18,
-Gradle) it succeeds, and then:
-
-```
-> Could not find org.springframework.boot:spring-boot-flyway:.
-> Could not find org.flywaydb:flyway-database-postgresql:.
-```
-
-Four of the spliced coordinates are wrong for Boot 2.7:
-
-| coordinate | problem on Boot 2.7 |
-|---|---|
-| `org.springframework.boot:spring-boot-flyway` | module does not exist — it is the Boot 4 split-out of the auto-configuration |
-| `org.flywaydb:flyway-database-postgresql` | not in Boot 2.7's BOM (Flyway 10 / Boot 3.2 onward), and jails supplied no version |
-| `org.springframework.boot:spring-boot-testcontainers` | Boot 3.1+ |
-| `org.springframework.boot:spring-boot-docker-compose` | Boot 3.1+ |
-
-Verified against the upstream checkout rather than from memory, per the rule in
-`CLAUDE.md`: at `deps/spring-boot` tag `v2.7.18`, `git ls-tree -r` finds zero
-paths matching `spring-boot-flyway` and zero matching `spring-boot-testcontainers`,
-and `flyway-database-postgresql` appears nowhere in that tag's dependency
-management. All three modules are Boot 3.1+/4 additions.
-
-`database.rs` already carries the `MANAGED` / `PINNED` pair, chosen on whether
-the project has Boot's dependency management. That is the wrong question:
-Boot 2.7 *does* manage `flyway-core` and *does not* manage
-`flyway-database-postgresql`, and has no `spring-boot-flyway` at all. The
-predicate has to be the Boot **version**, the same one
-`webmvc_test_import_for` and `validation_package` already read.
-
-`what_jails_generates_for_boot_2_compiles_and_what_cannot_refuses_by_name`
-covers `add cors`, `g enum`, `g scaffold`, `g usecase` — `add db` is in
-neither list, so this is untested rather than known-broken.
-
-### Reproduce
-
-```sh
-cp -r minicom/mc-01-06-2026/spring /tmp/m2 && cd /tmp/m2
-jails doctor          # ok project: Spring Boot (Gradle) — jails reads it correctly
-jails add db          # succeeds, no warning
-JAVA_HOME=<a JDK 21> ./gradlew build
-```
-
-```
-> Could not resolve all files for configuration ':compileClasspath'.
-   > Could not find org.springframework.boot:spring-boot-flyway:.
-   > Could not find org.flywaydb:flyway-database-postgresql:.
-```
-
-Note the trailing `:` with nothing after it — the coordinate was spliced with
-no version because jails classified the project as `MANAGED`.
-
-The contrast is one command away, in the same directory:
-
-```sh
-jails add api
-```
-
-```
-jails: `api` generates code that uses ProblemDetail, and this project is Spring Boot 2.
-       ProblemDetail arrived with the Jakarta EE 9 line, which is Spring Boot 3 …
-       fix: `jails g controller`, `jails g scaffold`, `jails g usecase`, `jails add cors`
-            and every non-web kind … work on this project.
-```
-
-That is exactly the refusal `add db` should be giving, and the `fix:` line is
-exactly the shape it should have. `require_jakarta_spring` names a *type*;
-this one would name the *module* — "`add db` wires Flyway through
-`spring-boot-flyway`, which is Spring Boot 4's split-out auto-configuration
-module and does not exist on this project."
-
-Confirming the version predicate is the right one, also one command:
-
-```sh
-cd /tmp/m2 && grep -n "spring-boot-gradle-plugin" build.gradle
-#   classpath("org.springframework.boot:spring-boot-gradle-plugin:2.7.18")
-```
-
-jails already reads that number — `jails doctor` prints "Spring Boot (Gradle)"
-and `mockmvc_autoconfigure_import` / `webmvc_test_import` / `validation_package`
-all branch on the Boot version. `add db` is the one that does not.
-
-This matters because the Boot 2.7 Gradle server is the *only* Spring server
-four of the six checkouts ship. It is the project a reader is actually in.
 
 ---
 
@@ -653,8 +562,8 @@ primitives, and that all six of these projects needed all three.
 
 M1 and M2 were different: defects rather than absences, and both invisible to
 the suite for the same reason — the golden scenarios exercise one kind on one
-flavour, and each bug needs a second thing present. M1 is closed, along with
-the blind spot behind it.
+flavour, and each bug needs a second thing present. Both are closed, along with
+the blind spot behind them.
 
 ---
 

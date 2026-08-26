@@ -712,6 +712,23 @@ impl Project {
         }
     }
 
+    /// This project's Boot `(major, minor)`, when it declares one.
+    ///
+    /// `None` on a project with no readable Boot version, which every caller
+    /// has to treat as "cannot answer" rather than as a number.
+    pub fn boot_version(&self) -> Option<(u32, u32)> {
+        match self.build {
+            crate::build::Build::Gradle => {
+                let text = crate::gradle::boot_version(&self.pom)?;
+                let mut parts = text.split('.');
+                let major = parts.next()?.parse().ok()?;
+                let minor = parts.next().and_then(|part| part.parse().ok()).unwrap_or(0);
+                Some((major, minor))
+            }
+            _ => crate::pom::spring_boot_version_of(&self.pom),
+        }
+    }
+
     /// `@AutoConfigureMockMvc`'s package, moved in the same Boot 4 change.
     pub fn mockmvc_autoconfigure_import(&self) -> &'static str {
         crate::pom::mockmvc_autoconfigure_import_for(self.boot_major())

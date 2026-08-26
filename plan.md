@@ -184,13 +184,19 @@ to go **red on landing**; P1.5 records what they name.
       the workaround does not compile either. Route the strategy renderer
       through the same `import_of` helper the scaffold uses for cross-package
       imports; it already returns an empty string when the packages match.
-- [ ] **P2.4** `add db` has no Spring Boot floor (missing M2). Four spliced
+- [x] **P2.4** `add db` has no Spring Boot floor (missing M2). Four spliced
       coordinates do not exist on Boot 2.7 (`spring-boot-flyway`,
       `flyway-database-postgresql`, `spring-boot-testcontainers`,
       `spring-boot-docker-compose`), and `MANAGED` is chosen on whether Boot
       manages dependencies rather than on the Boot **version** —
-      `crates/jails-generate/src/add/database.rs:109`. Refuse by name, in the
-      shape `require_jakarta_spring` already uses, naming the *module*.
+      `crates/jails-generate/src/add/database.rs`. Refusing everything below
+      Boot 4 would degrade politely where working is possible, which
+      `CLAUDE.md`'s Gradle note argues against, so `add db` picks the module
+      set the project's version *has*: three boundaries, each checked in
+      `deps/spring-boot` — testcontainers and docker-compose at 3.1,
+      `flyway-database-postgresql` managed at 3.3, `spring-boot-flyway` only at
+      4.0. Below 3.1 it refuses by name. Needed a Boot `(major, minor)` reader;
+      the major alone chooses an import and cannot choose a module set.
 - [ ] **P2.5** `g client` writes a remote call with no timeout, no base URL and
       no defined failure mode (modern §13.6). `backend.md` §1 admits no
       exceptions here. Write `spring.http.client.connect-timeout` /
