@@ -756,6 +756,10 @@ mod durable_job_tests {
         )
         .unwrap_err();
 
-        assert!(error.contains("stable `id:uuid`"), "{error}");
+        assert!(
+            error.contains("EnqueueWorkCommand has no required `id:uuid`"),
+            "{error}"
+        );
+        assert!(error.contains("regenerate the use case"), "{error}");
     }
 }

@@ -124,21 +124,25 @@ const EXPLANATIONS: &[Explanation] = &[
         body: "Required scalar fields only, so match and update semantics stay exact: an \
                optional filter would make \"absent\" and \"null\" the same query, and they are \
                not. It needs `version:long` or `version:int` -- the compare-and-set column is \
-               what makes the update safe under concurrency rather than last-write-wins.",
+               what makes the update safe under concurrency rather than last-write-wins.\n\n\
+               Example: `jails g transition RenameLoan id:uuid title:string! version:long --on Loan`.",
     },
     Explanation {
         kind: ArtifactKind::Query,
         summary: "A typed read: query record, port, JDBC adapter, controller, tests.",
         body: "Required scalar equality filters only, for the same reason `transition` refuses \
                optionals: null and list semantics would have to be guessed. Use the scaffold's \
-               own list endpoint for an unfiltered read.",
+               own list endpoint for an unfiltered read.\n\n\
+               Example: `jails g query LoansByMember memberId:uuid --on Loan`.",
     },
     Explanation {
         kind: ArtifactKind::DurableJob,
         summary: "Leased, retried, idempotent background work backed by a PostgreSQL queue.",
         body: "Durable because the queue is a table: a process that dies mid-item leaves the \
                lease to expire rather than losing the work. It needs `add db` -- an in-memory \
-               queue would be a different thing wearing the same name.",
+               queue would be a different thing wearing the same name. The target use case and \
+               job must share the same required `id:uuid` and exact command fields.\n\n\
+               Example: `jails g durable-job Nudge id:uuid subject:string --on CloseTicket --yields Ticket`.",
     },
     Explanation {
         kind: ArtifactKind::Association,
@@ -147,7 +151,8 @@ const EXPLANATIONS: &[Explanation] = &[
                an `author:User` component gave a silent `text` column and lost data. Both \
                records are read, types are checked across the boundary, composite keys are \
                free, and identifier length is checked. No `ON DELETE` behaviour is invented, \
-               because that is a data decision.",
+               because that is a data decision. NAME is the association's own name.\n\n\
+               Example: `jails g association LoanMember memberId=id --on Loan --yields Member`.",
     },
     Explanation {
         kind: ArtifactKind::Event,
@@ -456,6 +461,26 @@ mod tests {
                 name_of(entry.kind)
             );
             seen.push(entry.kind);
+        }
+    }
+
+    #[test]
+    fn composite_generators_include_a_worked_invocation() {
+        for kind in [
+            ArtifactKind::Association,
+            ArtifactKind::Transition,
+            ArtifactKind::Query,
+            ArtifactKind::DurableJob,
+        ] {
+            let entry = EXPLANATIONS
+                .iter()
+                .find(|entry| entry.kind == kind)
+                .unwrap();
+            assert!(
+                entry.body.contains("Example: `jails g"),
+                "{}",
+                name_of(kind)
+            );
         }
     }
 }

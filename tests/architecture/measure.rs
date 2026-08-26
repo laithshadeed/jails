@@ -668,7 +668,9 @@ pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 /// 432 → 430 when planned-subject decoding gained the same recovery advice.
 /// 430 → 426 when the extracted rename-source boundary made each invalid-name
 /// refusal carry the exact valid spelling to retry.
-pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 426;
+/// 426 → 425 when the durable-job identity refusal named the satisfiable
+/// use-case change instead of asking for a payload the command rejects.
+pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 425;
 
 /// A refusal that builds a message and does not say what to do next.
 ///

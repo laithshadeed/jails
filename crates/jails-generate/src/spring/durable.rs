@@ -117,16 +117,23 @@ pub(crate) fn durable_job_files(
             "durable-job {name} needs PostgreSQL/JDBC for durable leasing.\n       fix: run `jails add db` before generating it."
         ).into());
     }
-    let id = fields
-        .iter()
-        .find(|field| field.name == "id")
-        .ok_or_else(|| format!("durable-job {name} needs a stable `id:uuid` field"))?;
-    if usecase_normalized_type(&id.java_type) != "UUID"
-        || id.optionality == crate::generate::Optionality::Nullable
-    {
+    let service: &str = &slice.owned(Layer::Service);
+    let domain: &str = &slice.owned(Layer::Domain);
+    let command_name = format!("{usecase}Command");
+    let command_fields = slice.project().record_in(service, &command_name)
+        .ok_or_else(|| {
+            format!(
+                "durable-job {name} cannot read {command_name}.java. Generate usecase {usecase} first."
+            )
+        })?;
+    let command_id = command_fields.iter().find(|field| field.name == "id");
+    if !command_id.is_some_and(|id| {
+        usecase_normalized_type(&id.java_type) == "UUID"
+            && id.optionality != crate::generate::Optionality::Nullable
+    }) {
         return Err(format!(
-            "durable-job {name} needs required `id:uuid`; it received id:{}",
-            id.java_type
+            "durable-job {name} cannot target {usecase}: {command_name} has no required `id:uuid`, so no payload can both match the command and carry a stable identity.\n       \
+             fix: regenerate the use case with `id:uuid`, then pass that command's exact fields to the durable job."
         )
         .into());
     }
@@ -138,15 +145,6 @@ pub(crate) fn durable_job_files(
             field.name
         ).into());
     }
-    let service: &str = &slice.owned(Layer::Service);
-    let domain: &str = &slice.owned(Layer::Domain);
-    let command_name = format!("{usecase}Command");
-    let command_fields = slice.project().record_in(service, &command_name)
-        .ok_or_else(|| {
-            format!(
-                "durable-job {name} cannot read {command_name}.java. Generate usecase {usecase} first."
-            )
-        })?;
     if fields.len() != command_fields.len()
         || fields.iter().zip(&command_fields).any(|(work, command)| {
             work.name != command.name
