@@ -266,29 +266,37 @@ pub fn test(requested: &[String], options: TestOptions, debug: bool) -> Result<(
 }
 
 fn test_once(requested: &[String], options: TestOptions, debug: bool) -> Result<()> {
-    test_once_with_fallback(requested, options, debug, None)
+    let json = options.json;
+    let slowest = options.slowest;
+    let report = test_report_once(requested, options, debug)?;
+    crate::reports::render(&report, json, slowest)
 }
 
-fn test_once_with_fallback(
+pub(super) fn test_report_once(
+    requested: &[String],
+    options: TestOptions,
+    debug: bool,
+) -> Result<jails_protocol::testing::TestReportV1> {
+    test_report_once_with_fallback(requested, options, debug, None)
+}
+
+fn test_report_once_with_fallback(
     requested: &[String],
     mut options: TestOptions,
     debug: bool,
     fallback_reason: Option<String>,
-) -> Result<()> {
+) -> Result<jails_protocol::testing::TestReportV1> {
     let (root, build) = either_root("test")?;
     let mut execution_requested = requested.to_vec();
     if options.failed {
-        let failures = match build {
-            crate::build::Build::Gradle => crate::reports::failed_patterns(&root),
-            _ => crate::reports::failed_selectors(&root),
-        };
+        let failures = crate::reports::failed_selectors(&root);
         if failures.is_empty() && execution_requested.is_empty() {
             println!(
                 "no failures recorded. Reports are read from target/surefire-reports, \
                  target/failsafe-reports and build/test-results/."
             );
             println!("Nothing to rerun -- run `jails test` first, or drop --failed.");
-            return Ok(());
+            return crate::reports::merge(options.scope, &[], Vec::new());
         }
         if !failures.is_empty() {
             if execution_requested.is_empty() {
@@ -311,224 +319,62 @@ fn test_once_with_fallback(
     let requested = execution_requested.as_slice();
     let compiled_outputs_current =
         build == crate::build::Build::Maven && crate::launcher::staleness(&root).is_none();
-    let plan = test_plan::plan(build, requested, &options, compiled_outputs_current)?;
+    let plan = test_plan::plan(&root, build, requested, &options, compiled_outputs_current)?;
     if options.explain_selection || options.fast {
         test_plan::explain(&plan);
     }
-    if plan
-        .partitions
-        .iter()
-        .any(|partition| partition.engine == jails_protocol::testing::TestEngine::TestdV2)
-    {
-        return test_execution::run_warm(requested, &options, debug);
-    }
-    if options.affected {
-        if options.engine == jails_protocol::testing::TestEnginePolicy::Build {
-            println!(
-                "test selection widened to the full {:?} scope: the build engine has no safe \
-                 affected-test graph",
-                options.scope
-            );
-        } else {
-            return test_execution::run_warm(requested, &options, debug);
-        }
-    }
-    if build == crate::build::Build::Gradle {
-        return gradlew::test(&root, requested, options, fallback_reason, debug);
-    }
-    let root = maven_root("test")?;
-
-    let filter = match requested {
-        [] => None,
-        [one] => Some(one.as_str()),
-        _ => {
-            let context = test_execution::MavenTestContext {
-                project: &root,
-                options: &options,
-                fallback_reason: fallback_reason.as_deref(),
-                debug,
-            };
-            return test_execution::test_many_maven(&context, requested);
-        }
-    };
-
-    // `--failed` is a filter jails computes rather than one the reader types,
-    // so it is resolved first and then follows exactly the same path.
-    let from_reports;
-    let filter = if options.failed {
-        let failures = crate::reports::failed_selectors(&root);
-        if failures.is_empty() {
-            println!(
-                "no failures recorded. Reports are read from target/surefire-reports, \
-                 target/failsafe-reports and build/test-results/."
-            );
-            println!("Nothing to rerun -- run `jails test` first, or drop --failed.");
-            return Ok(());
-        }
+    if options.affected && options.engine == jails_protocol::testing::TestEnginePolicy::Build {
         println!(
-            "rerunning {} failed test(s) from the last run",
-            failures.len()
+            "test selection widened to the full {:?} scope: the build engine has no safe affected-test graph",
+            options.scope
         );
-        from_reports = failures.join(",");
-        Some(from_reports.as_str())
-    } else {
-        filter
-    };
-
-    // The fast path, and every way out of it. `plan.md` §10.2's rule is that a
-    // fast path falls back *loudly*: the failure this prevents is a green run
-    // over classes that no longer match the source, which is worse than any
-    // slowness.
-    if options.fast {
-        // The console launcher is already on the test classpath: `main.rs`
-        // installs it as an owned entity before calling this, so a reader can
-        // take it back out with `jails remove fast-test`. It used to be
-        // spliced from here, which recorded nothing and left no way to undo
-        // it -- `pending.md` §7.7's one real project write outside a
-        // transaction.
-        match fast_path_refusal(&root, &options) {
-            Some(reason) => {
-                println!("--fast not taken: {reason}");
-                println!("Running the full Maven path instead.");
-            }
-            None => {
-                let resolved = filter
-                    .map(|f| resolve_filter(&root, f))
-                    .transpose()?
-                    .and_then(|f| crate::launcher::fully_qualified(&root, &f));
-                if filter.is_some() && resolved.is_none() {
-                    println!(
-                        "--fast not taken: could not resolve `{}` to a fully qualified name.",
-                        filter.unwrap_or_default()
-                    );
-                    println!("Running the full Maven path instead.");
-                } else {
-                    return crate::launcher::run_fast(&root, resolved.as_deref(), debug);
-                }
-            }
-        }
     }
 
-    let mut cmd = Command::new(crate::maven::binary(&root));
-    let mut rerun_hint: Option<String> = None;
-    if let Some(f) = filter {
-        let resolved = resolve_filter(&root, f)?;
-        let test_name = expand_filter(&resolved);
-        // Decided on the *class*, not on the whole filter. `PayoutIT#settles`
-        // ends in `settles`, so routing on the finished string sent an
-        // integration test to Surefire, which does not run `*IT` -- Maven
-        // reported success having executed nothing. Splitting first is what
-        // makes both halves right.
-        let (class, _) = split_method(&test_name);
-        if class.ends_with("IT") {
-            cmd.arg("verify").arg(format!("-Dit.test={test_name}"));
+    let mut reports = Vec::new();
+    for partition in &plan.partitions {
+        let selectors = partition
+            .selectors
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        let partition_reason = partition
+            .reasons
+            .iter()
+            .filter_map(|reason| match reason {
+                jails_protocol::testing::SelectionReason::Widened(reason) => Some(reason.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        let reason = if partition_reason.is_empty() {
+            fallback_reason.clone()
         } else {
-            cmd.arg("test").arg(format!("-Dtest={test_name}"));
-        }
-        // Without this, a filter that matches nothing is a *build failure*
-        // with a stack trace rather than "no tests ran" -- and jails' own
-        // routing above can hand Surefire a filter that legitimately matches
-        // nothing when the project holds both kinds. The payments team keeps
-        // this as tribal knowledge; it belongs in the tool.
-        cmd.arg("-Dsurefire.failIfNoSpecifiedTests=false");
-        cmd.arg("-Dfailsafe.failIfNoSpecifiedTests=false");
-        rerun_hint = Some(test_name);
-    } else {
-        match options.scope {
-            jails_protocol::testing::TestScope::Unit => {
-                cmd.arg("test");
+            Some(partition_reason)
+        };
+        let report = match partition.engine {
+            jails_protocol::testing::TestEngine::TestdV2 => {
+                test_execution::warm_report(&selectors, &options, debug)?
             }
-            jails_protocol::testing::TestScope::Integration => {
-                cmd.arg("verify").arg("-Dsurefire.skip=true");
+            jails_protocol::testing::TestEngine::Maven => {
+                let context = test_execution::MavenTestContext {
+                    project: &root,
+                    options: &options,
+                    fallback_reason: reason.as_deref(),
+                    debug,
+                };
+                test_execution::maven_report(&context, &selectors)?
             }
-            jails_protocol::testing::TestScope::All => {
-                cmd.arg("verify");
+            jails_protocol::testing::TestEngine::Gradle => {
+                gradlew::test_report(&root, &selectors, &options, reason, debug)?
             }
+        };
+        let passed = report.succeeded();
+        reports.push(report);
+        if options.fail_fast && !passed {
+            break;
         }
     }
-    if !options.tags.is_empty() {
-        cmd.arg(format!("-Dgroups={}", options.tags.join(",")));
-    }
-    if options.fail_fast {
-        // One failing class is enough to stop: the point of the flag is the
-        // *first* failure, and Surefire counts classes, not methods.
-        cmd.arg("-Dsurefire.skipAfterFailureCount=1");
-        cmd.arg("-Dfailsafe.skipAfterFailureCount=1");
-    }
-    cmd.current_dir(&root);
-
-    if options.json {
-        if options.timeout.is_some() {
-            return Err(
-                "`--timeout --json` needs the v2 captured-result executor\n       fix: omit one \
-                 option until that executor is active"
-                    .into(),
-            );
-        }
-        // Maven's own output would sit in front of the JSON and make it
-        // unparseable, so it is captured and dropped. The report is read from
-        // Surefire's XML afterwards -- the same source `--failed` and
-        // `--slowest` already use, so the three cannot disagree about what ran.
-        let captured = cmd
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .output()
-            .map_err(|error| format!("failed to run Maven: {error}"))?;
-        let report = crate::reports::normalized(
-            &root,
-            jails_protocol::testing::TestEngine::Maven,
-            options.scope,
-            requested,
-            captured.status.success(),
-            fallback_reason,
-        )?;
-        return crate::reports::render(&report, true, options.slowest);
-    }
-
-    let outcome = match options.timeout.as_deref() {
-        Some(timeout) => test_execution::run_inherited_timeout(
-            cmd,
-            debug,
-            std::time::Duration::from_secs(test_plan::parse_duration(timeout)?),
-        ),
-        None => run_inherited(cmd, debug),
-    };
-
-    if outcome.is_err() {
-        crate::reports::rerun_line(&root, rerun_hint.as_deref());
-    }
-    let report = crate::reports::normalized(
-        &root,
-        jails_protocol::testing::TestEngine::Maven,
-        options.scope,
-        requested,
-        outcome.is_ok(),
-        fallback_reason,
-    )?;
-    crate::reports::render(&report, false, options.slowest)
-}
-
-/// Why `--fast` cannot be used for this run, if it cannot.
-///
-/// `--json` and `--slowest` read Surefire's XML, which the console launcher
-/// does not write. Producing an empty report would be worse than declining:
-/// the three ways jails reports a run all read one source, and that is what
-/// stops them disagreeing about what ran.
-fn fast_path_refusal(root: &Path, options: &TestOptions) -> Option<String> {
-    if options.json {
-        return Some(
-            "--json reads Surefire's XML, which the console launcher does not write".into(),
-        );
-    }
-    if options.slowest.is_some() {
-        return Some(
-            "--slowest reads Surefire's XML, which the console launcher does not write".into(),
-        );
-    }
-    if options.fail_fast {
-        return Some("--fail-fast is a Surefire setting".into());
-    }
-    crate::launcher::staleness(root).map(|stale| stale.explain())
+    crate::reports::merge(options.scope, requested, reports)
 }
 
 pub fn build(debug: bool) -> Result<()> {

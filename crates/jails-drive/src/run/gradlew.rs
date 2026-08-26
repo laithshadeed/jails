@@ -49,13 +49,13 @@ pub(super) fn tasks(root: &Path, names: &[&str], debug: bool) -> Result<()> {
 /// silently ran the whole suite instead would look like it worked -- the
 /// fast-path rule from `launcher.rs`, one level up: a fast path falls back
 /// *loudly*.
-pub(super) fn test(
+pub(super) fn test_report(
     root: &Path,
     requested: &[String],
-    options: TestOptions,
+    options: &TestOptions,
     fallback_reason: Option<String>,
     debug: bool,
-) -> Result<()> {
+) -> Result<jails_protocol::testing::TestReportV1> {
     let build_script = std::fs::read_to_string(root.join("build.gradle")).unwrap_or_default();
     if (!options.tags.is_empty() || options.fail_fast) && !build_script.contains("jails.test.tags")
     {
@@ -104,7 +104,7 @@ pub(super) fn test(
         // method pattern, which is the same shape the reader already types for
         // Surefire.
         selectors.push("--tests".to_string());
-        selectors.push(pattern.to_string());
+        selectors.push(pattern.replace('#', "."));
     }
     let borrowed: Vec<&str> = selectors.iter().map(String::as_str).collect();
     let outcome = match options.timeout.as_deref() {
@@ -122,13 +122,12 @@ pub(super) fn test(
 
     // After the run, over the reports it just wrote. `--json` owns the exit
     // status because its whole point is being the machine-readable answer.
-    let report = crate::reports::normalized(
+    crate::reports::normalized(
         root,
         jails_protocol::testing::TestEngine::Gradle,
         options.scope,
         requested,
         outcome.is_ok(),
         fallback_reason,
-    )?;
-    crate::reports::render(&report, options.json, options.slowest)
+    )
 }

@@ -2,6 +2,13 @@
 
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Default, Eq, PartialEq)]
+pub(super) struct PartitionEvidence {
+    pub eligible: Vec<String>,
+    pub ineligible: Vec<(String, String)>,
+    pub gaps: Vec<String>,
+}
+
 const FORK_SENSITIVE: &[(&str, &str)] = &[
     ("@SpringBootTest", "Spring application context"),
     ("@WebMvcTest", "Spring MVC context"),
@@ -28,62 +35,95 @@ const FORK_SENSITIVE: &[(&str, &str)] = &[
     ("@Isolated", "explicit JUnit isolation"),
 ];
 
-pub(super) fn refusals(project: &Path, requested: &[String]) -> Vec<String> {
-    let sources = if requested.is_empty() {
-        discover_tests(project)
-    } else {
-        requested
-            .iter()
-            .map(|selector| {
-                source_for(project, selector).map_or_else(
-                    || {
-                        Err(format!(
-                            "`{selector}` has no attributable test source\n       fix: pass its fully qualified test class or use the build engine"
-                        ))
-                    },
-                    Ok,
-                )
-            })
-            .collect()
-    };
-    let mut reasons = Vec::new();
-    for source in sources {
-        let source = match source {
-            Ok(source) => source,
-            Err(reason) => {
-                reasons.push(reason);
-                continue;
+pub(super) fn partition_evidence(project: &Path, requested: &[String]) -> PartitionEvidence {
+    let mut evidence = PartitionEvidence::default();
+    if requested.is_empty() {
+        for source in discover_tests(project) {
+            match source {
+                Ok(source) => match selector_for_source(project, &source) {
+                    Some(selector) => classify(project, selector, source, &mut evidence),
+                    None => evidence.gaps.push(format!(
+                        "{} has no attributable Java test type\n       fix: use the build engine for this source layout",
+                        source.display()
+                    )),
+                },
+                Err(reason) => evidence.gaps.push(reason),
             }
-        };
-        let label = source
-            .strip_prefix(project)
-            .unwrap_or(&source)
-            .display()
-            .to_string();
-        if source
-            .file_stem()
-            .is_some_and(|name| name.to_string_lossy().ends_with("IT"))
-        {
-            reasons.push(format!("{label} is an integration test"));
-            continue;
         }
-        let text = match std::fs::read_to_string(&source) {
-            Ok(text) => text,
-            Err(error) => {
-                reasons.push(format!("{label} cannot be inspected ({error})"));
-                continue;
+    } else {
+        for selector in requested {
+            match source_for(project, selector) {
+                Some(source) => classify(project, selector.clone(), source, &mut evidence),
+                None => evidence.ineligible.push((
+                    selector.clone(),
+                    format!(
+                        "`{selector}` has no attributable test source\n       fix: pass its fully qualified test class or use the build engine"
+                    ),
+                )),
             }
-        };
-        if let Some((_, reason)) = FORK_SENSITIVE
-            .iter()
-            .find(|(evidence, _)| text.contains(evidence))
-        {
-            reasons.push(format!("{label} uses {reason}"));
         }
     }
-    reasons.sort();
-    reasons.dedup();
-    reasons
+    evidence.eligible.sort();
+    evidence.eligible.dedup();
+    evidence.ineligible.sort();
+    evidence.ineligible.dedup();
+    evidence.gaps.sort();
+    evidence.gaps.dedup();
+    evidence
+}
+
+fn classify(project: &Path, selector: String, source: PathBuf, evidence: &mut PartitionEvidence) {
+    let label = source
+        .strip_prefix(project)
+        .unwrap_or(&source)
+        .display()
+        .to_string();
+    if source
+        .file_stem()
+        .is_some_and(|name| name.to_string_lossy().ends_with("IT"))
+    {
+        evidence
+            .ineligible
+            .push((selector, format!("{label} is an integration test")));
+        return;
+    }
+    let text = match std::fs::read_to_string(&source) {
+        Ok(text) => text,
+        Err(error) => {
+            evidence
+                .ineligible
+                .push((selector, format!("{label} cannot be inspected ({error})")));
+            return;
+        }
+    };
+    if let Some((_, reason)) = FORK_SENSITIVE
+        .iter()
+        .find(|(needle, _)| text.contains(needle))
+    {
+        evidence
+            .ineligible
+            .push((selector, format!("{label} uses {reason}")));
+    } else {
+        evidence.eligible.push(selector);
+    }
+}
+
+fn selector_for_source(project: &Path, source: &Path) -> Option<String> {
+    let class = source.file_stem()?.to_str()?;
+    let text = std::fs::read_to_string(source).ok()?;
+    let package = text.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("package ")
+            .and_then(|rest| rest.strip_suffix(';'))
+            .map(str::trim)
+            .filter(|package| !package.is_empty())
+    });
+    let selector =
+        package.map_or_else(|| class.to_string(), |package| format!("{package}.{class}"));
+    let expected = project
+        .join("src/test/java")
+        .join(format!("{}.java", selector.replace('.', "/")));
+    (expected == source).then_some(selector)
 }
 
 fn discover_tests(project: &Path) -> Vec<Result<PathBuf, String>> {
@@ -216,7 +256,11 @@ mod tests {
             "import org.junit.Test; class PlainTest { @Test void ok() {} }",
             "PlainTest",
         );
-        assert!(refusals(project.path(), &[selector]).is_empty());
+        assert!(
+            partition_evidence(project.path(), &[selector])
+                .ineligible
+                .is_empty()
+        );
     }
 
     #[test]
@@ -240,7 +284,11 @@ mod tests {
             ),
         ] {
             let (project, selector) = source(body, name);
-            let reasons = refusals(project.path(), &[selector]);
+            let reasons = partition_evidence(project.path(), &[selector])
+                .ineligible
+                .into_iter()
+                .map(|(_, reason)| reason)
+                .collect::<Vec<_>>();
             assert!(
                 reasons.iter().any(|reason| reason.contains(expected)),
                 "{reasons:?}"
@@ -251,6 +299,10 @@ mod tests {
     #[test]
     fn an_unknown_selector_is_not_assumed_safe() {
         let project = jails_support::scratch::ScratchDir::in_temp("test-isolation").unwrap();
-        assert!(refusals(project.path(), &["MissingTest".into()])[0].contains("no attributable"));
+        assert!(
+            partition_evidence(project.path(), &["MissingTest".into()]).ineligible[0]
+                .1
+                .contains("no attributable")
+        );
     }
 }

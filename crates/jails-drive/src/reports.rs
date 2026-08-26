@@ -52,18 +52,6 @@ impl Case {
         format!("{}#{}", short_class(&self.class), self.method)
     }
 
-    /// The same case as a Gradle `--tests` pattern.
-    ///
-    /// `Class.method`, and the class **fully qualified** -- Gradle matches the
-    /// pattern against the full name and treats a bare one as a prefix, so the
-    /// short form silently selects every class in every package whose name
-    /// happens to start with it. Surefire's `#` spelling is a different
-    /// language, which is why this is a second method rather than a `replace`
-    /// at the call site.
-    pub fn pattern(&self) -> String {
-        format!("{}.{}", self.class, self.method)
-    }
-
     fn canonical_selector(&self) -> Result<TestSelector> {
         TestSelector::parse(&format!("{}#{}", self.class, self.method))
     }
@@ -112,23 +100,6 @@ pub(crate) fn cases(root: &Path) -> Vec<Case> {
         }
     }
     found
-}
-
-/// Which tests failed last time, as Gradle `--tests` patterns.
-///
-/// The counterpart of [`failed_selectors`], and separate for the reason
-/// [`Case::pattern`] is separate from [`Case::selector`]: the two build tools
-/// take different spellings, and one function returning whichever the caller
-/// happened to want is how a selector reaches the wrong tool.
-pub(crate) fn failed_patterns(root: &Path) -> Vec<String> {
-    let mut patterns: Vec<String> = cases(root)
-        .into_iter()
-        .filter(|case| case.failed)
-        .map(|case| case.pattern())
-        .collect();
-    patterns.sort();
-    patterns.dedup();
-    patterns
 }
 
 /// Which tests failed last time, as rerun selectors, deduplicated and in a
@@ -232,6 +203,9 @@ pub(crate) fn normalized(
     };
     let results = cases(root)
         .into_iter()
+        .filter(|case| {
+            requested.is_empty() || requested.iter().any(|selector| matches(case, selector))
+        })
         .map(|case| {
             let outcome = if case.error {
                 TestOutcome::Error
@@ -263,6 +237,53 @@ pub(crate) fn normalized(
         requested,
         cases: results,
         fallback_reasons: fallback_reason.into_iter().collect(),
+    })
+}
+
+fn matches(case: &Case, selector: &TestSelector) -> bool {
+    let (class, method) = selector
+        .as_str()
+        .split_once('#')
+        .map_or((selector.as_str(), None), |(class, method)| {
+            (class, Some(method))
+        });
+    (class == case.class || class == short_class(&case.class))
+        && method.is_none_or(|method| method == case.method)
+}
+
+pub(crate) fn merge(
+    scope: TestScope,
+    requested: &[String],
+    reports: Vec<TestReportV1>,
+) -> Result<TestReportV1> {
+    let requested = requested
+        .iter()
+        .map(|selector| TestSelector::parse(selector))
+        .collect::<Result<Vec<_>>>()?;
+    let epoch = reports.iter().map(|report| report.epoch).max().unwrap_or(0);
+    let passed = reports.iter().all(TestReportV1::succeeded);
+    let mut cases = reports
+        .iter()
+        .flat_map(|report| report.cases.iter().cloned())
+        .collect::<Vec<_>>();
+    cases.sort_by(|left, right| {
+        left.selector
+            .cmp(&right.selector)
+            .then_with(|| engine_name(left.engine).cmp(engine_name(right.engine)))
+    });
+    let mut fallback_reasons = reports
+        .into_iter()
+        .flat_map(|report| report.fallback_reasons)
+        .collect::<Vec<_>>();
+    fallback_reasons.sort();
+    fallback_reasons.dedup();
+    Ok(TestReportV1 {
+        epoch,
+        passed,
+        scope,
+        requested,
+        cases,
+        fallback_reasons,
     })
 }
 
@@ -438,10 +459,6 @@ mod tests {
         assert_eq!(gradle[0].method, "passes");
         assert_eq!(gradle[0].selector(), "SampleTest#passes");
         assert!(gradle[1].failed);
-        // Fully qualified, and dotted: Gradle matches `--tests` against the
-        // whole name and treats a bare one as a prefix, so the short form
-        // would select every class in every package starting with it.
-        assert_eq!(gradle[1].pattern(), "com.example.SampleTest.failsOnPurpose");
     }
 
     use super::*;
@@ -521,6 +538,37 @@ mod tests {
         assert!(json.contains("\"engine\":\"maven\""));
         assert!(json.contains("\"passed\":false"));
         assert!(json.contains("warm partition delegated"));
+    }
+
+    #[test]
+    fn requested_reports_exclude_stale_xml_and_mixed_reports_merge_once() {
+        let root = jails_support::scratch::ScratchDir::in_temp("partitioned-test-report").unwrap();
+        let directory = root.path().join("target/surefire-reports");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("TEST-PayoutTest.xml"), REPORT).unwrap();
+        let build = normalized(
+            root.path(),
+            TestEngine::Maven,
+            TestScope::Unit,
+            &["PayoutTest#settles".into()],
+            true,
+            Some("other selector required process isolation".into()),
+        )
+        .unwrap();
+        assert_eq!(build.cases.len(), 1, "unselected XML must not leak in");
+        let mut warm = build.clone();
+        warm.cases[0].engine = TestEngine::TestdV2;
+        warm.cases[0].selector = TestSelector::parse("com.example.demo.PlainTest#ok").unwrap();
+        warm.fallback_reasons.clear();
+        let merged = merge(
+            TestScope::Unit,
+            &["PayoutTest#settles".into(), "PlainTest#ok".into()],
+            vec![build, warm],
+        )
+        .unwrap();
+        assert_eq!(merged.cases.len(), 2);
+        assert_eq!(merged.fallback_reasons.len(), 1);
+        assert!(merged.succeeded());
     }
 
     #[test]

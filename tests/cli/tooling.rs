@@ -1079,20 +1079,79 @@ fn adopt_teaches_jails_where_an_existing_project_keeps_things() {
 /// not beat `mvnd`, so what this test pins is not speed but the two properties
 /// that make the path safe to offer at all.
 #[test]
-fn test_fast_runs_compiled_classes_and_falls_back_loudly_when_they_are_stale() {
+fn test_fast_is_a_visible_alias_for_the_complete_auto_engine() {
     let root = temp_dir("test-fast");
     write_plain_fixture(&root);
 
-    // Nothing compiled: refused rather than reporting a green run over an
-    // empty classpath.
+    // Nothing compiled: auto repairs through the build tool and explains why
+    // the warm partition was not selected. The alias never narrows the suite.
     let cold = jails_cmd(&root, None)
         .args(["test", "--fast"])
         .output()
         .unwrap();
     let report = String::from_utf8_lossy(&cold.stdout);
     assert!(
-        report.contains("--fast not taken"),
-        "an uncompiled project must not take the fast path: {report}"
+        report.contains("`--fast` normalized to auto")
+            && report.contains("compiled test outputs are stale"),
+        "the alias must expose the complete auto-engine decision: {report}"
+    );
+}
+
+#[test]
+fn auto_engine_merges_warm_and_build_partitions_without_losing_a_selector() {
+    if !real_mvn_available() || !real_java_supports_target_release() {
+        skip("mvn or a new enough JDK not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("mixed-test-partitions");
+    write_plain_fixture(&root);
+    let tests = root.join("src/test/java/com/example/demo");
+    fs::create_dir_all(&tests).unwrap();
+    fs::write(
+        tests.join("PlainTest.java"),
+        "package com.example.demo;\nimport org.junit.jupiter.api.Test;\nclass PlainTest { @Test void plain() {} }\n",
+    )
+    .unwrap();
+    fs::write(
+        tests.join("GlobalTest.java"),
+        "package com.example.demo;\nimport org.junit.jupiter.api.Test;\nclass GlobalTest { @Test void global() { System.setProperty(\"jails.mixed\", \"yes\"); } }\n",
+    )
+    .unwrap();
+
+    let prepared = jails_cmd_with_path(&root, &path)
+        .args(["test", "--fast"])
+        .output()
+        .unwrap();
+    if !prepared.status.success() {
+        skip("could not prepare the mixed-engine fixture");
+        return;
+    }
+
+    let output = jails_cmd_with_path(&root, &path)
+        .args(["test", "PlainTest", "GlobalTest", "--output", "json"])
+        .output()
+        .unwrap();
+    let json = String::from_utf8_lossy(&output.stdout);
+    let _ = jails_cmd_with_path(&root, &path)
+        .args(["testd", "--stop"])
+        .output();
+    assert!(
+        output.status.success(),
+        "{json}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        json.lines().count(),
+        1,
+        "watch-free JSON is one report: {json}"
+    );
+    assert!(
+        json.contains("\"selector\":\"com.example.demo.GlobalTest#global\"")
+            && json.contains("\"engine\":\"maven\"")
+            && json.contains("\"selector\":\"com.example.demo.PlainTest#plain\"")
+            && json.contains("\"engine\":\"testd-v2\""),
+        "the merged report must contain both disjoint partitions: {json}"
     );
 }
 

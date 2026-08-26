@@ -5,8 +5,10 @@ use jails_protocol::testing::{
     SelectionReason, TestEngine, TestEnginePolicy, TestExecutionPlanV1, TestPartition, TestSelector,
 };
 use jails_support::Result;
+use std::path::Path;
 
 pub(super) fn plan(
+    project: &Path,
     build: crate::build::Build,
     requested: &[String],
     options: &TestOptions,
@@ -31,27 +33,6 @@ pub(super) fn plan(
             .into());
         }
     };
-    let engine = match options.engine {
-        TestEnginePolicy::Build => build_engine,
-        TestEnginePolicy::Warm => TestEngine::TestdV2,
-        TestEnginePolicy::Auto
-            if matches!(
-                options.compile,
-                jails_protocol::testing::TestCompilePolicy::Ide
-                    | jails_protocol::testing::TestCompilePolicy::None
-            ) && build_engine == TestEngine::Maven =>
-        {
-            TestEngine::TestdV2
-        }
-        TestEnginePolicy::Auto
-            if options.compile == jails_protocol::testing::TestCompilePolicy::Auto
-                && compiled_outputs_current
-                && build_engine == TestEngine::Maven =>
-        {
-            TestEngine::TestdV2
-        }
-        TestEnginePolicy::Auto => build_engine,
-    };
     let reasons = if options.fast {
         vec![SelectionReason::Widened(
             "`--fast` normalized to auto; compiled classes are tried before build fallback"
@@ -62,17 +43,137 @@ pub(super) fn plan(
     } else {
         vec![SelectionReason::Requested]
     };
+    if options.compile == jails_protocol::testing::TestCompilePolicy::Ide {
+        return Err(
+            "`--compile ide` requires a negotiated editor output epoch\n       fix: connect the editor session, or use `--compile auto`"
+                .into(),
+        );
+    }
+
+    let build_only_reason = if build_engine != TestEngine::Maven {
+        Some("the warm engine is unavailable for this build system")
+    } else if options.compile == jails_protocol::testing::TestCompilePolicy::Build {
+        Some("the build tool is the explicit compile owner")
+    } else if !compiled_outputs_current {
+        Some("compiled test outputs are stale")
+    } else if options.scope != jails_protocol::testing::TestScope::Unit || options.database_schema {
+        Some("the warm engine only accepts isolated unit tests")
+    } else if !options.tags.is_empty() {
+        Some("JUnit tag eligibility is not yet attributable per warm test")
+    } else {
+        None
+    };
+
+    if options.engine == TestEnginePolicy::Warm
+        && build_engine == TestEngine::Maven
+        && options.scope == jails_protocol::testing::TestScope::Unit
+        && !options.database_schema
+        && options.tags.is_empty()
+    {
+        let evidence = super::isolation::partition_evidence(project, requested);
+        if !evidence.ineligible.is_empty() || !evidence.gaps.is_empty() {
+            let reason = evidence
+                .ineligible
+                .iter()
+                .map(|(_, reason)| reason.as_str())
+                .chain(evidence.gaps.iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(format!(
+                "strict warm execution is ineligible: {reason}\n       fix: choose `--engine auto` so the build tool owns this partition"
+            )
+            .into());
+        }
+    }
+
+    let mut partitions = Vec::new();
+    if options.engine == TestEnginePolicy::Build || build_only_reason.is_some() {
+        if options.engine == TestEnginePolicy::Warm {
+            return Err(format!(
+                "strict warm execution is unavailable: {}\n       fix: choose `--engine auto` so the build tool owns this partition",
+                build_only_reason.unwrap_or("the selected policy is incompatible")
+            )
+            .into());
+        }
+        partitions.push(TestPartition {
+            engine: build_engine,
+            selectors: selectors.clone(),
+            reasons: if options.engine == TestEnginePolicy::Build {
+                reasons.clone()
+            } else {
+                let mut partition_reasons = reasons.clone();
+                if let Some(reason) = build_only_reason {
+                    partition_reasons.push(SelectionReason::Widened(reason.to_string()));
+                }
+                partition_reasons
+            },
+        });
+    } else if options.affected {
+        partitions.push(TestPartition {
+            engine: TestEngine::TestdV2,
+            selectors: selectors.clone(),
+            reasons: reasons.clone(),
+        });
+    } else {
+        let evidence = super::isolation::partition_evidence(project, requested);
+        if !evidence.gaps.is_empty() {
+            let reason = format!("test discovery is incomplete: {}", evidence.gaps.join("; "));
+            if options.engine == TestEnginePolicy::Warm {
+                return Err(format!(
+                    "strict warm execution is ineligible: {reason}\n       fix: choose `--engine auto` so the build tool widens safely"
+                )
+                .into());
+            }
+            partitions.push(TestPartition {
+                engine: build_engine,
+                selectors: Vec::new(),
+                reasons: vec![SelectionReason::Widened(reason)],
+            });
+        } else {
+            if !evidence.ineligible.is_empty() {
+                let reason = evidence
+                    .ineligible
+                    .iter()
+                    .map(|(_, reason)| reason.as_str())
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                if options.engine == TestEnginePolicy::Warm {
+                    return Err(format!(
+                        "strict warm execution is ineligible: {reason}\n       fix: choose `--engine auto` so the build tool owns this partition"
+                    )
+                    .into());
+                }
+                partitions.push(TestPartition {
+                    engine: build_engine,
+                    selectors: evidence
+                        .ineligible
+                        .iter()
+                        .map(|(selector, _)| TestSelector::parse(selector))
+                        .collect::<Result<Vec<_>>>()?,
+                    reasons: vec![SelectionReason::Widened(reason)],
+                });
+            }
+            if !evidence.eligible.is_empty() || evidence.ineligible.is_empty() {
+                partitions.push(TestPartition {
+                    engine: TestEngine::TestdV2,
+                    selectors: evidence
+                        .eligible
+                        .iter()
+                        .map(|selector| TestSelector::parse(selector))
+                        .collect::<Result<Vec<_>>>()?,
+                    reasons: reasons.clone(),
+                });
+            }
+        }
+    }
+
     let plan = TestExecutionPlanV1 {
         scope: options.scope,
         requested: selectors.clone(),
         compile: options.compile,
         engine: options.engine,
         epoch: 0,
-        partitions: vec![TestPartition {
-            engine,
-            selectors,
-            reasons,
-        }],
+        partitions,
     };
     if matches!(
         options.compile,
@@ -83,10 +184,15 @@ pub(super) fn plan(
         .iter()
         .any(|partition| partition.engine != TestEngine::TestdV2)
     {
-        return Err(
-            "the selected compile policy cannot supply a current warm-engine output for this project\n       fix: use `--compile auto` or `--compile build`"
-                .into(),
-        );
+        return Err(match options.compile {
+            jails_protocol::testing::TestCompilePolicy::None => {
+                "automatic warm execution is ineligible and `--compile none` forbids the build partition\n       fix: compile explicitly, or choose `--compile auto` so the build tool may own this partition"
+            }
+            _ => {
+                "the selected compile policy cannot supply a current warm-engine output for this project\n       fix: use `--compile auto` or `--compile build`"
+            }
+        }
+        .into());
     }
     plan.validate()?;
     Ok(plan)
@@ -219,9 +325,33 @@ mod tests {
         }
     }
 
+    fn project_with(tests: &[(&str, &str)]) -> jails_support::scratch::ScratchDir {
+        let project = jails_support::scratch::ScratchDir::in_temp("test-plan").unwrap();
+        for (name, body) in tests {
+            let source = project
+                .path()
+                .join("src/test/java/com/example")
+                .join(format!("{name}.java"));
+            std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+            std::fs::write(source, format!("package com.example;\n{body}\n")).unwrap();
+        }
+        project
+    }
+
     #[test]
     fn automatic_execution_keeps_every_requested_selector() {
         let plan = plan(
+            project_with(&[
+                (
+                    "AlphaTest",
+                    "class AlphaTest { @org.junit.Test void ok() {} }",
+                ),
+                (
+                    "BetaTest",
+                    "class BetaTest { @org.junit.Test void ok() {} }",
+                ),
+            ])
+            .path(),
             crate::build::Build::Maven,
             &["BetaTest".into(), "AlphaTest".into(), "AlphaTest".into()],
             &options(),
@@ -238,6 +368,11 @@ mod tests {
         let mut options = options();
         options.engine = TestEnginePolicy::Warm;
         let plan = plan(
+            project_with(&[(
+                "AlphaTest",
+                "class AlphaTest { @org.junit.Test void ok() {} }",
+            )])
+            .path(),
             crate::build::Build::Maven,
             &["AlphaTest".into()],
             &options,
@@ -250,6 +385,11 @@ mod tests {
     #[test]
     fn automatic_compile_uses_current_maven_outputs_and_builds_when_stale() {
         let current = plan(
+            project_with(&[(
+                "AlphaTest",
+                "class AlphaTest { @org.junit.Test void ok() {} }",
+            )])
+            .path(),
             crate::build::Build::Maven,
             &["AlphaTest".into()],
             &options(),
@@ -259,6 +399,11 @@ mod tests {
         assert_eq!(current.partitions[0].engine, TestEngine::TestdV2);
 
         let stale = plan(
+            project_with(&[(
+                "AlphaTest",
+                "class AlphaTest { @org.junit.Test void ok() {} }",
+            )])
+            .path(),
             crate::build::Build::Maven,
             &["AlphaTest".into()],
             &options(),
@@ -269,11 +414,43 @@ mod tests {
     }
 
     #[test]
+    fn automatic_execution_partitions_warm_and_fork_sensitive_selectors() {
+        let project = project_with(&[
+            (
+                "PlainTest",
+                "class PlainTest { @org.junit.Test void ok() {} }",
+            ),
+            (
+                "ContextTest",
+                "@SpringBootTest class ContextTest { @org.junit.Test void ok() {} }",
+            ),
+        ]);
+        let plan = plan(
+            project.path(),
+            crate::build::Build::Maven,
+            &["PlainTest".into(), "ContextTest".into()],
+            &options(),
+            true,
+        )
+        .unwrap();
+        assert_eq!(plan.partitions.len(), 2);
+        assert_eq!(plan.partitions[0].engine, TestEngine::Maven);
+        assert_eq!(plan.partitions[0].selectors[0].as_str(), "ContextTest");
+        assert_eq!(plan.partitions[1].engine, TestEngine::TestdV2);
+        assert_eq!(plan.partitions[1].selectors[0].as_str(), "PlainTest");
+    }
+
+    #[test]
     fn gradle_cannot_compile_implicitly_under_none() {
         let mut no_compile = options();
         no_compile.compile = TestCompilePolicy::None;
         assert!(
             plan(
+                project_with(&[(
+                    "AlphaTest",
+                    "class AlphaTest { @org.junit.Test void ok() {} }"
+                )])
+                .path(),
                 crate::build::Build::Gradle,
                 &["AlphaTest".into()],
                 &no_compile,

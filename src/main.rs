@@ -463,7 +463,7 @@ fn main() -> std::process::ExitCode {
                 tags,
                 fail_fast,
                 slowest,
-                json,
+                json: json || invocation.output == Output::Json,
                 fast,
                 until_fail,
                 repeat,

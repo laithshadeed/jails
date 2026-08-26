@@ -118,19 +118,6 @@ pub(crate) struct TestClasspath {
     pub dependencies: Vec<PathBuf>,
 }
 
-impl TestClasspath {
-    /// Everything, in the order `java -cp` wants it.
-    pub fn joined(&self) -> Result<String> {
-        join(self.outputs.iter().chain(&self.dependencies))
-    }
-}
-
-fn join<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Result<String> {
-    Ok(std::env::join_paths(paths)
-        .map(|joined| joined.to_string_lossy().into_owned())
-        .map_err(|error| format!("failed to join classpath: {error}"))?)
-}
-
 /// The test classpath, from cache when the pom has not moved since.
 pub(crate) fn test_classpath(root: &Path, debug: bool) -> Result<TestClasspath> {
     let cache = root.join("target/jails-test-classpath");
@@ -174,25 +161,6 @@ fn is_fresh(cache: &Path, source: &Path) -> bool {
     }
 }
 
-/// `Note#renders` -> `--select-method=…Note#renders`; `Note` -> `--select-class`.
-///
-/// The launcher wants a fully qualified name and jails' filters are usually
-/// bare class names, so the caller resolves the filter to an FQN first --
-/// exactly what the Maven path does before handing Surefire a `-Dtest=`.
-pub(crate) fn selectors(filter: Option<&str>) -> Vec<String> {
-    match filter {
-        None => vec![
-            "--scan-class-path".to_string(),
-            // Without this a filter that matches nothing exits 2 with a stack
-            // trace rather than saying no tests ran -- the same trap the Maven
-            // path spells `surefire.failIfNoSpecifiedTests=false`.
-            "--fail-if-no-tests".to_string(),
-        ],
-        Some(filter) if filter.contains('#') => vec![format!("--select-method={filter}")],
-        Some(filter) => vec![format!("--select-class={filter}")],
-    }
-}
-
 /// `NoteTest` -> `com.example.demo.domain.NoteTest`.
 ///
 /// The launcher selects by fully qualified name; jails' filters are bare class
@@ -233,19 +201,6 @@ pub(crate) fn fully_qualified(root: &Path, filter: &str) -> Option<String> {
         }
     }
     None
-}
-
-/// Run the already-compiled tests. The caller has checked [`staleness`].
-pub(crate) fn run_fast(root: &Path, filter: Option<&str>, debug: bool) -> Result<()> {
-    let classpath = test_classpath(root, debug)?.joined()?;
-    let mut cmd = Command::new("java");
-    cmd.args(["-cp", &classpath])
-        .arg("org.junit.platform.console.ConsoleLauncher")
-        .arg("execute")
-        .args(selectors(filter))
-        .arg("--details=testfeed")
-        .current_dir(root);
-    run::run_inherited(cmd, debug)
 }
 
 #[cfg(test)]
@@ -335,18 +290,5 @@ mod tests {
             Some("com.other.Thing")
         );
         assert_eq!(fully_qualified(&root, "Missing"), None);
-    }
-
-    #[test]
-    fn a_method_filter_selects_a_method_and_a_bare_name_a_class() {
-        assert_eq!(
-            selectors(Some("com.example.NoteTest#renders")),
-            vec!["--select-method=com.example.NoteTest#renders"]
-        );
-        assert_eq!(
-            selectors(Some("com.example.NoteTest")),
-            vec!["--select-class=com.example.NoteTest"]
-        );
-        assert!(selectors(None).contains(&"--scan-class-path".to_string()));
     }
 }
