@@ -8,7 +8,10 @@ public final class AmountAndDateMatchRule implements MatchRule {
     @Override
     public Optional<MatchOutcome> apply(MatchCandidate candidate) {
         if (candidate.sourceEntry().amount().equals(candidate.targetEntry().amount())
-                && candidate.sourceEntry().postedAt().equals(candidate.targetEntry().postedAt())) {
+                && candidate
+                        .sourceEntry()
+                        .postedAt()
+                        .equals(candidate.targetEntry().postedAt())) {
             return Optional.of(MatchOutcome.MATCHED);
         }
         return Optional.empty();
