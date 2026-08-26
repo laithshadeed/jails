@@ -626,7 +626,7 @@ WITH observed(kind, schema_name, object_name, parent_name, d1, d2, d3, d4, d5, d
          CASE WHEN tn.nspname = 'pg_catalog' THEN t.typname ELSE tn.nspname || '.' || t.typname END,
          (NOT a.attnotnull)::text, a.attnum::text,
          COALESCE(pg_catalog.pg_get_expr(ad.adbin, ad.adrelid), ''),
-         NULLIF(a.attgenerated, ''), NULLIF(a.attidentity, ''),
+         NULLIF(a.attgenerated, '')::text, NULLIF(a.attidentity, '')::text,
          COALESCE(pg_catalog.col_description(c.oid, a.attnum), '')
   FROM pg_catalog.pg_attribute a
   JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
@@ -741,7 +741,7 @@ WITH observed(kind, schema_name, object_name, parent_name, d1, d2, d3, d4, d5, d
 
   UNION ALL
   SELECT 'policy', n.nspname, pol.polname, c.relname,
-         'PERMISSIVE=' || pol.polpermissive::text || ';COMMAND=' || pol.polcmd
+         'PERMISSIVE=' || pol.polpermissive::text || ';COMMAND=' || pol.polcmd::text
            || ';ROLES=' || pg_catalog.array_to_string(pol.polroles, ',')
            || ';USING=' || COALESCE(pg_catalog.pg_get_expr(pol.polqual, pol.polrelid), '')
            || ';CHECK=' || COALESCE(pg_catalog.pg_get_expr(pol.polwithcheck, pol.polrelid), ''),
@@ -752,7 +752,7 @@ WITH observed(kind, schema_name, object_name, parent_name, d1, d2, d3, d4, d5, d
   WHERE n.nspname = '__JAILS_SCHEMA__'
 
   UNION ALL
-  SELECT 'opaque', n.nspname, c.relname, '', 'unsupported relkind=' || c.relkind,
+  SELECT 'opaque', n.nspname, c.relname, '', 'unsupported relkind=' || c.relkind::text,
          '', '', '', '', '', ''
   FROM pg_catalog.pg_class c
   JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
