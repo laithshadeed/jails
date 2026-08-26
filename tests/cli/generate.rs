@@ -624,6 +624,42 @@ fn single_cutover_reports_reader_owned_sql_without_writing() {
 }
 
 #[test]
+fn single_cutover_refuses_opaque_database_dependencies_without_writing() {
+    let root = temp_dir("resource-rename-opaque-database-dependency");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    let generated = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success(), "{generated:?}");
+    fs::write(
+        root.join("src/main/resources/db/migration/V002__task_view.sql"),
+        "create view public.open_tasks as select id from public.tasks;\n",
+    )
+    .unwrap();
+    let before = snapshot_tree(&root);
+
+    let refused = jails_cmd(&root, None)
+        .args([
+            "rename",
+            "resource",
+            "Billing.Task",
+            "WorkItem",
+            "--strategy",
+            "single-cutover",
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success(), "{refused:?}");
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("opaque-dependency"), "{stderr}");
+    assert!(stderr.contains("V002__task_view.sql"), "{stderr}");
+    assert_eq!(snapshot_tree(&root), before, "refusal wrote project files");
+}
+
+#[test]
 fn rolling_rename_waits_for_attestation_then_completes_storage_forward() {
     let root = temp_dir("resource-rename-rolling");
     write_spring_fixture(&root);

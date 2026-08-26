@@ -101,6 +101,7 @@ pub(super) fn validate_cutover_sql(
     cutover: &CutoverPlan,
 ) -> Result<()> {
     let mut manual = Vec::new();
+    let mut opaque = Vec::new();
     for path in &cutover.sql_sources {
         let jails_protocol::snapshot::Captured::Present(file) = snapshot.read(path)? else {
             continue;
@@ -119,9 +120,24 @@ pub(super) fn validate_cutover_sql(
                 )
                 .into());
             }
+            if opaque_dependency_mentions(text, cutover.current.as_str()) {
+                opaque.push(path.clone());
+            }
         } else if jails_java::identifier::bounded_mentions(text, cutover.current.as_str()) > 0 {
             manual.push(path.clone());
         }
+    }
+    if !opaque.is_empty() {
+        let paths = opaque
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n         ");
+        return Err(format!(
+            "opaque-dependency: migration history contains a view, routine, trigger, policy, rule, or dynamic SQL that may depend on table `{}`:\n         {paths}\n       fix: prove and migrate those database objects explicitly before retrying this storage cutover",
+            cutover.current.as_str()
+        )
+        .into());
     }
     if manual.is_empty() {
         return Ok(());
@@ -136,6 +152,28 @@ pub(super) fn validate_cutover_sql(
         cutover.current.as_str()
     )
     .into())
+}
+
+fn opaque_dependency_mentions(sql: &str, table: &str) -> bool {
+    if jails_java::identifier::bounded_mentions(sql, table) == 0 {
+        return false;
+    }
+    let normalized = sql
+        .to_ascii_lowercase()
+        .replace(['\"', '\n', '\r', '\t'], " ");
+    [
+        "create view ",
+        "create materialized view ",
+        "create function ",
+        "create procedure ",
+        "create trigger ",
+        "create policy ",
+        "create rule ",
+        "execute ",
+        "execute immediate ",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker))
 }
 
 fn declares_table(sql: &str, table: &str) -> bool {
