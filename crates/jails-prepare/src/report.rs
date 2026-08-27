@@ -665,6 +665,7 @@ pub(crate) fn render_receipt(receipt: &AppliedReceipt) -> String {
             effect_label(&effect.effect),
             state_label(&effect.state)
         ));
+        out.push_str(&effect_repair(effect));
     }
     for warning in &receipt.warnings {
         out.push_str(&format!(
@@ -674,6 +675,47 @@ pub(crate) fn render_receipt(receipt: &AppliedReceipt) -> String {
         ));
     }
     out
+}
+
+/// What to do about an effect that did not succeed, on the line that says so.
+///
+/// `missing.md` M12: `jails add db` on a machine with no container engine
+/// writes every file, records the ledger, prints `effect compose reconcile
+/// (1 up, 0 stopped) (failed)` -- and exits 1. The project is correct and a
+/// second run says `nothing to do`, so the only thing wrong is a side effect;
+/// but in `for c in db api cors json sse; do jails add $c || fail; done`,
+/// which is how capabilities get installed on a real project, that reads as a
+/// failed install of the capability that actually worked. The natural response
+/// is to rerun it, which is a no-op that exits 0, so the operator learns to
+/// ignore the status.
+///
+/// **Everywhere else in jails a refusal carries a `fix:`. This line had
+/// none**, and `--no-start` -- which makes the same command exit 0 -- was not
+/// named anywhere near it. The exit status stays 1 on purpose: the services
+/// really are not running, and a command that reports success over that is
+/// the failure this whole tool is organised against.
+fn effect_repair(effect: &crate::receipt::EffectReceipt) -> String {
+    if !matches!(effect.state, EffectState::Failed { .. }) {
+        return String::new();
+    }
+    let lines: [&str; 4] = match &effect.effect {
+        PostCommitEffect::ComposeReconcile { .. } => [
+            "the services are not running; every file, the manifest and the ledger",
+            "are written and durable.",
+            "fix: start the container engine and rerun this command, or pass",
+            "     `--no-start` to record the services without starting them.",
+        ],
+        PostCommitEffect::ApplyMigrations { .. } => [
+            "the migrations are not applied; every file and the ledger are written",
+            "and durable.",
+            "fix: repair the datasource, then `jails migrate` -- the recorded",
+            "     transaction does not need repeating.",
+        ],
+    };
+    lines
+        .iter()
+        .map(|line| format!("          {line}\n"))
+        .collect()
 }
 
 /// The verb a receipt row implies, from the pair of images it records.

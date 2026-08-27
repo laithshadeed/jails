@@ -841,6 +841,19 @@ All three of `missing.md`'s named primitives, in full, plus the smaller entries.
       compile under real Maven in the Spring toolbox. The third entry — a
       usecase defaulting an enum positionally — closed with P6.5 and its text
       went with the rest.
+- [x] **P8.12** **M12 -- a fully applied transaction exits 1 because an
+      external effect failed**, with no `fix:` and no mention of the flag that
+      avoids it.
+      *Done:* the effect line carries its own repair now, chosen by which
+      effect failed: a compose reconcile names the container engine and
+      `--no-start`, an unapplied migration names the datasource and `jails
+      migrate`. Both first say the thing that was actually confusing -- the
+      files, the manifest and the ledger *are* written and durable, and the
+      status is about the side effect alone. **The exit status stays 1 on
+      purpose**: the services really are not running, and a command that
+      reports success over that is the failure this tool is organised against.
+      `an_effect_that_failed_names_the_flag_that_avoids_it` pins both halves,
+      including that a run which worked carries no repair line.
 - [ ] **P8.11** Delete `missing.md`.
 
 ## P9 — research.md's remaining sections
@@ -1017,9 +1030,79 @@ The nine endpoints, verbatim from `customer.js` and `admin.js`:
       adapter read the real table. It is build-aware now, and `has_jdbc`
       accepts `spring-boot-starter-data-jdbc`, which declares the narrow
       starter (verified in `deps/spring-boot`).
+- [x] **P10.9** **Four defects the checkout's own `./gradlew build` found,
+      none of which any golden test can see.** The goldens compare bytes; they
+      never run the code, and every scenario that could have caught these runs
+      `add db` first.
+      *Done:*
+      - `g usecase --on-conflict` and `g presence` wrote
+        `@Import(TestcontainersConfig.class)` unconditionally, so on a project
+        with a database of its own -- an H2 file, a shared server -- JDBC is on
+        the classpath, both generators fire, and the build stops on `cannot
+        find symbol` in a test jails wrote seconds earlier. That is the
+        compile error for a file the reader did not write that the write path
+        exists to prevent, and `g scaffold`'s JDBC round trip had already
+        solved it. `spring::support::TestSupport` is the shared answer.
+      - `requests/*.http` and the generated controller test documented the
+        primary key and an optimistic-lock `version` -- components the request
+        record does not declare. **Five of the checkout's six controller tests
+        were red for this one reason**: a standalone `MockMvcTester` has a
+        plain `ObjectMapper`, which rejects a property the record cannot hold,
+        while the running app does not. Both are built from `client_supplied`
+        now, the predicate the record itself is built from.
+      - the `@id` a GET and a DELETE need was read back out of the create
+        body, which is exactly where a server-assigned key is not. Sampled
+        from the key's own type now; the two defects were one edit apart.
+      - `json_sample` spelled an enum by its Java constant, so an enum
+        declared `ADMIN("admin")` with `@JsonValue` documented a request the
+        application rejects. `first_enum_wire_value` answers the wire
+        question; `first_enum_constant` keeps answering the SQL and
+        Java-literal one.
+      - `--on-conflict`'s H2 refusal now states what was verified rather than
+        that H2 "has no form of it": H2 parses `on conflict do nothing` under
+        `MODE=PostgreSQL` only, and only bare -- no target, no `returning`
+        (`deps/h2database` `Parser.java:1622`, `Mode.java:704`) -- so it cannot
+        name the row that already held the key, which is the answer the use
+        case exists to give. `merge into … key(…)` overwrites and returns
+        nothing either.
+- [x] **P10.10** **Every minicom checkout ships `jdbc:h2:file:~/minicom`**, so
+      they share one file *outside every project* and the newest H2 wins it
+      permanently. Starting the pristine `mc-01-06-2026` after
+      `minicom-15-01-2026` had been modernized died with `The write format 3 is
+      larger than the supported format 2`, and nothing in that message says the
+      file belongs to another checkout.
+      *Done:* a `why` rule, added under the standing rule that rules come from
+      failures that actually happened. It reads the two format numbers back to
+      the reader, names the home directory as the cause, and offers the three
+      fixes in order of what was probably meant -- delete the file, `jails
+      modernize` if the newer H2 was the intent, or give the project its own
+      file under `build/`.
 - [ ] **P10.7** Implement the mission on the checkout itself, with jails
       commands only, and record the command log. The mission is two-way
       communication: a customer replies, and the admin sees the reply.
+      *In progress.* The four generators the mission needs are working on the
+      checkout -- three scaffolds, four closed sets, an association, a
+      path-variable query and two form-bound use cases -- and P10.9's four
+      defects were all found by running its build. What is not yet expressible
+      by any jails command, each one blocking a named endpoint:
+
+      - **a use case cannot pin a component to a constant.** `POST
+        /admin_api/messages` must write `sender_type = ADMIN` and
+        `/customer_api/messages` must write `CUSTOMER`; today both take it
+        from the caller, so either endpoint can forge the other's messages.
+      - **a use case cannot resolve a foreign key on a write.** `POST
+        /customer_api/messages` carries `email`, not `user_id`. `g query
+        --via` does this on the read side and there is no write equivalent.
+      - **a use case returns its target, and two endpoints must return
+        something else.** `POST /customer_api/ping` returns the *unread
+        messages* for the email it was given; `POST /customer_api/read`
+        returns nothing and mutates a flag.
+      - **there is no generator for a partial update.** The three `PATCH
+        /admin_api/conversations/{userId}/{field}` endpoints are one shape
+        repeated: set one column on the row a path variable selects.
+      - **a resource's route is not settable.** `g scaffold User` serves
+        `/users`; the frontend calls `/admin_api/users`. `--path` exists on
+        `g query` and `g usecase` and not here.
 
 ---
 

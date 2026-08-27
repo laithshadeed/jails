@@ -10,10 +10,9 @@ Maven and Groovy Gradle). Ports and adapters, pure records, raw `JdbcClient`,
 **no ORM**. Every mutation is one transaction: prepared in memory, previewable
 byte-for-byte, committed through a write-ahead journal in `.jails/`.
 
-State of this file: verified against `jails 0.1.0` at HEAD `e3c7041`
-(2026-08-26) by running the binary, not by reading the docs. `bugs.md` is the
-live defect ledger and `research.md` is what is not built yet — both were
-rechecked at the same commit.
+State of this file: verified against `jails 0.1.0` at HEAD `d05a8af`
+(2026-08-27) by running the binary. All numbered reports in `bugs.md` are closed;
+active implementation phases are tracked in `plan.md`.
 
 ## The three rules that explain everything else
 
@@ -28,6 +27,10 @@ rechecked at the same commit.
    replaces or deletes a published `VNNN__*.sql`. Every schema change is a new
    forward migration. There are no down migrations and there never will be.
 
+*(Torn transactions are recovered automatically: `finish_interrupted` runs at the
+entry point of every mutating command and rolls forward uncommitted journaled
+state before planning reads the store.)*
+
 ## Command map
 
 Everything below exists and runs today.
@@ -40,7 +43,7 @@ Everything below exists and runs today.
 | `jails new <name> --offline` | same, from the vendored fixture, no network |
 | `jails new <name> --gradle [--boot 2.7.18] [--gradle-version 8.5]` | Groovy Gradle, written locally |
 | `jails new-cli <name> [--release 26]` | plain Maven CLI with a command dispatcher |
-| `jails new <name> --app <manifest.toml>` | create **and** apply a manifest in one transaction |
+| `jails new <name> --app <manifest.toml>` | create **and** apply a manifest in one transaction (publishes project before post-commit effects) |
 | `jails adopt` | write a `[layout]` table matching where an existing project already keeps things |
 
 ### Generate — `jails g <kind> <Name> [fields...]`
@@ -51,21 +54,46 @@ Plain Java: `record` `class` `interface` `value` `enum` `sealed` `strategy`
 
 Spring: `scaffold` `controller` `service` `repo` `dto` `usecase` `query`
 `transition` `event` `client` `fetcher` `job` `durable-job` `association`
-`http-workflow` `http-sink` `idempotency` `auth` `webhook` `search`.
+`http-workflow` `http-sink` `idempotency` `auth` `webhook` `search`
+`socket` `presence` `seed`.
 
 `jails explain <kind>` gives the rationale *and the trap* for each one — read it
 before generating something unfamiliar; it is a hand-maintained table, not
 generated filler.
 
-Common flags: `--package <sub.package>` (relative to the base package),
-`--timestamps`, `--index "col, col desc"` (repeatable), `--on <Resource>`,
-`--yields <Event>`.
+Common flags:
+- `--package <sub.package>` (relative to the base package, `''` for flat)
+- `--timestamps` (audit timestamps: `createdAt`, `updatedAt`)
+- `--index "col, col desc"` (repeatable composite or ordered index)
+- `--on <Resource>` (target resource / dispatcher / entity)
+- `--yields <Event|Parent>` (yielded event or parent resource)
+- `--path <path>` (`controller`, `usecase`, `query`, `client`: custom route; path variables like `/items/{itemId}` bind `@PathVariable` GET routes)
+- `--consumes json|form` (`controller`, `usecase`, `query`, `transition`: `form` binds `@Valid @ModelAttribute` and `@BindParam`)
+
+Key Spring generators:
+- `scaffold <Name> <fields...>` — requires single `@pk`. Immutable record, repo port, `JdbcClient` adapter, in-memory fake, request/response DTOs, controller, `.http` collection, and tests. DDL is written to `db/migration` (or `schema.sql` via marked blocks if no migration dir exists).
+- `usecase <Name> [fields...] --on <Resource> [--yields <Event>] [--on-conflict <component>]` — create operation. `--on-conflict <comp>` turns it into atomic get-or-create (`Ensuring<Name>UseCase` via `JdbcClient` `ON CONFLICT DO NOTHING RETURNING`). `--yields` adds outbox with batch drain, backoff jitter, and per-sink delivery tracking (`delivered text[]`).
+- `query <Name> [fields...] --on <Resource> [--via <Parent>] [--order-by '<cols>'] [--limit <n>]` — typed read with equality filters. `?` suffix on a filter (e.g. `status:Status?`) renders `(cast(:status as type) is null or col = :status)`. `--via <Parent>` joins parent table.
+- `transition <Name> [fields...] --on <Resource>` — atomic CAS update matching `id`, `@scope`, and required `version:long`. Returns sealed `Result` (`Applied`, `StaleVersion`, `NotFound`), maps `If-Match` / `ETag`, and raises `ApiException` when `add api` is present.
+- `client <Name> [--method <verb>] [--on <Req>] [--returns <Resp>] [--path <path>]` — typed `@HttpExchange` client with timeouts and base URL. Generates independent `<Name>ClientConfig` per client.
+- `event <Name> [fields...] [--on <Entity>]` — Kafka payload record and publisher. `--on <Entity>` keys partitions on `<entity>Id` for per-entity ordering; mints `TimeOrderedUuid` so outbox doesn't drop duplicates.
+- `enum <Name> [NAME=wire...]` — enum with `@JsonValue`/`@JsonCreator` and Spring converters. Widening an enum automatically emits `alter table ... drop constraint ... add constraint` forward migrations.
+- `strategy <Name> [variants...] [--on <Req>] [--yields <Resp>]` — strategy interface and `@Component` implementations placed in `service`/`adapters` (keeping `domain` dependency-free), plus ordered `<Name>Evaluator`.
+- `socket <Name>` (aliases: `websocket`, `ws`) — `TextWebSocketHandler`, `/ws/<name>` registration, concurrency decorator, and test.
+- `presence <Name>` — PostgreSQL cluster presence `(scope, member, node)`, heartbeats, sweep, and multi-node test.
+- `seed <Resource>` — development data in `db/seeds/<table>.json` loaded through repository port with `@Profile("seed")` `ApplicationRunner`.
 
 ### Add capabilities — `jails add <capability>...`
 
 `db` `sqlite` `h2` `kafka` `redis` `csv` `json` `mail` `http` `api` `actuator`
 `cache` `security` `cors` `sse` `observability` `format` `coverage` `testkit`
 `fake` `toxiproxy` `loadtest` `docker` `k8s` `ci`
+
+Escape hatches and configuration:
+- `jails add dependency <group>:<artifact> [--version <v>] [--scope compile|runtime|test]`
+- `jails remove dependency <group>:<artifact>`
+- `jails set <key>=<value> [--tests]` / `jails unset <key> [--tests]`
+- `jails remove fast-test`
 
 `jails.toml`'s `[project] capabilities` is maintained by `add`/`remove`, not by
 hand. `jails sync` re-plans every recorded capability and repairs drift.
@@ -81,12 +109,16 @@ jails resource field rename <Entity> <old> <new>   --column single-cutover
 jails resource field type   <Entity> <field>       --to <type> --strategy safe|expand-contract
 jails resource field nullability <Entity> <field>  --nullable | --required [--backfill-file P]
 jails resource field drop   <Entity> <field>       --confirm-column <exact-column>
+jails resource index add    <Entity> '<columns>'   # appends forward index migration
 jails resource repair <Entity> --strategy roll-forward
 jails resource revive <Entity> --table <preserved-table>
+jails rename resource <Name> <New> --strategy preserve-table|single-cutover|rolling
 ```
 
 Each writes a new forward migration. The guards ask for exactly the evidence
-they need and no more.
+they need and no more. Running `g field` or `resource field` on an entity
+automatically re-plans all companions that read it (`query`, `transition`,
+`usecase`, `association`, `durable-job`).
 
 ### Destroy
 
@@ -94,6 +126,7 @@ they need and no more.
 jails destroy <kind> <Name> [--force]
 jails destroy scaffold <Name> --storage preserve
 jails destroy scaffold <Name> --storage drop --confirm-table <exact-table>
+jails destroy association <Name>                   # retires FK and appends drop constraint
 ```
 
 A table-backed entity refuses without an explicit storage policy. `--storage
@@ -103,9 +136,9 @@ create migration, so the cycle is complete and its history is readable.
 ### Verify and inspect
 
 ```
-jails doctor [--json]        # environment + recorded-output drift; every FAIL carries a fix:
+jails doctor [--json]        # environment, drift, sealed migration bytes, and lineage column replay
 jails migrate --check        # apply every migration to a scratch database
-jails migrate lint           # classify destructive statements  (needs .jails/app.toml)
+jails migrate lint           # classify destructive statements (works from declared driver)
 jails routes | beans | stats | notes | lint | src <Type>
 jails why [logfile]          # root-cause a failure from a table of real signatures
 jails history | show <id> | undo <id>
@@ -114,6 +147,10 @@ jails history | show <id> | undo <id>
 `routes` and `beans` read source, never a running context — they work on a
 project that will not start, and they say so with `evidence:` and `limitation:`
 lines.
+
+`doctor` verifies recorded output drift, checks digest-sealed migration bytes,
+performs a bounded replay of migration history to verify entity fields match
+columns, and warns on `@Disabled` test files.
 
 ### Test and run
 
@@ -170,7 +207,7 @@ failure.
 
 ## Field DSL
 
-`name:type[!?][@constraint...]`
+`name:type[!?][@constraint...]` (and `NAME=wire` for `g enum`)
 
 **Case is the rule.** Lowercase is a jails builtin; capitalised is a type the
 project owns, passed through verbatim with no import.
@@ -180,22 +217,24 @@ Builtins: `string` `int` `long` `double` `decimal` `boolean` `uuid` `date`
 
 Suffix — optionality:
 - (bare) non-null
-- `!` non-null **and** non-blank
-- `?` emits `Optional<T>` and normalises a null one in the compact constructor
+- `!` non-null **and** non-blank (emits constructor trim/blank check and SQL `check (length(btrim(col)) > 0)`)
+- `?` emits `Optional<T>` in records/DTOs; in `query` filters emits `(cast(:x as type) is null or col = :x)`
 
-Constraints, a closed set, parsed off the *type* so either order works:
+Constraints, parsed off the *type* so either order works:
 `@pk` `@unique` `@index` `@positive` `@nonnegative` `@scope`.
 
-All but `@scope` change SQL and nothing about the Java type. `@scope` marks a
-request-boundary field proved against a same-named JWT claim — it is how tenancy
-works without the word "tenant" existing in core, and it refuses unless
-`add security` wrote a `ScopeAuthorizer`.
-
-**An unknown marker is an error, not a no-op.** So is an unknown type, a
-duplicate field name, a Java or SQL reserved word, two names folding to one
-column, a scaffold with no `@pk` or two, and an entity name whose lower-camel
-spelling is a Java keyword or whose plural table is a PostgreSQL keyword. Every
-one of those refuses before a byte is written.
+Identity and Key Assignment:
+- `g scaffold` **requires** a single `@pk`.
+- Key assignment is derived from the key type:
+  - `uuid@pk`: server-assigned via RFC 9562 UUIDv7 (`TimeOrderedUuid`).
+  - `int@pk` / `long@pk`: database-assigned (`generated always as identity`), retrieved via JDBC `getGeneratedKeys`.
+- Repository ports return the saved row on `save(T)`.
+- `findById` is strongly typed on the primary key's Java type (`UUID`, `Long`), not `String`.
+- Create request DTOs withhold server-assigned state (primary key, audit timestamps, optimistic lock version) from POST bodies.
+- `@unique` on email-named columns automatically generates case-insensitive unique index `lower(email)`.
+- Enum fields emit SQL `check (col in ('VAL1', 'VAL2'))`.
+- Naming convergence: snake_case column is normal form; Java lowerCamelCase is derived. Recorded `@column(...)` bindings preserve custom column names.
+- Free-text `String` fields with enum-like names trigger `free-text-closed-set` warnings.
 
 Composite or ordered indexes go on the command, not the field:
 `--index "author, created_at desc"`.
@@ -203,7 +242,7 @@ Composite or ordered indexes go on the command, not the field:
 ## Two ways to drive it
 
 **Imperative** — `jails g ...` and `jails add ...`, recorded in the ledger as you
-go. This is the better-finished path today.
+go.
 
 **Declarative** — `.jails/app.toml`, applied with `jails app plan` / `jails app
 apply` as **one transaction** over the whole manifest. Idempotent; an
@@ -220,10 +259,10 @@ fields = ["id:uuid@pk", "subject:string!", "openedAt:instant"]
 timestamps = true
 ```
 
-The manifest is deliberately domain-blind: a crawler, a support inbox and a
-payments gateway are three lists of the same generic intents. `examples/` holds
-the proof applications and `examples/proof-policy.tsv` declares the tier each is
-held to.
+The declarative engine handles lifecycle deltas:
+- Appending a field to `[[generate]]` automatically writes a forward `alter table ... add column` migration.
+- Removing a table-backed entity from the manifest refuses with `storage-policy-required` until an explicit retirement command is run.
+- Re-declaring a previously dropped scaffold revives it.
 
 ## Traps worth knowing before you hit them
 
@@ -232,6 +271,9 @@ held to.
 - **Anything writing an `*IT` must configure Failsafe.** jails does this from
   the write path; if you hand-write one, `mvn verify` will pass without running
   it, which is worse than having no test.
+- **ArchUnit fitness rules enforce the architecture.** `g scaffold` installs
+  `DOMAIN_HAS_NO_FRAMEWORK_DEPENDENCIES` and `RAW_JDBC_STAYS_IN_ADAPTERS`.
+  Keep domain records clean of Spring annotations (`@Component`, `@Repository`).
 - **Capability order changes output.** `add api` before `add db` renders an
   exception handler without the `DuplicateKeyException` arm. `doctor` reports it
   and `jails sync` repairs it byte-identically. `jails add db api` in one command
@@ -240,47 +282,14 @@ held to.
 - **A name that already carries its kind's suffix does not get it twice** —
   `g service OrderService` is `OrderService`, not `OrderServiceService`.
   `scaffold` is exempt because it spans three suffixes at once.
-- **The POST body wants the client to supply the id.** `@pk` renders as
-  `@NotNull UUID id` and the generated `.http` posts a fixed UUID. Posting it
-  twice violates the primary key.
-- **`g field` on an entity with `g query` / `g usecase` companions regenerates
-  those companions too.** That is one transaction, so review `--pretend` before
-  running it on a slice you have hand-edited.
+- **`g field` / `resource field` regenerates companion slices.** `query`, `transition`,
+  `usecase`, `association`, and `durable-job` companions are re-planned in the same
+  transaction, so review `--pretend` before running it on a slice you have hand-edited.
 - **`jails add format` rewrites and re-records jails' own output** in the same
   transaction, so `doctor` stays clean. Do not run `spotless:apply` yourself and
   expect the same — the re-record is what keeps the ledger honest.
-- **`migrate lint` and `schema diff` need `.jails/app.toml`** and so do not run
-  on an imperative project.
-
-## Known-broken paths — check `bugs.md` before trusting these
-
-Verified broken at HEAD `e3c7041`:
-
-- **`jails rename <Old> <New>` on a table-backed entity commits the Java half
-  only.** No `alter table ... rename to`, no create migration for the new table
-  name. Flyway then stops, and both `doctor` and `resource status` report health.
-  Use `resource field rename` for fields; for an entity, prefer not renaming yet.
-  (`bugs.md` B2.)
-- **A write that fails mid-transaction leaves the project torn**, and `resource
-  repair --strategy roll-forward` then adopts the tear as the recorded truth.
-  If a command fails with a filesystem error, inspect the tree before running
-  anything else. (`bugs.md` B18.)
-- **`jails new --app` discards the whole project** if a post-commit compose
-  effect fails — e.g. something else already holds `:5432`. Free the port, or
-  run `new` and `app apply` as two steps. (`bugs.md` B45.)
-- **On a manifest project a field cannot be added to an existing entity** —
-  `app apply` hits the migration seal and the manifest has no way to append.
-  (`bugs.md` B20.)
-- **Deleting an entity from the manifest skips the storage ceremony** the
-  imperative `destroy` insists on: every Java file goes, the create migration
-  and the table stay, and nothing reports the orphan. (`bugs.md` B22.)
-- **Neither half of an association can be destroyed** — each refusal names the
-  other command, and `destroy association` refuses as forward-only.
-  (`bugs.md` B37.)
-- **`doctor` cannot tell whether an entity's fields match the columns its
-  migrations created.** It answers "are these the bytes jails wrote". Until that
-  check exists, a green `doctor` is not evidence that the project will start —
-  run `jails migrate --check` and `jails check`.
+- **`schema diff` requires `.jails/app.toml`**; `migrate lint` runs on both
+  imperative and manifest projects using the project's declared SQL driver.
 
 ## Working on jails itself
 

@@ -152,45 +152,6 @@ deep design commitment.
 
 ---
 
-## M12 — a fully applied transaction exits 1 because an external effect failed
-
-`add db` writes every file, records the ledger, and then returns a failure
-status because it could not start the compose service.
-
-```sh
-jails new p --package com.x --offline --no-git && cd p
-jails add db ; echo "EXIT=$?"
-```
-
-```
-  create  compose.yaml
-  create  jails.toml
-  replace pom.xml
-  …
-  ledger  create
-  effect  compose reconcile (1 up, 0 stopped) (failed)
-EXIT=1
-```
-
-The project is correct — `compose.yaml`, `jails.toml` and the migration
-directory are all there, and a second run says `nothing to do` and exits 0.
-Only the side effect failed.
-
-Two things follow. In a script — `for c in db api cors json sse; do jails add
-$c || fail; done`, which is how I installed capabilities on six projects —
-this reads as a failed install of the one capability that actually succeeded.
-And the natural response is to re-run it, which is a no-op that reports
-success, so the operator learns to ignore the status.
-
-**`--no-start` exists and fixes it** (`jails add db --no-start` → `EXIT=0`),
-but the failure line names neither the cause nor the flag. Everywhere else
-jails puts a `fix:` on a refusal; this line has none.
-
-The narrow fix is a distinct exit status for "applied, effect failed" — or, at
-minimum, `fix: jails add db --no-start` on that line.
-
----
-
 ## M18 — no back-office surface
 
 Every Django checkout registers its models with the Django admin — list

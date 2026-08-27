@@ -80,6 +80,41 @@ pub fn command(
 
 const RULES: &[Rule] = &[
     Rule {
+        // Observed on the pristine `mc-01-06-2026` take-home the first time
+        // it was started after a *different* minicom checkout had run: every
+        // one of them ships `jdbc:h2:file:~/minicom`, so they share one file
+        // outside every project, and whichever H2 is newest wins it
+        // permanently. The message names a format number and a file, and
+        // nothing in it says the file belongs to another project.
+        signatures: &["Unsupported database file version or invalid file header"],
+        group: "h2-file-version",
+        explain: |log| Diagnosis {
+            headline: "this H2 file was written by a newer H2 than the one on the classpath".into(),
+            because: format!(
+                "H2's file format is not backward compatible across majors, and \
+                 `jdbc:h2:file:~/something` puts the database in your **home directory**, not in \
+                 the project. So two checkouts that both use that URL share one file: the one \
+                 with the newer H2 writes a format the older one refuses to open, and it refuses \
+                 for good. The `write format N is larger than the supported format M` line below \
+                 the first `Caused by:` is the pair of numbers -- N is what wrote it, M is what \
+                 is trying to read it.{}",
+                if log.contains("spring-boot-starter-data-jdbc") || log.contains("(v2.") {
+                    " This project is on Spring Boot 2, which manages H2 2.1.x; Boot 4 manages \
+                     2.4.x."
+                } else {
+                    ""
+                }
+            ),
+            fixes: vec![
+                "rm ~/minicom.mv.db ~/minicom.trace.db   # the file, not the project".into(),
+                "jails modernize   # if the intent was to be on the newer H2 in the first place"
+                    .into(),
+                "give this project its own file: spring.datasource.url=jdbc:h2:file:./build/db"
+                    .into(),
+            ],
+        },
+    },
+    Rule {
         // Testcontainers caches a failed environment probe for the life of
         // the JVM, so this is what every *subsequent* test in the same run
         // reports. Observed 7 times against 4 of the original message, which

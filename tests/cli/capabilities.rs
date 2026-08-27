@@ -29,6 +29,55 @@ fn add_db_no_start_skips_docker_compose_up() {
     assert!(stdout.contains("jails start"), "{stdout}");
 }
 
+/// A side effect that failed says which flag avoids it, on its own line.
+///
+/// `missing.md` M12. `jails add db` on a machine with no container engine
+/// writes every file, records the ledger and exits 1 -- which in
+/// `for c in db api cors json sse; do jails add $c || fail; done` reads as a
+/// failed install of the capability that succeeded. The status stays 1,
+/// because the services really are not running; what was missing is the
+/// `fix:` every other refusal in jails carries, and any mention at all of
+/// `--no-start`, which makes the same command exit 0.
+#[test]
+fn an_effect_that_failed_names_the_flag_that_avoids_it() {
+    let root = temp_dir("effect-failed-fix");
+    write_plain_fixture(&root);
+    let fake = temp_dir("effect-failed-fix-bin");
+    let log = fake.join("log.txt");
+    // No `docker` on PATH at all, which is the machine this was reported from.
+    write_fake_maven(&fake, &[], &log);
+
+    let output = jails_cmd(&root, Some(&fake))
+        .args(["add", "db"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!output.status.success(), "{stdout}");
+    assert!(stdout.contains("(failed)"), "{stdout}");
+    // The project is complete: the status is about the effect and says so.
+    assert!(root.join("compose.yaml").is_file());
+    assert!(stdout.contains("are written and durable"), "{stdout}");
+    assert!(stdout.contains("fix: "), "{stdout}");
+    assert!(stdout.contains("`--no-start`"), "{stdout}");
+
+    // And the flag it names really does make the same command succeed.
+    let root = temp_dir("effect-failed-fix-ok");
+    write_plain_fixture(&root);
+    let output = jails_cmd(&root, Some(&fake))
+        .args(["add", "db", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains("fix: "),
+        "a run that worked must not carry a repair line"
+    );
+}
+
 #[test]
 fn add_errors_outside_a_project() {
     let root = temp_dir("add-no-project");
