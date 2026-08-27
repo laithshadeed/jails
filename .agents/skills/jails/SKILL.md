@@ -68,12 +68,12 @@ Common flags:
 - `--on <Resource>` (target resource / dispatcher / entity)
 - `--yields <Event|Parent>` (yielded event or parent resource)
 - `--path <path>` (`controller`, `usecase`, `query`, `client`: custom route; path variables like `/items/{itemId}` bind `@PathVariable` GET routes)
-- `--consumes json|form` (`controller`, `usecase`, `query`, `transition`: `form` binds `@Valid @ModelAttribute` and `@BindParam`)
+- `--consumes json|form` (`controller`, `usecase`, `query`, `transition`: `form` binds `@Valid @ModelAttribute` and `@BindParam`; on a `query` it also makes the route a **GET reading the query string**)
 
 Key Spring generators:
 - `scaffold <Name> <fields...>` — requires single `@pk`. Immutable record, repo port, `JdbcClient` adapter, in-memory fake, request/response DTOs, controller, `.http` collection, and tests. DDL is written to `db/migration` (or `schema.sql` via marked blocks if no migration dir exists).
 - `usecase <Name> [fields...] --on <Resource> [--yields <Event>] [--on-conflict <component>]` — create operation. `--on-conflict <comp>` turns it into atomic get-or-create (`Ensuring<Name>UseCase` via `JdbcClient` `ON CONFLICT DO NOTHING RETURNING`). `--yields` adds outbox with batch drain, backoff jitter, and per-sink delivery tracking (`delivered text[]`).
-- `query <Name> [fields...] --on <Resource> [--via <Parent>] [--order-by '<cols>'] [--limit <n>]` — typed read with equality filters. `?` suffix on a filter (e.g. `status:Status?`) renders `(cast(:status as type) is null or col = :status)`. `--via <Parent>` joins parent table.
+- `query <Name> [fields...] --on <Resource> [--via <Parent>] [--order-by '<cols>'] [--limit <n>]` — typed read with equality filters. `?` suffix on a filter (e.g. `status:Status?`) renders `(cast(:status as type) is null or col = :status)`. `--via <Parent>` joins parent table. The verb is derived, never chosen: GET when every filter is a `--path` variable, **GET binding `@ModelAttribute` from the query string with `--consumes form`** (so `GET /admin_api/users?status=open&category=Billing` is reachable), POST otherwise.
 - `transition <Name> [fields...] --on <Resource>` — atomic CAS update matching `id`, `@scope`, and required `version:long`. Returns sealed `Result` (`Applied`, `StaleVersion`, `NotFound`), maps `If-Match` / `ETag`, and raises `ApiException` when `add api` is present.
 - `client <Name> [--method <verb>] [--on <Req>] [--returns <Resp>] [--path <path>]` — typed `@HttpExchange` client with timeouts and base URL. Generates independent `<Name>ClientConfig` per client.
 - `event <Name> [fields...] [--on <Entity>]` — Kafka payload record and publisher. `--on <Entity>` keys partitions on `<entity>Id` for per-entity ordering; mints `TimeOrderedUuid` so outbox doesn't drop duplicates.
@@ -302,12 +302,13 @@ The declarative engine handles lifecycle deltas:
   expect the same — the re-record is what keeps the ledger honest.
 - **`schema diff` requires `.jails/app.toml`**; `migrate lint` runs on both
   imperative and manifest projects using the project's declared SQL driver.
-- **A `transition` selects by `id` unless `--select <field>` names another.**
-  A conversation keyed by `user_id` could not be updated at all before, because
-  the name was a literal in the SQL predicate. The key still comes from the
-  request body: a `--path` variable is refused rather than mounted and ignored,
-  since binding it means a command record without the key and a port that takes
-  it beside the command.
+- **A `transition` selects by `id` unless `--select <field>` names another**,
+  and that key may come from the URL: `--select userId --path
+  '/admin_api/conversations/{userId}/status'` drops the selector from the
+  command record and binds it as a `@PathVariable`. The port shape is the same
+  either way -- `execute(key, command, expectedVersion)` -- so the adapter and
+  the controller cannot disagree about where the key was. A variable naming
+  anything other than the selector is refused, and so is a second one.
 - **A flag a recipe derives is refused, not ignored.** `--method` applies to
   `controller`, `client` and `transition` (PUT by default, PATCH the other
   correct spelling for an idempotent update); `--path` to `controller`,

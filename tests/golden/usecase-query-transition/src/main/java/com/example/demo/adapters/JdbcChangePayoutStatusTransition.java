@@ -27,7 +27,9 @@ public class JdbcChangePayoutStatusTransition implements ChangePayoutStatusUseCa
 
     @Override
     @Transactional
-    public ChangePayoutStatusUseCase.Result execute(ChangePayoutStatusCommand command, long expectedVersion) {
+    public ChangePayoutStatusUseCase.Result execute(
+            UUID id, ChangePayoutStatusCommand command, long expectedVersion) {
+        Objects.requireNonNull(id, "id is required");
         Objects.requireNonNull(command, "command is required");
         var updated = db.sql("""
                         update payouts
@@ -37,7 +39,7 @@ public class JdbcChangePayoutStatusTransition implements ChangePayoutStatusUseCa
                           and version = :version
                         returning id, amount, status, version, created_at
                         """)
-                .param("id", command.id())
+                .param("id", id)
                 .param("status", command.status().name())
                 .param("version", expectedVersion)
                 .query(JdbcChangePayoutStatusTransition::map)
@@ -54,11 +56,11 @@ public class JdbcChangePayoutStatusTransition implements ChangePayoutStatusUseCa
                         from payouts
                         where id = :id
                         """)
-                .param("id", command.id())
+                .param("id", id)
                 .query(JdbcChangePayoutStatusTransition::map)
                 .optional()
                 .<ChangePayoutStatusUseCase.Result>map(ChangePayoutStatusUseCase.Result.StaleVersion::new)
-                .orElseGet(() -> new ChangePayoutStatusUseCase.Result.NotFound(command.id()));
+                .orElseGet(() -> new ChangePayoutStatusUseCase.Result.NotFound(id));
     }
 
     private static Payout map(ResultSet rows, int rowNumber) throws SQLException {

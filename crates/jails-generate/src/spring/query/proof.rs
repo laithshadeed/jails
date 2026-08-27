@@ -97,6 +97,49 @@ pub(super) fn query_controller_test_java(
             ],
         );
     }
+    // A form-bound query answers a GET and binds from the query string, so
+    // its test sends parameters rather than a JSON body. One `Endpoint`, read
+    // by the controller and by this -- `bugs.md` B48 is what happens when the
+    // two work it out separately.
+    if endpoint.consumes == jails_spec::spec::kind::WireFormat::Form {
+        // A filter's sample is taken as if it were *present*, not as JSON
+        // would render it. `json_sample` answers `null` for a `?` field, which
+        // is right in a body and wrong here twice over: `status=null` is the
+        // four-character string, and a test that sends it proves the filter is
+        // never applied. An optional filter jails cannot sample is omitted --
+        // absent is what "no filter" means on a query string.
+        let params = fields
+            .iter()
+            .filter_map(|field| {
+                let mut present = field.clone();
+                present.optionality = crate::generate::Optionality::Required;
+                let sample = json_sample(slice, &present)?;
+                Some(format!(
+                    "                .param(\"{}\", \"{}\")",
+                    field.name,
+                    sample.trim_matches('"')
+                ))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        return crate::template::render(
+            crate::template_here!("spring/query_controller_form_test_java.java"),
+            &[
+                ("web", web),
+                ("port_import", &*port_import),
+                ("target_import", &*target_import),
+                ("scope_import", &*scope_import),
+                ("imports", &*imports),
+                ("disabled_import", disabled_import),
+                ("name", name),
+                ("annotation", annotation),
+                ("target", target),
+                ("target_args", &*target_args),
+                ("scope_argument", &*scope_argument),
+                ("params", &params),
+            ],
+        );
+    }
     crate::template::render(
         // No classic form: `g query` refuses below Boot 3 because the adapter
         // it writes needs `JdbcClient`, so a Boot 2 test would have nothing to

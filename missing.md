@@ -12,8 +12,13 @@ capability (`jails g socket <Name>` is the slice, and `jails add websocket`
 now says so), first-class `devtools` (one dependency and no code, so `jails
 add dependency` is the verb -- both `run --watch` and `doctor` name it now),
 H2's console and safe URL defaults (`jails db`, `jails db --web`, and two
-`doctor` checks), WebSocket route discovery, and `@Value`/SpEL parsing in
-`jails beans`. `jails fmt` on Gradle is a *deliberate* refusal, recorded in
+`doctor` checks), WebSocket route discovery, `@Value`/SpEL parsing in
+`jails beans`, a `GET` reading its filters from the query string
+(`--consumes form` on `g query` now decides the verb as well as the binding,
+so `GET /admin_api/conversations?status=open&category=Billing` is reachable),
+and a `transition` whose key is a path variable (`--select userId --path
+/admin_api/conversations/{userId}/status`, so `PATCH` at the URL an admin
+frontend actually calls is one command). `jails fmt` on Gradle is a *deliberate* refusal, recorded in
 `research.md` §5.1, not a gap.
 
 ---
@@ -40,34 +45,25 @@ H2's console and safe URL defaults (`jails db`, `jails db --web`, and two
 - **Adoption must not claim jails wrote the schema.** This project's DDL is in `schema.sql`, not a Flyway lineage jails sealed. An adopted resource is storage-backed by a table jails did not create, so `--storage drop` has to stay refused for it -- the recorded lineage is the authority for what jails may retire, and adoption must not forge one.
 - **Whatever cannot be read is confirmed, not defaulted.** A column says `varchar(64)` and not `@unique`; a record read off disk already carries no constraints for exactly this reason. The precedent to follow is `destroy --storage drop --confirm-table`: ask for the evidence rather than invent it.
 
-### A route whose key is in the URL (`transition` path binding)
+### Adopting the ArchUnit baseline (`jails architecture baseline`)
 
-Measured on `minicom-15-01-2026-org`, implementing the feature list with jails
-commands only. Every PATCH the frontend sends is
-`/admin_api/conversations/{userId}/{field}`.
+Measured on `minicom-15-01-2026-org`: after every jails command in the feature
+list had run and the project compiled, `./gradlew test` was red on exactly one
+class -- `ArchitectureTest`, over 24 violations in code jails did not write
+(`java.sql.Timestamp` in the legacy `Message` and `User` POJOs and the three
+hand-written controllers).
 
-- `g transition` takes `--path` and `--method patch` now, and `--select
-  <field>` lets it update a row keyed by `user_id` rather than `id`. What it
-  still cannot do is take that key **from the URL**: the command record carries
-  the selector, so a path variable is refused rather than mounted and ignored.
-- **Expected**: with `--path /x/{userId}/status --select userId`, generate a
-  command record *without* the selector and a port that takes it beside the
-  command -- the URL identifies the row, the body carries the change.
-- **Why it is refused rather than half-built**: mounting the variable without
-  binding it is exactly `bugs.md` B48, which cost three generated tests failing
-  with `Not enough variable values available to expand`. The two shapes of one
-  port are the drift risk, so this needs deciding rather than defaulting.
-
-### A `GET` with query-string filters (`query`)
-
-- `g query` emits GET when every filter is a path variable and POST otherwise,
-  so it cannot answer `GET /admin_api/users?status=open&category=Billing` --
-  which is what a browser sends and what the minicom admin UI already calls.
-- `--consumes form` binds `@ModelAttribute`, which Spring *does* fill from
-  query parameters on a GET, so the pieces exist and only the verb decision is
-  in the way.
-- **Expected**: `--consumes form` plus a filter set that is all optional should
-  give a GET binding from the query string.
+- `g scaffold` already **warns** and names the bootstrap, so nothing is hidden.
+  What it names is four manual steps in a file jails wrote: set both
+  `allowStoreCreation` and `allowStoreUpdate` true in
+  `src/test/resources/archunit.properties`, run the suite once, set both back,
+  commit `.jails/architecture-baseline`.
+- Doing it by hand takes a minute and is the last thing standing between a
+  legacy checkout and a green `jails check` -- which is the whole adoption
+  story, so it is the wrong place to hand the reader a four-step recipe.
+- **Expected**: `jails architecture baseline` performs those four steps as one
+  transition and reports what it froze, so the violations that were already
+  there are recorded and any *new* one still fails the build.
 
 ### `modernize` does not re-plan jails' own output
 

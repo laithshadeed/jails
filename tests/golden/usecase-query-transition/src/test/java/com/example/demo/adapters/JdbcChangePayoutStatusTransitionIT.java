@@ -32,7 +32,7 @@ class JdbcChangePayoutStatusTransitionIT {
                 UUID.fromString("00000000-0000-0000-0000-000000000001"),
                 PayoutStatus.PENDING);
 
-        var applied = useCase.execute(command, 1L);
+        var applied = useCase.execute(stored.id(), command, 1L);
 
         assertThat(applied).isInstanceOf(ChangePayoutStatusUseCase.Result.Applied.class);
         var resource = ((ChangePayoutStatusUseCase.Result.Applied) applied).resource();
@@ -40,9 +40,9 @@ class JdbcChangePayoutStatusTransitionIT {
 
         // The same expectation a second time is stale, and the outcome
         // carries the row as it now stands rather than a message about it.
-        var again = useCase.execute(command, 1L);
+        var again = useCase.execute(stored.id(), command, 1L);
         assertThat(again).isInstanceOf(ChangePayoutStatusUseCase.Result.StaleVersion.class);
         assertThat(((ChangePayoutStatusUseCase.Result.StaleVersion) again).current()).isEqualTo(resource);
-        assertThat(repository.findById(command.id())).contains(resource);
+        assertThat(repository.findById(stored.id())).contains(resource);
     }
 }

@@ -13,12 +13,17 @@ package {{pkg}};
 public interface {{name}}UseCase {
 
     /**
+     * @param {{id_component}} which row to change. A separate argument rather
+     *     than a component of the command, because it is not always in the
+     *     body: with a path variable it comes from the URL, and one port shape
+     *     is what stops the adapter and the controller disagreeing about which
+     *     of the two it is.
      * @param command what to change
      * @param expectedVersion the version the caller believes the row is at.
      *     It arrives as an {@code If-Match} header rather than in the body:
      *     HTTP already has a word for "only if it is still what I read".
      */
-    Result execute({{name}}Command command, {{version_type}} expectedVersion);
+    Result execute({{key_type}} {{id_component}}, {{name}}Command command, {{version_type}} expectedVersion);
 
     /**
      * What the transition concluded.

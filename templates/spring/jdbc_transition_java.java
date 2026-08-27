@@ -19,7 +19,9 @@ public class Jdbc{{name}}Transition implements {{name}}UseCase {
 
     @Override
     @Transactional
-    public {{name}}UseCase.Result execute({{name}}Command command, {{version_type}} expectedVersion) {
+    public {{name}}UseCase.Result execute(
+            {{key_type}} {{id_component}}, {{name}}Command command, {{version_type}} expectedVersion) {
+        Objects.requireNonNull({{id_component}}, "{{id_component}} is required");
         Objects.requireNonNull(command, "command is required");
         var updated = db.sql("""
                         update {{table}}
@@ -47,7 +49,7 @@ public class Jdbc{{name}}Transition implements {{name}}UseCase {
                 .query(Jdbc{{name}}Transition::map)
                 .optional()
                 .<{{name}}UseCase.Result>map({{name}}UseCase.Result.StaleVersion::new)
-                .orElseGet(() -> new {{name}}UseCase.Result.NotFound(command.{{id_component}}()));
+                .orElseGet(() -> new {{name}}UseCase.Result.NotFound({{id_component}}));
     }
 
     private static {{target}} map(ResultSet rows, int rowNumber) throws SQLException {

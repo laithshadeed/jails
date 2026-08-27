@@ -43,7 +43,7 @@ public final class ChangePayoutStatusController {
         // No `default`: the port's outcomes are sealed, so a fourth one stops
         // this file compiling rather than falling through to a status nobody
         // chose.
-        return switch (useCase.execute(command, expected)) {
+        return switch (useCase.execute(command.id(), command, expected)) {
             case ChangePayoutStatusUseCase.Result.Applied(var resource) ->
                     ResponseEntity.ok()
                             .eTag(String.valueOf(resource.version()))

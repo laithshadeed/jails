@@ -450,7 +450,13 @@ Four things to know before touching it:
   fetcher, http-workflow, http-sink) and `crates/jails-generate/src/spring/schema.rs` (association,
   idempotency). `spring.rs` itself is down from 6,624 to ~1,900 lines and holds
   the shared precondition, the shared helpers used by more than one kind, and
-  the capability slices.
+  the capability slices. `transition` and `query` have since moved out of
+  `workflow.rs` into files of their own, and each then split again **by
+  secret**: `spring/query/proof.rs` and `spring/transition/proof.rs` hold what
+  jails writes to *prove* the recipe, because the fact a test turns on -- where
+  the request's values come from -- is one the route renderer already resolved
+  and the test renderer must not resolve again. `bugs.md` B48 was exactly that
+  drift.
 
   Two things the split needed and the next one will too: a child module reaches
   its parent's **private** items through `use super::*;`, but the parent needs

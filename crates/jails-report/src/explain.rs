@@ -151,9 +151,11 @@ const EXPLANATIONS: &[Explanation] = &[
                for an unfiltered read.\n\n\
                Two things the generated adapter decides for you. The result is capped at 100 \
                rows with no cursor and no total, so a caller that receives 100 cannot tell \
-               whether there were more. And the HTTP verb is derived, not chosen: GET when \
-               every filter comes from `--path`, POST otherwise -- `--method` does not apply \
-               and is refused here.\n\n\
+               whether there were more. And the HTTP verb is derived, not chosen, because it \
+               follows from where the values come from: GET when every filter is a `--path` \
+               variable, GET reading the query string with `--consumes form` (which binds \
+               `@ModelAttribute`, and Spring fills that from request parameters), POST with \
+               a JSON body otherwise. `--method` does not apply and is refused here.\n\n\
                Example: `jails g query LoansByMember memberId:uuid --on Loan`.",
     },
     Explanation {

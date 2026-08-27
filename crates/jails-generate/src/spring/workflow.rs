@@ -702,7 +702,13 @@ pub(crate) fn json_sample(slice: &Slice, field: &crate::generate::Field) -> Opti
         // body with the field silently missing. `pending.md` §1.3.
         "Currency" => Some("GBP".to_string()),
         "byte[]" => Some("amFpbHM=".to_string()),
-        owned if field.owned => crate::generate::first_enum_constant(project, domain, owned),
+        // The *wire* value, not the constant: an enum declared
+        // `OPEN=open` serialises and deserialises as `open`, so a request
+        // carrying `OPEN` is rejected by the converter jails generated
+        // alongside it. `first_enum_wire_value` falls back to the constant
+        // when the enum has no `@JsonValue`, which is the common case and
+        // why this read the wrong one for so long.
+        owned if field.owned => crate::generate::first_enum_wire_value(project, domain, owned),
         _ => None,
     };
     if let Some(value) = quoted {

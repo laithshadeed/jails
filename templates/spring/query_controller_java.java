@@ -3,7 +3,7 @@ package {{web}};
 {{query_import}}{{port_import}}{{scope_import}}import {{validation}}.validation.Valid;
 import java.util.List;
 import java.util.Objects;
-import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.{{mapping}};
 {{binding_import}}import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -22,7 +22,7 @@ public final class {{name}}QueryController {
 {{scope_assignment}}
     }
 
-    @PostMapping
+    @{{mapping}}
     public List<{{target}}Response> execute(
             @Valid @{{binding}} {{name}}Criteria criteria{{scope_parameter}}) {
 {{scope_checks}}

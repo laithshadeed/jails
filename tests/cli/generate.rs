@@ -854,9 +854,10 @@ fn a_named_route_replaces_the_derived_one_everywhere_it_appears() {
 /// at all. Found implementing the minicom feature list, where every PATCH the
 /// frontend sends is addressed by `userId`.
 ///
-/// The URL half is deliberately still refused: binding the key from the path
-/// means a command record without it and a port that takes it beside the
-/// command, and half of that is a route that mounts a variable and ignores it.
+/// The URL half is `a_transition_can_take_its_key_from_the_url`; what is
+/// refused here is a variable that names something *other* than the selector,
+/// because the only value a URL can identify a row with is the one the row is
+/// selected by.
 #[test]
 fn a_transition_can_select_by_a_component_other_than_id() {
     let root = temp_dir("transition-select");
@@ -930,8 +931,9 @@ fn a_transition_can_select_by_a_component_other_than_id() {
     assert!(stderr.contains("`nothing`"), "{stderr}");
     assert!(stderr.contains("--select"), "{stderr}");
 
-    // And a path variable is refused rather than mounted and ignored.
-    let bound = jails_cmd(&root, None)
+    // A path variable that names something other than the selector has nowhere
+    // to go, so it is refused rather than mounted and ignored.
+    let wrong = jails_cmd(&root, None)
         .args([
             "g",
             "transition",
@@ -944,16 +946,174 @@ fn a_transition_can_select_by_a_component_other_than_id() {
             "--select",
             "userId",
             "--path",
+            "/admin_api/conversations/{id}/status",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        !wrong.status.success(),
+        "a stray path variable was accepted"
+    );
+    let stderr = String::from_utf8_lossy(&wrong.stderr);
+    assert!(
+        stderr.contains("cannot take `{id}` from the URL"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("--select id"), "{stderr}");
+
+    // Two variables: only one value identifies a row, and the message says
+    // which one to keep rather than picking.
+    let two = jails_cmd(&root, None)
+        .args([
+            "g",
+            "transition",
+            "SetFromTwo",
+            "--on",
+            "Conversation",
+            "userId:long",
+            "version:long",
+            "status:string",
+            "--select",
+            "userId",
+            "--path",
+            "/admin_api/{userId}/conversations/{status}",
+        ])
+        .output()
+        .unwrap();
+    assert!(!two.status.success(), "two path variables were accepted");
+    let stderr = String::from_utf8_lossy(&two.stderr);
+    assert!(stderr.contains("can bind one path variable"), "{stderr}");
+    assert!(stderr.contains("`{userId}`"), "{stderr}");
+}
+
+/// `missing.md`: the key in the URL, which is where every admin frontend puts
+/// it -- `PATCH /admin_api/conversations/{userId}/status`.
+///
+/// Three things move together or the route is broken in the quiet way
+/// `bugs.md` B48 was: the command record drops the selector (a component bound
+/// from two places can disagree with itself), the port takes the key beside
+/// the command, and the generated proof expands the variable. The port shape
+/// is deliberately the *same* one a body-carried key gets -- `execute(key,
+/// command, expectedVersion)` either way -- so the adapter and the controller
+/// cannot come to different conclusions about where the key was.
+#[test]
+fn a_transition_can_take_its_key_from_the_url() {
+    let root = temp_dir("transition-path-bound");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+
+    assert!(
+        jails_cmd(&root, None)
+            .args([
+                "g",
+                "scaffold",
+                "Conversation",
+                "id:long@pk",
+                "userId:long@unique",
+                "status:string",
+                "version:long",
+            ])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+
+    let output = jails_cmd(&root, None)
+        .args([
+            "g",
+            "transition",
+            "SetStatus",
+            "--on",
+            "Conversation",
+            "userId:long",
+            "version:long",
+            "status:string",
+            "--select",
+            "userId",
+            "--method",
+            "patch",
+            "--path",
             "/admin_api/conversations/{userId}/status",
         ])
         .output()
         .unwrap();
-    assert!(!bound.status.success(), "a path variable was accepted");
-    let stderr = String::from_utf8_lossy(&bound.stderr);
     assert!(
-        stderr.contains("cannot take `{userId}` from the URL"),
-        "{stderr}"
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
+
+    // The command record no longer carries the key.
+    let command = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/service/SetStatusCommand.java"),
+    )
+    .unwrap();
+    assert!(
+        command.contains("record SetStatusCommand(String status)"),
+        "{command}"
+    );
+    assert!(!command.contains("userId"), "{command}");
+
+    // Mounted *and* bound.
+    let controller = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/web/SetStatusController.java"),
+    )
+    .unwrap();
+    assert!(
+        controller.contains("PATH = \"/admin_api/conversations/{userId}/status\""),
+        "{controller}"
+    );
+    assert!(
+        controller.contains("@PathVariable Long userId"),
+        "{controller}"
+    );
+    assert!(
+        controller.contains("import org.springframework.web.bind.annotation.PathVariable;"),
+        "{controller}"
+    );
+    assert!(
+        controller.contains("useCase.execute(userId, command, expected)"),
+        "{controller}"
+    );
+    assert!(controller.contains("@PatchMapping"), "{controller}");
+
+    // One port shape, and the SQL binds the key from the parameter rather than
+    // off a command component that is no longer there.
+    let port = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/service/SetStatusUseCase.java"),
+    )
+    .unwrap();
+    assert!(
+        port.contains(
+            "Result execute(Long userId, SetStatusCommand command, long expectedVersion);"
+        ),
+        "{port}"
+    );
+    let adapter = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/adapters/JdbcSetStatusTransition.java"),
+    )
+    .unwrap();
+    assert!(adapter.contains("where user_id = :user_id"), "{adapter}");
+    assert!(adapter.contains(".param(\"user_id\", userId)"), "{adapter}");
+    assert!(!adapter.contains("command.userId()"), "{adapter}");
+    assert!(adapter.contains("Result.NotFound(userId)"), "{adapter}");
+
+    // And the proof expands the variable, which is the half B48 dropped.
+    let test = fs::read_to_string(
+        root.join("src/test/java/com/example/demo/web/SetStatusControllerTest.java"),
+    )
+    .unwrap();
+    assert!(
+        test.contains("mvc.patch().uri(SetStatusController.PATH, "),
+        "{test}"
+    );
+    assert!(
+        test.contains("(userId, command, expectedVersion) ->"),
+        "{test}"
+    );
+    assert!(!test.contains("\"userId\":"), "{test}");
 }
 
 /// A resource can be dropped, re-created and dropped again, indefinitely.
@@ -6039,6 +6199,159 @@ fn a_query_path_may_address_its_filters_by_name() {
         error.contains("subject would have to come from a request body"),
         "{error}"
     );
+}
+
+/// `missing.md`: a `GET` whose filters come from the query string.
+///
+/// `g query` emitted GET only when every filter was a path variable, and POST
+/// otherwise -- so the one shape a browser actually sends,
+/// `GET /admin_api/users?status=open&category=Billing`, was unreachable. The
+/// pieces already existed: `--consumes form` binds `@ModelAttribute`, and
+/// Spring fills that from request *parameters*, which on a GET are the query
+/// string. Only the verb decision was in the way.
+///
+/// The generated test has to move with it -- `bugs.md` B48 is what happens
+/// when the controller renderer and the test renderer decide the wire
+/// separately.
+#[test]
+fn a_form_bound_query_answers_a_get_and_reads_the_query_string() {
+    let root = temp_dir("query-form");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources")).unwrap();
+    fs::write(root.join("src/main/resources/schema.sql"), "-- schema\n").unwrap();
+
+    let status = jails_cmd(&root, None)
+        .args([
+            "g",
+            "scaffold",
+            "Ticket",
+            "id:long@pk",
+            "subject:string!",
+            "status:string?",
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let output = jails_cmd(&root, None)
+        .args([
+            "g",
+            "query",
+            "OpenTickets",
+            "status:string?",
+            "--on",
+            "Ticket",
+            "--consumes",
+            "form",
+            "--path",
+            "/admin_api/tickets",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let controller = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/web/OpenTicketsQueryController.java"),
+    )
+    .unwrap();
+    assert!(controller.contains("@GetMapping"), "{controller}");
+    assert!(
+        controller.contains("import org.springframework.web.bind.annotation.GetMapping;"),
+        "{controller}"
+    );
+    assert!(
+        controller.contains("@Valid @ModelAttribute OpenTicketsCriteria criteria"),
+        "{controller}"
+    );
+    assert!(!controller.contains("PostMapping"), "{controller}");
+    assert!(!controller.contains("RequestBody"), "{controller}");
+
+    // The proof moves with the wire: parameters, not a JSON body, and no
+    // `status=null` -- a filter is sampled as if it were present, because a
+    // request that sends the four-character string proves nothing.
+    let test = fs::read_to_string(
+        root.join("src/test/java/com/example/demo/web/OpenTicketsQueryControllerTest.java"),
+    )
+    .unwrap();
+    assert!(test.contains("mvc.get()"), "{test}");
+    assert!(test.contains(".param(\"status\", \"sample\")"), "{test}");
+    assert!(!test.contains("mvc.post()"), "{test}");
+    assert!(!test.contains("APPLICATION_JSON"), "{test}");
+
+    // An enum filter is sampled by its **wire** value, not its constant. A
+    // `g enum Status OPEN=open` renders `@JsonValue`, and the converter jails
+    // generates beside it rejects `OPEN` -- so the generated proof used to
+    // send a value the generated code refuses. Both wires: the JSON body of a
+    // POST query reads the same sampler.
+    let status = jails_cmd(&root, None)
+        .args(["g", "enum", "Stage", "OPEN=open", "SHUT=shut"])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let status = jails_cmd(&root, None)
+        .args([
+            "g",
+            "scaffold",
+            "Matter",
+            "id:long@pk",
+            "stage:Stage",
+            "note:string!",
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let output = jails_cmd(&root, None)
+        .args([
+            "g",
+            "query",
+            "MattersByStage",
+            "stage:Stage?",
+            "--on",
+            "Matter",
+            "--consumes",
+            "form",
+            "--path",
+            "/admin_api/cases",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let staged = fs::read_to_string(
+        root.join("src/test/java/com/example/demo/web/MattersByStageQueryControllerTest.java"),
+    )
+    .unwrap();
+    assert!(staged.contains(".param(\"stage\", \"open\")"), "{staged}");
+    assert!(!staged.contains("\"OPEN\""), "{staged}");
+
+    // JSON is still a POST: a GET with a body is dropped somewhere between the
+    // caller and the handler by most of the stack in between.
+    let output = jails_cmd(&root, None)
+        .args([
+            "g",
+            "query",
+            "TicketsBySubject",
+            "subject:string!",
+            "--on",
+            "Ticket",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let json = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/web/TicketsBySubjectQueryController.java"),
+    )
+    .unwrap();
+    assert!(json.contains("@PostMapping"), "{json}");
 }
 
 /// The dependency reader on a Gradle project, and what its blindness cost.

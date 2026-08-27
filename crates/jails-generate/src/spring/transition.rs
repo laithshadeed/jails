@@ -5,8 +5,11 @@
 //! generated adapter refuses a move the enum does not allow, so the illegal
 //! transition fails in the database rather than in a code review.
 
-use super::workflow::{json_sample, scope_test_parts, usecase_command_java};
+use super::workflow::{scope_test_parts, usecase_command_java};
+
+mod proof;
 use super::*;
+use proof::{jdbc_transition_it_java, transition_controller_test_java};
 
 /// The three lists that together describe one optimistic update: the target's
 /// columns, the command's columns, and which fields actually change.
@@ -72,10 +75,10 @@ pub(crate) fn transition_files(
     // `--path /admin_api/conversations/{userId}/status --select userId` the
     // key comes from the URL and the rest of the command from the body.
     //
-    // Refused otherwise rather than mounted and ignored. The first version of
-    // `--path` here did mount it, and three generated tests failed with
-    // `Not enough variable values available to expand` -- a route that looks
-    // right and silently drops half of itself.
+    // Anything else is refused rather than mounted and ignored. The first
+    // version of `--path` here mounted whatever it was given, and three
+    // generated tests failed with `Not enough variable values available to
+    // expand` -- a route that looks right and silently drops half of itself.
     let variables: Vec<&str> = endpoint
         .route
         .map(|route| {
@@ -86,14 +89,27 @@ pub(crate) fn transition_files(
                 .collect()
         })
         .unwrap_or_default();
-    if let Some(first) = variables.first() {
+    if variables.len() > 1 {
+        return Err(format!(
+            "transition {name} can bind one path variable, the one that identifies the row, \
+             and this path has {}: {}.\n       fix: keep `{{{selector}}}` and move the rest \
+             into the request body.",
+            variables.len(),
+            variables
+                .iter()
+                .map(|variable| format!("`{{{variable}}}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+        .into());
+    }
+    if let Some(first) = variables.first()
+        && *first != selector
+    {
         return Err(format!(
             "transition {name} cannot take `{{{first}}}` from the URL: it selects its row by \
-             `{selector}`, which the request body carries.\n       Binding it from the path \
-             would mean a command record without it and a port that takes it beside the \
-             command,\n       and half of that is a route that mounts a variable and ignores \
-             it.\n       fix: give it a path with no variables. `--select <field>` is what makes \
-             a row keyed by something\n            other than `id` updatable at all."
+             `{selector}`, and that is the only value a URL can identify a row with.\n                    fix: spell the variable `{{{selector}}}`, or name `{first}` the selector with \
+             `--select {first}`."
         )
         .into());
     }
@@ -106,6 +122,13 @@ pub(crate) fn transition_files(
                  `--select <field>`."
             )
         })?;
+    let key = Key {
+        component: selector,
+        java_type: crate::generate::builtin_by_java_name(&id.java_type)
+            .map(|(boxed, _)| boxed)
+            .unwrap_or("String"),
+        from_path: !variables.is_empty(),
+    };
     // `missing.md` M11: both halves of this were good refusals and neither
     // said what to type, so a ported schema met the column requirement, then
     // met `g field`'s data-plan requirement, and only then had the two
@@ -169,32 +192,34 @@ pub(crate) fn transition_files(
             path: main_service.join(format!("{name}Command.java")),
             // Without `version`: the expected version is a precondition,
             // not data the command carries. plan.md P4.5.
-            contents: usecase_command_java(slice, name, &command_fields(fields), endpoint),
+            contents: usecase_command_java(slice, name, &command_fields(fields, key), endpoint),
         },
         Artifact {
             kind: "transition port",
             path: main_service.join(format!("{name}UseCase.java")),
-            contents: transition_port_java(slice, name, target, fields, selector),
+            contents: transition_port_java(slice, name, target, fields, key),
         },
         Artifact {
             kind: "optimistic JDBC transition",
             path: main_adapters.join(format!("Jdbc{name}Transition.java")),
-            contents: jdbc_transition_java(slice, name, target, fields, &update, selector),
+            contents: jdbc_transition_java(slice, name, target, fields, &update, key),
         },
         Artifact {
             kind: "optimistic transition integration test",
             path: test_adapters.join(format!("Jdbc{name}TransitionIT.java")),
-            contents: jdbc_transition_it_java(slice, name, &resource, fields),
+            contents: jdbc_transition_it_java(slice, name, &resource, fields, key),
         },
         Artifact {
             kind: "transition controller",
             path: main_web.join(format!("{name}Controller.java")),
-            contents: transition_controller_java(slice, name, target, fields, endpoint),
+            contents: transition_controller_java(slice, name, target, fields, endpoint, key),
         },
         Artifact {
             kind: "transition controller test",
             path: test_web.join(format!("{name}ControllerTest.java")),
-            contents: transition_controller_test_java(slice, name, &resource, fields, endpoint),
+            contents: transition_controller_test_java(
+                slice, name, &resource, fields, endpoint, key,
+            ),
         },
     ])
 }
@@ -206,6 +231,39 @@ pub(crate) fn transition_files(
 /// scope", "scoped matches cannot mutate another tenant's row" -- was printed
 /// over `where id = :id` in every project that declared no scope at all.
 /// modern.md 5.3, plan.md P4.5.
+/// The row this transition selects, and where its value comes from.
+///
+/// One value because the three are decided together in `transition_files` and
+/// read together by every renderer below. It is also what keeps the port to
+/// *one* shape: `execute(key, command, expectedVersion)` whether the key
+/// arrived in the URL or in the body, so the adapter and the controller cannot
+/// disagree about which of the two it was. Two shapes would be the `bugs.md`
+/// B48 drift with a bigger surface.
+#[derive(Clone, Copy)]
+struct Key<'a> {
+    /// The component that identifies the row -- `id` unless `--select` named
+    /// another.
+    component: &'a str,
+    /// The Java type the port takes it as: the boxed builtin, because
+    /// `Result.NotFound` is a record component and cannot hold a primitive
+    /// generically.
+    java_type: &'static str,
+    /// True when a `--path` variable carries it, so the command record does
+    /// not.
+    from_path: bool,
+}
+
+impl Key<'_> {
+    /// How the controller names the value it hands the port.
+    fn expression(&self) -> String {
+        if self.from_path {
+            self.component.to_string()
+        } else {
+            format!("command.{}()", self.component)
+        }
+    }
+}
+
 fn scope_clause(fields: &[crate::generate::Field]) -> &'static str {
     if fields.iter().any(|field| field.constraints.scoped) {
         " within the caller's authorized scope"
@@ -225,10 +283,15 @@ fn version_field(fields: &[crate::generate::Field]) -> &crate::generate::Field {
 
 /// The command a caller sends: every declared field except the version, which
 /// travels as `If-Match`. plan.md P4.5.
-fn command_fields(fields: &[crate::generate::Field]) -> Vec<crate::generate::Field> {
+///
+/// And except the selector, when a `--path` variable carries it: a component
+/// bound from two places at once is a component that can disagree with itself,
+/// and the URL is the half a router already matched on.
+fn command_fields(fields: &[crate::generate::Field], key: Key<'_>) -> Vec<crate::generate::Field> {
     fields
         .iter()
         .filter(|field| field.name != "version")
+        .filter(|field| !(key.from_path && field.name == key.component))
         .cloned()
         .collect()
 }
@@ -246,7 +309,7 @@ fn transition_port_java(
     name: &str,
     target: &str,
     fields: &[crate::generate::Field],
-    selector: &str,
+    key: Key<'_>,
 ) -> String {
     let pkg: &str = &slice.placed(Layer::Service);
     let domain: &str = &slice.owned(Layer::Domain);
@@ -254,11 +317,8 @@ fn transition_port_java(
     let (version_type, _) = version_type(fields);
     let id = fields
         .iter()
-        .find(|field| field.name == selector)
+        .find(|field| field.name == key.component)
         .expect("a transition is refused without its selector field");
-    let key_type = crate::generate::builtin_by_java_name(&id.java_type)
-        .map(|(boxed, _)| boxed)
-        .unwrap_or("String");
     let key_import = crate::generate::builtin_by_java_name(&id.java_type)
         .and_then(|(_, import)| import)
         .map(|import| format!("import {import};\n"))
@@ -270,7 +330,8 @@ fn transition_port_java(
             ("target_import", &format!("{target_import}{key_import}")),
             ("scope_clause", scope_clause(fields)),
             ("version_type", version_type),
-            ("key_type", key_type),
+            ("key_type", key.java_type),
+            ("id_component", key.component),
             ("name", name),
             ("target", target),
         ],
@@ -283,7 +344,7 @@ fn jdbc_transition_java(
     target: &str,
     fields: &[crate::generate::Field],
     update: &Update,
-    selector: &str,
+    key: Key<'_>,
 ) -> String {
     let pkg: &str = &slice.owned(Layer::Adapters);
     let service: &str = &slice.placed(Layer::Service);
@@ -328,7 +389,7 @@ fn jdbc_transition_java(
         .join(",\n                            ");
     let match_fields = fields
         .iter()
-        .filter(|field| field.name == selector || field.constraints.scoped)
+        .filter(|field| field.name == key.component || field.constraints.scoped)
         .collect::<Vec<_>>();
     let optimistic_predicates = match_fields
         .iter()
@@ -347,6 +408,14 @@ fn jdbc_transition_java(
         })
         .collect::<Vec<_>>()
         .join("\n                                  and ");
+    // The key is bound from the port's own parameter, not off the command --
+    // the command does not always carry it. `sql::columns` renders a write
+    // expression against a receiver (`command.userId()`, or
+    // `Timestamp.from(command.at())` where the receiver sits in the middle),
+    // so the substitution is the receiver prefix rather than the whole
+    // expression. Naming the parameter after the component is what makes that
+    // one replacement enough.
+    let receiver = format!("command.{}()", key.component);
     let bindings_for = |selected: &[&crate::generate::Field], indent: &str| {
         selected
             .iter()
@@ -355,11 +424,13 @@ fn jdbc_transition_java(
                     .iter()
                     .find(|column| column.name == crate::sql::snake_case(&field.name))
                     .expect("validated transition column");
-                format!(
-                    "{indent}.param(\"{}\", {})",
-                    column.name,
-                    column.write.as_deref().expect("mapped transition column")
-                )
+                let write = column.write.as_deref().expect("mapped transition column");
+                let write = if field.name == key.component {
+                    write.replacen(&receiver, key.component, 1)
+                } else {
+                    write.to_string()
+                };
+                format!("{indent}.param(\"{}\", {write})", column.name)
             })
             .collect::<Vec<_>>()
             .join("\n")
@@ -403,7 +474,8 @@ fn jdbc_transition_java(
             ("existence_bindings", &*existence_bindings),
             ("scope_clause", scope_clause(fields)),
             ("version_type", version_type(fields).0),
-            ("id_component", selector),
+            ("id_component", key.component),
+            ("key_type", key.java_type),
             ("map_args", &*map_args),
         ],
     )
@@ -415,6 +487,7 @@ fn transition_controller_java(
     target: &str,
     fields: &[crate::generate::Field],
     endpoint: Endpoint<'_>,
+    key: Key<'_>,
 ) -> String {
     let security: &str = slice.base();
     let service: &str = &slice.placed(Layer::Service);
@@ -448,9 +521,26 @@ fn transition_controller_java(
     let method = endpoint.method;
     let (failure_imports, arms) = outcome_arms(slice, web, name, target);
     let (version_type, parse) = version_type(fields);
+    // Mounted *and* bound, or neither. `bugs.md` B48 is the half-built
+    // version: a variable in the `@RequestMapping` that no parameter reads,
+    // which fails at the URI before the verb or the body can matter.
+    let (key_parameter, path_variable_import) = if key.from_path {
+        (
+            format!(
+                "            @PathVariable {} {},\n",
+                key.java_type, key.component
+            ),
+            "import org.springframework.web.bind.annotation.PathVariable;\n",
+        )
+    } else {
+        (String::new(), "")
+    };
     crate::template::render(
         crate::template_here!("spring/transition_controller_java.java"),
         &[
+            ("key_parameter", &*key_parameter),
+            ("path_variable_import", path_variable_import),
+            ("key_expression", &key.expression()),
             (
                 "validation",
                 crate::spring::validation_package(slice.project()),
@@ -532,236 +622,5 @@ fn outcome_arms(slice: &Slice, web: &str, name: &str, target: &str) -> (String, 
              .body({target}Response.from(current));\n            \
              case {name}UseCase.Result.NotFound(var id) -> ResponseEntity.notFound().build();"
         ),
-    )
-}
-
-/// The component a target's database-assigned key lives in, if it has one.
-///
-/// `None` covers both "no generated key" and "no key jails can see", which
-/// are the same answer to the only question the caller asks: may a generated
-/// test write this component down as a literal?
-fn generated_key_component(
-    fields: &[crate::generate::Field],
-    project: &crate::model::Project,
-    domain: &str,
-) -> Option<String> {
-    let columns = crate::sql::columns(fields, project, domain, "value");
-    crate::sql::generated_key(&columns).map(|column| column.component.clone())
-}
-
-fn jdbc_transition_it_java(
-    slice: &Slice,
-    name: &str,
-    resource: &Target,
-    fields: &[crate::generate::Field],
-) -> String {
-    let project = slice.project();
-    let pkg: &str = &slice.owned(Layer::Adapters);
-    let service: &str = &slice.placed(Layer::Service);
-    let domain: &str = &slice.owned(Layer::Domain);
-    let app: &str = &slice.owned(Layer::App);
-    let target_fields: &[crate::generate::Field] = &resource.fields;
-    let target: &str = &resource.name;
-    // The scaffolded target's port is typed on its own key, so this test
-    // hands it that value rather than a rendering of it. plan.md P3.3.
-    let key = crate::generate::key_type_of(target_fields, project, domain);
-    let key_argument = crate::generate::key_argument("stored.id()", &key);
-    let command_key_argument = crate::generate::key_argument("command.id()", &key);
-    let command_samples = fields
-        .iter()
-        .map(|field| crate::generate::sample_value(field, project, domain))
-        .collect::<Option<Vec<_>>>();
-    let target_samples = target_fields
-        .iter()
-        .map(|field| crate::generate::sample_value(field, project, domain))
-        .collect::<Option<Vec<_>>>();
-    let disabled = command_samples.is_none() || target_samples.is_none();
-    let mut command_values = command_samples.unwrap_or_default();
-    // The version is no longer a component of the command, so its sample
-    // becomes the `expectedVersion` argument instead. plan.md P4.5.
-    let expected_version = fields
-        .iter()
-        .position(|field| field.name == "version")
-        .map(|index| command_values.remove(index))
-        .unwrap_or_else(|| "1L".to_string());
-    let fields: Vec<crate::generate::Field> = command_fields(fields);
-    let fields: &[crate::generate::Field] = &fields;
-    // A database-assigned key is not a literal this test can predict: the
-    // sequence does not roll back with the transaction, so the second run of
-    // the suite selects a row that is not there. The saved row knows its own
-    // key, so the command is built from that. plan.md P4.2.
-    if let Some(component) = generated_key_component(target_fields, project, domain)
-        && let Some(index) = fields.iter().position(|field| field.name == component)
-    {
-        command_values[index] = format!("stored.{component}()");
-    }
-    let command_args = command_values.join(",\n                ");
-    let target_args = target_samples
-        .unwrap_or_default()
-        .join(",\n                ");
-    let wrong_scope_test = fields
-        .iter()
-        .enumerate()
-        .find_map(|(index, field)| {
-            field
-                .constraints
-                .scoped
-                .then(|| durable_alternate_sample(field).map(|value| (index, value)))
-                .flatten()
-        })
-        .map_or_else(String::new, |(changed, alternate)| {
-            let args = command_values
-                .iter()
-                .enumerate()
-                .map(|(index, value)| {
-                    if index == changed {
-                        alternate.clone()
-                    } else {
-                        value.clone()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(",\n                ");
-            format!(
-                r#"
-    @Test
-    void aDifferentPersistedScopeIsNotFoundAndCannotMutateTheRow() {{
-        var stored = repository.save(new {target}(
-                {target_args}));
-        var wrongScope = new {name}Command(
-                {args});
-
-        assertThat(useCase.execute(wrongScope, {expected_version}))
-                .isInstanceOf({name}UseCase.Result.NotFound.class);
-        assertThat(repository.findById({key_argument})).contains(stored);
-    }}
-"#
-            )
-        });
-    let target_import = crate::generate::import_of(pkg, domain, target);
-    let command_import = crate::generate::import_of(pkg, service, &format!("{name}Command"));
-    let port_import = crate::generate::import_of(pkg, service, &format!("{name}UseCase"));
-    let repository_import = crate::generate::import_of(pkg, app, &format!("{target}Repository"));
-    let imports = java_literal_imports(target_fields, domain)
-        .into_iter()
-        .chain(java_literal_imports(fields, domain))
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .map(|import| format!("import {import};\n"))
-        .collect::<String>();
-    let disabled_import = if disabled {
-        "import org.junit.jupiter.api.Disabled;\n"
-    } else {
-        ""
-    };
-    let annotation = if disabled {
-        "@Disabled(\"todo: supply transition samples Jails cannot fabricate\")\n"
-    } else {
-        ""
-    };
-    crate::template::render(
-        crate::template_here!("spring/jdbc_transition_it_java.java"),
-        &[
-            ("pkg", pkg),
-            ("target_import", &*target_import),
-            ("command_import", &*command_import),
-            ("port_import", &*port_import),
-            ("repository_import", &*repository_import),
-            ("imports", &*imports),
-            ("disabled_import", disabled_import),
-            ("annotation", annotation),
-            ("name", name),
-            ("target", target),
-            ("target_args", &*target_args),
-            ("command_args", &*command_args),
-            ("expected_version", &*expected_version),
-            ("key_argument", &*command_key_argument),
-            ("wrong_scope_test", &*wrong_scope_test),
-        ],
-    )
-}
-
-fn transition_controller_test_java(
-    slice: &Slice,
-    name: &str,
-    resource: &Target,
-    fields: &[crate::generate::Field],
-    endpoint: Endpoint<'_>,
-) -> String {
-    let project = slice.project();
-    let security: &str = slice.base();
-    let service: &str = &slice.placed(Layer::Service);
-    let web: &str = &slice.placed(Layer::Web);
-    let domain: &str = &slice.owned(Layer::Domain);
-    let target_fields: &[crate::generate::Field] = &resource.fields;
-    let target: &str = &resource.name;
-    // The body carries the command, and the command no longer carries the
-    // version -- it is the `If-Match` header. plan.md P4.5.
-    let command = command_fields(fields);
-    let json = command
-        .iter()
-        .map(|field| {
-            json_sample(slice, field).map(|sample| format!("  \"{}\": {sample}", field.name))
-        })
-        .collect::<Option<Vec<_>>>();
-    let target_samples = target_fields
-        .iter()
-        .map(|field| crate::generate::sample_value(field, project, domain))
-        .collect::<Option<Vec<_>>>();
-    let disabled = json.is_none() || target_samples.is_none();
-    let json = json.unwrap_or_default().join(",\n");
-    let target_args = target_samples
-        .unwrap_or_default()
-        .join(",\n                    ");
-    let command_import = crate::generate::import_of(web, service, &format!("{name}Command"));
-    let usecase_import = crate::generate::import_of(web, service, &format!("{name}UseCase"));
-    let target_import = crate::generate::import_of(web, domain, target);
-    let imports = java_literal_imports(target_fields, domain)
-        .into_iter()
-        .map(|import| format!("import {import};\n"))
-        .collect::<String>();
-    let disabled_import = if disabled {
-        "import org.junit.jupiter.api.Disabled;\n"
-    } else {
-        ""
-    };
-    let annotation = if disabled {
-        "    @Disabled(\"todo: supply transition samples\")\n"
-    } else {
-        ""
-    };
-    let (scope_import, scope_argument) = scope_test_parts(security, web, fields);
-    // The fake returns the target built from these samples, so the `ETag` it
-    // answers with is that sample's version. Written without the `L` suffix:
-    // this is an HTTP header, not Java.
-    let sample_version = target_fields
-        .iter()
-        .find(|field| field.name == "version")
-        .and_then(|field| crate::generate::sample_value(field, project, domain))
-        .map(|sample| sample.trim_end_matches(['L', 'l']).to_string())
-        .unwrap_or_else(|| "1".to_string());
-    crate::template::render(
-        // No classic form, for the same reason `g query` has none.
-        crate::template_here!("spring/transition_controller_test_java.java"),
-        &[
-            // `MockMvcTester` names the verb in lower case, and the mapping
-            // annotation names it capitalised -- one value, two renderings, so
-            // the test cannot exercise a verb the controller does not answer.
-            ("verb", endpoint.method.label()),
-            ("web", web),
-            ("command_import", &*command_import),
-            ("usecase_import", &*usecase_import),
-            ("target_import", &*target_import),
-            ("scope_import", &*scope_import),
-            ("imports", &*imports),
-            ("disabled_import", disabled_import),
-            ("name", name),
-            ("annotation", annotation),
-            ("json", &*json),
-            ("target", target),
-            ("target_args", &*target_args),
-            ("sample_version", &*sample_version),
-            ("scope_argument", &*scope_argument),
-        ],
     )
 }

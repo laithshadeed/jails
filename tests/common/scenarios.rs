@@ -740,6 +740,76 @@ pub const SCENARIOS: &[Scenario] = &[
             ],
         ],
     },
+    // The other half of `--consumes form`: on a `query` it also decides the
+    // verb, because `@ModelAttribute` binds from request *parameters* and on a
+    // GET those are the query string. `missing.md`'s "a GET with query-string
+    // filters" -- `GET /admin_api/tickets?status=open` is what a browser sends.
+    Scenario {
+        name: "query-form",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[
+            &["add", "db", "--no-start"],
+            &[
+                "g",
+                "scaffold",
+                "Ticket",
+                "id:long@pk",
+                "subject:string!",
+                "status:string?",
+            ],
+            &[
+                "g",
+                "query",
+                "OpenTickets",
+                "status:string?",
+                "--on",
+                "Ticket",
+                "--consumes",
+                "form",
+                "--path",
+                "/admin_api/tickets",
+            ],
+        ],
+    },
+    // The key in the URL: `PATCH /admin_api/topics/{userId}/status`, which is
+    // the shape every admin frontend sends and the one `missing.md` counted.
+    // The command record loses the selector, the port takes it beside the
+    // command, and the generated proof expands the variable -- three things
+    // that have to move together or the route mounts a variable and drops it.
+    Scenario {
+        name: "transition-path",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[
+            &["add", "db", "--no-start"],
+            &[
+                "g",
+                "scaffold",
+                "Topic",
+                "id:long@pk",
+                "userId:long",
+                "subject:string!",
+                "version:long",
+            ],
+            &[
+                "g",
+                "transition",
+                "SetTopicSubject",
+                "userId:long",
+                "subject:string!",
+                "version:long",
+                "--on",
+                "Topic",
+                "--select",
+                "userId",
+                "--method",
+                "patch",
+                "--path",
+                "/admin_api/topics/{userId}/subject",
+            ],
+        ],
+    },
     Scenario {
         name: "presence",
         fixture: Fixture::Spring,

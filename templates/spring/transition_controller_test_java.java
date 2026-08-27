@@ -10,12 +10,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 class {{name}}ControllerTest {
 
     private final MockMvcTester mvc = MockMvcTester.of(new {{name}}Controller(
-            (command, expectedVersion) -> new {{name}}UseCase.Result.Applied(new {{target}}(
+            ({{id_component}}, command, expectedVersion) -> new {{name}}UseCase.Result.Applied(new {{target}}(
                     {{target_args}})){{scope_argument}}));
 
 {{annotation}}    @Test
-    void putExecutesTheTransitionAndReturnsTheNewVersionAsAnETag() {
-        assertThat(mvc.{{verb}}().uri({{name}}Controller.PATH)
+    void {{verb}}ExecutesTheTransitionAndReturnsTheNewVersionAsAnETag() {
+        assertThat(mvc.{{verb}}().uri({{name}}Controller.PATH{{path_arguments}})
                 .header(HttpHeaders.IF_MATCH, "\"{{sample_version}}\"")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -29,7 +29,7 @@ class {{name}}ControllerTest {
 
 {{annotation}}    @Test
     void aRequestWithNoIfMatchIsRefusedRatherThanAppliedBlind() {
-        assertThat(mvc.{{verb}}().uri({{name}}Controller.PATH)
+        assertThat(mvc.{{verb}}().uri({{name}}Controller.PATH{{path_arguments}})
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
 {

@@ -595,9 +595,23 @@ fn query_controller_java(
         scope_parameter,
         scope_checks,
     ) = scope_controller_parts(security, web, fields, "criteria");
+    // A form-bound query answers a GET. `@ModelAttribute` binds from request
+    // *parameters*, which on a GET are the query string -- so
+    // `GET /admin_api/users?status=open&category=Billing`, which is what a
+    // browser sends and what the minicom admin UI already calls, was one
+    // annotation away and unreachable. JSON still means POST: a GET with a
+    // JSON body is ignored by most of the stack between caller and handler.
+    //
+    // The verb is still derived rather than chosen, which is why `--method` on
+    // a query stays refused: it follows from where the values come from.
+    let mapping = match endpoint.consumes {
+        jails_spec::spec::kind::WireFormat::Form => "GetMapping",
+        jails_spec::spec::kind::WireFormat::Json => "PostMapping",
+    };
     crate::template::render(
         crate::template_here!("spring/query_controller_java.java"),
         &[
+            ("mapping", mapping),
             (
                 "validation",
                 crate::spring::validation_package(slice.project()),
