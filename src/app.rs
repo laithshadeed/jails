@@ -74,6 +74,8 @@ struct GenerateIntent {
     select: Option<String>,
     /// Components pinned to a constant, as `component=literal`.
     set: Vec<String>,
+    /// Whether a `transition` insists on the caller's `If-Match`.
+    if_match: Option<jails_spec::spec::kind::Precondition>,
     method: Option<jails_spec::spec::kind::HttpMethod>,
     /// How that endpoint reads its request: `json` (the default) or `form`.
     consumes: Option<jails_spec::spec::kind::WireFormat>,
@@ -135,6 +137,7 @@ impl GenerateIntent {
             path: self.path,
             select: self.select,
             set: self.set,
+            if_match: self.if_match,
             method: self.method,
             consumes: self.consumes,
         })

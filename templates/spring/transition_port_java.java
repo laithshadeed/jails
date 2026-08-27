@@ -20,8 +20,7 @@ public interface {{name}}UseCase {
      *     of the two it is.
      * @param command what to change
      * @param expectedVersion the version the caller believes the row is at.
-     *     It arrives as an {@code If-Match} header rather than in the body:
-     *     HTTP already has a word for "only if it is still what I read".
+     *     {{expected_version_clause}}
      */
     Result execute({{key_type}} {{id_component}}, {{name}}Command command, {{version_type}} expectedVersion);
 

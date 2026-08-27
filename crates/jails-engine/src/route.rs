@@ -212,6 +212,7 @@ pub(super) struct Recorded {
     on_conflict: Option<String>,
     path: Option<String>,
     select: Option<String>,
+    if_match: Option<jails_spec::spec::kind::Precondition>,
     pins: Vec<String>,
     method: Option<jails_spec::spec::kind::HttpMethod>,
     consumes: Option<jails_spec::spec::kind::WireFormat>,
@@ -228,6 +229,7 @@ impl Recorded {
             on_conflict: spec.on_conflict.as_ref().map(ToString::to_string),
             path: spec.path.as_ref().map(ToString::to_string),
             select: spec.select.as_ref().map(ToString::to_string),
+            if_match: spec.if_match,
             // The canonical `component=literal`, which is what `--set` parses:
             // one spelling in and out, the same rule `ordering_token` follows.
             pins: spec
@@ -266,6 +268,7 @@ impl Recorded {
             method: self.method,
             consumes: self.consumes,
             select: self.select.as_deref(),
+            if_match: self.if_match,
             pins: &self.pins,
         }
     }

@@ -59,6 +59,7 @@ const KNOWN_GENERATE_KEYS: &[&str] = &[
     "path",
     "select",
     "set",
+    "if_match",
     "method",
     "consumes",
 ];
@@ -182,6 +183,13 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<Intent>)> {
                 "path" => intent.path = Some(string(value, line_number, key)?.to_string()),
                 "select" => intent.select = Some(string(value, line_number, key)?.to_string()),
                 "set" => intent.set = string_array(value, line_number, key)?,
+                "if_match" => {
+                    let value = string(value, line_number, key)?;
+                    intent.if_match = Some(
+                        jails_spec::spec::kind::Precondition::parse(value)
+                            .map_err(|why| format!("line {line_number}: {why}"))?,
+                    );
+                }
                 "on_conflict" => {
                     intent.on_conflict = Some(string(value, line_number, key)?.to_string())
                 }
@@ -425,6 +433,7 @@ mod tests {
                 "limit" => "10".to_string(),
                 "kind" => "\"record\"".to_string(),
                 "method" => "\"post\"".to_string(),
+                "if_match" => "\"optional\"".to_string(),
                 "consumes" => "\"form\"".to_string(),
                 "path" => "\"/a\"".to_string(),
                 _ => "\"x\"".to_string(),

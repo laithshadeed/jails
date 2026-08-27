@@ -132,12 +132,19 @@ const EXPLANATIONS: &[Explanation] = &[
                not. It needs `version:long` or `version:int` -- the compare-and-set column is \
                what makes the update safe under concurrency rather than last-write-wins.\n\n\
                A ported schema that has no such column grows one: \
-               `jails g field Loan version:long --default-literal 0`, then this command. \
-               There is deliberately no unguarded mode -- an update with no compare-and-set \
-               is a lost update nothing reports, and the escape hatch, when the guard is \
-               genuinely not wanted, is `jails g usecase` plus a `save` through the \
-               repository port, where last-write-wins is the reader's decision rather than \
-               jails' silent default.\n\n\
+               `jails g field Loan version:long --default-literal 0`, then this command.\n\n\
+               The guard travels as `If-Match` and comes back as an `ETag`, and it is \
+               required by default -- an update with no compare-and-set is a lost update \
+               nothing reports. `--if-match optional` says the guarantee is available and \
+               not insisted on: a request carrying the header is checked against it, one \
+               that does not is applied unconditionally, and `StaleVersion` is then \
+               unreachable. It is a word you type rather than something derived from the \
+               request, because it is a real weakening -- and it exists because an ordinary \
+               browser page sends no conditional headers, so Spring answers 400 before any \
+               generated code runs.\n\n\
+               `--set component=literal` pins a component the endpoint decides rather than \
+               the caller, so the request need not carry it at all: \
+               `--set messageRead=true` is the whole of a mark-as-read route.\n\n\
                Example: `jails g transition RenameLoan id:uuid title:string! version:long --on Loan`.",
     },
     Explanation {

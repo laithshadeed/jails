@@ -117,6 +117,7 @@ pub(super) fn declared(
         .select
         .map(jails_protocol::identity::Name::parse)
         .transpose()?;
+    spec.if_match = recipe.if_match;
     spec.pins = recipe
         .pins
         .iter()

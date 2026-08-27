@@ -185,7 +185,7 @@ pub(crate) fn usecase_files(
             target,
         },
         (target_fields, fields),
-        pins,
+        &crate::spring::pin::parse(pins)?,
     )?;
 
     for field in fields {

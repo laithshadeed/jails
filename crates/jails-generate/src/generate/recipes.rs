@@ -386,8 +386,12 @@ pub(crate) fn artifacts_for(
                 name,
                 &capitalize(target),
                 &parsed,
-                endpoint,
-                recipe.selector(),
+                crate::spring::Moved {
+                    selector: recipe.selector(),
+                    precondition: recipe.precondition(),
+                    pins: recipe.pins,
+                    endpoint,
+                },
             )?
         }
         ArtifactKind::Presence => {

@@ -20,18 +20,43 @@ struct Update<'a> {
     target_columns: Vec<crate::sql::Column>,
     command_columns: Vec<crate::sql::Column>,
     fields: Vec<&'a crate::generate::Field>,
+    /// The components the *endpoint* sets, as `(column, bound expression)`.
+    ///
+    /// They are assignments like the ones above and bindings like the ones
+    /// below; what makes them their own list is that no request carries them,
+    /// so they appear in the SQL and never in the command record.
+    pins: Vec<(String, String)>,
 }
 
 use crate::model::{Artifact, Layer, Slice};
+
+/// How this transition moves the row, beyond the fields it declares.
+///
+/// Four things the caller decides and every renderer below reads: which
+/// component selects the row, whether the caller's `If-Match` is insisted on,
+/// which components the endpoint sets rather than the caller, and where and
+/// how the route answers.
+#[derive(Clone, Copy)]
+pub(crate) struct Moved<'a> {
+    pub(crate) selector: &'a str,
+    pub(crate) precondition: jails_spec::spec::kind::Precondition,
+    pub(crate) pins: &'a [String],
+    pub(crate) endpoint: Endpoint<'a>,
+}
 
 pub(crate) fn transition_files(
     slice: &Slice,
     name: &str,
     target: &str,
     fields: &[crate::generate::Field],
-    endpoint: Endpoint<'_>,
-    selector: &str,
+    moved: Moved<'_>,
 ) -> jails_support::Result<Vec<Artifact>> {
+    let Moved {
+        selector,
+        precondition,
+        pins,
+        endpoint,
+    } = moved;
     let root: &Path = slice.project().root();
     let service: &str = &slice.placed(Layer::Service);
     let web: &str = &slice.placed(Layer::Web);
@@ -152,13 +177,40 @@ pub(crate) fn transition_files(
         )
         .into());
     }
+    // Before the generic resolution, because these two are refusals about
+    // what a transition *is*. Both components are required of every
+    // transition, so the generic "accepts it and pins it" would always fire
+    // first and would say the less useful of the two true things.
+    let specs = crate::spring::pin::parse(pins)?;
+    if let Some(spec) = specs.iter().find(|spec| {
+        let component = spec.component.to_string();
+        component == selector || component == "version"
+    }) {
+        return Err(format!(
+            "transition {name} pins `{}`, which is how it finds the row and how it proves the \
+             caller read it -- not something it changes about the row.\n       fix: pin a \
+             component this transition updates, or drop the `--set`.",
+            spec.component
+        )
+        .into());
+    }
+    let pins = crate::spring::pin::resolve(
+        slice,
+        crate::spring::Pinning {
+            recipe: "transition",
+            name,
+            target,
+        },
+        (&target_fields, fields),
+        &specs,
+    )?;
     let update_fields = fields
         .iter()
         .filter(|field| {
             field.name != id.name && field.name != version.name && !field.constraints.scoped
         })
         .collect::<Vec<_>>();
-    if update_fields.is_empty() {
+    if update_fields.is_empty() && pins.is_empty() {
         return Err(format!(
             "transition {name} needs at least one field to update in addition to id, @scope fields, and version"
         ).into());
@@ -181,10 +233,16 @@ pub(crate) fn transition_files(
         target_columns,
         command_columns,
         fields: update_fields,
+        pins: pinned_assignments(slice, &target_fields, domain, &pins),
     };
     let resource = Target {
         name: target.to_string(),
         fields: target_fields,
+    };
+    let shape = Transition {
+        key,
+        precondition,
+        endpoint,
     };
     Ok(vec![
         Artifact {
@@ -197,31 +255,70 @@ pub(crate) fn transition_files(
         Artifact {
             kind: "transition port",
             path: main_service.join(format!("{name}UseCase.java")),
-            contents: transition_port_java(slice, name, target, fields, key),
+            contents: transition_port_java(slice, name, target, fields, shape),
         },
         Artifact {
             kind: "optimistic JDBC transition",
             path: main_adapters.join(format!("Jdbc{name}Transition.java")),
-            contents: jdbc_transition_java(slice, name, target, fields, &update, key),
+            contents: jdbc_transition_java(slice, name, target, fields, (&update, shape)),
         },
         Artifact {
             kind: "optimistic transition integration test",
             path: test_adapters.join(format!("Jdbc{name}TransitionIT.java")),
-            contents: jdbc_transition_it_java(slice, name, &resource, fields, key),
+            contents: jdbc_transition_it_java(slice, name, &resource, fields, shape),
         },
         Artifact {
             kind: "transition controller",
             path: main_web.join(format!("{name}Controller.java")),
-            contents: transition_controller_java(slice, name, target, fields, endpoint, key),
+            contents: transition_controller_java(slice, name, target, fields, shape),
         },
         Artifact {
             kind: "transition controller test",
             path: test_web.join(format!("{name}ControllerTest.java")),
-            contents: transition_controller_test_java(
-                slice, name, &resource, fields, endpoint, key,
-            ),
+            contents: transition_controller_test_java(slice, name, &resource, fields, shape),
         },
     ])
+}
+
+/// The pinned components as `(column, the expression that binds it)`.
+///
+/// A pin is a Java value and a column wants whatever that column's write
+/// expression is -- `.name()` for an enum, `Timestamp.from(..)` for an
+/// instant. So the column is rendered against a named receiver and the
+/// receiver is substituted out, which is the same one-replacement trick the
+/// selector uses two functions down: rendering the write expression a second
+/// time here is how the adapter and the row mapper come to disagree about the
+/// same column.
+fn pinned_assignments(
+    slice: &Slice,
+    target_fields: &[crate::generate::Field],
+    domain: &str,
+    pins: &[crate::spring::pin::Pin],
+) -> Vec<(String, String)> {
+    let pinned: Vec<crate::generate::Field> = pins
+        .iter()
+        .filter_map(|pin| {
+            target_fields
+                .iter()
+                .find(|field| field.name == pin.component)
+                .cloned()
+        })
+        .collect();
+    let columns = crate::sql::columns(&pinned, slice.project(), domain, "pinned");
+    pins.iter()
+        .zip(columns)
+        .map(|(pin, column)| {
+            let write = column
+                .write
+                .as_deref()
+                .expect("a pinned component is one the target maps to a column");
+            let receiver = format!("pinned.{}()", pin.component);
+            (
+                column.name.clone(),
+                write.replacen(&receiver, &pin.expression, 1),
+            )
+        })
+        .collect()
 }
 
 /// How this transition talks about the boundary it enforces.
@@ -240,7 +337,7 @@ pub(crate) fn transition_files(
 /// disagree about which of the two it was. Two shapes would be the `bugs.md`
 /// B48 drift with a bigger surface.
 #[derive(Clone, Copy)]
-struct Key<'a> {
+pub(super) struct Key<'a> {
     /// The component that identifies the row -- `id` unless `--select` named
     /// another.
     component: &'a str,
@@ -251,6 +348,21 @@ struct Key<'a> {
     /// True when a `--path` variable carries it, so the command record does
     /// not.
     from_path: bool,
+}
+
+/// What every renderer here has to agree about: which row is being moved,
+/// what the caller has to know about it first, and where the route is.
+///
+/// One value because the three are decided together in `transition_files` and
+/// read together everywhere below -- including in `proof.rs`, which is exactly
+/// where `bugs.md` B48's drift lived: the test renderer worked out where the
+/// key came from a second time and reached a different answer from the
+/// controller's.
+#[derive(Clone, Copy)]
+pub(super) struct Transition<'a> {
+    pub(super) key: Key<'a>,
+    pub(super) precondition: jails_spec::spec::kind::Precondition,
+    pub(super) endpoint: Endpoint<'a>,
 }
 
 impl Key<'_> {
@@ -297,10 +409,21 @@ fn command_fields(fields: &[crate::generate::Field], key: Key<'_>) -> Vec<crate:
 }
 
 /// The Java type the expected version is passed as, and the parser for it.
-fn version_type(fields: &[crate::generate::Field]) -> (&'static str, &'static str) {
-    match usecase_normalized_type(&version_field(fields).java_type) {
-        "int" => ("int", "Integer.parseInt"),
-        _ => ("long", "Long.parseLong"),
+fn version_type(
+    fields: &[crate::generate::Field],
+    precondition: jails_spec::spec::kind::Precondition,
+) -> (&'static str, &'static str) {
+    match (
+        usecase_normalized_type(&version_field(fields).java_type),
+        // Boxed when the caller may omit the header, because `null` is then a
+        // value the port has to be able to hold: "no precondition was given"
+        // is a third thing, distinct from any version number.
+        precondition.is_optional(),
+    ) {
+        ("int", false) => ("int", "Integer.parseInt"),
+        ("int", true) => ("Integer", "Integer.parseInt"),
+        (_, false) => ("long", "Long.parseLong"),
+        (_, true) => ("Long", "Long.parseLong"),
     }
 }
 
@@ -309,12 +432,13 @@ fn transition_port_java(
     name: &str,
     target: &str,
     fields: &[crate::generate::Field],
-    key: Key<'_>,
+    shape: Transition<'_>,
 ) -> String {
+    let key = shape.key;
     let pkg: &str = &slice.placed(Layer::Service);
     let domain: &str = &slice.owned(Layer::Domain);
     let target_import = crate::generate::import_of(pkg, domain, target);
-    let (version_type, _) = version_type(fields);
+    let (version_type, _) = version_type(fields, shape.precondition);
     let id = fields
         .iter()
         .find(|field| field.name == key.component)
@@ -330,6 +454,10 @@ fn transition_port_java(
             ("target_import", &format!("{target_import}{key_import}")),
             ("scope_clause", scope_clause(fields)),
             ("version_type", version_type),
+            (
+                "expected_version_clause",
+                expected_version_clause(shape.precondition),
+            ),
             ("key_type", key.java_type),
             ("id_component", key.component),
             ("name", name),
@@ -338,14 +466,57 @@ fn transition_port_java(
     )
 }
 
+/// What the controller's own Javadoc says when the header is optional.
+///
+/// A constant rather than an inline `format!`: it is prose with no
+/// substitutions in it, and every line has to line up under the `*` of a
+/// Javadoc block that a template already opened.
+const OPTIONAL_PRECONDITION_DOC: &str = r#" *
+ * <p>The header is optional here: a request that sends one is checked against
+ * it, and a request that does not is applied unconditionally. That is a real
+ * weakening of the compare-and-swap, and it was asked for by name --
+ * {@code --if-match optional} -- because an ordinary browser page sends no
+ * conditional headers and would otherwise be answered 400 by Spring before
+ * this class ran.
+"#;
+
+/// What the port says about the version it is handed.
+///
+/// Two sentences rather than one because the two policies are genuinely
+/// different contracts, and a Javadoc that described the strict one over the
+/// permissive one would be the `modern.md` §8 failure -- generated prose
+/// asserting what the generated code does not do.
+fn expected_version_clause(precondition: jails_spec::spec::kind::Precondition) -> &'static str {
+    match precondition {
+        jails_spec::spec::kind::Precondition::Required => REQUIRED_VERSION_DOC,
+        jails_spec::spec::kind::Precondition::Optional => OPTIONAL_VERSION_DOC,
+    }
+}
+
+/// Constants for the same reason [`OPTIONAL_PRECONDITION_DOC`] is: prose with
+/// no substitutions, and every continuation line has to line up under the
+/// `@param` a template already opened.
+const REQUIRED_VERSION_DOC: &str = r#"It arrives as an {@code If-Match} header rather than in
+     *     the body: HTTP already has a word for "only if it is still what I
+     *     read"."#;
+
+const OPTIONAL_VERSION_DOC: &str = r#"It arrives as an {@code If-Match} header rather than in
+     *     the body: HTTP already has a word for "only if it is still what I
+     *     read". {@code null} means the caller sent no precondition, and the
+     *     update is then unconditional -- so {@link Result.StaleVersion}
+     *     cannot be the answer to a call that did not ask a question."#;
+
 fn jdbc_transition_java(
     slice: &Slice,
     name: &str,
     target: &str,
     fields: &[crate::generate::Field],
-    update: &Update,
-    key: Key<'_>,
+    moving: (&Update, Transition<'_>),
 ) -> String {
+    let (update, shape) = moving;
+    let Transition {
+        key, precondition, ..
+    } = shape;
     let pkg: &str = &slice.owned(Layer::Adapters);
     let service: &str = &slice.placed(Layer::Service);
     let domain: &str = &slice.owned(Layer::Domain);
@@ -383,6 +554,15 @@ fn jdbc_transition_java(
             let column = crate::sql::snake_case(&field.name);
             format!("{column} = :{column}")
         })
+        // Bound, not inlined: a pinned value is still a parameter, so the
+        // statement text is the same for every call and the driver does the
+        // quoting rather than the generator.
+        .chain(
+            update
+                .pins
+                .iter()
+                .map(|(column, _)| format!("{column} = :{column}")),
+        )
         .chain(maintains_updated_at.then_some("updated_at = current_timestamp".to_string()))
         .chain(std::iter::once("version = version + 1".to_string()))
         .collect::<Vec<_>>()
@@ -391,13 +571,28 @@ fn jdbc_transition_java(
         .iter()
         .filter(|field| field.name == key.component || field.constraints.scoped)
         .collect::<Vec<_>>();
+    // `coalesce(:version, version)` is the whole of `--if-match optional`, and
+    // it is one statement rather than two on purpose: with a version it reads
+    // `version = 5` and guards; without one it reads `version = version` and
+    // does not. A pair of statements chosen in Java would be two spellings of
+    // one update, and the `set` clause above would have to be written twice.
+    //
+    // It also solves the typing: an untyped `null` parameter compared with `=`
+    // leaves PostgreSQL unable to infer a type, while inside `coalesce` it
+    // takes the type of the column beside it.
+    let guard = match precondition {
+        jails_spec::spec::kind::Precondition::Required => "version = :version".to_string(),
+        jails_spec::spec::kind::Precondition::Optional => {
+            "version = coalesce(:version, version)".to_string()
+        }
+    };
     let optimistic_predicates = match_fields
         .iter()
         .map(|field| {
             let column = crate::sql::snake_case(&field.name);
             format!("{column} = :{column}")
         })
-        .chain(std::iter::once("version = :version".to_string()))
+        .chain(std::iter::once(guard))
         .collect::<Vec<_>>()
         .join("\n                          and ");
     let existence_predicates = match_fields
@@ -442,7 +637,16 @@ fn jdbc_transition_java(
         .iter()
         .filter(|field| field.name != "version")
         .collect::<Vec<_>>();
-    let update_bindings = bindings_for(&bound, "                ");
+    let update_bindings = std::iter::once(bindings_for(&bound, "                "))
+        .chain(
+            update
+                .pins
+                .iter()
+                .map(|(column, write)| format!("                .param(\"{column}\", {write})")),
+        )
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
     let existence_bindings = bindings_for(&match_fields, "                ");
     let select = target_columns
         .iter()
@@ -473,7 +677,7 @@ fn jdbc_transition_java(
             ("existence_predicates", &*existence_predicates),
             ("existence_bindings", &*existence_bindings),
             ("scope_clause", scope_clause(fields)),
-            ("version_type", version_type(fields).0),
+            ("version_type", version_type(fields, precondition).0),
             ("id_component", key.component),
             ("key_type", key.java_type),
             ("map_args", &*map_args),
@@ -486,9 +690,13 @@ fn transition_controller_java(
     name: &str,
     target: &str,
     fields: &[crate::generate::Field],
-    endpoint: Endpoint<'_>,
-    key: Key<'_>,
+    shape: Transition<'_>,
 ) -> String {
+    let Transition {
+        key,
+        precondition,
+        endpoint,
+    } = shape;
     let security: &str = slice.base();
     let service: &str = &slice.placed(Layer::Service);
     let web: &str = &slice.placed(Layer::Web);
@@ -520,7 +728,7 @@ fn transition_controller_java(
     // this row", and a frontend that calls one will not accept the other.
     let method = endpoint.method;
     let (failure_imports, arms) = outcome_arms(slice, web, name, target);
-    let (version_type, parse) = version_type(fields);
+    let (version_type, parse) = version_type(fields, precondition);
     // Mounted *and* bound, or neither. `bugs.md` B48 is the half-built
     // version: a variable in the `@RequestMapping` that no parameter reads,
     // which fails at the URI before the verb or the body can matter.
@@ -535,9 +743,24 @@ fn transition_controller_java(
     } else {
         (String::new(), "")
     };
+    // Required is the default policy and the strict contract; optional says
+    // the guarantee is available and not insisted on. Spring answers 400 for a
+    // missing *required* header before any of this runs, which is why the
+    // difference is a `required = false` here rather than a check inside.
+    let (if_match_binding, absent_precondition, precondition_doc) = match precondition {
+        jails_spec::spec::kind::Precondition::Required => ("HttpHeaders.IF_MATCH", "", ""),
+        jails_spec::spec::kind::Precondition::Optional => (
+            "value = HttpHeaders.IF_MATCH, required = false",
+            "        if (ifMatch == null) {\n            return null;\n        }\n",
+            OPTIONAL_PRECONDITION_DOC,
+        ),
+    };
     crate::template::render(
         crate::template_here!("spring/transition_controller_java.java"),
         &[
+            ("if_match_binding", if_match_binding),
+            ("absent_precondition", absent_precondition),
+            ("precondition_doc", precondition_doc),
             ("key_parameter", &*key_parameter),
             ("path_variable_import", path_variable_import),
             ("key_expression", &key.expression()),

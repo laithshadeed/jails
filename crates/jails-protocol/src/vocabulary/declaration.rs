@@ -417,6 +417,13 @@ pub struct IntentSpec {
     /// touches, and a selector that came back as the default would flip the
     /// adapter's `where` clause to a different column without saying so.
     pub select: Option<Name>,
+    /// Whether a `transition` insists on the caller's `If-Match`, or only
+    /// checks one when it arrives.
+    ///
+    /// `None` is "not asked", never `Required`: the default belongs at the one
+    /// place that renders the header parameter, not spread across every recipe
+    /// that has no precondition to describe.
+    pub if_match: Option<jails_spec::spec::kind::Precondition>,
     /// Components this recipe pins to a constant rather than reading from the
     /// request.
     ///
@@ -526,6 +533,7 @@ impl IntentSpec {
             on_conflict: None,
             path: None,
             select: None,
+            if_match: None,
             pins: Vec::new(),
         })
     }
@@ -560,6 +568,8 @@ impl Codec for IntentSpec {
         // recorded value must not change meaning when the enum is reordered.
         encoder.option(self.consumes.as_ref(), |e, format| e.string(format.label()))?;
         encoder.option(self.select.as_ref(), |e, name| name.encode(e))?;
+        // The label, not the discriminant, on the same rule as `method`.
+        encoder.option(self.if_match.as_ref(), |e, policy| e.string(policy.label()))?;
         encoder.count(self.pins.len())?;
         for pin in &self.pins {
             pin.encode(encoder)?;
@@ -610,6 +620,8 @@ impl Codec for IntentSpec {
             consumes: decoder
                 .option(|d| jails_spec::spec::kind::WireFormat::parse(&d.string()?))?,
             select: decoder.option(crate::identity::Name::decode)?,
+            if_match: decoder
+                .option(|d| jails_spec::spec::kind::Precondition::parse(&d.string()?))?,
             pins: {
                 let count = decoder.count()?;
                 let mut pins = Vec::new();

@@ -154,6 +154,60 @@ impl Dialect {
 ///
 /// **Two, because a browser form and a JSON API are the two things that
 /// actually arrive**, and Spring binds them through different machinery:
+/// Whether a transition insists on the caller's version, or only checks one
+/// when the caller sends it.
+///
+/// `If-Match` is a *conditional request* header: RFC 9110 defines it as a
+/// precondition the origin server evaluates when it is present, and a server
+/// MAY require it. jails required it, which is a policy rather than a reading
+/// of HTTP -- and a policy that makes every generated transition unreachable
+/// from an ordinary browser page, because `$.ajax({type: 'PATCH'})` sends no
+/// header and Spring answers 400 for a missing required one before any of the
+/// code jails wrote runs.
+///
+/// `required` is that policy, and stays the default: the compare-and-swap is
+/// what a transition *is*, and a caller that never sends a precondition can
+/// silently lose an update. `optional` says the guarantee is available and not
+/// insisted on -- the update is unconditional when no precondition arrives,
+/// conditional when one does, and `StaleVersion` is simply unreachable in the
+/// first case. That is a real weakening, so it is a word the reader types
+/// rather than something derived from the shape of the request.
+///
+/// **No per-variant doc comments**, the same shape [`WireFormat`] has: clap
+/// renders those as a bulleted value list and `tests/editor.rs` scrapes that
+/// shape out of `jails generate --help` to find the artifact kinds.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, ValueEnum)]
+pub enum Precondition {
+    Required,
+    Optional,
+}
+
+impl Precondition {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Required => "required",
+            Self::Optional => "optional",
+        }
+    }
+
+    pub fn parse(text: &str) -> Result<Self> {
+        match text {
+            "required" => Ok(Self::Required),
+            "optional" => Ok(Self::Optional),
+            other => Err(format!(
+                "unknown If-Match policy `{other}`.\n       fix: one of required, optional"
+            )
+            .into()),
+        }
+    }
+
+    /// True when a caller may omit the header, so the version arrives boxed
+    /// and `null` means "no precondition was given".
+    pub fn is_optional(self) -> bool {
+        matches!(self, Self::Optional)
+    }
+}
+
 /// `@RequestBody` runs Jackson over the body, `@ModelAttribute` runs the data
 /// binder over request parameters. A method parameter cannot be both, so a
 /// controller that guesses wrong answers 415 to every real request and says

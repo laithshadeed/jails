@@ -367,6 +367,7 @@ fn what_a_plan_desires_is_what_the_command_writes() {
                 consumes: invocation.consumes,
                 select: None,
                 pins: &[],
+                if_match: None,
             },
             invocation.package.as_deref(),
         ) {

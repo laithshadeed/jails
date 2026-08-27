@@ -36,7 +36,9 @@ pub const DURABLE_ENVELOPE_SCHEMA: u32 = 2;
 /// named route (`--path`, plan.md P8.7) and the seventh when it gained the
 /// format its endpoint reads (`--consumes`, plan.md P10.2) and the eighth when
 /// it gained the row selector and the components pinned to a constant
-/// (`--select`/`--set`, plan.md P10.7) -- appended fields, so an older
+/// (`--select`/`--set`, plan.md P10.7) and the ninth when it gained a
+/// transition's `If-Match` policy (`--if-match`, plan.md P10.7) -- appended
+/// fields, so an older
 /// payload simply runs out of bytes where the newer one expects some. There is no translation, deliberately -- `CLAUDE.md`'s rule
 /// for the store is that a ledger this binary did not write was written by a
 /// different jails, and naming the file beats guessing at an older schema.
@@ -49,9 +51,10 @@ pub const DURABLE_PAYLOAD_CODEC_SUPERSEDED: &[&str] = &[
     concat!("jails-", "led", "ger-payload-6"),
     concat!("jails-", "led", "ger-payload-7"),
     concat!("jails-", "led", "ger-payload-8"),
+    concat!("jails-", "led", "ger-payload-9"),
 ];
 /// Binary codec named by newly written ledger envelopes.
-pub const DURABLE_PAYLOAD_CODEC: &str = concat!("jails-", "led", "ger-payload-9");
+pub const DURABLE_PAYLOAD_CODEC: &str = concat!("jails-", "led", "ger-payload-10");
 
 /// Transaction journal root-format marker, including its fixed-width NUL.
 pub const JOURNAL_MAGIC: &[u8; 16] = b"JAILS-JOURNAL-1\0";

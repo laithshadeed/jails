@@ -36,6 +36,23 @@ pub(super) fn refuse_misplaced(recipe: &Recipe<'_>) -> Result<()> {
         "the recipe that creates a row",
         recipe.on_conflict.is_some(),
     )?;
+    // One recipe has a precondition to insist on or not: the compare-and-swap
+    // update. Nothing else reads `If-Match`, so a flag here would describe a
+    // header the generated code never looks at.
+    if recipe.if_match.is_some() && recipe.kind != ArtifactKind::Transition {
+        use clap::ValueEnum;
+        return Err(format!(
+            "`--if-match` applies to a transition -- the one recipe with a version to check \
+             against.\n       fix: drop it from `jails g {} {}`.",
+            recipe
+                .kind
+                .to_possible_value()
+                .expect("every kind has a clap value")
+                .get_name(),
+            recipe.name
+        )
+        .into());
+    }
     // Two recipes write a row: one creates it and one updates it, and both
     // have a component the endpoint decides rather than the caller. Everywhere
     // else there is no row to pin a component of, so a `--set` would be the M7

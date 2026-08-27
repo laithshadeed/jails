@@ -459,6 +459,10 @@ pub struct Recipe<'a> {
     /// `None` is "not asked", and [`Recipe::selector`] applies the default --
     /// `id`, which is what every transition selected on before this existed.
     pub select: Option<&'a str>,
+    /// Whether a `transition` insists on the caller's `If-Match`.
+    ///
+    /// `None` is "not asked"; [`Recipe::precondition`] applies the default.
+    pub if_match: Option<jails_spec::spec::kind::Precondition>,
     /// Components pinned to a constant rather than read from the request, as
     /// the `component=literal` tokens the caller typed.
     ///
@@ -492,6 +496,17 @@ impl Recipe<'_> {
     /// because the name was a literal at four sites and in the SQL predicate.
     pub fn selector(&self) -> &str {
         self.select.unwrap_or("id")
+    }
+
+    /// Whether a transition insists on the caller's `If-Match`, with the
+    /// default applied.
+    ///
+    /// `required`, because the compare-and-swap is what a transition *is* and
+    /// a caller that never sends a precondition can silently lose an update.
+    /// Stated once, here, so no template decides it twice.
+    pub fn precondition(&self) -> jails_spec::spec::kind::Precondition {
+        self.if_match
+            .unwrap_or(jails_spec::spec::kind::Precondition::Required)
     }
 
     /// How this recipe's endpoint reads its request, with the default applied.

@@ -71,6 +71,8 @@ pub struct Intent {
     /// Components pinned to a constant rather than read from the request, as
     /// `component=literal`. Empty is "the caller supplies every one".
     pub set: Vec<String>,
+    /// Whether a `transition` insists on the caller's `If-Match`.
+    pub if_match: Option<jails_spec::spec::kind::Precondition>,
     /// The HTTP verb, for the one recipe that answers HTTP.
     pub method: Option<jails_spec::spec::kind::HttpMethod>,
     /// How that endpoint reads its request. `missing.md` M15.
@@ -184,6 +186,7 @@ fn declare(
             consumes: intent.consumes,
             select: intent.select.as_deref(),
             pins: &intent.set,
+            if_match: intent.if_match,
         };
         let change = with_test_support(
             &planned,

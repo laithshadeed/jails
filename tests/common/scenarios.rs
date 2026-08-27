@@ -740,6 +740,45 @@ pub const SCENARIOS: &[Scenario] = &[
             ],
         ],
     },
+    // A mark-as-read route, which is the shape a browser page actually sends:
+    // one form field, no conditional header, and the column it sets decided by
+    // the endpoint. Both halves are needed -- Spring answers 400 for a missing
+    // required `If-Match` before any generated code runs, and the request does
+    // not carry the flag either.
+    Scenario {
+        name: "transition-unconditional",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[
+            &["add", "db", "--no-start"],
+            &[
+                "g",
+                "scaffold",
+                "Note",
+                "id:long@pk",
+                "body:string!",
+                "seen:boolean",
+                "version:long",
+            ],
+            &[
+                "g",
+                "transition",
+                "MarkSeen",
+                "id:long",
+                "version:long",
+                "--on",
+                "Note",
+                "--set",
+                "seen=true",
+                "--if-match",
+                "optional",
+                "--consumes",
+                "form",
+                "--path",
+                "/customer_api/seen",
+            ],
+        ],
+    },
     // The component the *endpoint* decides rather than the caller. Two
     // endpoints write the same table and each must stamp its own sender; with
     // the component in the request either can forge the other's rows, and a

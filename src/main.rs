@@ -185,49 +185,13 @@ fn main() -> std::process::ExitCode {
             logs.tail,
             invocation,
         ),
-        Command::Generate {
-            kind,
-            name,
-            fields,
-            timestamps,
-            package,
-            default_literal,
-            backfill_file,
-            indexes,
-            strategy_on,
-            strategy_yields,
-            via,
-            order_by,
-            limit,
-            on_conflict,
-            path,
-            select,
-            set,
-            method,
-            consumes,
-        } => {
+        Command::Generate(args) => {
             // Built once, outside the closure: a route may be called twice --
             // a plan for a confirmation, then the commit -- and the intent is
             // the same request both times.
-            let intent = jails_engine::route::Intent {
-                kind,
-                name,
-                fields,
-                timestamps,
-                indexes,
-                package,
-                on: strategy_on,
-                yields: strategy_yields,
-                via,
-                order_by,
-                limit,
-                on_conflict,
-                path,
-                select,
-                set,
-                method,
-                consumes,
-            };
+            let default_literal = args.default_literal.clone();
+            let backfill_file = args.backfill_file.clone();
+            let intent = jails_engine::route::Intent::from(args);
             dispatch::mutate(invocation, false, |run| {
                 jails_engine::route::recipe_with_field_data(
                     run,

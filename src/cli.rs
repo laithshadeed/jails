@@ -12,6 +12,9 @@
 //! emit a static completion list; and an alias meant to be typed is a
 //! `visible_alias`, because a hidden one is invisible to the bash generator.
 
+mod generate_args;
+pub(crate) use generate_args::GenerateArgs;
+
 use crate::add::Capability;
 use crate::app;
 use crate::arguments;
@@ -495,147 +498,7 @@ pub(crate) enum Command {
     // paragraph by default, which turns the field-syntax table and the
     // examples into an unreadable run-on.
     #[command(visible_alias = "g", verbatim_doc_comment)]
-    Generate {
-        kind: ArtifactKind,
-        name: String,
-        fields: Vec<String>,
-        /// Add conventional `createdAt` and `updatedAt` instant components.
-        /// The generated create path supplies both; transitions advance
-        /// `updated_at` in the same optimistic SQL statement.
-        #[arg(long)]
-        timestamps: bool,
-        /// Subpackage to place the generated code in, relative to the base
-        /// package -- overrides the conventional one for the kind. Pass an
-        /// empty string to write straight into the base package.
-        #[arg(long)]
-        package: Option<String>,
-        /// Typed value used to backfill rows for `generate field`
-        #[arg(long, conflicts_with = "backfill_file")]
-        default_literal: Option<String>,
-        /// Project-relative reader-owned SQL used by `generate field`
-        #[arg(long, conflicts_with = "default_literal")]
-        backfill_file: Option<String>,
-        /// A composite or ordered index for the generated migration, as the
-        /// column list Postgres wants. Repeatable.
-        ///
-        /// Per-column `@index` covers the single-column case; this is for the
-        /// ones it cannot spell:
-        ///   --index 'customer_id, created_at desc'
-        #[arg(long = "index", value_name = "COLUMNS")]
-        indexes: Vec<String>,
-        /// For `strategy`, the type each implementation examines. For
-        /// `usecase`, the existing scaffolded resource the operation creates;
-        /// for `query`, the scaffolded resource it reads; for `durable-job`,
-        /// the existing generated use case it invokes. For `command`, the
-        /// dispatcher to register it in, when the project has more than one.
-        ///
-        ///   jails g strategy RewardRule Coffee Large --on Transaction --yields Reward
-        #[arg(long = "on", value_name = "TYPE")]
-        strategy_on: Option<String>,
-        /// For `strategy`: what a matching implementation produces. Omit and
-        /// the strategy is a predicate returning `boolean`. For
-        /// `durable-job`, the resource whose stable id proves completion.
-        #[arg(long = "yields", visible_alias = "returns", value_name = "TYPE")]
-        strategy_yields: Option<String>,
-        /// For `query`, a second resource to read alongside `--on`, so a
-        /// filter may name a component of either.
-        ///
-        ///   jails g query UnreadForEmail email:string! read:boolean --on Message --via User
-        ///
-        /// The join column is the child component that references the
-        /// parent's key -- `<parent>Id` when it is there, otherwise the one
-        /// component of the parent key's type whose name ends in `Id`. Two
-        /// candidates is a refusal naming both, never a choice.
-        #[arg(long = "via", value_name = "TYPE")]
-        via: Option<String>,
-        /// For `query`, the result order, as components of `--on` (or the
-        /// column names they map to), each optionally `asc`/`desc`.
-        ///
-        ///   jails g query RecentMessages userId:long --on Message --order-by 'sentAt desc'
-        ///
-        /// Omit and the adapter orders newest first with the key as the
-        /// tiebreak, which is what it has always done.
-        #[arg(long = "order-by", value_name = "COMPONENTS")]
-        order_by: Option<String>,
-        /// For `query`, the row ceiling. Defaults to 100.
-        #[arg(long, value_name = "ROWS")]
-        limit: Option<u32>,
-        /// For `usecase`, the target component whose unique constraint turns
-        /// the create into a get-or-create.
-        ///
-        ///   jails g usecase EnsureUser email:string! --on User --on-conflict email
-        ///
-        /// One `insert ... on conflict (col) do nothing returning`, then a
-        /// read of the row that was already there. The component must be
-        /// declared `@unique` or `@pk` on the target -- Postgres has nothing
-        /// to conflict on otherwise -- and must be one the command carries.
-        #[arg(long = "on-conflict", value_name = "COMPONENT")]
-        on_conflict: Option<String>,
-        /// The route a generated endpoint answers, instead of the derived one.
-        ///
-        ///   jails g usecase Ping email:string! --on User --path /customer_api/ping
-        ///
-        /// Derived paths are a virtue greenfield; they are unusable when the
-        /// URLs are a fixed external contract. Valid on `controller`,
-        /// `scaffold`, `usecase`, `query` and `transition`.
-        ///
-        /// On a scaffold it names the *collection*, and the item routes hang
-        /// off it: `--path /admin_api/users` also serves
-        /// `GET /admin_api/users/{id}`.
-        #[arg(long, value_name = "PATH")]
-        path: Option<String>,
-        /// Which component identifies the row a `transition` updates.
-        ///
-        ///   jails g transition SetStatus --on Conversation --select userId ...
-        ///
-        /// `id` by default. A path variable binds to this component, so
-        /// `--path /admin_api/conversations/{userId}/status --select userId`
-        /// takes the key from the URL and the rest from the body.
-        #[arg(long, value_name = "FIELD")]
-        select: Option<String>,
-        /// Pin one component to a constant instead of reading it from the
-        /// request. Repeatable, as `component=literal`.
-        ///
-        ///   jails g usecase SendAdminMessage userId:long content:string! \
-        ///     --on Message --set senderType=ADMIN
-        ///
-        /// The endpoint that must write `ADMIN` and the one that must write
-        /// `CUSTOMER` are two endpoints, and with the component in the request
-        /// either can forge the other's rows -- a well-formed request is
-        /// exactly what the forgery looks like, so no validation on the
-        /// request closes it.
-        ///
-        /// The value is a literal, never a Java expression: an enum constant,
-        /// a boolean, a number, or a short piece of text. It is resolved
-        /// against the component's declared type, so a constant that is not
-        /// one of that enum's constants is refused by name rather than
-        /// written into your code.
-        ///
-        /// Valid on `usecase` and `transition`. A `transition` whose every
-        /// mutated component is pinned needs no version and no `If-Match`:
-        /// every writer writes the same value, so there is no update to lose.
-        #[arg(long = "set", value_name = "COMPONENT=VALUE")]
-        set: Vec<String>,
-        /// For `controller`, the HTTP method the generated route answers.
-        /// Defaults to `get`.
-        ///
-        ///   jails g controller Verify --method post --returns Verification
-        ///
-        /// `--on <Type>` becomes the `@RequestBody` parameter on a verb that
-        /// carries one; `--returns <Type>` is what the handler returns.
-        #[arg(long, value_name = "METHOD")]
-        method: Option<jails_spec::spec::kind::HttpMethod>,
-        /// How the generated endpoint reads its request. Defaults to `json`.
-        ///
-        ///   jails g usecase Ping email:string! --on User --consumes form
-        ///
-        /// `form` is `application/x-www-form-urlencoded` -- what an HTML form
-        /// and jQuery's `$.post(url, object)` send, and what a `@RequestBody`
-        /// endpoint answers 415 to. Valid on `controller`, `usecase`,
-        /// `query` and `transition`.
-        #[arg(long, value_name = "FORMAT")]
-        consumes: Option<jails_spec::spec::kind::WireFormat>,
-    },
+    Generate(GenerateArgs),
     /// Add one or more capabilities to an existing project: dependencies, code and tests
     ///
     /// A capability is a whole slice, not a dependency line: the artifact in

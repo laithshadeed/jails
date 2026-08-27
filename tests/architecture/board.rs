@@ -920,9 +920,17 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // flag (`--set`) costs exactly two lines there -- the name in
                 // the destructuring and the name in the `Intent` -- because
                 // `main.rs` is dispatch only and every flag has to be carried
-                // across it by hand. That is the file doing its one job, not
-                // acquiring a second.
-                ceiling: 670,
+                // across it by hand.
+                //
+                // 670 -> 669, and that cost is gone: `--if-match` took
+                // `main.rs` to 672 and the answer was the split this row asks
+                // for. `generate`'s twenty arguments are a `clap::Args` struct
+                // in `src/cli/generate_args.rs` now, with the conversion to
+                // the engine's `Intent` written beside the field names rather
+                // than at the dispatch site, so `main.rs` names the command
+                // once and a twenty-first flag costs it nothing. The largest
+                // module is `spring/workflow.rs` again, unchanged.
+                ceiling: 669,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
                       decomposing one, so this asks the question the split is actually for: \

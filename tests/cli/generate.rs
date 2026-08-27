@@ -6763,3 +6763,230 @@ fn a_pin_that_cannot_be_resolved_is_refused_and_names_what_would_work() {
         "{stderr}"
     );
 }
+
+/// A transition an ordinary browser page can reach.
+///
+/// `If-Match` is a conditional request header, and requiring it is a policy
+/// rather than a reading of HTTP. It is jails' default policy -- the
+/// compare-and-swap is what a transition *is* -- but it made every generated
+/// transition unreachable from a page that sends `$.ajax({type: 'PATCH'})`,
+/// because Spring answers 400 for a missing required header before any code
+/// jails wrote runs.
+///
+/// Three things have to move together for the permissive form to be honest:
+/// the header becomes optional, the version arrives boxed so `null` can mean
+/// "no precondition", and the SQL guard becomes conditional.
+#[test]
+fn an_optional_precondition_reaches_the_sql_the_port_and_the_route() {
+    let root = temp_dir("transition-optional-if-match");
+    write_spring_fixture(&root);
+
+    for args in [
+        vec!["add", "db", "--no-start"],
+        vec![
+            "g",
+            "scaffold",
+            "Note",
+            "id:long@pk",
+            "body:string!",
+            "seen:boolean",
+            "version:long",
+        ],
+        vec![
+            "g",
+            "transition",
+            "MarkSeen",
+            "id:long",
+            "version:long",
+            "--on",
+            "Note",
+            "--set",
+            "seen=true",
+            "--if-match",
+            "optional",
+            "--consumes",
+            "form",
+            "--path",
+            "/customer_api/seen",
+        ],
+    ] {
+        assert!(
+            jails_cmd(&root, None)
+                .args(&args)
+                .status()
+                .unwrap()
+                .success(),
+            "{args:?}"
+        );
+    }
+
+    let main = root.join("src/main/java/com/example/demo");
+    let adapter = fs::read_to_string(main.join("adapters/JdbcMarkSeenTransition.java")).unwrap();
+    // One statement, not two: with a version it reads `version = 5` and
+    // guards, without one it reads `version = version` and does not. It is
+    // also what gives the null parameter a type -- an untyped null compared
+    // with `=` leaves PostgreSQL unable to infer one.
+    assert!(
+        adapter.contains("version = coalesce(:version, version)"),
+        "{adapter}"
+    );
+    // The pinned component is in the SQL and bound as a parameter, so the
+    // statement text is the same for every call.
+    assert!(adapter.contains("set seen = :seen"), "{adapter}");
+    assert!(adapter.contains(".param(\"seen\", true)"), "{adapter}");
+
+    // Boxed, because `null` is a value the port has to be able to hold.
+    let port = fs::read_to_string(main.join("service/MarkSeenUseCase.java")).unwrap();
+    assert!(
+        port.contains("Result execute(Long id, MarkSeenCommand command, Long expectedVersion);"),
+        "{port}"
+    );
+
+    // And the request cannot carry the pinned flag at all.
+    let command = fs::read_to_string(main.join("service/MarkSeenCommand.java")).unwrap();
+    assert!(!command.contains("seen"), "{command}");
+
+    let controller = fs::read_to_string(main.join("web/MarkSeenController.java")).unwrap();
+    assert!(
+        controller.contains("@RequestHeader(value = HttpHeaders.IF_MATCH, required = false)"),
+        "{controller}"
+    );
+
+    // The proof moves with it. Without this test the unconditional branch is
+    // generated, compiles, and is executed by nothing -- removing `coalesce`
+    // would change no test, which is the shape `CLAUDE.md` records for
+    // `g auth` and `add sse`.
+    let integration = fs::read_to_string(
+        root.join("src/test/java/com/example/demo/adapters/JdbcMarkSeenTransitionIT.java"),
+    )
+    .unwrap();
+    assert!(
+        integration.contains("aCallerThatSendsNoPreconditionAppliesUnconditionallyAndCanRepeat"),
+        "{integration}"
+    );
+    assert!(
+        integration.contains("useCase.execute(stored.id(), command, null)"),
+        "{integration}"
+    );
+
+    // The controller test names the answer rather than a status it might
+    // reach for another reason -- it asserted 400 before, and a form-bound
+    // transition sent a JSON body is answered 400 too.
+    let proof = fs::read_to_string(
+        root.join("src/test/java/com/example/demo/web/MarkSeenControllerTest.java"),
+    )
+    .unwrap();
+    assert!(
+        proof.contains("aRequestWithNoIfMatchIsAppliedUnconditionally"),
+        "{proof}"
+    );
+    assert!(proof.contains(".param(\"id\", \"7\")"), "{proof}");
+    assert!(!proof.contains("APPLICATION_JSON"), "{proof}");
+}
+
+/// The strict default is unchanged, and its proof still says so.
+#[test]
+fn a_transition_insists_on_the_precondition_unless_it_was_asked_not_to() {
+    let root = temp_dir("transition-required-if-match");
+    write_spring_fixture(&root);
+
+    for args in [
+        vec!["add", "db", "--no-start"],
+        vec![
+            "g",
+            "scaffold",
+            "Note",
+            "id:long@pk",
+            "body:string!",
+            "version:long",
+        ],
+        vec![
+            "g",
+            "transition",
+            "Rename",
+            "id:long",
+            "body:string!",
+            "version:long",
+            "--on",
+            "Note",
+        ],
+    ] {
+        assert!(
+            jails_cmd(&root, None)
+                .args(&args)
+                .status()
+                .unwrap()
+                .success(),
+            "{args:?}"
+        );
+    }
+
+    let main = root.join("src/main/java/com/example/demo");
+    let adapter = fs::read_to_string(main.join("adapters/JdbcRenameTransition.java")).unwrap();
+    assert!(adapter.contains("version = :version"), "{adapter}");
+    assert!(!adapter.contains("coalesce"), "{adapter}");
+
+    let port = fs::read_to_string(main.join("service/RenameUseCase.java")).unwrap();
+    assert!(port.contains("long expectedVersion);"), "{port}");
+
+    let controller = fs::read_to_string(main.join("web/RenameController.java")).unwrap();
+    assert!(
+        controller.contains("@RequestHeader(HttpHeaders.IF_MATCH)"),
+        "{controller}"
+    );
+
+    let proof = fs::read_to_string(
+        root.join("src/test/java/com/example/demo/web/RenameControllerTest.java"),
+    )
+    .unwrap();
+    assert!(
+        proof.contains("aRequestWithNoIfMatchIsRefusedRatherThanAppliedBlind"),
+        "{proof}"
+    );
+
+    // And the flag is refused where there is no version to check against,
+    // rather than accepted and ignored.
+    let output = jails_cmd(&root, None)
+        .args([
+            "g",
+            "usecase",
+            "Probe",
+            "body:string!",
+            "--on",
+            "Note",
+            "--if-match",
+            "optional",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("`--if-match` applies to a transition"),
+        "{stderr}"
+    );
+
+    // A pin on the component that *finds* the row is refused too: it is not
+    // something this transition changes.
+    let output = jails_cmd(&root, None)
+        .args([
+            "g",
+            "transition",
+            "Probe",
+            "id:long",
+            "body:string!",
+            "version:long",
+            "--on",
+            "Note",
+            "--set",
+            "id=7",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("how it finds the row and how it proves the caller read it"),
+        "{stderr}"
+    );
+}

@@ -22,8 +22,9 @@ public interface SetTopicSubjectUseCase {
      *     of the two it is.
      * @param command what to change
      * @param expectedVersion the version the caller believes the row is at.
-     *     It arrives as an {@code If-Match} header rather than in the body:
-     *     HTTP already has a word for "only if it is still what I read".
+     *     It arrives as an {@code If-Match} header rather than in
+     *     the body: HTTP already has a word for "only if it is still what I
+     *     read".
      */
     Result execute(Long userId, SetTopicSubjectCommand command, long expectedVersion);
 

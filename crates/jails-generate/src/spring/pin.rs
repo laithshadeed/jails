@@ -18,6 +18,19 @@
 use super::*;
 use jails_support::Result;
 
+/// The `component=literal` tokens as validated values, parsed once.
+///
+/// Separate from [`resolve`] because a recipe has refusals of its own to make
+/// first: a transition pins what it *changes*, so pinning the component it
+/// finds the row by is a different mistake from pinning one the request also
+/// carries, and the specific message is the useful one.
+pub(crate) fn parse(tokens: &[String]) -> Result<Vec<jails_protocol::declaration::PinSpec>> {
+    tokens
+        .iter()
+        .map(|token| jails_protocol::declaration::PinSpec::parse(token))
+        .collect()
+}
+
 /// One resolved pin: the component, the Java expression it becomes, and what
 /// that expression has to import.
 pub(crate) struct Pin {
@@ -49,7 +62,7 @@ pub(crate) fn resolve(
     slice: &Slice,
     pinning: Pinning<'_>,
     fields: (&[crate::generate::Field], &[crate::generate::Field]),
-    tokens: &[String],
+    specs: &[jails_protocol::declaration::PinSpec],
 ) -> Result<Vec<Pin>> {
     let (target_fields, request) = fields;
     let Pinning {
@@ -57,9 +70,8 @@ pub(crate) fn resolve(
         name,
         target,
     } = pinning;
-    let mut pins: Vec<Pin> = Vec::with_capacity(tokens.len());
-    for token in tokens {
-        let spec = jails_protocol::declaration::PinSpec::parse(token)?;
+    let mut pins: Vec<Pin> = Vec::with_capacity(specs.len());
+    for spec in specs {
         let component = spec.component.to_string();
         if let Some(earlier) = pins.iter().find(|pin| pin.component == component) {
             return Err(format!(

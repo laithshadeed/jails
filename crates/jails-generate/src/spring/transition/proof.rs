@@ -28,8 +28,9 @@ pub(super) fn jdbc_transition_it_java(
     name: &str,
     resource: &Target,
     fields: &[crate::generate::Field],
-    key: Key<'_>,
+    shape: Transition<'_>,
 ) -> String {
+    let key = shape.key;
     let project = slice.project();
     let pkg: &str = &slice.owned(Layer::Adapters);
     let service: &str = &slice.placed(Layer::Service);
@@ -138,6 +139,38 @@ pub(super) fn jdbc_transition_it_java(
 "#
             )
         });
+    // The proof that `--if-match optional` is what it says. Without it the
+    // unconditional branch is generated, compiles, and is never executed by
+    // anything: the guarded assertions above pass a version, so removing
+    // `coalesce` from the predicate would change no test. That is the shape
+    // `CLAUDE.md` records for `g auth` and `add sse` -- the generated test is
+    // the thing that keeps the fix in place, because nothing else observes it.
+    let unconditional_test = if shape.precondition.is_optional() && !disabled {
+        format!(
+            r#"
+    @Test
+    void aCallerThatSendsNoPreconditionAppliesUnconditionallyAndCanRepeat() {{
+        var stored = repository.save(new {target}(
+                {target_args}));
+        var command = new {name}Command(
+                {command_args});
+
+        // `null` is not a version, and not a wrong one: it is the absence of
+        // a precondition, which this transition was asked to allow.
+        assertThat(useCase.execute({key_expression}, command, null))
+                .isInstanceOf({name}UseCase.Result.Applied.class);
+
+        // Again. A guarded call would be stale by now -- the row moved -- so
+        // this is the assertion that fails if the guard stops being optional.
+        assertThat(useCase.execute({key_expression}, command, null))
+                .isInstanceOf({name}UseCase.Result.Applied.class);
+    }}
+"#,
+            key_expression = format!("stored.{}()", key.component)
+        )
+    } else {
+        String::new()
+    };
     let target_import = crate::generate::import_of(pkg, domain, target);
     let command_import = crate::generate::import_of(pkg, service, &format!("{name}Command"));
     let port_import = crate::generate::import_of(pkg, service, &format!("{name}UseCase"));
@@ -180,6 +213,7 @@ pub(super) fn jdbc_transition_it_java(
             // path the command has no component to read it from, and with the
             // key in the body the two are the same value anyway.
             ("key_expression", &format!("stored.{}()", key.component)),
+            ("unconditional_test", &*unconditional_test),
             ("wrong_scope_test", &*wrong_scope_test),
         ],
     )
@@ -190,9 +224,13 @@ pub(super) fn transition_controller_test_java(
     name: &str,
     resource: &Target,
     fields: &[crate::generate::Field],
-    endpoint: Endpoint<'_>,
-    key: Key<'_>,
+    shape: Transition<'_>,
 ) -> String {
+    let Transition {
+        key,
+        endpoint,
+        precondition,
+    } = shape;
     let project = slice.project();
     let security: &str = slice.base();
     let service: &str = &slice.placed(Layer::Service);
@@ -214,7 +252,50 @@ pub(super) fn transition_controller_test_java(
         .map(|field| crate::generate::sample_value(field, project, domain))
         .collect::<Option<Vec<_>>>();
     let disabled = json.is_none() || target_samples.is_none();
-    let json = json.unwrap_or_default().join(",\n");
+    // How this test *sends* the command, which has to be how the controller
+    // reads it. `@ModelAttribute` binds from request parameters and a JSON
+    // body is not parameters, so a form-bound transition tested with a JSON
+    // body binds every component to null and is answered 400 -- and the
+    // second test here asserts 400, so it passed for the wrong reason. That
+    // is `bugs.md` B48's shape again: the fact is resolved once, by the
+    // renderer that already knows it.
+    let request = match endpoint.consumes {
+        jails_spec::spec::kind::WireFormat::Json => format!(
+            "{indent}.contentType(MediaType.APPLICATION_JSON)\n{indent}.content(\"\"\"\n{{\n{body}\n}}\n\"\"\")",
+            indent = "                ",
+            body = json.clone().unwrap_or_default().join(",\n")
+        ),
+        jails_spec::spec::kind::WireFormat::Form => command
+            .iter()
+            .filter_map(|field| {
+                json_sample(slice, field).map(|sample| {
+                    format!(
+                        "                .param(\"{}\", \"{}\")",
+                        field.name,
+                        sample.trim_matches('"')
+                    )
+                })
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    };
+    let media_type_import = match endpoint.consumes {
+        jails_spec::spec::kind::WireFormat::Json => "import org.springframework.http.MediaType;\n",
+        jails_spec::spec::kind::WireFormat::Form => "",
+    };
+    // What a request carrying no precondition means here, which is the whole
+    // of `--if-match required` versus `--if-match optional`. Naming the test
+    // after the answer is what stops it passing for a different reason.
+    let (no_precondition_test, no_precondition_status) = match precondition {
+        jails_spec::spec::kind::Precondition::Required => (
+            "aRequestWithNoIfMatchIsRefusedRatherThanAppliedBlind",
+            "400",
+        ),
+        jails_spec::spec::kind::Precondition::Optional => {
+            ("aRequestWithNoIfMatchIsAppliedUnconditionally", "200")
+        }
+    };
+
     let target_args = target_samples
         .unwrap_or_default()
         .join(",\n                    ");
@@ -278,7 +359,10 @@ pub(super) fn transition_controller_test_java(
             ("disabled_import", disabled_import),
             ("name", name),
             ("annotation", annotation),
-            ("json", &*json),
+            ("request", &*request),
+            ("media_type_import", media_type_import),
+            ("no_precondition_test", no_precondition_test),
+            ("no_precondition_status", no_precondition_status),
             ("target", target),
             ("target_args", &*target_args),
             ("sample_version", &*sample_version),

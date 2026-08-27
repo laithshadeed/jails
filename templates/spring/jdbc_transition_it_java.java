@@ -33,4 +33,4 @@ class Jdbc{{name}}TransitionIT {
         assertThat((({{name}}UseCase.Result.StaleVersion) again).current()).isEqualTo(resource);
         assertThat(repository.findById({{key_argument}})).contains(resource);
     }
-{{wrong_scope_test}}}
+{{unconditional_test}}{{wrong_scope_test}}}

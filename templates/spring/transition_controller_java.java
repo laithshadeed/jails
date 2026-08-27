@@ -18,7 +18,7 @@ import org.springframework.web.server.ResponseStatusException;
  * {@code ETag}. It used to be a field in the request body, which is a bespoke
  * spelling of a thing HTTP already has -- and one that no cache, proxy or
  * client library understands.
- */
+{{precondition_doc}} */
 @RestController
 @RequestMapping({{name}}Controller.PATH)
 public final class {{name}}Controller {
@@ -34,7 +34,7 @@ public final class {{name}}Controller {
 
     @{{mapping}}
     public ResponseEntity<{{target}}Response> execute(
-            @RequestHeader(HttpHeaders.IF_MATCH) String ifMatch,
+            @RequestHeader({{if_match_binding}}) String ifMatch,
 {{key_parameter}}            @Valid @{{binding}} {{name}}Command command{{scope_parameter}}) {
 {{scope_checks}}
         {{version_type}} expected = expectedVersion(ifMatch);
@@ -54,7 +54,7 @@ public final class {{name}}Controller {
      * {@code ETag} this controller issued.
      */
     private static {{version_type}} expectedVersion(String ifMatch) {
-        String value = ifMatch.trim();
+{{absent_precondition}}        String value = ifMatch.trim();
         if (value.startsWith("W/")) {
             value = value.substring(2);
         }
