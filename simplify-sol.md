@@ -45,32 +45,37 @@ have proved themselves.
 
 ## Audit basis
 
-This audit used the live tree at HEAD
-`f0e66829cb8d1ef236485bdf1b5df2bf886a93e5`, including the then-uncommitted
-42-line addition in `crates/jails-report/src/doctor/wiring.rs`. The inventory
-was taken from the filesystem, not inferred from the module graph:
+The four full-scope audits began against HEAD `f0e66829...` and were refreshed
+through HEAD `a229087e9113c9e1daf11383a5c6feace6d05e43`. While this document was
+being written, a concurrent uncommitted `--bind` change added one protocol file
+and touched the engine, generator and root CLI. That complete Rust delta was
+read separately. The final inventory below is the live filesystem after that
+delta, not an inference from the module graph:
 
 | Scope | Rust files | Raw lines | Main concern |
 |---|---:|---:|---|
-| `crates/jails-engine` + root `src` | 66 | 18,933 | orchestration and CLI |
-| `jails-generate` + `jails-java` | 64 | 27,880 | lowering and rendering |
-| `jails-protocol` + `jails-project` + `jails-spec` + `jails-state` | 86 | 39,049 | domain, wire values and project state |
-| `jails-commit` + `jails-prepare` + `jails-drive` + `jails-report` + `jails-support` + `jails-testkit` | 83 | 36,445 | planning, transactions and tools |
-| **Total** | **299** | **122,307** | **96,317 nonblank code lines** |
+| `crates/jails-engine` + root `src` | 66 | 18,973 | orchestration and CLI |
+| `jails-generate` + `jails-java` | 64 | 27,956 | lowering and rendering |
+| `jails-protocol` + `jails-project` + `jails-spec` + `jails-state` | 87 | 39,219 | domain, wire values and project state |
+| `jails-commit` + `jails-prepare` + `jails-drive` + `jails-report` + `jails-support` + `jails-testkit` | 83 | 36,511 | planning, transactions and tools |
+| **Total** | **300** | **122,659** | **96,569 nonblank code lines** |
 
-The totals include colocated tests and should not be read as 96,317 lines of
+The totals include colocated tests and should not be read as 96,569 lines of
 production logic. They are useful for scale and coverage, not as a productivity
 metric.
 
-Every Rust file in those scopes was inventoried and assigned to one of four
-audits. Findings are grouped by responsibility below instead of repeated as a
-299-row filename dump. The codebase graph was used first for structure, call
-paths and hotspots. Its current project matched the HEAD above, but exact
-coverage checks still reported several files as metadata-changed or absent
-from the recorded generation. Those files were read directly. A clean graph
-coverage result means no *recorded* gap, not proof that an exhaustive query is
-complete; the filesystem inventory and source reads are the authority for the
-exhaustive statements here.
+Every baseline Rust file was inventoried and assigned to one of four audits;
+the new file and every modified Rust hunk that appeared afterward were then
+read directly. Findings are grouped by responsibility below instead of
+repeated as a 300-row filename dump. The codebase graph was used first for
+structure, call paths and hotspots. Its project matched the committed HEAD,
+but exact coverage checks still reported many files as metadata-changed or
+absent from the recorded generation. A clean graph coverage result means no
+*recorded* gap, not proof that an exhaustive query is complete; the filesystem
+inventory and source reads are the authority for the exhaustive statements
+here. The final coverage call for the newly appeared delta was attempted twice,
+but the graph transport had closed; those paths are therefore qualified by
+direct source inspection rather than fresh graph coverage.
 
 The measured graph also supports the qualitative picture. Among the heaviest
 cross-crate boundaries were protocol-to-support, generate-to-project,
@@ -220,6 +225,17 @@ records why: several manual unpacking sites omitted a newly added option.
 `route/request.rs:71` performs another optional-field projection. These are
 not domain types; they are adapters between duplicate representations.
 
+A concurrent change during this audit provided a useful controlled example.
+Adding one `--bind component=parameter` concept touched **20 Rust files** across
+root CLI/manifest, engine `Intent`/`Recorded`/request projection, generator
+`Recipe` and flag validation, endpoint/rendering, protocol declarations,
+identity and durable compatibility. It also required a new wire type and a
+ledger codec bump. The new `Endpoint::bindings` is a good local owner for the
+rendering rule, but the breadth of propagation is the architectural signal: a
+single semantic field must still be copied through every phase and storage
+shape. In the proposed design it would enter one `OperationDecl`, resolve to
+one endpoint IR field, and have generated wire/front-end projections.
+
 The transaction layers have the same pattern around
 `PreparedKind`, `OperationSemantics`, `PreparedIdentity`, `PreparedChange`,
 ledger records, effects, journals and receipts. Each type may be locally
@@ -271,6 +287,35 @@ project directly. A compiler that receives a captured `World`/`ProjectFacts`
 value can report its inputs structurally and can compute a real dependency
 graph.
 
+`Asked` is another incomplete command model. It holds a canonical semantic
+request beside a manually reconstructed syntax map, but routes decide which
+options make it into that map. For `app apply`, the request records little more
+than `no_start`, the syntax does not identify the manifest, and
+`manifest_source` remains empty (`route/request.rs:623-770`). Two different
+manifests can therefore share an invocation fingerprint even though their
+prepared bytes differ. Parsing should produce one `ParsedInvocation` with
+semantic command, explicit syntax and source input identities; all hashes and
+reports derive from it.
+
+Evolution and rename reveal the same missing model. Several field/lifecycle
+paths rerun a full recipe and then delete the create-migration it generated,
+before adding a different forward migration. Companion invalidation is a
+five-kind table. Drop-field rederives a SQL column with `snake_case` instead of
+using the stored physical column, which is wrong after a preserve-column
+rename (`route/field.rs:428-437`). The rename path textually rewrites generated
+Java and moves entity IDs while cloning referenced specs unchanged
+(`route/maintenance/rename/source.rs:7-32`); dependent `on`, `yields` or field
+references can remain semantically stale even when source bytes show the new
+name. Stable logical IDs plus model/schema diffs remove all three failure
+classes.
+
+Finally, some orchestration bypasses its own transaction story. `app apply`
+may commit its aggregate plan and then format as a second mutation; the
+formatting failure is swallowed (`route/app.rs:96-115` and
+`route/capability.rs:107-136`). Formatting must either be a pure compiler pass
+or a recorded retriable effect. It should not be an invisible second
+transaction.
+
 ### `jails-generate` and `jails-java`
 
 The generator contains good local abstractions, but they are islands rather
@@ -315,3 +360,1271 @@ reader-owned Java, and keep normal managed generation independent of parsing.
 If a JVM implementation is chosen later, use the Java ecosystem's syntax
 model instead of maintaining these scanners.
 
+### `jails-protocol`, `jails-spec`, `jails-project` and `jails-state`
+
+These crates are intended to hold validated values and the resolved project,
+but several different kinds of stability are mixed together:
+
+- semantic concepts such as recipes, fields, resources and effects;
+- versioned wire representations used by plans, ledgers and receipts;
+- project discovery and build/layout facts;
+- decoders for Jails-owned files;
+- projections reconstructed from those files;
+- live or adopted Java/SQL evidence.
+
+That mix makes “protocol” depend on Java, spec and support, and makes most
+higher layers depend on protocol. It is a wide vocabulary crate rather than a
+small stable boundary. Re-export facades in each crate make moves convenient,
+but they also allow module code to see a much broader lower-layer surface than
+its real responsibility requires.
+
+The right separation is by *reason for change*, not by whether a struct looks
+like data:
+
+- semantic model types change when the Jails language changes;
+- wire DTOs change only when an on-disk/API version changes;
+- project facts change when Maven, Gradle, Java or Spring detection changes;
+- state adapters change when storage changes.
+
+Wire DTOs should decode and immediately convert to semantic types at the
+boundary. They should not become the model passed throughout the compiler.
+Likewise, project discovery should produce a closed `ProjectFacts` snapshot;
+compiler passes should not retain a `Project` that lets them read arbitrary
+files later.
+
+The current code has useful building blocks to keep: validated names and
+identifiers, closed compatibility classifiers, field syntax, build-layout
+facts, SQL parsing and conservative refusal. The simplification is to give
+each one a single role and to stop using the ledger projection as a substitute
+for an application model.
+
+### `jails-prepare` and `jails-commit`
+
+This is the most important place not to confuse deletion with simplification.
+Arbitrary files in an existing directory cannot all be atomically replaced as
+one operation. A crash-safe multi-file mutation needs a lock, staged bytes,
+preconditions, a durable record of intent and idempotent roll-forward. Moving
+the staging directory beside the project or using SQLite does not repeal that
+filesystem fact.
+
+What can be simplified is the number of meanings carried through the kernel.
+Preparation currently has parallel resource, operation, ledger and effect
+representations. Commit stores its own journal and receipt forms, object
+images, preconditions and recovery state. This creates enough surface for the
+normal and recovery paths to drift. The audit found examples worth treating as
+architectural warnings:
+
+- recovery reconstructs a receipt with no post-commit effects in
+  `jails-commit/src/recover.rs:173`, while journal validation compares exact
+  effects in `journal.rs:611`;
+- normal execution promotes durable objects in `execute.rs:267`, while the
+  corresponding roll-forward path in `recover.rs:150` does not show the same
+  action;
+- several external/machine preconditions are accepted by the model but cannot
+  be checked by the executor's runtime context (`execute.rs:656` and
+  `execute.rs:736`);
+- prepare computes `ledger_after` only on one pipeline branch
+  (`jails-prepare/src/pipeline.rs:779`), while other lifecycle plans depend on
+  special defaults or placeholder bytes.
+
+These observations need focused correctness tests before being called live
+data-loss bugs, but they demonstrate the maintenance cost: the safety protocol
+is large enough that mirrored paths no longer obviously mirror each other.
+
+The long-term transaction kernel should accept one canonical `Plan`, persist
+that same value once, and execute a small sequence of idempotent operations.
+It should know nothing about recipes, Java, Spring, resources or human report
+wording. External effects such as starting services or running a formatter
+should normally be retriable follow-ups after the project mutation, not file
+transaction states.
+
+### `jails-drive`, `jails-report`, `jails-support` and `jails-testkit`
+
+`jails-support` is mostly appropriately low-level, but broad facade re-exports
+make helpers appear as an implicit shared framework. Keep only genuinely
+domain-free filesystem, process, codec and lock primitives. A helper used by
+one subsystem should live with that subsystem.
+
+`jails-drive` and `jails-report` contain useful, substantial applications.
+Their complexity is mostly orthogonal to compiling an application model. A
+schema inspector, test daemon, process launcher, Kafka helper and diagnostic
+engine need not share the compiler's mutation vocabulary or release cadence.
+They can remain in the workspace while becoming separate command packs or
+binaries behind a small JSON/subprocess protocol.
+
+This is not a call to build a general in-process plugin lifecycle. The simplest
+extension seam is Unix-like: `jails foo` may delegate to a `jails-foo`
+executable that receives a versioned request and project-facts file. Crashes,
+dependencies and state remain isolated. Commands that are central to model
+compilation stay built in; tools that merely inspect or launch can move out.
+
+`jails-testkit` is already tiny and should remain tiny.
+
+## The product choice
+
+There are four coherent architectures. The current hybrid is the expensive
+space between them.
+
+### A. Honest one-shot generator
+
+Jails writes files once; after that they are the reader's files. Preview is a
+diff, and Git is the normal undo mechanism. There is no later managed destroy,
+rename, sync, declarative apply, ownership merge, object store or receipt
+history.
+
+This is the smallest and most Rails-like product. It is attractive if Jails'
+primary value is “start me with excellent Java,” not “keep my application
+model reconciled.” It gives up many features the current code has spent most
+of its complexity making safe.
+
+### B. Managed compiler with ejection — recommended
+
+The application model is source. Managed Java, tests, HTTP collections and
+reproducible configuration are compiler outputs. Readers extend generated
+ports from ordinary source and explicitly eject a generated facet when they
+need to own its implementation.
+
+Schema migrations are not reproducible output: they are append-only history
+events produced by a semantic model diff. Rare patches to reader-owned build
+or configuration files are also explicit plan operations, not ordinary
+renderer output.
+
+This keeps declarative apply, preview, safe evolution and deterministic
+generation while removing the ambiguity that drives most merge and ownership
+code. It is a product change, especially for users accustomed to editing a
+generated class in place. That change must be prototyped with real projects
+before the legacy engine is deleted.
+
+### C. Keep editable managed files and refactor in place
+
+Typed IR, one model and one plan would still improve the system substantially.
+However, retaining “edit this output and let Jails later merge/delete it” also
+retains ownership records, content blobs, three-way merge, conflict policy and
+multi-file crash recovery. Expect a cleaner implementation, not a small one.
+
+Choose this only if in-place editing plus later management is a defining
+product requirement. It is internally coherent; it simply has an irreducible
+cost.
+
+### D. JVM build-time compiler
+
+A more radical destination is a Java compiler core packaged as a Maven/Gradle
+plugin or annotation processor. It could read the same application model,
+generate source during the build and use a mature Java syntax/emit model. A
+small native launcher could retain the fast CLI experience.
+
+This moves Jails into its target ecosystem and makes generated-source roots a
+natural build concept. It also adds JVM startup, plugin-version compatibility,
+two build-tool adapters and a harder adoption story. SQL migration allocation
+still cannot safely happen as an incidental annotation-processing side effect.
+Treat this as a prototype or eventual backend, not the first migration step.
+
+## Recommended semantic model
+
+### Stable logical identities, mutable projected names
+
+Random UUIDs in a hand-edited DSL are noisy. Names alone make rename
+ambiguous. A useful middle ground is an immutable logical key with mutable
+projections:
+
+```toml
+schema = 2
+
+[project]
+base_package = "com.example.shop"
+platform = "spring"
+
+[entities.order]
+java_name = "PurchaseOrder"
+table = "orders"
+facets = ["record", "repository", "service", "http"]
+
+[entities.order.fields.id]
+java_name = "id"
+column = "id"
+type = "uuid"
+primary_key = true
+
+[entities.order.fields.customer]
+java_name = "customerId"
+column = "customer_id"
+type = "uuid"
+
+[operations.find_recent_orders]
+kind = "query"
+java_name = "RecentOrders"
+on = "order"
+order_by = ["created_at desc", "id"]
+limit = 100
+```
+
+`order`, `customer` and `find_recent_orders` are stable semantic identities.
+Changing `java_name` is a Java rename; changing `table` or `column` is an
+explicit storage rename. References use logical keys, so dependency edges do
+not break when a projection changes. This replaces the current repeated
+round-trip between Java member, SQL column, URL, property and package
+spellings.
+
+The model need not be one enormous physical file. A root file may import
+closed-schema fragments. “One model” means one semantic authority and one
+linker, not necessarily one blob on disk.
+
+### Typed declarations, not an optional-field soup
+
+The CLI and manifest should lower immediately to variants for which irrelevant
+states cannot exist:
+
+```rust
+enum Declaration {
+    Entity(EntityDecl),
+    Operation(OperationDecl),
+    Capability(CapabilityDecl),
+}
+
+enum OperationDecl {
+    Create(CreateDecl),
+    Query(QueryDecl),
+    Transition(TransitionDecl),
+    Event(EventDecl),
+    Worker(WorkerDecl),
+    Workflow(WorkflowDecl),
+}
+
+struct QueryDecl {
+    id: OperationId,
+    target: EntityId,
+    filters: Vec<FilterDecl>,
+    via: Option<EntityId>,
+    order: Vec<Ordering>,
+    limit: Limit,
+    endpoint: Endpoint,
+}
+```
+
+A query cannot accidentally carry a durable-job-only option because the type
+has nowhere to store it. The negative kind-by-flag table disappears.
+
+### One semantic world
+
+All declarations link into a canonical graph:
+
+```rust
+struct AppModel {
+    schema: ModelSchema,
+    project: ProjectIntent,
+    entities: BTreeMap<EntityId, Entity>,
+    operations: BTreeMap<OperationId, Operation>,
+    capabilities: BTreeMap<CapabilityId, CapabilityIntent>,
+}
+
+struct Entity {
+    id: EntityId,
+    names: NameSet,
+    fields: Vec<Field>,
+    constraints: Vec<Constraint>,
+    facets: BTreeSet<Facet>,
+}
+
+struct NameSet {
+    java_type: JavaTypeName,
+    java_member: JavaMemberName,
+    sql_table: SqlIdent,
+    route_segment: RouteSegment,
+    config_prefix: ConfigPrefix,
+}
+```
+
+`scaffold` becomes a profile that adds a known set of facets to one entity. It
+does not need its own monolithic implementation. `destroy scaffold` removes
+those model facets; dependency analysis determines the output delta.
+
+References such as `on`, `via`, `yields` and associations are graph edges. A
+field change invalidates every compiler node that actually references the
+field or entity. No recipe-kind invalidation table is needed.
+
+### One type algebra
+
+Every builtin field type should have one semantic definition:
+
+```rust
+struct TypeSemantics {
+    java: JavaType,
+    sql: DialectMap<SqlType>,
+    jdbc: JdbcCodec,
+    wire: WireCodec,
+    validation: ConstraintPolicy,
+    samples: SampleSet,
+    key_policy: KeyPolicy,
+}
+```
+
+Java imports, primitive boxing, SQL type, JDBC read/write, wire conversion,
+validation, and Java/JSON/SQL samples all derive from this table. An external
+project-owned type enters the model as a typed unresolved/resolved symbol with
+explicit capabilities; it does not trigger scattered “maybe disable the test”
+branches.
+
+If the compiler cannot synthesize a required sample, it should emit a
+diagnostic tied to the declaration. A user may provide a sample or choose to
+omit a proof explicitly. Silently emitting `@Disabled` is a weak substitute
+for missing type semantics.
+
+## The compiler pipeline
+
+The important rule is that only the capture/adoption boundary reads the
+workspace. Every later pass is pure over explicit input values.
+
+### Pass 0: capture
+
+Capture one immutable input:
+
+```rust
+struct WorkspaceSnapshot {
+    model: Versioned<AppModel>,
+    project: ProjectFacts,
+    external_types: ExternalTypeIndex,
+    migration_history: MigrationHistory,
+    owned_patches: OwnedPatchState,
+    preconditions: SnapshotPreconditions,
+}
+```
+
+`ProjectFacts` contains the exact Maven/Gradle, Java, Spring, package, layout
+and configuration facts compiler passes are allowed to observe. An adoption
+adapter may parse existing Java and SQL into `ExternalTypeIndex` and an import
+proposal. Normal generation never reparses its own output.
+
+This makes read sets and provenance real. If a pass asks the snapshot for an
+entity, type or build capability, that query can be recorded. A renderer can
+no longer reach through `Project` and silently read another file.
+
+### Pass 1: parse front ends to `ModelPatch`
+
+Current CLI syntax and `app.toml` both produce the same typed patch:
+
+```rust
+enum ModelPatch {
+    AddEntity(EntityDecl),
+    AddFacet(EntityId, FacetDecl),
+    AddOperation(OperationDecl),
+    ChangeField(EntityId, FieldId, FieldPatch),
+    RenameProjection(NodeId, Projection, String),
+    Remove(NodeId, RemovalPolicy),
+    SetCapability(CapabilityId, CapabilityPatch),
+    ReplaceManifest(AppModel),
+}
+```
+
+An imperative command is not a competing authority. It edits the same model
+that declarative apply replaces. If no model exists, the first command creates
+one by importing the current legacy ledger/project once.
+
+The closed option schema can be data-driven. A `RecipeSpec` may define command
+name, aliases, arguments, help, applicability and the typed lowering function.
+That one catalog can build Clap, manifest schema, completion, documentation and
+canonical request metadata. It should not encode arbitrary semantic code in
+YAML; lowering remains typed Rust.
+
+### Pass 2: link, resolve and validate
+
+Resolve logical IDs, fields, packages, routes, capabilities and project-owned
+symbols. Validate constraints once. Produce diagnostics with model spans. At
+the end of this pass the compiler has a valid `World`; later emitters do not
+perform user-facing semantic validation again.
+
+This is where defaults live. The audit found one current example in which the
+artifact path constructs a default `PUT` endpoint while `Recipe::http_method`
+defaults to `GET` (`generate/recipes.rs:59` versus `generate.rs:478`). A
+resolved operation must contain one method, so downstream disagreement is
+impossible.
+
+### Pass 3: normalize facets and derive the dependency graph
+
+Expand profiles such as `scaffold` into primitive facets, derive names once,
+and build a graph of what reads what. A compact primitive vocabulary could be:
+
+- entity/value type;
+- repository/storage;
+- command/create operation;
+- query;
+- transition;
+- endpoint/contract;
+- event/worker/workflow;
+- capability.
+
+The existing named recipes remain friendly syntax and migration-compatible
+identities. Internally, their output is a composition of these primitives.
+This lets scaffold, use-case, query, transition, durable work and messaging
+share lowering instead of each assembling a vertical slice from strings.
+
+### Pass 4: lower to typed artifact IR
+
+```rust
+enum Unit {
+    Java(JavaFile),
+    Sql(MigrationUnit),
+    Http(HttpCollection),
+    Property(PropertyClaim),
+    Dependency(DependencyClaim),
+    Registration(RegistrationClaim),
+}
+
+struct JavaFile {
+    identity: ArtifactId,
+    package: Package,
+    imports: BTreeSet<Import>,
+    declarations: Vec<JavaDecl>,
+    requirements: BTreeSet<Requirement>,
+    provenance: Provenance,
+}
+
+enum JavaExpr {
+    Variable(VarId),
+    Field(Box<JavaExpr>, FieldId),
+    Call(FunctionId, Vec<JavaExpr>),
+    Construct(JavaType, Vec<JavaExpr>),
+    Literal(Value),
+    Convert(CodecId, Box<JavaExpr>),
+}
+
+enum SqlExpr {
+    Column(ColumnId),
+    Parameter(FieldId),
+    Literal(SqlValue),
+    Compare(Comparison, Box<SqlExpr>, Box<SqlExpr>),
+    Boolean(BooleanOp, Vec<SqlExpr>),
+    Cast(Box<SqlExpr>, SqlType),
+}
+```
+
+Expressions do not embed a caller's variable name, so changing `value` to
+`candidate` never requires string replacement. Imports are sets, not
+pre-rendered blocks. Requirements attach to semantic units; the compiler does
+not scan the bytes for `assertThat`, `@WebMvcTest` or JDBC names.
+
+Typed IR need not model every token of Java on day one. Start with types,
+imports, annotations, declarations, statements and expressions that current
+generators compose dynamically. A checked whole-file template remains fine
+for a stable leaf. The test is whether semantic code is passed around as a
+string and later inspected or mutated.
+
+### Pass 5: derive schema and evolution
+
+Project the resolved world into `SchemaModel` and compare it with the last
+accepted semantic schema by stable logical ID:
+
+```rust
+enum SchemaChange {
+    CreateTable(Table),
+    RenameTable { id: EntityId, from: SqlIdent, to: SqlIdent },
+    AddColumn { table: EntityId, field: Field },
+    RenameColumn { field: FieldId, from: SqlIdent, to: SqlIdent },
+    AlterColumn { field: FieldId, change: TypeChange, policy: ChangePolicy },
+    AddConstraint(Constraint),
+    DropConstraint(ConstraintId),
+    DropColumn { field: FieldId, policy: DropPolicy },
+    DropTable { entity: EntityId, policy: DropPolicy },
+}
+```
+
+Classify changes rather than pretending all diffs are equally automatable:
+
+- safe and automatic: create table, add nullable/defaulted column, add index,
+  some validated widenings;
+- requires explicit policy: rename, non-null backfill, representation change,
+  online cutover;
+- destructive/refused by default: drop data, unsafe narrowing, ambiguous
+  identity.
+
+The existing rename and field-evolution routes contain valuable policy that
+can move into this pass. Their source scanning, recipe reconstruction and
+whole-generator replay can then be deleted.
+
+Declared schema, migration history and a live database should not be symmetric
+authorities. Give each a role:
+
+- the model states desired semantics;
+- migrations are append-only history of accepted transitions;
+- the live database is observed evidence and drift detection;
+- `pull` proposes a model patch; it never silently changes authority.
+
+### Pass 6: emit and form one immutable plan
+
+```rust
+struct CompileOutput {
+    next_model: AppModel,
+    generated: GeneratedTree,
+    migrations: Vec<AppendOnlyArtifact>,
+    owned_patches: Vec<OwnedPatch>,
+    follow_up_effects: Vec<Effect>,
+    diagnostics: Vec<Diagnostic>,
+}
+
+struct Plan {
+    id: PlanId,
+    compiler: CompilerVersion,
+    base: SnapshotPreconditions,
+    input: CanonicalModelPatch,
+    output: CompileOutput,
+    digest: PlanDigest,
+}
+```
+
+Human review, JSON output and portable serialization are projections of this
+one `Plan`. Applying it first rechecks `base`; it never reparses argv or calls
+the route that originally compiled it. A stale plan is rejected. A caller may
+explicitly request a recompile, but that produces a new digest and a new thing
+to review.
+
+`Outcome` can become an execution record over a plan rather than a sum of
+planned, committed, recovered and effect-retry variants with many projection
+methods:
+
+```rust
+struct Execution {
+    plan: PlanIdentity,
+    core: CoreStatus,
+    recovery: Vec<RecoveryEvent>,
+    effects: Vec<EffectStatus>,
+    timing: Timing,
+}
+```
+
+## Managed output and ejection
+
+This boundary determines whether the architectural simplification is real.
+
+### Managed tree
+
+Put reproducible compiler output under an unmistakable source root, for
+example:
+
+```text
+.jails/generated/main/java/
+.jails/generated/test/java/
+.jails/generated/main/resources/
+```
+
+or a conventional visible `generated-src/jails/...` equivalent. Maven and
+Gradle each need one stable integration that adds those roots. The exact path
+is a prototype question; the ownership property is not.
+
+The tree is wholly Jails-owned and can be discarded and rebuilt. It should
+normally be ignored by Git if every supported build reliably invokes or is
+preceded by the compiler; committing it is acceptable only if the team wants
+reviewable generated diffs and Jails still owns the whole subtree.
+
+Reader code lives only in ordinary `src/main/java` and `src/test/java`. It
+depends on generated ports/types or supplies implementations through explicit
+extension points. Compiler output never performs identifier surgery in that
+tree as part of normal operation.
+
+### Ejection
+
+`jails eject <logical-id> [--facet <facet>]` should:
+
+1. materialize the selected generated source into the reader-owned tree;
+2. mark that facet `external` in the model;
+3. remove the managed artifact from the next generation;
+4. preserve the interface/contract edge needed by other managed facets;
+5. warn, but never rewrite, when later model changes invalidate the external
+   implementation.
+
+Ejection is irreversible by default because silently reclaiming ownership is
+dangerous. A separate `jails adopt` may prove that the external bytes match a
+generated artifact and bring it back under management.
+
+Some current generators produce deliberately empty stubs intended for
+immediate editing. Under the new model those should either be born ejected or
+be replaced with generated interfaces plus reader-owned implementation
+templates. Generating a managed class whose purpose is to be edited recreates
+the paradox.
+
+### Irreproducible outputs
+
+Not everything belongs in the generated tree:
+
+- Flyway migrations are append-only historical artifacts;
+- a user build file may require a one-time source-root integration patch;
+- secrets and machine-specific settings are never model output;
+- external effects such as starting a service are not files.
+
+The plan type makes these categories explicit. The executor can retain a
+small journal for migration allocation and rare reader-file patches without
+journaling thousands of disposable generated files.
+
+## A smaller transaction kernel
+
+SQLite is a good implementation option once the semantic collapse has
+happened, not a substitute for it. A `.jails/state.sqlite` database could
+replace the custom metadata codecs, object directory, GC bookkeeping and
+several ledger/receipt files with a few normalized tables:
+
+```text
+model_revision(revision, schema, payload, digest, created_at)
+plan(id, base_revision, payload, digest, status)
+operation(plan_id, sequence, kind, path, before_digest, after_digest, status)
+blob(digest, bytes)
+effect(plan_id, sequence, kind, idempotency_key, status, detail)
+```
+
+The algorithm remains conservative:
+
+1. acquire one project lock;
+2. roll forward an unfinished plan;
+3. validate the plan's snapshot preconditions;
+4. persist the plan and required blobs in one SQLite transaction;
+5. stage irreproducible file operations beside their targets;
+6. activate each operation idempotently, recording progress;
+7. commit the model revision and core status;
+8. release the lock;
+9. run retriable follow-up effects and record their outcomes.
+
+SQLite makes metadata atomic and queryable. It cannot atomically commit
+arbitrary workspace files with the database, so the small per-operation
+journal and idempotent recovery remain. For the disposable managed tree,
+recovery can simply delete an incomplete generation and recompile.
+
+If the model file is committed and the generated tree is reproducible, most
+history belongs in Git. Keep Jails history only for execution/recovery and
+evolution evidence. Undo becomes “apply the inverse model patch and compile,”
+except for database migrations, whose inverse is a new forward migration.
+
+### Correctness firewall before migration
+
+Do not build the new architecture on unverified transaction assumptions. The
+transaction audit identified these paths for immediate tests or temporary
+disablement:
+
+1. External and machine preconditions are represented but not enforced in
+   `jails-commit/src/execute.rs:646-738`.
+2. Ledger observation performs independent content/metadata reads and may not
+   describe one coherent snapshot (`store.rs:45-95`).
+3. Normal execution promotes durable objects before committing the ledger,
+   while recovery's roll-forward does not visibly perform the same promotion
+   (`execute.rs:267-274`; `recover.rs:150-170`).
+4. Recovery drops post-commit effects even though receipt validation requires
+   exact agreement (`recover.rs:185-195`; `journal.rs:611-628`).
+5. Advertised crash failpoints and actual trip sites do not match, and the
+   crash loop does not assert that its requested point fired
+   (`fault.rs:79-101`; `tests/crash.rs:139-177`).
+6. Finalise and Abort default `ledger_after` to absence outside the Apply
+   branch (`jails-prepare/src/pipeline.rs:779-839`).
+7. Abort restoration can construct empty or missing replacement objects
+   (`pipeline.rs:417-485`).
+8. `Tree::join`/`inside` are lexical and need explicit `..` and symlink escape
+   tests (`jails-support/src/apply/mod.rs:722-793`).
+9. create/replace file contracts need race-safe create-new/existence semantics
+   (`apply/mod.rs:95-119`).
+10. activation currently treats broad metadata failures like absence
+    (`jails-commit/src/activate.rs:40-69`).
+
+These are high-value, bounded fixes regardless of which long-term design is
+chosen. Where Finalise, Abort, conflict or generic tool paths have no real
+caller, deleting or quarantining them is safer than preserving an aspirational
+state machine in the trusted core.
+
+## Yes, write a compiler — actually, two small ones
+
+### 1. The application compiler
+
+This is the pipeline described above: user declarations become a linked world,
+typed facets, artifacts, schema evolution and one plan. It is business logic
+and should remain readable, handwritten Rust around strong types.
+
+### 2. The domain-schema compiler
+
+`jails-protocol` is already a hand-written schema compiler. The baseline source
+audit counted 188 `impl Codec` blocks, 197 encode functions, 197 decode
+functions and 49 tag/from-tag pairs; the concurrent `--bind` delta immediately
+added two more codecs. Request variants are repeated across subject types,
+numeric tags, validation dispatch, codecs, maintenance classification, JSON
+views and tests.
+
+A small build-time schema can describe the mechanical parts:
+
+```text
+union Request @wire(version = 11) {
+  1: Generate(GenerateRequest),
+  2: Destroy(DestroyRequest),
+  ...
+}
+
+record FieldSpec {
+  1: id FieldId,
+  2: type FieldType,
+  3: optionality Optionality,
+  4: constraints [Constraint],
+}
+```
+
+Generate:
+
+- Rust records/unions and branded IDs;
+- stable numeric tags and canonical codecs;
+- Serde/TOML/JSON adapters with unknown-field policy;
+- CLI/manifest schema metadata;
+- conversion skeletons between wire versions and semantic types;
+- documentation tables and golden compatibility tests;
+- exhaustive dispatch over variants.
+
+Keep handwritten:
+
+- business validation;
+- reference resolution;
+- reconciliation policy;
+- compiler passes;
+- migration safety decisions;
+- document transformations.
+
+Start this as a declarative macro or a small checked-in code generator. Do not
+start by designing a beautiful general-purpose language. Generated code should
+be inspectable, deterministic and snapshot-tested. Old wire bytes must remain
+golden fixtures, and version migration must be explicit rather than “bump one
+global codec number and refuse the old world.”
+
+This compiler also removes duplicated registries. `Layer`, for example, is
+currently represented by multiple enums/tables across `jails-spec`,
+`jails-project` and protocol observation. A generated
+`LayerDef { id, default_package, heading }` can own those projections.
+
+### What should be dynamic
+
+Dynamic data is useful for:
+
+- recipe names, aliases, option metadata and help;
+- simple capability bundles;
+- custom logical-type metadata;
+- external plugin request/response payloads;
+- renderer/template selection.
+
+It is a poor fit for core invariants such as safe rename, schema cutover,
+ownership reconciliation and Java/SQL lowering. Encoding those in YAML or a
+general rules language merely replaces Rust with an interpreter that has
+weaker diagnostics. Compile declarative metadata into strong types; use a
+typed Rust escape hatch for semantics that do not fit.
+
+## Project and document adapters
+
+### One true snapshot
+
+The domain audit found three overlapping project views: legacy `Project`,
+protocol `ProjectSnapshot`/`ProjectedProject`, and `ProjectContext`. The legacy
+model calls itself immutable but methods such as `projected_text`,
+`projected_sources` and `projected_names_in` still read the filesystem
+(`jails-project/src/model/mod.rs:819-936`). The protocol snapshot correctly
+refuses undeclared reads (`observe/snapshot.rs:529-607`).
+
+Make a snapshot-backed `ProjectView` the only planner input. It exposes facts
+and an overlay, never a root path or general-purpose file API. This is both
+simpler and more correct: deterministic compilation, read-set validation and
+cache keys all become consequences of the type boundary.
+
+### One patch algebra
+
+The project layer currently has legacy `Change`, protocol `DesiredChange`,
+`SemanticEdit`, projected edits, diffs and prepared file operations. Replace
+the middle of that chain with one ordered `PatchSet`:
+
+```rust
+enum DocumentPatch {
+    PutManaged { artifact: ArtifactId, path: ProjectPath, bytes: BlobId },
+    RemoveManaged { artifact: ArtifactId, path: ProjectPath },
+    Maven(MavenPatch),
+    GradleFragment(GradlePatch),
+    Properties(PropertiesPatch),
+    Compose(ComposePatch),
+    JavaExternal(JavaPatch),
+    AppendMigration(MigrationArtifact),
+}
+```
+
+Each document backend parses once into facts and stable spans, validates a
+typed patch, applies it and can derive an inverse where inversion is honest.
+Retire and apply should not have mirrored match forests.
+
+### Stop partially parsing arbitrary build languages where possible
+
+`jails-project/src/gradle.rs` is roughly 1,500 lines and is effectively a
+partial Groovy parser. A simpler contract is a one-time, reviewed
+`apply from`/plugin anchor and a Jails-owned generated Gradle fragment. The
+compiler then replaces its own fragment rather than surgically understanding
+every Gradle program.
+
+Maven does not have an identical include seam. At minimum, consolidate the two
+custom XML scanners into one span-preserving Maven document backend. A more
+radical build-extension prototype may own dependencies and generated source
+roots, but it must be evaluated against Maven lifecycle/version behavior
+before it becomes the default.
+
+Use a truthful sum type such as `BuildModel::Maven` and
+`BuildModel::Gradle`; do not store Gradle text in a field named `pom` or let a
+Maven-flavored `Flavor` stand for the entire build world.
+
+### Fix semantic naming collisions
+
+Two protocol types named `RoutePath` currently describe different grammars:
+an application route prefix and an endpoint pattern. Name them `RoutePrefix`
+and `EndpointPattern`, backed by shared route tokens where appropriate. Similar
+aliases that weaken `FieldId` to generic `Name` should be replaced with the
+strong logical/physical identity used by evolution.
+
+### Fail closed through one state adapter
+
+`jails-state::compat` deliberately distinguishes absent, current and
+unreadable state. `jails-project::generated_files` converts broad read/parse
+failure to absence. Durable reads should all go through the former. “Could not
+read” must never become “nothing exists” on a path that controls ownership or
+recovery.
+
+## Command architecture
+
+There are currently at least three command oracles:
+
+- Clap definitions in `src/cli.rs` and its submodules;
+- canonical alias/path reconstruction in `src/cli/command_path.rs`;
+- the pre-Clap plan parser in `src/plan_command.rs`;
+- plus the semantic match in `src/main.rs`.
+
+The manual path table already omits live nested commands including resource
+index, migration lint, database console and test daemon. One command schema
+should generate/own:
+
+```text
+parse shape
+canonical command ID
+aliases
+help and examples
+machine request schema
+editor completion metadata
+mutation/read-only classification
+handler identity
+fingerprint projection
+```
+
+Make plan import an ordinary command such as `jails plan apply FILE`. The plan
+already carries its authenticated original request identity; inert argv should
+not be reparsed before Clap to reconstruct it.
+
+A smaller core CLI could converge on:
+
+```text
+jails init/new       compile a model into an empty tree
+jails model check    parse, link and typecheck
+jails plan           compile model/current workspace to an exact Plan
+jails apply          execute an exact Plan
+jails diff           show semantic and filesystem projections
+jails eject          transfer one facet to reader ownership
+jails history/show   render typed transaction views
+jails schema import  turn live schema evidence into a ModelPatch
+```
+
+`g scaffold`, `g query`, `add db` and other friendly commands remain aliases
+for typed model patches. They are not separate planners.
+
+The editor surface should either become a real long-lived language server over
+the compiler model, or become much smaller. The current command rescans and
+hashes the project per request, walks a simplified Clap model, and offers
+diagnostics too shallow to justify a separate pseudo-protocol. A model schema
+can generate completion and diagnostics; a server can cache the captured
+world.
+
+The contract checker should likewise emit a real OpenAPI/contract IR from
+facets before claiming comparisons over request, response and security
+semantics. Today its emitted model is thinner than the comparison logic. Until
+that gap closes, delegating comparison or removing unsupported scopes is
+simpler and more truthful.
+
+## Target dependency shape
+
+Do not begin by choosing an aesthetically pleasing crate count. First delete
+duplicate concepts; then let ownership form the boundaries. A plausible end
+state is:
+
+```text
+jails-model
+  semantic IDs, AppModel, ModelPatch, diagnostics, generated wire DTOs
+
+jails-compiler
+  link/validate, facets, type algebra, dependency graph, schema evolution,
+  Java/SQL/HTTP emitters; no filesystem access
+
+jails-workspace
+  capture/adoption, ProjectView, document backends, Plan executor,
+  SQLite state and recovery
+
+jails-cli
+  generated command catalog, front ends, plan/review/apply reporting
+
+jails-tools-*
+  optional run/test/db/log/editor/contract processes behind a versioned seam
+
+jails-testkit
+  shared test-only primitives
+```
+
+`jails-compiler` consumes only the semantic model and explicit project facts.
+`jails-workspace` constructs those facts and executes compiler output. The CLI
+is the composition root. Optional tools do not import the mutation protocol.
+
+The current thirteen crates may temporarily collapse during migration because
+moving a concept is easier inside one crate. That is not itself a success
+metric. Five crates containing the same fifteen representations would be the
+same architecture with fewer `Cargo.toml` files.
+
+## Radical ideas worth prototyping
+
+### A private Git object store
+
+Instead of custom blobs, trees, diffs, merge bases, receipts and garbage
+collection, Jails could keep a private bare repository under `.jails` and store
+managed generations as commits. Git already supplies content-addressed blobs,
+trees, history, diff, merge, integrity checking and GC.
+
+This is much more attractive if editable managed files remain a requirement.
+It does not solve arbitrary dirty/untracked workspace files, executable and
+symlink policy, filesystem activation, database migrations or external
+effects. Requiring the reader's worktree to be clean would simplify further
+but would be a major UX change. Prototype it as a storage backend, not as an
+assumption baked into the semantic model.
+
+### A Java annotation processor or build plugin
+
+The most aggressive ecosystem-aligned move is to make `.jails/app.toml` (or a
+future DSL) input to a Java build-time compiler. A processor/plugin can generate
+Java with native type models and place it in standard generated-source roots.
+The Rust binary can shrink to model editing, planning, schema evolution and
+workspace operations—or eventually disappear.
+
+This is compelling if the team accepts a build-time Jails dependency. It is
+less compelling if “one standalone binary, no Jails artifact in the project”
+is core. Annotation processors also should not allocate persistent migration
+versions as an incidental compile side effect. Keep migration planning in an
+explicit CLI/build task.
+
+### Database-first authority
+
+For database-heavy projects, a PostgreSQL catalog plus an append-only intended
+migration stream could be the canonical schema input. Entity and repository
+facets would project from it. This deletes some parallel migration/source
+inference and makes live truth central.
+
+The price is offline generation, portability and greenfield usability. A
+safer compromise is a schema-import frontend that creates a `ModelPatch`,
+after which the application model remains authoritative.
+
+### External recipe/backend plugins
+
+If extensibility becomes a real requirement, prefer a versioned subprocess or
+Wasm boundary:
+
+```text
+ResolvedWorld + requested facet + ProjectFacts
+    -> plugin
+    -> typed ArtifactUnits + Requirements + Diagnostics
+```
+
+The core validates paths, identities and requirements before accepting output.
+Do not expose transaction lifecycle hooks. A plugin compiles an artifact; it
+does not participate in locking, recovery or ledger mutation.
+
+This should follow a stable IR. Adding plugins while `Recipe`, `Change` and
+prepared state are still in flux would make every accidental representation a
+public compatibility promise.
+
+### Full event sourcing
+
+An append-only stream of `PlanCreated`, `OperationApplied`, `ModelCommitted`,
+`EffectAttempted` and `EffectCompleted` can make history and recovery elegant.
+SQLite tables plus an event column are a practical version. A custom event log
+would recreate codec, migration, compaction and corruption problems.
+
+Use event sourcing only if historical audit and replay are product
+requirements. A current semantic snapshot plus a bounded transaction/effect
+journal is simpler for most projects.
+
+## What will not simplify Jails by itself
+
+### A new JDL
+
+The CLI field syntax, generator vocabulary and two application-manifest paths
+are already domain-specific languages. A prettier grammar does not remove any
+semantic duplication. It adds a parser, spans, formatter, migration,
+completion and documentation.
+
+Define `AppModel` and `ModelPatch` first. If TOML then proves too clumsy, add a
+grammar as one more frontend and compile it to the same model. That keeps the
+language replaceable and testable.
+
+### Minijinja or another template engine
+
+Loops and conditionals would shorten some render functions. They would also
+move structural Java decisions into untyped text. They do not unify type
+semantics, names, dependencies, lifecycle or schema evolution. Use a richer
+template engine only behind typed artifact IR, and count template complexity
+as code rather than declaring it deleted.
+
+### A three-crate rewrite
+
+Crate count affects navigation and compile boundaries. It does not eliminate
+`Recipe`, `Declared`, `DesiredChange`, `SemanticEdit`, prepared identities,
+journals or receipts. Consolidating can help a strangler migration, but the
+goal is one representation per concept and a narrow dependency graph.
+
+### “Render in a temp directory and atomically swap it”
+
+This works for a wholly managed new destination and is why
+`src/new/publish.rs` is good. It does not atomically replace arbitrary files in
+an existing nonempty project across platforms. It becomes useful for the new
+disposable managed subtree, not as a replacement for journaling reader-file
+patches.
+
+### A fully dynamic runtime schema
+
+Maps of strings and rule expressions make adding variants look cheap while
+moving failures from the compiler to runtime. They are appropriate at plugin
+boundaries, not for core ownership, schema and recovery invariants. Generate
+strong Rust from a declarative schema instead.
+
+### A full Java compiler in Rust
+
+Jails needs deterministic emission and bounded, lossless edits to adopted Java.
+It does not need overload resolution, bytecode generation or the Java type
+system. One shared token/CST adapter—or a JVM backend—is enough. The existing
+multiple partial scanners should converge, not expand into a language
+implementation.
+
+### Deleting the WAL because generated output is reproducible
+
+Only the managed tree is reproducible. Model revisions, migrations and rare
+reader-owned patches are not. Shrink the recovery domain first, then shrink the
+journal. Do not weaken crash safety while the current broad mutation contract
+still exists.
+
+### An extreme LOC promise
+
+The audit found 96,000-plus Rust code lines, including extensive tests, across
+hundreds of product behaviors. Typed IR will remove synchronization code but
+will not make the security, schema, workflow, build-tool and testing opinions
+free. Any claim that a template engine and crate merge alone can remove 80–90%
+is not an engineering estimate. Measure one migrated vertical slice before
+setting a repository-wide target.
+
+## Rewrite dependency graph
+
+This is an ordering of invariants, not a calendar plan. AI agents can implement
+independent workstreams in parallel and make one coordinated cutover. The
+expensive part is not typing 100,000 lines; it is choosing the right semantic
+model and proving that the replacement preserves the guarantees worth keeping.
+Keep legacy/new comparison only as a temporary oracle, then delete the legacy
+path aggressively once its gate passes.
+
+### Phase 0: stop the bleeding and define the contract
+
+- Pause new recipe kinds while the core seam is established. Small fixes can
+  continue.
+- Resolve or disable the ten transaction correctness paths listed above.
+- Make every crash-test case assert that its requested failpoint actually
+  fired; add child-process termination tests, not only unwinding tests.
+- Snapshot current request bytes, ledger/plan bytes, reports and generated
+  trees for the scenario corpus.
+- Record the current product surface and decide which tool suites are core.
+
+Exit gate: current behavior and durable compatibility are executable fixtures,
+not prose comments.
+
+### Phase 1: one exact plan around the legacy engine
+
+- Define `PlanV1` as the canonical value accepted by preview, portable plan,
+  confirmation and commit.
+- Adapt the existing prepare output into it without changing generators yet.
+- Replace the closure-based “pretend then route again” API with
+  `compile(request) -> Plan` and `execute(Plan)`.
+- Give report/history one typed `PlanView`/`ReceiptView`; derive human and JSON
+  encodings.
+- Turn plan import into an ordinary command and delete the pre-Clap parser.
+
+Exit gate: the digest displayed for confirmation is the digest executed, and
+stale preconditions refuse rather than trigger a hidden replan.
+
+### Phase 2: generate mechanical protocol and command code
+
+- Introduce the domain-schema generator in shadow mode.
+- Generate tags/codecs for one closed union and byte-compare with the existing
+  implementation.
+- Generate the command catalog and compare Clap help, aliases, canonical IDs,
+  docs and completion metadata.
+- Move one repeated registry such as `Layer` or builtin field types into the
+  schema.
+
+Exit gate: generated wire bytes match golden fixtures, every current command
+has exactly one ID, and manual tables start being deleted rather than wrapped.
+
+### Phase 3: introduce `AppModel` in shadow mode
+
+- Import the current manifest plus ledger/projection into `AppModel`.
+- Lower direct CLI commands and declarative apply into `ModelPatch` values.
+- Emit `--show-model`/`--emit-ir` diagnostics for comparison.
+- Make schema pull output a model patch instead of a third manifest dialect.
+- Use logical IDs and explicit projections for new schema-2 projects.
+
+No output changes yet. Compile both the legacy request and the model request,
+then compare identities, dependencies and expected resources.
+
+Exit gate: direct CLI, app apply and import agree on one semantic graph for the
+same scenario.
+
+### Phase 4: migrate a thin vertical slice to typed IR
+
+Start with three cases, not the most spectacular workflow:
+
+1. `record` proves field/type/name semantics;
+2. `query` proves references, endpoint and SQL lowering;
+3. `add db` proves project requirements and document patches.
+
+Then express `scaffold` as a profile composing the migrated primitives. Keep
+the current templates where they are adequate; replace dynamic expression and
+import assembly with typed builders. Compare exact generated files or
+explicitly approve intentional byte changes.
+
+Exit gate: migrated passes perform no filesystem reads, infer dependencies
+from IR rather than bytes, and use one `TypeSemantics`/`NameSet` registry.
+
+### Phase 5: prototype managed output and ejection
+
+- Enable schema-2 projects to compile the migrated facets into a generated
+  source tree.
+- Integrate that tree with one Maven and one Gradle fixture.
+- Add `eject` and test ordinary customization, later model change, rename and
+  re-adoption.
+- Run the prototype on at least one real, edited service—not only goldens—and
+  decide immediately whether the eject workflow is acceptable. If everything
+  must be ejected, the product contract is wrong.
+
+This is the decisive gate. If managed/ejected ownership is accepted, most
+legacy merge/ownership machinery has a deletion path. If it is rejected, keep
+the typed compiler but budget for the complex editable-output transaction
+model.
+
+### Phase 6: model-driven schema evolution
+
+- Project `SchemaModel` from stable entity/field IDs.
+- Port safe add/index/widening rules.
+- Require explicit policy for rename, backfill, cutover and drop.
+- Import existing migration history once; stop parsing generated Java/SQL as
+  normal state communication.
+- Replace the route-level rename and field replay engines one operation class
+  at a time.
+
+Exit gate: every emitted migration is explained by a typed semantic diff, and
+ambiguous destructive changes cannot be inferred silently.
+
+### Phase 7: shrink persistence behind the existing `Store`
+
+- Introduce SQLite behind the current storage trait.
+- Dual-write plans/events and legacy artifacts; crash-test equivalence.
+- Move recovery, effect attempts, resource ownership and report queries to the
+  database.
+- Keep old ledger/receipts readable for compatibility, but stop producing
+  them after a version gate.
+- Delete custom journals, directory discovery, receipt rewriting, object GC
+  coordination and duplicate codecs only after the new path is authoritative.
+
+Exit gate: the executor has one replay algorithm, and a generated-tree crash
+is recovered by regeneration rather than per-file ownership reconstruction.
+
+### Phase 8: split or prune satellite products
+
+- Move warm testing/affected analysis to a separately measured process or
+  delegate it to the build tool.
+- Consolidate one process runner and one cache/fingerprint authority.
+- Split DB/schema tools, editor server, dev launchers and contract tools where
+  their lifecycle is independent.
+- Remove flags and scopes that are accepted but have no implemented meaning.
+
+Exit gate: the compiler kernel does not import process-launch, editor,
+contract or test-daemon representations.
+
+### Phase 9: retire schema 1
+
+- Provide one explicit model migration command.
+- Retain a read-only legacy receipt/history reader for a documented period.
+- Delete legacy `Recipe` reconstruction, source-as-state paths and editable
+  managed ownership only after every supported facet has crossed.
+
+## Concrete deletion map
+
+| Current area | Destination | Eventual deletion/simplification |
+|---|---|---|
+| `jails-spec::Field` plus protocol `FieldSpec` | one model type registry and renderer views | old field derivation/translation tables |
+| repeated `Layer`, route and name tables | generated domain schema | synchronized enum/label/package tables |
+| `Recipe` + `refuse_misplaced` + giant artifact match | typed declarations, recipe metadata and compiler passes | optional-field bag and negative flag matrix |
+| `Recorded`, `Declared`, `Asked` | `ModelPatch`, canonical request identity and `Plan` | manual recipe reconstruction and syntax copies |
+| generated Java/SQL reparsing | adoption importer plus `AppModel` | source-as-database normal paths |
+| `Change` + `DesiredChange` + `SemanticEdit` + projected edit forests | one semantic `PatchSet` | mirrored apply/retire and translation layers |
+| desired/observed/applied/pending record variants | canonical records plus `StateDelta` | phase-specific row duplication |
+| hand codecs/tags/JSON serializers | generated wire/report schemas | repetitive encode/decode/match code |
+| project `Project`/`ProjectContext`/snapshot overlap | snapshot-backed `ProjectView` | post-capture arbitrary disk reads |
+| Gradle partial parser | managed fragment/plugin anchor | most arbitrary Groovy rewriting |
+| duplicate Maven XML scanners | one document backend | second scanners and field-name lies |
+| per-byte dependency inference | typed IR requirements | `with_test_support`-style scans |
+| route-level rename/field evolution replay | stable IDs + semantic schema diff | whole-generator reruns and hard-coded companions |
+| prepare identity/semantics/prepared representations | one canonical `Plan` | agreement methods and vector cloning |
+| journal/receipt/object directory protocols | SQLite plan/event state plus tiny replay | bespoke storage/GC/rewrite machinery |
+| `main.rs` dispatch + command-path + pre-Clap parsing | generated command catalog | duplicated command oracles |
+| `new` generation paths | compiler to `GeneratedTree`; keep `Publication` executor | manual preview path lists and nested engine state |
+| drive/report/tool suites | optional command processes or explicit core modules | facade coupling and duplicated runners/caches |
+
+## Architecture fitness rules
+
+Add tests for properties that express the new shape, not file-size thresholds:
+
+- after capture, no compiler module can access `std::fs`, a project root or a
+  process runner;
+- identical `AppModel + ProjectFacts + compiler version` yields an identical
+  plan digest;
+- preview, plan export, confirmation and apply reference the same digest;
+- every command and alias resolves through one generated catalog;
+- every builtin type has one semantics row;
+- every artifact requirement comes from IR, never a content/path scan;
+- managed output is written only below the managed root;
+- reader-owned source is changed only by an explicit typed patch/eject/adopt
+  operation;
+- every persisted union tag and field number is generated and golden-tested;
+- every advertised failpoint fires in at least one test;
+- every active transaction state has one tested recovery transition;
+- the planner's read set is complete by construction, not inferred after the
+  fact;
+- optional tool crates cannot import mutation executor internals.
+
+Avoid gates that assert only a maximum file length or a minimum scanner count.
+Those improve navigation but can be satisfied while every duplicated concept
+survives.
+
+## Final recommendation
+
+The crazy idea that fits the evidence is not “write a new language.” It is:
+
+> Treat Jails as a compiler whose source is one application model, whose
+> generated tree is disposable until ejected, whose irreversible output is an
+> explicit evolution plan, and whose executor applies exactly the plan the
+> reader reviewed.
+
+Build the application compiler and the small mechanical schema compiler. Keep
+the current syntax as compatibility front ends. Use typed facet and artifact
+IR rather than strings, generated source as output rather than state, stable
+logical identities rather than name inference, and SQLite as a simplifier for
+the remaining durable kernel.
+
+The largest code deletion will not come from shorter render functions. It will
+come from making these questions disappear:
+
+- Which of six representations is authoritative?
+- What facts can be recovered from the Java we emitted?
+- Which recipe kinds happen to depend on this field?
+- Is this edited file still ours?
+- Did preview and apply run the same computation?
+- Does recovery reproduce every side condition of normal commit?
+
+One model, one graph, one plan and one explicit ownership transfer answer all
+six.
