@@ -70,6 +70,8 @@ struct GenerateIntent {
     on_conflict: Option<String>,
     /// The route a generated endpoint answers.
     path: Option<String>,
+    /// Which component identifies the row a `transition` updates.
+    select: Option<String>,
     method: Option<jails_spec::spec::kind::HttpMethod>,
     /// How that endpoint reads its request: `json` (the default) or `form`.
     consumes: Option<jails_spec::spec::kind::WireFormat>,
@@ -129,6 +131,7 @@ impl GenerateIntent {
             limit: self.limit,
             on_conflict: self.on_conflict,
             path: self.path,
+            select: self.select,
             method: self.method,
             consumes: self.consumes,
         })

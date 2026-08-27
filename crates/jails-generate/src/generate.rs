@@ -454,6 +454,11 @@ pub struct Recipe<'a> {
     ///
     /// `None` is "not asked", never "JSON", for the same reason `method`'s is.
     pub consumes: Option<jails_spec::spec::kind::WireFormat>,
+    /// Which component identifies the row a `transition` updates.
+    ///
+    /// `None` is "not asked", and [`Recipe::selector`] applies the default --
+    /// `id`, which is what every transition selected on before this existed.
+    pub select: Option<&'a str>,
 }
 
 impl Recipe<'_> {
@@ -466,6 +471,17 @@ impl Recipe<'_> {
     pub fn http_method(&self) -> jails_spec::spec::kind::HttpMethod {
         self.method
             .unwrap_or(jails_spec::spec::kind::HttpMethod::Get)
+    }
+
+    /// The component a `transition` selects its row by, with the default
+    /// applied.
+    ///
+    /// `id` unless the caller named another. A resource whose natural key is
+    /// not called `id` -- a conversation keyed by `user_id`, a row a URL
+    /// addresses by something else -- could not be updated at all before,
+    /// because the name was a literal at four sites and in the SQL predicate.
+    pub fn selector(&self) -> &str {
+        self.select.unwrap_or("id")
     }
 
     /// How this recipe's endpoint reads its request, with the default applied.

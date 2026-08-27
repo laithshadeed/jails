@@ -302,8 +302,16 @@ The declarative engine handles lifecycle deltas:
   expect the same — the re-record is what keeps the ledger honest.
 - **`schema diff` requires `.jails/app.toml`**; `migrate lint` runs on both
   imperative and manifest projects using the project's declared SQL driver.
+- **A `transition` selects by `id` unless `--select <field>` names another.**
+  A conversation keyed by `user_id` could not be updated at all before, because
+  the name was a literal in the SQL predicate. The key still comes from the
+  request body: a `--path` variable is refused rather than mounted and ignored,
+  since binding it means a command record without the key and a port that takes
+  it beside the command.
 - **A flag a recipe derives is refused, not ignored.** `--method` applies to
-  `controller` and `client` only: a `query`, `usecase` or `transition` derives
+  `controller`, `client` and `transition` (PUT by default, PATCH the other
+  correct spelling for an idempotent update); `--path` to `controller`,
+  `usecase`, `query` and `transition`: a `query`, `usecase` or `transition` derives
   its verb from the request (GET when every filter comes from `--path`, POST
   when it carries a body), so passing one there is refused by name. Same for
   `--path` on `g scaffold`, `--via` outside `query`, `--consumes` outside the

@@ -377,7 +377,14 @@ pub(crate) fn artifacts_for(
             }
             let slice = crate::model::Slice::new(project, package);
             let parsed = parse_fields(fields)?;
-            crate::spring::transition_files(&slice, name, &capitalize(target), &parsed, endpoint)?
+            crate::spring::transition_files(
+                &slice,
+                name,
+                &capitalize(target),
+                &parsed,
+                endpoint,
+                recipe.selector(),
+            )?
         }
         ArtifactKind::Presence => {
             require_spring_project(project, "presence")?;

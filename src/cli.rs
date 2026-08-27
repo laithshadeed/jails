@@ -577,9 +577,18 @@ pub(crate) enum Command {
         ///
         /// Derived paths are a virtue greenfield; they are unusable when the
         /// URLs are a fixed external contract. Valid on `controller`,
-        /// `usecase` and `query`.
+        /// `usecase`, `query` and `transition`.
         #[arg(long, value_name = "PATH")]
         path: Option<String>,
+        /// Which component identifies the row a `transition` updates.
+        ///
+        ///   jails g transition SetStatus --on Conversation --select userId ...
+        ///
+        /// `id` by default. A path variable binds to this component, so
+        /// `--path /admin_api/conversations/{userId}/status --select userId`
+        /// takes the key from the URL and the rest from the body.
+        #[arg(long, value_name = "FIELD")]
+        select: Option<String>,
         /// For `controller`, the HTTP method the generated route answers.
         /// Defaults to `get`.
         ///

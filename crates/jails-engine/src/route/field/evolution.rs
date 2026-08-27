@@ -150,6 +150,7 @@ pub(super) fn evolve_existing(
                 path: path.as_deref(),
                 method: after.method,
                 consumes: after.consumes,
+                select: None,
             },
             package,
         )?,

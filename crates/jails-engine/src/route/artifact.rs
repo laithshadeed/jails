@@ -701,6 +701,7 @@ pub fn recipe_with_field_data(
                     path: intent.path.as_deref(),
                     method: intent.method,
                     consumes: intent.consumes,
+                    select: intent.select.as_deref(),
                 },
                 package,
             )

@@ -64,6 +64,10 @@ pub struct Intent {
     pub on_conflict: Option<String>,
     /// The route a generated endpoint answers. plan.md P8.7.
     pub path: Option<String>,
+    /// Which component identifies the row a `transition` updates, `id` by
+    /// default. A path variable binds to it, which is what lets a transition
+    /// answer on a route whose key is in the URL.
+    pub select: Option<String>,
     /// The HTTP verb, for the one recipe that answers HTTP.
     pub method: Option<jails_spec::spec::kind::HttpMethod>,
     /// How that endpoint reads its request. `missing.md` M15.
@@ -175,6 +179,7 @@ fn declare(
             path: intent.path.as_deref(),
             method: intent.method,
             consumes: intent.consumes,
+            select: intent.select.as_deref(),
         };
         let change = with_test_support(
             &planned,

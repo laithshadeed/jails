@@ -514,6 +514,7 @@ fn add_field_with_syntax(
                 // recorded.
                 method: None,
                 consumes: None,
+                select: None,
             },
             package,
         )?,

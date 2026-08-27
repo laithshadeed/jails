@@ -27,6 +27,7 @@ pub(crate) fn transition_files(
     target: &str,
     fields: &[crate::generate::Field],
     endpoint: Endpoint<'_>,
+    selector: &str,
 ) -> jails_support::Result<Vec<Artifact>> {
     let root: &Path = slice.project().root();
     let service: &str = &slice.placed(Layer::Service);
@@ -65,32 +66,46 @@ pub(crate) fn transition_files(
             .into());
         }
     }
-    // A `--path` variable has to be *bound*, and a transition selects its row
-    // by `id` alone -- the name is a literal at four sites here and in the SQL
-    // predicate. So a route like `/admin_api/conversations/{userId}/status`
-    // would mount the variable and bind nothing to it: Spring maps the
-    // request, the command still carries `id` in the body, and the variable is
-    // silently ignored. Refused until the selector is nameable, because a
-    // route that looks right and ignores half of itself is worse than one
-    // jails declines to write.
-    if let Some(route) = endpoint.route
-        && let Some(variable) = route
-            .split('{')
-            .nth(1)
-            .and_then(|rest| rest.split('}').next())
-    {
+    // A `--path` variable has to be *bound*, and the only value a transition
+    // can bind from a URL is the one that identifies the row. So exactly one
+    // variable is allowed and it must name the selector: with
+    // `--path /admin_api/conversations/{userId}/status --select userId` the
+    // key comes from the URL and the rest of the command from the body.
+    //
+    // Refused otherwise rather than mounted and ignored. The first version of
+    // `--path` here did mount it, and three generated tests failed with
+    // `Not enough variable values available to expand` -- a route that looks
+    // right and silently drops half of itself.
+    let variables: Vec<&str> = endpoint
+        .route
+        .map(|route| {
+            route
+                .split('{')
+                .skip(1)
+                .filter_map(|rest| rest.split('}').next())
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(first) = variables.first() {
         return Err(format!(
-            "transition {name} cannot answer on `{route}`: a transition selects its row by `id` \
-             from the request body, so `{{{variable}}}` would be mounted and never \
-             bound.\n       fix: give it a path with no variables, or use `jails g usecase` if \
-             the operation creates rather than updates."
+            "transition {name} cannot take `{{{first}}}` from the URL: it selects its row by \
+             `{selector}`, which the request body carries.\n       Binding it from the path \
+             would mean a command record without it and a port that takes it beside the \
+             command,\n       and half of that is a route that mounts a variable and ignores \
+             it.\n       fix: give it a path with no variables. `--select <field>` is what makes \
+             a row keyed by something\n            other than `id` updatable at all."
         )
         .into());
     }
     let id = fields
         .iter()
-        .find(|field| field.name == "id")
-        .ok_or_else(|| format!("transition {name} needs the target's required `id` field"))?;
+        .find(|field| field.name == selector)
+        .ok_or_else(|| {
+            format!(
+                "transition {name} needs the component that identifies the row, `{selector}`.\n                        fix: declare `{selector}:<type>` among its fields, or name another with \
+                 `--select <field>`."
+            )
+        })?;
     // `missing.md` M11: both halves of this were good refusals and neither
     // said what to type, so a ported schema met the column requirement, then
     // met `g field`'s data-plan requirement, and only then had the two
@@ -159,12 +174,12 @@ pub(crate) fn transition_files(
         Artifact {
             kind: "transition port",
             path: main_service.join(format!("{name}UseCase.java")),
-            contents: transition_port_java(slice, name, target, fields),
+            contents: transition_port_java(slice, name, target, fields, selector),
         },
         Artifact {
             kind: "optimistic JDBC transition",
             path: main_adapters.join(format!("Jdbc{name}Transition.java")),
-            contents: jdbc_transition_java(slice, name, target, fields, &update),
+            contents: jdbc_transition_java(slice, name, target, fields, &update, selector),
         },
         Artifact {
             kind: "optimistic transition integration test",
@@ -231,6 +246,7 @@ fn transition_port_java(
     name: &str,
     target: &str,
     fields: &[crate::generate::Field],
+    selector: &str,
 ) -> String {
     let pkg: &str = &slice.placed(Layer::Service);
     let domain: &str = &slice.owned(Layer::Domain);
@@ -238,8 +254,8 @@ fn transition_port_java(
     let (version_type, _) = version_type(fields);
     let id = fields
         .iter()
-        .find(|field| field.name == "id")
-        .expect("a transition is refused without an id field");
+        .find(|field| field.name == selector)
+        .expect("a transition is refused without its selector field");
     let key_type = crate::generate::builtin_by_java_name(&id.java_type)
         .map(|(boxed, _)| boxed)
         .unwrap_or("String");
@@ -267,6 +283,7 @@ fn jdbc_transition_java(
     target: &str,
     fields: &[crate::generate::Field],
     update: &Update,
+    selector: &str,
 ) -> String {
     let pkg: &str = &slice.owned(Layer::Adapters);
     let service: &str = &slice.placed(Layer::Service);
@@ -311,7 +328,7 @@ fn jdbc_transition_java(
         .join(",\n                            ");
     let match_fields = fields
         .iter()
-        .filter(|field| field.name == "id" || field.constraints.scoped)
+        .filter(|field| field.name == selector || field.constraints.scoped)
         .collect::<Vec<_>>();
     let optimistic_predicates = match_fields
         .iter()
@@ -386,7 +403,7 @@ fn jdbc_transition_java(
             ("existence_bindings", &*existence_bindings),
             ("scope_clause", scope_clause(fields)),
             ("version_type", version_type(fields).0),
-            ("id_component", "id"),
+            ("id_component", selector),
             ("map_args", &*map_args),
         ],
     )

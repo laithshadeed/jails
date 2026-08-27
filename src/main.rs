@@ -201,6 +201,7 @@ fn main() -> std::process::ExitCode {
             limit,
             on_conflict,
             path,
+            select,
             method,
             consumes,
         } => {
@@ -221,6 +222,7 @@ fn main() -> std::process::ExitCode {
                 limit,
                 on_conflict,
                 path,
+                select,
                 method,
                 consumes,
             };

@@ -846,6 +846,116 @@ fn a_named_route_replaces_the_derived_one_everywhere_it_appears() {
     );
 }
 
+/// A transition can update a row keyed by something other than `id`.
+///
+/// The selector was the literal `"id"` at four sites here and in the SQL
+/// predicate, so a resource whose natural key is `user_id` -- a conversation
+/// per customer, a row a URL addresses by the customer -- could not be updated
+/// at all. Found implementing the minicom feature list, where every PATCH the
+/// frontend sends is addressed by `userId`.
+///
+/// The URL half is deliberately still refused: binding the key from the path
+/// means a command record without it and a port that takes it beside the
+/// command, and half of that is a route that mounts a variable and ignores it.
+#[test]
+fn a_transition_can_select_by_a_component_other_than_id() {
+    let root = temp_dir("transition-select");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+
+    assert!(
+        jails_cmd(&root, None)
+            .args([
+                "g",
+                "scaffold",
+                "Conversation",
+                "id:long@pk",
+                "userId:long@unique",
+                "status:string",
+                "version:long",
+            ])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+
+    let selected = jails_cmd(&root, None)
+        .args([
+            "g",
+            "transition",
+            "SetStatus",
+            "--on",
+            "Conversation",
+            "userId:long",
+            "version:long",
+            "status:string",
+            "--select",
+            "userId",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        selected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&selected.stderr)
+    );
+
+    // The SQL is what proves it: the predicate, not just the record.
+    let adapter = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/adapters/JdbcSetStatusTransition.java"),
+    )
+    .unwrap();
+    assert!(adapter.contains("where user_id = :user_id"), "{adapter}");
+    assert!(!adapter.contains("where id = :id"), "{adapter}");
+
+    // A selector that names no component says which ones there are.
+    let missing = jails_cmd(&root, None)
+        .args([
+            "g",
+            "transition",
+            "SetOther",
+            "--on",
+            "Conversation",
+            "userId:long",
+            "version:long",
+            "status:string",
+            "--select",
+            "nothing",
+        ])
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    let stderr = String::from_utf8_lossy(&missing.stderr);
+    assert!(stderr.contains("`nothing`"), "{stderr}");
+    assert!(stderr.contains("--select"), "{stderr}");
+
+    // And a path variable is refused rather than mounted and ignored.
+    let bound = jails_cmd(&root, None)
+        .args([
+            "g",
+            "transition",
+            "SetFromUrl",
+            "--on",
+            "Conversation",
+            "userId:long",
+            "version:long",
+            "status:string",
+            "--select",
+            "userId",
+            "--path",
+            "/admin_api/conversations/{userId}/status",
+        ])
+        .output()
+        .unwrap();
+    assert!(!bound.status.success(), "a path variable was accepted");
+    let stderr = String::from_utf8_lossy(&bound.stderr);
+    assert!(
+        stderr.contains("cannot take `{userId}` from the URL"),
+        "{stderr}"
+    );
+}
+
 /// A resource can be dropped, re-created and dropped again, indefinitely.
 ///
 /// `bugs.md` B46. Two independent one-way doors sat behind this, and the first
