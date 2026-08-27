@@ -857,7 +857,21 @@ mod tests {
         let bare = base.join("bare");
         let checks = hot_reload_checks(&project_with_pom(&bare, &boot.replace("{deps}", "")));
         assert_eq!(checks[0].status, Status::Warn);
+        // The fix has to be runnable *here*. It used to name the coordinate
+        // and leave the reader to work out the command, and `run --watch`'s
+        // sibling message told them to `jails new` -- which is a command that
+        // exists, so the oracle over `fix:` lines passed it, and which creates
+        // a different project rather than repairing this one.
+        assert!(
+            checks[0].fix.starts_with("jails add dependency"),
+            "{}",
+            checks[0].fix
+        );
         assert!(checks[0].fix.contains("spring-boot-devtools"));
+        assert!(
+            !checks[0].fix.contains("jails new"),
+            "a fix for an existing project must not tell the reader to create one"
+        );
 
         // Restarts switched off is the one that deserves a Fail: the
         // dependency is present, so everything *looks* wired up.

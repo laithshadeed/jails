@@ -682,7 +682,15 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // The warn arm is the one that costs the lines: a file-backed
                 // H2 without `AUTO_SERVER` works and cannot be inspected,
                 // which is a different answer from broken and has to say so.
-                ceiling: 1565,
+                //
+                // 1565 -> 1567. The devtools `fix:` named a coordinate and
+                // left the reader to work out the command, while `run
+                // --watch`'s sibling message told them to `jails new` -- a
+                // command that exists, so the oracle over `fix:` lines passed
+                // it, and one that creates a different project rather than
+                // repairing this one. Two lines, because the runnable command
+                // does not fit on one.
+                ceiling: 1567,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.

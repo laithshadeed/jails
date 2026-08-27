@@ -541,8 +541,16 @@ pub(super) fn build_tool_watch(args: &[std::ffi::OsString], debug: bool) -> Resu
         ));
     }
     if !pom.contains("devtools") {
+        // The fix has to work on *this* project. It used to read `jails new
+        // --deps web,devtools`, which tells a reader standing in a project to
+        // create a different one -- the same shape as a `fix:` line naming a
+        // command that does not exist, and invisible to the oracle that
+        // catches those, because `jails new` does exist.
         eprintln!(
-            "jails: spring-boot-devtools not found in pom.xml -- recompiles won't trigger a restart. Add it: jails new --deps web,devtools"
+            "jails: spring-boot-devtools is not in pom.xml, so recompiling will not restart the \
+             running application.\n       --watch keeps target/classes fresh either way; devtools \
+             is what notices.\n       fix: jails add dependency \
+             org.springframework.boot:spring-boot-devtools --scope runtime"
         );
     }
 

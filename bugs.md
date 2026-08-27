@@ -42,16 +42,6 @@ works — it is the second create that is fatal.
 The refusal itself is correct behaviour for an undeclared read: the bug is the
 missing declaration.
 
-## B55 — `jails add websocket` is rejected as an invalid capability
-
-While `jails g socket <Name>` exists to scaffold WebSocket handlers, `jails add websocket` (and `jails add socket`) is rejected:
-```
-error: invalid value 'websocket' for '<CAPABILITIES>...'
-  [possible values: db, kafka, csv, sqlite, h2, json, testkit, fake, http, format, coverage, loadtest, ci, docker, k8s, api, actuator, cache, security, cors, sse, mail, redis, observability, toxiproxy]
-```
-
-Adding `websocket` as a recognized capability in `jails add` should install `spring-boot-starter-websocket` into `pom.xml` / `build.gradle` and configure `[project] capabilities = ["websocket"]`.
-
 ---
 
 ## Never covered

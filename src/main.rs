@@ -25,11 +25,86 @@ use clap::{CommandFactory, Parser};
 
 pub(crate) use template_macro::template_here;
 
+/// A closed vocabulary jails does not have, and the thing it has instead.
+///
+/// `bugs.md` B55: `jails add websocket` answered with clap's bare list of the
+/// 25 capabilities and pointed at nothing, while `jails g socket <Name>` is
+/// the whole slice -- handler, registration, test, and the starter that makes
+/// them run. A reader who knows the word and not the spelling is one command
+/// away from what they want and gets a wall of alternatives instead.
+///
+/// A table, one edit per entry, the `why.rs` shape. Only for words with a
+/// *real* answer: a synonym pointing at nothing would be worse than clap's
+/// list, which at least tells you what does exist.
+///
+/// And only for words clap does not already accept. `postgres` was in the
+/// first version of this table and is a `visible_alias` for `db`, so the entry
+/// was dead code claiming the capability does not exist.
+const INSTEAD: &[(&str, &str)] = &[
+    (
+        "websocket",
+        "there is no `websocket` capability -- `jails g socket <Name>` is the slice: a \
+         TextWebSocketHandler,\n       its WebSocketConfigurer registration, a test, and the \
+         spring-boot-starter-websocket that makes them run.\n       fix: jails g socket Chat \
+         (or, for the dependency alone, jails add dependency \
+         org.springframework.boot:spring-boot-starter-websocket)",
+    ),
+    (
+        "socket",
+        "there is no `socket` capability -- `jails g socket <Name>` is a generator kind rather \
+         than a capability,\n       because it needs a name to write a handler for.\n       fix: \
+         jails g socket Chat",
+    ),
+    (
+        "devtools",
+        "there is no `devtools` capability -- it is one dependency and no code, so it goes \
+         through the verb for that.\n       fix: jails add dependency \
+         org.springframework.boot:spring-boot-devtools --scope runtime",
+    ),
+    (
+        "flyway",
+        "there is no `flyway` capability -- `db` installs Flyway along with the datasource, the \
+         compose service\n       and the test wiring, because a migration tool with no database \
+         is not a slice.\n       fix: jails add db",
+    ),
+    (
+        "websockets",
+        "there is no `websockets` capability -- `jails g socket <Name>` is the slice.\n       fix: \
+         jails g socket Chat",
+    ),
+];
+
+/// Answer a rejected closed-vocabulary value with what jails has instead.
+///
+/// Everything else is clap's own error, rendered by clap. This only intercepts
+/// the case where jails knows a better answer than "here are 25 other words".
+fn unparsed(error: clap::Error) -> std::process::ExitCode {
+    let rendered = error.render().to_string();
+    let named = rendered
+        .split_once("invalid value '")
+        .and_then(|(_, rest)| rest.split_once('\''))
+        .map(|(value, _)| value.to_ascii_lowercase());
+    if let Some(named) = named
+        && let Some((_, instead)) = INSTEAD.iter().find(|(word, _)| *word == named)
+    {
+        eprintln!("jails: {instead}");
+        return std::process::ExitCode::from(2);
+    }
+    let _ = error.print();
+    match error.use_stderr() {
+        true => std::process::ExitCode::from(2),
+        false => std::process::ExitCode::SUCCESS,
+    }
+}
+
 fn main() -> std::process::ExitCode {
     if let Some(result) = plan_command::requested() {
         return dispatch::finish(result);
     }
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => return unparsed(error),
+    };
     let debug = cli.debug;
     let pretend = cli.pretend;
 

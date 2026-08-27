@@ -662,3 +662,72 @@ fn quoted_jails_commands() -> Vec<(String, String)> {
     );
     out
 }
+
+/// A word jails does not have, answered with the thing it has instead.
+///
+/// `bugs.md` B55: `jails add websocket` answered with clap's bare list of 25
+/// capabilities and pointed at nothing, while `jails g socket <Name>` is the
+/// whole slice. A reader who knows the word and not the spelling was one
+/// command away and got a wall of alternatives.
+///
+/// The table is deliberately only for words with a *real* answer. A synonym
+/// pointing at nothing would be worse than clap's list, which at least says
+/// what does exist -- so the last case here checks that an unknown word still
+/// gets it.
+#[test]
+fn a_capability_jails_does_not_have_names_the_one_it_does() {
+    let root = temp_dir("capability-synonyms");
+    write_spring_fixture(&root);
+
+    for (word, expected) in [
+        ("websocket", "jails g socket Chat"),
+        (
+            "devtools",
+            "jails add dependency org.springframework.boot:spring-boot-devtools",
+        ),
+        ("flyway", "jails add db"),
+    ] {
+        let refused = jails_cmd(&root, None).args(["add", word]).output().unwrap();
+        assert!(!refused.status.success(), "add {word} was accepted");
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(
+            stderr.contains(expected),
+            "add {word} did not name `{expected}`:\n{stderr}"
+        );
+        // jails' own voice, not clap's list.
+        assert!(stderr.starts_with("jails:"), "add {word}: {stderr}");
+        assert!(
+            !stderr.contains("[possible values:"),
+            "add {word}: {stderr}"
+        );
+    }
+
+    // A word clap already accepts must not be in the table: `postgres` is a
+    // visible_alias for `db`, and an entry for it would claim a capability
+    // that works does not exist.
+    for alias in ["postgres", "dbconsole"] {
+        let refused = jails_cmd(&root, None)
+            .args(["add", alias])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(
+            !stderr.contains("there is no"),
+            "`{alias}` is accepted elsewhere; the table claims it does not exist:\n{stderr}"
+        );
+    }
+
+    // A word with no answer keeps clap's, which is the useful reply there.
+    let unknown = jails_cmd(&root, None)
+        .args(["add", "nonsense"])
+        .output()
+        .unwrap();
+    assert!(!unknown.status.success());
+    let stderr = String::from_utf8_lossy(&unknown.stderr);
+    assert!(stderr.contains("[possible values:"), "{stderr}");
+
+    // And the interception must not have eaten ordinary clap behaviour.
+    let helped = jails_cmd(&root, None).args(["--help"]).output().unwrap();
+    assert!(helped.status.success());
+    assert!(!String::from_utf8_lossy(&helped.stdout).is_empty());
+}

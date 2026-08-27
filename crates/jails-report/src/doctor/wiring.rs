@@ -783,7 +783,10 @@ pub(super) fn hot_reload_checks(project: &Project) -> Vec<Check> {
                 "reload",
                 "no spring-boot-devtools: the editor recompiles into target/classes on save, but the running application never picks it up",
             )
-            .fix("add org.springframework.boot:spring-boot-devtools with <optional>true</optional>"),
+            .fix(
+                "jails add dependency org.springframework.boot:spring-boot-devtools --scope \
+                 runtime",
+            ),
         );
         return checks;
     }
