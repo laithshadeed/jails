@@ -751,11 +751,27 @@ All three of `missing.md`'s named primitives, in full, plus the smaller entries.
       `g idempotency`: scope and member are strings the caller picks.
       `minicom` carries `g presence Admin` and passes `jails check`
       (Failsafe 8 → 11 tests).
-- [ ] **P8.6** M9 — an index on an existing table: `resource index`, or
+- [x] **P8.6** M9 — an index on an existing table: `resource index`, or
       `--index` on `g field`. `g field` can already add a *column* to a live
       table with a data plan, which is the harder problem; an index has no data
       plan to argue about, and `sql::validate_index` already parses
       `'created_at desc'` into column plus ordering.
+      *Done:* `jails resource index add <Entity> '<columns>'` — one forward
+      migration, the columns checked against the table before anything is
+      written, and the index recorded on the entity so a re-plan reproduces it
+      and a second attempt at the same one is refused. It is named in the same
+      `{table}_idx{n}` series a `create table` uses, from one `declared_index`
+      both call, so two commands cannot give two indexes one name.
+      *It also uncovered a live two-spellings bug.* `IndexSpec` records
+      **fields**, deliberately, so every path handing a recorded index to a
+      generator has to render it back to columns — and one did not: `app
+      apply` passed the manifest's own column tokens while a re-plan passed
+      `IndexSpec::canonical()`, which is camelCase. The create migration is
+      one-shot so it never surfaced, until this command re-planned a scaffold
+      and `validate_index` reported "no column 'customerId' in this table" over
+      a table that has it. `request::as_column_names` is the one renderer now,
+      and it reads the field's own recorded binding rather than `snake_case`,
+      because a `@column(...)` override is exactly where the two differ.
 - [ ] **P8.7** M8 — `--path` on `g controller`, `g usecase`, `g query`. Derived
       paths are a virtue greenfield and unusable when the URLs are a fixed
       external contract. The derivability argument does not block it: `destroy`

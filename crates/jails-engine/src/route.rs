@@ -97,8 +97,8 @@ pub use contract::contract_emit;
 pub use declare::{add_dependency, set_property, undeclare};
 pub use feature::{install_fast_test, remove_fast_test};
 pub use field::{
-    add_field, add_field_with_data, change_field_type, drop_field, field, field_with_data,
-    rename_field, set_field_nullability, set_field_nullability_with_data,
+    add_field, add_field_with_data, add_index, change_field_type, drop_field, field,
+    field_with_data, rename_field, set_field_nullability, set_field_nullability_with_data,
 };
 pub use history::undo_files;
 pub use lifecycle::{repair, revive};

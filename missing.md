@@ -292,39 +292,6 @@ setup is graded on is not something jails can produce.
 than a `--package` is meant to be. Wanted on `g controller`, `g usecase`,
 `g query`.
 
-## M9 — no way to add an index to an existing table
-
-`--index` exists on `g scaffold` and `@index` on a field, both at creation
-time. Afterwards there is nothing.
-
-### Reproduce
-
-```sh
-jails g scaffold Message id:long@pk userId:long@index customerId:long? content:string!
-jails g migration add_customer_id_index
-cat src/main/resources/db/migration/V00*__add_customer_id_index.sql
-```
-
-```sql
--- Forward-only migration. Write explicit SQL below.
-```
-
-That is the whole file. `mc-01-06-2026`'s third migration is exactly this on a
-live table:
-
-```ts
-await queryInterface.addIndex('messages', ['customer_id']);
-```
-
-`g field` can already add a *column* to a live table with a data plan
-(`--default-literal` / `--backfill-file`), which is the harder problem — an
-index has no data plan to argue about. `sql::validate_index` already parses
-`'created_at desc'` into column plus ordering for the `--index` flag, so the
-validation half exists too.
-
-Wanted: `jails g index MessagesByCustomer 'customer_id' --on Message`, or
-`--index` accepted on `g field` / a `resource index` verb.
-
 ## M10 — no seed or fixture data path
 
 ### Reproduce

@@ -635,6 +635,94 @@ fn a_field_reaches_the_companions_named_by_yields_as_well_as_on() {
     );
 }
 
+/// An index on a table that already exists.
+///
+/// `--index` and `@index` are both creation-time and there was nothing
+/// afterwards -- `missing.md` M9, measured against a real project whose third
+/// migration is exactly `addIndex('messages', ['customer_id'])`. `g field` can
+/// already add a *column* to a live table, which is the harder problem: an
+/// index has no data plan to argue about.
+#[test]
+fn an_index_can_be_added_to_a_table_that_already_exists() {
+    let root = temp_dir("resource-index-add");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    let scaffold = jails_cmd(&root, None)
+        .args([
+            "g",
+            "scaffold",
+            "Message",
+            "id:uuid@pk",
+            "customerId:uuid",
+            "body:string!",
+            "createdAt:instant",
+        ])
+        .output()
+        .unwrap();
+    assert!(scaffold.status.success(), "{scaffold:?}");
+
+    let added = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "index",
+            "add",
+            "Message",
+            "customer_id, created_at desc",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&added.stdout),
+        String::from_utf8_lossy(&added.stderr)
+    );
+
+    let migration = fs::read_dir(root.join("src/main/resources/db/migration"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.to_string_lossy().contains("index_messages"))
+        .expect("the index migration was not written");
+    let sql = fs::read_to_string(&migration).unwrap();
+    // The columns the table has, not the components jails records.
+    assert!(
+        sql.contains("on messages (customer_id, created_at desc)"),
+        "{sql}"
+    );
+
+    // Recorded, so a re-plan reproduces it -- and so a second attempt at the
+    // same index is refused rather than writing a duplicate migration.
+    let again = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "index",
+            "add",
+            "Message",
+            "customer_id, created_at desc",
+        ])
+        .output()
+        .unwrap();
+    assert!(!again.status.success());
+    assert!(
+        String::from_utf8_lossy(&again.stderr).contains("already declares an index"),
+        "{}",
+        String::from_utf8_lossy(&again.stderr)
+    );
+
+    // A typo fails here rather than at `flyway migrate` on whichever machine
+    // runs it first.
+    let typo = jails_cmd(&root, None)
+        .args(["resource", "index", "add", "Message", "custmoer_id"])
+        .output()
+        .unwrap();
+    assert!(!typo.status.success());
+    assert!(
+        String::from_utf8_lossy(&typo.stderr).contains("not a declared field"),
+        "{}",
+        String::from_utf8_lossy(&typo.stderr)
+    );
+}
+
 #[test]
 fn generate_scaffold_writes_a_raw_jdbc_slice() {
     let root = temp_dir("scaffold-files");

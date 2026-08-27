@@ -26,7 +26,9 @@ use super::*;
 mod companion;
 mod data;
 mod evolution;
+mod index;
 mod target;
+pub use index::add_index;
 
 use companion::companion_updates;
 use data::{add_data_plan, read_backfill};

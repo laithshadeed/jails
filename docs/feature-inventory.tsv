@@ -54,6 +54,8 @@ resource field rename	jails-engine	project-mutation	route::rename_field
 resource field type	jails-engine	project-mutation	route::change_field_type
 resource field nullability	jails-engine	project-mutation	route::set_field_nullability
 resource field drop	jails-engine	project-mutation	route::drop_field
+resource index	jails	dispatch-only	main command dispatch
+resource index add	jails-engine	project-mutation	route::add_index
 test	jails-drive	external-process+conditional-project-mutation	run::test
 test daemon	jails-drive	dispatch-only	main command dispatch
 test daemon restart	jails-drive	machine-daemon+external-process	testd::testd

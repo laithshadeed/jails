@@ -118,10 +118,12 @@ pub(super) fn evolve_existing(
     let package = recipe_package(project, &id, package)?;
     let package = package.as_deref();
     let fields: Vec<String> = after.fields().iter().map(FieldSpec::canonical).collect();
+    // Columns, not components: the generator writes DDL. See
+    // `request::as_column_names` for what passing `canonical()` here cost.
     let indexes: Vec<String> = after
         .indexes
         .iter()
-        .map(|index| index.canonical())
+        .map(|index| super::request::as_column_names(index, after.fields()))
         .collect();
     let on = after.on.as_ref().map(JavaType::qualified);
     let yields = after.yields.as_ref().map(JavaType::qualified);
@@ -285,6 +287,7 @@ fn action_name(subject: &PlannedSubject) -> &'static str {
             FieldEvolution::ChangeType { .. } => "type",
             FieldEvolution::SetNullability { .. } => "nullability",
             FieldEvolution::Drop { .. } => "drop",
+            FieldEvolution::AddIndex(_) => "index",
         },
         _ => unreachable!("field evolution constructs a field subject"),
     }

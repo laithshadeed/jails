@@ -40,10 +40,12 @@ pub fn revive(run: &Run, selector: &str, table: &str) -> Result<Outcome> {
     };
 
     let fields = spec.arguments.canonical();
+    // Columns, not components: the generator writes DDL. See
+    // `request::as_column_names`.
     let indexes = spec
         .indexes
         .iter()
-        .map(|index| index.canonical())
+        .map(|index| super::request::as_column_names(index, spec.fields()))
         .collect::<Vec<_>>();
     let on = spec.on.as_ref().map(JavaType::qualified);
     let yields = spec.yields.as_ref().map(JavaType::qualified);
@@ -183,10 +185,12 @@ pub fn repair(run: &Run, selector: &str, datasource: Option<&str>) -> Result<Out
     };
 
     let fields = spec.arguments.canonical();
+    // Columns, not components: the generator writes DDL. See
+    // `request::as_column_names`.
     let indexes = spec
         .indexes
         .iter()
-        .map(|index| index.canonical())
+        .map(|index| super::request::as_column_names(index, spec.fields()))
         .collect::<Vec<_>>();
     let on = spec.on.as_ref().map(JavaType::qualified);
     let yields = spec.yields.as_ref().map(JavaType::qualified);

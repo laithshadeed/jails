@@ -1119,6 +1119,23 @@ Column names in `--index` are checked against the table before anything is
 written; a typo there would otherwise surface at `flyway migrate` on whichever
 machine ran it first.
 
+**Afterwards, `jails resource index add`.** `--index` and `@index` are both
+creation-time, so an index a table turns out to need later had no verb:
+
+```
+jails resource index add Message 'customer_id, created_at desc'
+```
+
+One forward migration, the columns checked the same way, and the index recorded
+on the entity so a re-plan reproduces it. The same index twice is refused
+rather than written twice. An index is the easy half of what `resource field
+add` already does — a new column has to argue about a data plan for a populated
+table and an index has none.
+
+The enum's sample is the first constant by *name*: `Currency.GBP`, not
+`Currency.values()[0]`, so reordering the enum cannot silently change what the
+sample stands for.
+
 **A suffix picks the validation.** `name:string!` is required *and* non-blank;
 `name:string?` becomes an `Optional<String>` component (pass `null` to mean
 absent); bare `name:string` is required but may be blank. Hardcoding one policy
@@ -1127,7 +1144,7 @@ text rule, so `when:date!` is an error rather than a no-op.
 
 jails cannot invent a sample of a type you own, so a companion test that needs
 one is generated in full and `@Disabled`, naming the component it needs. Two
-cases escape that: an enum is filled in with `Currency.values()[0]`, and a `?`
+cases escape that: an enum is filled in with its first constant, and a `?`
 component with `Optional.empty()`.
 
 ## What a new project looks like

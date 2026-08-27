@@ -330,6 +330,13 @@ pub enum FieldEvolution {
         field: FieldId,
         confirmed_column: SqlName,
     },
+    /// A composite or ordered index added to a table that already exists.
+    ///
+    /// Not a field edit, and in this enum anyway: what the type actually
+    /// classifies is *an edit to a recorded declaration that costs one
+    /// forward migration*, and an index is one of those. A second envelope
+    /// carrying the same three things would be a copy, not a distinction.
+    AddIndex(crate::declaration::IndexSpec),
 }
 
 impl Codec for FieldEvolution {
@@ -373,6 +380,10 @@ impl Codec for FieldEvolution {
                 field.encode(encoder)?;
                 confirmed_column.encode(encoder)
             }
+            Self::AddIndex(index) => {
+                encoder.tag(5);
+                index.encode(encoder)
+            }
         }
     }
 
@@ -397,6 +408,7 @@ impl Codec for FieldEvolution {
                 field: Name::decode(decoder)?,
                 confirmed_column: SqlName::decode(decoder)?,
             },
+            5 => Self::AddIndex(crate::declaration::IndexSpec::decode(decoder)?),
             other => Err(format!(
                 "unknown field evolution tag {other}.\n       fix: upgrade jails or restore compatible `.jails` state"
             ))?,

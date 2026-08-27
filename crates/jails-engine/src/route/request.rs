@@ -156,6 +156,44 @@ pub(super) fn as_field_names(token: &str, fields: &[FieldSpec]) -> String {
         .join(", ")
 }
 
+/// A recorded index as the columns PostgreSQL wants: [`as_field_names`]'s
+/// inverse, and the reason it has to exist.
+///
+/// `IndexSpec` names **fields** -- plan.md §R1.1 fixes that deliberately,
+/// because the column is derived and a spec storing the derived form would be
+/// a second authority on it. So every path that hands a recorded index to a
+/// generator has to render it back, and until this existed one of them did not:
+/// `app apply` passed the manifest's own column tokens while a re-plan passed
+/// `IndexSpec::canonical()`, which is camelCase. The create migration is
+/// one-shot, so the camelCase spelling only surfaced when
+/// `resource index add` re-planned a scaffold and `validate_index` reported
+/// "no column 'customerId' in this table" over a table that has it.
+///
+/// The column comes from the field's own recorded binding, not from
+/// `snake_case`: a `@column(...)` override is exactly the case where the two
+/// differ.
+pub(super) fn as_column_names(
+    index: &jails_protocol::declaration::IndexSpec,
+    fields: &[FieldSpec],
+) -> String {
+    index
+        .columns
+        .iter()
+        .map(|column| {
+            let name = fields
+                .iter()
+                .find(|field| field.name == column.field)
+                .map(|field| field.name.column().as_str().to_string())
+                .unwrap_or_else(|| jails_generate::sql::snake_case(column.field.as_str()));
+            match column.direction {
+                jails_protocol::declaration::IndexDirection::Ascending => name,
+                jails_protocol::declaration::IndexDirection::Descending => format!("{name} desc"),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Record the capability in the manifest `sync` acts on.
 ///
 /// CLAUDE.md states the rule and the reason: a manifest somebody has to

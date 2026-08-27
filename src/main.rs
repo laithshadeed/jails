@@ -16,8 +16,8 @@ mod tool_command;
 
 // What the CLI accepts lives in `cli`; what it does is the match below.
 pub(crate) use cli::{
-    Cli, Command, Declare, Invocation, Output, ResourceCommand, ResourceFieldCommand, SqlCommand,
-    Undeclare,
+    Cli, Command, Declare, Invocation, Output, ResourceCommand, ResourceFieldCommand,
+    ResourceIndexCommand, SqlCommand, Undeclare,
 };
 pub(crate) use facade::*;
 
@@ -340,6 +340,15 @@ fn main() -> std::process::ExitCode {
             } => dispatch::mutate(invocation, false, |run| {
                 jails_engine::route::repair(run, &selector, datasource.as_deref())
             }),
+            ResourceCommand::Index { command } => match command {
+                ResourceIndexCommand::Add {
+                    entity,
+                    columns,
+                    package,
+                } => dispatch::mutate(invocation, false, |run| {
+                    jails_engine::route::add_index(run, &entity, &columns, package.as_deref())
+                }),
+            },
             ResourceCommand::Field { command } => match command {
                 ResourceFieldCommand::Add {
                     entity,

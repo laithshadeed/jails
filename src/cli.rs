@@ -216,6 +216,29 @@ pub(crate) enum ResourceCommand {
         #[command(subcommand)]
         command: ResourceFieldCommand,
     },
+    /// Add an index to a table that already exists
+    Index {
+        #[command(subcommand)]
+        command: ResourceIndexCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub(crate) enum ResourceIndexCommand {
+    /// Append one composite or ordered index and its migration
+    ///
+    ///   jails resource index add Message 'customer_id, created_at desc'
+    ///
+    /// The columns are the ones the table has, each optionally `asc`/`desc`
+    /// and nothing else -- arbitrary SQL is refused rather than recorded as
+    /// trusted generated SQL, the same rule `--index` follows at creation.
+    Add {
+        entity: String,
+        columns: String,
+        /// Subpackage containing the generated entity
+        #[arg(long)]
+        package: Option<String>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]

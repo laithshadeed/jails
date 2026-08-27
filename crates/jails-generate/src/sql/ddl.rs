@@ -300,16 +300,24 @@ pub(crate) fn create_table(
         ));
     }
     for (n, spec) in extra_indexes.iter().enumerate() {
-        // Named by position rather than by content: an index over
-        // `created_at desc` cannot go in an identifier, and a name derived by
-        // stripping the ordering would collide with the plain one.
-        out.push_str(&format!(
-            "\ncreate index {table}_idx{}\n  on {table} ({});\n",
-            n + 1,
-            spec.trim()
-        ));
+        out.push_str(&declared_index(&table, n + 1, spec));
     }
     out
+}
+
+/// One declared composite or ordered index, named by position.
+///
+/// **By position rather than by content**: an index over `created_at desc`
+/// cannot put the ordering in an identifier, and a name derived by stripping
+/// it would collide with the plain one. The position is the index's place in
+/// the entity's recorded list, so the name a `create table` gives it and the
+/// name a later `resource index add` gives the next one are the same series --
+/// which is what stops the two disagreeing about which index is which.
+pub fn declared_index(table: &str, position: usize, spec: &str) -> String {
+    format!(
+        "\ncreate index {table}_idx{position}\n  on {table} ({});\n",
+        spec.trim()
+    )
 }
 
 /// A forward-only migration for one newly introduced component.
