@@ -332,6 +332,139 @@ const RESERVED: &[&str] = &[
     "null",
 ];
 
+/// Every public type in `java.lang`, which the compiler imports into every
+/// file whether or not anybody asked.
+///
+/// A table rather than a refusal: `Name` is "a type name, a field name, a
+/// package segment", so it validates *references* as well as declarations, and
+/// refusing `String` here would refuse `value:String`. Only a declaration
+/// shadows, and only the rendered plan knows there is one --
+/// `route::request::naming` asks it.
+///
+/// `bugs.md` B50: `jails g record String value:string` wrote
+/// `public record String(String value)`, whose component is typed as the
+/// record rather than as text -- a package member outranks the implicit
+/// import. It compiles, its generated test compiles, and the caller who asked
+/// for a string field silently got a self-reference. `RESERVED` did not catch
+/// it because every Java reserved word is lowercase and a type name is
+/// capitalised before the check, so `class`, `int` and `String` all passed.
+///
+/// **Read off the JDK, not recalled**: the class list of `java.base`'s
+/// `java/lang/` filtered to the ones `javap` reports as `public`, on the JDK
+/// this project targets. A hand-written subset would be a check that silently
+/// stops applying to whatever it omitted, which is the shape this whole
+/// refusal exists to remove.
+pub const JAVA_LANG: &[&str] = &[
+    "AbstractMethodError",
+    "Appendable",
+    "ArithmeticException",
+    "ArrayIndexOutOfBoundsException",
+    "ArrayStoreException",
+    "AssertionError",
+    "AutoCloseable",
+    "Boolean",
+    "BootstrapMethodError",
+    "Byte",
+    "Character",
+    "CharSequence",
+    "Class",
+    "ClassCastException",
+    "ClassCircularityError",
+    "ClassFormatError",
+    "ClassLoader",
+    "ClassNotFoundException",
+    "ClassValue",
+    "Cloneable",
+    "CloneNotSupportedException",
+    "Comparable",
+    "Deprecated",
+    "Double",
+    "Enum",
+    "EnumConstantNotPresentException",
+    "Error",
+    "Exception",
+    "ExceptionInInitializerError",
+    "Float",
+    "FunctionalInterface",
+    "IllegalAccessError",
+    "IllegalAccessException",
+    "IllegalArgumentException",
+    "IllegalCallerException",
+    "IllegalMonitorStateException",
+    "IllegalStateException",
+    "IllegalThreadStateException",
+    "IncompatibleClassChangeError",
+    "IndexOutOfBoundsException",
+    "InheritableThreadLocal",
+    "InstantiationError",
+    "InstantiationException",
+    "Integer",
+    "InternalError",
+    "InterruptedException",
+    "IO",
+    "Iterable",
+    "LayerInstantiationException",
+    "LazyConstant",
+    "LinkageError",
+    "Long",
+    "MatchException",
+    "Math",
+    "Module",
+    "ModuleLayer",
+    "NegativeArraySizeException",
+    "NoClassDefFoundError",
+    "NoSuchFieldError",
+    "NoSuchFieldException",
+    "NoSuchMethodError",
+    "NoSuchMethodException",
+    "NullPointerException",
+    "Number",
+    "NumberFormatException",
+    "Object",
+    "OutOfMemoryError",
+    "Override",
+    "Package",
+    "Process",
+    "ProcessBuilder",
+    "ProcessHandle",
+    "Readable",
+    "Record",
+    "ReflectiveOperationException",
+    "Runnable",
+    "Runtime",
+    "RuntimeException",
+    "RuntimePermission",
+    "SafeVarargs",
+    "ScopedValue",
+    "SecurityException",
+    "SecurityManager",
+    "Short",
+    "StackOverflowError",
+    "StackTraceElement",
+    "StackWalker",
+    "StrictMath",
+    "String",
+    "StringBuffer",
+    "StringBuilder",
+    "StringIndexOutOfBoundsException",
+    "SuppressWarnings",
+    "System",
+    "Thread",
+    "ThreadDeath",
+    "ThreadGroup",
+    "ThreadLocal",
+    "Throwable",
+    "TypeNotPresentException",
+    "UnknownError",
+    "UnsatisfiedLinkError",
+    "UnsupportedClassVersionError",
+    "UnsupportedOperationException",
+    "VerifyError",
+    "VirtualMachineError",
+    "Void",
+    "WrongThreadException",
+];
+
 fn validate_identifier(text: &str, what: &str) -> Result<()> {
     if text.is_empty() {
         return Err(format!("{what} is empty").into());

@@ -42,28 +42,6 @@ works — it is the second create that is fatal.
 The refusal itself is correct behaviour for an undeclared read: the bug is the
 missing declaration.
 
-## B47 — `doctor` reports "all clear" over a ledger no command can read
-
-`doctor` is the command you run when something is wrong, and it is the one
-command that does not notice this.
-
-```sh
-echo garbage > .jails/ledger.toml
-jails doctor                        # 25 checks, all clear.
-jails g record Foo a:string         # jails: ... ledger.toml cannot be read by this jails
-jails resource status Book          # state: ambiguous, declaration: unknown
-```
-
-Three oracles over one store, three answers: the generator names the file and
-the schema rule it violates and tells you to restore it, `resource status`
-reports the resource as ambiguous without saying why, and `doctor` reports a
-clean project. Two commands reading one store must not answer differently —
-the reader cannot tell which to believe, and the one they will believe is the
-one that says everything is fine.
-
-`compat` already classifies the store as absent / current / unreadable, so
-`doctor` has the answer available and does not ask for it.
-
 ## B48 — a path-variable query generates a controller test that cannot pass
 
 ```sh
@@ -93,33 +71,6 @@ expand 'userId'`. Observed on `minicom-15-01-2026`, reproduced from a clean
 
 The test renderer branches on the criteria record; it does not know the path
 carries variables, which the controller renderer already worked out.
-
-## B50 — an entity named after a `java.lang` type shadows it in its own package
-
-```sh
-jails g record String value:string
-```
-
-```java
-package com.example.p.domain;
-
-public record String(String value) {          // the component's type is the record
-    public String {
-        Objects.requireNonNull(value, "value");
-    }
-}
-```
-
-A package member outranks the implicit `java.lang` import, so `value` is
-typed as the record being declared rather than as text. The caller asked for a
-string field and got a self-reference.
-
-Nothing reports it. `javac` accepts the record **and** the generated
-`StringTest`, so the compiler tier — the only tier that answers the question
-this tool exists for — is green over it. `Name` refuses Java reserved words,
-but every reserved word is lowercase and the name is capitalised before the
-check, so `class`, `int` and `String` all pass. `java.lang`'s own type names
-are a closed list and the same check is the place for them.
 
 ## B55 — `jails add websocket` is rejected as an invalid capability
 

@@ -106,12 +106,44 @@ fn report_json(checks: &[Check]) -> Result<()> {
     Ok(())
 }
 
+/// What jails' own bookkeeping says about itself.
+///
+/// Absent is not a finding: a project jails has never touched is the ordinary
+/// case and has nothing to repair. Only `Unreadable` is, and it is a failure
+/// rather than a warning, because nothing that writes can run until it is
+/// resolved.
+fn machine_state_check(project: &Project) -> Vec<Check> {
+    let jails_state::compat::MachineState::Unreadable(why) =
+        jails_state::compat::read(project.root())
+    else {
+        return Vec::new();
+    };
+    // `why` is the whole refusal every mutating command already prints, fix
+    // line included, so the reader meets one sentence rather than two
+    // descriptions of one file -- and this check cannot drift from the
+    // refusal it is reporting.
+    let (detail, fix) = why
+        .split_once("\n       fix: ")
+        .unwrap_or((why.as_str(), ""));
+    vec![Check::new(Status::Fail, "jails state", detail.trim()).fix(fix.trim())]
+}
+
 fn run_checks(project: &Project) -> Vec<Check> {
     let root = project.root();
     let pom_text = project.pom();
     let mut checks = Vec::new();
 
     checks.push(project_check(project));
+    // Before anything else about the project, because it decides whether the
+    // rest of this report is about the project the reader has.
+    //
+    // `bugs.md` B47: with damaged machine state every mutating command
+    // refused by name and `doctor` reported `25 checks, all clear`. That
+    // state is what all of them plan against, so a report omitting it is
+    // green on the one condition nothing can act on -- in the command a
+    // reader runs when something is wrong. `compat` already classifies it
+    // into exactly three answers; this asks it, and says nothing of its own.
+    checks.extend(machine_state_check(project));
     // Nothing below reads a pom that is not there; the first check said why.
     if matches!(project.build(), crate::build::Build::Foreign(_)) {
         checks.extend(template_override_checks());

@@ -41,6 +41,7 @@ pub fn generate(run: &Run, recipe: &Recipe<'_>, package: Option<&str>) -> Result
     // Asked of the rendered plan rather than of the name: a keyword-derived
     // variable is only a compile error where a template declares one.
     refuse_reserved_variable(&id, name, &change)?;
+    refuse_java_lang_shadow(&id, name, &change)?;
     // A foreign build file changes what gets emitted -- plain JDBC instead of
     // `JdbcClient`, no JSpecify -- and a dependency claim splices into nothing
     // because there is no pom to splice it into. Said out loud, because the

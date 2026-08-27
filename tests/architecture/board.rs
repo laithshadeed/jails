@@ -660,7 +660,16 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // the machine", and the fact it asks lives in `gradle.rs`
                 // where the other Gradle version facts already are -- so this
                 // row grows by the question, not by the answer.
-                ceiling: 1509,
+                //
+                // 1509 -> 1521. `doctor` reported `25 checks, all clear` over
+                // a `.jails/ledger.toml` that every mutating command refused
+                // to read (bugs.md B47) -- green on the one machine state
+                // nothing can act on, in the command a reader runs when
+                // something is wrong. 12 lines, and the same shape as the row
+                // above: `compat` already classifies the store into exactly
+                // three answers and this asks it, so what grows here is the
+                // question. `Absent` is deliberately not a finding.
+                ceiling: 1521,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.

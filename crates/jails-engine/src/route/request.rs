@@ -14,7 +14,7 @@ use super::*;
 
 mod naming;
 
-pub(super) use naming::refuse_reserved_variable;
+pub(super) use naming::{refuse_java_lang_shadow, refuse_reserved_variable};
 
 /// `(recipe, name, resolved package)` — the identity everything about this
 /// artifact is filed under.

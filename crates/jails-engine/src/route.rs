@@ -120,7 +120,8 @@ pub use session::{Outcome, Run};
 use commit::{commit, commit_set, commit_subject, observed, retry_existing};
 use request::{
     Asked, Declared, Request, asked_capabilities, declaration, declared, declared_capabilities,
-    identity, record_capability, recorded_migrations, refuse_reserved_variable, retiring,
+    identity, record_capability, recorded_migrations, refuse_java_lang_shadow,
+    refuse_reserved_variable, retiring,
 };
 
 /// A kind as the word somebody types, taken from the same `ValueEnum` clap

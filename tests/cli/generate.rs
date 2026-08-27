@@ -45,6 +45,12 @@ fn scaffold_refuses_invalid_or_reserved_derived_names_before_projection() {
         ("Bad!Name", "not valid in a Java identifier"),
         ("A", "PostgreSQL table `as`"),
         ("I", "PostgreSQL table `is`"),
+        // `bugs.md` B50. A package member outranks `java.lang`'s implicit
+        // import, so `record String(String value)` types its own component as
+        // itself -- and compiles, as does its generated test, which is why no
+        // tier reported it.
+        ("String", "is a type in `java.lang`"),
+        ("Record", "is a type in `java.lang`"),
     ] {
         let output = jails_cmd(&root, None)
             .args(["g", "scaffold", name, "id:uuid@pk", "value:int"])
@@ -56,6 +62,19 @@ fn scaffold_refuses_invalid_or_reserved_derived_names_before_projection() {
         assert!(stderr.contains("fix:"), "{name}: {stderr}");
         assert_eq!(snapshot_tree(&root), before, "{name} wrote project files");
     }
+
+    // And a `java.lang` name is refused only where it is *declared*: `Name`
+    // validates references too, so refusing it there would have refused every
+    // `value:String` in the tool.
+    let referenced = jails_cmd(&root, None)
+        .args(["g", "record", "Note", "body:String", "count:Integer"])
+        .output()
+        .unwrap();
+    assert!(
+        referenced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&referenced.stderr)
+    );
 }
 
 #[test]
