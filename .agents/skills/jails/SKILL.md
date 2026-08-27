@@ -146,11 +146,16 @@ jails history | show <id> | undo <id>
 
 `routes` and `beans` read source, never a running context — they work on a
 project that will not start, and they say so with `evidence:` and `limitation:`
-lines.
+lines. `routes` lists WebSocket endpoints too, as `WS <path> <Handler>`, read
+from a `WebSocketConfigurer`'s `registry.addHandler(...)`; a path assembled at
+run time is still outside what it can see.
 
 `doctor` verifies recorded output drift, checks digest-sealed migration bytes,
 performs a bounded replay of migration history to verify entity fields match
-columns, and warns on `@Disabled` test files.
+columns, and warns on `@Disabled` test files. It also **fails** on machine
+state it cannot read (`.jails/ledger.toml`), on a Gradle wrapper whose pinned
+distribution cannot launch on the JDK on PATH, and on an H2 URL combining
+`AUTO_SERVER=TRUE` with `DB_CLOSE_ON_EXIT=FALSE`.
 
 ### Test and run
 
@@ -169,6 +174,10 @@ jails start | stop           # the only CLI-owned compose lifecycle
 build engine and says so. `jails fmt` refuses on Gradle by name (use
 `./gradlew spotlessApply`; `add format` has already configured it).
 
+`run --watch` needs `spring-boot-devtools` to restart on recompile, and says so
+with the command that adds it to *this* project:
+`jails add dependency org.springframework.boot:spring-boot-devtools --scope runtime`.
+
 ### SQL, schema and contracts
 
 ```
@@ -186,6 +195,9 @@ becomes a blocking diagnostic rather than a guess.
 
 ```
 jails request GET /orders/1     # route-aware curl, argv shown, secrets redacted
+jails db                        # a client for whichever database this project has
+jails db --web                  # H2's own browser console (not Spring's /h2-console)
+jails db <file.sqlite>          # SQLite
 jails db console                # real PostgreSQL client against a declared datasource
 jails console                   # JShell with the Spring context booted
 jails runner script.jsh         # noninteractive snippet over the project classpath
@@ -290,6 +302,37 @@ The declarative engine handles lifecycle deltas:
   expect the same — the re-record is what keeps the ledger honest.
 - **`schema diff` requires `.jails/app.toml`**; `migrate lint` runs on both
   imperative and manifest projects using the project's declared SQL driver.
+- **A flag a recipe derives is refused, not ignored.** `--method` applies to
+  `controller` and `client` only: a `query`, `usecase` or `transition` derives
+  its verb from the request (GET when every filter comes from `--path`, POST
+  when it carries a body), so passing one there is refused by name. Same for
+  `--path` on `g scaffold`, `--via` outside `query`, `--consumes` outside the
+  four recipes that bind a body.
+- **An entity may not be named after a `java.lang` type.** `String`, `Class`,
+  `Record` and the other 105 are refused where they would be *declared*:
+  a package member outranks the implicit import, so `record String(String x)`
+  types its own component as itself — and compiles. References are untouched,
+  so `body:String` is still a string field.
+- **`jails add <word>` names what to run instead** when the word is not a
+  capability but jails has an answer — `websocket` points at `g socket`,
+  `devtools` at `add dependency`, `flyway` at `add db`. A word with no answer
+  still gets clap's list of what does exist.
+- **Gradle pins a distribution, and a distribution cannot run on any JDK.**
+  `jails new --gradle --boot 2.x` refuses a Java release the Gradle it also
+  picks cannot launch on; `doctor` fails on an adopted wrapper in the same
+  state; `jails why` recognises `Unsupported class file major version`, which
+  names neither Gradle nor Java. Boot 2.7 needs Gradle 8.5 under JDK 21.
+- **The generated ArchUnit suite is strict on a new project and will fail on
+  an adopted one.** `g scaffold` says so up front when the project already has
+  files outside `adapters` using `java.sql`, and names the bootstrap: set
+  **both** `freeze.store.default.allowStoreCreation` and `...allowStoreUpdate`
+  to `true` in `src/test/resources/archunit.properties`, run once, set both
+  back, and commit `.jails/architecture-baseline`. Creation alone writes an
+  empty index and every rule still fails.
+- **`add h2` writes `AUTO_SERVER=TRUE`, and never `DB_CLOSE_ON_EXIT=FALSE`.**
+  The first is what lets `jails db` attach while the application runs; H2
+  refuses the pair outright and the application dies at startup reporting
+  `Feature not supported`, which names neither property.
 
 ## Working on jails itself
 

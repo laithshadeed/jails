@@ -119,9 +119,9 @@ fn presence_migration(table: &str) -> String {
          -- believes the member is connected. A member seen by any node is\n\
          -- present, which is the answer a single process's memory cannot give.\n\
          create table {table} (\n\
-        \x20 scope text not null check (length(btrim(scope)) > 0),\n\
-        \x20 member text not null check (length(btrim(member)) > 0),\n\
-        \x20 node text not null check (length(btrim(node)) > 0),\n\
+        \x20 scope text not null check (length(trim(scope)) > 0),\n\
+        \x20 member text not null check (length(trim(member)) > 0),\n\
+        \x20 node text not null check (length(trim(node)) > 0),\n\
         \x20 seen_at timestamptz not null,\n\
         \x20 primary key (scope, member, node)\n\
          );\n\n\

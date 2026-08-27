@@ -2,9 +2,9 @@
 -- believes the member is connected. A member seen by any node is
 -- present, which is the answer a single process's memory cannot give.
 create table room_presence (
-  scope text not null check (length(btrim(scope)) > 0),
-  member text not null check (length(btrim(member)) > 0),
-  node text not null check (length(btrim(node)) > 0),
+  scope text not null check (length(trim(scope)) > 0),
+  member text not null check (length(trim(member)) > 0),
+  node text not null check (length(trim(node)) > 0),
   seen_at timestamptz not null,
   primary key (scope, member, node)
 );

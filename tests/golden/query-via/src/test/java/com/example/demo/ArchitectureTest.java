@@ -6,6 +6,7 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
 
+import com.tngtech.archunit.ArchConfiguration;
 import com.tngtech.archunit.core.domain.Dependency;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.junit.AnalyzeClasses;
@@ -42,10 +43,20 @@ final class ArchitectureTest {
     private static final String SLICE_ROOT = "com.example.demo.domain";
     private static final List<Allowance> ALLOWANCES = loadAllowances();
 
+    /** Strict for a new project; frozen once a baseline is adopted. */
     private static ArchRule reviewed(ArchRule rule) {
-        return Files.exists(Path.of(".jails/architecture-baseline"))
-                ? FreezingArchRule.freeze(rule)
-                : rule;
+        return baselineAdopted() ? FreezingArchRule.freeze(rule) : rule;
+    }
+
+    // Also true while creation is allowed: only a frozen rule writes the
+    // store, so requiring it to exist first meant it could never be recorded.
+    private static boolean baselineAdopted() {
+        if (Files.exists(Path.of(".jails/architecture-baseline"))) {
+            return true;
+        }
+        return Boolean.parseBoolean(ArchConfiguration.get()
+                .getSubProperties("freeze.store")
+                .getProperty("default.allowStoreCreation", "false"));
     }
 
     private static ArchRule sliceCycles() {

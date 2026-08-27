@@ -153,6 +153,19 @@ fn migration_description(artifact: &Artifact) -> Option<String> {
     Some(rest.strip_suffix(".sql")?.to_string())
 }
 
+/// Say that the architecture suite jails is about to write will fail on code
+/// the reader already had, and how to accept that.
+///
+/// Printed here rather than in `architecture.rs` because this module owns the
+/// terminal -- the boundary
+/// `only_deliberate_output_modules_print_to_the_terminal` holds. That module
+/// decides what to write and returns the sentence.
+pub fn report_adoption_note(project: &Project) {
+    if let Some(note) = crate::architecture::adoption_note(project) {
+        println!("{note}");
+    }
+}
+
 pub fn report_degraded_shape(project: &Project, change: &Change) {
     let crate::build::Build::Foreign(tool) = project.build() else {
         return;

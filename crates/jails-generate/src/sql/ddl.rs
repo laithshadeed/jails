@@ -15,7 +15,7 @@
 use super::{Column, generated_key, key_column};
 use jails_support::Result;
 
-/// `check (length(btrim(body)) > 0)`, where the field spec said `!`.
+/// `check (length(trim(body)) > 0)`, where the field spec said `!`.
 ///
 /// plan.md P5.4, modern.md §4.7. The Java constructor rejects a blank value
 /// and the database did not, so any path that is not the constructor -- a
@@ -23,13 +23,24 @@ use jails_support::Result;
 /// application believes cannot hold one. `backend.md` §5: the schema is the
 /// last line of defence.
 ///
-/// `btrim`, not `<> ''`: `' '` is the case that bites, and it is exactly what
+/// Trimmed, not `<> ''`: `' '` is the case that bites, and it is exactly what
 /// the Java side trims before rejecting.
+///
+/// **`trim`, not `btrim`.** They mean the same thing -- PostgreSQL's `trim(x)`
+/// with no `leading`/`trailing` *is* `btrim(x)` -- and only one of them is
+/// spelled the same everywhere jails emits. `BTRIM` reaches H2 in 2.0.202
+/// (`git tag --contains` the commit that adds `TrimFunction.java` in
+/// `deps/h2database`), and Boot 2.7 manages H2 1.4.200, whose function table
+/// has `"TRIM"` and no `"BTRIM"`. On that project the application did not
+/// start: `Function "BTRIM" not found`, thrown while `spring.sql.init` ran
+/// `schema.sql`, so every bean that wanted a DataSource failed with it. Found
+/// by running `g scaffold` on `minicom-15-01-2026` rather than by reading the
+/// bytes, which is the only way this class of thing is found.
 fn non_blank_check(column: &Column) -> String {
     if !column.non_blank || column.sql_type != "text" {
         return String::new();
     }
-    format!(" check (length(btrim({})) > 0)", column.name)
+    format!(" check (length(trim({})) > 0)", column.name)
 }
 
 /// Whether this column's uniqueness has to ignore case.
@@ -566,11 +577,16 @@ mod tests {
             &cols(&["id:uuid@pk", "body:string!", "note:string"]),
             &[],
         );
-        assert!(ddl.contains("check (length(btrim(body)) > 0)"), "{ddl}");
+        assert!(ddl.contains("check (length(trim(body)) > 0)"), "{ddl}");
         // `note:string` is required and may be empty: `!` is what asks for
         // the stronger claim, and inventing it would reject data the record
         // accepts.
-        assert!(!ddl.contains("btrim(note)"), "{ddl}");
+        assert!(!ddl.contains("trim(note)"), "{ddl}");
+        // And never `btrim`, which is PostgreSQL's spelling and reaches H2
+        // only in 2.0.202. Boot 2.7 manages H2 1.4.200, where it does not
+        // resolve -- so the application failed to start while `spring.sql.init`
+        // ran the schema, and every bean wanting a DataSource failed with it.
+        assert!(!ddl.contains("btrim"), "{ddl}");
     }
 
     /// As written, `A@b.com` and `a@b.com` were two accounts -- a `@unique`

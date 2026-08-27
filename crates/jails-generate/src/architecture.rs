@@ -15,6 +15,91 @@ pub(crate) const ARCHUNIT_JUNIT5: Dependency = Dependency {
     optional: false,
 };
 
+/// Main sources outside `adapters`/`jobs` that already reach `java.sql`.
+///
+/// `plan.md` P10.8: the first scaffold into an existing project writes
+/// `RAW_JDBC_STAYS_IN_ADAPTERS`, and on `minicom-15-01-2026` it went red 24
+/// times over the reader's own `Message`, `User` and controllers -- code jails
+/// did not write and was not asked about. A generated test that fails on
+/// pre-existing code turns "try jails on this project" into "jails broke my
+/// build", which is the adoption story in one line.
+///
+/// The mechanism to accept that already exists and nothing pointed at it: the
+/// suite calls `FreezingArchRule.freeze` when `.jails/architecture-baseline`
+/// is present, which records today's violations and fails only on new ones.
+/// `allowStoreCreation=false` keeps creating it a deliberate, reviewable act
+/// -- that part is right, and the missing half was saying so.
+///
+/// Deliberately *this* rule and not a general audit: it is the one whose
+/// violations are ordinary in a project written before jails arrived, and a
+/// scan that tried to predict every rule would be re-implementing ArchUnit in
+/// Rust. Unknown widens to silence, so a project this misses simply gets the
+/// failure it would have got before.
+fn preexisting_raw_jdbc(project: &Project) -> Vec<String> {
+    let adapters = project.package_named(jails_spec::spec::layout::ADAPTERS, None);
+    let jobs = project.package_named(jails_spec::spec::layout::JOBS, None);
+    let mut found = Vec::new();
+    for (path, source) in project.projected_main_sources() {
+        let package = jails_java::java::package_of(&source).unwrap_or_default();
+        if package.starts_with(&adapters) || package.starts_with(&jobs) {
+            continue;
+        }
+        // Through `blanked()`: `java.sql` inside a Javadoc example is not a
+        // dependency on it.
+        if jails_java::java::blanked(&source).contains("java.sql.") {
+            found.push(
+                path.file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            );
+        }
+    }
+    found.sort();
+    found
+}
+
+/// What the reader has to know before the strict suite runs on their project.
+///
+/// Returned rather than printed: this module decides what to write, and
+/// `generate.rs` owns the terminal, which is the boundary
+/// `only_deliberate_output_modules_print_to_the_terminal` holds.
+pub(crate) fn adoption_note(project: &Project) -> Option<String> {
+    let architecture_test =
+        crate::generate::test_dir(project.root(), project.base()).join("ArchitectureTest.java");
+    if architecture_test.is_file() {
+        return None;
+    }
+    let existing = preexisting_raw_jdbc(project);
+    if existing.is_empty() {
+        return None;
+    }
+    let mut note = vec![
+        format!(
+            "note: {} file(s) here outside `adapters` already use `java.sql`, so the",
+            existing.len()
+        ),
+        "      generated `RAW_JDBC_STAYS_IN_ADAPTERS` rule will fail on code jails did not"
+            .to_string(),
+        "      write:".to_string(),
+    ];
+    note.extend(existing.iter().map(|name| format!("        {name}")));
+    note.extend(
+        [
+            "      The suite freezes today's violations and fails only on new ones once",
+            "      `.jails/architecture-baseline` exists, which is deliberately a decision",
+            "      you make rather than one jails makes for you.",
+            "      fix: in `src/test/resources/archunit.properties` set BOTH",
+            "           `freeze.store.default.allowStoreCreation=true` and",
+            "           `freeze.store.default.allowStoreUpdate=true`, run the suite once, set",
+            "           both back to `false`, and commit `.jails/architecture-baseline`.",
+            "           Creation alone writes an empty index and every rule still fails --",
+            "           ArchUnit needs update permission to record what it froze.",
+        ]
+        .map(str::to_string),
+    );
+    Some(note.join("\n"))
+}
+
 pub(crate) fn artifacts(project: &Project) -> Vec<Artifact> {
     let packages = Packages::of(project);
     let architecture_test =

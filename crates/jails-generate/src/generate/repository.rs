@@ -126,7 +126,19 @@ pub(super) fn repository_wiring(project: &crate::model::Project) -> RepositoryWi
     // Spring Data JDBC project get the in-memory adapter as its bean while a
     // generated query read the real table -- writes to a HashMap, reads from
     // an empty database, and nothing to say so.
-    if project.has_jdbc() {
+    // The starter is necessary and *not* sufficient. `JdbcClient` is Spring
+    // Framework 6.1 -- first tagged `v6.1.0` in `deps/spring-framework`, which
+    // is Boot 3.2 -- so on an older Boot the starter is present, the type is
+    // not, and the generated adapter does not compile. Found by running
+    // `g scaffold` on `minicom-15-01-2026`, a Boot 2.7.18 project that
+    // declares `spring-boot-starter-jdbc`: three `cannot find symbol: class
+    // JdbcClient`.
+    //
+    // The suite could not see it because each half was covered alone. The
+    // Boot 2 fixture has no JDBC starter, so it took the `PlainJdbc` arm and
+    // compiled; the JDBC fixtures are all Boot 4. Same shape as `missing.md`
+    // M1 and M2 -- the bug needs a *second* thing present.
+    if project.has_jdbc() && has_jdbc_client(project) {
         RepositoryWiring::JdbcClientBean
     } else {
         // `JdbcClient` lives in spring-jdbc, which the starter brings in.
@@ -134,6 +146,21 @@ pub(super) fn repository_wiring(project: &crate::model::Project) -> RepositoryWi
         // compile -- so this is not a stylistic fallback, it is the only
         // adapter that can be written.
         RepositoryWiring::PlainJdbc
+    }
+}
+
+/// Whether this project's Spring Framework has `JdbcClient` at all.
+///
+/// Boot 3.2 upwards. **Unknown widens to yes**, deliberately and unlike the
+/// rest of this module: a version jails cannot read is far more likely to be a
+/// current one than a 2.x, and the `PlainJdbc` adapter is not a safe fallback
+/// -- it takes a caller-owned `Connection` and is not a bean, so choosing it
+/// wrongly gives a project a repository nothing injects. The failure jails can
+/// see is the one it guards; the one it cannot see it does not guess at.
+fn has_jdbc_client(project: &crate::model::Project) -> bool {
+    match project.boot_version() {
+        Some((major, minor)) => major > 3 || (major == 3 && minor >= 2),
+        None => true,
     }
 }
 

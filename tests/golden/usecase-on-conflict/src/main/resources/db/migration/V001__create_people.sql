@@ -1,7 +1,7 @@
 -- Forward-only migration, generated from the field spec.
 create table people (
   id          uuid        not null,
-  email       text        not null check (length(btrim(email)) > 0),
+  email       text        not null check (length(trim(email)) > 0),
   created_at  timestamptz not null,
 
   constraint people_pk
