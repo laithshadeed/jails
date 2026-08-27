@@ -13,8 +13,9 @@ mod proof;
 use proof::query_controller_test_java;
 
 mod shape;
+use crate::spring::resolve_join;
 pub(crate) use shape::Bounds;
-use shape::{DEFAULT_MAX_RESULTS, Projection, declared_ordering, resolve_join};
+use shape::{DEFAULT_MAX_RESULTS, Projection, declared_ordering};
 
 use crate::model::{Artifact, Layer, Slice};
 
@@ -92,7 +93,7 @@ pub(crate) fn query_files(
     }
     let target_fields = Target::read(slice, "query", name, target)?.fields;
     let join = via
-        .map(|parent| resolve_join(slice, name, target, &target_fields, parent))
+        .map(|parent| resolve_join(slice, "query", name, target, &target_fields, parent))
         .transpose()?;
     let target_table = crate::sql::table_name(target);
     // Which side of the join each filter reads. Without `--via` there is one

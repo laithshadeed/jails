@@ -797,6 +797,13 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // measure of what `spring.rs` *holds*, and it holds nothing
                 // more than it did.
                 //
+                // 556 -> 558 for `mod join;` and its re-export: which component
+                // of a child references a parent is one question, and it was
+                // answered inside `query` while `usecase --via` needed the
+                // same answer from the other side. Two copies of a derivation
+                // is two derivations, and the one that differs is the one
+                // nobody tested. Two lines for a shared secret, again.
+                //
                 // 554 -> 556 for `mod pin;` and its re-export: resolving a
                 // `--set` literal against the declared type of the component
                 // it pins is a secret of its own -- two recipes ask it, and
@@ -809,7 +816,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // its own module rather than into this file. A submodule
                 // declaration costing two lines is not the growth the gate
                 // exists to stop.
-                ceiling: 556,
+                ceiling: 558,
                 target: 2500,
                 why: "Logical cohesion: one file for everything sharing the `require_spring` \
                       precondition. abstract.md §6.2 says turning that precondition into data \
