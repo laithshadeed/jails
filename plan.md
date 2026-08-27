@@ -29,7 +29,7 @@ Four documents describe what jails does not do yet:
 |---|---:|---|
 | `bugs.md` | 6 | defects reproduced from an empty directory, B46–B51 |
 | `missing.md` | 1 | M18, the one deliberate scope line, recorded as a decision |
-| `modern.md` | 10 | the generated Java assessed against `java.md`/`backend.md` |
+| `modern.md` | 8 | the generated Java assessed against `java.md`/`backend.md` |
 | `research.md` | 9 | the remaining product direction |
 
 Phases P0–P5 and P7 are closed and deleted. What remains is P6 (generated
@@ -60,41 +60,49 @@ retires it.
 
 ## P6 — the prose, and the real bugs behind it
 
-- [ ] **P6.6** Delete `modern.md`. Every remaining entry is closed by here.
-      *Blocked on ten entries no item covers.* Every §-numbered entry below
-      is jails-side and reproducible; none is an input problem the file itself
-      labels as such. They need converting into real items before the file can
-      go:
+- [ ] **P6.6** Delete `modern.md`. Blocked on **eight** entries, each one a
+      defect that survives a perfect field spec and each re-confirmed on
+      2026-08-27 against a project built from nothing but `jails new --offline`
+      plus nine commands (`modern.md`'s header has the exact list). They need
+      converting into real items before the file can go:
 
-      - **§4.3** no index serves any query the application runs. jails could
-        say so the way it says `free-text-closed-set` — a `query --on X` whose
-        filter columns have no index is a shape it can see.
-      - **§5.4** boxed primitives on the wire (`Boolean`, `Long` in a response
-        describing a `boolean` and a `long`), then `@NotNull` compensating.
-      - **§6.1** the service layer takes a concrete `Jdbc*` class *and* a
-        concrete sibling implementation, under Javadoc saying it depends on
-        interfaces.
-      - **§6.3** `AppMetrics`, `CorsConfig`, `MetricsConfig` land in the root
-        package because nothing decides where they go.
-      - **§6.4** interfaces with one implementation, and `MessageService`
-        forwarding four calls. P3.4 left this open deliberately.
+      - **§4.3** no index serves any query the application runs. `g query --on
+        X userId:uuid` reads a table whose only index is the primary key. jails
+        can see the shape and could say so the way `free-text-closed-set` does.
+      - **§5.4** a `boolean` domain component becomes a `Boolean` on the wire,
+        both ways, with `@NotNull` compensating for the boxing.
+      - **§6.3** `AppMetrics`, `CorsConfig` and `MetricsConfig` land in the
+        root package: a capability's files decide nothing, so nothing places
+        them, while every *kind* goes through `generate::layout`.
+      - **§6.4** `MessageService` is four one-line forwards to the port. The
+        port earns its interface (there is a real in-memory second
+        implementation); the service between the controller and it does not.
       - **§6.5** two API styles in one service — REST for the scaffold,
-        RPC-over-POST for the generated operations, including a `POST` to read.
-      - **§7** three read-side defects: a command/query record bound directly
-        as `@RequestBody`, a query named *unread* that takes `isRead` as a
-        parameter, and a silent `MAX_RESULTS`.
-      - **§8** the generated listener is a `TODO` that logs an id and drops the
-        event.
+        RPC-over-POST for the generated operations, including a `POST` to
+        read — chosen by which command wrote the route rather than by a
+        decision. Compounded by P10.7's last bullet: `g scaffold` refuses
+        `--path`, so a project cannot be made consistent without hand-editing.
+      - **§7** two read-side defects: the service-layer criteria record bound
+        directly as `@RequestBody` in a project whose own generated Javadoc
+        argues the wire type must not be the domain type, and a silent
+        `MAX_RESULTS = 100` with no cursor, no total and nothing in the
+        response saying the list was truncated.
+      - **§8** `g event`'s listener logs an id and drops the event, under a
+        Javadoc saying it hands the event to the application. There is nowhere
+        to hand it: no port is generated. A project consuming a topic discards
+        every message on it and logs that it received them.
       - **§9** the generated tests mostly test the framework: a service test
-        that can only fail if Mockito breaks, an association IT that asserts
-        Postgres recorded the FK the migration declared, every fixture value
-        `"sample"`, and no concurrency test for the CAS the `version` column
-        exists for.
-      §1, §2, §3.2, §4.6, §4.7, §5.1, §10, §12, §13.1, §13.10 and §13.11 are
-      either narrative, the hand-built reference, or input problems the file
-      itself labels as such — they are the record of *why*, and they go when
-      the ten above do. §13.6 is closed: its shape half shipped with `g
-      client --method/--on/--returns`.
+        that can only fail if Mockito breaks, an association IT that asks
+        `pg_constraint` whether PostgreSQL recorded the FK the migration
+        declared, every fixture value `"sample"`, and no concurrency test for
+        the CAS the `version` column exists for.
+
+      Two entries closed on re-check and are deleted from `modern.md`: **§6.1**
+      (the service takes the port interface now, not a concrete `Jdbc*` class)
+      and **§13.6** (its shape half shipped as `g client --method/--on/
+      --returns`). Everything narrative, the hand-built reference slice, and
+      every entry the file itself labels an *input* problem are deleted too —
+      `git log -p -- modern.md` is the record.
 
 ---
 
