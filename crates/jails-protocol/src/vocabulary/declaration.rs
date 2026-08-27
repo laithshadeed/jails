@@ -86,6 +86,54 @@ impl Codec for FieldMapping {
     }
 }
 
+/// One component pinned to a constant instead of taken from the request.
+///
+/// `--set senderType=ADMIN`. Both halves are validated values: a `Name` for
+/// the component, so a pin cannot name a SQL fragment, and a `LiteralValue`
+/// for what it holds, so it cannot name a Java expression. The generator
+/// resolves the literal against the component's *declared type* -- an enum
+/// constant that is not one of that enum's constants is refused there, where
+/// the type is known, rather than written into a constructor argument and
+/// discovered by the compiler.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+pub struct PinSpec {
+    pub component: Name,
+    pub value: crate::identity::LiteralValue,
+}
+
+impl PinSpec {
+    /// `component=literal`.
+    pub fn parse(token: &str) -> Result<Self> {
+        let (component, value) = token.split_once('=').ok_or_else(|| {
+            format!(
+                "`{token}` is not a pinned value.\n       fix: each `--set` is \
+                 `component=literal`, for example `--set senderType=ADMIN`."
+            )
+        })?;
+        Ok(Self {
+            component: Name::parse(component.trim())?,
+            value: crate::identity::LiteralValue::parse(value.trim())?,
+        })
+    }
+
+    pub fn canonical(&self) -> String {
+        format!("{}={}", self.component, self.value)
+    }
+}
+impl Codec for PinSpec {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.component.encode(encoder)?;
+        self.value.encode(encoder)
+    }
+
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(Self {
+            component: Name::decode(decoder)?,
+            value: crate::identity::LiteralValue::decode(decoder)?,
+        })
+    }
+}
+
 /// A recipe's positional arguments, in the shape that recipe takes.
 ///
 /// plan.md §R1.1's amendment. Which variant a spec holds is a total function
@@ -361,6 +409,23 @@ pub struct IntentSpec {
     /// The route a generated endpoint answers, when the caller names one
     /// instead of taking the derived shape. `missing.md` M8.
     pub path: Option<crate::identity::RoutePath>,
+    /// Which component identifies the row a `transition` updates.
+    ///
+    /// Content, not identity: changing `--select id` to `--select userId` is
+    /// an edit to a known entity. Recorded because a regeneration has to
+    /// reproduce it -- `g field` re-derives every companion of the record it
+    /// touches, and a selector that came back as the default would flip the
+    /// adapter's `where` clause to a different column without saying so.
+    pub select: Option<Name>,
+    /// Components this recipe pins to a constant rather than reading from the
+    /// request.
+    ///
+    /// Empty is "the caller supplies every component", which is what every
+    /// recipe held before `--set` existed. Content for the same reason
+    /// `order_by` is, and shape-validated here while the *meaning* -- is
+    /// `ADMIN` a constant of this component's enum? -- is resolved in the
+    /// generator, where the target's declared types are known.
+    pub pins: Vec<PinSpec>,
     /// The HTTP method a generated endpoint answers.
     ///
     /// Content rather than identity, like every other field here: changing
@@ -460,6 +525,8 @@ impl IntentSpec {
             limit: None,
             on_conflict: None,
             path: None,
+            select: None,
+            pins: Vec::new(),
         })
     }
 }
@@ -491,7 +558,13 @@ impl Codec for IntentSpec {
         encoder.option(self.path.as_ref(), |e, path| path.encode(e))?;
         // The label, not the discriminant, on the same rule as `method`: a
         // recorded value must not change meaning when the enum is reordered.
-        encoder.option(self.consumes.as_ref(), |e, format| e.string(format.label()))
+        encoder.option(self.consumes.as_ref(), |e, format| e.string(format.label()))?;
+        encoder.option(self.select.as_ref(), |e, name| name.encode(e))?;
+        encoder.count(self.pins.len())?;
+        for pin in &self.pins {
+            pin.encode(encoder)?;
+        }
+        Ok(())
     }
 
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
@@ -536,6 +609,15 @@ impl Codec for IntentSpec {
             path: decoder.option(crate::identity::RoutePath::decode)?,
             consumes: decoder
                 .option(|d| jails_spec::spec::kind::WireFormat::parse(&d.string()?))?,
+            select: decoder.option(crate::identity::Name::decode)?,
+            pins: {
+                let count = decoder.count()?;
+                let mut pins = Vec::new();
+                for _ in 0..count {
+                    pins.push(PinSpec::decode(decoder)?);
+                }
+                pins
+            },
         })
     }
 }

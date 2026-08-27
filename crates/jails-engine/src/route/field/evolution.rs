@@ -125,33 +125,12 @@ pub(super) fn evolve_existing(
         .iter()
         .map(|index| super::request::as_column_names(index, after.fields()))
         .collect();
-    let on = after.on.as_ref().map(JavaType::qualified);
-    let yields = after.yields.as_ref().map(JavaType::qualified);
-    let via = after.via.as_ref().map(JavaType::qualified);
-    let order_by = ordering_token(&after);
-    let limit = after.limit;
-    let on_conflict = after.on_conflict.as_ref().map(ToString::to_string);
-    let path = after.path.as_ref().map(ToString::to_string);
+    let recorded = Recorded::read(&after);
     let mut change = with_test_support(
         project,
         jails_generate::generate::plan_recipe(
             project,
-            &jails_generate::generate::Recipe {
-                kind: id.recipe,
-                name: id.name.as_str(),
-                fields: &fields,
-                indexes: &indexes,
-                strategy_on: on.as_deref(),
-                strategy_yields: yields.as_deref(),
-                via: via.as_deref(),
-                order_by: order_by.as_deref(),
-                limit,
-                on_conflict: on_conflict.as_deref(),
-                path: path.as_deref(),
-                method: after.method,
-                consumes: after.consumes,
-                select: None,
-            },
+            &recorded.recipe(id.recipe, id.name.as_str(), &fields, &indexes),
             package,
         )?,
     );

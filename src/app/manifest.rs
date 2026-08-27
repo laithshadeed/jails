@@ -31,6 +31,38 @@ pub(super) fn manifest_path(root: &Path, requested: Option<&Path>) -> Result<Pat
     Ok(path)
 }
 
+/// Every key a `[[generate]]` row accepts, in the order the refusal lists
+/// them.
+///
+/// Written down because the refusal *is* the documentation: a reader who
+/// mistypes a key learns the schema from this line and nowhere else. It had
+/// silently stopped naming `method` and `consumes`, so two shipped keys were
+/// unreachable to anyone who had not read the source -- the same
+/// oracles-disagreeing shape
+/// `every_command_a_message_tells_the_reader_to_run_is_one_that_exists`
+/// exists to catch on the CLI side.
+///
+/// `every_known_generate_key_is_one_the_parser_accepts` keeps it honest.
+const KNOWN_GENERATE_KEYS: &[&str] = &[
+    "kind",
+    "name",
+    "fields",
+    "timestamps",
+    "indexes",
+    "package",
+    "on",
+    "yields",
+    "via",
+    "order_by",
+    "limit",
+    "on_conflict",
+    "path",
+    "select",
+    "set",
+    "method",
+    "consumes",
+];
+
 pub(super) fn read_manifest(path: &Path) -> Result<(Manifest, Vec<Intent>)> {
     let text =
         fs::read_to_string(path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
@@ -148,6 +180,8 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<Intent>)> {
                 "via" => intent.via = Some(string(value, line_number, key)?.to_string()),
                 "order_by" => intent.order_by = Some(string(value, line_number, key)?.to_string()),
                 "path" => intent.path = Some(string(value, line_number, key)?.to_string()),
+                "select" => intent.select = Some(string(value, line_number, key)?.to_string()),
+                "set" => intent.set = string_array(value, line_number, key)?,
                 "on_conflict" => {
                     intent.on_conflict = Some(string(value, line_number, key)?.to_string())
                 }
@@ -158,9 +192,8 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<Intent>)> {
                 }
                 _ => {
                     return Err(format!(
-                        "line {line_number}: unknown [[generate]] key `{key}`; known: \
-                         kind, name, fields, timestamps, indexes, package, on, yields, via, \
-                         order_by, limit, on_conflict, path"
+                        "line {line_number}: unknown [[generate]] key `{key}`; known: {}",
+                        KNOWN_GENERATE_KEYS.join(", ")
                     )
                     .into());
                 }
@@ -374,5 +407,53 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    /// The refusal *is* the schema documentation, so a key it names has to be
+    /// one the parser takes -- and a key the parser takes has to be named.
+    ///
+    /// It had stopped naming `method` and `consumes`: two shipped keys that
+    /// worked and that nobody who had not read the source could discover.
+    #[test]
+    fn every_known_generate_key_is_one_the_parser_accepts() {
+        for key in KNOWN_GENERATE_KEYS {
+            // A value of the right shape for each: the point is that the key
+            // is *reached*, not that this particular value is meaningful.
+            let value = match *key {
+                "fields" | "indexes" | "set" => "[]".to_string(),
+                "timestamps" => "true".to_string(),
+                "limit" => "10".to_string(),
+                "kind" => "\"record\"".to_string(),
+                "method" => "\"post\"".to_string(),
+                "consumes" => "\"form\"".to_string(),
+                "path" => "\"/a\"".to_string(),
+                _ => "\"x\"".to_string(),
+            };
+            let manifest = format!(
+                "schema = 1\n\n[[generate]]\nkind = \"record\"\nname = \"Note\"\n{key} = {value}\n"
+            );
+            let parsed = parse_manifest(&manifest);
+            assert!(
+                !parsed
+                    .as_ref()
+                    .err()
+                    .is_some_and(|error| error.contains("unknown [[generate]] key")),
+                "`{key}` is listed as known and the parser rejects it: {parsed:?}"
+            );
+        }
+    }
+
+    /// And the other direction: a key nobody documented is refused, listing
+    /// the ones that exist.
+    #[test]
+    fn an_undocumented_generate_key_is_refused_with_the_list() {
+        let error = parse_manifest(
+            "schema = 1\n\n[[generate]]\nkind = \"record\"\nname = \"Note\"\nsett = \"x\"\n",
+        )
+        .unwrap_err();
+        assert!(error.contains("unknown [[generate]] key `sett`"), "{error}");
+        for key in KNOWN_GENERATE_KEYS {
+            assert!(error.contains(key), "the refusal omits `{key}`: {error}");
+        }
     }
 }

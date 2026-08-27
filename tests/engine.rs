@@ -145,6 +145,7 @@ fn a_record_generates_through_the_transaction_protocol() {
             method: None,
             consumes: None,
             select: None,
+            pins: &[],
         },
         None,
     )
@@ -195,6 +196,7 @@ fn generating_the_same_record_twice_is_one_artifact_and_a_no_op() {
                 method: None,
                 consumes: None,
                 select: None,
+                pins: &[],
             },
             None,
         )
@@ -243,6 +245,7 @@ fn a_file_the_request_does_not_own_is_not_overwritten() {
             method: None,
             consumes: None,
             select: None,
+            pins: &[],
         },
         None,
     );
@@ -617,6 +620,7 @@ fn destroying_a_record_takes_back_exactly_what_generating_it_wrote() {
             method: None,
             consumes: None,
             select: None,
+            pins: &[],
         },
         None,
     )
@@ -674,6 +678,7 @@ fn destroying_one_record_leaves_another_alone() {
                 method: None,
                 consumes: None,
                 select: None,
+                pins: &[],
             },
             None,
         )
@@ -829,6 +834,7 @@ fn every_persistent_kind_destroys_back_to_its_projection_baseline() {
                 method: None,
                 consumes: None,
                 select: None,
+                pins: &[],
             },
             invocation.package.as_deref(),
         );
@@ -958,6 +964,7 @@ fn route_step(root: &std::path::Path, step: &[&str]) -> Result<(), jails_support
                     method: None,
                     consumes: None,
                     select: None,
+                    pins: &[],
                 },
                 invocation.package.as_deref(),
             )
@@ -1314,6 +1321,7 @@ fn a_field_evolves_the_record_and_migrates_the_table_for_it() {
             method: None,
             consumes: None,
             select: None,
+            pins: &[],
         },
         None,
     )
@@ -1460,6 +1468,7 @@ fn field_evolution_appends_rename_type_nullability_and_drop_migrations() {
             method: None,
             consumes: None,
             select: None,
+            pins: &[],
         },
         None,
     )
@@ -1581,6 +1590,7 @@ fn field_evolution_on_a_plain_record_changes_java_and_writes_no_migration() {
             method: None,
             consumes: None,
             select: None,
+            pins: &[],
         },
         None,
     )
@@ -1668,6 +1678,7 @@ fn a_source_only_field_refuses_a_backfill_plan_by_name() {
             method: None,
             consumes: None,
             select: None,
+            pins: &[],
         },
         None,
     )
@@ -1711,6 +1722,7 @@ fn unsafe_field_evolution_refuses_before_writing() {
             method: None,
             consumes: None,
             select: None,
+            pins: &[],
         },
         None,
     )
@@ -1771,6 +1783,7 @@ fn a_field_merges_an_edit_the_generator_also_touched() {
             method: None,
             consumes: None,
             select: None,
+            pins: &[],
         },
         None,
     )
@@ -1866,6 +1879,7 @@ fn a_field_refuses_a_duplicate_and_an_unrecorded_target() {
             method: None,
             consumes: None,
             select: None,
+            pins: &[],
         },
         None,
     )
@@ -1920,6 +1934,7 @@ fn a_manifest_applies_as_one_transition_that_each_step_can_see() {
                 method: None,
                 consumes: None,
                 select: None,
+                set: Vec::new(),
             },
             // Needs `add db`'s starter *and* `g scaffold`'s record, neither of
             // which exists on disk while this plans.
@@ -1940,6 +1955,7 @@ fn a_manifest_applies_as_one_transition_that_each_step_can_see() {
                 method: None,
                 consumes: None,
                 select: None,
+                set: Vec::new(),
             },
         ],
     )
@@ -2010,6 +2026,7 @@ fn a_manifest_that_drops_a_row_takes_it_back_out() {
         method: None,
         consumes: None,
         select: None,
+        set: Vec::new(),
     };
 
     jails_engine::route::app_apply(
@@ -2071,6 +2088,7 @@ fn applying_a_manifest_twice_leaves_the_store_where_it_was() {
                 method: None,
                 consumes: None,
                 select: None,
+                set: Vec::new(),
             }],
         )
     };
@@ -2117,6 +2135,7 @@ fn the_web_crawler_manifest_applies_as_one_transition() {
         method: None,
         consumes: None,
         select: None,
+        set: Vec::new(),
     };
     let on = |mut i: jails_engine::route::Intent, target: &str| {
         i.on = Some(target.to_string());
@@ -2344,6 +2363,7 @@ fn a_plan_names_exactly_the_files_the_apply_then_writes() {
         method: None,
         consumes: None,
         select: None,
+        set: Vec::new(),
     };
 
     let before = common::scenarios::file_set(&root);
@@ -2447,6 +2467,7 @@ fn a_manifest_row_that_changes_merges_with_what_the_reader_wrote() {
         method: None,
         consumes: None,
         select: None,
+        set: Vec::new(),
     };
     let at = root.join("src/main/java/com/example/demo/domain/Note.java");
 
@@ -2521,6 +2542,7 @@ fn an_overlapping_edit_refuses_without_writing_anything() {
         method: None,
         consumes: None,
         select: None,
+        set: Vec::new(),
     };
     let at = root.join("src/main/java/com/example/demo/domain/Note.java");
 
@@ -2602,6 +2624,7 @@ fn a_rename_moves_the_type_its_companions_and_every_reference_at_once() {
             method: None,
             consumes: None,
             select: None,
+            pins: &[],
         },
         None,
     )
@@ -2697,6 +2720,7 @@ fn a_rename_is_one_generation_and_will_not_land_on_an_occupied_name() {
                 method: None,
                 consumes: None,
                 select: None,
+                pins: &[],
             },
             None,
         )
@@ -2999,6 +3023,7 @@ fn renaming_a_generated_type_moves_what_the_store_says_it_owns() {
             method: None,
             consumes: None,
             select: None,
+            pins: &[],
         },
         None,
     )
@@ -3085,6 +3110,7 @@ fn an_operation_records_the_request_that_produced_it() {
             method: None,
             consumes: None,
             select: None,
+            pins: &[],
         },
         None,
     )
@@ -3127,6 +3153,7 @@ fn an_operation_records_the_request_that_produced_it() {
             method: None,
             consumes: None,
             select: None,
+            pins: &[],
         },
         None,
     )
@@ -3187,6 +3214,7 @@ fn pretending_writes_nothing_and_names_what_a_commit_would_write() {
             method: None,
             consumes: None,
             select: None,
+            pins: &[],
         },
         None,
     )
@@ -3233,6 +3261,7 @@ fn pretending_writes_nothing_and_names_what_a_commit_would_write() {
             method: None,
             consumes: None,
             select: None,
+            pins: &[],
         },
         None,
     )
@@ -3282,6 +3311,7 @@ fn a_plan_is_reported_through_the_one_projection() {
             method: None,
             consumes: None,
             select: None,
+            pins: &[],
         },
         None,
     )
@@ -3335,6 +3365,7 @@ fn a_plan_is_reported_through_the_one_projection() {
             method: None,
             consumes: None,
             select: None,
+            pins: &[],
         },
         None,
     )
@@ -3357,6 +3388,7 @@ fn a_plan_is_reported_through_the_one_projection() {
             method: None,
             consumes: None,
             select: None,
+            pins: &[],
         },
         None,
     )
@@ -3443,6 +3475,7 @@ fn a_generated_command_is_registered_in_the_dispatcher_that_runs_it() {
                 method: None,
                 consumes: None,
                 select: None,
+                pins: &[],
             },
             None,
         )
@@ -3762,6 +3795,7 @@ fn a_foreign_build_gets_the_code_and_a_capability_still_refuses() {
             method: None,
             consumes: None,
             select: None,
+            pins: &[],
         },
         None,
     )
@@ -3934,6 +3968,7 @@ fn a_plan_and_its_commit_are_described_in_the_same_words() {
                 method: None,
                 consumes: None,
                 select: None,
+                pins: &[],
             },
             None,
         )
@@ -4041,6 +4076,7 @@ fn one_entry_point_sends_each_kind_to_the_route_that_owns_it() {
         method: None,
         consumes: None,
         select: None,
+        set: Vec::new(),
     };
     let run =
         |i| jails_engine::route::recipe(&committing(&Project::load(&root).unwrap()), &i).unwrap();
@@ -4125,6 +4161,7 @@ fn a_commit_and_a_plan_are_the_same_envelope() {
                 method: None,
                 consumes: None,
                 select: None,
+                pins: &[],
             },
             None,
         )

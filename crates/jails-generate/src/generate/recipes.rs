@@ -81,6 +81,7 @@ pub(crate) fn artifacts_for(
                 name,
                 fields,
                 indexes,
+                path,
             )?
         }
         ArtifactKind::Controller => {
@@ -321,8 +322,11 @@ pub(crate) fn artifacts_for(
                 name,
                 &capitalize(target),
                 &parsed,
-                on_conflict,
-                endpoint,
+                crate::spring::Written {
+                    on_conflict,
+                    pins: recipe.pins,
+                    endpoint,
+                },
             )?;
             if let Some(event) = strategy_yields {
                 files.extend(crate::spring::outbox_files(

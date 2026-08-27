@@ -72,6 +72,8 @@ struct GenerateIntent {
     path: Option<String>,
     /// Which component identifies the row a `transition` updates.
     select: Option<String>,
+    /// Components pinned to a constant, as `component=literal`.
+    set: Vec<String>,
     method: Option<jails_spec::spec::kind::HttpMethod>,
     /// How that endpoint reads its request: `json` (the default) or `form`.
     consumes: Option<jails_spec::spec::kind::WireFormat>,
@@ -132,6 +134,7 @@ impl GenerateIntent {
             on_conflict: self.on_conflict,
             path: self.path,
             select: self.select,
+            set: self.set,
             method: self.method,
             consumes: self.consumes,
         })

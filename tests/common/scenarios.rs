@@ -740,6 +740,64 @@ pub const SCENARIOS: &[Scenario] = &[
             ],
         ],
     },
+    // The component the *endpoint* decides rather than the caller. Two
+    // endpoints write the same table and each must stamp its own sender; with
+    // the component in the request either can forge the other's rows, and a
+    // well-formed request is exactly what the forgery looks like. `missing.md`
+    // M-pin, and P10.7's first bullet.
+    Scenario {
+        name: "usecase-pinned",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[
+            &["add", "db", "--no-start"],
+            &["g", "enum", "SenderType", "CUSTOMER", "ADMIN"],
+            &[
+                "g",
+                "scaffold",
+                "Note",
+                "id:long@pk",
+                "authorId:long",
+                "body:string!",
+                "senderType:SenderType",
+            ],
+            &[
+                "g",
+                "usecase",
+                "PostAdminNote",
+                "authorId:long",
+                "body:string!",
+                "--on",
+                "Note",
+                "--set",
+                "senderType=ADMIN",
+                "--consumes",
+                "form",
+                "--path",
+                "/admin_api/notes",
+            ],
+        ],
+    },
+    // A resource whose collection URL is a fixed external contract.
+    // `g scaffold User` serves `/users` and the admin frontend calls
+    // `/admin_api/users`; refusing `--path` here was the honest answer while
+    // nothing carried it and the useless one once the URLs were given, because
+    // the only remaining repair was hand-editing the controller jails had just
+    // written. `missing.md` M8's last shape.
+    Scenario {
+        name: "scaffold-path",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[&[
+            "g",
+            "scaffold",
+            "Operator",
+            "id:long@pk",
+            "email:string!@unique",
+            "--path",
+            "/admin_api/operators",
+        ]],
+    },
     // The other half of `--consumes form`: on a `query` it also decides the
     // verb, because `@ModelAttribute` binds from request *parameters* and on a
     // GET those are the query string. `missing.md`'s "a GET with query-string

@@ -76,22 +76,53 @@ pub(crate) fn resource_service_java(
 /// with a `Location` for a creation, 204 for a delete that removed
 /// something, 404 for one that did not, and 404 rather than an empty 200 for
 /// a missing item.
+/// What the collection half of a scaffold's controller needs, as one value.
+///
+/// Three facts decided together by the caller and read together here: whether
+/// there is a per-item URL to advertise, what type that URL's segment is, and
+/// where the collection answers. Passing them positionally is what pushed this
+/// function past the parameter ceiling the sibling module is held to.
+#[derive(Clone, Copy)]
+pub(crate) struct Collection<'a> {
+    /// True when the resource has an `id` component, so a creation has
+    /// somewhere to point a `Location` header.
+    pub has_id: bool,
+    /// The Java type of the key an item route matches.
+    pub key: &'a crate::generate::KeyType,
+    /// `--path`, or `None` for the derived plural.
+    pub route: Option<&'a str>,
+}
+
+/// Where a scaffolded resource's collection answers.
+///
+/// One owner, and it delegates to `sql::table_name` for the derived case for
+/// the reason `CLAUDE.md` records: the framework-free handler once served
+/// `/categorys` over a table called `categories`, because a second pluraliser
+/// existed. A named route replaces the derivation outright rather than being
+/// spliced onto it -- `--path /admin_api/users` is the whole collection URL,
+/// not a prefix, so the item routes below it are `PATH + "/" + id`.
+pub(crate) fn collection_route(named: Option<&str>, name: &str) -> String {
+    named
+        .map(str::to_string)
+        .unwrap_or_else(|| crate::generate::resource_path(name))
+}
+
 pub(crate) fn resource_controller_java(
     slice: &Slice,
     name: &str,
     extra: &str,
-    has_id: bool,
     fields: &[crate::generate::Field],
-    key: &crate::generate::KeyType,
+    collection: Collection<'_>,
 ) -> String {
+    let Collection { has_id, key, route } = collection;
     let pkg: &str = &slice.placed(Layer::Web);
     if fields.iter().any(|field| field.constraints.scoped) {
         // The scoped controller has no id lookup and no delete -- a plain
         // repository operation cannot prove a tenant boundary -- so it never
         // names the key type and must not import it either.
-        return scoped_resource_controller_java(slice, name, extra, has_id, fields);
+        return scoped_resource_controller_java(slice, name, extra, has_id, fields, route);
     }
-    let path = format!("/{}", crate::sql::table_name(name).replace('_', "-"));
+    let path = collection_route(route, name);
     // A `Location` header needs something to point at. Without an `id`
     // component there is no per-item URL to build, and inventing one would
     // be worse than omitting the header.
@@ -144,10 +175,11 @@ fn scoped_resource_controller_java(
     extra: &str,
     has_id: bool,
     fields: &[crate::generate::Field],
+    route: Option<&str>,
 ) -> String {
     let security: &str = slice.base();
     let pkg: &str = &slice.placed(Layer::Web);
-    let path = format!("/{}", crate::sql::table_name(name).replace('_', "-"));
+    let path = collection_route(route, name);
     let (
         scope_import,
         scope_field,

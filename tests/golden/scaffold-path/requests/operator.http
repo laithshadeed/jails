@@ -1,0 +1,22 @@
+@baseUrl = http://localhost:8080
+
+### Create Operator
+POST {{baseUrl}}/admin_api/operators
+Content-Type: application/json
+
+{
+  "email": "sample-email"
+}
+
+### List Operator
+GET {{baseUrl}}/admin_api/operators
+Accept: application/json
+
+@id = 1
+
+### Get Operator
+GET {{baseUrl}}/admin_api/operators/{{id}}
+Accept: application/json
+
+### Delete Operator
+DELETE {{baseUrl}}/admin_api/operators/{{id}}

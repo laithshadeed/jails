@@ -188,6 +188,89 @@ pub(super) fn ordering_token(spec: &IntentSpec) -> Option<String> {
     })
 }
 
+/// Everything a *recorded* declaration contributes to a regenerated recipe,
+/// owned, in the spelling the CLI takes.
+///
+/// One value because of what it replaces: five sites -- two lifecycle repairs,
+/// two companion re-derivations and the field evolution -- each unpacked the
+/// same nine `IntentSpec` fields by hand into a `Recipe`, and each had to be
+/// found again when a tenth appeared. `--select` is the proof that they were
+/// not: it reached `Recipe` and every one of those five kept writing
+/// `select: None`, so `g field` on a resource whose transition selects
+/// `user_id` would have re-derived the adapter with `where id = :id` -- a
+/// different column, silently, in a file the reader never opened.
+///
+/// A struct rather than a free function returning a `Recipe` because the
+/// `Recipe` borrows: the owned strings have to outlive it, and this is where
+/// they live.
+pub(super) struct Recorded {
+    on: Option<String>,
+    yields: Option<String>,
+    via: Option<String>,
+    order_by: Option<String>,
+    limit: Option<u32>,
+    on_conflict: Option<String>,
+    path: Option<String>,
+    select: Option<String>,
+    pins: Vec<String>,
+    method: Option<jails_spec::spec::kind::HttpMethod>,
+    consumes: Option<jails_spec::spec::kind::WireFormat>,
+}
+
+impl Recorded {
+    pub(super) fn read(spec: &IntentSpec) -> Self {
+        Self {
+            on: spec.on.as_ref().map(JavaType::qualified),
+            yields: spec.yields.as_ref().map(JavaType::qualified),
+            via: spec.via.as_ref().map(JavaType::qualified),
+            order_by: ordering_token(spec),
+            limit: spec.limit,
+            on_conflict: spec.on_conflict.as_ref().map(ToString::to_string),
+            path: spec.path.as_ref().map(ToString::to_string),
+            select: spec.select.as_ref().map(ToString::to_string),
+            // The canonical `component=literal`, which is what `--set` parses:
+            // one spelling in and out, the same rule `ordering_token` follows.
+            pins: spec
+                .pins
+                .iter()
+                .map(jails_protocol::declaration::PinSpec::canonical)
+                .collect(),
+            method: spec.method,
+            consumes: spec.consumes,
+        }
+    }
+
+    /// The recipe this declaration would be regenerated from. `fields` and
+    /// `indexes` stay the caller's, because a repair and a companion
+    /// re-derivation disagree about which spelling of them the generator
+    /// wants.
+    pub(super) fn recipe<'a>(
+        &'a self,
+        kind: jails_spec::spec::kind::ArtifactKind,
+        name: &'a str,
+        fields: &'a [String],
+        indexes: &'a [String],
+    ) -> Recipe<'a> {
+        Recipe {
+            kind,
+            name,
+            fields,
+            indexes,
+            strategy_on: self.on.as_deref(),
+            strategy_yields: self.yields.as_deref(),
+            via: self.via.as_deref(),
+            order_by: self.order_by.as_deref(),
+            limit: self.limit,
+            on_conflict: self.on_conflict.as_deref(),
+            path: self.path.as_deref(),
+            method: self.method,
+            consumes: self.consumes,
+            select: self.select.as_deref(),
+            pins: &self.pins,
+        }
+    }
+}
+
 pub(super) fn projected_after(
     project: &Project,
     reads: &ReadDeclaration,

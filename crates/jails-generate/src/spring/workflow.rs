@@ -146,18 +146,47 @@ struct Defaults {
     preamble: &'static str,
 }
 
+/// How this write differs from a plain insert of what the request carried.
+///
+/// Three things decided by the caller and read together here: whether a unique
+/// constraint turns the create into a get-or-create, which components the
+/// endpoint pins rather than the caller supplying, and where and how the route
+/// answers. One value because `usecase_files` is where every one of them lands
+/// and passing them positionally is the Long Parameter List `Recipe` itself
+/// exists to have removed.
+#[derive(Clone, Copy)]
+pub(crate) struct Written<'a> {
+    pub(crate) on_conflict: Option<&'a str>,
+    pub(crate) pins: &'a [String],
+    pub(crate) endpoint: Endpoint<'a>,
+}
+
 pub(crate) fn usecase_files(
     slice: &Slice,
     name: &str,
     target: &str,
     fields: &[crate::generate::Field],
-    on_conflict: Option<&str>,
-    endpoint: Endpoint<'_>,
+    written: Written<'_>,
 ) -> jails_support::Result<Vec<Artifact>> {
+    let Written {
+        on_conflict,
+        pins,
+        endpoint,
+    } = written;
     require_scope_authorizer(slice, "usecase", name, fields)?;
     let resolved = Target::read(slice, "usecase", name, target)?;
     let target_fields = &resolved.fields;
     let id = resolved.id("usecase", name)?;
+    let pins = crate::spring::pin::resolve(
+        slice,
+        crate::spring::Pinning {
+            recipe: "usecase",
+            name,
+            target,
+        },
+        (target_fields, fields),
+        pins,
+    )?;
 
     for field in fields {
         let Some(target_field) = target_fields
@@ -220,6 +249,15 @@ pub(crate) fn usecase_files(
     for field in target_fields {
         if fields.iter().any(|input| input.name == field.name) {
             expressions.push(format!("command.{}()", field.name));
+            continue;
+        }
+        // Before the inferred default, and it has to be: a pinned component
+        // is one jails *could* have inferred -- `senderType` is an enum whose
+        // first constant is a perfectly good default -- and the whole point of
+        // pinning it is that this endpoint writes a particular one.
+        if let Some(pin) = pins.iter().find(|pin| pin.component == field.name) {
+            expressions.push(pin.expression.clone());
+            default_imports.extend(pin.imports.iter().cloned());
             continue;
         }
         let Some((expression, imports)) = usecase_default(slice, field) else {
@@ -869,8 +907,11 @@ mod usecase_tests {
             "WriteNote",
             "Note",
             &fields,
-            None,
-            Endpoint::json(),
+            Written {
+                on_conflict: None,
+                pins: &[],
+                endpoint: Endpoint::json(),
+            },
         )
         .unwrap();
         let implementation = &files
@@ -927,8 +968,11 @@ mod usecase_tests {
             "CreateWorkItem",
             "WorkItem",
             &fields,
-            None,
-            Endpoint::json(),
+            Written {
+                on_conflict: None,
+                pins: &[],
+                endpoint: Endpoint::json(),
+            },
         )
         .unwrap();
         let implementation = &files
@@ -982,8 +1026,11 @@ mod usecase_tests {
             "CreateMembership",
             "Membership",
             &[],
-            None,
-            Endpoint::json(),
+            Written {
+                on_conflict: None,
+                pins: &[],
+                endpoint: Endpoint::json(),
+            },
         )
         .unwrap_err();
 
@@ -1005,8 +1052,11 @@ mod usecase_tests {
             "CreateWorkspace",
             "Tenant",
             &fields,
-            None,
-            Endpoint::json(),
+            Written {
+                on_conflict: None,
+                pins: &[],
+                endpoint: Endpoint::json(),
+            },
         )
         .unwrap_err();
 

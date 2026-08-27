@@ -36,6 +36,29 @@ pub(super) fn refuse_misplaced(recipe: &Recipe<'_>) -> Result<()> {
         "the recipe that creates a row",
         recipe.on_conflict.is_some(),
     )?;
+    // Two recipes write a row: one creates it and one updates it, and both
+    // have a component the endpoint decides rather than the caller. Everywhere
+    // else there is no row to pin a component of, so a `--set` would be the M7
+    // shape -- a flag accepted, ignored, and never mentioned again.
+    if !recipe.pins.is_empty()
+        && !matches!(
+            recipe.kind,
+            ArtifactKind::Usecase | ArtifactKind::Transition
+        )
+    {
+        use clap::ValueEnum;
+        return Err(format!(
+            "`--set` applies to a use case or a transition -- the recipes that write a \
+             row.\n       fix: drop it from `jails g {} {}`.",
+            recipe
+                .kind
+                .to_possible_value()
+                .expect("every kind has a clap value")
+                .get_name(),
+            recipe.name
+        )
+        .into());
+    }
     // Four recipes take a request body jails renders as one bound parameter --
     // a `query`'s criteria record is one, which is why it is here. `handler`
     // writes a whole CRUD surface rather than one route, and `webhook` reads
@@ -63,14 +86,22 @@ pub(super) fn refuse_misplaced(recipe: &Recipe<'_>) -> Result<()> {
         )
         .into());
     }
-    // Four recipes answer or call HTTP on a route a caller might have to
-    // match.
+    // Five recipes answer or call HTTP on a route a caller might have to
+    // match. A scaffold is one of them: it serves a *collection*, so the
+    // named route is the collection's and the item routes hang off it --
+    // `--path /admin_api/users` is `GET /admin_api/users/{id}` too. Refusing
+    // it was the honest answer while nothing carried it and the useless one
+    // once a frontend's URLs were the contract: `g scaffold User` served
+    // `/users` and the admin page called `/admin_api/users`, so the project
+    // could not be made consistent without hand-editing the one controller
+    // jails had just written.
     // `handler` writes a whole CRUD surface rather than one route and
     // `webhook` answers a signed POST by definition, so neither is one path.
     if recipe.path.is_some()
         && !matches!(
             recipe.kind,
             ArtifactKind::Controller
+                | ArtifactKind::Scaffold
                 | ArtifactKind::Usecase
                 | ArtifactKind::Query
                 | ArtifactKind::Transition
@@ -79,8 +110,8 @@ pub(super) fn refuse_misplaced(recipe: &Recipe<'_>) -> Result<()> {
     {
         use clap::ValueEnum;
         return Err(format!(
-            "`--path` applies to a controller, a use case, a query or a transition.\n       fix: \
-             drop it from `jails g {} {}`.",
+            "`--path` applies to a controller, a scaffold, a use case, a query or a \
+             transition.\n       fix: drop it from `jails g {} {}`.",
             recipe
                 .kind
                 .to_possible_value()

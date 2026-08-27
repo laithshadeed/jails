@@ -459,6 +459,16 @@ pub struct Recipe<'a> {
     /// `None` is "not asked", and [`Recipe::selector`] applies the default --
     /// `id`, which is what every transition selected on before this existed.
     pub select: Option<&'a str>,
+    /// Components pinned to a constant rather than read from the request, as
+    /// the `component=literal` tokens the caller typed.
+    ///
+    /// Empty is "the caller supplies every component", which is what every
+    /// recipe did before `--set` existed. Parsed at the boundary rather than
+    /// here, the same split every other reference in this struct takes: the
+    /// token is text until `route::request::declared` turns it into a
+    /// `PinSpec`, and its *meaning* against the target's declared types is
+    /// resolved in the generator.
+    pub pins: &'a [String],
 }
 
 impl Recipe<'_> {

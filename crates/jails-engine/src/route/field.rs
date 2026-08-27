@@ -515,6 +515,7 @@ fn add_field_with_syntax(
                 method: None,
                 consumes: None,
                 select: None,
+                pins: &[],
             },
             package,
         )?,

@@ -113,6 +113,15 @@ pub(super) fn declared(
         .path
         .map(jails_protocol::identity::RoutePath::parse)
         .transpose()?;
+    spec.select = recipe
+        .select
+        .map(jails_protocol::identity::Name::parse)
+        .transpose()?;
+    spec.pins = recipe
+        .pins
+        .iter()
+        .map(|token| jails_protocol::declaration::PinSpec::parse(token))
+        .collect::<Result<Vec<_>>>()?;
     // Recorded, not applied: an intent regenerated with a different verb is
     // the *same* entity with new content, which is what makes it an edit the
     // three-way merge can carry rather than an orphan and a rewrite.

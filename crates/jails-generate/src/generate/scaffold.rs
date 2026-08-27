@@ -26,6 +26,7 @@ pub(crate) fn scaffold_artifacts(
     name: &str,
     fields: &[String],
     indexes: &[String],
+    route: Option<&str>,
 ) -> Result<Vec<Artifact>> {
     let domain = slice.placed(Layer::Domain);
     let (parsed, reusing_record) =
@@ -35,8 +36,16 @@ pub(crate) fn scaffold_artifacts(
     // `scaffold_artifacts_from_fields`, which reads the referenced record's
     // stored `@pk` and names the two commands that do the job. A generic
     // refusal here would shadow that one and teach nothing.
-    let mut artifacts =
-        scaffold_artifacts_from_fields(slice, name, &parsed, indexes, !reusing_record)?;
+    let mut artifacts = scaffold_artifacts_from_fields(
+        slice,
+        name,
+        &parsed,
+        indexes,
+        Emission {
+            include_record: !reusing_record,
+            route,
+        },
+    )?;
     artifacts.extend(crate::architecture::artifacts(slice.project()));
     Ok(artifacts)
 }
@@ -72,13 +81,33 @@ pub(crate) fn has_schema_sql(project: &crate::model::Project) -> bool {
         .contains("schema.sql")
 }
 
+/// What this scaffold emits beyond its fields: the two things that vary
+/// between a fresh `g scaffold` and the re-derivation `g field` performs.
+///
+/// One value rather than two more positional parameters, the same cut
+/// `spring::Slice` made: both are decided by the caller and read once each,
+/// deep in the artifact list.
+#[derive(Clone, Copy)]
+pub(crate) struct Emission<'a> {
+    /// False when the record is already on disk and this call is re-deriving
+    /// everything around it.
+    pub include_record: bool,
+    /// The collection route the controller answers, when the caller named one
+    /// instead of taking `sql::table_name`'s derived shape.
+    pub route: Option<&'a str>,
+}
+
 pub(crate) fn scaffold_artifacts_from_fields(
     slice: &crate::model::Slice,
     name: &str,
     parsed: &[Field],
     indexes: &[String],
-    include_record: bool,
+    emission: Emission<'_>,
 ) -> Result<Vec<Artifact>> {
+    let Emission {
+        include_record,
+        route,
+    } = emission;
     let root: &Path = slice.project().root();
     let place = |layer| slice.placed(layer);
     let domain = place(Layer::Domain);
@@ -165,7 +194,7 @@ pub(crate) fn scaffold_artifacts_from_fields(
         path: root
             .join("requests")
             .join(format!("{}.http", crate::sql::snake_case(name))),
-        contents: scaffold_requests(slice.project(), &domain, name, parsed, &sample.0),
+        contents: scaffold_requests(slice.project(), &domain, name, parsed, (&sample.0, route)),
     });
 
     // A fixture file, on the same rule as the migration: only when the
@@ -347,9 +376,12 @@ pub(crate) fn scaffold_artifacts_from_fields(
                     domain_in(&web),
                     import_of(&web, &service, &format!("{name}Service"))
                 ),
-                parsed.iter().any(|f| f.name == "id"),
                 parsed,
-                &super::repository::key_type(&columns),
+                crate::spring::Collection {
+                    has_id: parsed.iter().any(|f| f.name == "id"),
+                    key: &super::repository::key_type(&columns),
+                    route,
+                },
             ),
         },
         Artifact {
@@ -470,9 +502,10 @@ pub(crate) fn scaffold_requests(
     domain: &str,
     name: &str,
     fields: &[Field],
-    body: &str,
+    request: (&str, Option<&str>),
 ) -> String {
-    let route = resource_path(name);
+    let (body, named) = request;
+    let route = crate::spring::collection_route(named, name);
     // Scoped resources are create-only; reads go through `jails g query`,
     // which writes its own collection.
     let browse = if fields.iter().any(|field| field.constraints.scoped) {

@@ -6540,3 +6540,226 @@ fn the_documented_body_carries_only_what_the_request_record_declares() {
         "{collection}"
     );
 }
+
+/// A resource whose collection URL is given rather than derived.
+///
+/// `g scaffold User` serves `/users` and the frontend that ships with the
+/// brief calls `/admin_api/users`. Refusing `--path` here was the honest
+/// answer while nothing carried it, and the useless one once the URLs were
+/// the contract: the only remaining repair was hand-editing the controller
+/// jails had just written, which is the plumbing this tool exists to remove.
+///
+/// The item routes hang off the collection rather than being separately
+/// derived -- `PATH + "/" + id` -- so naming one route names all four.
+#[test]
+fn a_scaffold_answers_on_the_collection_route_it_was_given() {
+    let root = temp_dir("scaffold-named-route");
+    write_spring_fixture(&root);
+
+    assert!(
+        jails_cmd(&root, None)
+            .args([
+                "g",
+                "scaffold",
+                "User",
+                "id:long@pk",
+                "email:string!@unique",
+                "--path",
+                "/admin_api/users",
+            ])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let controller =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/web/UserController.java"))
+            .unwrap();
+    assert!(
+        controller.contains(r#"public static final String PATH = "/admin_api/users";"#),
+        "{controller}"
+    );
+    // Derived nowhere else: the item routes are built from PATH, so a named
+    // collection cannot leave a `/users/{id}` behind it.
+    assert!(!controller.contains("\"/users\""), "{controller}");
+
+    // The editor collection is the same one value, not a second derivation --
+    // which is the drift `sql::table_name` being the only pluraliser exists to
+    // stop.
+    let requests = fs::read_to_string(root.join("requests/user.http")).unwrap();
+    assert!(
+        requests.contains("POST {{baseUrl}}/admin_api/users"),
+        "{requests}"
+    );
+    assert!(
+        requests.contains("GET {{baseUrl}}/admin_api/users/{{id}}"),
+        "{requests}"
+    );
+    assert!(!requests.contains("{{baseUrl}}/users"), "{requests}");
+}
+
+/// The component the endpoint decides, not the caller.
+///
+/// `POST /admin_api/messages` must write `ADMIN` and `POST
+/// /customer_api/messages` must write `CUSTOMER`. With the component in the
+/// request both endpoints take it from whoever calls them, so either can forge
+/// the other's rows -- and no validation closes that, because a well-formed
+/// request is exactly what the forgery looks like.
+#[test]
+fn a_pinned_component_is_written_by_the_endpoint_and_not_by_the_caller() {
+    let root = temp_dir("usecase-pinned-component");
+    write_spring_fixture(&root);
+
+    for args in [
+        vec!["add", "db", "--no-start"],
+        vec!["g", "enum", "SenderType", "CUSTOMER", "ADMIN"],
+        vec![
+            "g",
+            "scaffold",
+            "Message",
+            "id:long@pk",
+            "userId:long",
+            "content:string!",
+            "senderType:SenderType",
+        ],
+        vec![
+            "g",
+            "usecase",
+            "SendAdminMessage",
+            "userId:long",
+            "content:string!",
+            "--on",
+            "Message",
+            "--set",
+            "senderType=ADMIN",
+        ],
+    ] {
+        assert!(
+            jails_cmd(&root, None)
+                .args(&args)
+                .status()
+                .unwrap()
+                .success(),
+            "{args:?}"
+        );
+    }
+
+    let service = root.join("src/main/java/com/example/demo/service");
+    let implementation =
+        fs::read_to_string(service.join("StoringSendAdminMessageUseCase.java")).unwrap();
+    assert!(
+        implementation.contains("SenderType.ADMIN"),
+        "{implementation}"
+    );
+    assert!(
+        implementation.contains("import com.example.demo.domain.SenderType;"),
+        "the pinned constant brings its own import: {implementation}"
+    );
+
+    // And the request cannot carry it: a command component would be a way for
+    // the caller to say something else.
+    let command = fs::read_to_string(service.join("SendAdminMessageCommand.java")).unwrap();
+    assert!(!command.contains("senderType"), "{command}");
+}
+
+/// Every way a pin can be wrong is refused by name, before anything is
+/// written.
+///
+/// The literal is resolved against the component's *declared type*, which is
+/// the whole reason `--set` is not a passthrough: `SenderType.SHOUTING` would
+/// compile as text and fail as Java, in a file the reader did not write.
+#[test]
+fn a_pin_that_cannot_be_resolved_is_refused_and_names_what_would_work() {
+    let root = temp_dir("usecase-pin-refusals");
+    write_spring_fixture(&root);
+
+    for args in [
+        vec!["add", "db", "--no-start"],
+        vec!["g", "enum", "SenderType", "CUSTOMER", "ADMIN"],
+        vec![
+            "g",
+            "scaffold",
+            "Message",
+            "id:long@pk",
+            "userId:long",
+            "content:string!",
+            "senderType:SenderType",
+            "sentAt:instant",
+        ],
+    ] {
+        assert!(
+            jails_cmd(&root, None)
+                .args(&args)
+                .status()
+                .unwrap()
+                .success(),
+            "{args:?}"
+        );
+    }
+
+    for (pin, expected) in [
+        // Not a constant of that enum: the refusal lists the ones that are.
+        ("senderType=SHOUTING", "CUSTOMER, ADMIN"),
+        // Not a component of the target: the refusal lists the ones that are.
+        ("nope=ADMIN", "has no component with that name"),
+        // In the request *and* pinned: a pin the caller can override is not a
+        // pin, so one of the two has to go.
+        ("content=hello", "both accepts `content` and pins it"),
+        // A value with a lifetime of its own. A pinned instant is a timestamp
+        // frozen at generation time, which is never what anyone means.
+        ("sentAt=2024-01-01T00:00:00Z", "not a value with a lifetime"),
+        // Anything an expression could hide in never reaches a type at all.
+        ("senderType=Sender.of", "not a constant of SenderType"),
+    ] {
+        let output = jails_cmd(&root, None)
+            .args([
+                "g",
+                "usecase",
+                "Probe",
+                "userId:long",
+                "content:string!",
+                "--on",
+                "Message",
+                "--set",
+                pin,
+            ])
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{pin} was accepted");
+        assert!(stderr.contains(expected), "{pin}: {stderr}");
+        assert!(stderr.contains("fix:"), "{pin}: {stderr}");
+    }
+
+    // A literal that is not one is refused before any type is consulted, so
+    // the message is about the value rather than about the component.
+    let output = jails_cmd(&root, None)
+        .args([
+            "g",
+            "usecase",
+            "Probe",
+            "userId:long",
+            "--on",
+            "Message",
+            "--set",
+            "senderType=Sender.of(x)",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("contains `(`"), "{stderr}");
+
+    // And a recipe with no row to pin a component of refuses the flag rather
+    // than accepting and ignoring it -- `missing.md` M7's shape.
+    let output = jails_cmd(&root, None)
+        .args(["g", "record", "Probe", "a:string", "--set", "a=x"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("`--set` applies to a use case or a transition"),
+        "{stderr}"
+    );
+}

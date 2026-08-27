@@ -577,7 +577,11 @@ pub(crate) enum Command {
         ///
         /// Derived paths are a virtue greenfield; they are unusable when the
         /// URLs are a fixed external contract. Valid on `controller`,
-        /// `usecase`, `query` and `transition`.
+        /// `scaffold`, `usecase`, `query` and `transition`.
+        ///
+        /// On a scaffold it names the *collection*, and the item routes hang
+        /// off it: `--path /admin_api/users` also serves
+        /// `GET /admin_api/users/{id}`.
         #[arg(long, value_name = "PATH")]
         path: Option<String>,
         /// Which component identifies the row a `transition` updates.
@@ -589,6 +593,29 @@ pub(crate) enum Command {
         /// takes the key from the URL and the rest from the body.
         #[arg(long, value_name = "FIELD")]
         select: Option<String>,
+        /// Pin one component to a constant instead of reading it from the
+        /// request. Repeatable, as `component=literal`.
+        ///
+        ///   jails g usecase SendAdminMessage userId:long content:string! \
+        ///     --on Message --set senderType=ADMIN
+        ///
+        /// The endpoint that must write `ADMIN` and the one that must write
+        /// `CUSTOMER` are two endpoints, and with the component in the request
+        /// either can forge the other's rows -- a well-formed request is
+        /// exactly what the forgery looks like, so no validation on the
+        /// request closes it.
+        ///
+        /// The value is a literal, never a Java expression: an enum constant,
+        /// a boolean, a number, or a short piece of text. It is resolved
+        /// against the component's declared type, so a constant that is not
+        /// one of that enum's constants is refused by name rather than
+        /// written into your code.
+        ///
+        /// Valid on `usecase` and `transition`. A `transition` whose every
+        /// mutated component is pinned needs no version and no `If-Match`:
+        /// every writer writes the same value, so there is no update to lose.
+        #[arg(long = "set", value_name = "COMPONENT=VALUE")]
+        set: Vec<String>,
         /// For `controller`, the HTTP method the generated route answers.
         /// Defaults to `get`.
         ///

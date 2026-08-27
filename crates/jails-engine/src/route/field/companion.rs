@@ -49,33 +49,12 @@ pub(super) fn companion_updates(
             .iter()
             .map(|index| index.canonical())
             .collect::<Vec<_>>();
-        let on = after.on.as_ref().map(JavaType::qualified);
-        let yields = after.yields.as_ref().map(JavaType::qualified);
-        let via = after.via.as_ref().map(JavaType::qualified);
-        let order_by = ordering_token(&after);
-        let limit = after.limit;
-        let on_conflict = after.on_conflict.as_ref().map(ToString::to_string);
-        let path = after.path.as_ref().map(ToString::to_string);
+        let recorded = Recorded::read(&after);
         let mut change = with_test_support(
             project,
             jails_generate::generate::plan_recipe(
                 project,
-                &jails_generate::generate::Recipe {
-                    kind: id.recipe,
-                    name: id.name.as_str(),
-                    fields: &canonical_fields,
-                    indexes: &indexes,
-                    strategy_on: on.as_deref(),
-                    strategy_yields: yields.as_deref(),
-                    via: via.as_deref(),
-                    order_by: order_by.as_deref(),
-                    limit,
-                    on_conflict: on_conflict.as_deref(),
-                    path: path.as_deref(),
-                    method: after.method,
-                    consumes: after.consumes,
-                    select: None,
-                },
+                &recorded.recipe(id.recipe, id.name.as_str(), &canonical_fields, &indexes),
                 package,
             )?,
         );
@@ -237,33 +216,12 @@ fn dependent_updates(
             .iter()
             .map(|index| index.canonical())
             .collect::<Vec<_>>();
-        let on = spec.on.as_ref().map(JavaType::qualified);
-        let yields = spec.yields.as_ref().map(JavaType::qualified);
-        let via = spec.via.as_ref().map(JavaType::qualified);
-        let order_by = ordering_token(&spec);
-        let limit = spec.limit;
-        let on_conflict = spec.on_conflict.as_ref().map(ToString::to_string);
-        let path = spec.path.as_ref().map(ToString::to_string);
+        let recorded = Recorded::read(&spec);
         let mut change = with_test_support(
             &projected,
             jails_generate::generate::plan_recipe(
                 &projected,
-                &jails_generate::generate::Recipe {
-                    kind: id.recipe,
-                    name: id.name.as_str(),
-                    fields: &canonical_fields,
-                    indexes: &indexes,
-                    strategy_on: on.as_deref(),
-                    strategy_yields: yields.as_deref(),
-                    via: via.as_deref(),
-                    order_by: order_by.as_deref(),
-                    limit,
-                    on_conflict: on_conflict.as_deref(),
-                    path: path.as_deref(),
-                    method: spec.method,
-                    consumes: spec.consumes,
-                    select: None,
-                },
+                &recorded.recipe(id.recipe, id.name.as_str(), &canonical_fields, &indexes),
                 package,
             )?,
         );

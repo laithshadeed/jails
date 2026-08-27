@@ -68,6 +68,9 @@ pub struct Intent {
     /// default. A path variable binds to it, which is what lets a transition
     /// answer on a route whose key is in the URL.
     pub select: Option<String>,
+    /// Components pinned to a constant rather than read from the request, as
+    /// `component=literal`. Empty is "the caller supplies every one".
+    pub set: Vec<String>,
     /// The HTTP verb, for the one recipe that answers HTTP.
     pub method: Option<jails_spec::spec::kind::HttpMethod>,
     /// How that endpoint reads its request. `missing.md` M15.
@@ -180,6 +183,7 @@ fn declare(
             method: intent.method,
             consumes: intent.consumes,
             select: intent.select.as_deref(),
+            pins: &intent.set,
         };
         let change = with_test_support(
             &planned,

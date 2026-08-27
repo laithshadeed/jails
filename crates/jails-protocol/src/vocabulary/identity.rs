@@ -30,9 +30,11 @@ use crate::Result;
 use jails_support::codec::{self, Codec, DIGEST_BYTES, Decoder, Encoder};
 
 mod component;
+mod literal;
 mod route;
 mod sql;
 pub use component::FieldName;
+pub use literal::LiteralValue;
 pub use route::RoutePath;
 pub use sql::SqlName;
 
