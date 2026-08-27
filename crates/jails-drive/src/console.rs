@@ -4,6 +4,10 @@
 //! `add db` started, or `sqlite3` when given a file. `console` is `jshell`
 //! with the project's classpath and a booted application context.
 
+mod h2;
+
+pub use h2::Client as H2Client;
+
 use crate::compose;
 use crate::generate::find_project_root;
 use crate::run;
@@ -13,12 +17,38 @@ use std::io::{IsTerminal as _, Read, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Open a database client. A path argument is SQLite; otherwise the
-/// compose postgres from `jails add db`.
-pub fn db(file: Option<&Path>, no_start: bool, args: &[String], debug: bool) -> Result<()> {
+/// Open a database client for whichever database this project actually has.
+///
+/// A path argument is SQLite, an H2 datasource in `application.properties` is
+/// H2, and otherwise the compose postgres from `jails add db`. The H2 arm is
+/// keyed off the *declared URL* rather than off a recorded capability, for the
+/// same reason `sql_dialect` is: a manifest records what was asked for, and a
+/// datasource URL is a fact about the database this project will actually
+/// meet.
+pub fn db(
+    file: Option<&Path>,
+    web: bool,
+    no_start: bool,
+    args: &[String],
+    debug: bool,
+) -> Result<()> {
     let root = find_project_root()?;
     if let Some(path) = file {
+        if web {
+            return Err("`--web` opens H2's browser console; it does not apply to a SQLite file.\n       fix: drop `--web`, or drop the file argument to use the project's own datasource.".into());
+        }
         return sqlite3(&root, path, args, debug);
+    }
+    let project = crate::model::Project::discover()?;
+    if let Some(url) = h2::declared_url(&project) {
+        let client = match web {
+            true => H2Client::Web,
+            false => H2Client::Shell,
+        };
+        return h2::open(&project, &url, client, args, debug);
+    }
+    if web {
+        return Err("`--web` opens H2's browser console, and this project declares no `jdbc:h2:` datasource.\n       fix: `jails add h2`, or drop `--web` for the PostgreSQL client.".into());
     }
     psql(&root, no_start, args, debug)
 }

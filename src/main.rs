@@ -485,6 +485,7 @@ fn main() -> std::process::ExitCode {
         Command::Db {
             command,
             file,
+            web,
             no_start,
             args,
         } => match command {
@@ -500,7 +501,7 @@ fn main() -> std::process::ExitCode {
                 single_connection,
                 invocation,
             ),
-            None => console::db(file.as_deref(), no_start, &args, debug),
+            None => console::db(file.as_deref(), web, no_start, &args, debug),
         },
         Command::Console { console } => tool_command::console(
             &console.profiles,

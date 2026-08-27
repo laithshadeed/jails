@@ -669,7 +669,20 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // above: `compat` already classifies the store into exactly
                 // three answers and this asks it, so what grows here is the
                 // question. `Absent` is deliberately not a finding.
-                ceiling: 1521,
+                //
+                // 1521 -> 1565 for H2's URL grammar, in `doctor/h2.rs` rather
+                // than in `wiring.rs`: that module asks whether a capability
+                // is wired up, and this reads one property against facts that
+                // live in `deps/h2database` rather than in the project.
+                // `AUTO_SERVER=TRUE` with `DB_CLOSE_ON_EXIT=FALSE` is a hard
+                // startup failure -- `Database.java:282` throws
+                // `getUnsupportedException` on exactly that pair -- and a
+                // reader arrives at it honestly, since the first is what you
+                // add to get a console and the second is what a tutorial adds.
+                // The warn arm is the one that costs the lines: a file-backed
+                // H2 without `AUTO_SERVER` works and cannot be inspected,
+                // which is a different answer from broken and has to say so.
+                ceiling: 1565,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.

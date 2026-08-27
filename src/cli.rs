@@ -842,13 +842,19 @@ pub(crate) enum Command {
         #[arg(long)]
         no_start: bool,
     },
-    /// Open a database client (`psql` against compose postgres, or sqlite3)
+    /// Open a database client (H2, `psql` against compose postgres, or sqlite3)
     #[command(visible_alias = "dbconsole")]
     Db {
         #[command(subcommand)]
         command: Option<DbCommand>,
-        /// A SQLite file; omit this to use the compose postgres from `add db`
+        /// A SQLite file; omit this to use the project's own datasource
         file: Option<PathBuf>,
+        /// Open H2's browser console instead of a terminal prompt
+        ///
+        /// H2's own web server, not Spring's `/h2-console`: it works whether
+        /// or not the application is running.
+        #[arg(long)]
+        web: bool,
         /// Do not `docker compose up` postgres first
         #[arg(long)]
         no_start: bool,

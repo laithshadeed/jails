@@ -22,6 +22,8 @@ mod wiring;
 use environment::*;
 use wiring::*;
 
+mod h2;
+
 use crate::{compose, inspect, pom};
 use jails_support::Result;
 
@@ -163,6 +165,7 @@ fn run_checks(project: &Project) -> Vec<Check> {
     checks.extend(management_checks(project));
     checks.extend(cors_checks(project));
     checks.extend(sql_init_checks(project));
+    checks.extend(h2::checks(project));
     checks.extend(virtual_thread_checks(root));
     checks.extend(hot_reload_checks(project));
     checks.extend(port_checks(root));

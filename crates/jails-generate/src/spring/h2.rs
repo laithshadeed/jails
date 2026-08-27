@@ -79,7 +79,20 @@ fn exception_translation_property(boot_major: u32) -> &'static str {
 /// used was `jdbc:h2:file:~/minicom-spring-4`, which puts a project's data in
 /// the developer's home directory where nothing cleans it up and two checkouts
 /// of the same project silently share one database.
-const FILE_URL: &str = "jdbc:h2:file:./data/app";
+///
+/// **`AUTO_SERVER=TRUE` is what makes the database inspectable.** Without it
+/// H2 takes an exclusive file lock, so `jails db` while the application is up
+/// is refused with `Database may be already in use` -- and starting the
+/// application while a console is open fails the same way. With it, H2 elects
+/// the first opener as a server and the rest connect through it, which is the
+/// whole reason a developer picks a file-backed H2 over `mem:`.
+///
+/// **`DB_CLOSE_ON_EXIT=FALSE` must never join it.** `Database.java:282` in
+/// `deps/h2database` throws
+/// `getUnsupportedException("AUTO_SERVER=TRUE && DB_CLOSE_ON_EXIT=FALSE")`, so
+/// the pair is a hard startup failure rather than a bad idea. `doctor` reports
+/// it for projects jails did not write.
+const FILE_URL: &str = "jdbc:h2:file:./data/app;AUTO_SERVER=TRUE";
 
 /// What the tests get instead.
 ///
@@ -120,8 +133,11 @@ pub(crate) fn h2_slice(slice: &Slice) -> Change {
             console_note(boot_major),
             vec![
                 "spring.h2.console.enabled=true".to_string(),
-                "# Open http://localhost:8080/h2-console and connect with the URL above."
+                "# `jails db` opens a SQL prompt on this database and `jails db --web` opens"
                     .to_string(),
+                "# H2's own browser console -- both work whether or not the application is up."
+                    .to_string(),
+                "# Spring's own console, below, needs the application running.".to_string(),
                 "spring.h2.console.path=/h2-console".to_string(),
                 "# Raw SQL, no ORM -- so no CGLIB proxy around every @Repository.".to_string(),
                 exception_translation_property(boot_major).to_string(),
