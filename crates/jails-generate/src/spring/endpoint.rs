@@ -3,8 +3,6 @@
 //! Its own module rather than three lines in `spring.rs`, on that file's own
 //! rule: a value with a secret of its own goes beside the file, not in it.
 
-use super::*;
-
 /// The HTTP surface a recipe was asked for: where the route is, and how the
 /// request arrives.
 ///
