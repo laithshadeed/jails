@@ -304,6 +304,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-project", "codemod", 5),
     ("jails-project", "compose", 5),
     ("jails-project", "model", 5),
+    ("jails-project", "modernize", 5),
     ("jails-project", "project", 5),
     ("jails-project", "projection", 5),
     ("jails-project", "properties", 5),

@@ -279,6 +279,9 @@ pub enum CanonicalMutationRequest {
     Format {
         scopes: BTreeSet<ProjectPath>,
     },
+    Modernize {
+        files: BTreeSet<ProjectPath>,
+    },
     RemoveToolFeature {
         feature: ToolFeature,
         force: bool,
@@ -525,6 +528,7 @@ impl CanonicalMutationRequest {
             Self::RenameResource(_) => 22,
             Self::CompleteStorageRename(_) => 23,
             Self::UndoFiles(_) => 24,
+            Self::Modernize { .. } => 25,
         }
     }
 }
@@ -567,6 +571,9 @@ impl Codec for CanonicalMutationRequest {
             Self::AdoptLayout | Self::FastTest => {}
             Self::Format { scopes } => {
                 encoder.set(scopes)?;
+            }
+            Self::Modernize { files } => {
+                encoder.set(files)?;
             }
             Self::RemoveToolFeature { feature, force } => {
                 encoder.string(feature.label())?;
@@ -650,6 +657,10 @@ impl Codec for CanonicalMutationRequest {
             11 => {
                 let scopes: BTreeSet<ProjectPath> = decoder.set()?;
                 Self::Format { scopes }
+            }
+            25 => {
+                let files: BTreeSet<ProjectPath> = decoder.set()?;
+                Self::Modernize { files }
             }
             12 => {
                 let feature = ToolFeature::parse(&decoder.string()?)?;

@@ -174,7 +174,7 @@ fn element_text(xml: &str, tag: &str) -> Option<String> {
     None
 }
 
-fn inside_comment(xml: &str, offset: usize) -> bool {
+pub(crate) fn inside_comment(xml: &str, offset: usize) -> bool {
     match xml[..offset].rfind("<!--") {
         Some(open) => xml[open..offset].find("-->").is_none(),
         None => false,
@@ -820,6 +820,9 @@ fn indent_block(body: &str, indent: &str) -> String {
 /// auto-configuration into `spring-boot-flyway` at 4.0 -- three boundaries
 /// inside two majors, and `add db` needs all three. `None` means the parent is
 /// absent or unreadable, which is a different answer from "old".
+mod retarget;
+pub use retarget::{with_parent_version, with_release_level};
+
 pub fn spring_boot_version_of(pom: &str) -> Option<(u32, u32)> {
     let after = &pom[pom.find("spring-boot-starter-parent")?..];
     let start = after.find("<version>")? + "<version>".len();

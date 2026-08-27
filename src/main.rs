@@ -436,6 +436,7 @@ fn main() -> std::process::ExitCode {
         Command::Start { services } => compose::start(&services, debug),
         Command::Stop { services } => compose::stop_cmd(&services, debug),
         Command::Adopt => dispatch::mutate(invocation, false, jails_engine::route::adopt_layout),
+        Command::Modernize => dispatch::mutate(invocation, false, jails_engine::route::modernize),
         Command::Src { type_name, json } => source::src(&type_name, json),
         Command::Bench {
             vus,

@@ -831,7 +831,25 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // list of independent checks, which is the one shape where
                 // length is not complexity -- but it is the largest module
                 // now, and the next rise there is the split.
-                ceiling: 658,
+                //
+                // 658 -> 660, and `pom.rs` holds the record again. It took
+                // `jails modernize`'s two Maven edits to 694, and the answer
+                // was the split this row asks for -- `pom/retarget.rs`, the
+                // edits nothing but the upgrade makes -- which brought it back
+                // to 660. What is left of the rise is `mod retarget;` and its
+                // re-export: the two lines a new submodule always costs, and
+                // the shape this gate wants rather than the shape it stops.
+                //
+                // 660 -> 669, and the file is `intent/request.rs`. One new
+                // `CanonicalMutationRequest` variant costs eleven lines there
+                // -- the variant, its tag, its encode arm and its decode arm
+                // -- and all four have to live beside the enum, because the
+                // codec rule is that every wire decoder calls the same
+                // constructor. That is a closed vocabulary growing by one
+                // command (`modernize`), not a module accreting decisions; the
+                // splittable part of a request already lives in its own
+                // `RequestV1` type, and this one carries a set of paths.
+                ceiling: 669,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
                       decomposing one, so this asks the question the split is actually for: \

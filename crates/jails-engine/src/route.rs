@@ -103,7 +103,7 @@ pub use field::{
 pub use history::undo_files;
 pub use lifecycle::{repair, revive};
 pub use maintenance::{
-    RenameResourceInvocation, adopt_layout, app_init, format, rename, rename_resource,
+    RenameResourceInvocation, adopt_layout, app_init, format, modernize, rename, rename_resource,
     rename_storage,
 };
 pub use oneshot::{cases, migration};

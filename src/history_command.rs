@@ -372,6 +372,7 @@ fn receipt_reason(receipt: &jails_commit::journal::ReceiptV1) -> &'static str {
         PlannedSubject::GenerateQueries { .. } => "generate-queries",
         PlannedSubject::ContractProjection { .. } => "contract-projection",
         PlannedSubject::UndoFiles(_) => "undo-files",
+        PlannedSubject::Modernize { .. } => "modernize",
     }
 }
 

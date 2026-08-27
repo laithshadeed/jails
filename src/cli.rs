@@ -742,6 +742,17 @@ pub(crate) enum Command {
     /// reports the ones it does not rather than guessing. Never touches
     /// [project] capabilities -- `jails sync` acts on that list.
     Adopt,
+    /// Upgrade the build to the Spring Boot and JDK jails generates against
+    ///
+    /// One commit, five edits. A Boot 2.7 project on JDK 21 is not one change
+    /// away from Boot 4 on JDK 26: the Gradle wrapper, the plugin version, the
+    /// Java release (which Gradle 9 only accepts as a toolchain), the test
+    /// task's JUnit platform and H2 2.x's type names all move together, and
+    /// four of the five fail naming something other than the cause. What the
+    /// upgrade breaks in code you own -- Jackson 2, `javax.*` -- is reported
+    /// rather than rewritten.
+    #[command(visible_alias = "upgrade")]
+    Modernize,
     /// Check everything that has to be true before the app can start
     Doctor {
         /// Emit the checks as JSON: {version, failures, warnings, checks[]}

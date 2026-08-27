@@ -52,6 +52,9 @@ pub enum PlannedSubject {
         json_schema: bool,
     },
     UndoFiles(Box<UndoFilesPlanV1>),
+    Modernize {
+        files: BTreeSet<ProjectPath>,
+    },
 }
 
 /// The authenticated state needed to restore a receipt without re-deriving it.
@@ -90,6 +93,7 @@ impl PlannedSubject {
             Self::Format { .. } => MaintenanceAttribution::Format,
             Self::ContractProjection { .. } => MaintenanceAttribution::ContractProjection,
             Self::UndoFiles(_) => MaintenanceAttribution::Undo,
+            Self::Modernize { .. } => MaintenanceAttribution::Modernize,
             Self::Reconcile(_)
             | Self::ApplyOneShot { .. }
             | Self::DestroyCases { .. }
@@ -119,6 +123,7 @@ impl PlannedSubject {
             Self::RenameResource(_) => 14,
             Self::CompleteStorageRename(_) => 15,
             Self::UndoFiles(_) => 16,
+            Self::Modernize { .. } => 17,
         }
     }
 }
@@ -150,6 +155,10 @@ impl Codec for PlannedSubject {
             Self::AdoptLayout => Ok(()),
             Self::Format { scopes } => {
                 encoder.set(scopes)?;
+                Ok(())
+            }
+            Self::Modernize { files } => {
+                encoder.set(files)?;
                 Ok(())
             }
             Self::EvolveField(request) => request.encode(encoder),
@@ -190,6 +199,9 @@ impl Codec for PlannedSubject {
             5 => Self::AdoptLayout,
             7 => Self::Format {
                 scopes: decoder.set()?,
+            },
+            17 => Self::Modernize {
+                files: decoder.set()?,
             },
             8 => Self::EvolveField(Box::new(EvolveFieldRequestV1::decode(decoder)?)),
             9 => Self::DestroyResourceV2(Box::new(DestroyResourceRequestV2::decode(decoder)?)),

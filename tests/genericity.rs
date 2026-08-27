@@ -103,6 +103,7 @@ const ALLOWED: &[AllowedConcept] = &[
             "crates/jails-engine/src/route/maintenance/adopt.rs",
             "crates/jails-engine/src/route/maintenance/app_init.rs",
             "crates/jails-engine/src/route/maintenance/format.rs",
+            "crates/jails-engine/src/route/maintenance/modernize.rs",
             "crates/jails-engine/src/route/maintenance/rename.rs",
             // A rename's identity transition is read out of the ledger's
             // applied rows, which is what names the entities being renamed.

@@ -1331,6 +1331,43 @@ applies, and inferring it would have `sync` install things nobody asked for.
 
 Run `jails adopt --pretend` first.
 
+### `jails modernize` (alias `upgrade`)
+
+For a project still on the versions it was created with. It moves the build to
+the Spring Boot and JDK jails generates against, as **one commit**, because the
+edits are interdependent — a Gradle wrapper bumped without the toolchain block
+fails evaluation, and a toolchain bumped without the wrapper fails on an
+unsupported class file version.
+
+On a Gradle project it changes five things, and every one of them is a real
+`./gradlew build` that failed without it:
+
+| what | why the failure does not say so |
+|---|---|
+| Boot plugin → 4.1.0 | — |
+| Gradle wrapper → 9.7.0 | 8.5 does not run on JDK 26 at all |
+| Java release → 26, as a `java { toolchain { … } }` block | Gradle 9 removed the project-level `sourceCompatibility`, and fails *evaluation* with "unknown property" before a task runs |
+| `test { useJUnitPlatform() }` | reports "the test task did not discover any tests" rather than "your tests are JUnit 5" |
+| `datetime` → `timestamp` in `schema.sql` | H2 2.x answers `Unknown data type: "DATETIME"`, four `Caused by` levels below a bean-creation error |
+
+On a Maven project it moves the `spring-boot-starter-parent` version and
+whichever release property the POM already states. A release the POM does not
+state is left to its parent rather than decided here.
+
+The SQL rewrite is gated on H2 actually being the project's driver, and only
+touches `src/main/resources/schema.sql` and `data.sql` — the two files Spring
+initialises a datasource from. Flyway migrations under `db/migration` are
+applied-once history, and rewriting one that has already run changes a checksum
+rather than a schema.
+
+**What the upgrade breaks in code you own is reported, not rewritten.** A
+Jackson 2 import is named with its file, and left alone: Boot 4 ships Jackson 3,
+where the package moved *and* the API changed, so a mechanical rename would
+produce something that still does not compile while looking migrated. Same for
+`javax.*` packages that became `jakarta.*`.
+
+Run `jails modernize --pretend` first.
+
 ## Shaping the generated code
 
 Drop a file at `.jails/templates/<name>` to replace the built-in template of

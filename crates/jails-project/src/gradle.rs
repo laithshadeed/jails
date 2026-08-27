@@ -203,6 +203,17 @@ pub(crate) fn spring_boot_major(text: &str) -> Option<u32> {
 
 /// The Spring Boot plugin's full version string.
 pub(crate) fn boot_version(text: &str) -> Option<String> {
+    let span = boot_version_span(text)?;
+    Some(text[span].to_string())
+}
+
+/// Where that version literal sits, so the reader and the writer cannot
+/// disagree about which bytes are the version.
+///
+/// Two functions locating the same thing by two routes is how a splice comes
+/// to rewrite something the reader never reported -- `pom.rs` learned that
+/// once and this module is not going to learn it again.
+fn boot_version_span(text: &str) -> Option<std::ops::Range<usize>> {
     // Blanking finds *structure* -- which braces open which block. It is the
     // wrong tool for reading a *value*, because every value here lives inside
     // a string literal and blanking is precisely what erases those. So the
@@ -213,26 +224,34 @@ pub(crate) fn boot_version(text: &str) -> Option<String> {
         let region = &text[body.clone()];
         if let Some(at) = region.find("org.springframework.boot")
             && let Some(version_at) = region[at..].find("version")
-            && let Some(found) = first_literal(&region[at + version_at + "version".len()..])
         {
-            return Some(found);
+            let from = body.start + at + version_at + "version".len();
+            if let Some(found) = literal_span(&text[from..]) {
+                return Some(from + found.start..from + found.end);
+            }
         }
     }
     // Legacy: buildscript { dependencies { classpath '...:spring-boot-gradle-plugin:V' } }
     let at = text.find("spring-boot-gradle-plugin")?;
-    let tail = &text[at + "spring-boot-gradle-plugin".len()..];
-    let version = tail.strip_prefix(':')?;
-    let end = version.find(['\'', '"'])?;
-    Some(version[..end].to_string())
+    let from = at + "spring-boot-gradle-plugin".len();
+    let tail = text[from..].strip_prefix(':')?;
+    let end = tail.find(['\'', '"'])?;
+    Some(from + 1..from + 1 + end)
 }
 
 /// The first string literal in `text`, unquoted.
 fn first_literal(text: &str) -> Option<String> {
+    let span = literal_span(text)?;
+    Some(text[span].to_string())
+}
+
+/// Where the first string literal's *contents* sit, quotes excluded.
+fn literal_span(text: &str) -> Option<std::ops::Range<usize>> {
     let start = text.find(['\'', '"'])?;
     let quote = text.as_bytes()[start];
     let rest = &text[start + 1..];
     let end = rest.find(quote as char)?;
-    Some(rest[..end].to_string())
+    Some(start + 1..start + 1 + end)
 }
 
 /// The Java release this build targets.
@@ -273,6 +292,158 @@ fn digits(text: &str) -> Option<u32> {
         .find(|c: char| !c.is_ascii_digit())
         .unwrap_or(rest.len());
     rest[..end].parse().ok()
+}
+
+// ---------------------------------------------------------------------------
+// Retargeting: the four edits `jails modernize` makes to a Gradle build.
+// ---------------------------------------------------------------------------
+
+/// The Gradle wrapper's descriptor, the second file a Gradle project's version
+/// facts live in.
+pub const WRAPPER: &str = "gradle/wrapper/gradle-wrapper.properties";
+
+/// The Gradle jails upgrades a project to.
+///
+/// Not a taste: **Gradle 8.5 does not run on JDK 26.** It is also what Spring
+/// Boot's own build uses (`deps/spring-boot`'s wrapper), and Boot 4.1's system
+/// requirements name "Gradle 8.x (8.14 or later) and 9.x" -- so this is the
+/// intersection of what the JDK allows and what the framework supports, read
+/// off the checkout rather than remembered.
+pub const TARGET_GRADLE: &str = "9.7.0";
+
+/// The wrapper's Gradle version, read out of its `distributionUrl`.
+///
+/// `None` for a URL this module cannot parse -- a mirror, a custom
+/// distribution -- which is the same answer every other reader here gives to a
+/// question it cannot answer exactly.
+pub fn wrapper_version(text: &str) -> Option<String> {
+    let span = wrapper_version_span(text)?;
+    Some(text[span].to_string())
+}
+
+fn wrapper_version_span(text: &str) -> Option<std::ops::Range<usize>> {
+    let at = text.find("distributions/gradle-")?;
+    let from = at + "distributions/gradle-".len();
+    let rest = &text[from..];
+    let end = rest.find('-')?;
+    Some(from..from + end)
+}
+
+/// The wrapper pointing at another Gradle version, everything else untouched.
+///
+/// The `-all` / `-bin` suffix is preserved: which distribution a project pulls
+/// is the reader's choice (`-all` carries the sources an IDE indexes), and
+/// silently swapping it would be an unrelated change riding along with this
+/// one.
+pub fn with_wrapper_version(text: &str, version: &str) -> Option<String> {
+    let span = wrapper_version_span(text)?;
+    if text[span.clone()] == *version {
+        return None;
+    }
+    let mut out = text.to_string();
+    out.replace_range(span, version);
+    Some(out)
+}
+
+/// The build file with the Spring Boot plugin pinned to `version`.
+///
+/// `None` when it is already that version, or when the plugin's version is not
+/// a literal this module can locate -- a version catalog reference, say. A
+/// build whose version jails cannot *read* is one it must not rewrite.
+pub fn with_boot_version(text: &str, version: &str) -> Option<String> {
+    let span = boot_version_span(text)?;
+    if text[span.clone()] == *version {
+        return None;
+    }
+    let mut out = text.to_string();
+    out.replace_range(span, version);
+    Some(out)
+}
+
+/// The build file targeting `release`, expressed the way Gradle 9 accepts.
+///
+/// **`sourceCompatibility = 21` at the project level is gone in Gradle 9** --
+/// `Could not set unknown property 'sourceCompatibility' for root project`, on
+/// evaluation, before a single task runs. So this is not only a number change:
+/// the old spelling is removed and a `java { toolchain { ... } }` block takes
+/// its place, at the position the first removed line held so the file still
+/// reads in the order somebody wrote it.
+///
+/// A project that already has a toolchain block keeps it and only the number
+/// moves.
+pub fn with_release_level(text: &str, release: u32) -> Option<String> {
+    if let Some(body) = top_level_body(text, "java")
+        && let Some(inner) = top_level_body(&text[body.clone()], "toolchain")
+    {
+        let region = body.start + inner.start..body.start + inner.end;
+        let at = text[region.clone()].find("JavaLanguageVersion.of")?;
+        let from = region.start + at;
+        let start = from + text[from..region.end].find(|c: char| c.is_ascii_digit())?;
+        let end = start
+            + text[start..]
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(text.len() - start);
+        if text[start..end] == *release.to_string() {
+            return None;
+        }
+        let mut out = text.to_string();
+        out.replace_range(start..end, &release.to_string());
+        return Some(out);
+    }
+    let block = format!(
+        "java {{\n    toolchain {{\n        languageVersion = JavaLanguageVersion.of({release})\n    }}\n}}\n"
+    );
+    let scan = blanked(text);
+    let mut kept: Vec<&str> = Vec::new();
+    let mut inserted = false;
+    for (line, shape) in text.lines().zip(scan.lines()) {
+        let compatibility = shape.trim_start().starts_with("sourceCompatibility")
+            || shape.trim_start().starts_with("targetCompatibility");
+        if !compatibility {
+            kept.push(line);
+            continue;
+        }
+        if !inserted {
+            inserted = true;
+            kept.push(block.trim_end());
+        }
+    }
+    if !inserted {
+        // Nothing said the release before, so there is nothing to replace and
+        // the block goes at the end -- which is also the answer for a project
+        // that inherits its release from a convention plugin, since one that
+        // does will have the block already.
+        let mut out = text.trim_end().to_string();
+        out.push_str("\n\n");
+        out.push_str(&block);
+        return Some(out);
+    }
+    let mut out = kept.join("\n");
+    if text.ends_with('\n') {
+        out.push('\n');
+    }
+    Some(out)
+}
+
+/// The build file with `test { useJUnitPlatform() }`, or `None` when it has it.
+///
+/// Gradle does not infer it, and the failure names nothing useful: *"There are
+/// test sources present and no filters are applied, but the test task did not
+/// discover any tests to execute."* A Boot 2 project got away without it
+/// because Gradle 8's default framework found the JUnit 4 runner; a Boot 4
+/// project's tests are JUnit 5 and simply do not run.
+pub fn with_junit_platform(text: &str) -> Option<String> {
+    if blanked(text).contains("useJUnitPlatform") {
+        return None;
+    }
+    if let Some(body) = top_level_body(text, "test") {
+        let mut out = text.to_string();
+        out.insert_str(body.start, "\n    useJUnitPlatform()");
+        return Some(out);
+    }
+    let mut out = text.trim_end().to_string();
+    out.push_str("\n\ntest {\n    useJUnitPlatform()\n}\n");
+    Some(out)
 }
 
 /// One dependency line this module was able to read completely.
@@ -638,6 +809,84 @@ dependencies {
     testImplementation('org.springframework.boot:spring-boot-starter-test')
 }
 "#;
+
+    /// The four edits, against the file they were discovered on.
+    ///
+    /// Every one of them is here because a real `./gradlew build` on JDK 26
+    /// failed without it, in this order: unknown property
+    /// `sourceCompatibility`, then no tests discovered. The versions are
+    /// checked rather than assumed -- reading the result back through this
+    /// module's own readers is what stops a splice that lands somewhere the
+    /// reader never looks.
+    #[test]
+    fn the_four_edits_that_take_a_boot_2_gradle_build_to_jdk_26() {
+        let out = with_boot_version(MINICOM, "4.1.0").expect("the legacy spelling is rewritable");
+        assert_eq!(boot_version(&out).as_deref(), Some("4.1.0"));
+        assert!(out.contains("spring-boot-gradle-plugin:4.1.0"), "{out}");
+        // Idempotent: a second run has nothing to say.
+        assert!(with_boot_version(&out, "4.1.0").is_none());
+
+        let out = with_release_level(&out, 26).expect("21 is not 26");
+        assert_eq!(release_level(&out), Some(26));
+        // The old spelling is *removed*, not left beside the new one: Gradle 9
+        // fails evaluation on it, so leaving it would make the file worse than
+        // before the upgrade.
+        assert!(!out.contains("sourceCompatibility"), "{out}");
+        assert!(!out.contains("targetCompatibility"), "{out}");
+        assert!(
+            out.contains("        languageVersion = JavaLanguageVersion.of(26)"),
+            "{out}"
+        );
+        // In the position the removed lines held, so the file still reads in
+        // the order somebody wrote it -- `rfind`, because the *first*
+        // `dependencies {` in this file is the buildscript's plugin classpath.
+        assert!(
+            out.find("java {").unwrap() < out.rfind("dependencies {").unwrap(),
+            "{out}"
+        );
+        assert!(with_release_level(&out, 26).is_none());
+
+        let out = with_junit_platform(&out).expect("minicom has no test block");
+        assert!(out.contains("test {\n    useJUnitPlatform()\n}"), "{out}");
+        assert!(with_junit_platform(&out).is_none());
+    }
+
+    /// A project that already says it in the modern spelling gets the number
+    /// changed and nothing else.
+    #[test]
+    fn a_toolchain_block_is_retargeted_rather_than_duplicated() {
+        let text = "java {\n    toolchain {\n        languageVersion = \
+                    JavaLanguageVersion.of(21)\n    }\n}\n";
+        let out = with_release_level(text, 26).expect("21 is not 26");
+        assert_eq!(out.matches("toolchain").count(), 1, "{out}");
+        assert_eq!(release_level(&out), Some(26));
+    }
+
+    /// The suffix is the reader's choice and survives. `-all` carries the
+    /// sources an IDE indexes; swapping it to `-bin` would be an unrelated
+    /// change riding along with the upgrade.
+    #[test]
+    fn the_wrapper_moves_version_and_keeps_its_distribution() {
+        let text =
+            "distributionUrl=https\\://services.gradle.org/distributions/gradle-8.5-all.zip\n";
+        assert_eq!(wrapper_version(text).as_deref(), Some("8.5"));
+        let out = with_wrapper_version(text, TARGET_GRADLE).expect("8.5 is not the target");
+        assert!(out.ends_with("gradle-9.7.0-all.zip\n"), "{out}");
+        assert!(with_wrapper_version(&out, TARGET_GRADLE).is_none());
+    }
+
+    /// A version this module cannot read is one it must not rewrite. The
+    /// single most important line in the module, applied to the writers.
+    #[test]
+    fn a_version_catalog_reference_is_refused_rather_than_guessed_at() {
+        let text = "plugins {\n    id 'org.springframework.boot' version libs.versions.boot\n}\n";
+        assert_eq!(boot_version(text), None);
+        assert_eq!(with_boot_version(text, "4.1.0"), None);
+        assert_eq!(
+            wrapper_version("distributionUrl=https\\://mirror/gradle.zip"),
+            None
+        );
+    }
 
     /// The whole point of `top_level_body`: `buildscript` has a `dependencies`
     /// block too, and it holds the plugin classpath. Splicing the

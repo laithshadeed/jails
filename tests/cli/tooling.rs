@@ -1511,6 +1511,116 @@ fn maven_json_is_one_report_and_timeout_is_bounded_without_tool_noise() {
     );
 }
 
+/// `jails modernize` against the exact file it was discovered on.
+///
+/// The fixture is `minicom-15-01-2026/spring`'s `build.gradle`, unedited:
+/// Spring Boot 2.7.18 through the legacy `buildscript` spelling, a project-level
+/// `sourceCompatibility`, no test block, and a Gradle 8.5 wrapper. Every
+/// assertion below is a `./gradlew build` on JDK 26 that failed without it,
+/// discovered in this order -- unknown property `sourceCompatibility`, then
+/// "did not discover any tests", then `Unknown data type: "DATETIME"`.
+///
+/// It is one commit, not five, because the edits are interdependent: a wrapper
+/// bumped without the toolchain block fails evaluation, and a toolchain bumped
+/// without the wrapper fails on an unsupported class file version. A run that
+/// stopped halfway would leave a build broken in a way neither half explains.
+#[test]
+fn modernize_takes_a_boot_2_gradle_project_to_the_versions_jails_generates_against() {
+    let root = temp_dir("modernize");
+    write_project_skeleton(&root);
+    fs::remove_file(root.join("pom.xml")).unwrap();
+    fs::write(
+        root.join("build.gradle"),
+        concat!(
+            "buildscript {\n    repositories {\n        mavenCentral()\n    }\n",
+            "    dependencies {\n        classpath(\"org.springframework.boot:",
+            "spring-boot-gradle-plugin:2.7.18\")\n    }\n}\n\n",
+            "apply plugin: 'java'\napply plugin: 'org.springframework.boot'\n\n",
+            "sourceCompatibility = 21\ntargetCompatibility = 21\n\n",
+            "dependencies {\n    implementation 'org.springframework.boot:",
+            "spring-boot-starter-data-jdbc'\n    runtimeOnly 'com.h2database:h2'\n}\n",
+        ),
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("gradle/wrapper")).unwrap();
+    fs::write(
+        root.join("gradle/wrapper/gradle-wrapper.properties"),
+        "distributionUrl=https\\://services.gradle.org/distributions/gradle-8.5-all.zip\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("src/main/resources")).unwrap();
+    fs::write(
+        root.join("src/main/resources/schema.sql"),
+        "create table users (\n  id integer primary key,\n  created_at datetime\n);\n",
+    )
+    .unwrap();
+    let base = root.join("src/main/java/com/example/demo");
+    fs::create_dir_all(&base).unwrap();
+    fs::write(
+        base.join("Reader.java"),
+        "package com.example.demo;\n\nimport com.fasterxml.jackson.databind.ObjectMapper;\n\n\
+         public class Reader {\n    ObjectMapper mapper = new ObjectMapper();\n}\n",
+    )
+    .unwrap();
+
+    let preview = jails_cmd(&root, None)
+        .args(["modernize", "--pretend"])
+        .output()
+        .unwrap();
+    let preview = String::from_utf8_lossy(&preview.stdout).to_string();
+    assert!(preview.contains("nothing was written"), "{preview}");
+    assert!(
+        fs::read_to_string(root.join("build.gradle"))
+            .unwrap()
+            .contains("2.7.18"),
+        "--pretend wrote the file"
+    );
+
+    let output = jails_cmd(&root, None).arg("modernize").output().unwrap();
+    let report = String::from_utf8_lossy(&output.stdout).to_string();
+    assert!(
+        output.status.success(),
+        "{report}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let build = fs::read_to_string(root.join("build.gradle")).unwrap();
+    assert!(build.contains("spring-boot-gradle-plugin:4.1.0"), "{build}");
+    assert!(!build.contains("sourceCompatibility"), "{build}");
+    assert!(
+        build.contains("languageVersion = JavaLanguageVersion.of(26)"),
+        "{build}"
+    );
+    assert!(build.contains("useJUnitPlatform()"), "{build}");
+    // The rest of the file is untouched: this is a file the reader owns.
+    assert!(build.contains("apply plugin: 'eclipse'") || build.contains("apply plugin: 'java'"));
+    assert!(build.contains("runtimeOnly 'com.h2database:h2'"), "{build}");
+
+    let wrapper =
+        fs::read_to_string(root.join("gradle/wrapper/gradle-wrapper.properties")).unwrap();
+    assert!(wrapper.contains("gradle-9.7.0-all.zip"), "{wrapper}");
+
+    // Gated on H2 actually being this project's driver, and case-preserving.
+    let schema = fs::read_to_string(root.join("src/main/resources/schema.sql")).unwrap();
+    assert!(schema.contains("created_at timestamp"), "{schema}");
+
+    // Reported, never rewritten: the package moved *and* the API changed.
+    assert!(report.contains("Jackson 2"), "{report}");
+    assert!(report.contains("Reader.java"), "{report}");
+    let reader = fs::read_to_string(base.join("Reader.java")).unwrap();
+    assert!(reader.contains("com.fasterxml.jackson"), "{reader}");
+
+    // Idempotent, and it says what was already right rather than just "no".
+    let again = jails_cmd(&root, None).arg("modernize").output().unwrap();
+    let again = format!(
+        "{}{}",
+        String::from_utf8_lossy(&again.stdout),
+        String::from_utf8_lossy(&again.stderr)
+    );
+    assert!(again.contains("nothing to modernize"), "{again}");
+    assert!(again.contains("already 4.1.0"), "{again}");
+}
+
 /// `plan.md` §12: `jails adopt` writes a `[layout]` table, not new machinery.
 /// The proof is that a *reporting* command's answer changes with no code path
 /// of its own — `stats` counted a renamed web package as "Other".

@@ -29,6 +29,7 @@ pub mod inspect;
 pub mod junit;
 pub mod maven;
 pub mod model;
+pub mod modernize;
 pub mod pom;
 pub mod project;
 pub mod projection;

@@ -66,6 +66,7 @@ build	jails-drive	external-process	run::build
 clean	jails-drive	external-process	run::clean
 fmt	jails-engine	project-mutation+external-process	route::format
 check	jails-drive	external-process	run::check
+modernize	jails-engine	project-mutation	route::modernize
 mvn	jails-drive	external-process	run::mvn
 gradle	jails-drive	external-process	run::gradle
 run	jails-drive	external-process+service-lifecycle	run::run/run::watch

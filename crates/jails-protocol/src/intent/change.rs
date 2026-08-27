@@ -74,6 +74,7 @@ pub enum MaintenanceAttribution {
     Format,
     ContractProjection,
     Undo,
+    Modernize,
 }
 
 impl MaintenanceAttribution {
@@ -85,6 +86,7 @@ impl MaintenanceAttribution {
             Self::Format => 4,
             Self::ContractProjection => 5,
             Self::Undo => 6,
+            Self::Modernize => 7,
         }
     }
 
@@ -99,6 +101,7 @@ impl MaintenanceAttribution {
             4 => Self::Format,
             5 => Self::ContractProjection,
             6 => Self::Undo,
+            7 => Self::Modernize,
             other => Err(format!("unknown maintenance attribution tag {other}"))?,
         })
     }

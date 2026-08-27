@@ -18,11 +18,13 @@
 mod adopt;
 mod app_init;
 mod format;
+mod modernize;
 mod rename;
 
 pub use adopt::adopt_layout;
 pub use app_init::app_init;
 pub use format::format;
+pub use modernize::modernize;
 pub use rename::{RenameResourceInvocation, rename, rename_resource, rename_storage};
 
 use super::*;
