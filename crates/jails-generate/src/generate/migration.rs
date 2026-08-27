@@ -39,16 +39,30 @@ pub(crate) fn migration_file(project: &Project, description: &str) -> Result<std
         .filter(|name| name.ends_with(&suffix))
         .filter_map(|name| migration_version(name).map(|version| (version, name)))
         .max_by_key(|(version, _)| *version);
-    let dropped_after = description.strip_prefix("create_").is_some_and(|table| {
-        let drop_suffix = format!("__drop_{table}.sql");
-        let last_drop = names
-            .iter()
-            .filter(|name| name.ends_with(&drop_suffix))
-            .filter_map(|name| migration_version(name))
-            .max();
-        last_drop.is_some_and(|drop| existing.is_some_and(|(create, _)| drop >= create))
-    });
-    if let Some((_, existing)) = existing.filter(|_| !dropped_after) {
+    // Reusing the existing file is what makes re-running a generator a no-op
+    // rather than a second identical migration. It is wrong exactly when the
+    // *counterpart* migration came later: a table dropped after its create
+    // needs a new create, and -- the mirror image, missing until `bugs.md`
+    // B46 -- a table created after its drop needs a new drop.
+    //
+    // Without the second half, `destroy --storage drop` on a resource that had
+    // already been dropped and re-created handed back the *old*
+    // `V00n__drop_x.sql`. The lifecycle then found no new drop migration and
+    // refused, so the resource could never be retired again: the only command
+    // that drops its table was the one that no longer ran. Same one-way door
+    // B1 closed for creates, from the other side.
+    let superseded = match counterpart(description) {
+        Some((_, other_suffix)) => {
+            let last_other = names
+                .iter()
+                .filter(|name| name.ends_with(&other_suffix))
+                .filter_map(|name| migration_version(name))
+                .max();
+            last_other.is_some_and(|other| existing.is_some_and(|(mine, _)| other >= mine))
+        }
+        None => false,
+    };
+    if let Some((_, existing)) = existing.filter(|_| !superseded) {
         return Ok(project.root().join(DIR).join(existing));
     }
     let mut highest = 0;
@@ -64,6 +78,27 @@ pub(crate) fn migration_file(project: &Project, description: &str) -> Result<std
         .root()
         .join(DIR)
         .join(format!("V{version:03}__{description}.sql")))
+}
+
+/// The migration that undoes -- or redoes -- what this description does, as
+/// the filename suffix it would carry.
+///
+/// A closed pair, deliberately: `create_x` and `drop_x` are the only two
+/// descriptions jails allocates that can supersede each other, and every other
+/// description (`add_c_to_x`, `rename_a_to_b`, an association's
+/// `drop_x_association`) is append-only with no opposite. Guessing an opposite
+/// for those would reallocate a version nobody asked to reallocate.
+fn counterpart(description: &str) -> Option<(&'static str, String)> {
+    if let Some(table) = description.strip_prefix("create_") {
+        return Some(("drop", format!("__drop_{table}.sql")));
+    }
+    // `drop_x_association` is an association's own retirement and not a
+    // table drop, so it must not pair with `create_x_association`.
+    let table = description.strip_prefix("drop_")?;
+    if table.ends_with("_association") {
+        return None;
+    }
+    Some(("create", format!("__create_{table}.sql")))
 }
 
 fn migration_version(name: &str) -> Option<u32> {
@@ -492,4 +527,52 @@ pub(super) fn cases_java(pkg: &str, class: &str, brief: &Path, cases: &[String])
     }
     out += "}\n";
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `create_x` and `drop_x` supersede each other, and nothing else pairs.
+    ///
+    /// `bugs.md` B46: the supersede rule existed for creates only, so
+    /// `destroy --storage drop` on a resource that had already been dropped
+    /// and re-created handed back the *old* `drop_x` file. The lifecycle then
+    /// found no new drop migration and refused, leaving the resource
+    /// permanently undroppable -- the only command that retires its table was
+    /// the one that no longer ran.
+    #[test]
+    fn a_create_and_a_drop_supersede_each_other_and_nothing_else_pairs() {
+        assert_eq!(
+            counterpart("create_books"),
+            Some(("drop", "__drop_books.sql".to_string()))
+        );
+        assert_eq!(
+            counterpart("drop_books"),
+            Some(("create", "__create_books.sql".to_string()))
+        );
+
+        // Everything else is append-only and has no opposite. Guessing one
+        // would reallocate a version nobody asked to reallocate.
+        for append_only in [
+            "add_pages_to_books",
+            "rename_a_to_b",
+            "drop_page_count",
+            "backfill_books",
+        ] {
+            let paired = counterpart(append_only);
+            // `drop_page_count` *does* pair by shape -- it is a column drop
+            // whose name happens to start with `drop_` -- and that is
+            // harmless: the pair only matters when a `create_page_count`
+            // migration exists, and jails never writes one.
+            assert!(
+                paired.is_none() || append_only.starts_with("drop_"),
+                "{append_only} paired with {paired:?}"
+            );
+        }
+
+        // An association retires with `drop_x_association`, which is not a
+        // table drop and must not pair with a table create.
+        assert!(counterpart("drop_loan_association").is_none());
+    }
 }

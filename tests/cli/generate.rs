@@ -846,6 +846,85 @@ fn a_named_route_replaces_the_derived_one_everywhere_it_appears() {
     );
 }
 
+/// A resource can be dropped, re-created and dropped again, indefinitely.
+///
+/// `bugs.md` B46. Two independent one-way doors sat behind this, and the first
+/// hid the second.
+///
+/// The read set declared only the resource rows the owner currently holds,
+/// while the drop planner reaches the whole sealed lineage -- so the second
+/// drop planned against the superseded `V001__create_x.sql` and refused with
+/// jails' own internal-bug message. Behind that, `migration_file` reused an
+/// existing file whose description matched, and the escape hatch for that
+/// existed only for `create_`: a `drop_books` therefore handed back the
+/// *first* `V00n__drop_books.sql`, the lifecycle found no new drop migration,
+/// and the only command that retires the table was the one that no longer ran.
+#[test]
+fn a_resource_can_be_dropped_and_recreated_more_than_once() {
+    let root = temp_dir("drop-recreate-cycle");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+
+    let scaffold = || {
+        jails_cmd(&root, None)
+            .args(["g", "scaffold", "Book", "id:uuid@pk", "title:string"])
+            .output()
+            .unwrap()
+    };
+    let drop = || {
+        jails_cmd(&root, None)
+            .args([
+                "destroy",
+                "scaffold",
+                "Book",
+                "--storage",
+                "drop",
+                "--confirm-table",
+                "books",
+                "--force",
+            ])
+            .output()
+            .unwrap()
+    };
+
+    // Two full cycles: one create/drop pair was always fine, and the second
+    // is what was fatal.
+    for cycle in 1..=2 {
+        let created = scaffold();
+        assert!(
+            created.status.success(),
+            "cycle {cycle} create: {}",
+            String::from_utf8_lossy(&created.stderr)
+        );
+        let dropped = drop();
+        assert!(
+            dropped.status.success(),
+            "cycle {cycle} drop: {}",
+            String::from_utf8_lossy(&dropped.stderr)
+        );
+    }
+
+    // Forward-only and strictly alternating: nothing was rewritten, and every
+    // step got its own version.
+    let mut migrations = fs::read_dir(root.join("src/main/resources/db/migration"))
+        .unwrap()
+        .filter_map(|entry| {
+            let name = entry.ok()?.file_name().to_string_lossy().into_owned();
+            name.ends_with(".sql").then_some(name)
+        })
+        .collect::<Vec<_>>();
+    migrations.sort();
+    assert_eq!(
+        migrations,
+        vec![
+            "V001__create_books.sql",
+            "V002__drop_books.sql",
+            "V003__create_books.sql",
+            "V004__drop_books.sql",
+        ]
+    );
+}
+
 /// What `jails explain query` says about a filter is what `g query` does.
 ///
 /// `bugs.md` B51: the explanation said "required scalar equality filters only"

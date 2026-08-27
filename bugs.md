@@ -1,5 +1,8 @@
 # bugs.md — open defects found by dogfooding jails
 
+**No numbered report is currently open.** What follows is the convention and
+the coverage note, so the next pass starts from B57.
+
 Binary: `jails 0.1.0`, built and installed from this checkout. Every report
 below was reproduced from an empty directory with the commands as written, in a
 disposable project under a scratch directory. **No jails source, test, build or
@@ -9,38 +12,6 @@ doc file is modified while reproducing.**
 `git log -p -- bugs.md` is where a closed one and the run that closed it live.
 Numbers are stable and never reused, so a `bugs.md B33` citation in the source
 still resolves to a subject.
-
----
-
-## B46 — a resource that has been dropped and re-created can never be dropped again
-
-The second `destroy --storage drop` on the same resource refuses with jails'
-own internal-bug message and writes nothing. The resource is then stuck: the
-only command that retires its table is the one that no longer runs.
-
-```sh
-jails new --offline u --package com.example.u
-cd u && jails add db --no-start
-jails g scaffold Book id:uuid@pk title:string
-jails destroy scaffold Book --storage drop --confirm-table books --force   # ok, V002__drop_books.sql
-jails g scaffold Book id:uuid@pk title:string                              # ok, V003__create_books.sql
-jails destroy scaffold Book --storage drop --confirm-table books --force
-```
-
-```
-jails: this command planned against `src/main/resources/db/migration/V001__create_books.sql`
-       without observing it first, which is a bug in jails rather than in your project
-       -- nothing was written.
-```
-
-`V001` is the **superseded** create; the live one is `V003`. The drop planner
-reaches the whole sealed lineage while the read set declares only the current
-head, so the guard fires on the first command that has more than one create to
-walk. One create (with or without intervening `resource field` migrations)
-works — it is the second create that is fatal.
-
-The refusal itself is correct behaviour for an undeclared read: the bug is the
-missing declaration.
 
 ---
 

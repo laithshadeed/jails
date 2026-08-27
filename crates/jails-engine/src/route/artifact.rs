@@ -342,6 +342,28 @@ pub fn destroy(
         .into());
     }
     let mut reads = retiring(&store, &owner)?;
+    // `retiring` walks the resource rows this owner currently holds, which is
+    // not the whole sealed lineage: a scaffold that was dropped and generated
+    // again has *two* create migrations, and the earlier one is a seal on the
+    // lifecycle rather than a row this owner owns. The drop planner reaches
+    // the lineage, so the second `--storage drop` planned against
+    // `V001__create_x.sql` without declaring it and refused with jails' own
+    // internal-bug message -- leaving the resource permanently undroppable,
+    // since the only command that retires its table is the one that no longer
+    // ran (`bugs.md` B46).
+    //
+    // The same declaration the generate path above makes, for the same reason
+    // and out of the same function, so the two cannot drift.
+    if store
+        .lifecycles()
+        .iter()
+        .any(|lifecycle| lifecycle.entity == entity)
+    {
+        for path in recorded_migrations(&store, &id) {
+            reads = reads.file(path);
+        }
+        reads = reads.directory(ProjectPath::parse("src/main/resources/db/migration")?);
+    }
     if migration_effect.is_some() {
         reads = migration_history_reads(project, reads)?;
     }
