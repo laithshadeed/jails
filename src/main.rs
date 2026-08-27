@@ -124,6 +124,7 @@ fn main() -> std::process::ExitCode {
             via,
             order_by,
             limit,
+            on_conflict,
             method,
         } => {
             // Built once, outside the closure: a route may be called twice --
@@ -141,6 +142,7 @@ fn main() -> std::process::ExitCode {
                 via,
                 order_by,
                 limit,
+                on_conflict,
                 method,
             };
             dispatch::mutate(invocation, false, |run| {

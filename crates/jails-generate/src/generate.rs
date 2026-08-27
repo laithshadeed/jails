@@ -327,6 +327,9 @@ pub struct Recipe<'a> {
     /// For `query`, the declared result order and row ceiling. plan.md P8.2.
     pub order_by: Option<&'a str>,
     pub limit: Option<u32>,
+    /// For `usecase`, the target component whose unique constraint turns the
+    /// create into a get-or-create. plan.md P8.3.
+    pub on_conflict: Option<&'a str>,
     /// The HTTP verb an endpoint answers, when the recipe has one.
     ///
     /// `None` is "not asked", never "GET": the default belongs at the one

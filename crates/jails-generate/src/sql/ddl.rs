@@ -39,7 +39,7 @@ fn non_blank_check(column: &Column) -> String {
 /// not in the world. Kept to `email` rather than generalised, because that is
 /// the one identifier whose case-insensitivity is a fact about the format
 /// rather than about this project's policy.
-fn case_insensitive(column: &Column) -> bool {
+pub(crate) fn case_insensitive(column: &Column) -> bool {
     column.sql_type == "text" && column.name.rsplit('_').next().unwrap_or(&column.name) == "email"
 }
 

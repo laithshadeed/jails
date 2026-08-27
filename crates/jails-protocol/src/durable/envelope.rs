@@ -558,7 +558,7 @@ mod tests {
         assert_eq!(
             source,
             "schema = 2\n\
-             codec = \"jails-ledger-payload-5\"\n\
+             codec = \"jails-ledger-payload-6\"\n\
              payload_len = 4\n\
              payload_sha256 = \
              \"5f78c33274e43fa9de5659265c1d917e25c03722dcb0b8d27db8d5feaa813953\"\n\
@@ -575,7 +575,7 @@ mod tests {
         assert_eq!(
             render(&[]).unwrap(),
             "schema = 2\n\
-             codec = \"jails-ledger-payload-5\"\n\
+             codec = \"jails-ledger-payload-6\"\n\
              payload_len = 0\n\
              payload_sha256 = \
              \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"\n\
@@ -775,7 +775,7 @@ mod tests {
             pending_conflict: None,
         };
         let actual = ledger.render().unwrap();
-        let expected = include_str!("../../../../tests/protocol-golden/ledger-v5.toml");
+        let expected = include_str!("../../../../tests/protocol-golden/ledger-v6.toml");
         assert_eq!(actual, expected);
         assert_eq!(LedgerV2::parse_file(expected).unwrap(), ledger);
     }

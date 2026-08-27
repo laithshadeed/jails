@@ -537,6 +537,17 @@ pub(crate) enum Command {
         /// For `query`, the row ceiling. Defaults to 100.
         #[arg(long, value_name = "ROWS")]
         limit: Option<u32>,
+        /// For `usecase`, the target component whose unique constraint turns
+        /// the create into a get-or-create.
+        ///
+        ///   jails g usecase EnsureUser email:string! --on User --on-conflict email
+        ///
+        /// One `insert ... on conflict (col) do nothing returning`, then a
+        /// read of the row that was already there. The component must be
+        /// declared `@unique` or `@pk` on the target -- Postgres has nothing
+        /// to conflict on otherwise -- and must be one the command carries.
+        #[arg(long = "on-conflict", value_name = "COMPONENT")]
+        on_conflict: Option<String>,
         /// For `controller`, the HTTP method the generated route answers.
         /// Defaults to `get`.
         ///

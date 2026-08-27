@@ -105,6 +105,10 @@ pub(super) fn declared(
         .transpose()?
         .unwrap_or_default();
     spec.limit = recipe.limit;
+    spec.on_conflict = recipe
+        .on_conflict
+        .map(jails_protocol::identity::Name::parse)
+        .transpose()?;
     // Recorded, not applied: an intent regenerated with a different verb is
     // the *same* entity with new content, which is what makes it an edit the
     // three-way merge can carry rather than an orphan and a rewrite.

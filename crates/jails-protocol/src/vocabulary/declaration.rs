@@ -290,6 +290,12 @@ pub struct IntentSpec {
     /// A `query`'s explicit row ceiling. `None` is the adapter's default of
     /// 100, stated at the one place that renders it.
     pub limit: Option<u32>,
+    /// The target component whose unique constraint makes a `usecase` a
+    /// get-or-create rather than an insert.
+    ///
+    /// Content, like every other reference here: adding it to an existing
+    /// intent is an edit the three-way merge carries, not a new entity.
+    pub on_conflict: Option<crate::identity::Name>,
     /// The HTTP method a generated endpoint answers.
     ///
     /// Content rather than identity, like every other field here: changing
@@ -377,6 +383,7 @@ impl IntentSpec {
             via: None,
             order_by: Vec::new(),
             limit: None,
+            on_conflict: None,
         })
     }
 }
@@ -403,7 +410,8 @@ impl Codec for IntentSpec {
                 IndexDirection::Descending => 1,
             });
         }
-        encoder.option(self.limit.as_ref(), |e, limit| e.string(&limit.to_string()))
+        encoder.option(self.limit.as_ref(), |e, limit| e.string(&limit.to_string()))?;
+        encoder.option(self.on_conflict.as_ref(), |e, name| name.encode(e))
     }
 
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
@@ -444,6 +452,7 @@ impl Codec for IntentSpec {
                         .map_err(|_| jails_support::Failure::Told("bad query limit".to_string()))
                 })
                 .map_err(|_| jails_support::Failure::Told("bad query limit".to_string()))?,
+            on_conflict: decoder.option(crate::identity::Name::decode)?,
         })
     }
 }

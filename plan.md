@@ -688,11 +688,30 @@ All three of `missing.md`'s named primitives, in full, plus the smaller entries.
       which is the Django original's `[:20]` on `-created_at`, and it passes
       `jails check`. `query.rs` crossed the largest-module ceiling on the way,
       so its planning half is `spring/query/shape.rs` now.
-- [ ] **P8.3** M6 — get-or-create by natural key: `--on-conflict <field>` on
+- [x] **P8.3** M6 — get-or-create by natural key: `--on-conflict <field>` on
       `g usecase`. The statement is one `g explain idempotency` already
       describes verbatim (`insert … on conflict (…) do nothing returning`);
       what is missing is a verb that applies it to a scaffold's own unique key.
       The single most repeated hand-written line across the six projects.
+      *Done:* `--on-conflict <component>` replaces `Storing{X}UseCase` with
+      `Ensuring{X}UseCase`, a `JdbcClient` adapter implementing the same port —
+      the shape `g transition` already uses, because an operation whose
+      atomicity lives in SQL is written where the SQL is. A port with a
+      `save(T)` cannot express the clause, and read-then-insert reopens the
+      window the single statement exists to close.
+      Two things the real database taught. **The conflict target is not always
+      the column**: P5.4's `@unique` email is indexed on `lower(email)`, and
+      `on conflict (email)` finds no index — PostgreSQL refuses the whole
+      statement. It is derived through `sql::case_insensitive`, the same
+      function the DDL uses, so the two cannot disagree. And **jails cannot
+      check that the column is unique**: a record read off disk carries no
+      constraints, re-reading its own migration is the guessing `build.rs`
+      refuses, and taking the caller's word verifies nothing — so the generated
+      IT checks it against a real database, where it is a fact. `--on-conflict`
+      with `--yields` is refused: the outbox delegates to the class this
+      replaces. `minicom` carries `EnsureUser email:string! --on User
+      --on-conflict email` — the first line of the Django ping handler — and it
+      passes `jails check`.
 - [ ] **P8.4** M4a — a `WebSocketHandler`-shaped kind: the handler, its
       `WebSocketConfigurer` registration, and a test. Same shape as
       `g handler`. `add sse` covers the server→client half of read receipts and

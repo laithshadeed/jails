@@ -596,6 +596,34 @@ pub const SCENARIOS: &[Scenario] = &[
             ],
         ],
     },
+    // Get-or-create: the first line of three of the six ported projects, and
+    // the one shape `g usecase` could not write -- `missing.md` M6.
+    Scenario {
+        name: "usecase-on-conflict",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[
+            &["add", "db", "--no-start"],
+            &[
+                "g",
+                "scaffold",
+                "Person",
+                "id:uuid@pk",
+                "email:string!@unique",
+                "createdAt:instant",
+            ],
+            &[
+                "g",
+                "usecase",
+                "RegisterPerson",
+                "email:string!",
+                "--on",
+                "Person",
+                "--on-conflict",
+                "email",
+            ],
+        ],
+    },
     Scenario {
         name: "idempotency",
         fixture: Fixture::Spring,

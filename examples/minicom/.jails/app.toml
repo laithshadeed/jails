@@ -85,3 +85,14 @@ on = "Message"
 via = "User"
 order_by = "timeStamp desc"
 limit = 20
+
+# `User.get_or_create_from_email(email)` — the first line of the Django ping
+# handler, and of two of the other five ports. `g usecase` always inserted, so
+# on a `@unique` column the second call was a constraint violation rather than
+# a fetch, and every project hand-wrote the same statement.
+[[generate]]
+kind = "usecase"
+name = "EnsureUser"
+fields = ["email:string!"]
+on = "User"
+on_conflict = "email"

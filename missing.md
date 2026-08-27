@@ -211,60 +211,6 @@ the client→server half. Everything above was written by hand outside jails.
    `g auth` and `add sse` exist for: an in-memory presence map is silently
    correct on one node and silently wrong on two, with no error either way.
 
-## M6 — no get-or-create, and it is the first line of three of the six apps
-
-```python
-User.get_or_create_from_email(email)     # minicom-05-02-2026, on every ping
-await User.upsert({ id: 1, email: … })   # mc-01-06-2026, on every request
-conv = Conversation.objects.create() if not conv_id else …   # mc-16-11-2025
-```
-
-### Reproduce
-
-```sh
-jails commands | grep -iE 'upsert|get-or-create|find-or|ensure' ; echo "exit=$?"
-```
-
-```
-exit=1
-```
-
-`g usecase` is the only create verb and it always inserts — see the M3
-transcript: `repository.save(...)` with no conflict clause anywhere. On a
-column with `@unique` (which `email` has, and must have) the second call is a
-constraint violation, not a fetch.
-
-### Why `g idempotency` is not it
-
-```sh
-jails explain idempotency
-```
-
-```
-idempotency  At-most-once execution with a retained result: receipt store, guard, table.
-
-  A `@unique` column on the key already gives you one row per key. What it does
-  not give you is the *retained result* …
-```
-
-`explain` is right that it is a different primitive — it keys on a hash of the
-request, not on a natural key of the row, and it stores a receipt beside the
-data rather than returning the row. But the *statement* it already knows how to
-write is the one this needs:
-
-```sql
-insert into users (email) values (?) on conflict (email) do nothing returning *
-```
-
-which `explain idempotency` itself describes verbatim: "The claim is one
-`insert ... on conflict do nothing returning`. Select-then-insert leaves a
-window where two callers both see nothing and both proceed."
-
-So the shape exists; what is missing is a verb that applies it to a scaffold's
-own unique key — `jails g ensure User email:string!@unique --on User`, or a
-`--on-conflict <field>` on `g usecase`. This is the single most repeated
-hand-written line across the six projects.
-
 ## M7 — `g client` ignores `--method`, `--on` and `--returns` without saying so
 
 Two problems. The shape is fixed to a REST collection, and — the worse half —

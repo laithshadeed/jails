@@ -17,6 +17,9 @@
 
 use super::*;
 
+mod ensure;
+use ensure::{conflict_column, ensuring_usecase_it_java, ensuring_usecase_java};
+
 // ---------------------------------------------------------------------------
 // `generate usecase` -- an executable create operation over a scaffold.
 // ---------------------------------------------------------------------------
@@ -148,6 +151,7 @@ pub(crate) fn usecase_files(
     name: &str,
     target: &str,
     fields: &[crate::generate::Field],
+    on_conflict: Option<&str>,
 ) -> jails_support::Result<Vec<Artifact>> {
     require_scope_authorizer(slice, "usecase", name, fields)?;
     let resolved = Target::read(slice, "usecase", name, target)?;
@@ -250,13 +254,30 @@ pub(crate) fn usecase_files(
         preamble,
     };
 
+    // Get-or-create is a different statement, not a flag on the same one:
+    // `repository.save` cannot express `on conflict do nothing returning`, and
+    // select-then-insert leaves the window where two callers both see nothing
+    // and both proceed. `g explain idempotency` already describes the exact
+    // statement; `missing.md` M6 is that it had no verb.
+    let conflict = on_conflict
+        .map(|component| {
+            conflict_column(
+                name,
+                target,
+                target_fields,
+                &target_columns,
+                fields,
+                component,
+            )
+        })
+        .transpose()?;
     let transactional = slice.project().has_jdbc();
     let service: &str = &slice.placed(Layer::Service);
     let main_service = slice.project().main_in(service);
     let test_service = slice.project().test_in(service);
     let main_web = slice.main(Layer::Web);
     let test_web = slice.test(Layer::Web);
-    Ok(vec![
+    let mut artifacts = vec![
         Artifact {
             kind: "usecase command",
             path: main_service.join(format!("{name}Command.java")),
@@ -267,16 +288,41 @@ pub(crate) fn usecase_files(
             path: main_service.join(format!("{name}UseCase.java")),
             contents: usecase_port_java(slice, name, target),
         },
-        Artifact {
+    ];
+    if let Some(conflict) = &conflict {
+        let adapters = slice.owned(Layer::Adapters);
+        artifacts.push(Artifact {
+            kind: "get-or-create use case",
+            path: crate::generate::main_dir(slice.project().root(), &adapters)
+                .join(format!("Ensuring{name}UseCase.java")),
+            contents: ensuring_usecase_java(
+                slice,
+                name,
+                target,
+                &defaults,
+                &target_columns,
+                conflict,
+            ),
+        });
+        artifacts.push(Artifact {
+            kind: "get-or-create integration test",
+            path: crate::generate::test_dir(slice.project().root(), &adapters)
+                .join(format!("Ensuring{name}UseCaseIT.java")),
+            contents: ensuring_usecase_it_java(slice, name, &resolved, fields, conflict),
+        });
+    } else {
+        artifacts.push(Artifact {
             kind: "usecase implementation",
             path: main_service.join(format!("Storing{name}UseCase.java")),
             contents: usecase_impl_java(slice, name, target, &defaults, transactional),
-        },
-        Artifact {
+        });
+        artifacts.push(Artifact {
             kind: "usecase test",
             path: test_service.join(format!("{name}UseCaseTest.java")),
             contents: usecase_test_java(slice, name, &resolved, fields, id),
-        },
+        });
+    }
+    artifacts.extend([
         Artifact {
             kind: "usecase controller",
             path: main_web.join(format!("{name}Controller.java")),
@@ -287,7 +333,8 @@ pub(crate) fn usecase_files(
             path: test_web.join(format!("{name}ControllerTest.java")),
             contents: usecase_controller_test_java(slice, name, &resolved, fields),
         },
-    ])
+    ]);
+    Ok(artifacts)
 }
 
 fn usecase_default(slice: &Slice, field: &crate::generate::Field) -> Option<(String, Vec<String>)> {
@@ -796,8 +843,14 @@ mod usecase_tests {
         let fields = crate::generate::parse_fields(&["body:string!".to_string()]).unwrap();
 
         let project = Project::load(&root).unwrap();
-        let files =
-            usecase_files(&Slice::new(&project, None), "WriteNote", "Note", &fields).unwrap();
+        let files = usecase_files(
+            &Slice::new(&project, None),
+            "WriteNote",
+            "Note",
+            &fields,
+            None,
+        )
+        .unwrap();
         let implementation = &files
             .iter()
             .find(|artifact| artifact.kind == "usecase implementation")
@@ -852,6 +905,7 @@ mod usecase_tests {
             "CreateWorkItem",
             "WorkItem",
             &fields,
+            None,
         )
         .unwrap();
         let implementation = &files
@@ -905,6 +959,7 @@ mod usecase_tests {
             "CreateMembership",
             "Membership",
             &[],
+            None,
         )
         .unwrap_err();
 
@@ -926,6 +981,7 @@ mod usecase_tests {
             "CreateWorkspace",
             "Tenant",
             &fields,
+            None,
         )
         .unwrap_err();
 

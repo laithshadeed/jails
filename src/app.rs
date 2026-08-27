@@ -65,6 +65,9 @@ struct GenerateIntent {
     /// A `query`'s declared result order and row ceiling.
     order_by: Option<String>,
     limit: Option<u32>,
+    /// The target component whose unique constraint makes this create a
+    /// get-or-create.
+    on_conflict: Option<String>,
     method: Option<jails_spec::spec::kind::HttpMethod>,
 }
 
@@ -98,6 +101,7 @@ impl GenerateIntent {
             .chain(self.strategy_yields.iter())
             .chain(self.via.iter())
             .chain(self.order_by.iter())
+            .chain(self.on_conflict.iter())
         {
             if value.contains(['\n', '\r', '|']) {
                 return Err(format!(
@@ -118,6 +122,7 @@ impl GenerateIntent {
             via: self.via,
             order_by: self.order_by,
             limit: self.limit,
+            on_conflict: self.on_conflict,
             method: self.method,
         })
     }

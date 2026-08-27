@@ -14,6 +14,8 @@
 
 use super::*;
 
+mod flags;
+
 /// The files one `generate` call would write, computed without writing any.
 ///
 /// `abstract.md` rungs 4-5, Separate Query from Modifier. `destroy` used to
@@ -27,27 +29,6 @@ use super::*;
 /// cost, and it is the right trade: a query that returned only paths would be
 /// a *second* traversal of the same match, which is the duplication this
 /// removes wearing a different hat.
-/// A flag only `query` takes, refused rather than ignored.
-///
-/// A kind that silently drops a flag is `missing.md` M7's finding, and the
-/// reason `g client --method` had to be fixed: the reader gets a plausible
-/// artifact that answers a different question, and nothing says so.
-fn only_for_query(kind: ArtifactKind, name: &str, flags: &str, passed: bool) -> Result<()> {
-    if !passed || kind == ArtifactKind::Query {
-        return Ok(());
-    }
-    use clap::ValueEnum;
-    let label = kind
-        .to_possible_value()
-        .expect("every kind has a clap value");
-    Err(format!(
-        "{flags} only applies to a query, the one recipe that reads a second table.\n       \
-         fix: drop it from `jails g {} {name}`.",
-        label.get_name()
-    )
-    .into())
-}
-
 pub(crate) fn artifacts_for(
     project: &Project,
     recipe: &Recipe<'_>,
@@ -68,16 +49,11 @@ pub(crate) fn artifacts_for(
         via,
         order_by,
         limit,
+        on_conflict,
         ..
     } = *recipe;
 
-    only_for_query(recipe.kind, name, "`--via`", via.is_some())?;
-    only_for_query(
-        recipe.kind,
-        name,
-        "`--order-by` and `--limit`",
-        order_by.is_some() || limit.is_some(),
-    )?;
+    flags::refuse_misplaced(recipe)?;
 
     let artifacts = match recipe.kind {
         ArtifactKind::Scaffold => {
@@ -342,8 +318,13 @@ pub(crate) fn artifacts_for(
             // now, so no call site restates it.
             let slice = crate::model::Slice::new(project, package);
             let parsed = parse_fields(fields)?;
-            let mut files =
-                crate::spring::usecase_files(&slice, name, &capitalize(target), &parsed)?;
+            let mut files = crate::spring::usecase_files(
+                &slice,
+                name,
+                &capitalize(target),
+                &parsed,
+                on_conflict,
+            )?;
             if let Some(event) = strategy_yields {
                 files.extend(crate::spring::outbox_files(
                     &slice,

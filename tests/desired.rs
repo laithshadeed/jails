@@ -361,6 +361,7 @@ fn what_a_plan_desires_is_what_the_command_writes() {
                 via: None,
                 order_by: None,
                 limit: None,
+                on_conflict: None,
                 method: invocation.method,
             },
             invocation.package.as_deref(),

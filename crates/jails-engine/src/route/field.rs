@@ -504,6 +504,7 @@ fn add_field_with_syntax(
                 via: None,
                 order_by: None,
                 limit: None,
+                on_conflict: None,
                 // A field overlay never introduces an endpoint: it re-renders
                 // a recorded intent with one more component, and the verb --
                 // like the references -- is whatever that intent already

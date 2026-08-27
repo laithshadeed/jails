@@ -1,0 +1,24 @@
+@baseUrl = http://localhost:8080
+
+### Create Person
+POST {{baseUrl}}/people
+Content-Type: application/json
+
+{
+  "id": "00000000-0000-0000-0000-000000000001",
+  "email": "sample-email",
+  "createdAt": "2026-01-01T00:00:00Z"
+}
+
+### List Person
+GET {{baseUrl}}/people
+Accept: application/json
+
+@id = 00000000-0000-0000-0000-000000000001
+
+### Get Person
+GET {{baseUrl}}/people/{{id}}
+Accept: application/json
+
+### Delete Person
+DELETE {{baseUrl}}/people/{{id}}

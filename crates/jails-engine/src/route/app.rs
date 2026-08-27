@@ -59,6 +59,9 @@ pub struct Intent {
     /// A `query`'s explicit order and row ceiling. plan.md P8.2.
     pub order_by: Option<String>,
     pub limit: Option<u32>,
+    /// The target component whose unique constraint makes a `usecase` a
+    /// get-or-create. plan.md P8.3.
+    pub on_conflict: Option<String>,
     /// The HTTP verb, for the one recipe that answers HTTP.
     pub method: Option<jails_spec::spec::kind::HttpMethod>,
 }
@@ -164,6 +167,7 @@ fn declare(
             via: intent.via.as_deref(),
             order_by: intent.order_by.as_deref(),
             limit: intent.limit,
+            on_conflict: intent.on_conflict.as_deref(),
             method: intent.method,
         };
         let change = with_test_support(

@@ -312,7 +312,7 @@ there the unit is a whole service block rather than a setting.)
   a single `insert … on conflict do nothing returning`, because select-then-
   insert leaves the race the whole mechanism exists to close.
 - `jails generate|g usecase <Name> <field:type...> --on <Resource>
-  [--yields <Event>]` (alias `uc`) — an executable create operation over an
+  [--yields <Event>] [--on-conflict <component>]` (alias `uc`) — an executable create operation over an
   existing scaffold: a typed command, an application port, a transactional
   implementation that fills in what it can infer (ids, timestamps, status
   defaults, counters, flags, empty optionals) and refuses what it cannot, an
@@ -322,7 +322,21 @@ there the unit is a whole service block rather than a setting.)
   bounded retry and inspectable terminal failure. An event component named
   `<Resource>Id` is the identity of the row the use case just created; the
   event's own `id` is minted, so two events about one resource are two rows
-  rather than one silently discarded as a duplicate. The relay drains in
+  rather than one silently discarded as a duplicate.
+
+  **`--on-conflict <component>` makes the create a get-or-create.** The
+  generated implementation is `Ensuring<Name>UseCase`, a `JdbcClient` adapter
+  rather than the repository-backed `Storing<Name>UseCase`: one
+  `insert … on conflict (…) do nothing returning`, then a read of the row that
+  was already there. That is deliberate — a port with a `save(T)` cannot
+  express the clause, and read-then-insert reopens the window where two callers
+  both see nothing and both proceed. The component must be one the command
+  carries, or every call would invent a new key and nothing would ever
+  conflict. Whether its column is actually unique is *not* checked at
+  generation time — a record read off disk carries no constraints — so the
+  generated `IT` checks it against a real database instead, where it is a fact
+  rather than a claim. It cannot be combined with `--yields`, since the outbox
+  delegates to the class this replaces. The relay drains in
   batches (`outbox.<usecase-kebab>.batch-size`, default 100) rather than
   moving one row per tick, and its retry interval carries jitter.
 - `jails generate|g query <Name> <field:type...> --on <Resource> [--via

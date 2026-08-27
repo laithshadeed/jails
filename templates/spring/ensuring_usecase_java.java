@@ -1,0 +1,78 @@
+package {{pkg}};
+
+{{target_import}}{{command_import}}{{port_import}}{{imports}}import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.Objects;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * Get-or-create keyed on {@code {{conflict_component}}}, as one statement.
+ *
+ * <p>Not the repository, deliberately. A port with a {@code save(T)} cannot
+ * express {@code on conflict do nothing returning}, and the obvious
+ * alternative -- read, then insert if absent -- leaves a window where two
+ * callers both see nothing and both proceed. Whichever one loses the race gets
+ * a constraint violation instead of the row it asked for.
+ *
+ * <p>The insert either wins and returns its row, or does nothing and returns
+ * none; the second statement then reads the row that was already there. Both
+ * are inside one transaction, so a caller sees a created row or an existing
+ * one and never a half of either.
+ *
+ * <p>The conflict column must carry a unique index, or {@code on conflict}
+ * has nothing to arbitrate against. jails cannot check that from here: a
+ * record read off disk carries no constraints, so it says what type the
+ * component is and not whether the column is unique. The generated {@code IT}
+ * checks it instead, against a real database, where the answer is a fact
+ * rather than a claim.
+ */
+@Component
+public class Ensuring{{name}}UseCase implements {{name}}UseCase {
+
+    private final JdbcClient db;
+
+    public Ensuring{{name}}UseCase(JdbcClient db) {
+        this.db = Objects.requireNonNull(db, "db is required");
+    }
+
+    @Override
+    @Transactional
+    public {{target}} execute({{name}}Command command) {
+        Objects.requireNonNull(command, "command is required");
+{{preamble}}        {{target}} candidate = new {{target}}(
+{{args}});
+        var created = db.sql("""
+                        insert into {{table}} ({{columns}})
+                        values ({{placeholders}})
+                        on conflict ({{conflict_target}}) do nothing
+                        returning {{select}}
+                        """)
+{{bindings}}
+                .query(Ensuring{{name}}UseCase::map)
+                .optional();
+        if (created.isPresent()) {
+            return created.orElseThrow();
+        }
+
+        // Somebody else has this key. Read their row rather than reporting a
+        // conflict: that is the whole difference between this and an insert.
+        return db.sql("""
+                        select {{select}}
+                        from {{table}}
+                        where {{conflict_predicate}}
+                        """)
+                .param("{{conflict_column}}", {{conflict_write}})
+                .query(Ensuring{{name}}UseCase::map)
+                .optional()
+                .orElseThrow(() -> new IllegalStateException(
+                        "{{target}} with this {{conflict_component}} was claimed by a transaction "
+                                + "that then rolled back; retry"));
+    }
+
+    private static {{target}} map(ResultSet rows, int rowNumber) throws SQLException {
+        return new {{target}}(
+{{map_args}});
+    }
+}

@@ -312,12 +312,14 @@ fn unheld_maven_example_manifest_passes_real_verification() {
             // 17 -> 18 reports, 53 -> 54 tests: `UnreadForEmailQueryController
             // Test`, from the `--via User` query that is the Django original's
             // whole customer-facing surface (missing.md M5, plan.md P8.1).
-            reports: 18,
+            // 18 -> 19, 54 -> 55: `EnsureUserControllerTest`, from the
+            // get-or-create the Django ping handler opens with (M6, P8.3).
+            reports: 19,
             // 51 -> 52: `SendMessageUseCaseTest` gained the case missing.md
             // M3 says would have caught a create that never assigns a key.
             // 52 -> 53: `MarkAsReadControllerTest` gained the case for a
             // request with no `If-Match`, which used to apply blind.
-            tests: 54,
+            tests: 55,
             failures: 0,
             errors: 0,
             skipped: 0,
@@ -328,8 +330,11 @@ fn unheld_maven_example_manifest_passes_real_verification() {
         MavenReportSummary {
             // 5 -> 6 reports, 6 -> 7 tests: `JdbcUnreadForEmailQueryIT` runs
             // the join against real PostgreSQL.
-            reports: 6,
-            tests: 7,
+            // 6 -> 7, 7 -> 8: `EnsuringEnsureUserUseCaseIT`, which is the only
+            // place `on conflict` means anything -- and the only check that
+            // the column it names actually carries a unique index.
+            reports: 7,
+            tests: 8,
             failures: 0,
             errors: 0,
             skipped: 0,
