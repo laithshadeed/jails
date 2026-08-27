@@ -59,9 +59,17 @@ pub(crate) fn artifacts_for(
     // The HTTP surface this call asked for, built once: three recipes take it
     // and each used to take `path` positionally beside whatever else it
     // needed.
+    // Parsed once, here, so the refusal for a malformed token arrives before
+    // anything is planned and every renderer reads the same values.
+    let binds = recipe
+        .binds
+        .iter()
+        .map(|token| jails_protocol::declaration::BindSpec::parse(token))
+        .collect::<Result<Vec<_>>>()?;
     let endpoint = crate::spring::Endpoint {
         route: path,
         consumes: recipe.request_format(),
+        binds: &binds,
         // PUT unless the caller named one: what every transition emitted
         // before `--method` reached this recipe.
         method: recipe

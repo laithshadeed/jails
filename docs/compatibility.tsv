@@ -14,7 +14,8 @@ ledger_payload_v6	jails-ledger-payload-6	superseded	jails-protocol	refuse by nam
 ledger_payload_v7	jails-ledger-payload-7	superseded	jails-protocol	refuse by name before payload decode; no translation exists
 ledger_payload_v8	jails-ledger-payload-8	superseded	jails-protocol	refuse by name before payload decode; no translation exists
 ledger_payload_v9	jails-ledger-payload-9	superseded	jails-protocol	refuse by name before payload decode; no translation exists
-ledger_payload_v10	jails-ledger-payload-10	current	jails-protocol	refuse before payload decode; instruct upgrade
+ledger_payload_v10	jails-ledger-payload-10	superseded	jails-protocol	refuse by name before payload decode; no translation exists
+ledger_payload_v11	jails-ledger-payload-11	current	jails-protocol	refuse before payload decode; instruct upgrade
 transaction_journal	JAILS-JOURNAL-1\0	current	jails-commit	refuse before recovery; instruct upgrade
 transaction_receipt	JAILS-RECEIPT-1\0	current	jails-commit	refuse before acceptance; instruct upgrade
 prepared_plan	jails.prepared-plan.v1	current	jails-engine	refuse unknown schema/protocol/tool version before lock or project write

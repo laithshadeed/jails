@@ -59,6 +59,7 @@ const KNOWN_GENERATE_KEYS: &[&str] = &[
     "path",
     "select",
     "set",
+    "bind",
     "if_match",
     "method",
     "consumes",
@@ -183,6 +184,7 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<Intent>)> {
                 "path" => intent.path = Some(string(value, line_number, key)?.to_string()),
                 "select" => intent.select = Some(string(value, line_number, key)?.to_string()),
                 "set" => intent.set = string_array(value, line_number, key)?,
+                "bind" => intent.bind = string_array(value, line_number, key)?,
                 "if_match" => {
                     let value = string(value, line_number, key)?;
                     intent.if_match = Some(
@@ -428,7 +430,7 @@ mod tests {
             // A value of the right shape for each: the point is that the key
             // is *reached*, not that this particular value is meaningful.
             let value = match *key {
-                "fields" | "indexes" | "set" => "[]".to_string(),
+                "fields" | "indexes" | "set" | "bind" => "[]".to_string(),
                 "timestamps" => "true".to_string(),
                 "limit" => "10".to_string(),
                 "kind" => "\"record\"".to_string(),

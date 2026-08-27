@@ -33,10 +33,12 @@ mod component;
 mod literal;
 mod route;
 mod sql;
+mod wire;
 pub use component::FieldName;
 pub use literal::LiteralValue;
 pub use route::RoutePath;
 pub use sql::SqlName;
+pub use wire::WireName;
 
 // ---------------------------------------------------------------------------
 // Digests

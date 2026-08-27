@@ -50,7 +50,9 @@ The three levers, in order of size:
    templates, and the per-kind Rust plumbing folds into one engine.
 
 I do *not* think the win comes from inventing a DSL grammar — §5 (P8) explains why. That is where my analysis
-parted ways with the Gemini document.
+parted ways with the Gemini document. The resulting design is stated end to end in **§4** — the new vision:
+jails as a project compiler, manifest in, project tree out, reconcile as the only verb — and §5 walks there
+one deletable step at a time.
 
 ---
 
@@ -195,7 +197,10 @@ Two honest answers:
 
 ---
 
-## 4. The reframe: jails is a compiler whose output is a directory
+## 4. The new vision: jails as a project compiler
+
+*(This is the chapter the rest of the document serves: §5 is how to get there, §7 is the resulting crate map,
+§8 is the order to walk it.)*
 
 The user's instinct — "maybe write a compiler, invent a DSL, dynamic schema" — is pointing at something real,
 but the *valuable* property of a compiler isn't its phases or its IR. It's two properties:
@@ -203,39 +208,179 @@ but the *valuable* property of a compiler isn't its phases or its IR. It's two p
 1. **Determinism**: same inputs → same bytes.
 2. **Referential transparency**: the output can be thrown away and re-derived at any time.
 
-The codebase already believes in (1) — `pipeline.rs` replays and asserts. Follow it to its conclusion and the
-transaction engine becomes unnecessary:
+The codebase already believes in (1) — `pipeline.rs` replays and asserts. The new design follows both to
+their conclusion and lets them define the whole system:
+
+### 4.1 The system in one diagram
 
 ```
-facts     = observe(project)              # pom, gradle, compose, config, disk — read once, as values
-schema    = parse(jails.toml + app.toml)  # the field-spec DSL, kinds, capabilities — already exists
-target    = render(recipes, facts, schema) # pure; provenance header stamped
-plan      = diff(disk, target)            # the only "plan" that exists
---pretend = print(plan)
-apply     = staged writes → rename → merge-on-conflict (git merge-file) → manifest write-back
+              ┌────────────────────────────────────────────┐
+              │   jails.toml  —  the truth (human-owned)   │
+              │  project · layout · capabilities · entities│
+              └──────────────────┬─────────────────────────┘
+                                 │  edit (toml_edit, one row)
+                                 ▼
+  facts = observe(project)  ┌─────────┐   resolve:
+  (build tool, deps,        │ resolve │   which recipe rows,
+   versions, disk) ────────▶│         │   which variant cells
+  ┌───────────────────┐     └────┬────┘   apply to this project
+  │ recipes           │◀─────────┘
+  │ (39 kind rows +   │           ▼
+  │  templates, SQL/  │     target tree ──▶ diff(disk) ──▶ staged renames
+  │  DDL projection)  │     (never stored)  (the plan)      │
+  └───────────────────┘                                     ▼
+                                             receipts.jsonl ◀── write
 ```
 
-Under this model:
+`--pretend` prints the diff instead of writing. That is the entire runtime model. The rest of this
+section walks it: what the five nouns are (§4.2), what happened to the 25-step pipeline (§4.3), what every
+today's command becomes (§4.4), and a worked example in both worlds (§4.5).
 
-- **`--pretend` parity is free** — there's no second mode to drift from, because there's only one mode.
-- **Crash recovery is "run it again"** — the property `crash.rs` (390 lines) spends its whole suite proving
-  becomes an axiom.
-- **`destroy`/`rename`/`g field`** stop being bespoke multi-step routes (`route/field.rs` + `route/field/` is
-  1,945 lines across six verbs / twelve entry points, each hand-deriving its own SQL and companion re-plans) and
-  become *manifest edits + one reconcile*.
-  The schema-diff insight from the Gemini doc is right; it lands inside this shape.
-- **`app apply` is no longer a special command** — it's what every command already was.
-- The ledger stops being a database and becomes what a lockfile is: a *derived cache* of
-  (ownership → files, content hashes) plus an append-only receipts JSONL for `jails history` without git.
-  Corrupt or stale cache = regenerate. A cache you can delete-and-rebuild never needs crash recovery.
+### 4.2 The five nouns
 
-This is where the "dynamic schema" instinct lands too: the field-spec DSL (`name:type[!?]`, `@pk/@unique/
-@index/@positive/@scope`) already *is* a dynamic schema with a closed constraint vocabulary. The failure
-isn't the DSL — it's that the same idea exists three times (`FieldSpec` in jails-spec, `declaration::Field`
-in protocol, `IntentSpec` fields in route). One parser, one schema type, spoken by CLI, manifests, and
-(what remains of) the ledger.
+Everything jails keeps is one of these five. Everything in the current system is either one of these, or
+machinery serving them:
 
-## 5. The proposals
+| noun | what it is | where it lives | today's counterpart |
+|---|---|---|---|
+| **Manifest** | what the user asked for: package, layers, capabilities, and one row per entity | `jails.toml` — human-readable, human-owned, `toml_edit`-edited so comments survive | today's `jails.toml` + `.jails/app.toml` + the ledger's ownership registry, merged into **one file** |
+| **Facts** | what the project *is right now*: build tool, deps and versions, layer renames, disk state of every file the command could touch | in-memory only, observed once per command | `capture.rs`'s capture-once principle survives; the 985-line `fact.rs` ceremony collapses into one struct |
+| **Recipes** | how each artifact is produced: 39 kind rows + the 156 templates + field→SQL | `jails-core`, as data (P3) | today's per-kind Rust plumbing, already half-consolidated in `recipes.rs` |
+| **Target tree** | the complete set of files the manifest implies | computed, **never stored** | today's `LedgerIntent` + objects + publish inodes, i.e. a tree stored in triplicate |
+| **Receipts** | append-only JSONL, one line per apply: what ran, what changed, content hashes | `.jails/receipts.jsonl`, ~200 LOC | today's `JournalV1` + `ReceiptV1` + objects + transactions + gc + recovery ≈ 5,264 LOC |
+
+One verb — **reconcile** — and one flag — `--pretend` — cover everything the executor does today.
+
+The manifest, concretely (existing vocabulary throughout — kinds, layout keys, field-spec syntax, `--on`/
+`--yields`/`--select` all already exist; they move into the file):
+
+```toml
+# jails.toml — the only durable registry jails keeps
+[project]
+package     = "com.example.demo"
+java        = 26
+capabilities = ["db", "api", "testkit"]
+
+[layout]                          # unchanged — `jails adopt` already writes this
+domain = "domain"
+web    = "adapters.web"
+
+[[entity]]
+kind    = "scaffold"
+name    = "Note"
+fields  = ["id:uuid", "title:string!", "done:boolean"]
+mig     = "V3"                     # the one state a render can't re-derive: burned migration serials
+
+[[entity]]
+kind    = "usecase"
+name    = "ResolveNote"
+fields  = ["resolution:string!"]
+on      = "Note"
+yields  = "NoteResolved"
+
+[[entity]]
+kind    = "query"
+name    = "OpenNotes"
+on      = "Note"
+select  = "status = 'OPEN' ORDER BY created_at DESC"
+```
+
+Read that file and you know the whole project — what `ledger.toml`'s 47 KB of hex claims and what
+`jails resource status` reconstructs, in a form a human (and every editor) can already read. The `mig`
+column is deliberately the only piece of state a render cannot re-derive from disk, because Flyway has no
+undo; everything else in the file is what the user *asked for*, and ownership is *implied by the row* — not
+recorded separately from it.
+
+### 4.3 The pipeline: five stages replace 25
+
+Today's runtime is a 14-step prepare (`pipeline.rs`'s replay, render, diff, preimage guards, identity
+freeze), then an 11-step commit (object writes, journal states, `.publish` inodes, hard-link publication,
+ledger-last), plus capture read-sets, generation counters, canonical request fingerprints, and a GC. The new
+runtime is the diagram's right half, in full:
+
+1. **observe** — read the project once, as values (the capture-once principle survives; it is `capture.rs`
+   minus the ceremony). Every declared read records present-or-absent: an absence is a fact the plan can
+   check, not a gap.
+2. **resolve** — manifest rows ∩ facts: which recipes this command realizes, and which variant cells apply
+   (Boot floor, JUnit line, adapter shape, layer placement). One typed `Facts` value; version questions are
+   answered here and nowhere else — the sniffing family (`mockmvc_autoconfigure_import`, `webmvc_test_import`,
+   `validation_package`…) becomes data in this one place.
+3. **render** — pure: `(rows, facts) → Vec<OutputFile>`, provenance header stamped. Determinism is a tested
+   property of this function (today it is an assertion buried in prepare step 1).
+4. **diff** — target tree vs disk: per file, create / replace / leave-alone; reader-moved files go to
+   `git merge-file` (already the codebase's answer); rows the manifest no longer names become deletions.
+   This is the only "plan" that exists — and `--pretend` prints it.
+5. **write** — stage to temp dir, `rename` into place, append one receipt line, bring compose up if needed.
+   Interrupted? The next run of the same command re-derives the same target and finishes. `crash.rs` spends
+   390 lines proving what here is an axiom.
+
+Under this model the executor's guarantees come from the filesystem, not from protocol (§3.1's table, one
+row each). `--pretend` parity is free because there is no second mode to drift from. `crash recovery` is
+"run it again." And the 47 KB binary ledger stops existing: ownership is the manifest, file state is the
+disk, content hashes live in the receipt line that wrote them.
+
+### 4.4 What every existing command becomes
+
+The CLI surface doesn't shrink in *words* — it shrinks in *mechanism*. Same UX, one engine:
+
+| today | new world | what folds |
+|---|---|---|
+| `g scaffold Note id:uuid title:string!` | append one `[[entity]]` row → reconcile | sugar stays for humans |
+| `g field`, `resource field add/change/drop/rename/nullability` (1,945 LOC, six verbs, twelve entry points) | edit the row's `fields` → reconcile | one verb on one row; companions re-derive in render |
+| `add db`, `add kafka`, … | add the capability key → reconcile | unchanged UX; `sync` *is* reconcile |
+| `destroy <kind> <name>` | delete the row → reconcile | no `--force` semantics needed: the row is the truth |
+| `rename resource` | edit the name in the manifest → reconcile | a rename is a render under a different name |
+| `app plan` / `app apply` | the plan step / the write step | `app apply` stops being special — every command is apply |
+| `adopt layout`, `set/unset`, `add dependency` | manifest edits → reconcile | same file, same verb |
+| `show` / `history` / `undo` | `git log` / `git checkout`; `receipts.jsonl` for non-git projects | ~1,600 LOC of receipt machinery → 200 |
+| `doctor`, `why`, `explain`, `routes`, `beans`, `stats` | **unchanged** | they get *better*: one source of truth to read |
+| `test`, `testd`, `run`, `migrate`, `kafka`, `console`, `bench` | unchanged | the toolchain crate is already right |
+
+### 4.5 A worked example, both worlds
+
+`jails g scaffold Note id:uuid title:string!` —
+
+**Old world** (traced through the code): clap → `dispatch.rs::mutate` → `route/artifact.rs` assembles a
+`CanonicalGenerateRequest`, fingerprinted via `CanonicalRequestSyntaxV1::fingerprint()` so a mid-merge
+reconciliation can later ask "is this the same command?" → recipe becomes desired changes and ownership
+claims → `capture::projected` takes a read-set capture → `pipeline.rs`'s 14 steps (replay changes onto a
+fresh projection and assert equality with `LedgerIntent`, materialize deferred renders, diff against the
+snapshot, guard preimages, freeze identity) → flock → `execute.rs`'s 11 steps (write content objects to
+`.jails/objects/sha256/**`, journal Prepared → Active, copy into transaction-local `.publish` inodes,
+verify, sync, hard-link into place, journal → Committed, write the 47 KB binary hex ledger last) → receipt
+→ report. 60 golden trees pin the ledger's bytes, so any protocol change reddens the e2e suite.
+
+**New world**: clap → `toml_edit` appends one `[[entity]]` row (comments untouched) → render emits the same
+~10 files — record, port, JDBC adapter, in-memory adapter, DTOs, service, controller, companion tests,
+migration, `requests/Note.http` — *byte-identical to today's goldens* (which is why §10's oracle split comes
+first) → diff → 10 staged renames (or `git merge-file` where the reader edited) → one receipt line appended.
+`--pretend` is stages 1–4 printed.
+
+What vanishes from the path: fingerprinting, read-sets, guarded preimages, identity freezing, the object
+store, publish inodes, hard-link publication, journal states, generation counters, the 47 KB hex ledger,
+and the 60-golden coupling that turned an unrelated feature into a repo-wide red. What the user keeps:
+the same commands, the same bytes on disk, the same `--pretend` parity — plus durable state they can read.
+
+### 4.6 What this vision is *not*, and what you gain besides smaller
+
+- **It is not a grammar, not an IR, not minijinja** (§5 P8): the render function keeps today's templates,
+  today's field-spec DSL, and typed Rust context builders. The vision changes what jails *is* — a compiler
+  from a file to a tree — not what it *generates*. Every opinion that makes jails jails (immutable records,
+  ports/adapters, one-column-list SQL, visible SQL, honest status codes, tests that prove recipes) lives in
+  render, and render is untouched.
+- **You gain features the old substrate couldn't afford**: user-owned custom scaffolds (a `[[entity]]` row
+  plus project-local templates — no core change), `plan --from <manifest-diff>` as the portable story
+  (`route/portable.rs` simulates it with authenticated envelopes today), and a manifest that editors and
+  agents can read and write without jails as intermediary — because the truth stopped being hex.
+- **The remaining protocol is small enough to be honest about**: `Name`, `Package`, `EntityId`, the closed
+  kind/capability vocabularies, `FieldSpec` (one parser, spoken by CLI and manifest alike — ending the
+  three-spelling drift in §4's final paragraph), and an unversioned receipt schema. That is §7's ~2k-line
+  `jails-protocol`.
+
+## 5. The proposals: eight steps toward §4
+
+Each proposal below is one deletable step toward the §4 design; the vision is the destination, these are the
+stepping stones.
 
 ### P1 — Manifest is the truth; the ledger becomes a derived cache *(the hinge)*
 

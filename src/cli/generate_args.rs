@@ -163,6 +163,22 @@ pub(crate) struct GenerateArgs {
     /// before any generated code runs.
     #[arg(long = "if-match", value_name = "POLICY")]
     pub(crate) if_match: Option<jails_spec::spec::kind::Precondition>,
+    /// Bind one component from a request parameter of a different name.
+    /// Repeatable, as `component=parameter`.
+    ///
+    ///   jails g transition MarkRead id:long --on Message --bind id=message_id
+    ///
+    /// Spring's data binder has no naming strategy: Jackson has one and
+    /// applies it to JSON without help, so a project whose responses are
+    /// snake_case still binds a *form* field called `userId` unless the
+    /// component says otherwise. jails derives that from the project's Jackson
+    /// setting, and derivation cannot cover a value that is `id` in the
+    /// response and `message_id` in the request -- neither name follows from
+    /// the other.
+    ///
+    /// Only meaningful with `--consumes form`, and refused without it.
+    #[arg(long = "bind", value_name = "COMPONENT=PARAMETER")]
+    pub(crate) bind: Vec<String>,
     /// For `controller`, the HTTP method the generated route answers.
     /// Defaults to `get`.
     ///
@@ -209,6 +225,7 @@ impl From<GenerateArgs> for jails_engine::route::Intent {
             select: args.select,
             set: args.set,
             if_match: args.if_match,
+            bind: args.bind,
             method: args.method,
             consumes: args.consumes,
         }

@@ -117,6 +117,11 @@ pub(super) fn declared(
         .select
         .map(jails_protocol::identity::Name::parse)
         .transpose()?;
+    spec.binds = recipe
+        .binds
+        .iter()
+        .map(|token| jails_protocol::declaration::BindSpec::parse(token))
+        .collect::<Result<Vec<_>>>()?;
     spec.if_match = recipe.if_match;
     spec.pins = recipe
         .pins

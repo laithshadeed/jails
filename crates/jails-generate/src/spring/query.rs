@@ -252,7 +252,7 @@ fn query_record_java(
         pkg,
         &class,
         fields,
-        endpoint.binding_naming(slice.project()),
+        &endpoint.bindings(slice.project(), fields),
     );
     let mut imports = fields
         .iter()

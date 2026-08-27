@@ -473,6 +473,13 @@ pub struct Recipe<'a> {
     /// `PinSpec`, and its *meaning* against the target's declared types is
     /// resolved in the generator.
     pub pins: &'a [String],
+    /// Components bound from a request parameter of a different name, as the
+    /// `component=parameter` tokens the caller typed.
+    ///
+    /// Spring's data binder has no naming strategy, and the derived one --
+    /// the project's Jackson strategy -- cannot cover a value that is `id` in
+    /// the response and `message_id` in the request.
+    pub binds: &'a [String],
 }
 
 impl Recipe<'_> {

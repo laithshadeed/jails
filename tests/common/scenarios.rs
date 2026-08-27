@@ -740,6 +740,49 @@ pub const SCENARIOS: &[Scenario] = &[
             ],
         ],
     },
+    // The same value under two names on two wires. The brief's own customer
+    // page reads `message.id` out of the response and posts `message_id` back,
+    // and neither name follows from the other -- so the derivation that covers
+    // `userId` -> `user_id` cannot cover this, and it is a name the reader
+    // types.
+    Scenario {
+        name: "transition-bound-name",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[
+            &["add", "db", "--no-start"],
+            &[
+                "g",
+                "scaffold",
+                "Note",
+                "id:long@pk",
+                "body:string!",
+                "seen:boolean",
+                "version:long",
+            ],
+            &[
+                "g",
+                "transition",
+                "MarkNoteSeen",
+                "id:long",
+                "version:long",
+                "--on",
+                "Note",
+                "--set",
+                "seen=true",
+                "--if-match",
+                "optional",
+                "--consumes",
+                "form",
+                "--method",
+                "post",
+                "--bind",
+                "id=note_id",
+                "--path",
+                "/customer_api/seen",
+            ],
+        ],
+    },
     // The customer's reply: the caller sends the email they logged in with and
     // the row needs a `user_id`. `g query --via` reads across that reference
     // and nothing wrote across it, so the only expressible endpoint was one

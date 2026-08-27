@@ -46,6 +46,42 @@ pub(super) fn refuse_misplaced(recipe: &Recipe<'_>) -> Result<()> {
         "the recipe that creates a row",
         recipe.on_conflict.is_some(),
     )?;
+    // A binding is an instruction to Spring's *data binder*, and the data
+    // binder only reads a form. Jackson has a naming strategy and applies it
+    // to JSON without help, so `--bind` on a JSON endpoint would be a second
+    // authority on a question that already has one -- and a silent one, since
+    // `@BindParam` is simply ignored there.
+    if !recipe.binds.is_empty() {
+        use clap::ValueEnum;
+        let kind = recipe
+            .kind
+            .to_possible_value()
+            .expect("every kind has a clap value");
+        if !matches!(
+            recipe.kind,
+            ArtifactKind::Controller
+                | ArtifactKind::Usecase
+                | ArtifactKind::Query
+                | ArtifactKind::Transition
+        ) {
+            return Err(format!(
+                "`--bind` applies to a controller, a use case, a query or a transition -- the \
+                 recipes that bind one request body.\n       fix: drop it from `jails g {} {}`.",
+                kind.get_name(),
+                recipe.name
+            )
+            .into());
+        }
+        if recipe.request_format() != jails_spec::spec::kind::WireFormat::Form {
+            return Err(
+                "`--bind` names a request *parameter*, and this endpoint reads a JSON \
+                        body.\n       fix: add `--consumes form`, or drop `--bind` -- Jackson \
+                        applies the project's naming strategy to JSON without being told."
+                    .to_string()
+                    .into(),
+            );
+        }
+    }
     // One recipe has a precondition to insist on or not: the compare-and-swap
     // update. Nothing else reads `If-Match`, so a flag here would describe a
     // header the generated code never looks at.

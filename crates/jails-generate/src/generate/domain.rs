@@ -11,34 +11,23 @@ use super::*;
 // no framework annotations, and a compact constructor so an invalid value cannot be
 // constructed in the first place. ----
 
-/// The request-parameter name this component answers to, when it is not its
-/// own.
-///
-/// `None` means "no annotation": either the record is not form-bound, or the
-/// project's wire naming leaves the name alone, or the snake spelling is the
-/// name already -- and an annotation restating the default is noise in every
-/// generated record that has a one-word component.
-fn wire_name(field: &Field, bind: Option<jails_project::model::WireNaming>) -> Option<String> {
-    match bind? {
-        jails_project::model::WireNaming::AsWritten => None,
-        jails_project::model::WireNaming::SnakeCase => {
-            let snake = crate::sql::snake_case(&field.name);
-            (snake != field.name).then_some(snake)
-        }
-    }
-}
-
 pub(crate) fn record_java(pkg: &str, name: &str, fields: &[Field]) -> String {
-    bound_record_java(pkg, name, fields, None)
+    bound_record_java(pkg, name, fields, &vec![None; fields.len()])
 }
 
 /// The same record, with the request-parameter names a form post actually
 /// sends.
 ///
-/// `bind` is `Some` only for a record Spring's **data binder** fills -- a
-/// `@ModelAttribute` command or criteria -- and only where the project's wire
-/// naming differs from the component's own. Everything else goes through
-/// [`record_java`] and is byte-identical to what it always was.
+/// `bindings` is one entry per component: `Some(name)` for a component that
+/// answers to a request parameter of another name, `None` for one that does
+/// not. It is non-empty only for a record Spring's **data binder** fills -- a
+/// `@ModelAttribute` command or criteria -- and every other record goes
+/// through [`record_java`], byte-identical to what it always was.
+///
+/// Resolved by the caller rather than here: `Endpoint::bound_name` owns it,
+/// because the annotation on this record and the parameter the generated proof
+/// posts are the same fact, and a proof posting a name the record does not
+/// bind passes or fails for the wrong reason.
 ///
 /// It has to be per component, because the data binder has no naming strategy:
 /// `spring.jackson.property-naming-strategy` configures *Jackson*, so a
@@ -50,12 +39,12 @@ pub(crate) fn bound_record_java(
     pkg: &str,
     name: &str,
     fields: &[Field],
-    bind: Option<jails_project::model::WireNaming>,
+    bindings: &[Option<String>],
 ) -> String {
     // Only reference components can be null, and only ones not marked `?`
     // are checked -- if that leaves nothing, the compact constructor is dead
     // weight.
-    let bindings: Vec<Option<String>> = fields.iter().map(|f| wire_name(f, bind)).collect();
+
     let checked: Vec<&Field> = fields.iter().filter(|f| needs_null_check(f)).collect();
     let blank_checked: Vec<&Field> = fields.iter().filter(|f| needs_blank_check(f)).collect();
     let optional = has_optional(fields);
@@ -84,7 +73,7 @@ pub(crate) fn bound_record_java(
 
     let components = fields
         .iter()
-        .zip(&bindings)
+        .zip(bindings)
         .map(|(f, wire)| match wire {
             Some(wire) => format!("@BindParam(\"{wire}\") {} {}", declared_type(f), f.name),
             None => format!("{} {}", declared_type(f), f.name),

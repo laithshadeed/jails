@@ -134,6 +134,52 @@ impl Codec for PinSpec {
     }
 }
 
+/// One component bound from a request parameter of a different name.
+///
+/// `--bind id=message_id`. Spring's data binder has no naming strategy, and
+/// the derived one -- the project's Jackson strategy -- cannot cover a value
+/// that is `id` in the response and `message_id` in the request. Both halves
+/// are validated values: a `Name` for the component and a `WireName` for what
+/// arrives, so a binding cannot smuggle anything into an annotation.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+pub struct BindSpec {
+    pub component: Name,
+    pub wire: crate::identity::WireName,
+}
+
+impl BindSpec {
+    /// `component=parameter`.
+    pub fn parse(token: &str) -> Result<Self> {
+        let (component, wire) = token.split_once('=').ok_or_else(|| {
+            format!(
+                "`{token}` is not a binding.\n       fix: each `--bind` is \
+                 `component=parameter`, for example `--bind id=message_id`."
+            )
+        })?;
+        Ok(Self {
+            component: Name::parse(component.trim())?,
+            wire: crate::identity::WireName::parse(wire.trim())?,
+        })
+    }
+
+    pub fn canonical(&self) -> String {
+        format!("{}={}", self.component, self.wire)
+    }
+}
+impl Codec for BindSpec {
+    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
+        self.component.encode(encoder)?;
+        self.wire.encode(encoder)
+    }
+
+    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
+        Ok(Self {
+            component: Name::decode(decoder)?,
+            wire: crate::identity::WireName::decode(decoder)?,
+        })
+    }
+}
+
 /// A recipe's positional arguments, in the shape that recipe takes.
 ///
 /// plan.md §R1.1's amendment. Which variant a spec holds is a total function
@@ -433,6 +479,11 @@ pub struct IntentSpec {
     /// `ADMIN` a constant of this component's enum? -- is resolved in the
     /// generator, where the target's declared types are known.
     pub pins: Vec<PinSpec>,
+    /// Components bound from a request parameter of a different name.
+    ///
+    /// Empty is "every component binds by its own name, through the project's
+    /// wire naming", which is what every recipe held before `--bind` existed.
+    pub binds: Vec<BindSpec>,
     /// The HTTP method a generated endpoint answers.
     ///
     /// Content rather than identity, like every other field here: changing
@@ -535,6 +586,7 @@ impl IntentSpec {
             select: None,
             if_match: None,
             pins: Vec::new(),
+            binds: Vec::new(),
         })
     }
 }
@@ -573,6 +625,10 @@ impl Codec for IntentSpec {
         encoder.count(self.pins.len())?;
         for pin in &self.pins {
             pin.encode(encoder)?;
+        }
+        encoder.count(self.binds.len())?;
+        for bind in &self.binds {
+            bind.encode(encoder)?;
         }
         Ok(())
     }
@@ -629,6 +685,14 @@ impl Codec for IntentSpec {
                     pins.push(PinSpec::decode(decoder)?);
                 }
                 pins
+            },
+            binds: {
+                let count = decoder.count()?;
+                let mut binds = Vec::new();
+                for _ in 0..count {
+                    binds.push(BindSpec::decode(decoder)?);
+                }
+                binds
             },
         })
     }

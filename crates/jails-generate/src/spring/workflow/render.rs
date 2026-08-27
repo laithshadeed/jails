@@ -22,7 +22,7 @@ pub(crate) fn usecase_command_java(
         pkg,
         &command,
         fields,
-        endpoint.binding_naming(slice.project()),
+        &endpoint.bindings(slice.project(), fields),
     );
     let mut imports = fields
         .iter()

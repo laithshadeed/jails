@@ -71,6 +71,9 @@ pub struct Intent {
     /// Components pinned to a constant rather than read from the request, as
     /// `component=literal`. Empty is "the caller supplies every one".
     pub set: Vec<String>,
+    /// Components bound from a request parameter of a different name, as
+    /// `component=parameter`.
+    pub bind: Vec<String>,
     /// Whether a `transition` insists on the caller's `If-Match`.
     pub if_match: Option<jails_spec::spec::kind::Precondition>,
     /// The HTTP verb, for the one recipe that answers HTTP.
@@ -186,6 +189,7 @@ fn declare(
             consumes: intent.consumes,
             select: intent.select.as_deref(),
             pins: &intent.set,
+            binds: &intent.bind,
             if_match: intent.if_match,
         };
         let change = with_test_support(

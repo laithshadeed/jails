@@ -7214,3 +7214,114 @@ fn a_lookup_that_cannot_be_resolved_is_refused_and_names_what_would_work() {
         "{stderr}"
     );
 }
+
+/// The same value under two names on two wires.
+///
+/// Spring's data binder has no naming strategy. Jackson has one and applies it
+/// to JSON without help, which is why `@BindParam` is derived from the
+/// project's Jackson setting at all -- and that derivation covers
+/// `userId` -> `user_id` and cannot cover `id` -> `message_id`, because
+/// neither name follows from the other. The brief's own customer page reads
+/// `message.id` out of the response and posts `message_id` back.
+#[test]
+fn a_component_can_be_bound_from_a_parameter_of_another_name() {
+    let root = temp_dir("bound-parameter-name");
+    write_spring_fixture(&root);
+
+    for args in [
+        vec!["add", "db", "--no-start"],
+        vec![
+            "g",
+            "scaffold",
+            "Note",
+            "id:long@pk",
+            "body:string!",
+            "seen:boolean",
+            "version:long",
+        ],
+        vec![
+            "g",
+            "transition",
+            "MarkSeen",
+            "id:long",
+            "version:long",
+            "--on",
+            "Note",
+            "--set",
+            "seen=true",
+            "--if-match",
+            "optional",
+            "--consumes",
+            "form",
+            "--bind",
+            "id=note_id",
+        ],
+    ] {
+        assert!(
+            jails_cmd(&root, None)
+                .args(&args)
+                .status()
+                .unwrap()
+                .success(),
+            "{args:?}"
+        );
+    }
+
+    let command = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/service/MarkSeenCommand.java"),
+    )
+    .unwrap();
+    assert!(
+        command.contains(r#"@BindParam("note_id") long id"#),
+        "{command}"
+    );
+    assert!(
+        command.contains("import org.springframework.web.bind.annotation.BindParam;"),
+        "{command}"
+    );
+
+    // The proof posts what the record binds. They are one fact, and a proof
+    // posting the other name passes or fails for the wrong reason.
+    let proof = fs::read_to_string(
+        root.join("src/test/java/com/example/demo/web/MarkSeenControllerTest.java"),
+    )
+    .unwrap();
+    assert!(proof.contains(r#".param("note_id", "7")"#), "{proof}");
+    assert!(!proof.contains(r#".param("id""#), "{proof}");
+
+    // A binding is an instruction to the data binder, and the data binder only
+    // reads a form. On JSON it would be silently ignored.
+    let output = jails_cmd(&root, None)
+        .args([
+            "g",
+            "transition",
+            "Probe",
+            "id:long",
+            "body:string!",
+            "version:long",
+            "--on",
+            "Note",
+            "--bind",
+            "id=note_id",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("this endpoint reads a JSON body"),
+        "{stderr}"
+    );
+
+    // And a recipe that binds no request refuses it.
+    let output = jails_cmd(&root, None)
+        .args(["g", "record", "Probe", "a:string", "--bind", "a=b"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("`--bind` applies to a controller"),
+        "{stderr}"
+    );
+}

@@ -214,6 +214,7 @@ pub(super) struct Recorded {
     select: Option<String>,
     if_match: Option<jails_spec::spec::kind::Precondition>,
     pins: Vec<String>,
+    binds: Vec<String>,
     method: Option<jails_spec::spec::kind::HttpMethod>,
     consumes: Option<jails_spec::spec::kind::WireFormat>,
 }
@@ -236,6 +237,11 @@ impl Recorded {
                 .pins
                 .iter()
                 .map(jails_protocol::declaration::PinSpec::canonical)
+                .collect(),
+            binds: spec
+                .binds
+                .iter()
+                .map(jails_protocol::declaration::BindSpec::canonical)
                 .collect(),
             method: spec.method,
             consumes: spec.consumes,
@@ -270,6 +276,7 @@ impl Recorded {
             select: self.select.as_deref(),
             if_match: self.if_match,
             pins: &self.pins,
+            binds: &self.binds,
         }
     }
 }

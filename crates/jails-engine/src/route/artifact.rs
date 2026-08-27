@@ -703,6 +703,7 @@ pub fn recipe_with_field_data(
                     consumes: intent.consumes,
                     select: intent.select.as_deref(),
                     pins: &intent.set,
+                    binds: &intent.bind,
                     if_match: intent.if_match,
                 },
                 package,

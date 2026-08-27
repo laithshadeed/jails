@@ -21,6 +21,12 @@ pub(crate) struct Endpoint<'a> {
     pub route: Option<&'a str>,
     /// How the request body is bound.
     pub consumes: jails_spec::spec::kind::WireFormat,
+    /// Components bound from a request parameter of a different name.
+    ///
+    /// Here because this is the value that already knows *how* the request
+    /// arrives, and the override is only meaningful for the binder that has no
+    /// naming strategy of its own.
+    pub binds: &'a [jails_protocol::declaration::BindSpec],
     /// The verb this endpoint answers, where the recipe has a choice.
     ///
     /// `transition` is the one that does: its update is idempotent, so PUT and
@@ -41,6 +47,7 @@ impl Endpoint<'_> {
         Self {
             route: None,
             consumes: jails_spec::spec::kind::WireFormat::Json,
+            binds: &[],
             method: jails_spec::spec::kind::HttpMethod::Put,
         }
     }
@@ -94,18 +101,58 @@ impl Endpoint<'_> {
             jails_spec::spec::kind::WireFormat::Form => values
                 .iter()
                 .map(|(name, sample)| {
-                    let bound = match project.wire_naming() {
-                        jails_project::model::WireNaming::AsWritten => name.clone(),
-                        jails_project::model::WireNaming::SnakeCase => crate::sql::snake_case(name),
-                    };
                     format!(
-                        "{indent}.param(\"{bound}\", \"{}\")",
+                        "{indent}.param(\"{}\", \"{}\")",
+                        self.bound_name(project, name),
                         sample.trim_matches('"')
                     )
                 })
                 .collect::<Vec<_>>()
                 .join("\n"),
         }
+    }
+
+    /// The request parameter one component arrives under.
+    ///
+    /// The override first, then the project's wire naming. One owner, because
+    /// the annotation on the record and the parameter the generated proof
+    /// posts are the same fact -- and a proof that posts a name the record
+    /// does not bind passes or fails for the wrong reason.
+    pub fn bound_name(&self, project: &crate::model::Project, component: &str) -> String {
+        if let Some(bind) = self
+            .binds
+            .iter()
+            .find(|bind| bind.component.as_str() == component)
+        {
+            return bind.wire.to_string();
+        }
+        match project.wire_naming() {
+            jails_project::model::WireNaming::AsWritten => component.to_string(),
+            jails_project::model::WireNaming::SnakeCase => crate::sql::snake_case(component),
+        }
+    }
+
+    /// One `@BindParam` value per component, or `None` where the component's
+    /// own name is already the parameter.
+    ///
+    /// Empty for a JSON body: Jackson has a naming strategy and applies it
+    /// without help, so an annotation there would be a second authority on a
+    /// question that already has one.
+    pub fn bindings(
+        &self,
+        project: &crate::model::Project,
+        fields: &[crate::generate::Field],
+    ) -> Vec<Option<String>> {
+        if matches!(self.consumes, jails_spec::spec::kind::WireFormat::Json) {
+            return vec![None; fields.len()];
+        }
+        fields
+            .iter()
+            .map(|field| {
+                let bound = self.bound_name(project, &field.name);
+                (bound != field.name).then_some(bound)
+            })
+            .collect()
     }
 
     /// The `MediaType` import [`Endpoint::request`] costs, which is none for a
@@ -116,21 +163,6 @@ impl Endpoint<'_> {
                 "import org.springframework.http.MediaType;\n"
             }
             jails_spec::spec::kind::WireFormat::Form => "",
-        }
-    }
-
-    /// The wire naming a record bound by this endpoint has to answer to.
-    ///
-    /// `None` for JSON, and not because JSON has no naming -- it does, and
-    /// Jackson applies the project's strategy to it without help. This is
-    /// only for the *data binder*, which has none.
-    pub fn binding_naming(
-        &self,
-        project: &crate::model::Project,
-    ) -> Option<jails_project::model::WireNaming> {
-        match self.consumes {
-            jails_spec::spec::kind::WireFormat::Form => Some(project.wire_naming()),
-            jails_spec::spec::kind::WireFormat::Json => None,
         }
     }
 }
