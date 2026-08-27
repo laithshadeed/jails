@@ -139,10 +139,17 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<Intent>)> {
                     intent.strategy_yields = Some(string(value, line_number, key)?.to_string())
                 }
                 "via" => intent.via = Some(string(value, line_number, key)?.to_string()),
+                "order_by" => intent.order_by = Some(string(value, line_number, key)?.to_string()),
+                "limit" => {
+                    intent.limit = Some(value.trim().parse::<u32>().map_err(|_| {
+                        format!("line {line_number}: `limit` must be a positive whole number")
+                    })?)
+                }
                 _ => {
                     return Err(format!(
                         "line {line_number}: unknown [[generate]] key `{key}`; known: \
-                         kind, name, fields, timestamps, indexes, package, on, yields, via"
+                         kind, name, fields, timestamps, indexes, package, on, yields, via, \
+                         order_by, limit"
                     )
                     .into());
                 }

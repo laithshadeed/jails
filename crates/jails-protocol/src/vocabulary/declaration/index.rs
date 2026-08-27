@@ -38,6 +38,34 @@ impl IndexSpec {
     /// accepted, and an unknown column refuses here rather than at
     /// `flyway migrate`.
     pub fn parse(token: &str, fields: &[FieldSpec]) -> Result<Self> {
+        let parsed = Self::parse_columns(token)?;
+        for column in &parsed.columns {
+            if !fields.iter().any(|declared| declared.name == column.field) {
+                return Err(format!(
+                    "index column `{}` is not a declared field.\n       fix: index one of: \
+                     {}.",
+                    column.field,
+                    fields
+                        .iter()
+                        .map(|f| f.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+                .into());
+            }
+        }
+        Ok(parsed)
+    }
+
+    /// The same grammar with the referential check left out.
+    ///
+    /// `g query --order-by` names components of the **target**, which the
+    /// layer that builds a spec cannot read -- it holds the query's own filter
+    /// list and never touches disk. So the shape is validated here (a `Name`,
+    /// and `asc`/`desc` and nothing else) and *which* components exist is
+    /// checked where the record is, exactly the way `on` and `yields` are a
+    /// validated `JavaType` here and a file on disk in the generator.
+    pub fn parse_columns(token: &str) -> Result<Self> {
         let mut columns = Vec::new();
         for part in token.split(',') {
             let part = part.trim();
@@ -65,18 +93,6 @@ impl IndexSpec {
                 .into());
             }
             let field = Name::parse(field)?;
-            if !fields.iter().any(|declared| declared.name == field) {
-                return Err(format!(
-                    "index column `{field}` is not a declared field.\n       fix: index one of: \
-                     {}.",
-                    fields
-                        .iter()
-                        .map(|f| f.name.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-                .into());
-            }
             if columns
                 .iter()
                 .any(|existing: &IndexColumn| existing.field == field)

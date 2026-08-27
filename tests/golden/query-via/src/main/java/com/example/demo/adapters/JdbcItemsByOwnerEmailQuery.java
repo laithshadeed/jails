@@ -19,7 +19,7 @@ import org.springframework.stereotype.Component;
 public final class JdbcItemsByOwnerEmailQuery implements ItemsByOwnerEmailQuery {
 
     /** Equality queries are deliberately bounded; use a keyset query for navigation. */
-    private static final int MAX_RESULTS = 100;
+    private static final int MAX_RESULTS = 20;
 
     private static final String COLUMNS =
             """
@@ -43,7 +43,7 @@ public final class JdbcItemsByOwnerEmailQuery implements ItemsByOwnerEmailQuery 
                         from items
                         join owners on items.owner_id = owners.id
                         where owners.email = :email
-                        order by items.created_at desc, items.id
+                        order by items.created_at desc, items.name
                         limit :max_results
                         """.formatted(COLUMNS))
                 .param("email", criteria.email())

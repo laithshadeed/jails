@@ -525,6 +525,18 @@ pub(crate) enum Command {
         /// candidates is a refusal naming both, never a choice.
         #[arg(long = "via", value_name = "TYPE")]
         via: Option<String>,
+        /// For `query`, the result order, as components of `--on` (or the
+        /// column names they map to), each optionally `asc`/`desc`.
+        ///
+        ///   jails g query RecentMessages userId:long --on Message --order-by 'sentAt desc'
+        ///
+        /// Omit and the adapter orders newest first with the key as the
+        /// tiebreak, which is what it has always done.
+        #[arg(long = "order-by", value_name = "COMPONENTS")]
+        order_by: Option<String>,
+        /// For `query`, the row ceiling. Defaults to 100.
+        #[arg(long, value_name = "ROWS")]
+        limit: Option<u32>,
         /// For `controller`, the HTTP method the generated route answers.
         /// Defaults to `get`.
         ///

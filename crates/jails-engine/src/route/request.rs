@@ -97,6 +97,14 @@ pub(super) fn declared(
     spec.on = recipe.strategy_on.map(JavaType::parse).transpose()?;
     spec.yields = recipe.strategy_yields.map(JavaType::parse).transpose()?;
     spec.via = recipe.via.map(JavaType::parse).transpose()?;
+    spec.order_by = recipe
+        .order_by
+        .map(|token| {
+            jails_protocol::declaration::IndexSpec::parse_columns(token).map(|spec| spec.columns)
+        })
+        .transpose()?
+        .unwrap_or_default();
+    spec.limit = recipe.limit;
     // Recorded, not applied: an intent regenerated with a different verb is
     // the *same* entity with new content, which is what makes it an edit the
     // three-way merge can carry rather than an orphan and a rewrite.

@@ -126,6 +126,8 @@ pub(super) fn evolve_existing(
     let on = after.on.as_ref().map(JavaType::qualified);
     let yields = after.yields.as_ref().map(JavaType::qualified);
     let via = after.via.as_ref().map(JavaType::qualified);
+    let order_by = ordering_token(&after);
+    let limit = after.limit;
     let mut change = with_test_support(
         project,
         jails_generate::generate::plan_recipe(
@@ -138,6 +140,8 @@ pub(super) fn evolve_existing(
                 strategy_on: on.as_deref(),
                 strategy_yields: yields.as_deref(),
                 via: via.as_deref(),
+                order_by: order_by.as_deref(),
+                limit,
                 method: after.method,
             },
             package,

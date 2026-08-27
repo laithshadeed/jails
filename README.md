@@ -338,7 +338,15 @@ there the unit is a whole service block rather than a setting.)
   choice. `--via` names the parent **type**, not an association — an
   association records its mapping only in the migration it wrote, and jails
   does not re-read generated SQL to recover a decision. A joined select
-  qualifies every column, including the target's own. Results have stable key ordering and a
+  qualifies every column, including the target's own.
+
+  **`--order-by` and `--limit` say what the adapter used to decide silently.**
+  `--order-by 'sentAt desc, id'` names components of `--on` (or the columns
+  they map to), each optionally `asc`/`desc` and nothing else — arbitrary SQL
+  is refused here rather than recorded as trusted generated SQL, the same rule
+  `--index` follows. Omit it and the order is newest first with the key as the
+  tiebreak. `--limit` replaces the built-in ceiling of 100; `--limit 0` is
+  refused, since it can only ever return nothing. Results have stable key ordering and a
   hard row ceiling; the adapter's SQL comes from the same column model as the
   table's DDL.
 - `jails generate|g cases <path/to/file.md>` — one `@Test` per bullet in a

@@ -52,6 +52,8 @@ pub(super) fn companion_updates(
         let on = after.on.as_ref().map(JavaType::qualified);
         let yields = after.yields.as_ref().map(JavaType::qualified);
         let via = after.via.as_ref().map(JavaType::qualified);
+        let order_by = ordering_token(&after);
+        let limit = after.limit;
         let mut change = with_test_support(
             project,
             jails_generate::generate::plan_recipe(
@@ -64,6 +66,8 @@ pub(super) fn companion_updates(
                     strategy_on: on.as_deref(),
                     strategy_yields: yields.as_deref(),
                     via: via.as_deref(),
+                    order_by: order_by.as_deref(),
+                    limit,
                     method: after.method,
                 },
                 package,
@@ -230,6 +234,8 @@ fn dependent_updates(
         let on = spec.on.as_ref().map(JavaType::qualified);
         let yields = spec.yields.as_ref().map(JavaType::qualified);
         let via = spec.via.as_ref().map(JavaType::qualified);
+        let order_by = ordering_token(&spec);
+        let limit = spec.limit;
         let mut change = with_test_support(
             &projected,
             jails_generate::generate::plan_recipe(
@@ -242,6 +248,8 @@ fn dependent_updates(
                     strategy_on: on.as_deref(),
                     strategy_yields: yields.as_deref(),
                     via: via.as_deref(),
+                    order_by: order_by.as_deref(),
+                    limit,
                     method: spec.method,
                 },
                 package,

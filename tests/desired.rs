@@ -359,6 +359,8 @@ fn what_a_plan_desires_is_what_the_command_writes() {
                 strategy_on: invocation.on.as_deref(),
                 strategy_yields: invocation.yields.as_deref(),
                 via: None,
+                order_by: None,
+                limit: None,
                 method: invocation.method,
             },
             invocation.package.as_deref(),

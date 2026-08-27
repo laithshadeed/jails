@@ -672,7 +672,22 @@ All three of `missing.md`'s named primitives, in full, plus the smaller entries.
       the Django original's whole customer-facing surface, and the endpoint
       M5 was written about — and it passes `jails check` against real
       PostgreSQL.
-- [ ] **P8.2** M5's smaller half — `--order-by` and `--limit` on `g query`.
+- [x] **P8.2** M5's smaller half — `--order-by` and `--limit` on `g query`.
+      *Done:* `--order-by 'sentAt desc, id'` names components of `--on` (or the
+      columns they map to — each spelling resolves to exactly one column, and
+      refusing one of two unambiguous names would be arbitrary), with `asc`
+      /`desc` and nothing else after a name, the same closed grammar `--index`
+      uses so nothing arbitrary is recorded as trusted SQL. `--limit` replaces
+      the built-in ceiling of 100, and `--limit 0` is refused since it can only
+      ever return nothing. Shape-validated in `jails-protocol` and resolved
+      against the target's components in the generator, the split `on`/`yields`
+      already have — the layer that builds a spec holds the query's *filters*
+      and never reads the target. `IntentSpec` gained `order_by` and `limit`,
+      so the payload codec is `jails-ledger-payload-5`. `minicom`'s
+      `UnreadForEmail` carries `order_by = "timeStamp desc"` and `limit = 20`,
+      which is the Django original's `[:20]` on `-created_at`, and it passes
+      `jails check`. `query.rs` crossed the largest-module ceiling on the way,
+      so its planning half is `spring/query/shape.rs` now.
 - [ ] **P8.3** M6 — get-or-create by natural key: `--on-conflict <field>` on
       `g usecase`. The statement is one `g explain idempotency` already
       describes verbatim (`insert … on conflict (…) do nothing returning`);

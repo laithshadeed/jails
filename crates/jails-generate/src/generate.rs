@@ -324,6 +324,9 @@ pub struct Recipe<'a> {
     /// For `query`, the second resource read alongside `--on`, so a filter may
     /// name a component of either. plan.md P8.1.
     pub via: Option<&'a str>,
+    /// For `query`, the declared result order and row ceiling. plan.md P8.2.
+    pub order_by: Option<&'a str>,
+    pub limit: Option<u32>,
     /// The HTTP verb an endpoint answers, when the recipe has one.
     ///
     /// `None` is "not asked", never "GET": the default belongs at the one

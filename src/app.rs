@@ -62,6 +62,9 @@ struct GenerateIntent {
     /// The second resource a `query` reads. One spelling only -- it is new,
     /// so there is no shipped alias to keep working.
     via: Option<String>,
+    /// A `query`'s declared result order and row ceiling.
+    order_by: Option<String>,
+    limit: Option<u32>,
     method: Option<jails_spec::spec::kind::HttpMethod>,
 }
 
@@ -94,6 +97,7 @@ impl GenerateIntent {
             .chain(self.strategy_on.iter())
             .chain(self.strategy_yields.iter())
             .chain(self.via.iter())
+            .chain(self.order_by.iter())
         {
             if value.contains(['\n', '\r', '|']) {
                 return Err(format!(
@@ -112,6 +116,8 @@ impl GenerateIntent {
             on: self.strategy_on,
             yields: self.strategy_yields,
             via: self.via,
+            order_by: self.order_by,
+            limit: self.limit,
             method: self.method,
         })
     }

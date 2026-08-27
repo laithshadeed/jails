@@ -74,9 +74,14 @@ on = "Message"
 # no `email` component, so a query on it was reachable only by a caller that
 # already knew the surrogate user id. `--via User` reads `users` alongside
 # `messages`, joined on the `userId` the scaffold already declares.
+# `order_by` and `limit` are the Django `[:20]` and `-created_at` the original
+# applied in the view. The adapter picked both silently before: newest first by
+# whichever timestamp it found, 100 rows, neither sayable and neither reported.
 [[generate]]
 kind = "query"
 name = "UnreadForEmail"
 fields = ["email:string!", "isRead:boolean"]
 on = "Message"
 via = "User"
+order_by = "timeStamp desc"
+limit = 20

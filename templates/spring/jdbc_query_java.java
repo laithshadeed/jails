@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 public final class Jdbc{{name}}Query implements {{name}}Query {
 
     /** Equality queries are deliberately bounded; use a keyset query for navigation. */
-    private static final int MAX_RESULTS = 100;
+    private static final int MAX_RESULTS = {{limit}};
 
     private static final String COLUMNS =
             """

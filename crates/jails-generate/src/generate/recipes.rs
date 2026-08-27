@@ -27,6 +27,27 @@ use super::*;
 /// cost, and it is the right trade: a query that returned only paths would be
 /// a *second* traversal of the same match, which is the duplication this
 /// removes wearing a different hat.
+/// A flag only `query` takes, refused rather than ignored.
+///
+/// A kind that silently drops a flag is `missing.md` M7's finding, and the
+/// reason `g client --method` had to be fixed: the reader gets a plausible
+/// artifact that answers a different question, and nothing says so.
+fn only_for_query(kind: ArtifactKind, name: &str, flags: &str, passed: bool) -> Result<()> {
+    if !passed || kind == ArtifactKind::Query {
+        return Ok(());
+    }
+    use clap::ValueEnum;
+    let label = kind
+        .to_possible_value()
+        .expect("every kind has a clap value");
+    Err(format!(
+        "{flags} only applies to a query, the one recipe that reads a second table.\n       \
+         fix: drop it from `jails g {} {name}`.",
+        label.get_name()
+    )
+    .into())
+}
+
 pub(crate) fn artifacts_for(
     project: &Project,
     recipe: &Recipe<'_>,
@@ -45,28 +66,18 @@ pub(crate) fn artifacts_for(
         strategy_on,
         strategy_yields,
         via,
+        order_by,
+        limit,
         ..
     } = *recipe;
 
-    // One recipe reads a second resource. Refused here rather than ignored
-    // there: a flag a kind silently drops is `missing.md` M7's finding, and
-    // the whole reason `g client --method` had to be fixed.
-    if via.is_some() && recipe.kind != ArtifactKind::Query {
-        return Err(format!(
-            "`--via` is only valid for a query, which is the one recipe that reads a second \
-             resource.\n       fix: drop `--via` from `jails g {} {name}`.",
-            {
-                use clap::ValueEnum;
-                recipe
-                    .kind
-                    .to_possible_value()
-                    .expect("every kind has a clap value")
-                    .get_name()
-                    .to_string()
-            }
-        )
-        .into());
-    }
+    only_for_query(recipe.kind, name, "`--via`", via.is_some())?;
+    only_for_query(
+        recipe.kind,
+        name,
+        "`--order-by` and `--limit`",
+        order_by.is_some() || limit.is_some(),
+    )?;
 
     let artifacts = match recipe.kind {
         ArtifactKind::Scaffold => {
@@ -366,6 +377,7 @@ pub(crate) fn artifacts_for(
                 &capitalize(target),
                 &parsed,
                 via.map(capitalize).as_deref(),
+                crate::spring::Bounds { order_by, limit },
             )?
         }
         ArtifactKind::Transition => {

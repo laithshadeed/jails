@@ -1002,6 +1002,10 @@ mod query_tests {
             "Message",
             &fields,
             None,
+            Bounds {
+                order_by: None,
+                limit: None,
+            },
         )
         .unwrap();
         let adapter = &files
@@ -1050,6 +1054,10 @@ mod query_tests {
             "Contact",
             &[],
             None,
+            Bounds {
+                order_by: None,
+                limit: None,
+            },
         )
         .unwrap_err();
 
@@ -1069,6 +1077,10 @@ mod query_tests {
             "Contact",
             &fields,
             None,
+            Bounds {
+                order_by: None,
+                limit: None,
+            },
         )
         .unwrap_err();
 

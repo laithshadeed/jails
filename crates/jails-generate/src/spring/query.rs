@@ -9,39 +9,9 @@
 use super::workflow::{json_sample, scope_test_parts};
 use super::*;
 
-/// The two column lists one query reads through: what it selects, and what it
-/// filters on. Both are derived from the same field spec in one place, which
-/// is what stops a select and a where clause naming different columns.
-struct Projection {
-    target_columns: Vec<crate::sql::Column>,
-    filter_columns: Vec<crate::sql::Column>,
-    /// The table qualifier each filter's column takes, parallel to
-    /// `filter_columns`. Empty for an unjoined query, where a bare column name
-    /// is unambiguous and qualifying it would churn every golden for nothing.
-    filter_qualifiers: Vec<String>,
-    join: Option<Join>,
-}
-
-/// The second table a query reads, and the column pair that joins them.
-///
-/// `--via <Parent>` names the *type*, not the association. An association
-/// records its mapping only in the migration it wrote, and re-reading
-/// generated SQL to recover a decision is the guessing `build.rs` refuses to
-/// do with a build file. The join column is derived from the two records
-/// instead: `<parent>Id` when the child has it, otherwise the single component
-/// of the parent key's type whose name ends in `Id`. Two candidates is a
-/// refusal naming both.
-struct Join {
-    parent: String,
-    parent_table: String,
-    /// The child component that references the parent, and its column.
-    child_component: String,
-    child_column: String,
-    /// The parent's own key component, and its column.
-    parent_component: String,
-    parent_column: String,
-    parent_fields: Vec<crate::generate::Field>,
-}
+mod shape;
+pub(crate) use shape::Bounds;
+use shape::{DEFAULT_MAX_RESULTS, Projection, declared_ordering, resolve_join};
 
 use crate::model::{Artifact, Layer, Slice};
 
@@ -51,6 +21,7 @@ pub(crate) fn query_files(
     target: &str,
     fields: &[crate::generate::Field],
     via: Option<&str>,
+    bounds: Bounds<'_>,
 ) -> jails_support::Result<Vec<Artifact>> {
     let root: &Path = slice.project().root();
     let service: &str = &slice.placed(Layer::Service);
@@ -98,14 +69,27 @@ pub(crate) fn query_files(
                     })
             });
         let Some((source, owner, qualifier)) = owner else {
+            let known = |fields: &[crate::generate::Field]| {
+                fields
+                    .iter()
+                    .map(|candidate| candidate.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
             return Err(match &join {
                 Some(join) => format!(
-                    "query {name} filters `{}`, but neither {target} nor {} has a component with that name",
-                    field.name, join.parent
+                    "query {name} filters `{}`, but neither {target} nor {} has a component with \
+                     that name.\n       fix: filter one of: {}, {}.",
+                    field.name,
+                    join.parent,
+                    known(&target_fields),
+                    known(&join.parent_fields)
                 ),
                 None => format!(
-                    "query {name} filters `{}`, but {target} has no component with that name",
-                    field.name
+                    "query {name} filters `{}`, but {target} has no component with that \
+                     name.\n       fix: filter one of: {}.",
+                    field.name,
+                    known(&target_fields)
                 ),
             }
             .into());
@@ -155,11 +139,22 @@ pub(crate) fn query_files(
         name: target.to_string(),
         fields: target_fields,
     };
+    let ordering = declared_ordering(name, target, &target_columns, bounds.order_by)?;
+    if let Some(limit) = bounds.limit
+        && limit == 0
+    {
+        return Err(jails_support::Failure::Told(format!(
+            "query {name} declares `--limit 0`, which can only ever return nothing.\n                    fix: pass a positive row ceiling, or omit it for the default of \
+             {DEFAULT_MAX_RESULTS}."
+        )));
+    }
     let projection = Projection {
         target_columns,
         filter_columns,
         filter_qualifiers,
         join,
+        ordering,
+        limit: bounds.limit.unwrap_or(DEFAULT_MAX_RESULTS),
     };
     Ok(vec![
         Artifact {
@@ -193,96 +188,6 @@ pub(crate) fn query_files(
             contents: query_controller_test_java(slice, name, &resource, fields),
         },
     ])
-}
-
-/// Work out how the two tables meet, or refuse and say what was looked for.
-fn resolve_join(
-    slice: &Slice,
-    name: &str,
-    target: &str,
-    target_fields: &[crate::generate::Field],
-    parent: &str,
-) -> jails_support::Result<Join> {
-    if parent == target {
-        return Err(format!(
-            "query {name} joins {target} to itself.\n       fix: drop `--via {parent}`; a query \
-             already filters on its own components."
-        )
-        .into());
-    }
-    let domain: &str = &slice.owned(Layer::Domain);
-    let parent_fields = Target::read(slice, "query", name, parent)?.fields;
-    let parent_columns = crate::sql::columns(&parent_fields, slice.project(), domain, "row");
-    let parent_key = crate::sql::key_column(&parent_columns).ok_or_else(|| {
-        format!(
-            "query {name} joins through {parent}, which declares no key to join on.\n       \
-             fix: give {parent} one `@pk` component."
-        )
-    })?;
-    let parent_component = parent_key.component.clone();
-    let parent_key_type = parent_fields
-        .iter()
-        .find(|field| field.name == parent_component)
-        .map(|field| usecase_normalized_type(&field.java_type))
-        .unwrap_or_default();
-    // The conventional name first -- `<parent>Id` is what the outbox,
-    // `association` and `durable-job` all already read -- then the one
-    // component that could be it. Never a choice between two.
-    let conventional = format!("{}Id", crate::generate::lower_first(parent));
-    let child = target_fields
-        .iter()
-        .find(|field| field.name == conventional)
-        .or_else(|| {
-            let candidates = target_fields
-                .iter()
-                .filter(|field| {
-                    field.name.ends_with("Id")
-                        && usecase_normalized_type(&field.java_type) == parent_key_type
-                })
-                .collect::<Vec<_>>();
-            match candidates.as_slice() {
-                [only] => Some(*only),
-                _ => None,
-            }
-        });
-    let Some(child) = child else {
-        let candidates = target_fields
-            .iter()
-            .filter(|field| field.name.ends_with("Id"))
-            .map(|field| field.name.as_str())
-            .collect::<Vec<_>>();
-        return Err(format!(
-            "query {name} joins {target} to {parent}, but jails cannot tell which component of \
-             {target} references it{}.\n       fix: name it `{conventional}`, the convention \
-             every other reference here uses.",
-            if candidates.is_empty() {
-                String::new()
-            } else {
-                format!(" -- candidates: {}", candidates.join(", "))
-            }
-        )
-        .into());
-    };
-    let child_columns = crate::sql::columns(target_fields, slice.project(), domain, "row");
-    let child_column = child_columns
-        .iter()
-        .find(|column| column.component == child.name)
-        .map(|column| column.name.clone())
-        .ok_or_else(|| {
-            format!(
-                "query {name} cannot map {target}.{} to a column",
-                child.name
-            )
-        })?;
-    Ok(Join {
-        parent: parent.to_string(),
-        parent_table: crate::sql::table_name(parent),
-        child_component: child.name.clone(),
-        child_column,
-        parent_component,
-        parent_column: parent_key.name.clone(),
-        parent_fields,
-    })
 }
 
 fn query_record_java(slice: &Slice, name: &str, fields: &[crate::generate::Field]) -> String {
@@ -401,13 +306,19 @@ fn jdbc_query_java(slice: &Slice, name: &str, target: &str, projection: &Project
         })
         .collect::<Vec<_>>()
         .join(",\n");
-    // Newest first, not by key: `order by id` over a random UUID is a stable
-    // random order presented to a reader as their data. plan.md P4.4.
-    let order = crate::sql::ordering(target_columns)
-        .split(", ")
-        .map(|term| format!("{own}{term}"))
-        .collect::<Vec<_>>()
-        .join(", ");
+    // Declared if the caller said so, otherwise newest first and not by key:
+    // `order by id` over a random UUID is a stable random order presented to a
+    // reader as their data. plan.md P4.4, P8.2.
+    let order = if projection.ordering.is_empty() {
+        crate::sql::ordering(target_columns)
+    } else {
+        projection.ordering.join(", ")
+    }
+    .split(", ")
+    .map(|term| format!("{own}{term}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+    let limit = projection.limit.to_string();
     crate::template::render(
         crate::template_here!("spring/jdbc_query_java.java"),
         &[
@@ -422,6 +333,7 @@ fn jdbc_query_java(slice: &Slice, name: &str, target: &str, projection: &Project
             ("from", &*from),
             ("predicates", &*predicates),
             ("order", &order),
+            ("limit", &*limit),
             ("bindings", &*bindings),
             ("map_args", &*map_args),
         ],
@@ -710,6 +622,10 @@ mod join_tests {
             "Item",
             &fields,
             Some("Owner"),
+            Bounds {
+                order_by: None,
+                limit: None,
+            },
         )
         .unwrap();
         let adapter = &files[2].contents;
@@ -751,11 +667,83 @@ mod join_tests {
             "Item",
             &filters,
             Some("Owner"),
+            Bounds {
+                order_by: None,
+                limit: None,
+            },
         )
         .unwrap_err();
 
         assert!(error.contains("buyerId, sellerId"), "{error}");
         assert!(error.contains("`ownerId`"), "{error}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_declared_order_and_ceiling_replace_the_silent_ones() {
+        let (root, project) = two_records("query-order-limit");
+        let fields = parse_fields(&["ownerId:uuid".to_string()]).unwrap();
+        let files = query_files(
+            &Slice::new(&project, None),
+            "ItemsByOwner",
+            "Item",
+            &fields,
+            None,
+            Bounds {
+                // The component and the column are both accepted: each names
+                // exactly one column, and refusing one would be arbitrary.
+                order_by: Some("name desc, id"),
+                limit: Some(20),
+            },
+        )
+        .unwrap();
+        let adapter = &files[2].contents;
+
+        assert!(adapter.contains("order by name desc, id"), "{adapter}");
+        assert!(adapter.contains("MAX_RESULTS = 20"), "{adapter}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_order_by_a_component_the_target_lacks_lists_the_ones_it_has() {
+        let (root, project) = two_records("query-order-unknown");
+        let fields = parse_fields(&["ownerId:uuid".to_string()]).unwrap();
+        let error = query_files(
+            &Slice::new(&project, None),
+            "ItemsByOwner",
+            "Item",
+            &fields,
+            None,
+            Bounds {
+                order_by: Some("sentAt desc"),
+                limit: None,
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.contains("orders by `sentAt`"), "{error}");
+        assert!(error.contains("id, ownerId, name"), "{error}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_ceiling_of_zero_is_refused_rather_than_generated() {
+        let (root, project) = two_records("query-zero-limit");
+        let fields = parse_fields(&["ownerId:uuid".to_string()]).unwrap();
+        let error = query_files(
+            &Slice::new(&project, None),
+            "ItemsByOwner",
+            "Item",
+            &fields,
+            None,
+            Bounds {
+                order_by: None,
+                limit: Some(0),
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.contains("can only ever return nothing"), "{error}");
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -769,6 +757,10 @@ mod join_tests {
             "Item",
             &filters,
             Some("Owner"),
+            Bounds {
+                order_by: None,
+                limit: None,
+            },
         )
         .unwrap_err();
 

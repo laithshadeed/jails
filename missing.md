@@ -211,29 +211,6 @@ the client→server half. Everything above was written by hand outside jails.
    `g auth` and `add sse` exist for: an in-memory presence map is silently
    correct on one node and silently wrong on two, with no error either way.
 
-## M5 — a query has no ordering or bound
-
-*The join is closed (plan.md P8.1): `g query --on X --via Y` reads a second
-table, so one filter may name a column the parent owns. `minicom`'s manifest
-carries the endpoint this entry was written about —
-`UnreadForEmail email:string! isRead:boolean --on Message --via User` — and it
-compiles and passes against real PostgreSQL. What is left is the smaller half.*
-
-```sh
-jails g query RecentMessages toUserId:long --on Message --limit 20
-```
-
-```
-error: unexpected argument '--limit' found
-```
-
-`GET /api/conversations/` is `[:20]` ordered by `-created_at`;
-`User.unread_count()` is a `count()`. Both are hand-written today. The adapter
-already picks an order (`sql::ordering`, newest first with the key as the
-tiebreak) and already bounds the result (`MAX_RESULTS = 100`) — neither is
-sayable from the command line, and the bound is applied silently, which is the
-separate defect §7 of `modern.md` names.
-
 ## M6 — no get-or-create, and it is the first line of three of the six apps
 
 ```python

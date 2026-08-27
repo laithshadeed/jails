@@ -56,6 +56,9 @@ pub struct Intent {
     pub yields: Option<String>,
     /// The second resource a `query` reads alongside `--on`. plan.md P8.1.
     pub via: Option<String>,
+    /// A `query`'s explicit order and row ceiling. plan.md P8.2.
+    pub order_by: Option<String>,
+    pub limit: Option<u32>,
     /// The HTTP verb, for the one recipe that answers HTTP.
     pub method: Option<jails_spec::spec::kind::HttpMethod>,
 }
@@ -159,6 +162,8 @@ fn declare(
             strategy_on: intent.on.as_deref(),
             strategy_yields: intent.yields.as_deref(),
             via: intent.via.as_deref(),
+            order_by: intent.order_by.as_deref(),
+            limit: intent.limit,
             method: intent.method,
         };
         let change = with_test_support(

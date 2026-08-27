@@ -588,6 +588,11 @@ pub const SCENARIOS: &[Scenario] = &[
                 "Item",
                 "--via",
                 "Owner",
+                // The order and the ceiling the adapter used to pick silently.
+                "--order-by",
+                "createdAt desc, name",
+                "--limit",
+                "20",
             ],
         ],
     },

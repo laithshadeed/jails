@@ -173,6 +173,20 @@ fn resource_change_set(
 /// `g field` came to leave every companion constructing the old component
 /// list -- a project that does not compile, over which every jails oracle
 /// reported health, because each file was byte-identical to what jails wrote.
+/// A recorded intent's declared order, as the token the CLI takes.
+///
+/// One spelling in and out: `IndexSpec::canonical` is what `--order-by` parses,
+/// so a re-plan hands the generator exactly what the reader typed rather than a
+/// second rendering of it.
+pub(super) fn ordering_token(spec: &IntentSpec) -> Option<String> {
+    (!spec.order_by.is_empty()).then(|| {
+        jails_protocol::declaration::IndexSpec {
+            columns: spec.order_by.clone(),
+        }
+        .canonical()
+    })
+}
+
 pub(super) fn projected_after(
     project: &Project,
     reads: &ReadDeclaration,

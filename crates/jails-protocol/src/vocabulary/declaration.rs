@@ -35,7 +35,7 @@ pub use field::{
     FieldConstraints, FieldSpec, FieldType, NumericConstraint, Optionality, ScalarFieldType,
     parse_fields,
 };
-pub use index::{IndexColumn, IndexSpec};
+pub use index::{IndexColumn, IndexDirection, IndexSpec};
 
 use crate::Result;
 use crate::entity::Recipe;
@@ -278,6 +278,18 @@ pub struct IntentSpec {
     /// do with a build file. The join column is derived from the two records
     /// instead, and refused when more than one component could be it.
     pub via: Option<JavaType>,
+    /// A `query`'s explicit result order, as components of the target.
+    ///
+    /// Empty means the adapter's own rule -- newest first with the key as the
+    /// tiebreak (`sql::ordering`). Recorded because it is content: changing it
+    /// is an edit to a known entity, and a regeneration has to reproduce it.
+    ///
+    /// Shape-validated here and resolved against the target's components in
+    /// the generator, the same split `on` and `yields` have.
+    pub order_by: Vec<IndexColumn>,
+    /// A `query`'s explicit row ceiling. `None` is the adapter's default of
+    /// 100, stated at the one place that renders it.
+    pub limit: Option<u32>,
     /// The HTTP method a generated endpoint answers.
     ///
     /// Content rather than identity, like every other field here: changing
@@ -363,6 +375,8 @@ impl IntentSpec {
             yields: None,
             method: None,
             via: None,
+            order_by: Vec::new(),
+            limit: None,
         })
     }
 }
@@ -380,7 +394,16 @@ impl Codec for IntentSpec {
         // vocabulary on the wire, so reordering the enum cannot change a
         // recorded value.
         encoder.option(self.method.as_ref(), |e, method| e.string(method.label()))?;
-        encoder.option(self.via.as_ref(), |e, ty| ty.encode(e))
+        encoder.option(self.via.as_ref(), |e, ty| ty.encode(e))?;
+        encoder.count(self.order_by.len())?;
+        for column in &self.order_by {
+            column.field.encode(encoder)?;
+            encoder.tag(match column.direction {
+                IndexDirection::Ascending => 0,
+                IndexDirection::Descending => 1,
+            });
+        }
+        encoder.option(self.limit.as_ref(), |e, limit| e.string(&limit.to_string()))
     }
 
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
@@ -398,6 +421,29 @@ impl Codec for IntentSpec {
             yields: decoder.option(JavaType::decode)?,
             method: decoder.option(|d| jails_spec::spec::kind::HttpMethod::parse(&d.string()?))?,
             via: decoder.option(JavaType::decode)?,
+            order_by: {
+                let count = decoder.count()?;
+                let mut columns = Vec::new();
+                for _ in 0..count {
+                    let field = crate::identity::Name::decode(decoder)?;
+                    let direction = match decoder.tag()? {
+                        0 => IndexDirection::Ascending,
+                        1 => IndexDirection::Descending,
+                        other => {
+                            return Err(format!("unknown index direction tag {other}").into());
+                        }
+                    };
+                    columns.push(IndexColumn { field, direction });
+                }
+                columns
+            },
+            limit: decoder
+                .option(|d| {
+                    d.string()?
+                        .parse::<u32>()
+                        .map_err(|_| jails_support::Failure::Told("bad query limit".to_string()))
+                })
+                .map_err(|_| jails_support::Failure::Told("bad query limit".to_string()))?,
         })
     }
 }
