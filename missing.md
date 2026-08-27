@@ -159,34 +159,6 @@ deep design commitment.
 
 ---
 
-## M10 — no seed or fixture data path
-
-### Reproduce
-
-```sh
-jails add db
-jails commands | grep -icE 'seed|fixture'      # 0
-ls src/main/resources/db/migration/            # .gitkeep only
-ls src/test/resources/fixtures/                # messages.json, users.json — test scope only
-```
-
-jails writes `src/test/resources/fixtures/*.json` for generated tests and
-nothing for `dev`. There is no `db/seed` convention, no `jails db seed`, and
-`add db` writes no `V00X__seed_*.sql`.
-
-This is why `mc-01-06-2026` does database writes inside a `GET` handler:
-
-```ts
-async function listMessages(_req, res) {
-  await ensureSeedUsers();      // User.upsert(...) x3, on every request
-  await ensureSeedMessages();   // Message.bulkCreate(...), on every request
-  …
-}
-```
-
-Lower severity than the rest — it is a convention, not a mechanism — but the
-convention's absence is what pushed a write into a read path.
-
 ## M11 — `transition` requires a `version` column the original schema does not have
 
 Marking a message read is, in all three Django apps, `is_read = True; save()`.
@@ -446,7 +418,7 @@ field spec, `association`, `query`, `transition` and the write-path rules
 the point of them.
 
 The gaps cluster, and the cluster has a shape. **jails models a resource
-extremely well and a conversation not at all.** Every one of M4, M5, M6 and M10
+extremely well and a conversation not at all.** Every one of M4, M5 and M6
 is the same missing idea from a different angle: a participant identified by a
 natural key, a stream of messages between participants, and presence. That is
 not a request for a chat feature in core — `app.rs` is domain-blind on purpose

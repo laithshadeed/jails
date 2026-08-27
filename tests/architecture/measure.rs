@@ -679,7 +679,10 @@ pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 // 423 -> 421: the two "takes only a name" refusals `fetcher` and
 // `idempotency` wrote inline are the one helper in `recipes/flags.rs` now,
 // and it carries a `fix:` line. plan.md P8.8.
-pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 421;
+// 421 -> 419: `auth` and `webhook` wrote their "takes only a name" refusal
+// inline with no next step, and both are `recipes/flags.rs`'s helper now --
+// the same move `fetcher` and `idempotency` made, and the same `fix:` line.
+pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 419;
 
 /// A refusal that builds a message and does not say what to do next.
 ///

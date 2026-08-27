@@ -232,25 +232,10 @@ pub(crate) fn artifacts_for(
         }
         ArtifactKind::Auth => {
             require_spring_project(project, "auth")?;
-            if !fields.is_empty() || strategy_on.is_some() || strategy_yields.is_some() {
-                return Err(jails_support::Failure::Told(
-                    "auth takes only a name; the subject and scopes are runtime values the \
-                     caller supplies, not generation-time ones"
-                        .to_string(),
-                ));
-            }
             crate::spring::auth_files(&crate::model::Slice::new(project, package), name)?
         }
         ArtifactKind::Webhook => {
             require_spring_project(project, "webhook")?;
-            if !fields.is_empty() || strategy_on.is_some() || strategy_yields.is_some() {
-                return Err(jails_support::Failure::Told(
-                    "webhook takes only a name; the payload is whatever the sender posts, \
-                     and binding it before the signature is checked is the bug this kind \
-                     exists to avoid"
-                        .to_string(),
-                ));
-            }
             crate::spring::webhook_files(&crate::model::Slice::new(project, package), name)?
         }
         ArtifactKind::Search => {
@@ -387,6 +372,10 @@ pub(crate) fn artifacts_for(
         ArtifactKind::Presence => {
             require_spring_project(project, "presence")?;
             crate::spring::presence_files(&crate::model::Slice::new(project, package), name)?
+        }
+        ArtifactKind::Seed => {
+            require_spring_project(project, "seed")?;
+            crate::spring::seed_files(&crate::model::Slice::new(project, package), name)?
         }
         ArtifactKind::Socket => {
             require_spring_project(project, "socket")?;

@@ -80,6 +80,18 @@ public final class {{class}} {
         }
     }
 
+    /**
+     * The same, from an already-open stream.
+     *
+     * <p>A classpath resource is not a {@link Path} once the application is a
+     * jar, so anything shipped inside the build -- seed data, a fixture --
+     * has to come in this way.
+     */
+    public static <T> List<T> readList(java.io.InputStream in, Class<T> element) {
+        var listType = MAPPER.getTypeFactory().constructCollectionType(List.class, element);
+        return MAPPER.readValue(in, listType);
+    }
+
     /** Writes {@code value} as indented JSON, replacing any existing file. */
     public static void write(Path path, Object value) throws IOException {
         try (var out = Files.newOutputStream(path)) {

@@ -373,6 +373,10 @@ pub enum ArtifactKind {
     /// Who is connected, in PostgreSQL rather than in one process's memory,
     /// so two nodes give one answer. Needs `jails add db` (Spring only)
     Presence,
+    /// Development data for a resource: `db/seeds/<table>.json` and a
+    /// `@Profile("seed")` runner that loads it through the repository port.
+    /// Needs `jails add db` and `jails add json` (Spring only)
+    Seed,
     /// A `<Name>Test` skeleton
     Test,
     /// A disabled `<Name>IT` skeleton for a real boundary test; also splices

@@ -662,6 +662,17 @@ pub const SCENARIOS: &[Scenario] = &[
         ],
     },
     Scenario {
+        name: "seed",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[
+            &["add", "db", "--no-start"],
+            &["add", "json"],
+            &["g", "scaffold", "Widget", "id:uuid@pk", "name:string!"],
+            &["g", "seed", "Widget"],
+        ],
+    },
+    Scenario {
         name: "presence",
         fixture: Fixture::Spring,
         seed: &[],

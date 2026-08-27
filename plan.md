@@ -811,10 +811,19 @@ All three of `missing.md`'s named primitives, in full, plus the smaller entries.
       gets its own `<Name>ClientConfig` listing itself by type now — additive
       by construction — and two clients compile and pass together under real
       Maven.
-- [ ] **P8.9** M10 — a seed path: `db/seeds/*.json` plus a plain Java
+- [x] **P8.9** M10 — a seed path: `db/seeds/*.json` plus a plain Java
       `SeedRunner` going through repository **ports**, never JDBC. Production
       execution behind an explicit profile or flag. Its absence is what pushed
       a database write into a `GET` handler in `mc-01-06-2026`.
+      `g seed <Resource>` writes the file with one row built from the record's
+      own components, and a `@Profile("seed")` `ApplicationRunner` that loads
+      it through `<Resource>Repository`. Into an empty table only: an edited
+      seed row cannot be told from a change made in the database, so
+      reseeding is left to whoever knows which it was. The companion test is
+      what makes the file live — nothing else reads it until somebody starts
+      under the profile, so a renamed component would otherwise surface as a
+      start-up that dies on one machine. Proved by the minicom manifest under
+      real `mvn clean verify` (surefire 19 -> 20 reports, 55 -> 56 tests).
 - [ ] **P8.10** M11 and the two smaller entries — `g transition --unguarded`
       (or an `explain transition` line naming the escape hatch), and
       `g strategy` generating the evaluator its port's Javadoc describes, with

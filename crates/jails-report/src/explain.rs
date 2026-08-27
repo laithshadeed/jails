@@ -182,6 +182,28 @@ const EXPLANATIONS: &[Explanation] = &[
                than making a security decision for you.",
     },
     Explanation {
+        kind: ArtifactKind::Seed,
+        summary: "Development data in a file, loaded through the repository port under its own \
+                  profile.",
+        body: "Without somewhere to put development data it goes into the code that runs \
+               anyway. One ported project calls `ensureSeedUsers()` from inside a GET handler, \
+               which is a database write on every read of a page -- not because anyone wanted \
+               that, but because a request handler was the only thing guaranteed to \
+               run.\n\n\
+               So the rows are a file (`src/main/resources/db/seeds/<table>.json`) and the \
+               loader is an ApplicationRunner. It goes through the repository port rather than \
+               SQL: a seeder that inserts rows itself is the one dataset in the project the \
+               record's own constructor never sees, which is where invalid seed data comes \
+               from.\n\n\
+               `@Profile(\"seed\")` rather than a property, because a profile cannot be \
+               reached by accident, and it only ever loads into an empty table -- an edited \
+               seed row is indistinguishable from a change somebody made in the database, so \
+               reseeding is left to the reader who knows which it was.\n\n\
+               The trap: the file is read at start-up and nowhere else, so a component renamed \
+               in the record leaves it stale with nothing to say so. The generated test is what \
+               closes that -- it binds the shipped file to the record on every build.",
+    },
+    Explanation {
         kind: ArtifactKind::Presence,
         summary: "Who is connected, shared across nodes rather than held in one process.",
         body: "An in-memory presence map is silently correct on one node and silently wrong on \

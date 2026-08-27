@@ -107,3 +107,11 @@ path = "/customer_api/ping"
 [[generate]]
 kind = "presence"
 name = "Admin"
+
+# `db/seeds.rb` in Rails and `manage.py loaddata` in Django, both of which the
+# port had nowhere to put -- so seeding became `ensureSeedUsers()` called from
+# inside a GET handler, a write on every read of a page. The rows are a file
+# now and the loader is a runner under its own profile.
+[[generate]]
+kind = "seed"
+name = "User"

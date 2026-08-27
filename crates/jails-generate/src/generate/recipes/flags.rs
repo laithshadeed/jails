@@ -74,6 +74,23 @@ pub(super) fn refuse_misplaced(recipe: &Recipe<'_>) -> Result<()> {
     )?;
     takes_only_a_name(
         recipe,
+        ArtifactKind::Auth,
+        "the subject and scopes are runtime values the caller supplies, not generation-time ones",
+    )?;
+    takes_only_a_name(
+        recipe,
+        ArtifactKind::Webhook,
+        "the payload is whatever the sender posts, and binding it before the signature is checked \
+         is the bug this kind exists to avoid",
+    )?;
+    takes_only_a_name(
+        recipe,
+        ArtifactKind::Seed,
+        "a seed row is read from the record on disk, so naming its components again could only \
+         disagree with them",
+    )?;
+    takes_only_a_name(
+        recipe,
         ArtifactKind::Fetcher,
         "limits and policy are external configuration",
     )?;

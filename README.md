@@ -590,6 +590,16 @@ there the unit is a whole service block rather than a setting.)
   are strings the caller picks — jails does not know what is present in what.
   The generated `IT` is the point: two adapters are two nodes, one joins and
   the other is asked. Needs `jails add db`.
+- `jails generate|g seed <Resource>` — development data for a resource that
+  already exists: `src/main/resources/db/seeds/<table>.json` with one sample
+  row built from the record's own components, and a `@Profile("seed")`
+  `ApplicationRunner` that loads it **through the repository port**, never SQL
+  — a seeder that inserts rows itself is the one dataset in a project the
+  record's constructor never sees. It loads into an empty table only: an
+  edited seed row cannot be told from a change somebody made in the database.
+  The companion test binds the shipped file to the record on every build,
+  because nothing else reads it until somebody starts under the profile. Needs
+  `jails add db` and `jails add json`.
 - `jails generate|g event <Name> [--on <Entity>]` — a Kafka slice: the payload
   record, a publisher, a listener that deliberately does not catch (swallowing
   commits an offset for a message never processed), and an `IT` that publishes

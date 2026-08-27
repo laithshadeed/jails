@@ -314,12 +314,16 @@ fn unheld_maven_example_manifest_passes_real_verification() {
             // whole customer-facing surface (missing.md M5, plan.md P8.1).
             // 18 -> 19, 54 -> 55: `EnsureUserControllerTest`, from the
             // get-or-create the Django ping handler opens with (M6, P8.3).
-            reports: 19,
+            // 19 -> 20: `UserSeederTest`, which binds the shipped
+            // `db/seeds/users.json` to the record on every build -- the file
+            // is otherwise read only under the seed profile (M10, P8.9).
+            reports: 20,
             // 51 -> 52: `SendMessageUseCaseTest` gained the case missing.md
             // M3 says would have caught a create that never assigns a key.
             // 52 -> 53: `MarkAsReadControllerTest` gained the case for a
             // request with no `If-Match`, which used to apply blind.
-            tests: 55,
+            // 55 -> 56 with `UserSeederTest`'s one case.
+            tests: 56,
             failures: 0,
             errors: 0,
             skipped: 0,
