@@ -540,6 +540,20 @@ pub(crate) enum Command {
         #[command(subcommand)]
         declare: Option<Declare>,
     },
+    /// Freeze the architecture violations that were already there
+    ///
+    /// `g scaffold` writes a fitness suite, and on a project written before
+    /// jails arrived it fails over the reader's own code. The mechanism to
+    /// accept that is ArchUnit's freeze store, and creating one was four
+    /// manual steps in a file jails wrote.
+    ///
+    /// Nothing on disk is rewritten: the permission is granted for one run
+    /// through system properties, so `archunit.properties` stays strict and a
+    /// *new* violation still fails the build.
+    Architecture {
+        #[command(subcommand)]
+        action: ArchitectureAction,
+    },
     /// Apply every capability `jails.toml` declares that is not there yet
     ///
     /// `jails add` records what it applies, so `jails.toml` describes what the
@@ -1112,4 +1126,13 @@ mod tests {
             collect_commands(child, &path, paths);
         }
     }
+}
+
+/// What `jails architecture` can do. A subcommand group with one member,
+/// because freezing is not the only thing a project's architecture policy will
+/// ever need said about it and `jails baseline` would name none of that.
+#[derive(clap::Subcommand)]
+pub(crate) enum ArchitectureAction {
+    /// Record today's violations so the rules fail only on new ones
+    Baseline,
 }

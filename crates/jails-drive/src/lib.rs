@@ -14,6 +14,7 @@
 //! scans it for fatal markers and explains the failure inline.
 
 pub(crate) mod affected;
+pub mod baseline;
 pub mod bench;
 pub mod console;
 mod datasource;

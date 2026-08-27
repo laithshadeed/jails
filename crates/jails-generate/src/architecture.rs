@@ -24,11 +24,12 @@ pub(crate) const ARCHUNIT_JUNIT5: Dependency = Dependency {
 /// pre-existing code turns "try jails on this project" into "jails broke my
 /// build", which is the adoption story in one line.
 ///
-/// The mechanism to accept that already exists and nothing pointed at it: the
-/// suite calls `FreezingArchRule.freeze` when `.jails/architecture-baseline`
-/// is present, which records today's violations and fails only on new ones.
+/// The mechanism to accept that already exists: the suite calls
+/// `FreezingArchRule.freeze` when `.jails/architecture-baseline` is present,
+/// which records today's violations and fails only on new ones.
 /// `allowStoreCreation=false` keeps creating it a deliberate, reviewable act
-/// -- that part is right, and the missing half was saying so.
+/// -- that part is right, and what was missing was saying so and then having a
+/// verb for it. `jails architecture baseline` is the verb.
 ///
 /// Deliberately *this* rule and not a general audit: it is the one whose
 /// violations are ordinary in a project written before jails arrived, and a
@@ -88,12 +89,9 @@ pub(crate) fn adoption_note(project: &Project) -> Option<String> {
             "      The suite freezes today's violations and fails only on new ones once",
             "      `.jails/architecture-baseline` exists, which is deliberately a decision",
             "      you make rather than one jails makes for you.",
-            "      fix: in `src/test/resources/archunit.properties` set BOTH",
-            "           `freeze.store.default.allowStoreCreation=true` and",
-            "           `freeze.store.default.allowStoreUpdate=true`, run the suite once, set",
-            "           both back to `false`, and commit `.jails/architecture-baseline`.",
-            "           Creation alone writes an empty index and every rule still fails --",
-            "           ArchUnit needs update permission to record what it froze.",
+            "      fix: `jails architecture baseline` records them and commits nothing else;",
+            "           `src/test/resources/archunit.properties` stays strict, and a *new*",
+            "           violation still fails the build.",
         ]
         .map(str::to_string),
     );

@@ -97,3 +97,5 @@ request	jails	read-only+external-process	tool_command::request
 runner	jails-drive	read-only+external-process	console::runner
 logs	jails	read-only+external-process	tool_command::logs
 db console	jails-drive	read-only+external-process	console::postgres_console
+architecture	jails	dispatch-only	cli::ArchitectureAction
+architecture baseline	jails-drive	external-tool	baseline::freeze

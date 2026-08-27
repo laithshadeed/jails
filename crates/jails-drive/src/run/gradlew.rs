@@ -19,7 +19,7 @@ use std::process::Command;
 /// version in `gradle/wrapper/gradle-wrapper.properties`, so `gradle` off PATH
 /// can be a different major than the build was written for. Same reasoning as
 /// `maven::binary` preferring `./mvnw`.
-pub(super) fn binary(root: &Path) -> PathBuf {
+pub(crate) fn binary(root: &Path) -> PathBuf {
     let wrapper = root.join("gradlew");
     match wrapper.is_file() {
         true => wrapper,

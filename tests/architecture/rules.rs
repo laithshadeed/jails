@@ -370,6 +370,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-drive", "migrate", 8),
     ("jails-drive", "console", 8),
     ("jails-drive", "doctor", 8),
+    ("jails-drive", "baseline", 8),
     ("jails-drive", "bench", 8),
     ("jails-drive", "reports", 8),
     ("jails-drive", "lint", 8),
@@ -412,6 +413,11 @@ const SUBPROCESS_CLASSIFICATION: &[(&str, &str)] = &[
     ("why", "derived build process"),
     ("testd", "derived build process"),
     ("affected", "derived build process"),
+    // `architecture baseline` runs the generated ArchUnit suite and nothing
+    // else. What it produces is a store ArchUnit writes, which is the same
+    // shape as a build output: jails asks for it, does not write it, and
+    // holds no lock over it.
+    ("baseline", "derived build process"),
     // External runtime effects. A commit records the desired project files
     // first; reconciling the runtime is an idempotent receipt effect.
     ("compose", "external runtime effect"),

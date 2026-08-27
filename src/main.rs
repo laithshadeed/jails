@@ -185,6 +185,11 @@ fn main() -> std::process::ExitCode {
             logs.tail,
             invocation,
         ),
+        Command::Architecture { action } => match action {
+            cli::ArchitectureAction::Baseline => {
+                jails_drive::baseline::freeze(invocation.debug)
+            }
+        },
         Command::Generate(args) => {
             // Built once, outside the closure: a route may be called twice --
             // a plan for a confirmation, then the commit -- and the intent is

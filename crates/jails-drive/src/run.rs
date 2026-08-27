@@ -44,7 +44,7 @@ fn either_root(command: &str) -> Result<(PathBuf, crate::build::Build)> {
 mod application;
 mod filter;
 mod fingerprint;
-mod gradlew;
+pub(crate) mod gradlew;
 mod isolation;
 mod test_execution;
 mod test_plan;
