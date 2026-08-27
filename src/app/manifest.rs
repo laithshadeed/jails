@@ -138,10 +138,11 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<Intent>)> {
                     }
                     intent.strategy_yields = Some(string(value, line_number, key)?.to_string())
                 }
+                "via" => intent.via = Some(string(value, line_number, key)?.to_string()),
                 _ => {
                     return Err(format!(
                         "line {line_number}: unknown [[generate]] key `{key}`; known: \
-                         kind, name, fields, timestamps, indexes, package, on, yields"
+                         kind, name, fields, timestamps, indexes, package, on, yields, via"
                     )
                     .into());
                 }

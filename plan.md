@@ -651,11 +651,27 @@ commit as the change that causes it.
 
 All three of `missing.md`'s named primitives, in full, plus the smaller entries.
 
-- [ ] **P8.1** M5 — `--via <Association>` on `g query`, letting one filter name
+- [x] **P8.1** M5 — `--via <Association>` on `g query`, letting one filter name
       a column on the parent. `g association` already reads both records and
       type-checks the field mapping across the boundary, which is exactly what
       a join needs and is used today only to emit a foreign key. Covers all
       four real endpoints in the table without inventing a query language.
+      *Done, with one deliberate departure: `--via` names the parent **type**,
+      not the association.* An association records its mapping only in the
+      migration it wrote, and re-reading generated SQL to recover a decision is
+      the guessing `build.rs` refuses to do with a build file. The join column
+      is derived from the two records instead — `<parent>Id` when the child
+      declares it, otherwise the single component of the parent key's type
+      whose name ends in `Id`; two candidates is a refusal naming both. A
+      joined select qualifies every column, including the target's own, and the
+      generated IT saves the parent first and reads the child's foreign key and
+      every parent-side filter off it, so the row it stores actually matches.
+      `IntentSpec` gained `via`, which bumped the ledger payload codec to
+      `jails-ledger-payload-4`. `minicom`'s manifest now carries
+      `UnreadForEmail email:string! isRead:boolean --on Message --via User` —
+      the Django original's whole customer-facing surface, and the endpoint
+      M5 was written about — and it passes `jails check` against real
+      PostgreSQL.
 - [ ] **P8.2** M5's smaller half — `--order-by` and `--limit` on `g query`.
 - [ ] **P8.3** M6 — get-or-create by natural key: `--on-conflict <field>` on
       `g usecase`. The statement is one `g explain idempotency` already

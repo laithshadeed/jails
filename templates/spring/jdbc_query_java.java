@@ -30,7 +30,7 @@ public final class Jdbc{{name}}Query implements {{name}}Query {
         Objects.requireNonNull(criteria, "criteria is required");
         return db.sql("""
                         select %s
-                        from {{table}}
+                        from {{from}}
                         where {{predicates}}
                         order by {{order}}
                         limit :max_results

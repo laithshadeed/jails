@@ -44,8 +44,29 @@ pub(crate) fn artifacts_for(
         indexes,
         strategy_on,
         strategy_yields,
+        via,
         ..
     } = *recipe;
+
+    // One recipe reads a second resource. Refused here rather than ignored
+    // there: a flag a kind silently drops is `missing.md` M7's finding, and
+    // the whole reason `g client --method` had to be fixed.
+    if via.is_some() && recipe.kind != ArtifactKind::Query {
+        return Err(format!(
+            "`--via` is only valid for a query, which is the one recipe that reads a second \
+             resource.\n       fix: drop `--via` from `jails g {} {name}`.",
+            {
+                use clap::ValueEnum;
+                recipe
+                    .kind
+                    .to_possible_value()
+                    .expect("every kind has a clap value")
+                    .get_name()
+                    .to_string()
+            }
+        )
+        .into());
+    }
 
     let artifacts = match recipe.kind {
         ArtifactKind::Scaffold => {
@@ -339,7 +360,13 @@ pub(crate) fn artifacts_for(
             }
             let slice = crate::model::Slice::new(project, package);
             let parsed = parse_fields(fields)?;
-            crate::spring::query_files(&slice, name, &capitalize(target), &parsed)?
+            crate::spring::query_files(
+                &slice,
+                name,
+                &capitalize(target),
+                &parsed,
+                via.map(capitalize).as_deref(),
+            )?
         }
         ArtifactKind::Transition => {
             require_spring_project(project, "transition")?;

@@ -47,6 +47,7 @@ pub fn revive(run: &Run, selector: &str, table: &str) -> Result<Outcome> {
         .collect::<Vec<_>>();
     let on = spec.on.as_ref().map(JavaType::qualified);
     let yields = spec.yields.as_ref().map(JavaType::qualified);
+    let via = spec.via.as_ref().map(JavaType::qualified);
     let package = relative_package(project, id.package.as_str())?;
     let mut change = with_test_support(
         project,
@@ -59,6 +60,7 @@ pub fn revive(run: &Run, selector: &str, table: &str) -> Result<Outcome> {
                 indexes: &indexes,
                 strategy_on: on.as_deref(),
                 strategy_yields: yields.as_deref(),
+                via: via.as_deref(),
                 method: spec.method,
             },
             package.as_deref(),
@@ -182,6 +184,7 @@ pub fn repair(run: &Run, selector: &str, datasource: Option<&str>) -> Result<Out
         .collect::<Vec<_>>();
     let on = spec.on.as_ref().map(JavaType::qualified);
     let yields = spec.yields.as_ref().map(JavaType::qualified);
+    let via = spec.via.as_ref().map(JavaType::qualified);
     let package = relative_package(project, id.package.as_str())?;
     let mut change = with_test_support(
         project,
@@ -194,6 +197,7 @@ pub fn repair(run: &Run, selector: &str, datasource: Option<&str>) -> Result<Out
                 indexes: &indexes,
                 strategy_on: on.as_deref(),
                 strategy_yields: yields.as_deref(),
+                via: via.as_deref(),
                 method: spec.method,
             },
             package.as_deref(),

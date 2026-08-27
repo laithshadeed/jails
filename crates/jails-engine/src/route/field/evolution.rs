@@ -125,6 +125,7 @@ pub(super) fn evolve_existing(
         .collect();
     let on = after.on.as_ref().map(JavaType::qualified);
     let yields = after.yields.as_ref().map(JavaType::qualified);
+    let via = after.via.as_ref().map(JavaType::qualified);
     let mut change = with_test_support(
         project,
         jails_generate::generate::plan_recipe(
@@ -136,6 +137,7 @@ pub(super) fn evolve_existing(
                 indexes: &indexes,
                 strategy_on: on.as_deref(),
                 strategy_yields: yields.as_deref(),
+                via: via.as_deref(),
                 method: after.method,
             },
             package,

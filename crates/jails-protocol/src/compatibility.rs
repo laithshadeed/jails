@@ -26,18 +26,21 @@ pub const DURABLE_ENVELOPE_SCHEMA: u32 = 2;
 /// Payload codecs this jails can no longer read, named so the refusal can say
 /// *which* older format it found rather than "not mine".
 ///
-/// Both were readable until the recorded column binding went on the wire
-/// (plan.md P3.2): a field name is a `(java, column)` pair now, and a payload
-/// carrying only the Java half has no second value to promote. There is no
-/// translation, deliberately -- `CLAUDE.md`'s rule for the store is that a
-/// ledger this binary did not write was written by a different jails, and
-/// naming the file beats guessing at an older schema.
+/// The first two were readable until the recorded column binding went on the
+/// wire (plan.md P3.2): a field name is a `(java, column)` pair now, and a
+/// payload carrying only the Java half has no second value to promote. The
+/// third stopped when a recorded intent gained its join (`--via`, plan.md
+/// P8.1) -- an appended field, so a v3 payload simply runs out of bytes where
+/// v4 expects one. There is no translation, deliberately -- `CLAUDE.md`'s rule
+/// for the store is that a ledger this binary did not write was written by a
+/// different jails, and naming the file beats guessing at an older schema.
 pub const DURABLE_PAYLOAD_CODEC_SUPERSEDED: &[&str] = &[
     concat!("jails-", "led", "ger-payload-1"),
     concat!("jails-", "led", "ger-payload-2"),
+    concat!("jails-", "led", "ger-payload-3"),
 ];
 /// Binary codec named by newly written ledger envelopes.
-pub const DURABLE_PAYLOAD_CODEC: &str = concat!("jails-", "led", "ger-payload-3");
+pub const DURABLE_PAYLOAD_CODEC: &str = concat!("jails-", "led", "ger-payload-4");
 
 /// Transaction journal root-format marker, including its fixed-width NUL.
 pub const JOURNAL_MAGIC: &[u8; 16] = b"JAILS-JOURNAL-1\0";

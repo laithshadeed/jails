@@ -325,9 +325,20 @@ there the unit is a whole service block rather than a setting.)
   rather than one silently discarded as a duplicate. The relay drains in
   batches (`outbox.<usecase-kebab>.batch-size`, default 100) rather than
   moving one row per tick, and its retry interval carries jitter.
-- `jails generate|g query <Name> <field:type...> --on <Resource>` — a typed
-  read: a query record, a port, a JDBC adapter and an HTTP adapter, with every
-  declared field an equality filter. Results have stable key ordering and a
+- `jails generate|g query <Name> <field:type...> --on <Resource> [--via
+  <Parent>]` — a typed read: a query record, a port, a JDBC adapter and an HTTP
+  adapter, with every declared field an equality filter.
+
+  **`--via <Parent>` reads a second table**, so a filter may name a component
+  the target does not own — `jails g query UnreadForEmail email:string!
+  isRead:boolean --on Message --via User` filters messages by the *user's*
+  email. The join column is derived from the two records: `<parent>Id` when the
+  child declares it, otherwise the single component of the parent key's type
+  whose name ends in `Id`; two candidates is a refusal naming both, never a
+  choice. `--via` names the parent **type**, not an association — an
+  association records its mapping only in the migration it wrote, and jails
+  does not re-read generated SQL to recover a decision. A joined select
+  qualifies every column, including the target's own. Results have stable key ordering and a
   hard row ceiling; the adapter's SQL comes from the same column model as the
   table's DDL.
 - `jails generate|g cases <path/to/file.md>` — one `@Test` per bullet in a

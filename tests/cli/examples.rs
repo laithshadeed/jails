@@ -309,12 +309,15 @@ fn unheld_maven_example_manifest_passes_real_verification() {
     assert_eq!(
         maven_report_summary(root, "surefire-reports"),
         MavenReportSummary {
-            reports: 17,
+            // 17 -> 18 reports, 53 -> 54 tests: `UnreadForEmailQueryController
+            // Test`, from the `--via User` query that is the Django original's
+            // whole customer-facing surface (missing.md M5, plan.md P8.1).
+            reports: 18,
             // 51 -> 52: `SendMessageUseCaseTest` gained the case missing.md
             // M3 says would have caught a create that never assigns a key.
             // 52 -> 53: `MarkAsReadControllerTest` gained the case for a
             // request with no `If-Match`, which used to apply blind.
-            tests: 53,
+            tests: 54,
             failures: 0,
             errors: 0,
             skipped: 0,
@@ -323,8 +326,10 @@ fn unheld_maven_example_manifest_passes_real_verification() {
     assert_eq!(
         maven_report_summary(root, "failsafe-reports"),
         MavenReportSummary {
-            reports: 5,
-            tests: 6,
+            // 5 -> 6 reports, 6 -> 7 tests: `JdbcUnreadForEmailQueryIT` runs
+            // the join against real PostgreSQL.
+            reports: 6,
+            tests: 7,
             failures: 0,
             errors: 0,
             skipped: 0,

@@ -68,3 +68,15 @@ kind = "query"
 name = "Conversation"
 fields = ["userId:long"]
 on = "Message"
+
+# POST /customer_api/ping {email} — the whole customer-facing surface of the
+# Django original, and the one endpoint jails could not express: `Message` has
+# no `email` component, so a query on it was reachable only by a caller that
+# already knew the surrogate user id. `--via User` reads `users` alongside
+# `messages`, joined on the `userId` the scaffold already declares.
+[[generate]]
+kind = "query"
+name = "UnreadForEmail"
+fields = ["email:string!", "isRead:boolean"]
+on = "Message"
+via = "User"

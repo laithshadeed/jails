@@ -121,6 +121,7 @@ fn main() -> std::process::ExitCode {
             indexes,
             strategy_on,
             strategy_yields,
+            via,
             method,
         } => {
             // Built once, outside the closure: a route may be called twice --
@@ -135,6 +136,7 @@ fn main() -> std::process::ExitCode {
                 package,
                 on: strategy_on,
                 yields: strategy_yields,
+                via,
                 method,
             };
             dispatch::mutate(invocation, false, |run| {

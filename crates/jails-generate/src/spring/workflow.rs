@@ -1001,6 +1001,7 @@ mod query_tests {
             "MessagesByConversation",
             "Message",
             &fields,
+            None,
         )
         .unwrap();
         let adapter = &files
@@ -1043,8 +1044,14 @@ mod query_tests {
         write_record(&root, "Contact", &["id:uuid", "workspaceId:uuid"]);
 
         let project = Project::load(&root).unwrap();
-        let error =
-            query_files(&Slice::new(&project, None), "Contacts", "Contact", &[]).unwrap_err();
+        let error = query_files(
+            &Slice::new(&project, None),
+            "Contacts",
+            "Contact",
+            &[],
+            None,
+        )
+        .unwrap_err();
 
         assert!(error.contains("at least one typed filter"), "{error}");
     }
@@ -1061,6 +1068,7 @@ mod query_tests {
             "ContactsByEmail",
             "Contact",
             &fields,
+            None,
         )
         .unwrap_err();
 

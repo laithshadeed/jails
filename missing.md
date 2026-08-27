@@ -211,27 +211,13 @@ the client→server half. Everything above was written by hand outside jails.
    `g auth` and `add sse` exist for: an in-memory presence map is silently
    correct on one node and silently wrong on two, with no error either way.
 
-## M5 — a query cannot join, so no endpoint keyed by a natural key works
+## M5 — a query has no ordering or bound
 
-`g query --on X` filters on X's own columns by equality. Every real read in
-these apps crosses a table.
-
-### Reproduce
-
-In a project with `User(id, email)`, `Message(id, toUserId, …)` and the
-association between them — which is what `minicom-2026-02-05` is:
-
-```sh
-jails g association MessageRecipient toUserId=id --on Message --yields User   # succeeds
-jails g query MessagesByEmail email:string! --on Message --pretend
-```
-
-```
-jails: query MessagesByEmail filters `email`, but Message has no component with that name
-```
-
-The refusal is correct and there is no flag that changes it. There is also no
-ordering or bound:
+*The join is closed (plan.md P8.1): `g query --on X --via Y` reads a second
+table, so one filter may name a column the parent owns. `minicom`'s manifest
+carries the endpoint this entry was written about —
+`UnreadForEmail email:string! isRead:boolean --on Message --via User` — and it
+compiles and passes against real PostgreSQL. What is left is the smaller half.*
 
 ```sh
 jails g query RecentMessages toUserId:long --on Message --limit 20
@@ -241,35 +227,12 @@ jails g query RecentMessages toUserId:long --on Message --limit 20
 error: unexpected argument '--limit' found
 ```
 
-### What each original endpoint needs
-
-| original endpoint | what it needs |
-|---|---|
-| `POST /customer_api/ping {email}` | `users ⋈ messages` — unread messages for the user *with that email* |
-| `GET /messages` (node) | each message with its author's `{id, email}` embedded |
-| `GET /api/conversations/` | 20 most recent conversations, each with its **last** message |
-| `GET /admin_api/issues` | issues with `user.email` — the Django says `select_related('user')` |
-
-The first is the whole customer-facing surface of `minicom-05-02-2026`. jails
-generated `UnreadMessagesForUserQuery(toUserId, read)` — correct, and reachable
-only by a caller who already knows the surrogate id, which no minicom client
-does.
-
-### The information needed is already recorded
-
-`g association` reads both records and type-checks the field mapping across the
-boundary; that is exactly what a join needs, and it is used today only to emit
-a foreign key. A `--via <Association>` on `g query`, letting one filter name a
-column on the parent, would cover all four rows above without inventing a query
-language:
-
-```sh
-jails g query UnreadForEmail email:string! read:boolean --on Message --via MessageRecipient
-```
-
-Ordering and bounds are a separate, smaller ask (`--order-by`, `--limit`).
 `GET /api/conversations/` is `[:20]` ordered by `-created_at`;
-`User.unread_count()` is a `count()`. Both are hand-written today.
+`User.unread_count()` is a `count()`. Both are hand-written today. The adapter
+already picks an order (`sql::ordering`, newest first with the key as the
+tiebreak) and already bounds the result (`MAX_RESULTS = 100`) — neither is
+sayable from the command line, and the bound is applied silently, which is the
+separate defect §7 of `modern.md` names.
 
 ## M6 — no get-or-create, and it is the first line of three of the six apps
 

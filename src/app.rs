@@ -59,6 +59,9 @@ struct GenerateIntent {
     package: Option<String>,
     strategy_on: Option<String>,
     strategy_yields: Option<String>,
+    /// The second resource a `query` reads. One spelling only -- it is new,
+    /// so there is no shipped alias to keep working.
+    via: Option<String>,
     method: Option<jails_spec::spec::kind::HttpMethod>,
 }
 
@@ -90,6 +93,7 @@ impl GenerateIntent {
             .chain(self.package.iter())
             .chain(self.strategy_on.iter())
             .chain(self.strategy_yields.iter())
+            .chain(self.via.iter())
         {
             if value.contains(['\n', '\r', '|']) {
                 return Err(format!(
@@ -107,6 +111,7 @@ impl GenerateIntent {
             package: self.package,
             on: self.strategy_on,
             yields: self.strategy_yields,
+            via: self.via,
             method: self.method,
         })
     }

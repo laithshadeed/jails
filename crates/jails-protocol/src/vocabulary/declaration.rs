@@ -265,6 +265,19 @@ pub struct IntentSpec {
     /// until then these carry the resolved target type.
     pub on: Option<JavaType>,
     pub yields: Option<JavaType>,
+    /// The resource a `query` joins through to reach a filter it does not own.
+    ///
+    /// `g query ... --on Message --via User` reads `users` alongside
+    /// `messages`, so a filter may name a component of either. Content rather
+    /// than identity, the same as `on` and `yields`: adding the join to an
+    /// existing query is an edit to a known entity, not a new one.
+    ///
+    /// The **parent type**, not the association's name. An association records
+    /// its mapping only in the migration it wrote, and re-reading generated
+    /// SQL to recover a decision is exactly the guessing `build.rs` refuses to
+    /// do with a build file. The join column is derived from the two records
+    /// instead, and refused when more than one component could be it.
+    pub via: Option<JavaType>,
     /// The HTTP method a generated endpoint answers.
     ///
     /// Content rather than identity, like every other field here: changing
@@ -349,6 +362,7 @@ impl IntentSpec {
             on: None,
             yields: None,
             method: None,
+            via: None,
         })
     }
 }
@@ -365,7 +379,8 @@ impl Codec for IntentSpec {
         // By label, not by discriminant: §R1.4's rule for every closed
         // vocabulary on the wire, so reordering the enum cannot change a
         // recorded value.
-        encoder.option(self.method.as_ref(), |e, method| e.string(method.label()))
+        encoder.option(self.method.as_ref(), |e, method| e.string(method.label()))?;
+        encoder.option(self.via.as_ref(), |e, ty| ty.encode(e))
     }
 
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
@@ -382,6 +397,7 @@ impl Codec for IntentSpec {
             on: decoder.option(JavaType::decode)?,
             yields: decoder.option(JavaType::decode)?,
             method: decoder.option(|d| jails_spec::spec::kind::HttpMethod::parse(&d.string()?))?,
+            via: decoder.option(JavaType::decode)?,
         })
     }
 }

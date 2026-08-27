@@ -553,6 +553,44 @@ pub const SCENARIOS: &[Scenario] = &[
             ],
         ],
     },
+    // `--via` reads a second table so a filter can name a column the target
+    // does not own -- `missing.md` M5, the shape every real read in those apps
+    // needed and none of them could express.
+    Scenario {
+        name: "query-via",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[
+            &["add", "db", "--no-start"],
+            &[
+                "g",
+                "scaffold",
+                "Owner",
+                "id:uuid@pk",
+                "email:string!@unique",
+                "createdAt:instant",
+            ],
+            &[
+                "g",
+                "scaffold",
+                "Item",
+                "id:uuid@pk",
+                "ownerId:uuid@index",
+                "name:string!",
+                "createdAt:instant",
+            ],
+            &[
+                "g",
+                "query",
+                "ItemsByOwnerEmail",
+                "email:string!",
+                "--on",
+                "Item",
+                "--via",
+                "Owner",
+            ],
+        ],
+    },
     Scenario {
         name: "idempotency",
         fixture: Fixture::Spring,

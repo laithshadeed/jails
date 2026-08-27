@@ -51,6 +51,7 @@ pub(super) fn companion_updates(
             .collect::<Vec<_>>();
         let on = after.on.as_ref().map(JavaType::qualified);
         let yields = after.yields.as_ref().map(JavaType::qualified);
+        let via = after.via.as_ref().map(JavaType::qualified);
         let mut change = with_test_support(
             project,
             jails_generate::generate::plan_recipe(
@@ -62,6 +63,7 @@ pub(super) fn companion_updates(
                     indexes: &indexes,
                     strategy_on: on.as_deref(),
                     strategy_yields: yields.as_deref(),
+                    via: via.as_deref(),
                     method: after.method,
                 },
                 package,
@@ -227,6 +229,7 @@ fn dependent_updates(
             .collect::<Vec<_>>();
         let on = spec.on.as_ref().map(JavaType::qualified);
         let yields = spec.yields.as_ref().map(JavaType::qualified);
+        let via = spec.via.as_ref().map(JavaType::qualified);
         let mut change = with_test_support(
             &projected,
             jails_generate::generate::plan_recipe(
@@ -238,6 +241,7 @@ fn dependent_updates(
                     indexes: &indexes,
                     strategy_on: on.as_deref(),
                     strategy_yields: yields.as_deref(),
+                    via: via.as_deref(),
                     method: spec.method,
                 },
                 package,

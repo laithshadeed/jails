@@ -514,6 +514,17 @@ pub(crate) enum Command {
         /// `durable-job`, the resource whose stable id proves completion.
         #[arg(long = "yields", visible_alias = "returns", value_name = "TYPE")]
         strategy_yields: Option<String>,
+        /// For `query`, a second resource to read alongside `--on`, so a
+        /// filter may name a component of either.
+        ///
+        ///   jails g query UnreadForEmail email:string! read:boolean --on Message --via User
+        ///
+        /// The join column is the child component that references the
+        /// parent's key -- `<parent>Id` when it is there, otherwise the one
+        /// component of the parent key's type whose name ends in `Id`. Two
+        /// candidates is a refusal naming both, never a choice.
+        #[arg(long = "via", value_name = "TYPE")]
+        via: Option<String>,
         /// For `controller`, the HTTP method the generated route answers.
         /// Defaults to `get`.
         ///

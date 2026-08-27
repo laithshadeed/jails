@@ -1,0 +1,25 @@
+@baseUrl = http://localhost:8080
+
+### Create Item
+POST {{baseUrl}}/items
+Content-Type: application/json
+
+{
+  "id": "00000000-0000-0000-0000-000000000001",
+  "ownerId": "00000000-0000-0000-0000-000000000001",
+  "name": "sample-name",
+  "createdAt": "2026-01-01T00:00:00Z"
+}
+
+### List Item
+GET {{baseUrl}}/items
+Accept: application/json
+
+@id = 00000000-0000-0000-0000-000000000001
+
+### Get Item
+GET {{baseUrl}}/items/{{id}}
+Accept: application/json
+
+### Delete Item
+DELETE {{baseUrl}}/items/{{id}}
