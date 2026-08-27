@@ -847,5 +847,29 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
             },
             inline_java_bodies(&src),
         ),
+        (
+            Ratchet {
+                name: "percent of generated Java that is comment",
+                rung: "P6.4 — a template that cannot check its claim says less",
+                // 21 is what the templates measure today, after the four false
+                // claims `modern.md` §11.2 found were repaired at their
+                // source: the repository Javadoc names the *component* rather
+                // than the column, the publisher no longer claims per-entity
+                // ordering it does not give, the transition says nothing about
+                // scope where there is none in the SQL, and the in-memory
+                // adapter keys on the same component the JDBC one does.
+                //
+                // Held rather than driven down. The prose that remains is the
+                // load-bearing kind `modern.md` §12 names and asks to keep --
+                // why the container is a `@Bean`, why `*IT` needs Failsafe,
+                // why an NPE is deliberately not fatal. What the number stops
+                // is the next template quietly adding another paragraph nobody
+                // can check beside them.
+                ceiling: 21,
+                target: 21,
+                why: "A wrong explanation is believed, and a comment restating a decision is                       the fastest thing in a codebase to go stale. Generated prose is worse                       again: it is asserted by a template that has no way to confirm it, and                       it is copied into every project.",
+            },
+            template_comment_density(),
+        ),
     ]
 }

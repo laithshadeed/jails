@@ -913,6 +913,71 @@ pub(crate) fn inline_java_bodies(src: &[Source]) -> usize {
         .sum()
 }
 
+/// How much of the Java jails writes is comment, as a percentage of the
+/// non-blank lines in `templates/`.
+///
+/// Measured over the templates rather than over `crates/*/src` because this is
+/// the prose a reader of a *generated project* meets, and it is the prose
+/// nothing checks. `modern.md` §11.2 is the finding: "keyed on the `email`
+/// component" (it was not), "ordering per entity" (it was not), "scoped
+/// matches cannot mutate another tenant's row" (there was no scope in the
+/// SQL), "this type has no `id` component" (it had one). Each was asserted by
+/// a template that had no way to confirm it, and each was believed.
+///
+/// The load-bearing comments stay -- the `@ServiceConnection` explanation, the
+/// Failsafe note, why `NullPointerException` is deliberately not classified
+/// fatal. What this gate stops is the next template adding another paragraph
+/// of unverifiable prose beside them. A template that cannot check its own
+/// claim should say less.
+pub(crate) fn template_comment_density() -> usize {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    let mut files = Vec::new();
+    collect_java(&root, &mut files);
+    assert!(
+        files.len() > 100,
+        "the template scanner found only {} files -- it has lost track of where \
+         the generated Java lives, and would report a clean density over prose \
+         it never read",
+        files.len()
+    );
+    let (mut comment, mut total) = (0usize, 0usize);
+    for source in &files {
+        let mut in_block = false;
+        for line in source
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+        {
+            total += 1;
+            if in_block || line.starts_with("/*") {
+                comment += 1;
+                in_block = !line.contains("*/");
+            } else if line.starts_with("//") {
+                comment += 1;
+            }
+        }
+    }
+    comment * 100 / total.max(1)
+}
+
+/// Every `.java` under a directory, read whole -- templates are not Rust, so
+/// [`sources`] does not see them.
+pub(crate) fn collect_java(dir: &Path, out: &mut Vec<String>) {
+    let entries =
+        fs::read_dir(dir).unwrap_or_else(|e| panic!("failed to read {}: {e}", dir.display()));
+    for entry in entries {
+        let path = entry.expect("failed to read a directory entry").path();
+        if path.is_dir() {
+            collect_java(&path, out);
+        } else if path.extension().is_some_and(|ext| ext == "java") {
+            out.push(
+                fs::read_to_string(&path)
+                    .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display())),
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod blanking_tests {
     use super::*;

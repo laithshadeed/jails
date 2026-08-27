@@ -234,9 +234,13 @@ pub(super) fn jdbc_client_repository(
             .to_string()
     } else {
         match key {
+            // The *component*, not the column. `userId` is `user_id` in the
+            // table, and a Javadoc naming a component the record does not
+            // declare sends the reader looking for an accessor that is not
+            // there. plan.md P6.4.
             Some(column) if column.name != "id" => format!(
                 " * <p>Repository lookups are keyed on the {{@code {}}} component.\n",
-                column.name
+                column.component
             ),
             _ => String::new(),
         }
@@ -554,9 +558,13 @@ pub(super) fn jdbc_repository(
             .to_string()
     } else {
         match key {
+            // The *component*, not the column. `userId` is `user_id` in the
+            // table, and a Javadoc naming a component the record does not
+            // declare sends the reader looking for an accessor that is not
+            // there. plan.md P6.4.
             Some(column) if column.name != "id" => format!(
                 " * <p>Repository lookups are keyed on the {{@code {}}} component.\n",
-                column.name
+                column.component
             ),
             _ => String::new(),
         }
@@ -1249,6 +1257,52 @@ mod repository_test_generation_tests {
         assert!(adapter.contains("where reference = :id"), "{adapter}");
         assert!(test.contains("transaction.reference()"), "{test}");
         assert!(!test.contains("@Disabled"), "{test}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The Javadoc names a component the record actually declares.
+    ///
+    /// It used to print the *column* name, so a key called `customerId` was
+    /// announced as `customer_id` -- an accessor the reader then goes looking
+    /// for and does not find. `modern.md` §11.2's point exactly: generated
+    /// prose is asserted and never checked. plan.md P6.4.
+    #[test]
+    fn the_key_javadoc_names_the_component_not_the_column() {
+        let (root, _project) =
+            crate::spring::scratch_project("repository-test-key-doc", "<project></project>");
+        let fields = parse_fields(&[
+            "customerId:string@pk".to_string(),
+            "tenant:string".to_string(),
+        ])
+        .unwrap();
+        let columns = mapped_columns(&fields);
+
+        let adapter = jdbc_client_repository(
+            "com.example.demo.adapters",
+            "Transaction",
+            "",
+            &columns,
+            "com.example.demo.domain",
+            &key_type(&columns),
+        );
+        let plain = jdbc_repository(
+            "com.example.demo.adapters",
+            "Transaction",
+            "",
+            &columns,
+            "com.example.demo.domain",
+            &key_type(&columns),
+        );
+
+        for source in [&adapter, &plain] {
+            assert!(
+                source.contains("keyed on the {@code customerId} component"),
+                "{source}"
+            );
+            assert!(!source.contains("{@code customer_id}"), "{source}");
+        }
+        // The SQL is still the column, which is the half that was right.
+        assert!(adapter.contains("where customer_id = :id"), "{adapter}");
         std::fs::remove_dir_all(root).unwrap();
     }
 

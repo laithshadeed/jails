@@ -539,7 +539,7 @@ commit as the change that causes it.
       fails, and at-least-once quietly becomes at-least-`max_attempts`.
       `aSinkThatAlreadyAcceptedIsNotSentTheEventAgain` is generated per outbox
       and runs against real PostgreSQL (Failsafe count 70 → 72).
-- [ ] **P6.4** Delete or repair the claims that are false: "keyed on the
+- [x] **P6.4** Delete or repair the claims that are false: "keyed on the
       `email` component", "ordering per entity", "scoped matches cannot mutate
       another tenant's row" (there is no scope in the SQL), "this type has no
       `id` component" (it has one). 27% of production Java is comment and a
@@ -547,6 +547,18 @@ commit as the change that causes it.
       to `tests/architecture/board.rs`. The load-bearing ones — the
       `@ServiceConnection` explanation, the Failsafe note, the
       `DeadLetterPublishingRecoverer` default — stay (modern §11.5, §12).
+      *Done:* three of the four claims had already been repaired at their
+      source by earlier items — "ordering per entity" by P6.1, the scope
+      wording by P4.5's `scope_clause`, and the in-memory adapter's "no `id`
+      component" by P3.3's `key_component`. The fourth is repaired here: the
+      repository Javadoc printed the *column* name, so a key called
+      `customerId` was announced as `customer_id` — an accessor the reader
+      goes looking for and does not find. `the_key_javadoc_names_the_component
+      _not_the_column` pins both halves: the prose names the component, the
+      SQL still names the column. The new gate measures the percentage of
+      non-blank lines in `templates/**.java` that are comment; it is 21 and
+      the ceiling holds it there rather than driving it down, because what
+      remains is the load-bearing prose §12 asks to keep.
 - [ ] **P6.5** Two generators, two answers, one arguing against the other: the
       scaffold path sets both audit columns to one `Instant` and explains why,
       the use-case path calls the clock twice (modern §13.9). And a `usecase`

@@ -490,15 +490,6 @@ These are notes for jails, not changes.
    `UUID`. A generated file whose stated premise has become false should be
    re-planned or reported, not left with a comment contradicting the code beside it.
 
-2. **The generated prose is asserted, never checked.** "keyed on the `email`
-   component" (it is not), "ordering per entity" (it is not), "scoped matches
-   cannot mutate another tenant's row" (there is no scope), "this type has no
-   `id` component" (it has one). Comments that restate a decision are the
-   fastest thing in a codebase to go stale, and this codebase is 27% comment. A
-   template that cannot verify its own claim should say less. The load-bearing
-   ones — the `@ServiceConnection` explanation, the Failsafe note, the
-   `DeadLetterPublishingRecoverer` default — are excellent and should stay.
-
 ---
 
 ## 12. What is genuinely good, and worth not losing
