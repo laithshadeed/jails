@@ -1,6 +1,6 @@
 package {{web}};
 
-{{query_import}}{{port_import}}{{scope_import}}import java.util.List;
+{{query_import}}{{port_import}}{{scope_import}}{{imports}}import java.util.List;
 import java.util.Objects;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;

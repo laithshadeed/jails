@@ -9,6 +9,9 @@
 use super::workflow::{json_sample, scope_test_parts};
 use super::*;
 
+mod proof;
+use proof::query_controller_test_java;
+
 mod shape;
 pub(crate) use shape::Bounds;
 use shape::{DEFAULT_MAX_RESULTS, Projection, declared_ordering, resolve_join};
@@ -230,7 +233,7 @@ pub(crate) fn query_files(
         Artifact {
             kind: "query controller test",
             path: test_web.join(format!("{name}QueryControllerTest.java")),
-            contents: query_controller_test_java(slice, name, &resource, fields),
+            contents: query_controller_test_java(slice, name, &resource, fields, endpoint),
         },
     ])
 }
@@ -658,10 +661,20 @@ fn query_controller_path_java(
         .map(|field| field.name.clone())
         .collect::<Vec<_>>()
         .join(", ");
+    // Every filter's type is declared here as a `@PathVariable`, so every
+    // filter's import has to be here too. It was not: a `userId:uuid` path
+    // query wrote `@PathVariable UUID userId` and no `import java.util.UUID`,
+    // so the controller did not compile -- found by running the build a golden
+    // cannot, since a golden compares bytes.
+    let imports = java_literal_imports(fields, &slice.owned(Layer::Domain))
+        .into_iter()
+        .map(|import| format!("import {import};\n"))
+        .collect::<String>();
     crate::template::render(
         crate::template_here!("spring/query_controller_path_java.java"),
         &[
             ("web", web),
+            ("imports", &imports),
             ("query_import", &*query_import),
             ("port_import", &*port_import),
             ("scope_import", &*scope_import),
@@ -675,73 +688,6 @@ fn query_controller_path_java(
             ("scope_checks", &*scope_checks),
             ("path_parameters", &*path_parameters),
             ("criteria_arguments", &*criteria_arguments),
-        ],
-    )
-}
-
-fn query_controller_test_java(
-    slice: &Slice,
-    name: &str,
-    resource: &Target,
-    fields: &[crate::generate::Field],
-) -> String {
-    let project = slice.project();
-    let security: &str = slice.base();
-    let service: &str = &slice.placed(Layer::Service);
-    let web: &str = &slice.placed(Layer::Web);
-    let domain: &str = &slice.owned(Layer::Domain);
-    let target_fields: &[crate::generate::Field] = &resource.fields;
-    let target: &str = &resource.name;
-    let json = fields
-        .iter()
-        .map(|field| {
-            json_sample(slice, field).map(|sample| format!("  \"{}\": {sample}", field.name))
-        })
-        .collect::<Option<Vec<_>>>();
-    let target_samples = target_fields
-        .iter()
-        .map(|field| crate::generate::sample_value(field, project, domain))
-        .collect::<Option<Vec<_>>>();
-    let disabled = json.is_none() || target_samples.is_none();
-    let json = json.unwrap_or_default().join(",\n");
-    let target_args = target_samples
-        .unwrap_or_default()
-        .join(",\n                    ");
-    let port_import = crate::generate::import_of(web, service, &format!("{name}Query"));
-    let target_import = crate::generate::import_of(web, domain, target);
-    let imports = java_literal_imports(target_fields, domain)
-        .into_iter()
-        .map(|import| format!("import {import};\n"))
-        .collect::<String>();
-    let disabled_import = if disabled {
-        "import org.junit.jupiter.api.Disabled;\n"
-    } else {
-        ""
-    };
-    let annotation = if disabled {
-        "    @Disabled(\"todo: supply query/target samples Jails cannot fabricate\")\n"
-    } else {
-        ""
-    };
-    let (scope_import, scope_argument) = scope_test_parts(security, web, fields);
-    crate::template::render(
-        // No classic form: `g query` refuses below Boot 3 because the adapter
-        // it writes needs `JdbcClient`, so a Boot 2 test would have nothing to
-        // exercise. `pending.md` §1.2.
-        crate::template_here!("spring/query_controller_test_java.java"),
-        &[
-            ("web", web),
-            ("port_import", &*port_import),
-            ("target_import", &*target_import),
-            ("scope_import", &*scope_import),
-            ("imports", &*imports),
-            ("disabled_import", disabled_import),
-            ("name", name),
-            ("annotation", annotation),
-            ("json", &*json),
-            ("target", target),
-            ("target_args", &*target_args),
-            ("scope_argument", &*scope_argument),
         ],
     )
 }

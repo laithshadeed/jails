@@ -42,36 +42,6 @@ works — it is the second create that is fatal.
 The refusal itself is correct behaviour for an undeclared read: the bug is the
 missing declaration.
 
-## B48 — a path-variable query generates a controller test that cannot pass
-
-```sh
-jails g query MessagesForUser --on Message userId:uuid \
-      --path '/admin_api/messages/{userId}'
-```
-
-The controller is right — `@GetMapping` with `@PathVariable UUID userId` on
-`/admin_api/messages/{userId}`. The generated test is wrong three ways at once:
-
-```java
-assertThat(mvc.post()                                   // 1. POST to a GET-only route
-        .uri(MessagesForUserQueryController.PATH)       // 2. "{userId}" never expanded
-        .contentType(MediaType.APPLICATION_JSON)
-        .content("""
-{
-  "userId": "00000000-0000-0000-0000-000000000001"
-}
-"""))                                                   // 3. a body for a @PathVariable
-        .hasStatusOk();
-```
-
-It fails at the URI, before the verb or the body matter:
-`java.lang.IllegalArgumentException: Not enough variable values available to
-expand 'userId'`. Observed on `minicom-15-01-2026`, reproduced from a clean
-`jails new --offline`.
-
-The test renderer branches on the criteria record; it does not know the path
-carries variables, which the controller renderer already worked out.
-
 ## B55 — `jails add websocket` is rejected as an invalid capability
 
 While `jails g socket <Name>` exists to scaffold WebSocket handlers, `jails add websocket` (and `jails add socket`) is rejected:
