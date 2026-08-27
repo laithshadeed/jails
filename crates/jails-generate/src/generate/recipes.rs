@@ -62,6 +62,11 @@ pub(crate) fn artifacts_for(
     let endpoint = crate::spring::Endpoint {
         route: path,
         consumes: recipe.request_format(),
+        // PUT unless the caller named one: what every transition emitted
+        // before `--method` reached this recipe.
+        method: recipe
+            .method
+            .unwrap_or(jails_spec::spec::kind::HttpMethod::Put),
     };
 
     let artifacts = match recipe.kind {

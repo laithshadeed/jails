@@ -1562,6 +1562,19 @@ fn modernize_takes_a_boot_2_gradle_project_to_the_versions_jails_generates_again
          public class Reader {\n    ObjectMapper mapper = new ObjectMapper();\n}\n",
     )
     .unwrap();
+    // A second file whose Jackson use is *not* a rename: `JsonProcessingException`
+    // has zero occurrences under `tools/` in `deps/jackson-databind`, because it
+    // became unchecked and moved -- so a `throws` naming it changes shape and
+    // renaming the package alone would leave code that looks migrated and does
+    // not compile.
+    fs::write(
+        base.join("Legacy.java"),
+        "package com.example.demo;\n\nimport com.fasterxml.jackson.core.JsonProcessingException;\n\
+         import com.fasterxml.jackson.databind.ObjectMapper;\n\n\
+         public class Legacy {\n    String go(Object o) throws JsonProcessingException {\n        \
+         return new ObjectMapper().writeValueAsString(o);\n    }\n}\n",
+    )
+    .unwrap();
 
     let preview = jails_cmd(&root, None)
         .args(["modernize", "--pretend"])
@@ -1604,11 +1617,33 @@ fn modernize_takes_a_boot_2_gradle_project_to_the_versions_jails_generates_again
     let schema = fs::read_to_string(root.join("src/main/resources/schema.sql")).unwrap();
     assert!(schema.contains("created_at timestamp"), "{schema}");
 
-    // Reported, never rewritten: the package moved *and* the API changed.
-    assert!(report.contains("Jackson 2"), "{report}");
-    assert!(report.contains("Reader.java"), "{report}");
+    // Rewritten when the rename *is* the whole migration: every type
+    // `Reader.java` names exists in 3.x under the same name, `new
+    // ObjectMapper()` included
+    // (`deps/jackson-databind` `tools/jackson/databind/ObjectMapper.java:276`).
+    // Refusing this file left a project jails had just moved to Boot 4 unable
+    // to compile over one import.
     let reader = fs::read_to_string(base.join("Reader.java")).unwrap();
-    assert!(reader.contains("com.fasterxml.jackson"), "{reader}");
+    assert!(
+        reader.contains("tools.jackson.databind.ObjectMapper"),
+        "{reader}"
+    );
+    assert!(!reader.contains("com.fasterxml"), "{reader}");
+    assert!(
+        report.contains("com.fasterxml.jackson -> tools.jackson"),
+        "{report}"
+    );
+
+    // Reported and never rewritten when the API changed, which is the half the
+    // blanket refusal was right about.
+    assert!(report.contains("Jackson 2"), "{report}");
+    assert!(report.contains("Legacy.java"), "{report}");
+    assert!(
+        !report.contains("tools.jackson in src/main/java/com/example/demo/Legacy.java"),
+        "{report}"
+    );
+    let legacy = fs::read_to_string(base.join("Legacy.java")).unwrap();
+    assert!(legacy.contains("com.fasterxml.jackson"), "{legacy}");
 
     // Idempotent, and it says what was already right rather than just "no".
     let again = jails_cmd(&root, None).arg("modernize").output().unwrap();

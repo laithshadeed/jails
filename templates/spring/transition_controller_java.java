@@ -5,7 +5,7 @@ import java.util.Objects;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.{{mapping}};
 {{binding_import}}import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -32,7 +32,7 @@ public final class {{name}}Controller {
 {{scope_assignment}}
     }
 
-    @PutMapping
+    @{{mapping}}
     public ResponseEntity<{{target}}Response> execute(
             @RequestHeader(HttpHeaders.IF_MATCH) String ifMatch,
             @Valid @{{binding}} {{name}}Command command{{scope_parameter}}) {

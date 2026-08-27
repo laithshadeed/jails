@@ -15,7 +15,7 @@ class {{name}}ControllerTest {
 
 {{annotation}}    @Test
     void putExecutesTheTransitionAndReturnsTheNewVersionAsAnETag() {
-        assertThat(mvc.put().uri({{name}}Controller.PATH)
+        assertThat(mvc.{{verb}}().uri({{name}}Controller.PATH)
                 .header(HttpHeaders.IF_MATCH, "\"{{sample_version}}\"")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -29,7 +29,7 @@ class {{name}}ControllerTest {
 
 {{annotation}}    @Test
     void aRequestWithNoIfMatchIsRefusedRatherThanAppliedBlind() {
-        assertThat(mvc.put().uri({{name}}Controller.PATH)
+        assertThat(mvc.{{verb}}().uri({{name}}Controller.PATH)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
 {

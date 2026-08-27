@@ -73,13 +73,14 @@ pub(super) fn refuse_misplaced(recipe: &Recipe<'_>) -> Result<()> {
             ArtifactKind::Controller
                 | ArtifactKind::Usecase
                 | ArtifactKind::Query
+                | ArtifactKind::Transition
                 | ArtifactKind::Client
         )
     {
         use clap::ValueEnum;
         return Err(format!(
-            "`--path` applies to a controller, a use case or a query.\n       fix: drop it from \
-             `jails g {} {}`.",
+            "`--path` applies to a controller, a use case, a query or a transition.\n       fix: \
+             drop it from `jails g {} {}`.",
             recipe
                 .kind
                 .to_possible_value()
@@ -95,14 +96,19 @@ pub(super) fn refuse_misplaced(recipe: &Recipe<'_>) -> Result<()> {
     // `@GetMapping` and said nothing, because a query is a GET exactly when
     // every filter comes from `--path` and a POST otherwise, which is a fact
     // about the request rather than a preference.
+    // `transition` takes one too: its update is idempotent, so PUT and PATCH
+    // are both correct spellings of "set these fields on this row" and a
+    // frontend calling one will not accept the other. The first version of
+    // this refusal claimed a transition *derives* its verb from the request,
+    // which was simply untrue -- it was a hardcoded PUT.
     if recipe.method.is_some()
-        && !matches!(recipe.kind, ArtifactKind::Controller | ArtifactKind::Client)
+        && !matches!(
+            recipe.kind,
+            ArtifactKind::Controller | ArtifactKind::Client | ArtifactKind::Transition
+        )
     {
         use clap::ValueEnum;
-        let derived = matches!(
-            recipe.kind,
-            ArtifactKind::Query | ArtifactKind::Usecase | ArtifactKind::Transition
-        );
+        let derived = matches!(recipe.kind, ArtifactKind::Query | ArtifactKind::Usecase);
         return Err(format!(
             "`--method` applies to a controller or a client -- the recipes that name a verb \
              rather than derive one.\n       fix: drop it from `jails g {kind} {name}`.{note}",

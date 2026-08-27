@@ -356,6 +356,25 @@ fn rewritten(text: &str) -> String {
     out
 }
 
+/// The Jackson 2 names that are not a package rename away from Jackson 3.
+///
+/// Verified in `deps/jackson-databind`, which is Jackson 3: **zero**
+/// occurrences of either under `src/main/java/tools/`. `JsonProcessingException`
+/// became unchecked and moved, so a `throws`/`catch` naming it changes shape;
+/// java.time is in core databind now, so `JavaTimeModule` and the `jsr310`
+/// artifact are gone; `WRITE_DATES_AS_TIMESTAMPS` moved to `cfg.DateTimeFeature`.
+///
+/// A file touching any of these is reported and not rewritten. A file touching
+/// none of them is a rename -- `ObjectMapper`, `JsonNode`, `ObjectNode` and
+/// `new ObjectMapper()` all exist unchanged in 3.x
+/// (`tools/jackson/databind/ObjectMapper.java:276`).
+const JACKSON_3_CHANGED: [&str; 4] = [
+    "JsonProcessingException",
+    "JavaTimeModule",
+    "WRITE_DATES_AS_TIMESTAMPS",
+    "jsr310",
+];
+
 /// What the upgrade breaks in Java the reader owns.
 fn source_breaks(sources: &Sources, upgrade: &mut Upgrade) {
     let mut jackson = Vec::new();
@@ -363,7 +382,25 @@ fn source_breaks(sources: &Sources, upgrade: &mut Upgrade) {
     for (path, text) in &sources.java {
         let blanked = jails_java::java::blanked(text);
         if blanked.contains("com.fasterxml.jackson") {
-            jackson.push(path.clone());
+            // Split by whether the rename is the whole migration. Refusing
+            // every file was too blunt: it left a project that jails had just
+            // moved to Boot 4 unable to compile, over three imports whose
+            // types exist in 3.x under the same names -- and the reader was
+            // handed a paragraph instead of a working build.
+            match JACKSON_3_CHANGED.iter().any(|name| blanked.contains(name)) {
+                true => jackson.push(path.clone()),
+                false => upgrade.edits.push(Step {
+                    artifact: crate::model::Artifact {
+                        kind: "jackson package",
+                        path: path.into(),
+                        contents: text.replace("com.fasterxml.jackson", "tools.jackson"),
+                    },
+                    what: vec![format!(
+                        "jackson       com.fasterxml.jackson -> tools.jackson in {path} -- every \
+                         type it names exists in 3.x under the same name"
+                    )],
+                }),
+            }
         }
         if MOVED_TO_JAKARTA
             .iter()

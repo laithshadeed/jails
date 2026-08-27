@@ -65,6 +65,28 @@ pub(crate) fn transition_files(
             .into());
         }
     }
+    // A `--path` variable has to be *bound*, and a transition selects its row
+    // by `id` alone -- the name is a literal at four sites here and in the SQL
+    // predicate. So a route like `/admin_api/conversations/{userId}/status`
+    // would mount the variable and bind nothing to it: Spring maps the
+    // request, the command still carries `id` in the body, and the variable is
+    // silently ignored. Refused until the selector is nameable, because a
+    // route that looks right and ignores half of itself is worse than one
+    // jails declines to write.
+    if let Some(route) = endpoint.route
+        && let Some(variable) = route
+            .split('{')
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+    {
+        return Err(format!(
+            "transition {name} cannot answer on `{route}`: a transition selects its row by `id` \
+             from the request body, so `{{{variable}}}` would be mounted and never \
+             bound.\n       fix: give it a path with no variables, or use `jails g usecase` if \
+             the operation creates rather than updates."
+        )
+        .into());
+    }
     let id = fields
         .iter()
         .find(|field| field.name == "id")
@@ -157,7 +179,7 @@ pub(crate) fn transition_files(
         Artifact {
             kind: "transition controller test",
             path: test_web.join(format!("{name}ControllerTest.java")),
-            contents: transition_controller_test_java(slice, name, &resource, fields),
+            contents: transition_controller_test_java(slice, name, &resource, fields, endpoint),
         },
     ])
 }
@@ -390,10 +412,23 @@ fn transition_controller_java(
         scope_parameter,
         scope_checks,
     ) = scope_controller_parts(security, web, fields, "command");
-    let path = format!(
-        "/actions/{}",
-        crate::sql::snake_case(name).replace('_', "-")
-    );
+    // The contract when the caller names one, the derived shape when they do
+    // not -- the same rule `usecase` and `query` follow. A transition already
+    // took `--consumes`, so it could say *how* it binds and not *where* it
+    // answers; a frontend calling `PATCH /admin_api/conversations/{id}/status`
+    // is a fixed contract, and deriving `/actions/set-status` for it is the
+    // `missing.md` M8 shape one recipe at a time.
+    let path = endpoint.route.map(str::to_string).unwrap_or_else(|| {
+        format!(
+            "/actions/{}",
+            crate::sql::snake_case(name).replace('_', "-")
+        )
+    });
+    // PUT by default, because that is what every transition emitted before
+    // `--method` reached this recipe and a compare-and-swap update is
+    // idempotent. PATCH is the other legitimate spelling for "set one field on
+    // this row", and a frontend that calls one will not accept the other.
+    let method = endpoint.method;
     let (failure_imports, arms) = outcome_arms(slice, web, name, target);
     let (version_type, parse) = version_type(fields);
     crate::template::render(
@@ -414,6 +449,7 @@ fn transition_controller_java(
             ("parse", parse),
             ("name", name),
             ("path", &*path),
+            ("mapping", method.mapping()),
             ("scope_field", &*scope_field),
             ("scope_constructor", &*scope_constructor),
             ("scope_assignment", &*scope_assignment),
@@ -633,6 +669,7 @@ fn transition_controller_test_java(
     name: &str,
     resource: &Target,
     fields: &[crate::generate::Field],
+    endpoint: Endpoint<'_>,
 ) -> String {
     let project = slice.project();
     let security: &str = slice.base();
@@ -690,6 +727,10 @@ fn transition_controller_test_java(
         // No classic form, for the same reason `g query` has none.
         crate::template_here!("spring/transition_controller_test_java.java"),
         &[
+            // `MockMvcTester` names the verb in lower case, and the mapping
+            // annotation names it capitalised -- one value, two renderings, so
+            // the test cannot exercise a verb the controller does not answer.
+            ("verb", endpoint.method.label()),
             ("web", web),
             ("command_import", &*command_import),
             ("usecase_import", &*usecase_import),

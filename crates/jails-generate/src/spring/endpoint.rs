@@ -21,6 +21,13 @@ pub(crate) struct Endpoint<'a> {
     pub route: Option<&'a str>,
     /// How the request body is bound.
     pub consumes: jails_spec::spec::kind::WireFormat,
+    /// The verb this endpoint answers, where the recipe has a choice.
+    ///
+    /// `transition` is the one that does: its update is idempotent, so PUT and
+    /// PATCH are both correct spellings of "set these fields on this row", and
+    /// a frontend calling one will not accept the other. Every other recipe
+    /// here either derives its verb from the request or has exactly one.
+    pub method: jails_spec::spec::kind::HttpMethod,
 }
 
 impl Endpoint<'_> {
@@ -34,6 +41,7 @@ impl Endpoint<'_> {
         Self {
             route: None,
             consumes: jails_spec::spec::kind::WireFormat::Json,
+            method: jails_spec::spec::kind::HttpMethod::Put,
         }
     }
 
