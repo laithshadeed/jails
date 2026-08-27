@@ -255,13 +255,7 @@ three separate defects in the *read* and *command* endpoints:
    `User`'s first component is `UUID id`. The file was generated before `id`
    existed and never regenerated, and nothing detected the contradiction.
 
-2. **The outbox relay ceiling is one event per second.**
-   `claim()` is `limit 1`; the worker runs on `fixedDelay=PT1S` and processes
-   one claim per tick. There is also no jitter on the backoff (`backend.md` §3:
-   *"Exponential backoff with jitter"*), and a multi-sink partial failure
-   retries every sink, so a Kafka publish that succeeded is re-sent.
-
-3. **`MessageCreatedListener` is a `TODO`.**
+2. **`MessageCreatedListener` is a `TODO`.**
    It logs an id and drops the event. Shipped.
 
 ---

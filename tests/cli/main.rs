@@ -781,8 +781,11 @@ fn verified_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::P
         assert_eq!(
             reports,
             MavenReportSummary {
+                // 70 -> 72: `aSinkThatAlreadyAcceptedIsNotSentTheEventAgain`,
+                // one per outbox, proving the relay's per-sink record survives
+                // a failed attempt (plan.md P6.3).
                 reports: 47,
-                tests: 70,
+                tests: 72,
                 failures: 0,
                 errors: 0,
                 skipped: 0,

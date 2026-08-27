@@ -63,6 +63,28 @@ class {{usecase}}OutboxIT {
         });
     }
 
+    @Test
+    void aSinkThatAlreadyAcceptedIsNotSentTheEventAgain() {
+        var command = new {{usecase}}Command(
+                {{args}});
+        useCase.execute(command);
+        var staged = stagedEventId();
+
+        var first = outbox.claim().orElseThrow();
+        assertThat(first.delivered()).isEmpty();
+        outbox.delivered(staged, "kafka");
+        outbox.delivered(staged, "kafka");
+        outbox.fail(first.id(), new IllegalStateException("a later sink failed"));
+        db.sql("update {{usecase_snake}}_outbox set next_attempt_at = now() where id = :id")
+                .param("id", staged).update();
+
+        // What the relay reads before it decides which sinks to call. Recorded
+        // once however often it is reported, and it survives the attempt that
+        // failed -- otherwise the sink that succeeded is sent the event again
+        // on every retry of the sink that did not.
+        assertThat(outbox.claim().orElseThrow().delivered()).containsExactly("kafka");
+    }
+
     /**
      * The staged row's id is the <em>event's</em> id, minted once per event --
      * not the resource's. Reading it back rather than assuming

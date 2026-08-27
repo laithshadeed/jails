@@ -414,7 +414,11 @@ fn outbox_migration(table: &str) -> String {
            lease_until timestamptz,\n\
            last_error text,\n\
            created_at timestamptz not null,\n\
-           completed_at timestamptz\n\
+           completed_at timestamptz,\n\
+           -- Which sinks have already accepted this event. A row is only as\n\
+           -- atomic as its worst sink, so a retry has to skip the ones that\n\
+           -- succeeded or they see the event once per attempt.\n\
+           delivered text[] not null default '{{}}'\n\
          );\n\n\
          create index {table}_runnable_idx on {table} (state, next_attempt_at)\n\
            where state in ('PENDING', 'RUNNING');\n"

@@ -293,8 +293,10 @@ there the unit is a whole service block rather than a setting.)
   rejection/loopback contracts are generated. Configure
   `outbox.<usecase-kebab>.http.<name-kebab>.url`; optional keys are
   `.bearer-token`, `.connect-timeout-ms`, and `.request-timeout-ms`. Every sink
-  is at-least-once: if a later sink fails, earlier sinks may see the same stable
-  event id again and must deduplicate it.
+  is at-least-once, but a retry no longer re-sends to the sinks that already
+  accepted the event: each acceptance is recorded on the outbox row before the
+  next sink is tried, so a failing HTTP delivery does not republish to Kafka on
+  every attempt.
 - `jails generate|g idempotency <Name>` (alias `idempotent`) — at-most-once
   execution with a **retained result**: a scoped receipt record, a store port,
   a PostgreSQL adapter, a guard and its tests, plus the migration. Needs
@@ -318,7 +320,11 @@ there the unit is a whole service block rather than a setting.)
   transactional outbox: the business row and the typed event commit together,
   a leased relay delivers to every configured sink, and PostgreSQL tests prove
   bounded retry and inspectable terminal failure. An event component named
-  `<Resource>Id` is the identity of the row the use case just created.
+  `<Resource>Id` is the identity of the row the use case just created; the
+  event's own `id` is minted, so two events about one resource are two rows
+  rather than one silently discarded as a duplicate. The relay drains in
+  batches (`outbox.<usecase-kebab>.batch-size`, default 100) rather than
+  moving one row per tick, and its retry interval carries jitter.
 - `jails generate|g query <Name> <field:type...> --on <Resource>` — a typed
   read: a query record, a port, a JDBC adapter and an HTTP adapter, with every
   declared field an equality filter. Results have stable key ordering and a

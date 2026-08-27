@@ -521,10 +521,24 @@ commit as the change that causes it.
       id it published. The second of those went red on the real broker the
       moment the ids stopped agreeing, which is the whole argument for the
       end-to-end tier.
-- [ ] **P6.3** The outbox relay ceiling is one event per second (`claim()` is
+- [x] **P6.3** The outbox relay ceiling is one event per second (`claim()` is
       `limit 1` on a `fixedDelay=PT1S` worker), there is no jitter on the
       backoff, and a multi-sink partial failure re-sends a Kafka publish that
       succeeded (modern §8.4).
+      *Done:* three fixes in the generated relay. `claim(batchSize)` leases a
+      batch and `runOnce()` drains until a short batch says the runnable set is
+      exhausted, so the ceiling is `batch-size` per tick
+      (`outbox.<usecase>.batch-size`, default 100) rather than one; it
+      terminates because every claimed row either succeeds or has its next
+      attempt pushed forward. The retry interval keeps `2^attempts` capped at
+      five minutes but scales it by a random factor between a half and one, so
+      every row staged in one incident no longer retries at the same instant.
+      And a `delivered text[]` column records which sinks accepted the event
+      before the next sink is tried, so a retry skips them — without it a Kafka
+      publish that succeeded is re-sent on every attempt a slower HTTP sink
+      fails, and at-least-once quietly becomes at-least-`max_attempts`.
+      `aSinkThatAlreadyAcceptedIsNotSentTheEventAgain` is generated per outbox
+      and runs against real PostgreSQL (Failsafe count 70 → 72).
 - [ ] **P6.4** Delete or repair the claims that are false: "keyed on the
       `email` component", "ordering per entity", "scoped matches cannot mutate
       another tenant's row" (there is no scope in the SQL), "this type has no

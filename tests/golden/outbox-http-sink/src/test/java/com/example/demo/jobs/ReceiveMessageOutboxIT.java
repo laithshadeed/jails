@@ -72,6 +72,29 @@ class ReceiveMessageOutboxIT {
         });
     }
 
+    @Test
+    void aSinkThatAlreadyAcceptedIsNotSentTheEventAgain() {
+        var command = new ReceiveMessageCommand(
+                UUID.fromString("00000000-0000-0000-0000-000000000001"),
+                "sample");
+        useCase.execute(command);
+        var staged = stagedEventId();
+
+        var first = outbox.claim().orElseThrow();
+        assertThat(first.delivered()).isEmpty();
+        outbox.delivered(staged, "kafka");
+        outbox.delivered(staged, "kafka");
+        outbox.fail(first.id(), new IllegalStateException("a later sink failed"));
+        db.sql("update receive_message_outbox set next_attempt_at = now() where id = :id")
+                .param("id", staged).update();
+
+        // What the relay reads before it decides which sinks to call. Recorded
+        // once however often it is reported, and it survives the attempt that
+        // failed -- otherwise the sink that succeeded is sent the event again
+        // on every retry of the sink that did not.
+        assertThat(outbox.claim().orElseThrow().delivered()).containsExactly("kafka");
+    }
+
     /**
      * The staged row's id is the <em>event's</em> id, minted once per event --
      * not the resource's. Reading it back rather than assuming
