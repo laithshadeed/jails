@@ -55,6 +55,70 @@ impl Endpoint<'_> {
         self.consumes.binding_import()
     }
 
+    /// How a generated `MockMvcTester` test *sends* this request.
+    ///
+    /// It has to be how the controller reads it, and it was not: every
+    /// `--consumes form` endpoint jails wrote shipped a proof that posted a
+    /// JSON body at an `@ModelAttribute` parameter. The data binder reads
+    /// request *parameters*, so every component arrived null and the request
+    /// was answered 400 -- and on a transition the second generated test
+    /// asserted 400, so it passed for exactly the wrong reason.
+    ///
+    /// One owner for the same reason `Endpoint` has one: the binding and the
+    /// thing that has to match it are the same fact, and three renderers were
+    /// deriving it separately. `bugs.md` B48 is that shape.
+    ///
+    /// `values` is `(component, JSON sample)` -- the sample as it would be
+    /// written in a JSON body, quotes and all, because that is what the
+    /// callers already have. A form parameter is text, so the quotes come off.
+    pub fn request(
+        &self,
+        project: &crate::model::Project,
+        values: &[(String, String)],
+        indent: &str,
+    ) -> String {
+        match self.consumes {
+            jails_spec::spec::kind::WireFormat::Json => {
+                let body = values
+                    .iter()
+                    .map(|(name, sample)| format!("  \"{name}\": {sample}"))
+                    .collect::<Vec<_>>()
+                    .join(",\n");
+                format!(
+                    "{indent}.contentType(MediaType.APPLICATION_JSON)\n{indent}.content(\"\"\"\n{{\n{body}\n}}\n\"\"\")"
+                )
+            }
+            // The *bound* name, not the component name: a snake-cased project
+            // gives each component `@BindParam("user_id")`, and a test posting
+            // `userId` would then bind nothing. The two come from one place.
+            jails_spec::spec::kind::WireFormat::Form => values
+                .iter()
+                .map(|(name, sample)| {
+                    let bound = match project.wire_naming() {
+                        jails_project::model::WireNaming::AsWritten => name.clone(),
+                        jails_project::model::WireNaming::SnakeCase => crate::sql::snake_case(name),
+                    };
+                    format!(
+                        "{indent}.param(\"{bound}\", \"{}\")",
+                        sample.trim_matches('"')
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
+    }
+
+    /// The `MediaType` import [`Endpoint::request`] costs, which is none for a
+    /// form post.
+    pub fn media_type_import(&self) -> &'static str {
+        match self.consumes {
+            jails_spec::spec::kind::WireFormat::Json => {
+                "import org.springframework.http.MediaType;\n"
+            }
+            jails_spec::spec::kind::WireFormat::Form => "",
+        }
+    }
+
     /// The wire naming a record bound by this endpoint has to answer to.
     ///
     /// `None` for JSON, and not because JSON has no naming -- it does, and

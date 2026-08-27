@@ -1,8 +1,7 @@
 package {{web}};
 
 {{command_import}}{{usecase_import}}{{target_import}}{{scope_import}}{{imports}}{{disabled_import}}import org.junit.jupiter.api.Test;
-import org.springframework.http.MediaType;
-import org.springframework.test.web.servlet.assertj.MockMvcTester;
+{{media_type_import}}import org.springframework.test.web.servlet.assertj.MockMvcTester;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -16,12 +15,7 @@ class {{name}}ControllerTest {
     void postExecutesTheUseCase() {
         assertThat(mvc.post()
                 .uri({{name}}Controller.PATH)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-{
-{{json}}
-}
-"""))
+{{request}})
                 .hasStatus(201);
     }
 

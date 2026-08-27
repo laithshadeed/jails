@@ -16,17 +16,13 @@ public interface MarkSeenUseCase {
 
     /**
      * @param id which row to change. A separate argument rather
-     *     than a component of the command, because it is not always in the
-     *     body: with a path variable it comes from the URL, and one port shape
-     *     is what stops the adapter and the controller disagreeing about which
-     *     of the two it is.
+     *     than a component of the command, because a path variable puts it in
+     *     the URL instead.
      * @param command what to change
      * @param expectedVersion the version the caller believes the row is at.
-     *     It arrives as an {@code If-Match} header rather than in
-     *     the body: HTTP already has a word for "only if it is still what I
-     *     read". {@code null} means the caller sent no precondition, and the
-     *     update is then unconditional -- so {@link Result.StaleVersion}
-     *     cannot be the answer to a call that did not ask a question.
+     *     It arrives as an {@code If-Match} header, and {@code null}
+     *     means none was sent -- so the update is unconditional and
+     *     {@link Result.StaleVersion} is unreachable.
      */
     Result execute(Long id, MarkSeenCommand command, Long expectedVersion);
 

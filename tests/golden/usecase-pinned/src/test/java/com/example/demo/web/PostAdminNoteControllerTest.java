@@ -7,7 +7,6 @@ import com.example.demo.domain.SenderType;
 import com.example.demo.service.PostAdminNoteCommand;
 import com.example.demo.service.PostAdminNoteUseCase;
 import org.junit.jupiter.api.Test;
-import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 
 class PostAdminNoteControllerTest {
@@ -23,13 +22,8 @@ class PostAdminNoteControllerTest {
     void postExecutesTheUseCase() {
         assertThat(mvc.post()
                 .uri(PostAdminNoteController.PATH)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-{
-  "authorId": 7,
-  "body": "sample"
-}
-"""))
+                .param("authorId", "7")
+                .param("body", "sample"))
                 .hasStatus(201);
     }
 

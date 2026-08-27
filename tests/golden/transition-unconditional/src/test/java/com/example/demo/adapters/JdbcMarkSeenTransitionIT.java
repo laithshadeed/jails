@@ -54,13 +54,12 @@ class JdbcMarkSeenTransitionIT {
         var command = new MarkSeenCommand(
                 stored.id());
 
-        // `null` is not a version, and not a wrong one: it is the absence of
-        // a precondition, which this transition was asked to allow.
+        // `null` is the absence of a precondition, not a wrong one.
         assertThat(useCase.execute(stored.id(), command, null))
                 .isInstanceOf(MarkSeenUseCase.Result.Applied.class);
 
-        // Again. A guarded call would be stale by now -- the row moved -- so
-        // this is the assertion that fails if the guard stops being optional.
+        // Again: a guarded call would be stale by now, so this is what fails
+        // if the guard stops being optional.
         assertThat(useCase.execute(stored.id(), command, null))
                 .isInstanceOf(MarkSeenUseCase.Result.Applied.class);
     }

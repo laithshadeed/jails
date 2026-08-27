@@ -370,7 +370,7 @@ pub(crate) fn usecase_files(
         Artifact {
             kind: "usecase controller test",
             path: test_web.join(format!("{name}ControllerTest.java")),
-            contents: usecase_controller_test_java(slice, name, &resolved, fields),
+            contents: usecase_controller_test_java(slice, name, &resolved, fields, endpoint),
         },
     ]);
     Ok(artifacts)
@@ -766,6 +766,7 @@ fn usecase_controller_test_java(
     name: &str,
     target: &Target,
     fields: &[crate::generate::Field],
+    endpoint: Endpoint<'_>,
 ) -> String {
     let project = slice.project();
     let security: &str = slice.base();
@@ -774,24 +775,26 @@ fn usecase_controller_test_java(
     let domain: &str = &slice.owned(Layer::Domain);
     let target_fields: &[crate::generate::Field] = &target.fields;
     let target: &str = &target.name;
-    let json = fields
+    let samples = fields
         .iter()
-        .map(|field| {
-            json_sample(slice, field).map(|sample| format!("  \"{}\": {sample}", field.name))
-        })
+        .map(|field| json_sample(slice, field).map(|sample| (field.name.clone(), sample)))
         .collect::<Option<Vec<_>>>();
     let target_samples = target_fields
         .iter()
         .map(|field| crate::generate::sample_value(field, project, domain))
         .collect::<Option<Vec<_>>>();
-    let disabled_reason = if json.is_none() {
+    let disabled_reason = if samples.is_none() {
         Some("Jails cannot serialize one of the command field samples")
     } else if target_samples.is_none() {
         Some("Jails cannot construct the target resource sample")
     } else {
         None
     };
-    let json = json.unwrap_or_default().join(",\n");
+    // How this test sends the command has to be how the controller reads it.
+    // It was not: a `--consumes form` use case got a proof that posted JSON at
+    // an `@ModelAttribute` parameter, so every component arrived null and the
+    // request was answered 400. `Endpoint` owns the pair now.
+    let request = endpoint.request(project, &samples.unwrap_or_default(), "                ");
     let target_args = target_samples
         .unwrap_or_default()
         .join(",\n                    ");
@@ -826,7 +829,8 @@ fn usecase_controller_test_java(
             ("disabled_import", disabled_import),
             ("name", name),
             ("disabled", &*disabled),
-            ("json", &*json),
+            ("request", &*request),
+            ("media_type_import", endpoint.media_type_import()),
             ("target", target),
             ("target_args", &*target_args),
             ("scope_argument", &*scope_argument),

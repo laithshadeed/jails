@@ -6,7 +6,6 @@ import com.example.demo.domain.Ticket;
 import com.example.demo.service.OpenTicketCommand;
 import com.example.demo.service.OpenTicketUseCase;
 import org.junit.jupiter.api.Test;
-import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 
 class OpenTicketControllerTest {
@@ -20,12 +19,7 @@ class OpenTicketControllerTest {
     void postExecutesTheUseCase() {
         assertThat(mvc.post()
                 .uri(OpenTicketController.PATH)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-{
-  "subject": "sample"
-}
-"""))
+                .param("subject", "sample"))
                 .hasStatus(201);
     }
 

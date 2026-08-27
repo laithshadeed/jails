@@ -14,10 +14,8 @@ public interface {{name}}UseCase {
 
     /**
      * @param {{id_component}} which row to change. A separate argument rather
-     *     than a component of the command, because it is not always in the
-     *     body: with a path variable it comes from the URL, and one port shape
-     *     is what stops the adapter and the controller disagreeing about which
-     *     of the two it is.
+     *     than a component of the command, because a path variable puts it in
+     *     the URL instead.
      * @param command what to change
      * @param expectedVersion the version the caller believes the row is at.
      *     {{expected_version_clause}}

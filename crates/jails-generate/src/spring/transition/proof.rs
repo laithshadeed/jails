@@ -155,13 +155,12 @@ pub(super) fn jdbc_transition_it_java(
         var command = new {name}Command(
                 {command_args});
 
-        // `null` is not a version, and not a wrong one: it is the absence of
-        // a precondition, which this transition was asked to allow.
+        // `null` is the absence of a precondition, not a wrong one.
         assertThat(useCase.execute({key_expression}, command, null))
                 .isInstanceOf({name}UseCase.Result.Applied.class);
 
-        // Again. A guarded call would be stale by now -- the row moved -- so
-        // this is the assertion that fails if the guard stops being optional.
+        // Again: a guarded call would be stale by now, so this is what fails
+        // if the guard stops being optional.
         assertThat(useCase.execute({key_expression}, command, null))
                 .isInstanceOf({name}UseCase.Result.Applied.class);
     }}
@@ -252,37 +251,17 @@ pub(super) fn transition_controller_test_java(
         .map(|field| crate::generate::sample_value(field, project, domain))
         .collect::<Option<Vec<_>>>();
     let disabled = json.is_none() || target_samples.is_none();
-    // How this test *sends* the command, which has to be how the controller
-    // reads it. `@ModelAttribute` binds from request parameters and a JSON
-    // body is not parameters, so a form-bound transition tested with a JSON
-    // body binds every component to null and is answered 400 -- and the
-    // second test here asserts 400, so it passed for the wrong reason. That
-    // is `bugs.md` B48's shape again: the fact is resolved once, by the
-    // renderer that already knows it.
-    let request = match endpoint.consumes {
-        jails_spec::spec::kind::WireFormat::Json => format!(
-            "{indent}.contentType(MediaType.APPLICATION_JSON)\n{indent}.content(\"\"\"\n{{\n{body}\n}}\n\"\"\")",
-            indent = "                ",
-            body = json.clone().unwrap_or_default().join(",\n")
-        ),
-        jails_spec::spec::kind::WireFormat::Form => command
+    let request = endpoint.request(
+        project,
+        &command
             .iter()
             .filter_map(|field| {
-                json_sample(slice, field).map(|sample| {
-                    format!(
-                        "                .param(\"{}\", \"{}\")",
-                        field.name,
-                        sample.trim_matches('"')
-                    )
-                })
+                json_sample(slice, field).map(|sample| (field.name.clone(), sample))
             })
-            .collect::<Vec<_>>()
-            .join("\n"),
-    };
-    let media_type_import = match endpoint.consumes {
-        jails_spec::spec::kind::WireFormat::Json => "import org.springframework.http.MediaType;\n",
-        jails_spec::spec::kind::WireFormat::Form => "",
-    };
+            .collect::<Vec<_>>(),
+        "                ",
+    );
+    let media_type_import = endpoint.media_type_import();
     // What a request carrying no precondition means here, which is the whole
     // of `--if-match required` versus `--if-match optional`. Naming the test
     // after the answer is what stops it passing for a different reason.

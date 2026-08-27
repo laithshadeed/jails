@@ -538,6 +538,47 @@ fn verified_spring_db_toolbox(path: &str) -> &'static std::path::PathBuf {
                     "body:string",
                 ][..],
                 &["generate", "search", "Article", "title", "body"][..],
+                // The form-bound pair. They are here rather than in a test of
+                // their own because this fixture already runs `mvn test`, and
+                // a real build is the only oracle for the defect they cover:
+                // every `--consumes form` endpoint jails wrote shipped a proof
+                // that posted a JSON body at an `@ModelAttribute` parameter,
+                // which binds from request *parameters*. The goldens were
+                // green over it -- they compare bytes and never run the code.
+                &[
+                    "generate",
+                    "scaffold",
+                    "Note",
+                    "id:long@pk",
+                    "body:string!",
+                    "seen:boolean",
+                    "version:long",
+                ][..],
+                &[
+                    "generate",
+                    "usecase",
+                    "PostNote",
+                    "body:string!",
+                    "--on",
+                    "Note",
+                    "--consumes",
+                    "form",
+                ][..],
+                &[
+                    "generate",
+                    "transition",
+                    "MarkNoteSeen",
+                    "id:long",
+                    "version:long",
+                    "--on",
+                    "Note",
+                    "--set",
+                    "seen=true",
+                    "--if-match",
+                    "optional",
+                    "--consumes",
+                    "form",
+                ][..],
             ] {
                 let status = jails_cmd_with_path(&root, path)
                     .args(args)

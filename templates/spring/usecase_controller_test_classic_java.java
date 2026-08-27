@@ -5,8 +5,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup;
 
 {{disabled_import}}import org.junit.jupiter.api.Test;
-import org.springframework.http.MediaType;
-import org.springframework.test.web.servlet.MockMvc;
+{{media_type_import}}import org.springframework.test.web.servlet.MockMvc;
 
 /**
  * Written against plain {@code MockMvc} rather than {@code MockMvcTester},
@@ -21,12 +20,7 @@ class {{name}}ControllerTest {
 {{disabled}}    @Test
     void postExecutesTheUseCase() throws Exception {
         mvc.perform(post({{name}}Controller.PATH)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""
-{
-{{json}}
-}
-"""))
+{{request}})
                 .andExpect(status().isCreated());
     }
 

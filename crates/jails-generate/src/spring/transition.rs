@@ -472,12 +472,8 @@ fn transition_port_java(
 /// substitutions in it, and every line has to line up under the `*` of a
 /// Javadoc block that a template already opened.
 const OPTIONAL_PRECONDITION_DOC: &str = r#" *
- * <p>The header is optional here: a request that sends one is checked against
- * it, and a request that does not is applied unconditionally. That is a real
- * weakening of the compare-and-swap, and it was asked for by name --
- * {@code --if-match optional} -- because an ordinary browser page sends no
- * conditional headers and would otherwise be answered 400 by Spring before
- * this class ran.
+ * <p>{@code --if-match optional}: a request carrying the header is checked
+ * against it, one that does not is applied unconditionally.
 "#;
 
 /// What the port says about the version it is handed.
@@ -500,11 +496,9 @@ const REQUIRED_VERSION_DOC: &str = r#"It arrives as an {@code If-Match} header r
      *     the body: HTTP already has a word for "only if it is still what I
      *     read"."#;
 
-const OPTIONAL_VERSION_DOC: &str = r#"It arrives as an {@code If-Match} header rather than in
-     *     the body: HTTP already has a word for "only if it is still what I
-     *     read". {@code null} means the caller sent no precondition, and the
-     *     update is then unconditional -- so {@link Result.StaleVersion}
-     *     cannot be the answer to a call that did not ask a question."#;
+const OPTIONAL_VERSION_DOC: &str = r#"It arrives as an {@code If-Match} header, and {@code null}
+     *     means none was sent -- so the update is unconditional and
+     *     {@link Result.StaleVersion} is unreachable."#;
 
 fn jdbc_transition_java(
     slice: &Slice,

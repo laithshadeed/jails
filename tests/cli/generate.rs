@@ -6990,3 +6990,48 @@ fn a_transition_insists_on_the_precondition_unless_it_was_asked_not_to() {
         "{stderr}"
     );
 }
+
+/// A form-bound endpoint's own generated test passes.
+///
+/// The tier that answers the question, on a defect the byte goldens were green
+/// over for as long as `--consumes form` has existed: the generated proof
+/// posted a JSON body at an `@ModelAttribute` parameter. Spring's data binder
+/// reads request *parameters*, so every component arrived null and the request
+/// was answered 400 -- and on a transition the second generated test asserted
+/// 400, so it passed for exactly the wrong reason.
+///
+/// The assertion that matters is the shared toolbox's own `mvn test`, which
+/// this fixture runs. What is checked here is that the two files say what a
+/// form post is, so a regression is localised rather than reported as "the
+/// toolbox failed".
+#[test]
+fn a_form_bound_endpoint_is_proved_by_a_form_post() {
+    if !real_mvn_available() {
+        skip("mvn not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = verified_spring_db_toolbox(&path);
+    let web = root.join("src/test/java/com/example/demo/web");
+
+    for (file, sample) in [
+        (
+            "PostNoteControllerTest.java",
+            ".param(\"body\", \"sample\")",
+        ),
+        ("MarkNoteSeenControllerTest.java", ".param(\"id\", \"7\")"),
+    ] {
+        let proof = fs::read_to_string(web.join(file)).unwrap();
+        assert!(proof.contains(sample), "{file}: {proof}");
+        // A JSON body at a `@ModelAttribute` parameter binds nothing.
+        assert!(!proof.contains("APPLICATION_JSON"), "{file}: {proof}");
+    }
+
+    // And the transition's second test names the answer rather than a status
+    // it could reach for another reason.
+    let proof = fs::read_to_string(web.join("MarkNoteSeenControllerTest.java")).unwrap();
+    assert!(
+        proof.contains("aRequestWithNoIfMatchIsAppliedUnconditionally"),
+        "{proof}"
+    );
+}

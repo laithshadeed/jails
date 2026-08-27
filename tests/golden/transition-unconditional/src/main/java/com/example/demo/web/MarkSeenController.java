@@ -22,12 +22,8 @@ import org.springframework.web.server.ResponseStatusException;
  * spelling of a thing HTTP already has -- and one that no cache, proxy or
  * client library understands.
  *
- * <p>The header is optional here: a request that sends one is checked against
- * it, and a request that does not is applied unconditionally. That is a real
- * weakening of the compare-and-swap, and it was asked for by name --
- * {@code --if-match optional} -- because an ordinary browser page sends no
- * conditional headers and would otherwise be answered 400 by Spring before
- * this class ran.
+ * <p>{@code --if-match optional}: a request carrying the header is checked
+ * against it, one that does not is applied unconditionally.
  */
 @RestController
 @RequestMapping(MarkSeenController.PATH)
