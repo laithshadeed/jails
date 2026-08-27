@@ -690,7 +690,18 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // it, and one that creates a different project rather than
                 // repairing this one. Two lines, because the runnable command
                 // does not fit on one.
-                ceiling: 1567,
+                //
+                // 1567 -> 1590: one new check, and the check is the point. A
+                // legacy checkout arrives with an H2 `schema.sql` and
+                // `spring.sql.init.mode=always`; `jails add db` brings Flyway
+                // and a PostgreSQL, and Spring then runs the H2 script against
+                // PostgreSQL before Flyway sees the database. Both facts were
+                // already read here and `doctor` reported `ok` over each of
+                // them separately. This row is a list of independent checks --
+                // the one shape where length is not complexity -- and the rung
+                // it is held against is about `doctor` re-deriving what `add`
+                // owns, which this does not do.
+                ceiling: 1590,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.
@@ -923,6 +934,13 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // splittable part of a request already lives in its own
                 // `RequestV1` type, and this one carries a set of paths.
                 //
+                // 669 -> 687, and the file is `doctor/wiring.rs`. One new
+                // check, and the row above records why it belongs there: a
+                // list of independent checks is the one shape where length is
+                // not complexity. The split this row asks for is real and is
+                // `doctor`'s to make -- environment, wiring, drift -- and it
+                // is already made; what grew is one of the three halves.
+                //
                 // 669 -> 670, and the file is `src/main.rs`. One new generator
                 // flag (`--set`) costs exactly two lines there -- the name in
                 // the destructuring and the name in the `Intent` -- because
@@ -937,7 +955,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // than at the dispatch site, so `main.rs` names the command
                 // once and a twenty-first flag costs it nothing. The largest
                 // module is `spring/workflow.rs` again, unchanged.
-                ceiling: 669,
+                ceiling: 687,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
                       decomposing one, so this asks the question the split is actually for: \

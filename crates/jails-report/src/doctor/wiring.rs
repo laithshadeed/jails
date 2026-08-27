@@ -883,6 +883,32 @@ pub(super) fn sql_init_checks(project: &Project) -> Vec<Check> {
             .fix("add src/main/resources/schema.sql, or set spring.sql.init.mode=never"),
         ];
     }
+    // Two schema authorities, and the older one wins the race. This is where
+    // a legacy adoption lands: the checkout arrives with an H2 `schema.sql`
+    // and `spring.sql.init.mode=always`, `jails add db` brings Flyway and a
+    // PostgreSQL, and Spring then runs the H2 script against PostgreSQL before
+    // Flyway sees the database. `INTEGER PRIMARY KEY AUTO_INCREMENT` is not
+    // PostgreSQL, so the context fails to start -- and the failure names a
+    // script the reader did not know was still running.
+    //
+    // jails knows both facts and said `ok` over them. Measured on
+    // `minicom-15-01-2026-org/spring`: three tests red, one cause, and nothing
+    // in `doctor` pointing at it.
+    if let Some(migrations) = flyway_migrations(project) {
+        return vec![
+            Check::new(
+                Status::Fail,
+                "sql init",
+                format!(
+                    "spring.sql.init.mode={mode} runs {}, and {migrations} Flyway migration(s) describe the same schema. Spring runs the script first, so a script written for the old database fails against the new one before the context starts",
+                    present.join(" and ")
+                ),
+            )
+            .fix(
+                "set spring.sql.init.mode=never once the migrations describe the schema;                  `jails migrate --check` applies them to a scratch database first",
+            ),
+        ];
+    }
     vec![Check::new(
         Status::Ok,
         "sql init",
@@ -891,6 +917,24 @@ pub(super) fn sql_init_checks(project: &Project) -> Vec<Check> {
             present.join(" and ")
         ),
     )]
+}
+
+/// How many Flyway migrations this project has.
+///
+/// Counted rather than asked of the pom: the question here is whether a second
+/// description of the schema exists, and a `db/migration` full of `.sql` is
+/// that whether or not the dependency is wired -- the wiring has its own check
+/// two functions up.
+///
+/// Through the resolved `Project` rather than a `&Path`, so it reads what the
+/// plan leaves rather than only what is on disk.
+fn flyway_migrations(project: &Project) -> Option<usize> {
+    let count = project
+        .projected_names_in("src/main/resources/db/migration")
+        .iter()
+        .filter(|name| name.ends_with(".sql"))
+        .count();
+    (count > 0).then_some(count)
 }
 
 #[cfg(test)]
@@ -957,5 +1001,69 @@ mod tests {
             "class Real { PostgreSQLContainer c; }\n",
             JDBC_CONTAINERS
         ));
+    }
+
+    /// Two descriptions of one schema, and the older one wins the race.
+    ///
+    /// This is where a legacy adoption lands: the checkout arrives with an H2
+    /// `schema.sql` and `spring.sql.init.mode=always`, `jails add db` brings
+    /// Flyway and a PostgreSQL, and Spring runs the H2 script against
+    /// PostgreSQL before Flyway sees the database. `INTEGER PRIMARY KEY
+    /// AUTO_INCREMENT` is not PostgreSQL, so the context fails to start --
+    /// naming a script the reader did not know was still running.
+    ///
+    /// Measured on `minicom-15-01-2026-org/spring`: three tests red, one
+    /// cause, and `doctor` reporting `ok` over both halves of it.
+    #[test]
+    fn a_schema_script_beside_flyway_migrations_is_reported_as_two_authorities() {
+        let root = jails_support::scratch::ScratchDir::in_temp("jails-wiring-sql-init")
+            .unwrap()
+            .keep();
+        write(
+            &root,
+            "src/main/resources/application.properties",
+            "spring.sql.init.mode=always\n",
+        );
+        write(
+            &root,
+            "src/main/resources/schema.sql",
+            "create table t ();\n",
+        );
+        // `Project::load` infers the base package from a source file.
+        write(
+            &root,
+            "src/main/java/com/example/Application.java",
+            "package com.example;\n\nclass Application {}\n",
+        );
+
+        // With no migrations there is one authority and nothing to report.
+        let project = crate::model::Project::load(&root).unwrap();
+        let checks = sql_init_checks(&project);
+        assert_eq!(checks.len(), 1);
+        assert!(
+            matches!(checks[0].status, Status::Ok),
+            "{}",
+            checks[0].detail
+        );
+
+        write(
+            &root,
+            "src/main/resources/db/migration/V001__create.sql",
+            "create table t ();\n",
+        );
+        let project = crate::model::Project::load(&root).unwrap();
+        let checks = sql_init_checks(&project);
+        assert!(
+            matches!(checks[0].status, Status::Fail),
+            "{}",
+            checks[0].detail
+        );
+        let reported = format!("{} {}", checks[0].detail, checks[0].fix);
+        assert!(reported.contains("1 Flyway migration"), "{reported}");
+        // Every FAIL carries a next step, and this one is the exact property.
+        assert!(
+            reported.contains("spring.sql.init.mode=never"),
+            "{reported}"
+        );
     }
 }
