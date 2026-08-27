@@ -468,6 +468,36 @@ pub(super) fn create(request: &super::Request<'_>, deps: &str, boot: &str) -> Re
     let gradle = request
         .gradle_version
         .unwrap_or_else(|| default_gradle_version(major));
+    // jails picks both of these numbers, so it must not pick a pair it has
+    // seen fail. `--boot 2.7.18` pins Gradle 8.5 (Boot 2 does not run on 9.x)
+    // while `--java` still defaults to the current release, and 8.5 dies on
+    // JDK 26 before it reads the build script -- so `jails new --gradle
+    // --boot 2.7.18` wrote a project that could not be built at all, and
+    // `doctor` reported `ok jdk java 26 on PATH, project targets 26` over it.
+    //
+    // Only a *measured* failure refuses. A pairing jails has not run is
+    // `Unknown` and passes, because refusing on a guess would block a reader
+    // who pinned `--gradle-version` themselves and knows better.
+    if jails_project::gradle::launches_on(gradle, release) == jails_project::gradle::Launches::No {
+        let known = jails_project::gradle::highest_measured_release(gradle);
+        return Err(format!(
+            "Gradle {gradle} does not run on JDK {release}: it fails in its own build script \
+             with\n       `Unsupported class file major version {major_class}` before reading \
+             this project.\n       Boot {boot} pins Gradle {gradle}, because Boot 2 does not run \
+             on Gradle 9.x.\n       fix: {fix}",
+            major_class = release + 44,
+            fix = match known {
+                Some(release) => format!(
+                    "`--java {release}`, which is the pairing jails has run, or a `--boot` that \
+                     takes\n            a newer Gradle."
+                ),
+                None => "pass `--java <release>` with a release this Gradle runs on, or a \
+                         `--boot` that takes a newer Gradle."
+                    .to_string(),
+            }
+        )
+        .into());
+    }
     let package = super::resolved_package(name, request.group, request.package);
     let group = super::group_of(request.group, &package);
     let class = super::application_class(name);

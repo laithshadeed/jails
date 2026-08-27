@@ -18,15 +18,6 @@ Identified during the end-to-end implementation of **Minicom 2.0** (`minicom/pro
 
 ---
 
-## 2. Toolchain Management & Multi-JDK Execution
-
-### Automatic `JAVA_HOME` Discovery for Gradle
-- When running on modern developer machines with JDK 26 on PATH, `jails doctor` detects that the project targets JDK 21 (`ok jdk java 26 on PATH, project targets 21`).
-- However, `jails test` and `jails run` invoke `./gradlew` using PATH Java (Java 26), which crashes Gradle 8.5 with `Unsupported class file major version 70`.
-- **Expected**: `jails test` / `jails run` should detect installed JDKs matching `targetCompatibility` (e.g. from `~/.local/share/mise/installs/java/`, SDKMAN, or `/usr/lib/jvm`) and execute `./gradlew` with the appropriate `JAVA_HOME`.
-
----
-
 ## 3. Inspection & Static Analysis Tooling
 
 ### WebSocket Route Discovery in `jails routes`

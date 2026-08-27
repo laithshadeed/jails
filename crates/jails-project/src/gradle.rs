@@ -311,6 +311,74 @@ pub const WRAPPER: &str = "gradle/wrapper/gradle-wrapper.properties";
 /// off the checkout rather than remembered.
 pub const TARGET_GRADLE: &str = "9.7.0";
 
+/// Whether a Gradle distribution can *launch* on a JDK release.
+///
+/// Not a compatibility matrix, and deliberately not one: jails has no Gradle
+/// checkout under `deps/`, so a table here would be recalled rather than read,
+/// and this module's bar is the one `build.rs` sets -- **answer exactly or
+/// refuse, never guess.** What it holds is the pairings that were *run*, and
+/// everything else is `Unknown`.
+///
+/// The failure this exists for is not a build error. Gradle's build-script
+/// compiler rejects the launcher's own class files before any of the project
+/// is read:
+///
+/// ```text
+/// BUG! exception in phase 'semantic analysis' in source unit '_BuildScript_'
+/// Unsupported class file major version 70
+/// ```
+///
+/// Nothing in that names Gradle's version or the JDK's, and the project is
+/// unbuildable rather than misconfigured -- so a tool that writes both numbers
+/// must not write that pair.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Launches {
+    /// Measured, and it runs.
+    Yes,
+    /// Measured, and it dies before reading the build script.
+    No,
+    /// Not measured. jails makes no claim, which is the answer a reader who
+    /// pinned `--gradle-version` themselves is entitled to.
+    Unknown,
+}
+
+/// Each pairing below was run on this machine, and the evidence is the run.
+///
+/// - `9.7.0` on 26 -- `./gradlew --version` reports `Launcher JVM: 26.0.2`.
+/// - `8.5` on 26 -- `Unsupported class file major version 70`, which is Java
+///   26's own class-file major, before any task is selected.
+/// - `8.5` on 21 -- `minicom/old/mc-01-06-2026/spring` builds green under
+///   `JAVA_HOME` pointed at `openjdk-21.0.2`.
+///
+/// The releases between 22 and 25 are **not** measured against 8.5, so they
+/// are `Unknown` rather than assumed bad. Adding a row means running it.
+const MEASURED: &[(&str, u32, Launches)] = &[
+    ("9.7.0", 26, Launches::Yes),
+    ("8.5", 26, Launches::No),
+    ("8.5", 21, Launches::Yes),
+];
+
+/// Whether this distribution has been seen to launch on this release.
+pub fn launches_on(distribution: &str, release: u32) -> Launches {
+    MEASURED
+        .iter()
+        .find(|(gradle, jdk, _)| *gradle == distribution && *jdk == release)
+        .map(|(_, _, answer)| *answer)
+        .unwrap_or(Launches::Unknown)
+}
+
+/// The highest release this distribution is known to launch on, if any.
+///
+/// Used only to name a way out of a refusal -- "and `--java 21` is a pairing
+/// jails has run" -- never to claim the one above it would fail.
+pub fn highest_measured_release(distribution: &str) -> Option<u32> {
+    MEASURED
+        .iter()
+        .filter(|(gradle, _, answer)| *gradle == distribution && *answer == Launches::Yes)
+        .map(|(_, release, _)| *release)
+        .max()
+}
+
 /// The wrapper's Gradle version, read out of its `distributionUrl`.
 ///
 /// `None` for a URL this module cannot parse -- a mirror, a custom

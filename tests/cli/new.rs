@@ -703,3 +703,71 @@ fn new_gradle_previews_for_real() {
     assert!(report.contains("gradle-wrapper.properties"), "{report}");
     assert!(!parent.join("shop").exists(), "--pretend wrote a project");
 }
+
+/// jails picks the Gradle distribution and the Java release, so it must not
+/// pick a pair it has seen fail.
+///
+/// `bugs.md` B52's cause, one step earlier than the report found it.
+/// `--boot 2.7.18` pins Gradle 8.5 (Boot 2 does not run on Gradle 9.x) while
+/// `--java` still defaults to the current release -- and Gradle 8.5 dies on
+/// JDK 26 in its own build script, before reading one line of the project it
+/// was handed. So `jails new --gradle --boot 2.7.18` wrote a project that
+/// could not be built at all, and `doctor` reported `ok jdk java 26 on PATH,
+/// project targets 26` over it.
+///
+/// Only a *measured* pairing refuses: `gradle::MEASURED` holds the runs, and
+/// anything absent from it is `Unknown` and allowed, because refusing on a
+/// guess would block a reader who pinned `--gradle-version` themselves.
+#[test]
+fn a_gradle_project_is_not_created_with_a_jdk_its_gradle_cannot_run() {
+    let root = temp_dir("gradle-jdk-pairing");
+
+    let refused = jails_cmd(&root, None)
+        .args([
+            "new", "legacy", "--gradle", "--boot", "2.7.18", "--java", "26",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        !refused.status.success(),
+        "Gradle 8.5 with JDK 26 was accepted"
+    );
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    // The message names both numbers jails chose and the error the reader
+    // would otherwise have met, which names neither.
+    assert!(
+        stderr.contains("Gradle 8.5 does not run on JDK 26"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("Unsupported class file major version 70"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("--java 21"), "{stderr}");
+    assert!(!root.join("legacy").exists(), "a directory was published");
+
+    // The way out the refusal names is a pairing that was actually run.
+    let accepted = jails_cmd(&root, None)
+        .args([
+            "new", "legacy", "--gradle", "--boot", "2.7.18", "--java", "21",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+
+    // And the pairing jails defaults to for Boot 4 is measured green, so the
+    // check must not fire on the ordinary path.
+    let modern = jails_cmd(&root, None)
+        .args(["new", "current", "--gradle", "--java", "26"])
+        .output()
+        .unwrap();
+    assert!(
+        modern.status.success(),
+        "{}",
+        String::from_utf8_lossy(&modern.stderr)
+    );
+}

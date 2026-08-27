@@ -80,6 +80,63 @@ pub fn command(
 
 const RULES: &[Rule] = &[
     Rule {
+        // Observed twice on this machine: `jails new --gradle --boot 2.7.18`
+        // wrote a project it could not build, and the two real take-home
+        // checkouts under `minicom/` are Gradle 8.5 while the JDK on PATH is
+        // 26. `new` refuses that pairing now, but an *adopted* project brings
+        // its own wrapper and jails cannot refuse what it did not write.
+        //
+        // The message is uniquely unhelpful: it names neither Gradle nor Java,
+        // says `BUG!` about the reader's project, and the number is a class
+        // file major rather than a release. 70 is Java 26.
+        signatures: &["Unsupported class file major version"],
+        group: "gradle-jdk-too-new",
+        explain: |log| {
+            let rejected = log
+                .split("Unsupported class file major version")
+                .nth(1)
+                .and_then(|rest| {
+                    let digits: String = rest
+                        .trim_start()
+                        .chars()
+                        .take_while(char::is_ascii_digit)
+                        .collect();
+                    digits.parse::<u32>().ok()
+                })
+                .filter(|major| *major >= 45);
+            let release = rejected.map(|major| major - 44);
+            Diagnosis {
+                headline: "this Gradle distribution cannot run on the JDK that started it".into(),
+                because: format!(
+                    "Gradle compiles the build script with its own bundled Groovy, and that \
+                     compiler refuses class files newer than the version it was built against -- \
+                     so it dies before reading one line of your project, which is why it says \
+                     `BUG!` about a build that is fine.{}",
+                    match release {
+                        Some(release) => format!(
+                            " Major version {} is Java {release}, so the JDK that launched \
+                             the wrapper is {release} and the wrapper's pinned Gradle predates it.",
+                            release + 44
+                        ),
+                        None => String::new(),
+                    }
+                ),
+                fixes: vec![
+                    "run the wrapper under an older JDK: `JAVA_HOME=/path/to/jdk21 jails build` \
+                     -- `jails doctor` lists the JDKs it can see"
+                        .into(),
+                    "or upgrade the wrapper, if the project's Spring Boot allows it: \
+                     `jails modernize` moves Gradle and the release together"
+                        .into(),
+                    "the pin is `distributionUrl` in `gradle/wrapper/gradle-wrapper.properties`; \
+                     `sourceCompatibility` in `build.gradle` is a different number and changing \
+                     it does not help"
+                        .into(),
+                ],
+            }
+        },
+    },
+    Rule {
         // Observed on the pristine `mc-01-06-2026` take-home the first time
         // it was started after a *different* minicom checkout had run: every
         // one of them ships `jdbc:h2:file:~/minicom`, so they share one file

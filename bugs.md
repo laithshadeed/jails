@@ -121,17 +121,6 @@ but every reserved word is lowercase and the name is capitalised before the
 check, so `class`, `int` and `String` all pass. `java.lang`'s own type names
 are a closed list and the same check is the place for them.
 
-## B52 — `jails test` and `jails run` on Gradle execute under host JDK instead of target JDK
-
-`jails doctor` correctly reports `ok jdk java 26 on PATH, project targets 21`. However, `jails test` and `jails run` invoke `./gradlew` inheriting the current process's PATH (Java 26) without configuring `JAVA_HOME` to match the target JDK or checking for an installed JDK 21.
-
-Gradle 8.5 cannot run on Java 26 and immediately fails:
-```
-BUG! exception in phase 'semantic analysis' in source unit '_BuildScript_' Unsupported class file major version 70
-```
-
-`jails` should detect when a Gradle wrapper requires an earlier JDK and set `JAVA_HOME` pointing to a compatible toolchain installed in the environment (e.g. mise / asdf / SDKMAN) or warn with the exact `JAVA_HOME` export command.
-
 ## B53 — `jails beans` static AST parser misparses complex `@Value` annotations as unresolved dependency names
 
 When a Spring component constructor includes `@Value` annotations with nested colons or SpEL expressions:

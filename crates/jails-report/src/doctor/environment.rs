@@ -30,6 +30,42 @@ pub(super) fn maven_check(project: &Project) -> Check {
     // pins its own version and a project without one builds differently on
     // every machine.
     if matches!(project.build(), crate::build::Build::Gradle) {
+        // The wrapper pins a distribution, and a distribution cannot launch on
+        // an arbitrarily new JDK -- it dies compiling its own build script,
+        // before reading the project. `doctor` reported `ok` over exactly that
+        // project, which is the one situation this command exists to prevent.
+        //
+        // Only a *measured* pairing fails the check. `Launches::Unknown` stays
+        // ok, because a claim jails has not run is not a claim it makes.
+        if let Some(pinned) = std::fs::read_to_string(root.join(jails_project::gradle::WRAPPER))
+            .ok()
+            .as_deref()
+            .and_then(jails_project::gradle::wrapper_version)
+            && let Some(have) = java_major()
+            && jails_project::gradle::launches_on(&pinned, have)
+                == jails_project::gradle::Launches::No
+        {
+            let known = jails_project::gradle::highest_measured_release(&pinned);
+            return Check::new(
+                Status::Fail,
+                "gradle",
+                format!(
+                    "the wrapper pins Gradle {pinned}, which does not run on the JDK {have} on \
+                     PATH -- it fails with `Unsupported class file major version {}` before \
+                     reading this project",
+                    have + 44
+                ),
+            )
+            .fix(match known {
+                Some(release) => format!(
+                    "run under JDK {release}: `JAVA_HOME=<jdk{release}> jails build`, or \
+                     `jails modernize` to move Gradle and the release together"
+                ),
+                None => "run under an older JDK (set JAVA_HOME), or `jails modernize` to move \
+                         Gradle and the release together"
+                    .to_string(),
+            });
+        }
         return match root.join("gradlew").is_file() {
             true => Check::new(Status::Ok, "gradle", "project wrapper (./gradlew)"),
             false => Check::new(
