@@ -509,6 +509,46 @@ pub(crate) fn first_enum_constant(project: &Project, pkg: &str, type_name: &str)
     enum_constants(project, pkg, type_name)?.into_iter().next()
 }
 
+/// The first constant of a project enum **as it appears on the wire**.
+///
+/// A different question from `first_enum_constant`, and conflating them
+/// shipped: a documented create body said `"sender_type": "ADMIN"` for an enum
+/// declared `ADMIN("admin")` with `@JsonValue`, so the request that file
+/// documents is one the application rejects -- and the generated controller
+/// test, which sends the same sample, was red on every build.
+///
+/// The Java name stays right for the SQL `check` constraint and for Java
+/// literals in a fixture; only JSON is the wire.
+///
+/// **`@JsonValue` is what decides.** Without it Jackson serialises `name()`,
+/// so the constant *is* the wire value; with it, the value is the first
+/// constructor argument, which is the shape `g enum` writes and the only one
+/// this can read honestly. The literal is sliced out of the original source
+/// rather than the blanked copy, because `blanked` replaces the quotes too.
+pub(crate) fn first_enum_wire_value(
+    project: &Project,
+    pkg: &str,
+    type_name: &str,
+) -> Option<String> {
+    let name = first_enum_constant(project, pkg, type_name)?;
+    let source = project.source_of(pkg, type_name)?;
+    let source = source.as_str();
+    let text = crate::java::blanked(source);
+    if !text.contains("@JsonValue") {
+        return Some(name);
+    }
+    let body = text.find(&format!("enum {type_name}"))?;
+    let open = text[body..].find('{')? + body + 1;
+    let at = open + text.get(open..)?.find(&name)?;
+    let next = at + name.len();
+    if !text[next..].trim_start().starts_with('(') {
+        return Some(name);
+    }
+    let start = next + text[next..].find('(')? + 1;
+    let end = start + text[start..].find(')')?;
+    Some(source.get(start..end)?.trim().trim_matches('"').to_string())
+}
+
 /// Every constant of a project enum, in declaration order.
 ///
 /// Read off the file rather than remembered, for the same reason the sample

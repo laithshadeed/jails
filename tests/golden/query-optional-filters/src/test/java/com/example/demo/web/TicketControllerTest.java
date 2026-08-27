@@ -28,7 +28,6 @@ class TicketControllerTest {
     private static final String CREATE_REQUEST =
             """
             {
-              "id": 1,
               "status": "sample-status",
               "category": null
             }

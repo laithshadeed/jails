@@ -153,14 +153,19 @@ pub(crate) fn scaffold_artifacts_from_fields(
 
     // One sample, two readers: the collection a reader sends by hand and the
     // generated controller test that sends it on every build.
-    let sample = sampled_request(slice.project(), &domain, parsed);
+    let sample = sampled_request(
+        slice.project(),
+        &domain,
+        parsed,
+        crate::spring::assigned_key(&columns),
+    );
 
     artifacts.push(Artifact {
         kind: "HTTP request collection",
         path: root
             .join("requests")
             .join(format!("{}.http", crate::sql::snake_case(name))),
-        contents: scaffold_requests(name, parsed, &sample.0),
+        contents: scaffold_requests(slice.project(), &domain, name, parsed, &sample.0),
     });
 
     // A fixture file, on the same rule as the migration: only when the
@@ -375,15 +380,19 @@ pub(crate) fn sampled_request(
     project: &Project,
     domain: &str,
     fields: &[Field],
+    assigned: Option<&str>,
 ) -> (String, Vec<String>) {
-    let audited = crate::spring::has_audit_pair(fields);
     let mut unsampled = Vec::new();
-    let body = fields
+    // **The same predicate the request record is built from**, not a second
+    // list that agrees with it for a while. This filtered out the audit pair
+    // only, so a `@pk` scaffold documented `"id": 1` against a request record
+    // with no `id` component -- and its own generated controller test sent
+    // that body and got 400, because a standalone `MockMvcTester` has a plain
+    // `ObjectMapper` that rejects an unknown property. A `@version` column was
+    // wrong the same way. `client_supplied` knows all three.
+    let wire = crate::spring::client_supplied(fields, assigned);
+    let body = wire
         .iter()
-        // The audit columns the create path sets itself. The request record
-        // does not declare them, so a body carrying them describes a request
-        // that cannot be made.
-        .filter(|field| !crate::spring::is_audit_component(field, audited))
         .map(|field| {
             let value = if field.optionality == Optionality::Nullable {
                 "null".to_string()
@@ -439,7 +448,10 @@ pub(crate) fn json_sample(project: &Project, domain: &str, field: &Field) -> Opt
         // two separating again.
         "Path" => "\"/tmp/example\"".to_string(),
         other if field.owned => {
-            format!("\"{}\"", first_enum_constant(project, domain, other)?)
+            format!(
+                "\"{}\"",
+                crate::generate::domain::first_enum_wire_value(project, domain, other)?
+            )
         }
         _ => return None,
     })
@@ -453,22 +465,28 @@ pub(crate) fn json_sample(project: &Project, domain: &str, field: &Field) -> Opt
 /// -- so the `### List` block this used to end with unconditionally answered
 /// 405 there. A reader sending it learns nothing about their project, only
 /// about this file.
-pub(crate) fn scaffold_requests(name: &str, fields: &[Field], body: &str) -> String {
+pub(crate) fn scaffold_requests(
+    project: &Project,
+    domain: &str,
+    name: &str,
+    fields: &[Field],
+    body: &str,
+) -> String {
     let route = resource_path(name);
     // Scoped resources are create-only; reads go through `jails g query`,
     // which writes its own collection.
     let browse = if fields.iter().any(|field| field.constraints.scoped) {
         String::new()
     } else {
+        // Sampled from the key's own type, **not** read back out of the
+        // create body: the key is server-assigned, so it is not in that body
+        // at all. Reading it from there worked only while the body wrongly
+        // carried it, and the two failures were one edit apart.
         let item = fields
             .iter()
             .find(|field| field.constraints.primary_key)
-            .and_then(|key| {
-                let prefix = format!("  \"{}\": ", key.name);
-                body.lines()
-                    .find_map(|line| line.strip_prefix(&prefix))
-                    .map(|value| value.trim_end_matches(',').trim_matches('"'))
-            })
+            .and_then(|key| json_sample(project, domain, key))
+            .map(|value| value.trim_matches('"').to_string())
             .map(|id| {
                 format!(
                     "\n@id = {id}\n\n\

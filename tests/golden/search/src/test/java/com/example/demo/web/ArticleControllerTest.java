@@ -29,7 +29,6 @@ class ArticleControllerTest {
     private static final String CREATE_REQUEST =
             """
             {
-              "id": "00000000-0000-0000-0000-000000000001",
               "title": "sample-title",
               "body": "sample-body"
             }

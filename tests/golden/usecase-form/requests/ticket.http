@@ -5,7 +5,6 @@ POST {{baseUrl}}/tickets
 Content-Type: application/json
 
 {
-  "id": 1,
   "subject": "sample-subject"
 }
 

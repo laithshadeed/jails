@@ -5822,3 +5822,68 @@ fn an_integration_test_is_disabled_rather_than_uncompilable_without_a_container_
         "{it}"
     );
 }
+
+/// The documented create body is exactly what the request record accepts.
+///
+/// One sample, three readers -- `requests/*.http`, the generated controller
+/// test, and the request record itself -- and the third was built from a
+/// different list than the first two. `sampled_request` dropped the audit
+/// pair and nothing else, so a `@pk` scaffold documented the primary key, and
+/// its own generated controller test posted that body and got 400: a
+/// standalone `MockMvcTester` has a plain `ObjectMapper`, which rejects a
+/// property the record has no component for. Found on the real project, where
+/// five of six generated controller tests were red for this one reason.
+#[test]
+fn the_documented_body_carries_only_what_the_request_record_declares() {
+    let root = temp_dir("documented-body");
+    write_spring_fixture(&root);
+
+    assert!(
+        jails_cmd(&root, None)
+            .args([
+                "g",
+                "scaffold",
+                "Ticket",
+                "id:long@pk",
+                "subject:string!",
+                "version:long",
+            ])
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let request =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/web/TicketRequest.java"))
+            .unwrap();
+    let declared: Vec<&str> = ["id", "subject", "version"]
+        .into_iter()
+        .filter(|name| {
+            request.contains(&format!(" {name})")) || request.contains(&format!(" {name},"))
+        })
+        .collect();
+    assert_eq!(declared, vec!["subject"], "{request}");
+
+    for path in [
+        "requests/ticket.http",
+        "src/test/java/com/example/demo/web/TicketControllerTest.java",
+    ] {
+        let text = fs::read_to_string(root.join(path)).unwrap();
+        assert!(
+            text.contains("\"subject\": \"sample-subject\""),
+            "{path}: {text}"
+        );
+        assert!(!text.contains("\"id\":"), "{path}: {text}");
+        assert!(!text.contains("\"version\":"), "{path}: {text}");
+    }
+
+    // The `{{id}}` a GET and a DELETE need is still there: it is sampled from
+    // the key's own type rather than read back out of a body that no longer
+    // carries it.
+    let collection = fs::read_to_string(root.join("requests/ticket.http")).unwrap();
+    assert!(collection.contains("@id = 1"), "{collection}");
+    assert!(
+        collection.contains("GET {{baseUrl}}/tickets/{{id}}"),
+        "{collection}"
+    );
+}
