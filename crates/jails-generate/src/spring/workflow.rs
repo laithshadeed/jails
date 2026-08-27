@@ -282,7 +282,7 @@ pub(crate) fn usecase_files(
         Artifact {
             kind: "usecase command",
             path: main_service.join(format!("{name}Command.java")),
-            contents: usecase_command_java(slice, name, fields),
+            contents: usecase_command_java(slice, name, fields, endpoint),
         },
         Artifact {
             kind: "usecase port",
@@ -398,11 +398,17 @@ pub(super) fn usecase_command_java(
     slice: &Slice,
     name: &str,
     fields: &[crate::generate::Field],
+    endpoint: Endpoint<'_>,
 ) -> String {
     let pkg: &str = &slice.placed(Layer::Service);
     let domain: &str = &slice.owned(Layer::Domain);
     let command = format!("{name}Command");
-    let mut source = crate::generate::record_java(pkg, &command, fields);
+    let mut source = crate::generate::bound_record_java(
+        pkg,
+        &command,
+        fields,
+        endpoint.binding_naming(slice.project()),
+    );
     let mut imports = fields
         .iter()
         .filter(|field| field.owned && domain != pkg)

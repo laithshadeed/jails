@@ -5412,3 +5412,90 @@ fn a_scaffold_with_nowhere_to_put_ddl_says_so() {
     assert!(report.contains("jails add db"), "{report}");
     assert!(report.contains("schema.sql"), "{report}");
 }
+
+/// The wire contract, both directions, on the project that needs it.
+///
+/// `missing.md` M15's other half. Spring's **data binder** has no naming
+/// strategy: `spring.jackson.property-naming-strategy` configures Jackson, so
+/// a project whose JSON is `user_id` still binds a form field called `userId`
+/// unless the record's component says otherwise. Two names for one value on
+/// one wire, and it is silent -- the component simply arrives null.
+///
+/// Verified against a running server before it was written down: a form post
+/// of `user_id=42` at a generated `--consumes form` endpoint comes back as
+/// `{"id":1,"user_id":42,"status":"open"}`, which is the shape
+/// `minicom-15-01-2026`'s two pages read.
+#[test]
+fn a_form_bound_record_answers_to_the_names_this_projects_wire_actually_uses() {
+    let root = temp_dir("wire-naming");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources")).unwrap();
+    fs::write(root.join("src/main/resources/schema.sql"), "-- schema\n").unwrap();
+
+    let generate = |root: &std::path::Path| {
+        let status = jails_cmd(root, None)
+            .args([
+                "g",
+                "scaffold",
+                "Ticket",
+                "id:long@pk",
+                "userId:long",
+                "subject:string!",
+            ])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let output = jails_cmd(root, None)
+            .args([
+                "g",
+                "usecase",
+                "OpenTicket",
+                "userId:long",
+                "subject:string!",
+                "--on",
+                "Ticket",
+                "--consumes",
+                "form",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        fs::read_to_string(
+            root.join("src/main/java/com/example/demo/service/OpenTicketCommand.java"),
+        )
+        .unwrap()
+    };
+
+    // A project that says nothing about naming gets what it always got.
+    let plain = generate(&root);
+    assert!(!plain.contains("BindParam"), "{plain}");
+    assert!(plain.contains("long userId"), "{plain}");
+
+    // The same generation, in a project whose wire is snake_case.
+    let snake = temp_dir("wire-naming-snake");
+    write_spring_fixture(&snake);
+    fs::create_dir_all(snake.join("src/main/resources")).unwrap();
+    fs::write(snake.join("src/main/resources/schema.sql"), "-- schema\n").unwrap();
+    let status = jails_cmd(&snake, None)
+        .args(["set", "spring.jackson.property-naming-strategy=SNAKE_CASE"])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let bound = generate(&snake);
+    assert!(
+        bound.contains("@BindParam(\"user_id\") long userId"),
+        "{bound}"
+    );
+    assert!(
+        bound.contains("import org.springframework.web.bind.annotation.BindParam;"),
+        "{bound}"
+    );
+    // Only where the two spellings differ: an annotation restating the default
+    // is noise in every record with a one-word component.
+    assert!(!bound.contains("@BindParam(\"subject\")"), "{bound}");
+}

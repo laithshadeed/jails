@@ -639,7 +639,16 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // shape: `disabled_generated_tests`, whose body is in
                 // `managed_drift.rs`. 1480 -> 1481 for the fourth,
                 // `empty_migration_checks`, same file and same reason.
-                ceiling: 1481,
+                //
+                // 1481 -> 1485. `cors_checks` matched only
+                // `spring-boot-starter-webmvc`, so on every project written
+                // before Boot 4 renamed that starter it reported nothing --
+                // including `minicom-15-01-2026`, whose `@EnableWebMvc` was
+                // silently discarding every `spring.jackson.*` property in the
+                // file. Four lines: the second spelling, and the sentence
+                // saying what the override costs, which is the half a reader
+                // acts on.
+                ceiling: 1485,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.

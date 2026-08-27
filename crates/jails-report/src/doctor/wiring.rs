@@ -606,7 +606,15 @@ pub(super) fn management_checks(project: &Project) -> Vec<Check> {
 pub(super) fn cors_checks(project: &Project) -> Vec<Check> {
     let root: &Path = project.root();
     let pom_text: &str = project.pom();
-    if !pom_text.contains("spring-boot-starter-webmvc") {
+    // Either spelling. Boot 4 renamed the starter and deprecated the old
+    // name, but `spring-boot-starter-web` is what every project written
+    // before that says -- and those are exactly the projects being adopted.
+    // Matching only the new name is how this check came to report nothing on
+    // `minicom-15-01-2026`, whose `@EnableWebMvc` was silently discarding
+    // every `spring.jackson.*` property it had.
+    if !pom_text.contains("spring-boot-starter-webmvc")
+        && !pom_text.contains("spring-boot-starter-web")
+    {
         return Vec::new();
     }
     let mut enable_webmvc = Vec::new();
@@ -633,11 +641,16 @@ pub(super) fn cors_checks(project: &Project) -> Vec<Check> {
                 Status::Warn,
                 "MVC override",
                 format!(
-                    "@EnableWebMvc disables Boot MVC auto-configuration in {}",
+                    "@EnableWebMvc disables Boot MVC auto-configuration in {} -- every \
+                     spring.jackson.* property is ignored, and so is every converter Boot \
+                     would have contributed",
                     enable_webmvc.join(", ")
                 ),
             )
-            .fix("remove @EnableWebMvc; contribute WebMvcConfigurer beans instead"),
+            .fix(
+                "remove @EnableWebMvc; a WebMvcConfigurer bean still customises MVC, and \
+                  keeps the auto-configuration",
+            ),
         );
     }
     if !wildcard_without_origins.is_empty() {

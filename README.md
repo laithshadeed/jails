@@ -1352,6 +1352,19 @@ bug that kind exists to avoid; both refuse the flag by name.
 Recorded on the intent, so `jails sync` and `jails app apply` regenerate the
 same shape, and changing it is an edit to a known entity rather than a new one.
 
+**The names on the wire follow the project, not jails.** Set
+`spring.jackson.property-naming-strategy=SNAKE_CASE` (`jails set` owns the key)
+and a form-bound record's components carry `@BindParam("user_id")` for exactly
+the components whose two spellings differ. That annotation is not decoration:
+Spring's **data binder** has no naming strategy — the Jackson property
+configures Jackson — so without it a project whose JSON is `user_id` still
+binds a form field called `userId`, and the component silently arrives null.
+
+If nothing seems to apply, check `jails doctor` for **MVC override**.
+`@EnableWebMvc` in a Boot project switches off Boot's web auto-configuration,
+so every `spring.jackson.*` property is ignored with nothing in the log to say
+so.
+
 ### Where a scaffold's `create table` goes
 
 Two places, and which one is decided by what the project already has:

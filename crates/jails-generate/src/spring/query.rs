@@ -161,7 +161,7 @@ pub(crate) fn query_files(
         Artifact {
             kind: "query criteria",
             path: main_service.join(format!("{name}Criteria.java")),
-            contents: query_record_java(slice, name, fields),
+            contents: query_record_java(slice, name, fields, endpoint),
         },
         Artifact {
             kind: "query",
@@ -191,11 +191,21 @@ pub(crate) fn query_files(
     ])
 }
 
-fn query_record_java(slice: &Slice, name: &str, fields: &[crate::generate::Field]) -> String {
+fn query_record_java(
+    slice: &Slice,
+    name: &str,
+    fields: &[crate::generate::Field],
+    endpoint: Endpoint<'_>,
+) -> String {
     let pkg: &str = &slice.placed(Layer::Service);
     let domain: &str = &slice.owned(Layer::Domain);
     let class = format!("{name}Criteria");
-    let mut source = crate::generate::record_java(pkg, &class, fields);
+    let mut source = crate::generate::bound_record_java(
+        pkg,
+        &class,
+        fields,
+        endpoint.binding_naming(slice.project()),
+    );
     let mut imports = fields
         .iter()
         .filter(|field| field.owned && domain != pkg)

@@ -17,6 +17,20 @@ use crate::config::Config;
 use crate::pom::{self, Dependency, Flavor};
 use jails_support::Result;
 
+/// What a project calls its wire properties.
+///
+/// Two answers, because Boot's Jackson auto-configuration offers one knob that
+/// matters here and a project either turned it on or did not. Anything jails
+/// cannot read is `AsWritten`, which is what every project got before this
+/// existed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WireNaming {
+    /// The component name, as the field spec spells it.
+    AsWritten,
+    /// `snake_case`, because `spring.jackson.property-naming-strategy` says so.
+    SnakeCase,
+}
+
 /// One file a recipe intends to create.
 ///
 /// The rendered string is deliberately still eager at rung 2. Rung 4 changes
@@ -794,6 +808,38 @@ impl Project {
             String::from_utf8(bytes.clone()).ok()
         });
         projected.or_else(|| std::fs::read_to_string(self.root.join(path)).ok())
+    }
+
+    /// What this project calls its JSON properties on the wire.
+    ///
+    /// **Read off the property that actually decides it**, never configured
+    /// twice: `spring.jackson.property-naming-strategy` is what Boot hands the
+    /// mapper, so a project that says `SNAKE_CASE` there is a project whose
+    /// wire is snake_case, and jails does not need to be told again. Same rule
+    /// as `sql_dialect`, which reads the driver rather than the manifest.
+    ///
+    /// It matters beyond JSON: Spring's *data binder* has no naming strategy,
+    /// so a form post at a `@ModelAttribute` endpoint binds by the component
+    /// name unless each one carries `@BindParam`. Without this, a project
+    /// whose JSON is `user_id` would have its form fields silently arrive as
+    /// `null` -- the same value on the wire reaching two different names.
+    pub fn wire_naming(&self) -> WireNaming {
+        match self
+            .projected_text("src/main/resources/application.properties")
+            .and_then(|text| {
+                text.lines().rev().find_map(|line| {
+                    line.trim()
+                        .strip_prefix("spring.jackson.property-naming-strategy")?
+                        .trim_start()
+                        .strip_prefix('=')
+                        .map(|value| value.trim().to_string())
+                })
+            })
+            .as_deref()
+        {
+            Some("SNAKE_CASE") => WireNaming::SnakeCase,
+            _ => WireNaming::AsWritten,
+        }
     }
 
     /// Every Java source under `src/main/java`, as the plan leaves them.

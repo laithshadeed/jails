@@ -46,4 +46,19 @@ impl Endpoint<'_> {
     pub fn binding_import(&self) -> &'static str {
         self.consumes.binding_import()
     }
+
+    /// The wire naming a record bound by this endpoint has to answer to.
+    ///
+    /// `None` for JSON, and not because JSON has no naming -- it does, and
+    /// Jackson applies the project's strategy to it without help. This is
+    /// only for the *data binder*, which has none.
+    pub fn binding_naming(
+        &self,
+        project: &crate::model::Project,
+    ) -> Option<jails_project::model::WireNaming> {
+        match self.consumes {
+            jails_spec::spec::kind::WireFormat::Form => Some(project.wire_naming()),
+            jails_spec::spec::kind::WireFormat::Json => None,
+        }
+    }
 }

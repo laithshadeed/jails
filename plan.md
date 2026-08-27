@@ -948,10 +948,27 @@ The nine endpoints, verbatim from `customer.js` and `admin.js`:
       constructor. Proved against a running server rather than asserted:
       `curl -X POST -d "userId=7&status=open"` at a generated endpoint returns
       201 with `Location: /conversations/1` and the row in H2.
-- [ ] **P10.3** **The JSON key case is jails', not the client's.** The pages
+- [x] **P10.3** **The JSON key case is jails', not the client's.** The pages
       read `message.sender_type`, `message.created_at` and `user.id`; a
       generated response record emits `senderType` and `createdAt`. jails has
       no way to say a project's wire format is snake_case.
+      Done, and the JSON half needed no new feature:
+      `jails set spring.jackson.property-naming-strategy=SNAKE_CASE` already
+      owns that key, and `Project::wire_naming()` reads the wire off the
+      property that decides it rather than asking to be told twice -- the same
+      rule `sql_dialect` follows about the driver. What was missing is the
+      binder: Spring's data binder has no naming strategy, so a form-bound
+      record now carries `@BindParam("user_id")` on exactly the components
+      whose two spellings differ.
+      Two things had to be found first, both by running the thing.
+      `@EnableWebMvc` disables Boot's MVC auto-configuration, so *every*
+      `spring.jackson.*` property was silently ignored on this project --
+      `cors_checks` already had that warning and matched only the Boot 4
+      starter name, so it reported nothing on a project written before the
+      rename. Fixed, and `jails doctor` says it now.
+      End to end on the checkout: `curl -d "user_id=42&status=open"` returns
+      `{"id":1,"user_id":42,"status":"open"}`, which is the shape the two
+      pages read.
 - [ ] **P10.4** **M14 — an enum constant has no wire value.** The vocabularies
       here are `open`/`in_progress`/`resolved`/`closed` (lowercase),
       `Account`/`Billing`/`Product`/`Technical`/`Other` (TitleCase) and

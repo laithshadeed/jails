@@ -132,7 +132,7 @@ pub(crate) fn transition_files(
             path: main_service.join(format!("{name}Command.java")),
             // Without `version`: the expected version is a precondition,
             // not data the command carries. plan.md P4.5.
-            contents: usecase_command_java(slice, name, &command_fields(fields)),
+            contents: usecase_command_java(slice, name, &command_fields(fields), endpoint),
         },
         Artifact {
             kind: "transition port",
