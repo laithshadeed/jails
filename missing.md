@@ -35,10 +35,26 @@ frontend actually calls is one command). `jails fmt` on Gradle is a *deliberate*
 
 ## Code generation and architecture helpers
 
-### Global Exception Handler & Error Scaffold (`jails g advice` / `jails add errors`)
-- Spring Boot default error handling routes uncaught exceptions to `BasicErrorController`, producing generic 500 JSON without clear controller exception details or readable terminal stack traces (e.g. `@PathVariable` mismatches or missing URI parameters).
-- Developers frequently need a structured `@RestControllerAdvice` that outputs clear debug logs and returns structured error payloads (e.g. RFC 9457 `ProblemDetail` or custom JSON with status, error, and message).
-- **Expected**: `jails g advice <Name>` or `jails add error-handler` to scaffold a `@RestControllerAdvice` class with `@ExceptionHandler` methods for common web exceptions, validation binding errors, and fallback uncaught exceptions.
+### A fallback handler for the exception nobody wrote a rule for
+
+**Most of this shipped and the last arm did not.** `jails add api` writes
+`api/ApiExceptionHandler.java`, a `@RestControllerAdvice` extending
+`ResponseEntityExceptionHandler`, so the common web exceptions and validation
+binding errors are RFC 9457 `ProblemDetail` already, and `DuplicateKeyException`
+is a 409. That is the entry as it was originally written, minus one thing.
+
+- What is not there is `@ExceptionHandler(Exception.class)`. An exception no
+  rule names still reaches `BasicErrorController` and comes back as a generic
+  500 with no `type`, no `detail` and nothing in the terminal a reader can
+  match to the request that caused it -- which is the failure this entry was
+  reported for, since a `@PathVariable` mismatch is exactly the kind of thing
+  no rule names.
+- It is deliberately the last arm to write rather than the first: a fallback
+  that swallows everything is how a stack trace stops reaching the log at all,
+  so it has to log before it answers, and what it answers must not leak the
+  message of an exception nobody vetted.
+- **Expected**: `add api` writes the fallback too -- log at `error` with the
+  request path, answer a `ProblemDetail` carrying the status and nothing else.
 
 ### Extending Existing Controllers (`jails g action` / `jails g route --on <Controller>`)
 - `jails g controller <Name>` always creates a new standalone controller file. In traditional Spring projects where related routes live together in one controller (e.g. `MessagesController.java`), there is no CLI command to append an `@GetMapping` or `@PostMapping` handler method into an existing controller class.

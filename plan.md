@@ -27,7 +27,7 @@ Four documents describe what jails does not do yet:
 
 | document | open | subject |
 |---|---:|---|
-| `bugs.md` | 0 | B46–B51 all closed; the file holds the convention and the coverage note |
+| `bugs.md` | 1 | B57, found while re-confirming the others |
 | `missing.md` | 6 | `adopt resource`, `modernize` re-planning, and four generator shapes |
 | `modern.md` | 8 | the generated Java assessed against `java.md`/`backend.md` |
 | `research.md` | 9 | the remaining product direction |
@@ -91,8 +91,9 @@ retires it.
       - **§6.5** two API styles in one service — REST for the scaffold,
         RPC-over-POST for the generated operations, including a `POST` to
         read — chosen by which command wrote the route rather than by a
-        decision. Compounded by P10.7's last bullet: `g scaffold` refuses
-        `--path`, so a project cannot be made consistent without hand-editing.
+        decision. Half closed: `g scaffold --path` is accepted now, so a
+        project *can* be made consistent. What is left is that consistency is
+        something the reader has to ask for on every command.
       - **§7** two read-side defects: the service-layer criteria record bound
         directly as `@RequestBody` in a project whose own generated Javadoc
         argues the wire type must not be the domain type, and a silent
@@ -159,19 +160,24 @@ In `research.md` §9's own order.
       expression string, no SpEL passthrough, the same rule that keeps
       `@check(...)` out of the field spec.
 - [ ] **P9.6** §5.1 — Gradle behavioural parity for the warm test engine,
-      `jails fmt` and `jails console`. **No longer blocked.** The prerequisite
-      was read as "install a `gradle` binary" and none is on PATH, but two
-      checkouts ship their own wrapper and run it:
-      `minicom/minicom-15-01-2026/spring` (Boot 4.1 after `jails modernize`)
-      and `minicom/old/mc-01-06-2026/spring` (Gradle 8.5 / Boot 2.7.18 / JDK
-      21 -- Gradle 8.5 refuses JDK 26 with `Unsupported class file major
-      version 70`, so `JAVA_HOME` has to point at 21). Two Gradle generations
-      is what the exit gate actually wanted: claims observed, not inferred.
+      `jails fmt` and `jails console`. **No longer blocked**, and there are
+      three observable generations now rather than two: no `gradle` binary is
+      on PATH, but `minicom/old/mc-01-06-2026/spring` runs its own wrapper at
+      Gradle 8.5 / Boot 2.7.18 / JDK 21 (8.5 refuses JDK 26 with `Unsupported
+      class file major version 70`, so `JAVA_HOME` has to point at 21),
+      `minicom/minicom-15-01-2026/spring` is the same skeleton, and `jails
+      modernize` takes that checkout to Gradle 9.7 / Boot 4.1 / JDK 26 where
+      `./gradlew build` is green -- 60 unit tests and 23 integration tests
+      against a real PostgreSQL, `integrationTest` included. The substrate the
+      exit gate needs exists; the cross-engine comparison it asks for has not
+      been run, and the warm engine still refuses on Gradle by name.
 - [ ] **P9.7** §2.4c semantic readiness, §2.4b service identity labels,
       §2.4a test-dependency hints, §2.3 the shared source index — **each behind
       a dated measurement**, per §2.3's own note that the latency win was
       claimed and never measured. Record a baseline for `routes`/`beans` on the
-      largest proof app first.
+      largest proof app first. §2.4c is now the *semantic* half only: `--wait
+      --wait-timeout 120` and per-service healthchecks shipped, so what is left
+      is `SELECT 1` rather than the engine's opinion about the container.
 - [ ] **P9.8** §2.7 — the Ecto-style SQL sandbox stays deliberately deferred.
       If the experiment is run, record the negative result rather than deleting
       the section.
@@ -217,6 +223,27 @@ verbatim from `customer.js` and `admin.js`:
 | PATCH | `/admin_api/conversations/{userId}/status` | JSON `{status}` |
 | PATCH | `/admin_api/conversations/{userId}/category` | JSON `{category}` |
 | PATCH | `/admin_api/conversations/{userId}/priority` | JSON `{priority}` |
+
+---
+
+## P12 — the defect found while re-confirming the closed ones
+
+- [ ] **P12.1** **B57** — re-running an already-installed capability in a
+      project that declares a compose service leaves an unfinished transaction,
+      and every mutating command afterwards dies on an object that was never
+      stored. It is terminal rather than transient, the refusal names a path
+      inside `.jails/` and carries no `fix:`, and `doctor` prescribes running
+      the same command again, which is the reproduction. `jails sync` -- whose
+      whole job is re-applying recorded capabilities -- is among the commands
+      that cannot run.
+
+      Bisected in `bugs.md`: `add sqlite` is the control, so the trigger is the
+      compose service rather than any one capability. Not caught because every
+      scenario and every proof application exercises the *first* install.
+
+      Two things to fix, and the second is the one that matters: the no-op
+      re-apply must not leave a transaction expecting an object it never wrote,
+      and `doctor`'s `fix:` must not name a command that reproduces the fault.
 
 ---
 

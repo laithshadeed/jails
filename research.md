@@ -145,10 +145,17 @@ dev.jails.managed=true
 
 ### 2.4c Semantic readiness
 
-**Not built, and it has a live defect behind it** (`bugs.md` B10).
-`jails-project::compose` builds `["up", "-d"]` with no `--wait` and there is no
-healthcheck or probe on the start path, so `jails run` can boot Spring before
-PostgreSQL accepts TCP connections.
+**Partly built.** The claim that used to stand here -- that
+`jails-project::compose` builds `["up", "-d"]` with no `--wait` and that there
+is no healthcheck on the start path -- is no longer true, and B10 closed with
+it: `compose::up` builds `["up", "-d", "--wait", "--wait-timeout", "120"]` and
+every service jails writes declares a `healthcheck`, which is what `--wait`
+waits for. `jails run` no longer boots Spring before PostgreSQL accepts
+connections.
+
+What is **not** built is the part this section is named for. `--wait` waits for
+the container's own healthcheck, which is the engine's opinion about the
+container rather than the application's about the service.
 
 Readiness must be semantic — `SELECT 1`, broker metadata — not "the container is
 running". A merely live PID is `started`, not `ready`. Docker, Podman, WSL and

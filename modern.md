@@ -9,8 +9,9 @@ everything that shipped. `git log -p -- modern.md` is the record.
 are stable and never reused, so a `modern.md §11.1` citation in the source
 still resolves to a subject.
 
-Every entry below was **re-confirmed on 2026-08-27** against a project built
-from nothing but
+Every entry below was **re-confirmed on 2026-08-27**, and again the same day
+after `--set`, `--via`, `--if-match`, `--bind` and `g scaffold --path` shipped:
+none of those touched any of the eight. The project is built from nothing but
 
 ```sh
 jails new --offline m --package com.example.m && cd m
@@ -122,9 +123,16 @@ Every route in the project above:
 
 REST for the scaffold and RPC-over-POST for the generated operations, in one
 service, chosen by which command wrote the route rather than by a decision.
-`--path` overrides it and `g scaffold` refuses `--path` by name, so a project
-cannot even be made consistent without hand-editing the scaffold's controller.
 A `POST` to read is uncacheable, unlinkable and unloggable by URL.
+
+**Half of this closed and the half that matters did not.** `g scaffold --path`
+is accepted now, so a project *can* be made consistent -- the sentence that
+used to stand here, that it could not be without hand-editing the controller
+jails had just written, is no longer true. What is left is the default: the
+two styles are still chosen by which command wrote the route, so consistency
+is something the reader has to know to ask for, on every command, rather than
+something the tool has an opinion about. A default that is right half the time
+is the thing this entry is about.
 
 ---
 
