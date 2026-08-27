@@ -203,6 +203,21 @@ impl HttpMethod {
         }
     }
 
+    /// Spring's declarative-client annotation for this method.
+    ///
+    /// The other half of [`Self::mapping`]: the same verb, named from the
+    /// calling end. `spring-web`'s `org.springframework.web.service.annotation`
+    /// spells all five.
+    pub fn exchange(self) -> &'static str {
+        match self {
+            Self::Get => "GetExchange",
+            Self::Post => "PostExchange",
+            Self::Put => "PutExchange",
+            Self::Patch => "PatchExchange",
+            Self::Delete => "DeleteExchange",
+        }
+    }
+
     /// The method name a stub handler takes.
     pub fn handler_name(self) -> &'static str {
         self.label()

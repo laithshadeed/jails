@@ -87,11 +87,6 @@ const ALLOWED_LEFTOVER: &[(&str, &str, &str)] = &[
     ),
     (
         "",
-        "HttpClientsConfig.java",
-        "shared registration: a second client still needs the group",
-    ),
-    (
-        "",
         "pom.xml",
         "a file the user owns; generators splice into it, `remove` unsplices",
     ),

@@ -374,6 +374,20 @@ fn verified_spring_toolboxes(path: &str) -> &'static SpringToolboxes {
                 ][..],
                 &["generate", "dto", "Payout"][..],
                 &["generate", "client", "Billing"][..],
+                // The other client shape: the call the project makes rather
+                // than a REST collection to delete (missing.md M7). Its test
+                // is `@Disabled` and still has to compile.
+                &[
+                    "generate",
+                    "client",
+                    "Ledger",
+                    "--method",
+                    "post",
+                    "--on",
+                    "Payout",
+                    "--path",
+                    "/v1/ledger/entries",
+                ][..],
                 // Two kinds that only contradict each other in company.
                 // `g scaffold` writes an ArchUnit rule forbidding
                 // `org.springframework..` inside `domain..`, and `g strategy`

@@ -230,6 +230,37 @@ pub const SCENARIOS: &[Scenario] = &[
             &["g", "job", "Reconcile"],
         ],
     },
+    // The call this project actually makes, rather than a REST collection to
+    // delete -- `missing.md` M7. The plain `g client` scenario above keeps the
+    // collection shape, which is what a caller who names nothing still gets.
+    Scenario {
+        name: "client-call",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[
+            &[
+                "g",
+                "record",
+                "ChatRequest",
+                "model:string!",
+                "prompt:string!",
+            ],
+            &["g", "record", "ChatReply", "id:string!", "text:string!"],
+            &[
+                "g",
+                "client",
+                "OpenAiChat",
+                "--method",
+                "post",
+                "--on",
+                "ChatRequest",
+                "--returns",
+                "ChatReply",
+                "--path",
+                "/v1/chat/completions",
+            ],
+        ],
+    },
     Scenario {
         name: "socket",
         fixture: Fixture::Spring,

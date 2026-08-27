@@ -25,27 +25,168 @@ use super::*;
 /// the usual hand-written client: no `RestTemplate` field, no URI building,
 /// no response-entity unwrapping, and the base URL is configuration rather
 /// than a constant compiled into the jar.
-pub(crate) fn client_files(slice: &Slice, name: &str) -> Vec<Artifact> {
+/// What a caller said this client actually does, when they said anything.
+///
+/// `missing.md` M7: `--method`, `--on` and `--returns` were accepted and
+/// silently discarded, so `g client Gamma --method post --on Rq` reported
+/// success and wrote a `GetExchange` REST collection referencing neither. The
+/// generated shape was 100% overwritten in the one real project that used it.
+///
+/// Naming any of the three switches the interface from that collection to the
+/// one call it describes. `--path` alone does not: renaming the collection's
+/// base path is a different, coherent thing to want.
+pub(crate) struct Call<'a> {
+    pub(crate) method: Option<jails_spec::spec::kind::HttpMethod>,
+    pub(crate) accepts: Option<&'a str>,
+    pub(crate) returns: Option<&'a str>,
+    pub(crate) path: Option<&'a str>,
+}
+
+impl Call<'_> {
+    /// Whether the caller described a call rather than accepting the
+    /// collection.
+    fn described(&self) -> bool {
+        self.method.is_some() || self.accepts.is_some() || self.returns.is_some()
+    }
+}
+
+pub(crate) fn client_files(slice: &Slice, name: &str, call: &Call<'_>) -> Vec<Artifact> {
     let root: &Path = slice.project().root();
     let pkg: &str = &slice.placed(Layer::Clients);
+    let domain: &str = &slice.owned(Layer::Domain);
     let main = crate::generate::main_dir(root, pkg);
     let test = crate::generate::test_dir(root, pkg);
     let group = client_group(name);
+    if call.described() {
+        return one_call_files(slice, name, call, pkg, domain, &group, &main, &test);
+    }
     vec![
         Artifact {
             kind: "http client",
             path: main.join(format!("{name}Client.java")),
-            contents: client_interface_java(pkg, name),
+            contents: client_interface_java(pkg, name, call.path),
         },
         Artifact {
             kind: "http client registration",
-            path: main.join("HttpClientsConfig.java"),
-            contents: client_config_java(pkg, &group),
+            path: main.join(format!("{name}ClientConfig.java")),
+            contents: client_config_java(pkg, name, &group),
         },
         Artifact {
             kind: "http client test",
             path: test.join(format!("{name}ClientTest.java")),
-            contents: client_test_java(pkg, name, &group),
+            contents: client_test_java(pkg, name, &group, call.path),
+        },
+    ]
+}
+
+/// The client for a call the caller described: one method, their verb, their
+/// path, their types.
+///
+/// The test is generated whole and `@Disabled` when jails cannot fabricate the
+/// types -- the same rule `g controller` follows, and for the same reason:
+/// jails has no type model, so a stub response it invented would be a test of
+/// its guess.
+#[allow(clippy::too_many_arguments)]
+fn one_call_files(
+    slice: &Slice,
+    name: &str,
+    call: &Call<'_>,
+    pkg: &str,
+    domain: &str,
+    group: &str,
+    main: &Path,
+    test: &Path,
+) -> Vec<Artifact> {
+    let method = call
+        .method
+        .unwrap_or(jails_spec::spec::kind::HttpMethod::Get);
+    let path = call
+        .path
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("/{}", crate::sql::table_name(name).replace('_', "-")));
+    let imports: String = [call.accepts, call.returns]
+        .into_iter()
+        .flatten()
+        .map(|ty| crate::generate::import_of(pkg, domain, ty))
+        .collect();
+    let returns = call.returns.unwrap_or("String");
+    let (parameter, argument, body_import, sample) = match call.accepts {
+        Some(ty) => (
+            format!("@RequestBody {ty} request"),
+            "sample()".to_string(),
+            "import org.springframework.web.bind.annotation.RequestBody;\n",
+            // Generated whole and throwing rather than as a value jails
+            // invented: it has no type model, so a body it made up would be a
+            // test of its guess. Unreachable while the class is `@Disabled`,
+            // and it names the work.
+            format!(
+                "\n    private static {ty} sample() {{\n        throw new \
+                 UnsupportedOperationException(\n                \"todo: build the {ty} this \
+                 call sends\");\n    }}\n"
+            ),
+        ),
+        None => (String::new(), String::new(), "", String::new()),
+    };
+    let disabled = call.accepts.is_some() || call.returns.is_some();
+    let _ = slice;
+    vec![
+        Artifact {
+            kind: "http client",
+            path: main.join(format!("{name}Client.java")),
+            contents: crate::template::render(
+                crate::template_here!("spring/client_call_java.java"),
+                &[
+                    ("pkg", pkg),
+                    ("imports", &imports),
+                    ("body_import", body_import),
+                    ("exchange", method.exchange()),
+                    ("name", name),
+                    ("path", &path),
+                    ("returns", returns),
+                    ("parameter", &parameter),
+                ],
+            ),
+        },
+        Artifact {
+            kind: "http client registration",
+            path: main.join(format!("{name}ClientConfig.java")),
+            contents: client_config_java(pkg, name, group),
+        },
+        Artifact {
+            kind: "http client test",
+            path: test.join(format!("{name}ClientTest.java")),
+            contents: crate::template::render(
+                crate::template_here!("spring/client_call_test_java.java"),
+                &[
+                    ("pkg", pkg),
+                    ("imports", &imports),
+                    (
+                        "disabled_import",
+                        if disabled {
+                            "import org.junit.jupiter.api.Disabled;\n"
+                        } else {
+                            ""
+                        },
+                    ),
+                    (
+                        "disabled",
+                        &if disabled {
+                            format!(
+                                "@Disabled(\"todo: build the {} this call needs, then delete \
+                                 this @Disabled\")\n",
+                                call.accepts.or(call.returns).unwrap_or("value")
+                            )
+                        } else {
+                            String::new()
+                        },
+                    ),
+                    ("name", name),
+                    ("path", &path),
+                    ("group", group),
+                    ("argument", &argument),
+                    ("sample", &sample),
+                ],
+            ),
         },
     ]
 }
@@ -92,23 +233,27 @@ pub(crate) fn client_group(name: &str) -> String {
     crate::sql::snake_case(name).replace('_', "-")
 }
 
-fn client_interface_java(pkg: &str, name: &str) -> String {
-    let path = format!("/{}", crate::sql::table_name(name).replace('_', "-"));
+fn client_interface_java(pkg: &str, name: &str, route: Option<&str>) -> String {
+    let path = route
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("/{}", crate::sql::table_name(name).replace('_', "-")));
     crate::template::render(
         crate::template_here!("spring/client_interface_java.java"),
         &[("pkg", pkg), ("name", name), ("path", &*path)],
     )
 }
 
-fn client_config_java(pkg: &str, group: &str) -> String {
+fn client_config_java(pkg: &str, name: &str, group: &str) -> String {
     crate::template::render(
         crate::template_here!("spring/client_config_java.java"),
-        &[("pkg", pkg), ("group", group)],
+        &[("pkg", pkg), ("name", name), ("group", group)],
     )
 }
 
-fn client_test_java(pkg: &str, name: &str, group: &str) -> String {
-    let path = format!("/{}", crate::sql::table_name(name).replace('_', "-"));
+fn client_test_java(pkg: &str, name: &str, group: &str, route: Option<&str>) -> String {
+    let path = route
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("/{}", crate::sql::table_name(name).replace('_', "-")));
     crate::template::render(
         crate::template_here!("spring/client_test_java.java"),
         &[

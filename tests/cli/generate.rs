@@ -827,6 +827,45 @@ fn a_named_route_replaces_the_derived_one_everywhere_it_appears() {
     );
 }
 
+/// A second client does not take the first one's configuration with it.
+///
+/// `missing.md` M13: `@ImportHttpServices` carries one group name, and one
+/// shared `HttpClientsConfig` scanned by package meant the newest client
+/// always worked and every older one was broken -- silently at generate time,
+/// and visibly only as the older client's own test calling
+/// `https://example.invalid`. One config class per client, listed by type,
+/// makes it additive by construction.
+#[test]
+fn a_second_client_keeps_the_first_one_registered() {
+    let root = temp_dir("clients-are-additive");
+    write_spring_fixture(&root);
+    for name in ["Alpha", "Beta"] {
+        let output = jails_cmd(&root, None)
+            .args(["g", "client", name])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{name}: {output:?}");
+    }
+
+    assert!(
+        !root
+            .join("src/main/java/com/example/demo/clients/HttpClientsConfig.java")
+            .exists(),
+        "the shared registration is what made this break"
+    );
+    for (name, group) in [("Alpha", "alpha"), ("Beta", "beta")] {
+        let config = fs::read_to_string(root.join(format!(
+            "src/main/java/com/example/demo/clients/{name}ClientConfig.java"
+        )))
+        .unwrap();
+        assert!(config.contains(&format!("group = \"{group}\"")), "{config}");
+        assert!(
+            config.contains(&format!("types = {name}Client.class")),
+            "{config}"
+        );
+    }
+}
+
 #[test]
 fn generate_scaffold_writes_a_raw_jdbc_slice() {
     let root = temp_dir("scaffold-files");
@@ -4244,12 +4283,15 @@ fn generate_dto_client_and_job_compile_and_pass_against_real_spring() {
     assert!(client.contains("@GetExchange"), "{client}");
     // No base URL in the annotation: it belongs to the group's configuration.
     assert!(!client.contains("@HttpExchange(url"), "{client}");
+    // One registration per client, listed by type: a shared one carries a
+    // single group name, so a second client took the first's configuration
+    // with it. missing.md M13.
     let config = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/clients/HttpClientsConfig.java"),
+        root.join("src/main/java/com/example/demo/clients/BillingClientConfig.java"),
     )
     .unwrap();
     assert!(
-        config.contains("@ImportHttpServices(group = \"billing\""),
+        config.contains("@ImportHttpServices(group = \"billing\", types = BillingClient.class)"),
         "{config}"
     );
 

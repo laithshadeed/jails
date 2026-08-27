@@ -7,16 +7,11 @@ import org.springframework.web.service.annotation.GetExchange;
 /**
  * The Ledger service, as this application uses it.
  *
- * <p>An interface and nothing else: Spring builds the implementation. There is
- * no base URL here on purpose -- the client belongs to a group (see
- * {@link HttpClientsConfig}) whose URL comes from
- * {@code spring.http.serviceclient.*.base-url}, so pointing the client at a
- * stub, a staging host or production is configuration rather than a code
- * change.
- *
- * <p>Return domain types, not {@code ResponseEntity}: a non-2xx response
- * already becomes an exception, so unwrapping one by hand at every call site
- * buys nothing.
+ * <p>An interface and nothing else: Spring builds the implementation, and the
+ * base URL is configuration (see {@link LedgerClientConfig}), so pointing it
+ * at a stub, staging or production is not a code change. It returns domain
+ * types rather than {@code ResponseEntity} because a non-2xx response is
+ * already an exception.
  */
 public interface LedgerClient {
 
@@ -28,11 +23,6 @@ public interface LedgerClient {
     @GetExchange("/ledgers/{id}")
     LedgerPayload findById(@PathVariable String id);
 
-    /**
-     * What the upstream service returns. A record of its own rather than a
-     * domain type: the shape belongs to them and will change on their
-     * schedule, and letting it reach the domain directly is how an external
-     * rename becomes a refactor here.
-     */
+    /** Theirs, not yours: an external rename must not become a refactor here. */
     record LedgerPayload(String id, String name) {}
 }

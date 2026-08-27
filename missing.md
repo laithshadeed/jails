@@ -159,65 +159,6 @@ deep design commitment.
 
 ---
 
-## M7 — `g client` ignores `--method`, `--on` and `--returns` without saying so
-
-Two problems. The shape is fixed to a REST collection, and — the worse half —
-the flags that would change it are **accepted and silently discarded**:
-
-```sh
-jails g record Rq a:string!
-jails g client Gamma --method post --on Rq        # exit 0, reports success
-grep -c PostExchange src/main/java/com/x/clients/GammaClient.java
-```
-
-```
-0
-```
-
-No refusal, no warning, no `PostExchange`, and `Rq` is referenced nowhere. That
-is the failure class jails is otherwise scrupulous about — "an unknown marker
-is an error, not a no-op" — and `g controller` honours the very same three
-flags. Refusing them here would at least be honest; today the command reports
-success for work it did not do.
-
-### Reproduce the fixed shape
-
-```sh
-jails g client OpenAiChatClient
-cat src/main/java/com/x/clients/OpenAiChatClient.java
-```
-
-```java
-public interface OpenAiChatClient {
-    @GetExchange("/open-ai-chats")      List<OpenAiChatPayload> findAll();
-    @GetExchange("/open-ai-chats/{id}") OpenAiChatPayload findById(@PathVariable String id);
-    record OpenAiChatPayload(String id, String name) {}
-}
-```
-
-The call `minicom-05-02-2026/django/minicom/ai_service.py` actually makes is
-`POST /v1/chat/completions` with a JSON body of `{role, content}` messages and
-a `model`/`temperature`/`max_tokens` envelope. Nothing above survives: not the
-verb, not the path, not the arguments, not the return type. 100% overwritten.
-
-What *is* worth keeping is what the same command wrote alongside it —
-`HttpClientsConfig`, the `spring-boot-starter-restclient` splice, and the
-`spring.http.serviceclient.*.base-url` convention. That splice is the
-non-obvious part the module's own docs flag (`@ImportHttpServices` builds the
-proxies without it, and the first call dies on `URI with undefined scheme`).
-
-### The fix already exists on a sibling generator
-
-`g controller` takes exactly the three arguments this needs:
-
-```sh
-jails g controller Verify --method post --on ChatRequest --returns ChatResponse
-```
-
-`g client` already *takes* those three flags. Honouring them — plus a path, see
-M8 — would make it generate the call the project makes rather than a shape to
-delete. See also **M13**: a second `g client` breaks the first.
-
 ## M10 — no seed or fixture data path
 
 ### Reproduce
@@ -321,43 +262,6 @@ jails puts a `fix:` on a refusal; this line has none.
 
 The narrow fix is a distinct exit status for "applied, effect failed" — or, at
 minimum, `fix: jails add db --no-start` on that line.
-
----
-
-## M13 — `g client` is not additive: a second client silently breaks the first
-
-`@ImportHttpServices` carries **one group name**, jails regenerates the single
-shared `HttpClientsConfig` with the newest client's name, and `basePackages`
-scans every client into that one group. So every previously generated client
-loses its configuration, with no error at generate time.
-
-```sh
-jails g client Alpha
-grep -o 'group = "[a-z-]*"' src/main/java/com/x/clients/HttpClientsConfig.java   # "alpha"
-jails g client Beta
-grep -o 'group = "[a-z-]*"' src/main/java/com/x/clients/HttpClientsConfig.java   # "beta"
-jails build
-```
-
-```
-AlphaClientTest.findAllReadsTheCollection <<< ERROR!
-org.springframework.web.client.ResourceAccessException:
-  I/O error on GET request for "https://example.invalid/alphas"
-BetaClientTest — Tests run: 2, Failures: 0, Errors: 0
-```
-
-Alpha's own test sets `spring.http.serviceclient.alpha.base-url` through
-`@DynamicPropertySource`, but Alpha is now registered under group `beta`, so
-the dynamic override never reaches it and the `https://example.invalid`
-placeholder from `application.properties` wins. Beta passes. **The newest
-client always works and every older one is broken.**
-
-Three clients is three broken tests and one passing one. `destroy client Beta`
-does not restore `alpha` either — the only jails-only repair is to destroy and
-regenerate the client you want last.
-
-The fix is one group per client (a config class per client, or
-`@ImportHttpServices` listed by type rather than by package scan).
 
 ---
 

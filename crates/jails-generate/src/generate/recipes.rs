@@ -162,16 +162,19 @@ pub(crate) fn artifacts_for(
         // capabilities that share their Spring Boot 4 assumptions.
         ArtifactKind::Client => {
             require_spring_project(project, "client")?;
-            crate::spring::client_files(&crate::model::Slice::new(project, package), name)
+            crate::spring::client_files(
+                &crate::model::Slice::new(project, package),
+                name,
+                &crate::spring::Call {
+                    method: recipe.method,
+                    accepts: strategy_on,
+                    returns: strategy_yields,
+                    path,
+                },
+            )
         }
         ArtifactKind::Fetcher => {
             require_spring_project(project, "fetcher")?;
-            if !fields.is_empty() || strategy_on.is_some() || strategy_yields.is_some() {
-                return Err(jails_support::Failure::Told(
-                    "fetcher takes only a name; limits and policy are external configuration"
-                        .to_string(),
-                ));
-            }
             crate::spring::fetcher_files(&crate::model::Slice::new(project, package), name)
         }
         ArtifactKind::Job => {
@@ -225,13 +228,6 @@ pub(crate) fn artifacts_for(
         }
         ArtifactKind::Idempotency => {
             require_spring_project(project, "idempotency")?;
-            if !fields.is_empty() || strategy_on.is_some() || strategy_yields.is_some() {
-                return Err(jails_support::Failure::Told(
-                    "idempotency takes only a name; the scope, key and request bytes are \
-                     runtime values the caller supplies, not generation-time ones"
-                        .to_string(),
-                ));
-            }
             crate::spring::idempotency_files(&crate::model::Slice::new(project, package), name)?
         }
         ArtifactKind::Auth => {

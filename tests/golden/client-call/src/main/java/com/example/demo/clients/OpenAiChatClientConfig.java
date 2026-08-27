@@ -1,18 +1,18 @@
-package {{pkg}};
+package com.example.demo.clients;
 
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.service.registry.ImportHttpServices;
 
 /**
- * Registers {@link {{name}}Client} as a bean, in its own group.
+ * Registers {@link OpenAiChatClient} as a bean, in its own group.
  *
  * <p>One class per client, listed by type: {@code @ImportHttpServices}
  * carries one group name, so a shared registration scanned by package loses
  * every earlier client's configuration when a second one is generated.
  *
- * <p>{@code spring.http.serviceclient.{{group}}.base-url} is where it points;
+ * <p>{@code spring.http.serviceclient.open-ai-chat.base-url} is where it points;
  * the same prefix carries timeouts, headers and SSL bundles.
  */
 @Configuration(proxyBeanMethods = false)
-@ImportHttpServices(group = "{{group}}", types = {{name}}Client.class)
-public class {{name}}ClientConfig {}
+@ImportHttpServices(group = "open-ai-chat", types = OpenAiChatClient.class)
+public class OpenAiChatClientConfig {}

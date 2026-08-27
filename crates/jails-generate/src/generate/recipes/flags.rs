@@ -36,13 +36,17 @@ pub(super) fn refuse_misplaced(recipe: &Recipe<'_>) -> Result<()> {
         "the recipe that creates a row",
         recipe.on_conflict.is_some(),
     )?;
-    // Three recipes answer HTTP on a route a caller might have to match.
+    // Four recipes answer or call HTTP on a route a caller might have to
+    // match.
     // `handler` writes a whole CRUD surface rather than one route and
     // `webhook` answers a signed POST by definition, so neither is one path.
     if recipe.path.is_some()
         && !matches!(
             recipe.kind,
-            ArtifactKind::Controller | ArtifactKind::Usecase | ArtifactKind::Query
+            ArtifactKind::Controller
+                | ArtifactKind::Usecase
+                | ArtifactKind::Query
+                | ArtifactKind::Client
         )
     {
         use clap::ValueEnum;
@@ -67,6 +71,16 @@ pub(super) fn refuse_misplaced(recipe: &Recipe<'_>) -> Result<()> {
         recipe,
         ArtifactKind::Presence,
         "a scope and a member are runtime values the caller picks, not generation-time ones",
+    )?;
+    takes_only_a_name(
+        recipe,
+        ArtifactKind::Fetcher,
+        "limits and policy are external configuration",
+    )?;
+    takes_only_a_name(
+        recipe,
+        ArtifactKind::Idempotency,
+        "the scope, key and request bytes are runtime values the caller supplies",
     )?;
     // The outbox wraps `Storing{X}UseCase` by name, and `--on-conflict`
     // replaces that class with a JdbcClient adapter. Refused rather than
@@ -109,10 +123,13 @@ fn only_for(
     .into())
 }
 
-/// A kind whose whole request is its name, so anything positional is a
+/// A kind whose whole request is its name, so a field or a reference is a
 /// misunderstanding rather than an extra.
 fn takes_only_a_name(recipe: &Recipe<'_>, kind: ArtifactKind, why: &str) -> Result<()> {
-    if recipe.kind != kind || recipe.fields.is_empty() {
+    let asked = !recipe.fields.is_empty()
+        || recipe.strategy_on.is_some()
+        || recipe.strategy_yields.is_some();
+    if recipe.kind != kind || !asked {
         return Ok(());
     }
     use clap::ValueEnum;

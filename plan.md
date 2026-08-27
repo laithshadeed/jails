@@ -791,10 +791,26 @@ All three of `missing.md`'s named primitives, in full, plus the smaller entries.
       every row to save bytes on the few that are not intents — and the real
       answer when it costs something is to group the refinements rather than
       box the enum.
-- [ ] **P8.8** M7 — `g client` takes `--method`/`--on`/`--returns` (and the
+- [x] **P8.8** M7 — `g client` takes `--method`/`--on`/`--returns` (and the
       P8.7 path), so it generates the call the project makes rather than a REST
       collection to delete. The `HttpClientsConfig` / restclient splice it
       already writes alongside is the valuable half and stays.
+      *Done:* naming any of the three switches the interface from the CRUD
+      collection to the one call described — `@PostExchange("/v1/chat/
+      completions") ChatReply call(@RequestBody ChatRequest request)`. `--path`
+      alone still just renames the collection's base path, which is a
+      different and coherent thing to want. The generated test is whole and
+      `@Disabled` with a `sample()` that throws, the same rule `g controller`
+      follows: jails has no type model, so a body it invented would be a test
+      of its guess. `--method` is now `Optional` for `client` in the recipe
+      metadata, so the arity table says what the CLI does.
+      *And M13, which this surfaced.* Adding a second client to the Spring
+      toolbox turned the first one's test red exactly as M13 describes:
+      `@ImportHttpServices` carries one group name and the shared
+      `HttpClientsConfig` was rewritten with the newer client's. Each client
+      gets its own `<Name>ClientConfig` listing itself by type now — additive
+      by construction — and two clients compile and pass together under real
+      Maven.
 - [ ] **P8.9** M10 — a seed path: `db/seeds/*.json` plus a plain Java
       `SeedRunner` going through repository **ports**, never JDBC. Production
       execution behind an explicit profile or flag. Its absence is what pushed

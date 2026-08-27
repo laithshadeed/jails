@@ -123,6 +123,11 @@ pub(crate) fn metadata(recipe: ArtifactKind) -> RecipeMetadata {
         Strategy => (PersistentIntent, Required, Optional),
         Usecase => (PersistentIntent, Required, Optional),
         Query => (PersistentIntent, Required, Forbidden),
+        // `--on` is the request body and `--yields` the response, exactly as
+        // `controller` reads them. They were accepted and discarded until
+        // `missing.md` M7 counted what that produced: a REST collection
+        // nobody asked for, reported as success.
+        Client => (PersistentIntent, Optional, Optional),
         Transition => (PersistentIntent, Required, Forbidden),
         HttpWorkflow => (PersistentIntent, Required, Forbidden),
         HttpSink => (PersistentIntent, Required, Required),
@@ -146,8 +151,8 @@ pub(crate) fn metadata(recipe: ArtifactKind) -> RecipeMetadata {
         Controller => (PersistentIntent, Optional, Optional),
 
         Scaffold | Service | Class | Interface | Record | Factory | Value | Enum | Sealed
-        | Repo | Handler | Command | Cli | Client | Fetcher | Job | Idempotency | Auth
-        | Webhook | Search | Dto | Event | Socket | Presence | Test | IntegrationTest => {
+        | Repo | Handler | Command | Cli | Fetcher | Job | Idempotency | Auth | Webhook
+        | Search | Dto | Event | Socket | Presence | Test | IntegrationTest => {
             (PersistentIntent, Forbidden, Forbidden)
         }
     };
@@ -170,7 +175,12 @@ pub(crate) fn metadata(recipe: ArtifactKind) -> RecipeMetadata {
     // that could set either to `get` would describe something that does not
     // work.
     let method = match recipe {
-        Controller => RefArity::Optional,
+        // `client` for the same reason `controller` has it: both describe one
+        // HTTP call, from the two ends. `handler` writes a whole CRUD surface
+        // rather than one route and `webhook` answers a signed POST by
+        // definition, so a flag that could set either to `get` would describe
+        // something that does not work.
+        Controller | Client => RefArity::Optional,
         _ => RefArity::Forbidden,
     };
     RecipeMetadata {
@@ -612,18 +622,23 @@ mod tests {
         }
     }
 
-    /// Only a recipe that answers HTTP takes `--method`.
+    /// Only a recipe that describes one HTTP call takes `--method`.
     ///
     /// The rule §R1.1 states as *"never silently ignore a CLI parameter"*,
     /// held from the other side: a flag accepted by a recipe with no endpoint
-    /// would be a value the reader believes they set.
+    /// would be a value the reader believes they set. `client` joined
+    /// `controller` when `missing.md` M7 measured what accepting and
+    /// discarding it produced.
     #[test]
-    fn only_an_endpoint_takes_a_method() {
+    fn only_one_call_takes_a_method() {
         for recipe in ArtifactKind::value_variants() {
             if metadata(*recipe).method == RefArity::Forbidden {
                 continue;
             }
-            assert_eq!(*recipe, ArtifactKind::Controller, "{recipe:?}");
+            assert!(
+                matches!(recipe, ArtifactKind::Controller | ArtifactKind::Client),
+                "{recipe:?}"
+            );
         }
     }
 

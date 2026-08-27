@@ -250,7 +250,8 @@ there the unit is a whole service block rather than a setting.)
   from the field spec (`@NotNull`, `@NotBlank`; never on a primitive, which
   cannot be null), and an `Optional<T>` component becomes a plain nullable
   field on the wire. Splices `spring-boot-starter-validation` if absent.
-- `jails generate|g client <Name>` — a declarative HTTP client: an
+- `jails generate|g client <Name> [--method <verb>] [--on <Request>]
+  [--returns <Response>] [--path <path>]` — a declarative HTTP client: an
   `@HttpExchange` interface, an `@ImportHttpServices` registration, and a test
   that drives it against a real socket on an ephemeral port. No base URL in
   the code — the group's URL comes from
@@ -258,6 +259,21 @@ there the unit is a whole service block rather than a setting.)
   `spring-boot-starter-restclient`, without which the proxies are built but no
   base URL is ever applied (the failure reads "URI with undefined scheme" and
   says nothing about a missing dependency).
+
+  **Name a verb, a body or a return type and you get that call**, not a REST
+  collection: `--method post --on ChatRequest --returns ChatReply --path
+  /v1/chat/completions` generates one `@PostExchange` method taking and
+  returning those types. Naming none of the three keeps the collection shape.
+  The three flags used to be accepted and silently discarded — the command
+  reported success for work it had not done, which is the failure class jails
+  is otherwise scrupulous about.
+
+  **Each client gets its own registration.** `@ImportHttpServices` carries one
+  group name, so a single shared config scanned by package meant a second
+  client rewrote it and every earlier client lost its configuration —
+  silently at generate time, and visibly only as the older client's own test
+  calling `https://example.invalid`. One `<Name>ClientConfig` per client,
+  listed by type, is additive by construction.
 - `jails generate|g fetcher <Name>` — a bounded outbound byte-fetch port and
   Apache HttpClient adapter. Every HTTP redirect is revalidated, requests stay
   on the exact original host, HTTPS cannot downgrade, private/reserved DNS

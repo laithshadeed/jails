@@ -676,7 +676,10 @@ pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 /// one value (plan.md P3.1): the column-collision refusal and the
 /// duplicate-name refusal were two branches of one condition, and the branch
 /// that survives is the one that already carried a `fix:` line.
-pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 423;
+// 423 -> 421: the two "takes only a name" refusals `fetcher` and
+// `idempotency` wrote inline are the one helper in `recipes/flags.rs` now,
+// and it carries a `fix:` line. plan.md P8.8.
+pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 421;
 
 /// A refusal that builds a message and does not say what to do next.
 ///
