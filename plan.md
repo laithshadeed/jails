@@ -969,11 +969,21 @@ The nine endpoints, verbatim from `customer.js` and `admin.js`:
       End to end on the checkout: `curl -d "user_id=42&status=open"` returns
       `{"id":1,"user_id":42,"status":"open"}`, which is the shape the two
       pages read.
-- [ ] **P10.4** **M14 — an enum constant has no wire value.** The vocabularies
+- [x] **P10.4** **M14 — an enum constant has no wire value.** The vocabularies
       here are `open`/`in_progress`/`resolved`/`closed` (lowercase),
       `Account`/`Billing`/`Product`/`Technical`/`Other` (TitleCase) and
       `-`/`!`/`!!`, which are not identifiers at all. `g enum` uppercases, so
       none of the three can be expressed.
+      Done: `NAME=wire`, parsed by one `ConstantSpec` that both the recorded
+      intent and the generator go through, so `gbp` and `GBP` cannot become
+      two spellings of one constant. The enum carries
+      `@JsonValue`/`@JsonCreator`; the database still stores the *name* and
+      the check constraint lists those, because a column is an internal
+      contract with one reader. On Spring there is also a
+      `Converter<String, X>` bean, because `@JsonValue` covers a JSON body and
+      nothing else -- a form carrying `status=open` was a 400, measured.
+      Proved end to end on the checkout: form in, `"status":"open"` out, and
+      an unknown value 400 rather than a null.
 - [ ] **P10.5** **M16 — the admin list filters are optional and independent.**
       Status, category and priority, any subset, and `g query` takes required
       scalars only.

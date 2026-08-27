@@ -80,6 +80,9 @@ pub enum ArgumentShape {
     Names,
     /// `childField=parentField`, which only `association` takes.
     Mappings,
+    /// `NAME` or `NAME=wire`, which only `enum` takes -- the one recipe whose
+    /// values reach a client. `missing.md` M14.
+    Constants,
 }
 
 /// One recipe's contract.
@@ -161,7 +164,8 @@ pub(crate) fn metadata(recipe: ArtifactKind) -> RecipeMetadata {
     // arm list would make the table unreadable at exactly the point a new
     // kind is added.
     let arguments = match recipe {
-        Enum | Sealed | Strategy | Search => ArgumentShape::Names,
+        Enum => ArgumentShape::Constants,
+        Sealed | Strategy | Search => ArgumentShape::Names,
         Association => ArgumentShape::Mappings,
         Scaffold | Controller | Service | Class | Interface | Record | Factory | Value | Repo
         | Handler | Command | Cli | Client | Fetcher | Job | Idempotency | Auth | Webhook | Dto

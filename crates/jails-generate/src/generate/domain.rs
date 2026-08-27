@@ -532,7 +532,11 @@ pub(crate) fn enum_constants(project: &Project, pkg: &str, type_name: &str) -> O
     let constants: Vec<String> = source
         .get(open..end)?
         .split(',')
-        .map(str::trim)
+        // A constant with a wire value is `OPEN("open")`, and the name is the
+        // half before the parenthesis. Reading the whole token would put
+        // `OPEN("open")` in a `check (... in (...))`, which fails at
+        // `flyway migrate` on whichever machine runs it first.
+        .map(|token| token.trim().split('(').next().unwrap_or("").trim())
         .filter(|token| {
             !token.is_empty()
                 && token

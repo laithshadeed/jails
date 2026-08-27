@@ -145,9 +145,6 @@ you are allowed to rewrite — they are the fixed side of the contract.
 Four separate causes, three of them new:
 
 - **the paths are derived** — M8
-- **three of the four enums have wire values jails cannot spell**: `open`,
-  `in_progress` (lowercase), `Product`, `Billing` (TitleCase), and `-`, `!`,
-  `!!` (not identifiers at all) — **M14**
 - **the admin filters are optional** — any subset of status/category/priority —
   and `g query` takes required scalars only — **M16**
 
@@ -194,49 +191,6 @@ jails puts a `fix:` on a refusal; this line has none.
 
 The narrow fix is a distinct exit status for "applied, effect failed" — or, at
 minimum, `fix: jails add db --no-start` on that line.
-
----
-
-## M14 — enum constants are silently uppercased, and there is no wire value
-
-`explain enum` says "a closed set of named constants, **stored by name**".
-There is no way to give a constant a different serialized form, and jails
-rewrites what you pass without saying so.
-
-```sh
-jails g enum Status open in_progress resolved closed
-grep -A4 'enum Status' src/main/java/com/x/domain/Status.java
-```
-
-```java
-public enum Status {
-    OPEN,
-    IN_PROGRESS,
-    RESOLVED,
-    CLOSED
-```
-
-I asked for `open` and got `OPEN`, with no warning. The generated API then
-emits `"OPEN"` where the shipped admin website sends and expects `"open"`.
-Same for `Product`/`Billing` → `PRODUCT`/`BILLING`.
-
-And the third enum cannot be expressed at all:
-
-```sh
-jails g enum Priority - '!' '!!'
-```
-
-```
-jails: name `-` starts with `-`; a Java identifier starts with a letter, `_` or `$`
-```
-
-That refusal is correct — those are not Java identifiers — but there is no
-`@value("-")` to attach the wire form to a legal constant name either.
-
-All three of `minicom-15-01-2026`'s enums are unrepresentable on the wire, and
-enum-valued columns are exactly where a ported service meets an existing
-client. The silent uppercasing is the worse half: an unknown field marker is an
-error in jails, but an unspellable enum constant is quietly rewritten.
 
 ---
 
@@ -328,13 +282,13 @@ and should stay that way. It is the observation that *get-or-create by natural
 key*, *read across an association*, and *bidirectional push* are three generic
 primitives, and that all six of these projects needed all three.
 
-The second cluster is smaller and cheaper: **M14 and M16 are two remaining
-missing knobs** — an enum's wire value and an optional filter. A route path
-(M8) and a form binding (M15) were the other two, and both have shipped. None
-of them asks jails to understand anything new. Together they are the whole
-reason `mc-15-01` matches zero of ten endpoints while modelling the domain
-perfectly, and they are what separates "scaffolds a new service" from "can be
-pointed at an existing client".
+The second cluster is smaller and cheaper: **M16 is the one remaining missing
+knob** — an optional filter. A route path (M8), a form binding (M15) and an
+enum's wire value (M14) were the other three, and all have shipped. None of
+them asks jails to understand anything new. Together they are the whole reason
+`mc-15-01` matched zero of ten endpoints while modelling the domain perfectly,
+and they are what separates "scaffolds a new service" from "can be pointed at
+an existing client".
 
 M1 and M2 were different again: defects rather than absences, and both
 invisible to the suite for the same reason — the golden scenarios exercise one

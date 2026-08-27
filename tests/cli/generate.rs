@@ -5499,3 +5499,98 @@ fn a_form_bound_record_answers_to_the_names_this_projects_wire_actually_uses() {
     // is noise in every record with a one-word component.
     assert!(!bound.contains("@BindParam(\"subject\")"), "{bound}");
 }
+
+/// `missing.md` M14: the wire value, in the three shapes one real project
+/// needed and `g enum` could spell none of.
+///
+/// The Java name and the wire value are two different things, and treating
+/// them as one fails quietly: an enum whose constants are `OPEN` and
+/// `IN_PROGRESS` serialises as `"OPEN"`, the page reads `"open"`, and the
+/// badge is simply blank.
+///
+/// Proved against a running server before it was written down: a form
+/// carrying `status=open` binds, the response carries `"status":"open"`, and
+/// `status=nope` is a 400 rather than a null.
+#[test]
+fn an_enum_constant_can_be_called_something_else_on_the_wire() {
+    let root = temp_dir("enum-wire");
+    write_spring_fixture(&root);
+
+    let output = jails_cmd(&root, None)
+        .args([
+            "g",
+            "enum",
+            "IssueStatus",
+            "OPEN=open",
+            "IN_PROGRESS=in_progress",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let source =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/domain/IssueStatus.java"))
+            .unwrap();
+    assert!(source.contains("OPEN(\"open\")"), "{source}");
+    assert!(source.contains("IN_PROGRESS(\"in_progress\")"), "{source}");
+    // The annotations are Jackson's and stayed at the 2.x package even in
+    // Jackson 3 -- databind's own pom says so.
+    assert!(
+        source.contains("import com.fasterxml.jackson.annotation.JsonValue;"),
+        "{source}"
+    );
+    assert!(source.contains("@JsonCreator"), "{source}");
+    // The refusal lists what it would have taken.
+    assert!(
+        source.contains("expected one of open, in_progress"),
+        "{source}"
+    );
+
+    // `@JsonValue` covers a JSON body and nothing else: a form field, a path
+    // variable and a query parameter go through Spring's conversion service,
+    // whose enum converter calls `valueOf`.
+    let converter = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/web/IssueStatusConverter.java"),
+    )
+    .unwrap();
+    assert!(
+        converter.contains("Converter<String, IssueStatus>"),
+        "{converter}"
+    );
+    assert!(
+        converter.contains("IssueStatus.fromWire(source)"),
+        "{converter}"
+    );
+
+    // The generated test asserts the round trip rather than restating it.
+    let test =
+        fs::read_to_string(root.join("src/test/java/com/example/demo/domain/IssueStatusTest.java"))
+            .unwrap();
+    assert!(test.contains("roundTripsEveryWireValue"), "{test}");
+    assert!(test.contains("rejectsAnUnknownWireValue"), "{test}");
+
+    // An enum whose constants are called their own names is byte-identical to
+    // what it always was: no constructor, no annotations, no converter.
+    let plain = temp_dir("enum-plain");
+    write_spring_fixture(&plain);
+    let status = jails_cmd(&plain, None)
+        .args(["g", "enum", "Currency", "GBP", "EUR"])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let source =
+        fs::read_to_string(plain.join("src/main/java/com/example/demo/domain/Currency.java"))
+            .unwrap();
+    assert!(source.contains("    GBP,\n    EUR\n}"), "{source}");
+    assert!(!source.contains("JsonValue"), "{source}");
+    assert!(
+        !plain
+            .join("src/main/java/com/example/demo/web/CurrencyConverter.java")
+            .exists()
+    );
+}

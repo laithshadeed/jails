@@ -28,9 +28,11 @@
 //! - **Anything after an index column but `asc`/`desc`** — the current
 //!   pass-through tail would persist arbitrary text as trusted generated SQL.
 
+mod constant;
 mod field;
 mod index;
 
+pub use constant::ConstantSpec;
 pub use field::{
     FieldConstraints, FieldSpec, FieldType, NumericConstraint, Optionality, ScalarFieldType,
     parse_fields,
@@ -96,6 +98,11 @@ impl Codec for FieldMapping {
 pub enum IntentArguments {
     Fields(Vec<FieldSpec>),
     Names(Vec<Name>),
+    /// An `enum`'s constants, each of which may say what it is called on the
+    /// wire. Separate from `Names` because only this recipe has a wire at all
+    /// -- a `sealed` variant and a `strategy` implementation are class names
+    /// and nothing else. `missing.md` M14.
+    Constants(Vec<ConstantSpec>),
     Mappings(Vec<FieldMapping>),
 }
 
@@ -110,6 +117,7 @@ impl IntentArguments {
         match self {
             Self::Fields(_) => ArgumentShape::Fields,
             Self::Names(_) => ArgumentShape::Names,
+            Self::Constants(_) => ArgumentShape::Constants,
             Self::Mappings(_) => ArgumentShape::Mappings,
         }
     }
@@ -131,6 +139,7 @@ impl IntentArguments {
         match self {
             Self::Fields(items) => items.is_empty(),
             Self::Names(items) => items.is_empty(),
+            Self::Constants(items) => items.is_empty(),
             Self::Mappings(items) => items.is_empty(),
         }
     }
@@ -140,6 +149,7 @@ impl IntentArguments {
         match self {
             Self::Fields(items) => items.iter().map(FieldSpec::canonical).collect(),
             Self::Names(items) => items.iter().map(|name| name.to_string()).collect(),
+            Self::Constants(items) => items.iter().map(ConstantSpec::canonical).collect(),
             Self::Mappings(items) => items.iter().map(FieldMapping::canonical).collect(),
         }
     }
@@ -166,6 +176,39 @@ impl IntentArguments {
                 }
                 Ok(Self::Names(names))
             }
+            ArgumentShape::Constants => {
+                let mut constants: Vec<ConstantSpec> = Vec::new();
+                for token in tokens {
+                    let constant = ConstantSpec::parse(token)?;
+                    if constants.iter().any(|held| held.name == constant.name) {
+                        return Err(format!(
+                            "`{}` is declared twice.\n       fix: drop one of them -- two \
+                             tokens can reach one constant, since `gbp` and `GBP` are the \
+                             same name.",
+                            constant.name
+                        )
+                        .into());
+                    }
+                    if let Some(clash) = constants
+                        .iter()
+                        .find(|held| held.wire_value() == constant.wire_value())
+                    {
+                        // Two constants one wire value: whichever arrives is
+                        // decoded as one of them and the other is unreachable,
+                        // silently.
+                        return Err(format!(
+                            "`{}` and `{}` are both called `{}` on the wire.\n       fix: give \
+                             them different wire values.",
+                            clash.name,
+                            constant.name,
+                            constant.wire_value()
+                        )
+                        .into());
+                    }
+                    constants.push(constant);
+                }
+                Ok(Self::Constants(constants))
+            }
             ArgumentShape::Mappings => {
                 let mut mappings: Vec<FieldMapping> = Vec::new();
                 for token in tokens {
@@ -185,6 +228,7 @@ impl IntentArguments {
             Self::Fields(_) => 0,
             Self::Names(_) => 1,
             Self::Mappings(_) => 2,
+            Self::Constants(_) => 3,
         }
     }
 }
@@ -208,6 +252,17 @@ impl Codec for IntentArguments {
                     }
                     previous = Some(name);
                     name.encode(encoder)?;
+                }
+            }
+            Self::Constants(constants) => {
+                encoder.count(constants.len())?;
+                let mut previous: Option<&Name> = None;
+                for constant in constants {
+                    if previous == Some(&constant.name) {
+                        return Err(format!("`{}` is declared twice", constant.name).into());
+                    }
+                    previous = Some(&constant.name);
+                    constant.encode(encoder)?;
                 }
             }
             Self::Mappings(mappings) => {
@@ -249,6 +304,13 @@ impl Codec for IntentArguments {
                     mappings.push(FieldMapping::decode(decoder)?);
                 }
                 Self::Mappings(mappings)
+            }
+            3 => {
+                let mut constants = Vec::new();
+                for _ in 0..count {
+                    constants.push(ConstantSpec::decode(decoder)?);
+                }
+                Self::Constants(constants)
             }
             other => return Err(format!("unknown intent argument tag {other}").into()),
         })

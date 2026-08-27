@@ -16,6 +16,7 @@
 //! project compiling.
 
 use super::*;
+use jails_protocol::declaration::ConstantSpec;
 use jails_support::Result;
 
 // ---- enum: the closed set of alternatives, and the one owned type whose
@@ -23,54 +24,158 @@ use jails_support::Result;
 
 /// Enum constants are `SCREAMING_SNAKE_CASE` by convention, and a generated
 /// file that ignores the convention is one the reader has to think about.
-pub(super) fn parse_constants(args: &[String]) -> Result<Vec<String>> {
+/// The constants an `enum` recipe declares, through the one parser.
+///
+/// `ConstantSpec::parse` is where a token becomes `(name, wire)` and where
+/// `gbp` becomes `GBP` -- the same parser the ledger's `IntentArguments` uses,
+/// so a recorded constant and a generated one cannot be spelled differently.
+/// `parse_fields` and `FieldSpec` have exactly this shape and for exactly this
+/// reason (`pending.md` §6.3 is what two parsers of one syntax cost).
+pub(super) fn parse_constants(args: &[String]) -> Result<Vec<ConstantSpec>> {
     if args.is_empty() {
         return Err(jails_support::Failure::Told(
             "an enum needs at least one constant, e.g. `generate enum Currency GBP EUR`"
                 .to_string(),
         ));
     }
-    let mut constants = Vec::new();
+    let mut constants: Vec<ConstantSpec> = Vec::new();
     for arg in args {
-        let constant: String = arg
-            .trim()
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() {
-                    c.to_ascii_uppercase()
-                } else {
-                    '_'
-                }
-            })
-            .collect();
-        if constant.is_empty() || constant.starts_with(|c: char| c.is_ascii_digit()) {
-            return Err(format!("'{arg}' is not a usable enum constant").into());
-        }
-        if constants.contains(&constant) {
-            return Err(format!("duplicate enum constant '{constant}'").into());
+        let constant = ConstantSpec::parse(arg)?;
+        if constants.iter().any(|held| held.name == constant.name) {
+            return Err(format!("duplicate enum constant '{}'", constant.name).into());
         }
         constants.push(constant);
     }
     Ok(constants)
 }
 
-pub(super) fn enum_java(pkg: &str, name: &str, constants: &[String]) -> String {
+pub(super) fn enum_java(pkg: &str, name: &str, constants: &[ConstantSpec]) -> String {
+    let wired = constants.iter().any(|constant| constant.wire.is_some());
     let mut out = format!("package {pkg};\n\n");
+    if wired {
+        out += "import com.fasterxml.jackson.annotation.JsonCreator;\n";
+        out += "import com.fasterxml.jackson.annotation.JsonValue;\n\n";
+    }
     out += "/**\n";
     out += &format!(" * The {name} values this application understands.\n");
     out += " *\n";
     out += " * <p>A closed set, so a switch over it is checked for exhaustiveness and\n";
     out += " * adding a constant makes the compiler point at every place that has to\n";
     out += " * handle it.\n";
+    if wired {
+        out += " *\n";
+        out += " * <p>The name and the wire value are two different things: the database\n";
+        out += " * stores the name and the check constraint lists those, while a client\n";
+        out += " * sees what {@code wire()} returns.\n";
+    }
     out += " */\n";
     out += &format!("public enum {name} {{\n");
-    out += &format!("    {}\n", constants.join(",\n    "));
+    if !wired {
+        out += &format!(
+            "    {}\n",
+            constants
+                .iter()
+                .map(|constant| constant.name.to_string())
+                .collect::<Vec<_>>()
+                .join(",\n    ")
+        );
+        out += "}\n";
+        return out;
+    }
+    out += &format!(
+        "    {};\n",
+        constants
+            .iter()
+            .map(|constant| format!("{}(\"{}\")", constant.name, constant.wire_value()))
+            .collect::<Vec<_>>()
+            .join(",\n    ")
+    );
+    out += "\n    private final String wire;\n\n";
+    out += &format!("    {name}(String wire) {{\n        this.wire = wire;\n    }}\n\n");
+    out += "    /** What this constant is called outside the application. */\n";
+    out += "    @JsonValue\n";
+    out += "    public String wire() {\n        return this.wire;\n    }\n\n";
+    out += "    /**\n";
+    out += &format!("     * The {name} a client named, by wire value.\n");
+    out += "     *\n";
+    out += "     * <p>An unknown value throws, listing what it would have taken. A null\n";
+    out += "     * return here would be a request body that binds to null and fails\n";
+    out += "     * somewhere else entirely.\n";
+    out += "     */\n";
+    out += "    @JsonCreator\n";
+    out += &format!("    public static {name} fromWire(String value) {{\n");
+    out += &format!("        for ({name} candidate : values()) {{\n");
+    out += "            if (candidate.wire.equals(value)) {\n";
+    out += "                return candidate;\n";
+    out += "            }\n        }\n";
+    out += &format!(
+        "        throw new IllegalArgumentException(\n                \"no {name} with wire \
+         value '\" + value + \"'; expected one of {}\");\n",
+        constants
+            .iter()
+            .map(|constant| constant.wire_value().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    out += "    }\n";
     out += "}\n";
     out
 }
 
-pub(super) fn enum_test(pkg: &str, name: &str, constants: &[String]) -> String {
-    let first = &constants[0];
+/// The bean that lets a wire value arrive as anything other than a JSON body.
+///
+/// `@JsonValue` is Jackson's, and Jackson is not what binds a form field, a
+/// path variable or a query parameter -- Spring's own conversion service is,
+/// and its `StringToEnumConverterFactory` calls `Enum.valueOf`. So a form
+/// carrying `status=open` at an endpoint expecting `IssueStatus` is **400**,
+/// with a message about a binding failure rather than about the value.
+/// Measured against a running server before this existed.
+///
+/// `None` off Spring, and `None` for an enum whose constants are called their
+/// own names: `valueOf` already does that, and a converter restating it is a
+/// bean with nothing to do.
+pub(super) fn enum_converter_java(
+    web: &str,
+    domain: &str,
+    name: &str,
+    constants: &[ConstantSpec],
+    spring: bool,
+) -> Option<String> {
+    if !spring || !constants.iter().any(|constant| constant.wire.is_some()) {
+        return None;
+    }
+    let import = import_of(web, domain, name);
+    Some(format!(
+        r#"package {web};
+
+{import}import org.springframework.core.convert.converter.Converter;
+import org.springframework.stereotype.Component;
+
+/**
+ * Reads a {name} from the value a client sends.
+ *
+ * <p>{{@code @JsonValue}} covers a JSON body and nothing else: a form field, a
+ * path variable and a query parameter all go through Spring's conversion
+ * service, whose enum converter calls {{@code valueOf}} and therefore knows
+ * only the Java names. Without this bean, a request carrying a wire value is a
+ * 400 whose message is about binding rather than about the value.
+ */
+@Component
+public final class {name}Converter implements Converter<String, {name}> {{
+
+    @Override
+    public {name} convert(String source) {{
+        return {name}.fromWire(source);
+    }}
+}}
+"#
+    ))
+}
+
+pub(super) fn enum_test(pkg: &str, name: &str, constants: &[ConstantSpec]) -> String {
+    let first = constants[0].name.to_string();
+    let first = &first;
+    let wire = wire_round_trip_test(name, constants);
     format!(
         r#"package {pkg};
 
@@ -96,10 +201,44 @@ class {name}Test {{
     void declaresEveryConstantExactlyOnce() {{
         assertThat({name}.values()).hasSize({count}).doesNotHaveDuplicates();
     }}
-}}
+{wire}}}
 "#,
         count = constants.len()
     )
+}
+
+/// The wire round trip, for an enum that has one.
+///
+/// Empty for an enum whose constants are called their own names -- there is
+/// nothing there that `valueOf` does not already cover, and a test asserting
+/// `X.wire()` equals `"X"` would pin a method that does not exist.
+fn wire_round_trip_test(name: &str, constants: &[ConstantSpec]) -> String {
+    if !constants.iter().any(|constant| constant.wire.is_some()) {
+        return String::new();
+    }
+    let mut out = String::new();
+    out += "\n    /** The name is what the database stores; this is what a client sees. */\n";
+    out += "    @Test\n";
+    out += "    void roundTripsEveryWireValue() {\n";
+    for constant in constants {
+        out += &format!(
+            "        assertThat({name}.{}.wire()).isEqualTo(\"{}\");\n",
+            constant.name,
+            constant.wire_value()
+        );
+    }
+    out += &format!("        for ({name} constant : {name}.values()) {{\n");
+    out +=
+        &format!("            assertThat({name}.fromWire(constant.wire())).isEqualTo(constant);\n");
+    out += "        }\n    }\n\n";
+    out += "    /** An unknown wire value throws rather than binding to null. */\n";
+    out += "    @Test\n";
+    out += "    void rejectsAnUnknownWireValue() {\n";
+    out += &format!(
+        "        assertThatIllegalArgumentException().isThrownBy(() ->          {name}.fromWire(\"nope\"));\n"
+    );
+    out += "    }\n";
+    out
 }
 
 // ---- sealed: the closed set whose cases carry different data, which is the
@@ -371,10 +510,11 @@ pub(super) fn strategy_artifacts(
                  to be rewritten."
         )
     })?;
-    let spring = matches!(
-        crate::pom::read(root).map(|p| crate::pom::flavor(&p)),
-        Ok(crate::pom::Flavor::SpringBoot)
-    );
+    // `project.flavor()`, not `pom::read`: the second opens `pom.xml`
+    // whatever the build tool is, so on a Gradle project it answers a
+    // confident "not Spring" and every implementation loses its `@Component`
+    // -- which is the *silent* half of this kind's failure mode.
+    let spring = slice.flavor() == crate::pom::Flavor::SpringBoot;
     // Where `--on` and `--yields` already live. They are somebody
     // else's types, so their home is the conventional one whatever
     // `--package` says about this call's own classes.

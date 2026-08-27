@@ -672,6 +672,22 @@ pub const SCENARIOS: &[Scenario] = &[
             &["g", "seed", "Widget"],
         ],
     },
+    // `missing.md` M14: the three closed sets one real project needed and
+    // `g enum` could not spell -- lowercase, TitleCase, and two that are not
+    // identifiers in any casing.
+    Scenario {
+        name: "enum-wire-values",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[&[
+            "g",
+            "enum",
+            "IssuePriority",
+            "NONE=-",
+            "HIGH=!",
+            "URGENT=!!",
+        ]],
+    },
     // `--consumes form`: the wire format `missing.md` M15 counted, on the
     // recipe that needs it most. A form post is what every jQuery page sends
     // and what a `@RequestBody` endpoint answers 415 to.

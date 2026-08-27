@@ -498,7 +498,28 @@ pub(crate) fn artifacts_for(
             ];
             // The schema carries the closed set (P5.1), so widening the enum
             // is a schema change as much as a Java one. plan.md P5.2.
-            artifacts.extend(closed_set_widening(project, &domain, name, &constants)?);
+            if let Some(contents) = enum_converter_java(
+                &place(layout::WEB),
+                &domain,
+                name,
+                &constants,
+                project.flavor() == crate::pom::Flavor::SpringBoot,
+            ) {
+                artifacts.push(Artifact {
+                    kind: "enum converter",
+                    path: main_dir(&root, &place(layout::WEB))
+                        .join(format!("{name}Converter.java")),
+                    contents,
+                });
+            }
+            // The database stores the *name*, so the check constraint and its
+            // widening are about names and nothing else. The wire value is the
+            // external contract; a column is an internal one with one reader.
+            let names: Vec<String> = constants
+                .iter()
+                .map(|constant| constant.name.to_string())
+                .collect();
+            artifacts.extend(closed_set_widening(project, &domain, name, &names)?);
             artifacts
         }
         ArtifactKind::Repo => {

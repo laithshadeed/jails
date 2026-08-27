@@ -1331,6 +1331,35 @@ applies, and inferring it would have `sync` install things nobody asked for.
 
 Run `jails adopt --pretend` first.
 
+### An enum constant's wire value
+
+```
+jails g enum IssueStatus OPEN=open IN_PROGRESS=in_progress
+jails g enum IssuePriority NONE=- HIGH=! URGENT=!!
+```
+
+A bare constant is called its own name and generates exactly what it always
+did. `NAME=wire` says the two are different, which they usually are once a
+client already exists — `open`, `Account`, `!!` are none of them Java
+identifiers in any casing.
+
+**The Java name and the wire value are two different things**, and treating
+them as one fails quietly: an enum whose constant is `OPEN` serialises as
+`"OPEN"`, the page reads `"open"`, and the badge is blank. So the enum carries
+`@JsonValue`/`@JsonCreator`, the generated test round-trips every value, and an
+unknown one throws listing what would have been accepted.
+
+**The database stores the name, not the wire value**, and the `check`
+constraint lists the names: a column is an internal contract with one reader,
+and the wire value is the external one.
+
+On a Spring project jails also writes `<Name>Converter`, a
+`Converter<String, <Name>>` bean. `@JsonValue` covers a JSON body and nothing
+else — a form field, a path variable and a query parameter all go through
+Spring's conversion service, whose enum converter calls `valueOf` and knows
+only the Java names. Without that bean a form carrying `status=open` is a 400
+whose message is about binding rather than about the value.
+
 ### `--consumes json|form`
 
 Every endpoint jails generated used to be `@Valid @RequestBody` — a JSON body.
