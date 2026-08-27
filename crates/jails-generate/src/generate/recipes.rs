@@ -50,6 +50,7 @@ pub(crate) fn artifacts_for(
         order_by,
         limit,
         on_conflict,
+        path,
         ..
     } = *recipe;
 
@@ -92,6 +93,9 @@ pub(crate) fn artifacts_for(
                 returns: strategy_yields,
                 accepts: strategy_on,
                 extra,
+                // The named contract, or the derived shape `g controller Bar`
+                // has always answered on.
+                path: crate::generate::web::route(path, name),
             };
             vec![
                 Artifact {
@@ -324,6 +328,7 @@ pub(crate) fn artifacts_for(
                 &capitalize(target),
                 &parsed,
                 on_conflict,
+                path,
             )?;
             if let Some(event) = strategy_yields {
                 files.extend(crate::spring::outbox_files(
@@ -358,7 +363,11 @@ pub(crate) fn artifacts_for(
                 &capitalize(target),
                 &parsed,
                 via.map(capitalize).as_deref(),
-                crate::spring::Bounds { order_by, limit },
+                crate::spring::Bounds {
+                    order_by,
+                    limit,
+                    path,
+                },
             )?
         }
         ArtifactKind::Transition => {

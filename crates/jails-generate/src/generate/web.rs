@@ -54,6 +54,12 @@ pub(super) struct Endpoint<'a> {
     /// records. Deciding it here would mean this file second-guessing the
     /// per-layer renames `Config::layers()` owns.
     pub extra: String,
+    /// The route this endpoint answers.
+    ///
+    /// Resolved by the caller rather than derived here: `--path` is a fixed
+    /// external contract when there is one and the derived shape when there is
+    /// not, and this module should not have to know which. `missing.md` M8.
+    pub path: String,
 }
 
 impl Endpoint<'_> {
@@ -76,6 +82,14 @@ impl Endpoint<'_> {
     fn body_type(&self) -> Option<&str> {
         self.accepts.filter(|_| self.method.takes_a_body())
     }
+}
+
+/// The route a stub controller answers: the caller's, or the one this kind has
+/// always derived. `missing.md` M8.
+pub(crate) fn route(named: Option<&str>, name: &str) -> String {
+    named
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("/{}", name.to_lowercase()))
 }
 
 pub(super) fn stub_controller(pkg: &str, name: &str, endpoint: &Endpoint<'_>) -> String {
@@ -109,7 +123,7 @@ pub(super) fn stub_controller(pkg: &str, name: &str, endpoint: &Endpoint<'_>) ->
         &[
             ("pkg", pkg),
             ("name", name),
-            ("route", &name.to_lowercase()),
+            ("path", &endpoint.path),
             // Order does not matter: `write_new_file` normalises every import
             // block, which is why templates must never hand-order them.
             ("imports", &imports),
@@ -277,7 +291,7 @@ pub(super) fn controller_stub_test(
             ("pkg", pkg),
             ("name", name),
             ("mockmvc_import", mockmvc_import),
-            ("route", &name.to_lowercase()),
+            ("path", &endpoint.path),
             ("handler", endpoint.method.handler_name()),
             ("assertion", &assertion),
             (
@@ -329,7 +343,7 @@ fn controller_stub_test_classic(
             ("pkg", pkg),
             ("name", name),
             ("mockmvc_import", mockmvc_import),
-            ("route", &name.to_lowercase()),
+            ("path", &endpoint.path),
             ("handler", endpoint.method.handler_name()),
             ("assertion", &assertion),
             (
@@ -772,6 +786,7 @@ mod tests {
             returns: None,
             accepts: None,
             extra: String::new(),
+            path: "/post".to_string(),
         }
     }
 

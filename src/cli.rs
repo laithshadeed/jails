@@ -571,6 +571,15 @@ pub(crate) enum Command {
         /// to conflict on otherwise -- and must be one the command carries.
         #[arg(long = "on-conflict", value_name = "COMPONENT")]
         on_conflict: Option<String>,
+        /// The route a generated endpoint answers, instead of the derived one.
+        ///
+        ///   jails g usecase Ping email:string! --on User --path /customer_api/ping
+        ///
+        /// Derived paths are a virtue greenfield; they are unusable when the
+        /// URLs are a fixed external contract. Valid on `controller`,
+        /// `usecase` and `query`.
+        #[arg(long, value_name = "PATH")]
+        path: Option<String>,
         /// For `controller`, the HTTP method the generated route answers.
         /// Defaults to `get`.
         ///

@@ -17,6 +17,6 @@ class {{name}}ControllerTest {
 
     @Test
 {{disabled}}    void {{handler}}Answers() throws Exception {
-        mvc.perform({{handler}}("/{{route}}")){{assertion}};
+        mvc.perform({{handler}}("{{path}}")){{assertion}};
     }
 }

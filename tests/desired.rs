@@ -362,6 +362,7 @@ fn what_a_plan_desires_is_what_the_command_writes() {
                 order_by: None,
                 limit: None,
                 on_conflict: None,
+                path: None,
                 method: invocation.method,
             },
             invocation.package.as_deref(),

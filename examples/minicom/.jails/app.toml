@@ -85,6 +85,8 @@ on = "Message"
 via = "User"
 order_by = "timeStamp desc"
 limit = 20
+# The URL is the frontend's, not jails'. `foo-website/foo.js` hardcodes it.
+path = "/customer_api/read"
 
 # `User.get_or_create_from_email(email)` — the first line of the Django ping
 # handler, and of two of the other five ports. `g usecase` always inserted, so
@@ -96,6 +98,7 @@ name = "EnsureUser"
 fields = ["email:string!"]
 on = "User"
 on_conflict = "email"
+path = "/customer_api/ping"
 
 # `consumers.py` tracks admin presence in a module-level dict, under a comment
 # saying it works *because* there is one Daphne process. It is correct on one

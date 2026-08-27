@@ -36,6 +36,28 @@ pub(super) fn refuse_misplaced(recipe: &Recipe<'_>) -> Result<()> {
         "the recipe that creates a row",
         recipe.on_conflict.is_some(),
     )?;
+    // Three recipes answer HTTP on a route a caller might have to match.
+    // `handler` writes a whole CRUD surface rather than one route and
+    // `webhook` answers a signed POST by definition, so neither is one path.
+    if recipe.path.is_some()
+        && !matches!(
+            recipe.kind,
+            ArtifactKind::Controller | ArtifactKind::Usecase | ArtifactKind::Query
+        )
+    {
+        use clap::ValueEnum;
+        return Err(format!(
+            "`--path` applies to a controller, a use case or a query.\n       fix: drop it from \
+             `jails g {} {}`.",
+            recipe
+                .kind
+                .to_possible_value()
+                .expect("every kind has a clap value")
+                .get_name(),
+            recipe.name
+        )
+        .into());
+    }
     takes_only_a_name(
         recipe,
         ArtifactKind::Socket,

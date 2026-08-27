@@ -109,6 +109,10 @@ pub(super) fn declared(
         .on_conflict
         .map(jails_protocol::identity::Name::parse)
         .transpose()?;
+    spec.path = recipe
+        .path
+        .map(jails_protocol::identity::RoutePath::parse)
+        .transpose()?;
     // Recorded, not applied: an intent regenerated with a different verb is
     // the *same* entity with new content, which is what makes it an edit the
     // three-way merge can carry rather than an orphan and a rewrite.

@@ -55,6 +55,7 @@ pub(super) fn companion_updates(
         let order_by = ordering_token(&after);
         let limit = after.limit;
         let on_conflict = after.on_conflict.as_ref().map(ToString::to_string);
+        let path = after.path.as_ref().map(ToString::to_string);
         let mut change = with_test_support(
             project,
             jails_generate::generate::plan_recipe(
@@ -70,6 +71,7 @@ pub(super) fn companion_updates(
                     order_by: order_by.as_deref(),
                     limit,
                     on_conflict: on_conflict.as_deref(),
+                    path: path.as_deref(),
                     method: after.method,
                 },
                 package,
@@ -239,6 +241,7 @@ fn dependent_updates(
         let order_by = ordering_token(&spec);
         let limit = spec.limit;
         let on_conflict = spec.on_conflict.as_ref().map(ToString::to_string);
+        let path = spec.path.as_ref().map(ToString::to_string);
         let mut change = with_test_support(
             &projected,
             jails_generate::generate::plan_recipe(
@@ -254,6 +257,7 @@ fn dependent_updates(
                     order_by: order_by.as_deref(),
                     limit,
                     on_conflict: on_conflict.as_deref(),
+                    path: path.as_deref(),
                     method: spec.method,
                 },
                 package,

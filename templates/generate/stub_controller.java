@@ -12,7 +12,7 @@ package {{pkg}};
 @RestController
 class {{name}}Controller {
 
-    @{{mapping}}("/{{route}}")
+    @{{mapping}}("{{path}}")
     {{returns}} {{handler}}({{parameters}}) {
         {{body}}
     }

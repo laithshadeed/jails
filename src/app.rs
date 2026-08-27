@@ -68,6 +68,8 @@ struct GenerateIntent {
     /// The target component whose unique constraint makes this create a
     /// get-or-create.
     on_conflict: Option<String>,
+    /// The route a generated endpoint answers.
+    path: Option<String>,
     method: Option<jails_spec::spec::kind::HttpMethod>,
 }
 
@@ -102,6 +104,7 @@ impl GenerateIntent {
             .chain(self.via.iter())
             .chain(self.order_by.iter())
             .chain(self.on_conflict.iter())
+            .chain(self.path.iter())
         {
             if value.contains(['\n', '\r', '|']) {
                 return Err(format!(
@@ -123,6 +126,7 @@ impl GenerateIntent {
             order_by: self.order_by,
             limit: self.limit,
             on_conflict: self.on_conflict,
+            path: self.path,
             method: self.method,
         })
     }

@@ -674,6 +674,7 @@ pub fn recipe_with_field_data(
                     order_by: intent.order_by.as_deref(),
                     limit: intent.limit,
                     on_conflict: intent.on_conflict.as_deref(),
+                    path: intent.path.as_deref(),
                     method: intent.method,
                 },
                 package,

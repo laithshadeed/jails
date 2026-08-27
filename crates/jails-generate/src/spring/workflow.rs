@@ -152,6 +152,7 @@ pub(crate) fn usecase_files(
     target: &str,
     fields: &[crate::generate::Field],
     on_conflict: Option<&str>,
+    route: Option<&str>,
 ) -> jails_support::Result<Vec<Artifact>> {
     require_scope_authorizer(slice, "usecase", name, fields)?;
     let resolved = Target::read(slice, "usecase", name, target)?;
@@ -326,7 +327,7 @@ pub(crate) fn usecase_files(
         Artifact {
             kind: "usecase controller",
             path: main_web.join(format!("{name}Controller.java")),
-            contents: usecase_controller_java(slice, target, name, fields),
+            contents: usecase_controller_java(slice, target, name, fields, route),
         },
         Artifact {
             kind: "usecase controller test",
@@ -616,16 +617,21 @@ fn usecase_controller_java(
     target: &str,
     name: &str,
     fields: &[crate::generate::Field],
+    route: Option<&str>,
 ) -> String {
     let security: &str = slice.base();
     let service: &str = &slice.placed(Layer::Service);
     let web: &str = &slice.placed(Layer::Web);
     let command_import = crate::generate::import_of(web, service, &format!("{name}Command"));
     let usecase_import = crate::generate::import_of(web, service, &format!("{name}UseCase"));
-    let path = format!(
-        "/actions/{}",
-        crate::sql::snake_case(name).replace('_', "-")
-    );
+    // The contract when the caller names one, the derived shape when they do
+    // not. `missing.md` M8.
+    let path = route.map(str::to_string).unwrap_or_else(|| {
+        format!(
+            "/actions/{}",
+            crate::sql::snake_case(name).replace('_', "-")
+        )
+    });
     let resource_path = format!("/{}", crate::sql::table_name(target).replace('_', "-"));
     let (
         scope_import,
@@ -849,6 +855,7 @@ mod usecase_tests {
             "Note",
             &fields,
             None,
+            None,
         )
         .unwrap();
         let implementation = &files
@@ -906,6 +913,7 @@ mod usecase_tests {
             "WorkItem",
             &fields,
             None,
+            None,
         )
         .unwrap();
         let implementation = &files
@@ -960,6 +968,7 @@ mod usecase_tests {
             "Membership",
             &[],
             None,
+            None,
         )
         .unwrap_err();
 
@@ -981,6 +990,7 @@ mod usecase_tests {
             "CreateWorkspace",
             "Tenant",
             &fields,
+            None,
             None,
         )
         .unwrap_err();
@@ -1061,6 +1071,7 @@ mod query_tests {
             Bounds {
                 order_by: None,
                 limit: None,
+                path: None,
             },
         )
         .unwrap();
@@ -1113,6 +1124,7 @@ mod query_tests {
             Bounds {
                 order_by: None,
                 limit: None,
+                path: None,
             },
         )
         .unwrap_err();
@@ -1136,6 +1148,7 @@ mod query_tests {
             Bounds {
                 order_by: None,
                 limit: None,
+                path: None,
             },
         )
         .unwrap_err();

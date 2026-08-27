@@ -16,7 +16,7 @@ class {{name}}ControllerTest {
 
     @Test
 {{disabled}}    void {{handler}}Answers() {
-        assertThat(mvc.{{handler}}().uri("/{{route}}"))
+        assertThat(mvc.{{handler}}().uri("{{path}}"))
 {{assertion}};
     }
 }

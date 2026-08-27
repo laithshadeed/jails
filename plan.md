@@ -772,11 +772,25 @@ All three of `missing.md`'s named primitives, in full, plus the smaller entries.
       a table that has it. `request::as_column_names` is the one renderer now,
       and it reads the field's own recorded binding rather than `snake_case`,
       because a `@column(...)` override is exactly where the two differ.
-- [ ] **P8.7** M8 — `--path` on `g controller`, `g usecase`, `g query`. Derived
+- [x] **P8.7** M8 — `--path` on `g controller`, `g usecase`, `g query`. Derived
       paths are a virtue greenfield and unusable when the URLs are a fixed
       external contract. The derivability argument does not block it: `destroy`
       finds files by what the ledger recorded, so a recorded `--path` is no
       harder to undo than `--package` is meant to be.
+      *Done:* `RoutePath` is a validated protocol value rather than a
+      passthrough — it is text jails writes into an annotation, so a leading
+      `/` is required, `..` is refused and the charset is Spring's own path
+      grammar. The derived paths are unchanged where nothing names one, which
+      the goldens confirm byte-for-byte. `minicom` answers `/customer_api/ping`
+      and `/customer_api/read` now, which is what `foo-website/foo.js`
+      hardcodes, and it passes `jails check`.
+      *Noted on the way:* `IntentSpec` has taken five optional refinements in
+      this phase and is now large enough that clippy asks for the enum around
+      it to be boxed. It is deliberately not boxed — `Intent` is the variant a
+      ledger is almost entirely made of, so the indirection would pessimise
+      every row to save bytes on the few that are not intents — and the real
+      answer when it costs something is to group the refinements rather than
+      box the enum.
 - [ ] **P8.8** M7 — `g client` takes `--method`/`--on`/`--returns` (and the
       P8.7 path), so it generates the call the project makes rather than a REST
       collection to delete. The `HttpClientsConfig` / restclient splice it

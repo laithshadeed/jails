@@ -354,6 +354,14 @@ there the unit is a whole service block rather than a setting.)
   does not re-read generated SQL to recover a decision. A joined select
   qualifies every column, including the target's own.
 
+  **`--path` names the route**, for `controller`, `usecase` and `query`. A
+  derived path is a virtue greenfield — one shape, and every generated surface
+  agrees about it — and unusable when the URLs are a fixed external contract,
+  which is what porting a service or writing a server against an existing
+  frontend means. `--path /customer_api/ping` is recorded on the entity, so
+  `destroy` and a re-plan both know it; it is validated rather than passed
+  through, because it is text jails writes into an annotation.
+
   **`--order-by` and `--limit` say what the adapter used to decide silently.**
   `--order-by 'sentAt desc, id'` names components of `--on` (or the columns
   they map to), each optionally `asc`/`desc` and nothing else — arbitrary SQL

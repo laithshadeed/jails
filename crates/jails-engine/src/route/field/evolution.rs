@@ -131,6 +131,7 @@ pub(super) fn evolve_existing(
     let order_by = ordering_token(&after);
     let limit = after.limit;
     let on_conflict = after.on_conflict.as_ref().map(ToString::to_string);
+    let path = after.path.as_ref().map(ToString::to_string);
     let mut change = with_test_support(
         project,
         jails_generate::generate::plan_recipe(
@@ -146,6 +147,7 @@ pub(super) fn evolve_existing(
                 order_by: order_by.as_deref(),
                 limit,
                 on_conflict: on_conflict.as_deref(),
+                path: path.as_deref(),
                 method: after.method,
             },
             package,

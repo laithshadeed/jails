@@ -140,6 +140,7 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<Intent>)> {
                 }
                 "via" => intent.via = Some(string(value, line_number, key)?.to_string()),
                 "order_by" => intent.order_by = Some(string(value, line_number, key)?.to_string()),
+                "path" => intent.path = Some(string(value, line_number, key)?.to_string()),
                 "on_conflict" => {
                     intent.on_conflict = Some(string(value, line_number, key)?.to_string())
                 }
@@ -152,7 +153,7 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<Intent>)> {
                     return Err(format!(
                         "line {line_number}: unknown [[generate]] key `{key}`; known: \
                          kind, name, fields, timestamps, indexes, package, on, yields, via, \
-                         order_by, limit, on_conflict"
+                         order_by, limit, on_conflict, path"
                     )
                     .into());
                 }

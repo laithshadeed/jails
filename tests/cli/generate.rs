@@ -723,6 +723,110 @@ fn an_index_can_be_added_to_a_table_that_already_exists() {
     );
 }
 
+/// A route the caller names, because the URLs are somebody else's contract.
+///
+/// `missing.md` M8: the ported originals answer `/customer_api/ping`,
+/// `/admin_api/issues`, `/api/conversations/`, and none of those is derivable
+/// from any name jails would accept for the class. Derived paths stay the
+/// default -- they are a virtue greenfield -- and `--path` is how a port meets
+/// a fixed contract.
+#[test]
+fn a_named_route_replaces_the_derived_one_everywhere_it_appears() {
+    let root = temp_dir("named-route");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    for command in [
+        vec!["add", "db", "--no-start"],
+        vec![
+            "g",
+            "scaffold",
+            "Ping",
+            "id:uuid@pk",
+            "email:string!",
+            "createdAt:instant",
+        ],
+        vec![
+            "g",
+            "usecase",
+            "RecordPing",
+            "email:string!",
+            "--on",
+            "Ping",
+            "--path",
+            "/customer_api/ping",
+        ],
+        vec![
+            "g",
+            "query",
+            "PingsByEmail",
+            "email:string!",
+            "--on",
+            "Ping",
+            "--path",
+            "/customer_api/read",
+        ],
+        vec!["g", "controller", "Bar", "--path", "/bar"],
+    ] {
+        let output = jails_cmd(&root, None).args(&command).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{command:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    for (file, expected) in [
+        (
+            "src/main/java/com/example/demo/web/RecordPingController.java",
+            "\"/customer_api/ping\"",
+        ),
+        (
+            "src/main/java/com/example/demo/web/PingsByEmailQueryController.java",
+            "\"/customer_api/read\"",
+        ),
+        (
+            "src/main/java/com/example/demo/web/BarController.java",
+            "\"/bar\"",
+        ),
+    ] {
+        let source = fs::read_to_string(root.join(file)).unwrap();
+        assert!(source.contains(expected), "{file}:\n{source}");
+        assert!(!source.contains("/actions/"), "{file}:\n{source}");
+        assert!(!source.contains("/queries/"), "{file}:\n{source}");
+    }
+
+    // A path that is not one is refused rather than written into an
+    // annotation: this is text jails puts in a Java file.
+    for (bad, expected) in [
+        ("customer_api/ping", "does not start with"),
+        ("/customer api", "contains ` `"),
+        ("/api/../secret", "contains `..`"),
+    ] {
+        let refused = jails_cmd(&root, None)
+            .args(["g", "controller", "Other", "--path", bad])
+            .output()
+            .unwrap();
+        assert!(!refused.status.success(), "{bad} was accepted");
+        assert!(
+            String::from_utf8_lossy(&refused.stderr).contains(expected),
+            "{bad}: {}",
+            String::from_utf8_lossy(&refused.stderr)
+        );
+    }
+
+    // And a kind that answers no single route says so instead of ignoring it.
+    let wrong = jails_cmd(&root, None)
+        .args(["g", "record", "Thing", "id:uuid", "--path", "/thing"])
+        .output()
+        .unwrap();
+    assert!(!wrong.status.success());
+    assert!(
+        String::from_utf8_lossy(&wrong.stderr).contains("`--path` applies to"),
+        "{}",
+        String::from_utf8_lossy(&wrong.stderr)
+    );
+}
+
 #[test]
 fn generate_scaffold_writes_a_raw_jdbc_slice() {
     let root = temp_dir("scaffold-files");

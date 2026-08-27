@@ -331,6 +331,9 @@ pub struct Recipe<'a> {
     /// For `usecase`, the target component whose unique constraint turns the
     /// create into a get-or-create. plan.md P8.3.
     pub on_conflict: Option<&'a str>,
+    /// The route a generated endpoint answers, instead of the derived one.
+    /// plan.md P8.7.
+    pub path: Option<&'a str>,
     /// The HTTP verb an endpoint answers, when the recipe has one.
     ///
     /// `None` is "not asked", never "GET": the default belongs at the one

@@ -52,16 +52,18 @@ pub(super) struct Join {
     pub(super) parent_fields: Vec<crate::generate::Field>,
 }
 
-/// What a caller asked the read to be shaped like: the order and the ceiling.
+/// What a caller asked this read to look like: the order, the ceiling and the
+/// route.
 ///
-/// Both were decisions the adapter made silently -- newest first with the key
-/// as the tiebreak, and 100 rows -- and neither was sayable from the command
-/// line. `missing.md` M5's smaller half. They travel together because they are
-/// the same question (what comes back, and how much) and are consumed
-/// together, by one SQL statement.
+/// All three were decisions a generator made silently -- newest first with the
+/// key as the tiebreak, 100 rows, and `/queries/<name>` -- and none was
+/// sayable from the command line. `missing.md` M5's smaller half and M8. They
+/// travel together because they are one question asked three ways: what this
+/// read is, rather than what it filters on.
 pub(crate) struct Bounds<'a> {
     pub(crate) order_by: Option<&'a str>,
     pub(crate) limit: Option<u32>,
+    pub(crate) path: Option<&'a str>,
 }
 
 /// The declared order, as column names, or empty for the adapter's own rule.

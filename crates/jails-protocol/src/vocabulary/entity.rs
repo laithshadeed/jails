@@ -409,6 +409,13 @@ impl Codec for ToolFeatureSpec {
 /// The content half of an entity. Its discriminant must match its identity's —
 /// enforced by [`EntitySpec::matches`] wherever the two are paired.
 #[derive(Clone, Debug, Eq, PartialEq)]
+// `Intent` is much larger than its siblings and is deliberately not boxed:
+// it is also the variant a ledger is almost entirely made of, so an
+// indirection here would pessimise every row to save bytes on the handful
+// that are not intents. The size is `IntentSpec`'s optional refinements
+// accumulating -- `via`, `order_by`, `limit`, `on_conflict`, `path` -- and the
+// answer when that becomes a real cost is to group them, not to box the enum.
+#[allow(clippy::large_enum_variant)]
 pub enum EntitySpec {
     Capability(CapabilitySpec),
     Intent(IntentSpec),

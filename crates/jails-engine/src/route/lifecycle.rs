@@ -53,6 +53,7 @@ pub fn revive(run: &Run, selector: &str, table: &str) -> Result<Outcome> {
     let order_by = ordering_token(spec);
     let limit = spec.limit;
     let on_conflict = spec.on_conflict.as_ref().map(ToString::to_string);
+    let path = spec.path.as_ref().map(ToString::to_string);
     let package = relative_package(project, id.package.as_str())?;
     let mut change = with_test_support(
         project,
@@ -69,6 +70,7 @@ pub fn revive(run: &Run, selector: &str, table: &str) -> Result<Outcome> {
                 order_by: order_by.as_deref(),
                 limit,
                 on_conflict: on_conflict.as_deref(),
+                path: path.as_deref(),
                 method: spec.method,
             },
             package.as_deref(),
@@ -198,6 +200,7 @@ pub fn repair(run: &Run, selector: &str, datasource: Option<&str>) -> Result<Out
     let order_by = ordering_token(spec);
     let limit = spec.limit;
     let on_conflict = spec.on_conflict.as_ref().map(ToString::to_string);
+    let path = spec.path.as_ref().map(ToString::to_string);
     let package = relative_package(project, id.package.as_str())?;
     let mut change = with_test_support(
         project,
@@ -214,6 +217,7 @@ pub fn repair(run: &Run, selector: &str, datasource: Option<&str>) -> Result<Out
                 order_by: order_by.as_deref(),
                 limit,
                 on_conflict: on_conflict.as_deref(),
+                path: path.as_deref(),
                 method: spec.method,
             },
             package.as_deref(),

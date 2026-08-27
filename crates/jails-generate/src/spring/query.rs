@@ -180,7 +180,7 @@ pub(crate) fn query_files(
         Artifact {
             kind: "query controller",
             path: main_web.join(format!("{name}QueryController.java")),
-            contents: query_controller_java(slice, name, target, fields),
+            contents: query_controller_java(slice, name, target, fields, bounds.path),
         },
         Artifact {
             kind: "query controller test",
@@ -469,16 +469,22 @@ fn query_controller_java(
     name: &str,
     target: &str,
     fields: &[crate::generate::Field],
+    route: Option<&str>,
 ) -> String {
     let security: &str = slice.base();
     let service: &str = &slice.placed(Layer::Service);
     let web: &str = &slice.placed(Layer::Web);
     let query_import = crate::generate::import_of(web, service, &format!("{name}Criteria"));
     let port_import = crate::generate::import_of(web, service, &format!("{name}Query"));
-    let path = format!(
-        "/queries/{}",
-        crate::sql::snake_case(name).replace('_', "-")
-    );
+    // The contract when the caller names one, the derived shape when they do
+    // not. `missing.md` M8: a derived path is a virtue greenfield and unusable
+    // when the URLs are a fixed external contract.
+    let path = route.map(str::to_string).unwrap_or_else(|| {
+        format!(
+            "/queries/{}",
+            crate::sql::snake_case(name).replace('_', "-")
+        )
+    });
     let (
         scope_import,
         scope_field,
@@ -625,6 +631,7 @@ mod join_tests {
             Bounds {
                 order_by: None,
                 limit: None,
+                path: None,
             },
         )
         .unwrap();
@@ -670,6 +677,7 @@ mod join_tests {
             Bounds {
                 order_by: None,
                 limit: None,
+                path: None,
             },
         )
         .unwrap_err();
@@ -694,6 +702,7 @@ mod join_tests {
                 // exactly one column, and refusing one would be arbitrary.
                 order_by: Some("name desc, id"),
                 limit: Some(20),
+                path: None,
             },
         )
         .unwrap();
@@ -717,6 +726,7 @@ mod join_tests {
             Bounds {
                 order_by: Some("sentAt desc"),
                 limit: None,
+                path: None,
             },
         )
         .unwrap_err();
@@ -739,6 +749,7 @@ mod join_tests {
             Bounds {
                 order_by: None,
                 limit: Some(0),
+                path: None,
             },
         )
         .unwrap_err();
@@ -760,6 +771,7 @@ mod join_tests {
             Bounds {
                 order_by: None,
                 limit: None,
+                path: None,
             },
         )
         .unwrap_err();
