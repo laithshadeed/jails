@@ -40,6 +40,48 @@ H2's console and safe URL defaults (`jails db`, `jails db --web`, and two
 - **Adoption must not claim jails wrote the schema.** This project's DDL is in `schema.sql`, not a Flyway lineage jails sealed. An adopted resource is storage-backed by a table jails did not create, so `--storage drop` has to stay refused for it -- the recorded lineage is the authority for what jails may retire, and adoption must not forge one.
 - **Whatever cannot be read is confirmed, not defaulted.** A column says `varchar(64)` and not `@unique`; a record read off disk already carries no constraints for exactly this reason. The precedent to follow is `destroy --storage drop --confirm-table`: ask for the evidence rather than invent it.
 
+### A route whose key is in the URL (`transition` path binding)
+
+Measured on `minicom-15-01-2026-org`, implementing the feature list with jails
+commands only. Every PATCH the frontend sends is
+`/admin_api/conversations/{userId}/{field}`.
+
+- `g transition` takes `--path` and `--method patch` now, and `--select
+  <field>` lets it update a row keyed by `user_id` rather than `id`. What it
+  still cannot do is take that key **from the URL**: the command record carries
+  the selector, so a path variable is refused rather than mounted and ignored.
+- **Expected**: with `--path /x/{userId}/status --select userId`, generate a
+  command record *without* the selector and a port that takes it beside the
+  command -- the URL identifies the row, the body carries the change.
+- **Why it is refused rather than half-built**: mounting the variable without
+  binding it is exactly `bugs.md` B48, which cost three generated tests failing
+  with `Not enough variable values available to expand`. The two shapes of one
+  port are the drift risk, so this needs deciding rather than defaulting.
+
+### A `GET` with query-string filters (`query`)
+
+- `g query` emits GET when every filter is a path variable and POST otherwise,
+  so it cannot answer `GET /admin_api/users?status=open&category=Billing` --
+  which is what a browser sends and what the minicom admin UI already calls.
+- `--consumes form` binds `@ModelAttribute`, which Spring *does* fill from
+  query parameters on a GET, so the pieces exist and only the verb decision is
+  in the way.
+- **Expected**: `--consumes form` plus a filter set that is all optional should
+  give a GET binding from the query string.
+
+### `modernize` does not re-plan jails' own output
+
+- `jails modernize` moves the Boot version, and the Boot version decides what
+  jails' *own* generated files should say -- `javax.validation` vs
+  `jakarta.validation`, which `@AutoConfigureMockMvc` import, whether
+  `spring-boot-starter-webmvc-test` is needed. After modernizing, files jails
+  had written minutes earlier were reported as "rename these imports yourself".
+- Regenerating fixes them, so the repair exists and nothing triggers it.
+  `jails sync` re-plans recorded *capabilities*; there is no equivalent for
+  recorded resources.
+- **Expected**: `modernize` re-plans what the ledger records, the way `sync`
+  does, and reports only the files the reader owns.
+
 ### Dual-Format `consumes = [json, form]` Request Support
 
 - Current generators support `--consumes json` or `--consumes form`, but real-world web applications (like Minicom with jQuery `$.post` and API clients) frequently require endpoints that accept both form-urlencoded and JSON payloads without returning HTTP 415.
