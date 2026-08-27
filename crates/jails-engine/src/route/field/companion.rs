@@ -67,16 +67,7 @@ pub(super) fn companion_updates(
                 package,
             )?,
         );
-        change.files.retain(|artifact| {
-            !artifact
-                .path
-                .strip_prefix(project.root())
-                .is_ok_and(|path| {
-                    path.to_string_lossy()
-                        .replace('\\', "/")
-                        .starts_with("src/main/resources/db/migration/")
-                })
-        });
+        drop_migrations(project, &mut change);
         let owner = ResourceOwner::Entity(EntityId::Intent(id.clone()));
         let mut desired = desire::contribution(&owner, &change, project)?;
         provenance::stamp_files(
@@ -119,6 +110,41 @@ pub(super) fn companion_updates(
     })
 }
 
+/// A regenerated companion must not re-emit its migration.
+///
+/// The schema change belongs to the evolution itself: the companion's own
+/// `create table` was applied when it was first generated, and planning it
+/// again would either collide with the file on disk or append a second
+/// version of a migration that has already run.
+fn drop_migrations(project: &Project, change: &mut Change) {
+    change.files.retain(|artifact| {
+        !artifact
+            .path
+            .strip_prefix(project.root())
+            .is_ok_and(|path| {
+                path.to_string_lossy()
+                    .replace('\\', "/")
+                    .starts_with("src/main/resources/db/migration/")
+            })
+    });
+}
+
+/// The recipes that read the evolved resource's component list off disk.
+///
+/// Every one of them calls `Target::read` (or reads the record directly) and
+/// renders a constructor call, a row mapper or a column list from whatever
+/// `<Name>.java` said at the time — so adding one component makes each of
+/// them stale, and stale here means a project that no longer compiles. A
+/// recipe whose only use of `--on` is to name a type in a signature is
+/// deliberately absent: nothing it wrote stopped being true.
+const READS_THE_TARGETS_COMPONENTS: [ArtifactKind; 5] = [
+    ArtifactKind::Query,
+    ArtifactKind::Transition,
+    ArtifactKind::Usecase,
+    ArtifactKind::Association,
+    ArtifactKind::DurableJob,
+];
+
 /// Re-desire every recorded entity that *constructs* the evolved resource.
 ///
 /// A `query`, `transition` or `usecase` generated `--on Order` writes Java
@@ -150,16 +176,20 @@ fn dependent_updates(
             else {
                 return None;
             };
-            let targets_primary = spec.on.as_ref().is_some_and(|on| {
-                on.name() == &primary.name
-                    && (on.package().is_base() || on.package() == &primary.package)
-            });
-            (targets_primary
-                && matches!(
-                    id.recipe,
-                    ArtifactKind::Query | ArtifactKind::Transition | ArtifactKind::Usecase
-                ))
-            .then(|| (id.clone(), spec.clone()))
+            // `--yields` as well as `--on`: an `association` names its parent
+            // there, and a `usecase --yields <Event>` reads the event's
+            // components to build the outbox payload. Matching only `--on`
+            // left both of those constructing a type that had changed.
+            let names_primary = [spec.on.as_ref(), spec.yields.as_ref()]
+                .into_iter()
+                .flatten()
+                .any(|referenced| {
+                    referenced.name() == &primary.name
+                        && (referenced.package().is_base()
+                            || referenced.package() == &primary.package)
+                });
+            (names_primary && READS_THE_TARGETS_COMPONENTS.contains(&id.recipe))
+                .then(|| (id.clone(), spec.clone()))
         })
         .collect();
 
@@ -184,11 +214,12 @@ fn dependent_updates(
         // evolved resource's would write a second copy somewhere else.
         let package = recipe_package(project, &id, None)?;
         let package = package.as_deref();
-        let canonical_fields = spec
-            .fields()
-            .iter()
-            .map(FieldSpec::canonical)
-            .collect::<Vec<_>>();
+        // Whatever shape this recipe's arguments take. An `association`'s are
+        // `child=parent` mappings, not fields, and reading them as fields
+        // handed `plan_recipe` an empty list -- which it correctly refused as
+        // an association with no mapping, in the middle of an unrelated `g
+        // field`.
+        let canonical_fields = spec.arguments.canonical();
         let indexes = spec
             .indexes
             .iter()
@@ -196,7 +227,7 @@ fn dependent_updates(
             .collect::<Vec<_>>();
         let on = spec.on.as_ref().map(JavaType::qualified);
         let yields = spec.yields.as_ref().map(JavaType::qualified);
-        let change = with_test_support(
+        let mut change = with_test_support(
             &projected,
             jails_generate::generate::plan_recipe(
                 &projected,
@@ -212,6 +243,7 @@ fn dependent_updates(
                 package,
             )?,
         );
+        drop_migrations(project, &mut change);
         let owner = ResourceOwner::Entity(EntityId::Intent(id.clone()));
         let mut desired = desire::contribution(&owner, &change, project)?;
         provenance::stamp_files(

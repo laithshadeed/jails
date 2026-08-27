@@ -403,18 +403,33 @@ pub(crate) fn in_memory_repository_java(
                 note,
             )
         }
+        // Fail loudly, the same way the JDBC adapter's composite-key arms
+        // do. This branch used to answer `Optional.empty()` under a TODO and
+        // `false` from a `remove` that could never match, over a `save` that
+        // keyed on a counter -- three methods quietly doing the wrong thing
+        // under a comment explaining why. `modern.md` §8.1 is what that reads
+        // like from the outside. plan.md P7.1.
+        //
+        // Unreachable from `g scaffold`, which requires exactly one `@pk`;
+        // this is what keeps it unreachable *loudly* if another caller
+        // arrives.
         None => (
-            "        // TODO: jails cannot see which component of this type is\n\
-             \x20       // its identity -- no `@pk`, and no component it has a\n\
-             \x20       // storage mapping for. Pick one and key `items` on it.\n\
-             \x20       return Optional.empty();"
-                .to_string(),
-            "        return items.remove(id) != null;".to_string(),
+            format!(
+                "        throw new UnsupportedOperationException(\n\
+                 \x20               \"{name} declares no single key this port can take\");"
+            ),
+            format!(
+                "        throw new UnsupportedOperationException(\n\
+                 \x20               \"{name} declares no single key this port can take\");"
+            ),
             format!(
                 "        items.put(String.valueOf(items.size()), {var});\n        return {var};"
             ),
-            " * <p>This type declares no key jails can see, so lookups by id are\n\
-             \x20* left unimplemented -- see the TODO in {@code findById}.\n"
+            " * <p>This type declares no single key this port can take, so {@code findById}\n\
+             \x20* and {@code deleteById} throw rather than quietly answering empty and\n\
+             \x20* {@code false} forever. {@code save} and {@code findAll} still work:\n\
+             \x20* rows are keyed in insertion order, which is only safe because nothing\n\
+             \x20* can remove one.\n"
                 .to_string(),
         ),
     };

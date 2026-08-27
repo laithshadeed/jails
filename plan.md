@@ -578,7 +578,7 @@ commit as the change that causes it.
 
 ## P7 — evolution keeps derived code true (cause F)
 
-- [ ] **P7.1** A generated file whose stated premise has become false is
+- [x] **P7.1** A generated file whose stated premise has become false is
       re-planned or reported, never left with a comment contradicting the code
       beside it (modern §11.4). `g field id` wrote `V004` and left
       `InMemoryUserRepository.findById` returning `Optional.empty()` with a
@@ -586,6 +586,23 @@ commit as the change that causes it.
       on a colliding counter, `deleteById` removing a `UUID` from a
       `Map<String, …>` (modern §8.3). Extend the companion re-plan that landed
       for `g field` in `e3c7041`.
+      *Done:* three things. The dependent set is no longer a three-kind
+      allowlist matched on `--on`: it is every recipe that reads the target's
+      component list off disk — `query`, `transition`, `usecase`,
+      `association`, `durable-job` — matched on `--on` **or** `--yields`, which
+      is how an association names its parent and a `durable-job` its resource.
+      A companion is re-planned from its own argument *shape*, so an
+      association's `child=parent` mappings are no longer read as an empty
+      field list — that refused the whole unrelated `g field` with "association
+      needs at least one `childField=parentField` mapping". And a regenerated
+      companion no longer re-emits the migration its first generation already
+      applied.
+      The `InMemoryUserRepository` state itself is unreachable now — `g
+      scaffold` requires exactly one `@pk`, and with a single key the fake and
+      the JDBC adapter key on the same component (P3.3). What was left was the
+      branch that produced it: three methods quietly doing the wrong thing
+      under a comment explaining why, beside a JDBC adapter that failed
+      explicitly on the same input. It throws now.
 - [x] **P7.2** `--package` is not a one-way door (missing M1b). The report was
       that placement is unrecorded; it is not — `--package` is part of an
       entity's *identity*, deliberately, which is what makes slices possible.

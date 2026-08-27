@@ -240,22 +240,7 @@ three separate defects in the *read* and *command* endpoints:
 
 ## 8. Correctness bugs, ranked
 
-1. **`InMemoryUserRepository` cannot work.**
-   ```java
-   public Optional<User> findById(UUID id) {
-       // TODO: this type has no `id` component …
-       return Optional.empty();
-   }
-   public void save(User user) { items.put(String.valueOf(items.size()), user); }
-   public boolean deleteById(UUID id) { return items.remove(id) != null; }  // Map<String,…>
-   ```
-   `findById` always empty; `save` keys on a counter that collides after any
-   removal; `deleteById` removes a `UUID` from a `Map<String, User>` and is
-   always `false`. The class Javadoc says the type has no `id` component —
-   `User`'s first component is `UUID id`. The file was generated before `id`
-   existed and never regenerated, and nothing detected the contradiction.
-
-2. **`MessageCreatedListener` is a `TODO`.**
+1. **`MessageCreatedListener` is a `TODO`.**
    It logs an id and drops the event. Shipped.
 
 ---
@@ -479,19 +464,6 @@ by a single follow-up read rather than by two exception types.
 
 ---
 
-## 11. Where this comes from, and what would fix it
-
-These are notes for jails, not changes.
-
-1. **Evolution regenerates the schema but not the code that was derived from
-   it.** `g field id` wrote `V004` and left `InMemoryUserRepository.findById`
-   returning `Optional.empty()` with a TODO saying the type has no id, and left
-   `MessageRepository.findById(String)` typed against an id that is now a
-   `UUID`. A generated file whose stated premise has become false should be
-   re-planned or reported, not left with a comment contradicting the code beside it.
-
----
-
 ## 12. What is genuinely good, and worth not losing
 
 Being fair about this, because a rewrite that discards it would be worse:
@@ -602,14 +574,14 @@ the first of the two branches this entry offered. `@unique` on an
 email-shaped column is case-insensitive (plan.md P5.4); whether `@unique` was
 *typed* remains the reader's call, and that is what `@unique` is for.
 
-### 13.11 What this changes about §11
+### 13.11 What this changes about the root causes
 
 The corpus splits the root causes cleanly, and only the first two are about
 input:
 
 | | fixable by typing a better spec | jails-side, survives perfect input |
 |---|---|---|
-| snake_case in Java | ✅ (but §11.1 still holds — jails should converge) | |
+| snake_case in Java | ✅ | |
 | no primary key | ✅ | |
 | no FK index | ✅ | |
 | enum vs `String` in Java | ✅ | |

@@ -509,6 +509,132 @@ fn a_field_regenerates_the_companions_that_construct_the_resource() {
     }
 }
 
+/// The same rule, for the two companions `--on` alone did not reach.
+///
+/// An `association` names its parent with `--yields` and its child with
+/// `--on`, and a `durable-job` names the resource it produces with
+/// `--yields` -- so a match on `--on` only left both of them planning against
+/// the component list the resource had before the evolution. Both read it off
+/// `<Name>.java`: the association's probe builds a row from the child's
+/// columns, and the job's store maps one back. modern.md §11.1, plan.md P7.1.
+#[test]
+fn a_field_reaches_the_companions_named_by_yields_as_well_as_on() {
+    let root = temp_dir("field-stale-yields-companions");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    for command in [
+        vec!["add", "db", "--no-start"],
+        vec![
+            "g",
+            "scaffold",
+            "Owner",
+            "id:uuid@pk",
+            "name:string!",
+            "createdAt:instant",
+        ],
+        vec![
+            "g",
+            "scaffold",
+            "Item",
+            "id:uuid@pk",
+            "ownerId:uuid@index",
+            "name:string!",
+            "createdAt:instant",
+        ],
+        vec![
+            "g",
+            "association",
+            "ItemOwner",
+            "ownerId=id",
+            "--on",
+            "Item",
+            "--yields",
+            "Owner",
+        ],
+        vec![
+            "g",
+            "usecase",
+            "AddItem",
+            "id:uuid",
+            "ownerId:uuid",
+            "name:string!",
+            "--on",
+            "Item",
+        ],
+        vec![
+            "g",
+            "durable-job",
+            "ItemDispatcher",
+            "id:uuid",
+            "ownerId:uuid",
+            "name:string!",
+            "--on",
+            "AddItem",
+            "--yields",
+            "Item",
+        ],
+    ] {
+        let output = jails_cmd(&root, None).args(&command).output().unwrap();
+        assert!(output.status.success(), "{command:?}: {output:?}");
+    }
+
+    let evolved = jails_cmd(&root, None)
+        .args(["g", "field", "Item", "memo:string?"])
+        .output()
+        .unwrap();
+    assert!(
+        evolved.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&evolved.stdout),
+        String::from_utf8_lossy(&evolved.stderr)
+    );
+    let plan = String::from_utf8_lossy(&evolved.stdout);
+
+    // The association's probe builds a row out of the child's column list, so
+    // it goes stale the moment the child gains one. `--on Item` named it all
+    // along; what was missing is that `association` was not in the set of
+    // recipes a field evolution re-plans.
+    let probe = "src/test/java/com/example/demo/adapters/ItemOwnerAssociationIT.java";
+    assert!(plan.contains(probe), "{probe} missing from:\n{plan}");
+    let source = fs::read_to_string(root.join(probe)).unwrap();
+    assert!(source.contains("memo"), "{probe}:\n{source}");
+
+    // The evolution owns the schema change. A regenerated companion must not
+    // re-emit the `create table` its first generation already applied.
+    let migrations: Vec<String> = fs::read_dir(root.join("src/main/resources/db/migration"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(
+        migrations
+            .iter()
+            .filter(|name| name.contains("item"))
+            .count(),
+        migrations
+            .iter()
+            .filter(|name| name.contains("item"))
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        "{migrations:?}"
+    );
+
+    // The parent side, reached through `--yields`. The association re-plans
+    // from a `child=parent` *mapping* rather than a field list, and reading
+    // its arguments as fields refused the whole evolution with "association
+    // ItemOwner needs at least one `childField=parentField` mapping" -- in the
+    // middle of a `g field` that had nothing to do with it.
+    let parent = jails_cmd(&root, None)
+        .args(["g", "field", "Owner", "nickname:string?"])
+        .output()
+        .unwrap();
+    assert!(
+        parent.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&parent.stdout),
+        String::from_utf8_lossy(&parent.stderr)
+    );
+}
+
 #[test]
 fn generate_scaffold_writes_a_raw_jdbc_slice() {
     let root = temp_dir("scaffold-files");

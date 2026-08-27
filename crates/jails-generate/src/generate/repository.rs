@@ -1306,6 +1306,43 @@ mod repository_test_generation_tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// A port that cannot take this type's key says so by failing.
+    ///
+    /// A composite key is the reachable case: the port takes one value, so
+    /// there is nothing to key `items` on.
+    ///
+    /// The branch used to ship three methods quietly doing the wrong thing
+    /// under a comment explaining why: `findById` answering `Optional.empty()`
+    /// forever, `deleteById` removing a typed key from a `Map<String, ...>` so
+    /// it was always `false`, and `save` keying on a counter that collides
+    /// after any removal. `modern.md` §8.1 is what that reads like from
+    /// outside -- and the JDBC adapter beside it already failed explicitly on
+    /// the same input, which is the disagreement. plan.md P7.1.
+    #[test]
+    fn a_fake_that_cannot_be_keyed_fails_instead_of_answering_wrongly() {
+        let fields = parse_fields(&[
+            "tenant:string@pk".to_string(),
+            "reference:string@pk".to_string(),
+        ])
+        .unwrap();
+        let columns = mapped_columns(&fields);
+        let java = crate::spring::in_memory_repository_java(
+            "com.example.demo.adapters",
+            "Ticket",
+            "",
+            &StoredKey::of(&fields, &columns, "Ticket"),
+            true,
+        );
+
+        assert_eq!(
+            java.matches("UnsupportedOperationException").count(),
+            2,
+            "{java}"
+        );
+        assert!(!java.contains("return Optional.empty();"), "{java}");
+        assert!(!java.contains("items.remove(id)"), "{java}");
+    }
+
     #[test]
     fn a_composite_key_is_refused_until_the_port_can_represent_it() {
         let (root, project) =
