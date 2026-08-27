@@ -382,6 +382,12 @@ fn verified_spring_toolboxes(path: &str) -> &'static SpringToolboxes {
                 // because each exercises one kind in one project. This toolbox
                 // is where a first-party generator meets the fitness function
                 // another first-party generator installed.
+                // The WebSocket half. Its handler and test are ordinary Java,
+                // but the starter `g socket` splices is what decides whether
+                // `org.springframework.web.socket` resolves at all -- and a
+                // generator that emits code and not its dependency hands the
+                // reader a compile error for a line they did not write.
+                &["generate", "socket", "Chat"][..],
                 &["generate", "enum", "Visibility", "PUBLIC", "PRIVATE"][..],
                 &[
                     "generate", "strategy", "PostRule", "Featured", "Standard", "--on", "Post",

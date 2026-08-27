@@ -544,6 +544,18 @@ there the unit is a whole service block rather than a setting.)
   and silently unsets everything the tests did not restate. This is how a
   project gets a test-only datasource without the suite writing to whatever
   the application's own URL points at.
+- `jails generate|g socket <Name>` (aliases `websocket`, `ws`) — the
+  client→server half of a chat, which `add sse` does not cover: a
+  `TextWebSocketHandler`, its `WebSocketConfigurer` registration at
+  `/ws/<name>`, the `spring-boot-starter-websocket` dependency, and a test.
+  Three decisions it makes and states: every session is wrapped in
+  `ConcurrentWebSocketSessionDecorator`, because a `WebSocketSession` is not
+  safe for concurrent sends and a broadcast is exactly that shape (the failure
+  is `IllegalStateException: … [TEXT_PARTIAL_WRITING]`, load-dependent, and
+  never reproducible at the desk); a session that throws `IOException` is
+  evicted rather than retried forever or allowed to stop the broadcast; and the
+  handshake stays same-origin, with the registration saying where to widen it
+  rather than widening it, because that is a security decision.
 - `jails generate|g event <Name> [--on <Entity>]` — a Kafka slice: the payload
   record, a publisher, a listener that deliberately does not catch (swallowing
   commits an offset for a message never processed), and an `IT` that publishes

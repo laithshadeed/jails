@@ -165,6 +165,23 @@ const EXPLANATIONS: &[Explanation] = &[
                declares `<topic>.DLT` finds it empty with only a WARN to say so.",
     },
     Explanation {
+        kind: ArtifactKind::Socket,
+        summary: "A bidirectional WebSocket endpoint: handler, registration and test.",
+        body: "`add sse` is the server-to-client half. This is the other one, and the three \
+               things it decides are all defaults that are wrong in a way nothing reports.\n\n\
+               A `WebSocketSession` is not safe for concurrent sends: two threads on one \
+               session produce `IllegalStateException: The remote endpoint was in state \
+               [TEXT_PARTIAL_WRITING]`, which is load-dependent and never happens at the desk. \
+               Every session is wrapped in `ConcurrentWebSocketSessionDecorator`.\n\n\
+               A dead session must leave the registry: `sendMessage` on a closed one throws \
+               `IOException`, so letting it out stops the broadcast and swallowing it keeps \
+               the corpse forever.\n\n\
+               The handshake is same-origin by default, and the registration deliberately \
+               does not widen it. A browser client from another origin is refused with a 403 \
+               and nothing in the application log, so the config says where to look rather \
+               than making a security decision for you.",
+    },
+    Explanation {
         kind: ArtifactKind::Dto,
         summary: "Request and response records at the HTTP boundary, with validation.",
         body: "Separate from the domain record on purpose: the wire shape belongs to whoever \

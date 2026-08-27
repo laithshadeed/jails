@@ -231,6 +231,12 @@ pub const SCENARIOS: &[Scenario] = &[
         ],
     },
     Scenario {
+        name: "socket",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[&["g", "socket", "Chat"]],
+    },
+    Scenario {
         name: "event",
         fixture: Fixture::Spring,
         seed: &[],

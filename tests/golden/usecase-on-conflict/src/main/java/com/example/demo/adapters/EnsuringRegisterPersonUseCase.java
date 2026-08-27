@@ -18,23 +18,15 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Get-or-create keyed on {@code email}, as one statement.
  *
- * <p>Not the repository, deliberately. A port with a {@code save(T)} cannot
- * express {@code on conflict do nothing returning}, and the obvious
- * alternative -- read, then insert if absent -- leaves a window where two
- * callers both see nothing and both proceed. Whichever one loses the race gets
- * a constraint violation instead of the row it asked for.
+ * <p>Not the repository: a port with a {@code save(T)} cannot express
+ * {@code on conflict do nothing returning}, and read-then-insert leaves the
+ * window where two callers both see nothing and both proceed. The insert wins
+ * and returns its row, or does nothing and the second statement reads the row
+ * that was already there -- one transaction, so never half of either.
  *
- * <p>The insert either wins and returns its row, or does nothing and returns
- * none; the second statement then reads the row that was already there. Both
- * are inside one transaction, so a caller sees a created row or an existing
- * one and never a half of either.
- *
- * <p>The conflict column must carry a unique index, or {@code on conflict}
- * has nothing to arbitrate against. jails cannot check that from here: a
- * record read off disk carries no constraints, so it says what type the
- * component is and not whether the column is unique. The generated {@code IT}
- * checks it instead, against a real database, where the answer is a fact
- * rather than a claim.
+ * <p>The conflict column must carry a unique index. jails cannot check that
+ * from here, because a record read off disk carries no constraints; the
+ * generated {@code IT} checks it against a real database instead.
  */
 @Component
 public class EnsuringRegisterPersonUseCase implements RegisterPersonUseCase {

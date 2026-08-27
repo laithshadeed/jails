@@ -712,11 +712,26 @@ All three of `missing.md`'s named primitives, in full, plus the smaller entries.
       replaces. `minicom` carries `EnsureUser email:string! --on User
       --on-conflict email` — the first line of the Django ping handler — and it
       passes `jails check`.
-- [ ] **P8.4** M4a — a `WebSocketHandler`-shaped kind: the handler, its
+- [x] **P8.4** M4a — a `WebSocketHandler`-shaped kind: the handler, its
       `WebSocketConfigurer` registration, and a test. Same shape as
       `g handler`. `add sse` covers the server→client half of read receipts and
       presence and none of the client→server half.
-- [ ] **P8.5** M4b — the presence primitive. The Django original tracks admin
+      *Done:* `g socket <Name>` (aliases `websocket`, `ws`) writes the handler,
+      the registration at `/ws/<name>`, the test, and splices
+      `spring-boot-starter-websocket`. Three things it decides rather than
+      copies, each verified in `deps/spring-framework`: every session is
+      wrapped in `ConcurrentWebSocketSessionDecorator`, because a
+      `WebSocketSession` is not safe for concurrent sends and a broadcast is
+      exactly that shape — the failure is `IllegalStateException: …
+      [TEXT_PARTIAL_WRITING]`, load-dependent and never reproducible at the
+      desk; a session that throws `IOException` is evicted, since letting it
+      out stops the broadcast and swallowing it keeps the corpse; and the
+      handshake stays same-origin, with the registration naming the line to
+      change rather than changing it. The Spring toolbox generates one and runs
+      `mvn test` over it, so the starter splice is checked by the compiler
+      rather than asserted.
+- [ ] **P8.5** M4b (`missing.md` renumbered this from M4's second half) — the
+      presence primitive. The Django original tracks admin
       presence in a module-level dict with a comment saying it only works
       because there is one process: the author knew it was wrong and shipped it
       anyway. An in-memory presence map is silently correct on one node and

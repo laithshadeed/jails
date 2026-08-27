@@ -1,0 +1,65 @@
+package com.example.demo.web;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.io.IOException;
+import org.junit.jupiter.api.Test;
+import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.TextMessage;
+import org.springframework.web.socket.WebSocketSession;
+
+/**
+ * The two behaviours that are not obvious from reading the handler.
+ *
+ * <p>No container and no real socket: both facts under test are about the
+ * session registry, and a test that started a server would be testing the
+ * container instead.
+ */
+class ChatSocketHandlerTest {
+
+    @Test
+    void aMessageReachesEveryConnectedSession() throws Exception {
+        ChatSocketHandler handler = new ChatSocketHandler();
+        WebSocketSession first = connected(handler, "first");
+        WebSocketSession second = connected(handler, "second");
+
+        handler.handleTextMessage(first, new TextMessage("hello"));
+
+        verify(first).sendMessage(new TextMessage("hello"));
+        verify(second).sendMessage(new TextMessage("hello"));
+    }
+
+    /**
+     * A session that will not take a message is dropped rather than retried
+     * forever, and the broadcast still reaches the ones after it.
+     *
+     * <p>Both halves matter. Letting the {@link IOException} out would stop
+     * the loop before every session after the dead one; swallowing it would
+     * keep the corpse in the registry and throw again on every future send.
+     */
+    @Test
+    void aSessionThatCannotBeWrittenToIsDroppedAndTheRestStillGetIt() throws Exception {
+        ChatSocketHandler handler = new ChatSocketHandler();
+        WebSocketSession broken = connected(handler, "broken");
+        doThrow(new IOException("closed")).when(broken).sendMessage(any());
+        WebSocketSession live = connected(handler, "live");
+
+        handler.broadcast("hello");
+
+        assertThat(handler.connected()).isEqualTo(1);
+        verify(live).sendMessage(new TextMessage("hello"));
+        verify(broken).close(CloseStatus.SESSION_NOT_RELIABLE);
+    }
+
+    private static WebSocketSession connected(ChatSocketHandler handler, String id) {
+        WebSocketSession session = mock(WebSocketSession.class);
+        when(session.getId()).thenReturn(id);
+        handler.afterConnectionEstablished(session);
+        return session;
+    }
+}

@@ -147,7 +147,7 @@ pub(crate) fn metadata(recipe: ArtifactKind) -> RecipeMetadata {
 
         Scaffold | Service | Class | Interface | Record | Factory | Value | Enum | Sealed
         | Repo | Handler | Command | Cli | Client | Fetcher | Job | Idempotency | Auth
-        | Webhook | Search | Dto | Event | Test | IntegrationTest => {
+        | Webhook | Search | Dto | Event | Socket | Test | IntegrationTest => {
             (PersistentIntent, Forbidden, Forbidden)
         }
     };
@@ -160,7 +160,7 @@ pub(crate) fn metadata(recipe: ArtifactKind) -> RecipeMetadata {
         Association => ArgumentShape::Mappings,
         Scaffold | Controller | Service | Class | Interface | Record | Factory | Value | Repo
         | Handler | Command | Cli | Client | Fetcher | Job | Idempotency | Auth | Webhook | Dto
-        | Event | Test | IntegrationTest | Usecase | Query | Transition | HttpWorkflow
+        | Event | Socket | Test | IntegrationTest | Usecase | Query | Transition | HttpWorkflow
         | HttpSink | DurableJob | Field | Migration | Cases => ArgumentShape::Fields,
     };
     // Which recipes answer HTTP, as its own closed match for the same reason
@@ -207,6 +207,7 @@ fn suffix(kind: ArtifactKind) -> Option<&'static str> {
         ArtifactKind::Fetcher => Some("Fetcher"),
         ArtifactKind::Usecase => Some("UseCase"),
         ArtifactKind::Query => Some("Query"),
+        ArtifactKind::Socket => Some("SocketHandler"),
         ArtifactKind::Test => Some("Test"),
         ArtifactKind::IntegrationTest => Some("IT"),
 

@@ -350,6 +350,11 @@ pub enum ArtifactKind {
     /// A Kafka slice: payload record, publisher, listener, and an IT against
     /// a real broker (Spring only)
     Event,
+    /// A bidirectional WebSocket endpoint: a `TextWebSocketHandler`, its
+    /// `WebSocketConfigurer` registration and a test. `add sse` is the
+    /// server-to-client half only; this is the half a chat needs (Spring only)
+    #[value(alias = "websocket", alias = "ws")]
+    Socket,
     /// A `<Name>Test` skeleton
     Test,
     /// A disabled `<Name>IT` skeleton for a real boundary test; also splices

@@ -226,6 +226,7 @@ pub fn plan_recipe(
             crate::spring::APACHE_HTTPCLIENT,
             crate::spring::ACTUATOR_STARTER,
         ]),
+        ArtifactKind::Socket => change.deps.push(crate::spring::WEBSOCKET_STARTER),
         ArtifactKind::Event => change.deps.extend([
             crate::spring::TESTCONTAINERS_KAFKA,
             crate::spring::SPRING_TESTCONTAINERS,

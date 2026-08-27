@@ -3446,6 +3446,9 @@ fn standalone_generators_companion_tests_compile_and_pass() {
         "com/example/demo/web/HealthControllerTest.class",
         "com/example/demo/service/BillingServiceTest.class",
         "com/example/demo/domain/TagTest.class",
+        // The socket's two behaviours run here rather than in a container:
+        // both are about the session registry. plan.md P8.4.
+        "com/example/demo/web/ChatSocketHandlerTest.class",
     ] {
         assert!(
             verified.join("target/test-classes").join(class).is_file(),

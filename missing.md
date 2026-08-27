@@ -159,57 +159,26 @@ deep design commitment.
 
 ---
 
-## M4 — no WebSocket anything
+## M4b — the presence primitive
 
-Four of the six originals are bidirectional chat over Django Channels:
+*The handler half is closed (plan.md P8.4): `g socket <Name>` writes a
+`TextWebSocketHandler`, its `WebSocketConfigurer` registration, the starter and
+a test. What is left is the second piece, which is the valuable one.*
 
-- `mc-16-11-2025` — `ws/chat/` echo consumer
-- `mc-21-11-2025` — `ws/chat/<role>/<email>/`, per-user rooms, admin room
-  switching, `read_messages` → `messages_read` broadcast
-- `minicom-05-02-2026` — `ws/chat/<email>?role=`, plus admin presence tracking
-  and an `admin_status` broadcast on connect/disconnect
+`minicom-05-02-2026/django/minicom/consumers.py` tracks admin presence in a
+module-level dict and says in a comment why that is allowed:
 
-### Reproduce
-
-```sh
-jails commands | grep -iE 'socket|websocket' ; echo "exit=$?"
+```python
+# Module-level presence tracker: { group_name: set(channel_names) }
+# Works because InMemoryChannelLayer = single Daphne process.
 ```
 
-```
-exit=1        # no kind, no capability, no subcommand
-```
-
-The nearest thing is one-directional:
-
-```sh
-jails add sse && jails routes | grep stream
-```
-
-```
-GET     /events/{topic}/stream             EventStreamController#stream
-```
-
-which covers the server→client half of read receipts and presence and none of
-the client→server half. Everything above was written by hand outside jails.
-
-### Two separable pieces, and the second is the valuable one
-
-1. **A `WebSocketHandler`-shaped kind** — the handler, its
-   `WebSocketConfigurer` registration, and a test. Mechanical; the same shape
-   as `g handler`.
-2. **A presence primitive.** `minicom-05-02-2026/django/minicom/consumers.py`
-   tracks admin presence in a module-level dict and says in a comment why that
-   is allowed:
-
-   ```python
-   # Module-level presence tracker: { group_name: set(channel_names) }
-   # Works because InMemoryChannelLayer = single Daphne process.
-   ```
-
-   — which is to say the author knew it was wrong and shipped it anyway. That
-   is the same class of "the default is wrong in a way nothing reports" that
-   `g auth` and `add sse` exist for: an in-memory presence map is silently
-   correct on one node and silently wrong on two, with no error either way.
+— which is to say the author knew it was wrong and shipped it anyway. That is
+the same class of "the default is wrong in a way nothing reports" that `g auth`
+and `add sse` exist for: an in-memory presence map is silently correct on one
+node and silently wrong on two, with no error either way. The generated
+`{Name}SocketHandler`'s own session registry has exactly this shape and says
+nothing about it.
 
 ## M7 — `g client` ignores `--method`, `--on` and `--returns` without saying so
 

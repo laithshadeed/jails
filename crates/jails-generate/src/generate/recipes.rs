@@ -379,6 +379,18 @@ pub(crate) fn artifacts_for(
             let parsed = parse_fields(fields)?;
             crate::spring::transition_files(&slice, name, &capitalize(target), &parsed)?
         }
+        ArtifactKind::Socket => {
+            require_spring_project(project, "socket")?;
+            if !fields.is_empty() {
+                return Err(jails_support::Failure::Told(
+                    "`g socket` takes no fields: a socket carries whatever the endpoint sends, \
+                     and jails has no way to know what that is.\n       fix: run \
+                     `jails g socket <Name>` and shape the payload in the handler."
+                        .to_string(),
+                ));
+            }
+            crate::spring::socket_files(&crate::model::Slice::new(project, package), name)?
+        }
         ArtifactKind::Event => {
             require_spring_project(project, "event")?;
             if strategy_yields.is_some() {
