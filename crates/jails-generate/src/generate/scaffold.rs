@@ -63,65 +63,6 @@ fn require_single_primary_key(name: &str, fields: &[Field]) -> Result<()> {
     }
 }
 
-/// Where this project's `create table` belongs when it is not a migration.
-///
-/// **A scaffold whose table nothing creates is the silent wrong answer this
-/// repository is organised against**, and it shipped: the migration is
-/// conditional on `src/main/resources/db/migration` already existing, which is
-/// `add db`'s directory, so `jails g scaffold` into a Spring project that
-/// initialises its schema with `spring.sql.init` wrote a repository, a JDBC
-/// adapter and an `IT` against a table that does not exist -- and said
-/// nothing. Found on `minicom-15-01-2026/spring`, which is exactly the shape
-/// of project jails is supposed to be useful in.
-///
-/// `schema.sql` is Spring's own mechanism (`optional:classpath*:schema.sql`,
-/// verified in `deps/spring-boot`'s data-initialization guide) and a file the
-/// reader owns, so the DDL goes in as a `codemod` marked block -- one per
-/// table, keyed by table name, which is what makes `destroy` take out exactly
-/// the one it wrote and leave the reader's own tables alone.
-///
-/// `None` when Flyway is present (the migration is the answer) or when there
-/// is no `schema.sql` either (nothing to append to, and `generate.rs` says so
-/// rather than guessing where DDL should live).
-pub(crate) fn schema_block(
-    slice: &crate::model::Slice,
-    name: &str,
-    fields: &[String],
-    indexes: &[String],
-) -> Result<Option<jails_project::model::MarkedBlock>> {
-    let project = slice.project();
-    if project.has_directory("src/main/resources/db/migration") || !has_schema_sql(project) {
-        return Ok(None);
-    }
-    let domain = slice.placed(Layer::Domain);
-    let (parsed, _) = fields_from_spec_or_record(project, &domain, name, fields)?;
-    // The same two calls the migration arm makes, in the same order. A second
-    // *derivation* would be the drift this repository keeps finding; a second
-    // *call* of one derivation cannot disagree with itself, and
-    // `a_schema_block_and_a_migration_state_the_same_table` says so.
-    let columns = crate::sql::columns(&parsed, project, &domain, &lower_first(name));
-    if columns.is_empty() {
-        return Ok(None);
-    }
-    for spec in indexes {
-        crate::sql::validate_index(spec, &columns)?;
-    }
-    let table = crate::sql::table_name(name);
-    Ok(Some(jails_project::model::MarkedBlock {
-        path: SCHEMA_SQL.to_string(),
-        marker: format!("table-{table}"),
-        // The DDL, minus the "forward-only migration" header `create_table`
-        // opens with: inside a marked block in `schema.sql` that sentence is
-        // false -- this is not a migration, it is a table declaration jails
-        // rewrites in place -- and the markers already say who wrote it.
-        settings: crate::sql::create_table(name, &columns, indexes)
-            .lines()
-            .skip_while(|line| line.starts_with("-- Forward-only"))
-            .map(str::to_string)
-            .collect(),
-    }))
-}
-
 /// The script Spring initialises a datasource from, if this project has one.
 pub(crate) const SCHEMA_SQL: &str = "src/main/resources/schema.sql";
 
@@ -238,15 +179,14 @@ pub(crate) fn scaffold_artifacts_from_fields(
             contents: crate::sql::fixture_json(&columns, &constant),
         });
     }
-    // Same: `add db` creates `db/migration`, and in one transition it has not
-    // been written when this plans. Reading disk here silently dropped every
-    // scaffold's migration from the first `app apply` of a manifest that
-    // installs the database and generates a resource together.
-    if slice
-        .project()
-        .has_directory("src/main/resources/db/migration")
-        && !columns.is_empty()
-    {
+    // **The DDL is planned unconditionally**, and where it lands is decided
+    // once, in `generate::redirect_ddl_to_schema`: a Flyway migration, a
+    // marked block in `schema.sql`, or nothing plus a report naming both
+    // fixes. This used to be conditional on `db/migration` already existing,
+    // which is `add db`'s directory -- so a Spring project initialising its
+    // datasource the way Spring documents got a repository, a JDBC adapter
+    // and an `IT` against a table that does not exist, silently.
+    if !columns.is_empty() {
         let table = crate::sql::table_name(name);
         // Checked before it is written: a typo here fails at `flyway migrate`
         // with "column does not exist", on whichever machine runs it first.

@@ -39,6 +39,34 @@ fn non_blank_check(column: &Column) -> String {
 /// not in the world. Kept to `email` rather than generalised, because that is
 /// the one identifier whose case-insensitivity is a fact about the format
 /// rather than about this project's policy.
+/// The unique index that makes `A@b.com` and `a@b.com` one account.
+///
+/// **Two dialects, two statements, and it is not a preference.** PostgreSQL
+/// indexes the expression `lower(email)`; H2 2.x has no expression index at
+/// all and answers `Syntax error ... expected "ASC, DESC, NULLS, ,, )"`, so
+/// there the lowered value is a stored generated column and the index is on
+/// that. Both give the same guarantee; only one of them parses on each engine.
+///
+/// Measured against a real H2 2.4.240 rather than assumed, which is the same
+/// bar `Dialect::column_type`'s one rewrite was held to.
+pub(crate) fn unique_index(table: &str, column: &Column) -> String {
+    let name = &column.name;
+    match column.dialect {
+        jails_spec::spec::kind::Dialect::Postgres => format!(
+            "\n-- Unique regardless of case: `A@b.com` and `a@b.com` are one account.\n\
+             create unique index {table}_{name}_key\n  on {table} (lower({name}));\n"
+        ),
+        jails_spec::spec::kind::Dialect::H2 => format!(
+            "\n-- Unique regardless of case: `A@b.com` and `a@b.com` are one account.\n\
+             -- H2 has no expression index, so the lowered value is a column.\n\
+             alter table {table}\n  add column {name}_lower {} generated always as \
+             (lower({name}));\n\
+             create unique index {table}_{name}_key\n  on {table} ({name}_lower);\n",
+            column.sql_type
+        ),
+    }
+}
+
 pub(crate) fn case_insensitive(column: &Column) -> bool {
     column.sql_type == "text" && column.name.rsplit('_').next().unwrap_or(&column.name) == "email"
 }
@@ -286,11 +314,7 @@ pub(crate) fn create_table(
         .iter()
         .filter(|c| c.constraints.unique && case_insensitive(c))
     {
-        out.push_str(&format!(
-            "\n-- Unique regardless of case: `A@b.com` and `a@b.com` are one account.\n\
-             create unique index {table}_{}_key\n  on {table} (lower({}));\n",
-            column.name, column.name
-        ));
+        out.push_str(&unique_index(&table, column));
     }
 
     for column in columns.iter().filter(|c| c.constraints.indexed) {
@@ -411,11 +435,7 @@ pub fn add_column(type_name: &str, column: &Column) -> Result<String> {
     // the field was declared, which is not a fact about the domain.
     // plan.md P5.1.
     if column.constraints.unique && case_insensitive(column) {
-        out.push_str(&format!(
-            "\n-- Unique regardless of case: `A@b.com` and `a@b.com` are one account.\n\
-             create unique index {table}_{}_key\n  on {table} (lower({}));\n",
-            column.name, column.name
-        ));
+        out.push_str(&unique_index(&table, column));
     }
     if let Some((name, predicate)) = closed_set_constraint(&table, column) {
         out.push_str(&format!(

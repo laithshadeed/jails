@@ -58,30 +58,99 @@ pub(crate) use scaffold::*;
 /// Java that gets emitted -- `JdbcClient` becomes plain JDBC, JSpecify goes
 /// away -- and a reader who is not told that has no way to find out except by
 /// reading the generated code.
-/// A resource whose table nothing creates, said out loud.
+/// Move a change's DDL to where this project's schema actually lives.
 ///
-/// jails writes DDL to one of two places and both are conditional on what the
-/// project already has: a Flyway migration when `db/migration` is there, or a
-/// marked block in `schema.sql` when Spring initialises the datasource from
-/// one. A project with neither used to get **no DDL and no message** -- a
-/// repository, a JDBC adapter and an `IT` against a table that does not
-/// exist. This is the one place that can tell, because it is the one place
-/// that knows both what the change carries and what the project has.
-pub fn report_missing_schema_home(project: &Project, kind: ArtifactKind, name: &str) {
-    if kind != ArtifactKind::Scaffold
-        || project.has_directory("src/main/resources/db/migration")
-        || crate::generate::scaffold::has_schema_sql(project)
-    {
+/// **One rule, at the one place a `Change` is complete**, rather than a hook
+/// per kind. Nine generators write a migration -- `scaffold`, `association`,
+/// `presence`, `idempotency`, `search`, the outbox, a durable job, `g field`,
+/// a closed-set widening -- and the first version of this covered `scaffold`
+/// alone, so `g association` on the same project wrote a foreign key into
+/// `db/migration/` where nothing would ever run it.
+///
+/// Three cases, and the project decides which:
+///
+/// - **Flyway is there**: the migration stays a migration.
+/// - **`schema.sql` is there**: the DDL becomes a `codemod` marked block in
+///   it, which is what makes `destroy` take out exactly the table jails wrote.
+/// - **Neither**: the DDL is dropped and said out loud with both fixes. A
+///   migration in a directory nothing reads is a table nobody creates,
+///   reported as success.
+///
+/// Keyed by the migration's *description* rather than its `V00n`: the number
+/// is assigned by counting what is already there, so keying on it would make a
+/// regeneration append a second copy of the same table instead of replacing
+/// the block it wrote.
+///
+/// A `drop_` migration is left out deliberately, and reported. Retiring the
+/// marked block is what removes the declaration, which is the whole story for
+/// a database `spring.sql.init` recreates -- but an existing one still has the
+/// table, and appending `drop table` to a script that runs on every start-up
+/// would fail on the second one.
+pub fn redirect_ddl_to_schema(project: &Project, change: &mut Change) {
+    if project.has_directory("src/main/resources/db/migration") {
         return;
     }
-    let table = crate::sql::table_name(name);
-    println!(
-        "note: no `create table {table}` was written -- this project has neither Flyway \
-         migrations\n      nor a `schema.sql`, so jails has nowhere to put DDL it can also take \
-         back out.\n      fix: run `jails add db` for Flyway, or create \
-         src/main/resources/schema.sql\n           (with spring.sql.init.mode=always) and \
-         generate again."
-    );
+    let to_schema = crate::generate::scaffold::has_schema_sql(project);
+    let mut kept = Vec::with_capacity(change.files.len());
+    for artifact in std::mem::take(&mut change.files) {
+        let Some(description) = migration_description(&artifact) else {
+            kept.push(artifact);
+            continue;
+        };
+        if !to_schema {
+            println!(
+                "note: `{description}` was not written -- this project has neither Flyway \
+                 migrations\n      nor a `schema.sql`, so jails has nowhere to put DDL it can \
+                 also take back out.\n      fix: run `jails add db` for Flyway, or create \
+                 src/main/resources/schema.sql\n           (with spring.sql.init.mode=always) \
+                 and generate again."
+            );
+            continue;
+        }
+        if description.starts_with("drop_") {
+            println!(
+                "note: `{description}` was not written -- this project's schema is \
+                 `schema.sql`,\n      and removing the declaration is what retires the table \
+                 there. An existing\n      database still has it."
+            );
+            continue;
+        }
+        change.marked.push(jails_project::model::MarkedBlock {
+            path: crate::generate::scaffold::SCHEMA_SQL.to_string(),
+            marker: description.replace('_', "-"),
+            // Minus the header `create_table` opens with: inside a block jails
+            // rewrites in place, "forward-only migration" is false, and the
+            // markers already say who wrote it.
+            settings: artifact
+                .contents
+                .lines()
+                .skip_while(|line| line.starts_with("-- Forward-only"))
+                .map(str::to_string)
+                .collect(),
+        });
+    }
+    change.files = kept;
+}
+
+/// The `create_users` half of `V001__create_users.sql`, for an artifact bound
+/// for the migrations directory.
+///
+/// **Matched on the path, not on `kind`.** Nine generators write a migration
+/// and each labels it differently -- "association migration", "presence
+/// migration", "closed-set migration" -- so a rule keyed on the label covered
+/// exactly the one that says `"migration"` and silently missed the other
+/// eight. Where the file is going is the thing that actually decides this.
+fn migration_description(artifact: &Artifact) -> Option<String> {
+    let name = artifact.path.file_name()?.to_str()?;
+    if !artifact
+        .path
+        .parent()?
+        .ends_with("src/main/resources/db/migration")
+    {
+        return None;
+    }
+    let (_, rest) = name.split_once("__")?;
+    Some(rest.strip_suffix(".sql")?.to_string())
 }
 
 pub fn report_degraded_shape(project: &Project, change: &Change) {
@@ -297,17 +366,7 @@ pub fn plan_recipe(
             .push(crate::spring::durable_job_test_properties(&name));
     }
     // The DDL, when this project's schema is `schema.sql` rather than Flyway.
-    // Both destinations are conditional on what the project already has, and
-    // the case where it has *neither* is reported below rather than silently
-    // producing a resource whose table nobody creates.
-    if kind == ArtifactKind::Scaffold {
-        let slice = crate::model::Slice::new(project, package);
-        if let Some(block) =
-            crate::generate::scaffold::schema_block(&slice, &name, recipe.fields, recipe.indexes)?
-        {
-            change.marked.push(block);
-        }
-    }
+    redirect_ddl_to_schema(project, &mut change);
 
     Ok(change)
 }

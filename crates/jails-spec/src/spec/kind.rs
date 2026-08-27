@@ -119,9 +119,10 @@ impl Capability {
 /// exists because a *specific* type name differs and the difference was
 /// verified against that database's own source -- not because a database is
 /// popular.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Dialect {
     /// The default, and what `README.md` documents.
+    #[default]
     Postgres,
     /// `add h2`. In-process, and the only difference that reaches the DDL is
     /// one type name -- see [`Dialect::column_type`].

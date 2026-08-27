@@ -1133,6 +1133,7 @@ mod repository_test_generation_tests {
         fields
             .iter()
             .map(|field| crate::sql::Column {
+                dialect: jails_spec::spec::kind::Dialect::Postgres,
                 name: field.column.clone(),
                 component: field.name.clone(),
                 sql_type: "text".to_string(),

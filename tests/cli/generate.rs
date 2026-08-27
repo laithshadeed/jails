@@ -5368,10 +5368,10 @@ fn a_scaffold_writes_its_ddl_into_schema_sql_when_that_is_where_the_schema_lives
     assert!(schema.starts_with("create table users ("), "{schema}");
     // SQL comments, not `#`: a `# jails:` marker in a .sql file is a syntax
     // error rather than a comment in the wrong place.
-    assert!(schema.contains("-- jails:table-tickets"), "{schema}");
-    assert!(schema.contains("-- /jails:table-tickets"), "{schema}");
+    assert!(schema.contains("-- jails:create-tickets"), "{schema}");
+    assert!(schema.contains("-- /jails:create-tickets"), "{schema}");
     assert!(schema.contains("create table tickets ("), "{schema}");
-    assert!(schema.contains("\n-- jails:table-tickets"), "{schema}");
+    assert!(schema.contains("\n-- jails:create-tickets"), "{schema}");
     // No Flyway here, so nothing was written there either.
     assert!(!root.join("src/main/resources/db/migration").exists());
 
@@ -5387,7 +5387,7 @@ fn a_scaffold_writes_its_ddl_into_schema_sql_when_that_is_where_the_schema_lives
         String::from_utf8_lossy(&output.stderr)
     );
     let schema = fs::read_to_string(resources.join("schema.sql")).unwrap();
-    assert!(!schema.contains("jails:table-tickets"), "{schema}");
+    assert!(!schema.contains("jails:create-tickets"), "{schema}");
     assert!(!schema.contains("create table tickets"), "{schema}");
     assert!(schema.contains("create table users ("), "{schema}");
 }
@@ -5406,7 +5406,7 @@ fn a_scaffold_with_nowhere_to_put_ddl_says_so() {
     let report = String::from_utf8_lossy(&output.stdout).to_string();
     assert!(output.status.success(), "{report}");
     assert!(
-        report.contains("no `create table tickets` was written"),
+        report.contains("`create_tickets` was not written"),
         "{report}"
     );
     assert!(report.contains("jails add db"), "{report}");

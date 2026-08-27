@@ -68,6 +68,26 @@ pub(super) fn conflict_column(
     command_fields: &[crate::generate::Field],
     component: &str,
 ) -> jails_support::Result<Conflict> {
+    // **`on conflict ... do nothing returning` is PostgreSQL's**, and H2 has
+    // no form of it: `Syntax error ... [*]on conflict`, measured against a
+    // real H2 2.4.240. H2's `merge` is an upsert but has no `returning`, so
+    // the one-round-trip atomic claim this whole kind is built on would become
+    // a merge and then a select -- a different design, not a translation.
+    //
+    // Refused by name rather than emitted and left to fail at the first
+    // request, which is the rule `require_jakarta_spring` follows for a type
+    // that does not exist.
+    if let Some(column) = target_columns.first()
+        && column.dialect == jails_spec::spec::kind::Dialect::H2
+    {
+        return Err(format!(
+            "usecase {name} uses `--on-conflict`, which generates PostgreSQL's `insert ... on \
+             conflict ... do nothing returning`, and this project's driver is H2 -- which has \
+             no form of it.\n       fix: drop `--on-conflict` and let the caller handle a \
+             duplicate, or point the project at PostgreSQL (`jails add db`)."
+        )
+        .into());
+    }
     if !target_fields
         .iter()
         .any(|candidate| candidate.name == component)

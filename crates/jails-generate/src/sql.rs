@@ -51,6 +51,15 @@ pub struct Column {
     /// the caller can work out which imports the generated expressions need
     /// without re-parsing them out of the strings.
     pub java_type: String,
+    /// The dialect this column's type was resolved in.
+    ///
+    /// Carried beside `sql_type` because the dialect decides more than the
+    /// type name and every one of those decisions is made by a DDL emitter
+    /// that has only the column: a unique index on `lower(email)` is a
+    /// PostgreSQL expression index and a **syntax error** in H2, which has
+    /// none. Setting it here, once, is what stops each emitter needing the
+    /// project threaded through it.
+    pub dialect: jails_spec::spec::kind::Dialect,
     /// The table constraints declared on the field spec. Carried through
     /// unchanged -- `create_table` is the only reader.
     pub constraints: crate::generate::Constraints,
@@ -196,6 +205,7 @@ pub fn columns(
             // another, and `add_column` -- a second reader of the same value
             // -- would have to remember to apply it too.
             column.sql_type = dialect.column_type(&column.sql_type).to_string();
+            column.dialect = dialect;
             column
         })
         .collect()
@@ -219,6 +229,7 @@ fn column(field: &Field, project: &crate::model::Project, pkg: &str, receiver: &
         // A List or Map is not one column. Splitting it into a join table is
         // a schema decision jails has no business making silently.
         return Column {
+            dialect: jails_spec::spec::kind::Dialect::Postgres,
             name,
             component,
             sql_type: "jsonb".into(),
@@ -239,6 +250,7 @@ fn column(field: &Field, project: &crate::model::Project, pkg: &str, receiver: &
         }
         return finish(
             Column {
+                dialect: jails_spec::spec::kind::Dialect::Postgres,
                 name,
                 component,
                 sql_type,
@@ -265,6 +277,7 @@ fn column(field: &Field, project: &crate::model::Project, pkg: &str, receiver: &
         };
         return finish(
             Column {
+                dialect: jails_spec::spec::kind::Dialect::Postgres,
                 name,
                 component,
                 sql_type: "text".into(),
@@ -282,6 +295,7 @@ fn column(field: &Field, project: &crate::model::Project, pkg: &str, receiver: &
     }
 
     Column {
+        dialect: jails_spec::spec::kind::Dialect::Postgres,
         name,
         component,
         sql_type: "text".into(),
@@ -339,6 +353,7 @@ fn finish(column: Column, optional: bool) -> Column {
         format!("Optional.ofNullable({read})")
     };
     Column {
+        dialect: jails_spec::spec::kind::Dialect::Postgres,
         name,
         component,
         sql_type,

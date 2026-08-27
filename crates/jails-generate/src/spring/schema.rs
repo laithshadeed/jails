@@ -128,25 +128,44 @@ pub(crate) fn association_files(
     } else {
         String::new()
     };
+    // **H2 has no `DEFERRABLE`.** It answers `Syntax error ... deferrable
+    // [*]initially deferred`, so on that dialect the constraint is checked at
+    // the statement and the paragraph explaining the trade would be a false
+    // claim about the SQL beside it. Measured against a real H2 2.4.240.
+    let deferral = match slice.project().sql_dialect() {
+        jails_spec::spec::kind::Dialect::Postgres => (
+            "-- `deferrable initially deferred`: the check happens at commit rather\n\
+             -- than at the statement, so a transaction may insert a child before its\n\
+             -- parent and a batch may load in any order. What it costs is where the\n\
+             -- error surfaces -- at `commit`, naming this constraint rather than the\n\
+             -- statement that broke it. Say `not deferrable` here if you would rather\n\
+             -- pay for insert order and get the statement back.\n\
+             --\n",
+            "\n  deferrable initially deferred",
+        ),
+        jails_spec::spec::kind::Dialect::H2 => (
+            "-- Checked at the statement: H2 has no `deferrable`, so a child row has\n\
+             -- to be inserted after its parent. On PostgreSQL jails defers this to\n\
+             -- commit, which is the one behavioural difference between the two.\n\
+             --\n",
+            "",
+        ),
+    };
     let migration = format!(
         "{unique_index_ddl}\
          -- Two deliberate choices, stated because neither is the obvious one.\n\
          --\n\
-         -- `deferrable initially deferred`: the check happens at commit rather\n\
-         -- than at the statement, so a transaction may insert a child before its\n\
-         -- parent and a batch may load in any order. What it costs is where the\n\
-         -- error surfaces -- at `commit`, naming this constraint rather than the\n\
-         -- statement that broke it. Say `not deferrable` here if you would rather\n\
-         -- pay for insert order and get the statement back.\n\
-         --\n\
+         {}\
          -- `on delete no action`: deleting a parent row is a decision about the\n\
          -- child rows, and jails cannot see enough of this domain to make it.\n\
          -- `cascade` deletes them and `restrict` refuses the delete outright --\n\
          -- note `restrict` is never deferred, so choosing it also gives up the\n\
          -- line above.\n\
-         alter table {child_table}\n  add constraint {constraint}\n  foreign key ({}) references {parent_table} ({})\n  on update no action on delete no action\n  deferrable initially deferred;\n",
+         alter table {child_table}\n  add constraint {constraint}\n  foreign key ({}) references {parent_table} ({})\n  on update no action on delete no action{};\n",
+        deferral.0,
         local_columns.join(", "),
-        parent_columns.join(", ")
+        parent_columns.join(", "),
+        deferral.1
     );
 
     let child_columns = crate::sql::columns(&child_fields, slice.project(), domain, "value");
