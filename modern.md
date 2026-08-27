@@ -93,14 +93,6 @@ There is no index on `(user_id, is_read)`, none on `user_id`, none on
 manifest asks for `indexes = ["user_id, time_stamp desc"]`; this one did not,
 and jails did not mention it.
 
-### 4.5 A closed set stored as free text
-
-`direction text not null` — no `check`. `Message.direction` is a `String` whose
-compact constructor only rejects blank. `'banana'` is a valid direction at
-every layer. The example manifest models it as
-`enum MessageDirection { TO_USER, FROM_USER }`; this project typed `direction:String!`
-and jails accepted it without comment.
-
 ### 4.6 Column order records generation history
 
 `user_id, message, is_read, direction, time_stamp, id, version` — the identity
@@ -142,15 +134,6 @@ A one-line wrapper removes the entire class of mistake:
 public record UserId(UUID value)    { public UserId    { requireNonNull(value); } }
 public record MessageId(UUID value) { public MessageId { requireNonNull(value); } }
 ```
-
-### 5.2 The `String` id that is not a `String`
-
-`MessageRepository.findById(String id)` while `Message.id` is a `UUID` — so the
-adapter has to write `where id = cast(:id as uuid)`, the in-memory fake keys a
-`Map<String, Message>` with `String.valueOf(message.id())`, and every test says
-`repository.findById(String.valueOf(created.id()))`. `UserRepository.findById`
-takes a `UUID`. Two ports over two tables in one application disagree about how
-identity is typed.
 
 ### 5.4 Boxed primitives on the wire
 

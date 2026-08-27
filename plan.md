@@ -575,6 +575,42 @@ commit as the change that causes it.
       `one_create_reads_the_clock_once_for_every_timestamp_it_fills_in` pins
       the first; the proof apps show it end to end.
 - [ ] **P6.6** Delete `modern.md`. Every remaining entry is closed by here.
+      *Not yet, and the premise was wrong.* P6.1–P6.5 and P7.1 closed §8.1,
+      §8.2, §8.4, §11.1 and §11.2, and this pass also deleted §4.5 (the
+      free-text closed set is a `free-text-closed-set` warning now, P5.3) and
+      §5.2 (`findById` takes the key's own type, P3.3). What still stands is
+      ten jails-side entries, none of them covered by an item above:
+
+      - **§4.3** no index serves any query the application runs. jails could
+        say so the way it says `free-text-closed-set` — a `query --on X` whose
+        filter columns have no index is a shape it can see.
+      - **§5.4** boxed primitives on the wire (`Boolean`, `Long` in a response
+        describing a `boolean` and a `long`), then `@NotNull` compensating.
+      - **§6.1** the service layer takes a concrete `Jdbc*` class *and* a
+        concrete sibling implementation, under Javadoc saying it depends on
+        interfaces.
+      - **§6.3** `AppMetrics`, `CorsConfig`, `MetricsConfig` land in the root
+        package because nothing decides where they go.
+      - **§6.4** interfaces with one implementation, and `MessageService`
+        forwarding four calls. P3.4 left this open deliberately.
+      - **§6.5** two API styles in one service — REST for the scaffold,
+        RPC-over-POST for the generated operations, including a `POST` to read.
+      - **§7** three read-side defects: a command/query record bound directly
+        as `@RequestBody`, a query named *unread* that takes `isRead` as a
+        parameter, and a silent `MAX_RESULTS`.
+      - **§8** the generated listener is a `TODO` that logs an id and drops the
+        event.
+      - **§9** the generated tests mostly test the framework: a service test
+        that can only fail if Mockito breaks, an association IT that asserts
+        Postgres recorded the FK the migration declared, every fixture value
+        `"sample"`, and no concurrency test for the CAS the `version` column
+        exists for.
+      - **§13.6**'s surviving half is `missing.md` M7, tracked as **P8.8**.
+
+      §1, §2, §3.2, §4.6, §4.7, §5.1, §10, §12, §13.1, §13.10 and §13.11 are
+      either narrative, the hand-built reference, or input problems the file
+      itself labels as such — they are the record of *why*, and they go when
+      the ten above do.
 
 ## P7 — evolution keeps derived code true (cause F)
 
