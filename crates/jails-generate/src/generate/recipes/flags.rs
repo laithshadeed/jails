@@ -89,6 +89,38 @@ pub(super) fn refuse_misplaced(recipe: &Recipe<'_>) -> Result<()> {
         )
         .into());
     }
+    // Two recipes render a verb: `controller` answers on one, `client` calls
+    // one. Everywhere else the verb is *derived* and a flag contradicting the
+    // derivation is the M7 shape again -- `g query X --method post` emitted
+    // `@GetMapping` and said nothing, because a query is a GET exactly when
+    // every filter comes from `--path` and a POST otherwise, which is a fact
+    // about the request rather than a preference.
+    if recipe.method.is_some()
+        && !matches!(recipe.kind, ArtifactKind::Controller | ArtifactKind::Client)
+    {
+        use clap::ValueEnum;
+        let derived = matches!(
+            recipe.kind,
+            ArtifactKind::Query | ArtifactKind::Usecase | ArtifactKind::Transition
+        );
+        return Err(format!(
+            "`--method` applies to a controller or a client -- the recipes that name a verb \
+             rather than derive one.\n       fix: drop it from `jails g {kind} {name}`.{note}",
+            kind = recipe
+                .kind
+                .to_possible_value()
+                .expect("every kind has a clap value")
+                .get_name(),
+            name = recipe.name,
+            note = if derived {
+                "\n       note: this recipe's verb follows its request -- GET when every filter \
+                 comes from\n             `--path`, POST when it carries a body."
+            } else {
+                ""
+            }
+        )
+        .into());
+    }
     takes_only_a_name(
         recipe,
         ArtifactKind::Socket,

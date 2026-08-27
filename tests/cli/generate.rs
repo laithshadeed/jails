@@ -827,6 +827,138 @@ fn a_named_route_replaces_the_derived_one_everywhere_it_appears() {
     );
 }
 
+/// What `jails explain query` says about a filter is what `g query` does.
+///
+/// `bugs.md` B51: the explanation said "required scalar equality filters only"
+/// long after optional filters shipped, because `every_kind_has_an_explanation`
+/// checks that a kind *has* a row and nothing checks the row is still true.
+/// A rationale cannot be derived -- that is why the table is hand-written --
+/// but a claim about a shape jails emits can be checked against the shape, and
+/// the two claims that drifted are pinned here.
+#[test]
+fn what_explain_says_about_a_query_is_what_a_query_does() {
+    let root = temp_dir("explain-agrees-with-query");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+
+    let explained = jails_cmd(&root, None)
+        .args(["explain", "query"])
+        .output()
+        .unwrap();
+    assert!(explained.status.success());
+    let explained = String::from_utf8_lossy(&explained.stdout).to_string();
+
+    assert!(
+        jails_cmd(&root, None)
+            .args([
+                "g",
+                "scaffold",
+                "Loan",
+                "id:uuid@pk",
+                "memberId:uuid",
+                "settled:boolean",
+            ])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    assert!(
+        jails_cmd(&root, None)
+            .args([
+                "g",
+                "query",
+                "OpenLoans",
+                "--on",
+                "Loan",
+                "settled:boolean?"
+            ])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let adapter = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/adapters/JdbcOpenLoansQuery.java"),
+    )
+    .unwrap();
+
+    // An optional filter widens rather than matching null, and the
+    // explanation says so instead of saying filters must be required.
+    assert!(
+        adapter.contains("(cast(:settled as boolean) is null or settled = :settled)"),
+        "{adapter}"
+    );
+    assert!(explained.contains("is null or"), "{explained}");
+
+    // The cap the caller cannot see from the response is stated where they
+    // can see it.
+    let cap = adapter
+        .lines()
+        .find(|line| line.contains("MAX_RESULTS ="))
+        .expect("the adapter bounds its result");
+    let cap = cap
+        .rsplit('=')
+        .next()
+        .and_then(|rest| rest.trim().trim_end_matches(';').parse::<usize>().ok())
+        .expect("a numeric bound");
+    assert!(
+        explained.contains(&cap.to_string()),
+        "explain does not name the {cap}-row cap the adapter applies:\n{explained}"
+    );
+}
+
+/// A verb a recipe derives is not also a verb a flag can set.
+///
+/// `bugs.md` B49: `g query X --method post` emitted `@GetMapping` and said
+/// nothing. A query's verb follows its request -- GET when every filter comes
+/// from `--path`, POST when it carries a body -- so `--method` there is not a
+/// preference jails declines to honour, it is a claim about the request that
+/// contradicts the request. That is `missing.md` M7's shape, which this module
+/// already refuses for `--path`, `--via` and `--consumes`.
+#[test]
+fn a_verb_a_recipe_derives_is_not_one_a_flag_can_set() {
+    let root = temp_dir("method-derived-not-set");
+    write_spring_fixture(&root);
+
+    // The two recipes that name a verb keep taking it.
+    for kind in ["controller", "client"] {
+        let named = jails_cmd(&root, None)
+            .args(["g", kind, "Verify", "--method", "post"])
+            .output()
+            .unwrap();
+        assert!(
+            named.status.success(),
+            "g {kind} --method post: {}",
+            String::from_utf8_lossy(&named.stderr)
+        );
+    }
+
+    // Every other recipe says so rather than generating a different verb.
+    let refused = jails_cmd(&root, None)
+        .args(["g", "record", "Thing", "id:uuid", "--method", "post"])
+        .output()
+        .unwrap();
+    assert!(
+        !refused.status.success(),
+        "`--method` on a record was accepted"
+    );
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("`--method` applies to"), "{stderr}");
+
+    // And the three whose verb is derived say what it is derived from, so the
+    // refusal answers the question that produced the flag.
+    let derived = jails_cmd(&root, None)
+        .args([
+            "g", "query", "Thing", "--on", "Loan", "id:uuid", "--method", "post",
+        ])
+        .output()
+        .unwrap();
+    assert!(!derived.status.success());
+    let stderr = String::from_utf8_lossy(&derived.stderr);
+    assert!(stderr.contains("verb follows its request"), "{stderr}");
+}
+
 /// A second client does not take the first one's configuration with it.
 ///
 /// `missing.md` M13: `@ImportHttpServices` carries one group name, and one

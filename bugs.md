@@ -94,25 +94,6 @@ expand 'userId'`. Observed on `minicom-15-01-2026`, reproduced from a clean
 The test renderer branches on the criteria record; it does not know the path
 carries variables, which the controller renderer already worked out.
 
-## B49 — `--method` is accepted and silently ignored by `g query`
-
-```sh
-jails g query MsgsThree --on Message userId:uuid --path '/y/{userId}' --method post
-grep Mapping src/main/java/.../MsgsThreeQueryController.java   # @GetMapping
-```
-
-`--method post` produces `@GetMapping`; `--method get` on a query whose filters
-are not all path variables produces `@PostMapping`. The verb is derived — GET
-when every filter comes from the URL, POST otherwise — and that derivation is
-defensible. Accepting a flag that contradicts it and saying nothing is not.
-
-`--path` on `g scaffold` is the same situation handled correctly:
-
-```
-jails: `--path` applies to a controller, a use case or a query.
-       fix: drop it from `jails g scaffold User`.
-```
-
 ## B50 — an entity named after a `java.lang` type shadows it in its own package
 
 ```sh
@@ -140,28 +121,50 @@ but every reserved word is lowercase and the name is capitalised before the
 check, so `class`, `int` and `String` all pass. `java.lang`'s own type names
 are a closed list and the same check is the place for them.
 
-## B51 — `jails explain query` describes a restriction that no longer holds
+## B52 — `jails test` and `jails run` on Gradle execute under host JDK instead of target JDK
 
+`jails doctor` correctly reports `ok jdk java 26 on PATH, project targets 21`. However, `jails test` and `jails run` invoke `./gradlew` inheriting the current process's PATH (Java 26) without configuring `JAVA_HOME` to match the target JDK or checking for an installed JDK 21.
+
+Gradle 8.5 cannot run on Java 26 and immediately fails:
 ```
-query  A typed read: query record, port, JDBC adapter, controller, tests.
-
-  Required scalar equality filters only, for the same reason `transition`
-  refuses optionals: null and list semantics would have to be guessed.
-```
-
-Optional filters ship and are correct:
-
-```sh
-jails g query UnreadMessages --on Message isRead:boolean?
+BUG! exception in phase 'semantic analysis' in source unit '_BuildScript_' Unsupported class file major version 70
 ```
 
-```sql
-where (cast(:is_read as boolean) is null or is_read = :is_read)
+`jails` should detect when a Gradle wrapper requires an earlier JDK and set `JAVA_HOME` pointing to a compatible toolchain installed in the environment (e.g. mise / asdf / SDKMAN) or warn with the exact `JAVA_HOME` export command.
+
+## B53 — `jails beans` static AST parser misparses complex `@Value` annotations as unresolved dependency names
+
+When a Spring component constructor includes `@Value` annotations with nested colons or SpEL expressions:
+
+```java
+public AiService(
+    @Value("${openrouter.api.key:#{environment.OPENROUTER_API_KEY ?: ''}}") String openRouterApiKey
+)
 ```
 
-`explain` is a hand-written table by design, which is exactly why it needs the
-gate the rest of the surface has: `every_kind_has_an_explanation` checks that a
-kind *has* a row, and nothing checks that the row is still true.
+`jails beans` parses this as:
+```
+@Service AiService com/intercom/spring/services/AiService.java
+           needs ) String (external -- the framework or a library is expected to supply it)
+```
+
+The regex/AST extractor splits at the first closing parenthesis `)` inside the `@Value` string instead of matching the full annotation before extracting the parameter type and identifier.
+
+## B55 — `jails add websocket` is rejected as an invalid capability
+
+While `jails g socket <Name>` exists to scaffold WebSocket handlers, `jails add websocket` (and `jails add socket`) is rejected:
+```
+error: invalid value 'websocket' for '<CAPABILITIES>...'
+  [possible values: db, kafka, csv, sqlite, h2, json, testkit, fake, http, format, coverage, loadtest, ci, docker, k8s, api, actuator, cache, security, cors, sse, mail, redis, observability, toxiproxy]
+```
+
+Adding `websocket` as a recognized capability in `jails add` should install `spring-boot-starter-websocket` into `pom.xml` / `build.gradle` and configure `[project] capabilities = ["websocket"]`.
+
+## B56 — `jails routes` does not discover WebSocket endpoints registered via `WebSocketConfigurer`
+
+`jails routes` inspects `@RequestMapping` controller routes from source, but ignores WebSocket endpoints mapped via `WebSocketConfigurer#registerWebSocketHandlers` (e.g. `registry.addHandler(handler, "/ws/chat")`).
+
+WebSocket routes should be listed alongside HTTP routes (e.g. `WS /ws/chat ChatSocketHandler#handleTextMessage`).
 
 ---
 

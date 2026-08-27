@@ -143,9 +143,17 @@ const EXPLANATIONS: &[Explanation] = &[
     Explanation {
         kind: ArtifactKind::Query,
         summary: "A typed read: query record, port, JDBC adapter, controller, tests.",
-        body: "Required scalar equality filters only, for the same reason `transition` refuses \
-               optionals: null and list semantics would have to be guessed. Use the scaffold's \
-               own list endpoint for an unfiltered read.\n\n\
+        body: "Scalar equality filters only -- one column, one value. A required filter is \
+               `col = :col`; a `?` filter renders `(cast(:col as <type>) is null or col = \
+               :col)`, so omitting it widens rather than matching null. There are no list \
+               semantics and no ranges: `in (...)` and `between` would have to guess what an \
+               empty list or a half-open bound means. Use the scaffold\'s own list endpoint \
+               for an unfiltered read.\n\n\
+               Two things the generated adapter decides for you. The result is capped at 100 \
+               rows with no cursor and no total, so a caller that receives 100 cannot tell \
+               whether there were more. And the HTTP verb is derived, not chosen: GET when \
+               every filter comes from `--path`, POST otherwise -- `--method` does not apply \
+               and is refused here.\n\n\
                Example: `jails g query LoansByMember memberId:uuid --on Loan`.",
     },
     Explanation {

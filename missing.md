@@ -1,71 +1,51 @@
-# missing.md — what real minicom projects needed and jails cannot give
+# Missing Features & Dogfooding Gaps in Jails CLI
 
-Every entry here is a line that could not be written with the CLI, found by
-rebuilding a real application with **only** `jails` commands — no editor, no
-hand-written Java, no hand-edited pom. Nothing here is a proposal for its own
-sake.
-
-**A closed entry is *deleted* from this file, not marked done.**
-`git log -p -- missing.md` is where a closed one and the run that closed it
-live. Numbers are stable and never reused, so an `missing.md M6` citation in
-the source still resolves to a subject.
+Identified during the end-to-end implementation of **Minicom 2.0** (`minicom/prompt.md`) in `minicom/minicom-15-01-2026-playground`.
 
 ---
 
-## M18 — no back-office surface
+## 1. Capabilities & Dependency Management
 
-Every Django checkout registers its models with the Django admin — list
-columns, filters, search fields, read-only keys — in about twenty lines:
+### Missing `websocket` in `jails add`
+- `jails g socket <Name>` generates a `TextWebSocketHandler` and `WebSocketConfigurer`, but `jails add websocket` is rejected as an invalid capability.
+- `jails add sse` is supported, but bidirectional WebSockets require manual dependency additions on Gradle/Maven projects when not using `g socket`.
+- **Expected**: `jails add websocket` should configure `spring-boot-starter-websocket` in `build.gradle` / `pom.xml` and record `websocket` in `[project] capabilities`.
 
-```python
-@admin.register(Issue)
-class IssueAdmin(admin.ModelAdmin):
-    list_display = ('id', 'user', 'issue_summary', 'status', 'created_at')
-    list_filter = ('status',)
-    search_fields = ('user__email', 'issue_summary')
-```
-
-```sh
-jails commands | grep -icE 'admin|crud|backoffice'    # 0
-```
-
-jails generates the REST surface and no operator surface. This is a defensible
-scope line — an admin UI is a product, not scaffolding — but it is the one
-thing every Django port gets for free and every jails port does not, and
-`jails.toml` plus the ledger already know the field model such a view would
-need. Recorded so the decision is a decision rather than an omission.
+### Gradle Parity for `jails fmt`
+- `jails fmt` only supports Maven sandboxes and refuses Gradle projects with:
+  `fix: ./gradlew spotlessApply -- jails add format has already configured it`
+- **Expected**: `jails fmt` should invoke `./gradlew spotlessApply` automatically on Gradle projects rather than refusing.
 
 ---
 
-## What the closed entries taught, kept because it outlives them
+## 2. Toolchain Management & Multi-JDK Execution
 
-**jails models a resource extremely well and a conversation not at all.** M4,
-M5 and M6 were one missing idea from three angles — a participant identified
-by a natural key, a stream of messages between participants, and presence —
-and every ported project needed all three. They are closed as three generic
-primitives (`--on-conflict`, `--via`, `socket`/`presence`), not as a chat
-feature: `app.rs` is domain-blind on purpose and stays that way.
-
-**The contract half was four knobs, not a design commitment.** A route path
-(M8), a form binding (M15), an enum's wire value (M14) and an optional filter
-(M16) were the whole reason a project could model a domain perfectly and match
-**zero** of the ten endpoints its shipped frontend calls. None of them asked
-jails to understand anything new, and they are what separates "scaffolds a new
-service" from "can be pointed at an existing client".
-
-**The defects here were invisible to the suite for one reason.** M1 and M2 each
-needed a *second* thing present — a scaffold and a strategy in one project, a
-Boot version the fixture does not use — and the golden scenarios exercise one
-kind on one flavour. Goldens compare bytes and never run the code, so the
-project's own build is the oracle that finds this class. It still is: every
-defect in `bugs.md` came from running something rather than from reading it.
+### Automatic `JAVA_HOME` Discovery for Gradle
+- When running on modern developer machines with JDK 26 on PATH, `jails doctor` detects that the project targets JDK 21 (`ok jdk java 26 on PATH, project targets 21`).
+- However, `jails test` and `jails run` invoke `./gradlew` using PATH Java (Java 26), which crashes Gradle 8.5 with `Unsupported class file major version 70`.
+- **Expected**: `jails test` / `jails run` should detect installed JDKs matching `targetCompatibility` (e.g. from `~/.local/share/mise/installs/java/`, SDKMAN, or `/usr/lib/jvm`) and execute `./gradlew` with the appropriate `JAVA_HOME`.
 
 ---
 
-## Where the evidence lives
+## 3. Inspection & Static Analysis Tooling
 
-The rebuilt projects are at `/home/laith/code/minicom-jails/`, each a plain
-Maven project — `cd` into one and `jails build`. The command log per project is
-its `.jails/ledger.toml`; `jails history` prints it. The untouched originals
-are under `minicom/`, and `minicom/minicom-15-01-2026` is the checkout with
-four backends and two hand-written frontends that `plan.md` P10 is driven by.
+### WebSocket Route Discovery in `jails routes`
+- `jails routes` only inspects `@RestController`, `@Controller`, and `@RequestMapping` annotations.
+- Endpoints registered via Spring's `WebSocketConfigurer#registerWebSocketHandlers` (e.g. `/ws/chat/{email}/**`) are omitted from the route inventory.
+- **Expected**: `jails routes` should detect `WebSocketConfigurer` registrations and list WebSocket endpoints (e.g. `WS /ws/chat/{email}/** ChatWebSocketHandler`).
+
+### Complex `@Value` and SpEL Parsing in `jails beans`
+- `jails beans` static parser fails to parse constructors with nested parentheses or SpEL default expressions inside `@Value("${property:#{environment.VAR ?: ''}}")`, reporting `needs ) String (external)`.
+- **Expected**: The AST extractor should balance quotes and parentheses before splitting constructor parameter names and types.
+
+---
+
+## 4. Code Generation & Architecture Helpers
+
+### Dual-Format `consumes = [json, form]` Request Support
+- Current generators support `--consumes json` or `--consumes form`, but real-world web applications (like Minicom with jQuery `$.post` and API clients) frequently require endpoints that accept both form-urlencoded and JSON payloads without returning HTTP 415.
+- **Expected**: Generator support for hybrid request binders or unified payload parsing.
+
+### In-Memory / Room-Based Presence Generators
+- `jails g presence` generates PostgreSQL cluster-backed presence, but lightweight in-memory group/room chat presence (e.g. admin online tracking per customer email channel) is a common pattern that lacks a generator recipe.
+- **Expected**: A `socket-presence` recipe for room-based presence and lifecycle events.
