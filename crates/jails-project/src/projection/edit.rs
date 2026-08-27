@@ -123,12 +123,21 @@ impl ProjectedProject {
                     ));
                 };
                 let text = self.text(path)?.unwrap_or_default();
-                let marked = Marked::new(marker.as_str());
+                let marked = Marked::for_path(&path.to_string(), marker.as_str());
                 // Replacing means removing then rendering, which is the same
                 // path `sync` takes -- `codemod` deliberately has no
                 // `replace`, so this cannot drift from it.
                 let without = marked.strip_from(&text).unwrap_or(text);
-                self.write_text(path, format!("{without}{}", marked.render(body)));
+                // A reader's file need not end in a newline, and `schema.sql`
+                // in a real checkout did not: the opening marker landed on the
+                // same line as `);`, which is a comment in SQL and a syntax
+                // error in a properties file.
+                let separator = if without.is_empty() || without.ends_with('\n') {
+                    ""
+                } else {
+                    "\n"
+                };
+                self.write_text(path, format!("{without}{separator}{}", marked.render(body)));
                 Ok(Some(path.clone()))
             }
             SemanticEdit::HumanConfigCapability { key, spec } => {
@@ -368,7 +377,7 @@ impl ProjectedProject {
                 let Some(text) = self.text(path)? else {
                     return Ok(None);
                 };
-                let marked = Marked::new(marker.as_str());
+                let marked = Marked::for_path(&path.to_string(), marker.as_str());
                 let Some(without) = marked.strip_from(&text) else {
                     return Ok(None);
                 };

@@ -45,25 +45,63 @@
 pub struct Marked<'a> {
     pub marker: &'a str,
     pub indent: &'a str,
+    /// How this file spells "the rest of the line is a comment".
+    ///
+    /// `#` for properties, YAML and `spring.factories`; `--` for SQL. It is a
+    /// field rather than a constant because a marker in the wrong comment
+    /// syntax is not a cosmetic problem: `# jails:table-users` at the top of a
+    /// `schema.sql` is a syntax error, so the block jails writes would stop
+    /// the application starting.
+    pub comment: &'a str,
 }
 
 impl<'a> Marked<'a> {
     /// A block at column zero — properties, `spring.factories`.
     pub fn new(marker: &'a str) -> Self {
-        Self { marker, indent: "" }
+        Self {
+            marker,
+            indent: "",
+            comment: "#",
+        }
     }
 
     /// A block nested inside a YAML mapping.
     pub fn indented(marker: &'a str, indent: &'a str) -> Self {
-        Self { marker, indent }
+        Self {
+            comment: "#",
+            ..Self::new(marker)
+        }
+        .with_indent(indent)
+    }
+
+    fn with_indent(mut self, indent: &'a str) -> Self {
+        self.indent = indent;
+        self
+    }
+
+    /// The block this project-relative path's format would carry.
+    ///
+    /// **One function, so the splice and the unsplice cannot disagree.** Both
+    /// live in `projection/edit.rs` and both used to call `new`, which is fine
+    /// while every marked file is a properties file and silently wrong the
+    /// moment one is not: a block written with `--` markers and stripped by a
+    /// scan for `#` ones is a block `remove` leaves behind.
+    pub fn for_path(path: &str, marker: &'a str) -> Self {
+        Self {
+            comment: match path.rsplit('.').next() {
+                Some("sql") => "--",
+                _ => "#",
+            },
+            ..Self::new(marker)
+        }
     }
 
     pub fn open(&self) -> String {
-        format!("{}# jails:{}", self.indent, self.marker)
+        format!("{}{} jails:{}", self.indent, self.comment, self.marker)
     }
 
     pub fn close(&self) -> String {
-        format!("{}# /jails:{}", self.indent, self.marker)
+        format!("{}{} /jails:{}", self.indent, self.comment, self.marker)
     }
 
     /// Whether this file already carries the block.

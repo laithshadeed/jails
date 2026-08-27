@@ -1331,6 +1331,21 @@ applies, and inferring it would have `sync` install things nobody asked for.
 
 Run `jails adopt --pretend` first.
 
+### Where a scaffold's `create table` goes
+
+Two places, and which one is decided by what the project already has:
+
+- **`src/main/resources/db/migration/`** — a Flyway migration, when that
+  directory exists. `jails add db` creates it.
+- **`src/main/resources/schema.sql`** — a `-- jails:table-<name>` marked block
+  appended to the script Spring initialises the datasource from
+  (`spring.sql.init`), when there is no Flyway. `jails destroy` takes exactly
+  that block back out and leaves the tables you wrote alone.
+
+A project with **neither** is told so, by name, with both fixes. It used to get
+no DDL and no message — a repository, a JDBC adapter and an `IT` against a table
+that does not exist.
+
 ### `jails modernize` (alias `upgrade`)
 
 For a project still on the versions it was created with. It moves the build to

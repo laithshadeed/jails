@@ -58,6 +58,32 @@ pub(crate) use scaffold::*;
 /// Java that gets emitted -- `JdbcClient` becomes plain JDBC, JSpecify goes
 /// away -- and a reader who is not told that has no way to find out except by
 /// reading the generated code.
+/// A resource whose table nothing creates, said out loud.
+///
+/// jails writes DDL to one of two places and both are conditional on what the
+/// project already has: a Flyway migration when `db/migration` is there, or a
+/// marked block in `schema.sql` when Spring initialises the datasource from
+/// one. A project with neither used to get **no DDL and no message** -- a
+/// repository, a JDBC adapter and an `IT` against a table that does not
+/// exist. This is the one place that can tell, because it is the one place
+/// that knows both what the change carries and what the project has.
+pub fn report_missing_schema_home(project: &Project, kind: ArtifactKind, name: &str) {
+    if kind != ArtifactKind::Scaffold
+        || project.has_directory("src/main/resources/db/migration")
+        || crate::generate::scaffold::has_schema_sql(project)
+    {
+        return;
+    }
+    let table = crate::sql::table_name(name);
+    println!(
+        "note: no `create table {table}` was written -- this project has neither Flyway \
+         migrations\n      nor a `schema.sql`, so jails has nowhere to put DDL it can also take \
+         back out.\n      fix: run `jails add db` for Flyway, or create \
+         src/main/resources/schema.sql\n           (with spring.sql.init.mode=always) and \
+         generate again."
+    );
+}
+
 pub fn report_degraded_shape(project: &Project, change: &Change) {
     let crate::build::Build::Foreign(tool) = project.build() else {
         return;
@@ -269,6 +295,18 @@ pub fn plan_recipe(
         change
             .marked
             .push(crate::spring::durable_job_test_properties(&name));
+    }
+    // The DDL, when this project's schema is `schema.sql` rather than Flyway.
+    // Both destinations are conditional on what the project already has, and
+    // the case where it has *neither* is reported below rather than silently
+    // producing a resource whose table nobody creates.
+    if kind == ArtifactKind::Scaffold {
+        let slice = crate::model::Slice::new(project, package);
+        if let Some(block) =
+            crate::generate::scaffold::schema_block(&slice, &name, recipe.fields, recipe.indexes)?
+        {
+            change.marked.push(block);
+        }
     }
 
     Ok(change)

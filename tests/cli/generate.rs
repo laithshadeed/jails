@@ -5325,3 +5325,90 @@ fn what_jails_generates_for_boot_2_compiles_and_what_cannot_refuses_by_name() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+/// A scaffold's `create table`, into a project whose schema is `schema.sql`.
+///
+/// The bug this closes was silent: the migration is conditional on
+/// `src/main/resources/db/migration` existing, which is `add db`'s directory,
+/// so `jails g scaffold` into a Spring project that initialises its datasource
+/// with `spring.sql.init` wrote a repository, a JDBC adapter and an `IT`
+/// against a table that does not exist -- and printed nothing. Found on
+/// `minicom-15-01-2026/spring`, and verified fixed there: H2 2.x accepts the
+/// block and the whole context starts.
+///
+/// It is a `codemod` marked block rather than an append, because that is what
+/// makes `destroy` take out exactly the table jails wrote and leave the
+/// reader's own tables alone.
+#[test]
+fn a_scaffold_writes_its_ddl_into_schema_sql_when_that_is_where_the_schema_lives() {
+    let root = temp_dir("schema-sql-ddl");
+    write_spring_fixture(&root);
+    let resources = root.join("src/main/resources");
+    fs::create_dir_all(&resources).unwrap();
+    // No trailing newline, like the checkout this was found on: the opening
+    // marker landed on the same line as `);` before the separator existed.
+    fs::write(
+        resources.join("schema.sql"),
+        "create table users (\n  id bigint primary key\n);",
+    )
+    .unwrap();
+
+    let output = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Ticket", "id:long@pk", "subject:string!"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let schema = fs::read_to_string(resources.join("schema.sql")).unwrap();
+    assert!(schema.starts_with("create table users ("), "{schema}");
+    // SQL comments, not `#`: a `# jails:` marker in a .sql file is a syntax
+    // error rather than a comment in the wrong place.
+    assert!(schema.contains("-- jails:table-tickets"), "{schema}");
+    assert!(schema.contains("-- /jails:table-tickets"), "{schema}");
+    assert!(schema.contains("create table tickets ("), "{schema}");
+    assert!(schema.contains("\n-- jails:table-tickets"), "{schema}");
+    // No Flyway here, so nothing was written there either.
+    assert!(!root.join("src/main/resources/db/migration").exists());
+
+    // The inverse: `destroy` takes out the block it wrote, and only that.
+    let output = jails_cmd(&root, None)
+        .args(["destroy", "scaffold", "Ticket", "--force"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let schema = fs::read_to_string(resources.join("schema.sql")).unwrap();
+    assert!(!schema.contains("jails:table-tickets"), "{schema}");
+    assert!(!schema.contains("create table tickets"), "{schema}");
+    assert!(schema.contains("create table users ("), "{schema}");
+}
+
+/// A project with neither destination is told, rather than handed a resource
+/// whose table nobody creates.
+#[test]
+fn a_scaffold_with_nowhere_to_put_ddl_says_so() {
+    let root = temp_dir("schema-no-home");
+    write_spring_fixture(&root);
+
+    let output = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Ticket", "id:long@pk", "subject:string!"])
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&output.stdout).to_string();
+    assert!(output.status.success(), "{report}");
+    assert!(
+        report.contains("no `create table tickets` was written"),
+        "{report}"
+    );
+    assert!(report.contains("jails add db"), "{report}");
+    assert!(report.contains("schema.sql"), "{report}");
+}

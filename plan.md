@@ -883,6 +883,83 @@ In `research.md` §9's own order, minus what the phases above already delivered
       the section.
 - [ ] **P9.9** Delete `research.md`.
 
+## P10 — the wire contract, driven by one untouched take-home
+
+`minicom-15-01-2026` is the checkout jails has to be able to finish: a Spring
+Boot 2.7 backend with four endpoints, and two hand-written frontends that
+already call **nine**. The frontends are the specification, and they are not
+negotiable -- they ship with the brief, and a backend that answers a different
+shape is a backend that does not work.
+
+`jails modernize` closed the version half (`git log` has it). What is left is
+the wire half, and every entry below was measured by generating into a copy of
+that project and reading what came out. Four of them are `missing.md` entries
+that this one project needs all at once, which is the strongest argument yet
+that they are one subject rather than five.
+
+The nine endpoints, verbatim from `customer.js` and `admin.js`:
+
+| method | path | body |
+|---|---|---|
+| POST | `/customer_api/ping` | form `email` |
+| POST | `/customer_api/messages` | form `email, content, category, priority` |
+| POST | `/customer_api/read` | form `email, message_id` |
+| GET | `/admin_api/users` | — |
+| GET | `/admin_api/messages/{userId}` | — |
+| POST | `/admin_api/messages` | form `user_id, content, email` |
+| PATCH | `/admin_api/conversations/{userId}/status` | JSON `{status}` |
+| PATCH | `/admin_api/conversations/{userId}/category` | JSON `{category}` |
+| PATCH | `/admin_api/conversations/{userId}/priority` | JSON `{priority}` |
+
+- [x] **P10.1** **A project whose schema is `schema.sql` gets no DDL, and
+      nothing says so.** `jails g scaffold Conversation …` into that checkout
+      wrote a repository, an adapter and an `IT` against a `conversations`
+      table that does not exist, and printed no warning: the migration is
+      conditional on `src/main/resources/db/migration` already existing, which
+      is `add db`'s directory. This is the silent wrong answer the whole
+      project is organised against, so it goes first. Spring's
+      `spring.sql.init` reads `schema.sql`, jails already knows the dialect
+      from the driver, and `codemod`'s marked block is exactly the shape for
+      appending to a file the reader owns.
+      Done: `codemod::Marked` learned a comment token (`--` for SQL, chosen by
+      the path in `Marked::for_path`, so the splice and the unsplice cannot
+      disagree), `scaffold::schema_block` renders the DDL through the same two
+      calls the migration arm makes, and a project with neither destination is
+      reported by name with both fixes. Verified on the checkout: H2 2.4.240
+      accepts the block and the whole Spring context starts over it.
+- [ ] **P10.8** **`g scaffold` writes an ArchUnit fitness function that fails
+      on the project it was generated into.** `RAW_JDBC_STAYS_IN_ADAPTERS` went
+      red on `minicom-15-01-2026` because the reader's own
+      `UsersController`/`MessagesController` hold a `JdbcTemplate` -- code
+      jails did not write and was not asked about. A generated test that fails
+      over pre-existing code turns "try jails on this project" into "jails
+      broke my build", which is the adoption story in one line. Options are a
+      scope limited to packages jails owns rows for, or writing the rule only
+      into a project that starts clean; measure which before choosing.
+- [ ] **P10.2** **M15 — every generated endpoint binds JSON, and the clients
+      post forms.** `$.post` sends `application/x-www-form-urlencoded`; the
+      generated controller is `@Valid @RequestBody`, so six of the nine
+      endpoints reject every real request with a 415. Five of the six carry a
+      body jails already models as a request record.
+- [ ] **P10.3** **The JSON key case is jails', not the client's.** The pages
+      read `message.sender_type`, `message.created_at` and `user.id`; a
+      generated response record emits `senderType` and `createdAt`. jails has
+      no way to say a project's wire format is snake_case.
+- [ ] **P10.4** **M14 — an enum constant has no wire value.** The vocabularies
+      here are `open`/`in_progress`/`resolved`/`closed` (lowercase),
+      `Account`/`Billing`/`Product`/`Technical`/`Other` (TitleCase) and
+      `-`/`!`/`!!`, which are not identifiers at all. `g enum` uppercases, so
+      none of the three can be expressed.
+- [ ] **P10.5** **M16 — the admin list filters are optional and independent.**
+      Status, category and priority, any subset, and `g query` takes required
+      scalars only.
+- [ ] **P10.6** A path with a variable in it: `/admin_api/messages/{userId}`
+      returns `{messages, conversation}`. Check what `--path` accepts today
+      before deciding whether this is a gap or a doc line.
+- [ ] **P10.7** Implement the mission on the checkout itself, with jails
+      commands only, and record the command log. The mission is two-way
+      communication: a customer replies, and the admin sees the reply.
+
 ---
 
 ## Verification
