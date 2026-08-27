@@ -1141,11 +1141,53 @@ mod query_tests {
         assert!(error.contains("at least one typed filter"), "{error}");
     }
 
+    /// An optional filter means "do not filter on this", which is one answer
+    /// and not a guess -- `missing.md` M16. The cast is what makes it work on
+    /// PostgreSQL, which rejects a bare `$1 is null` because that position
+    /// gives the parameter no type to infer from.
     #[test]
-    fn query_rejects_nullable_filters_instead_of_inventing_null_semantics() {
+    fn an_optional_filter_is_generated_as_absent_meaning_unfiltered() {
         let root = scratch("nullable");
         write_record(&root, "Contact", &["id:uuid", "email:string?"]);
         let fields = crate::generate::parse_fields(&["email:string?".to_string()]).unwrap();
+
+        let project = Project::load(&root).unwrap();
+        let files = query_files(
+            &Slice::new(&project, None),
+            "ContactsByEmail",
+            "Contact",
+            &fields,
+            None,
+            Bounds {
+                order_by: None,
+                limit: None,
+            },
+            Endpoint::json(),
+        )
+        .unwrap();
+
+        let adapter = &files
+            .iter()
+            .find(|artifact| artifact.kind == "JDBC query adapter")
+            .unwrap()
+            .contents;
+        assert!(
+            adapter.contains("(cast(:email as text) is null or email = :email)"),
+            "{adapter}"
+        );
+        assert!(
+            adapter.contains(".param(\"email\", criteria.email().orElse(null))"),
+            "{adapter}"
+        );
+    }
+
+    /// A collection still is a guess: `in (...)`, `= any(...)` and "every one
+    /// of them" are three different queries.
+    #[test]
+    fn query_still_refuses_a_collection_filter() {
+        let root = scratch("collection");
+        write_record(&root, "Contact", &["id:uuid", "email:string"]);
+        let fields = crate::generate::parse_fields(&["email:list<string>".to_string()]).unwrap();
 
         let project = Project::load(&root).unwrap();
         let error = query_files(
@@ -1162,9 +1204,6 @@ mod query_tests {
         )
         .unwrap_err();
 
-        assert!(
-            error.contains("null/list semantics are never guessed"),
-            "{error}"
-        );
+        assert!(error.contains("is a collection"), "{error}");
     }
 }

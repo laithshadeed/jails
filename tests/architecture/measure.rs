@@ -682,7 +682,11 @@ pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 // 421 -> 419: `auth` and `webhook` wrote their "takes only a name" refusal
 // inline with no next step, and both are `recipes/flags.rs`'s helper now --
 // the same move `fetcher` and `idempotency` made, and the same `fix:` line.
-pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 419;
+// 419 -> 418: `g query`'s "optional or a collection" refusal was two
+// refusals in one sentence and named no next step. Optional filters are
+// generated now (plan.md P10.5), and what is left refuses a collection with
+// the two things a reader can do about it.
+pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 418;
 
 /// A refusal that builds a message and does not say what to do next.
 ///

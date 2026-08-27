@@ -115,3 +115,15 @@ name = "Admin"
 [[generate]]
 kind = "seed"
 name = "User"
+
+# The admin list filters: status, category and priority, any subset. Three
+# independent optional filters is eight queries written by hand, which is why
+# `missing.md` M16 counted it -- and the generated IT is what proves the
+# `cast(:x as type) is null` form PostgreSQL needs, because it runs the SQL
+# against a real one.
+[[generate]]
+kind = "query"
+name = "MessagesByDirection"
+fields = ["userId:long", "direction:MessageDirection?"]
+on = "Message"
+order_by = "timeStamp desc"

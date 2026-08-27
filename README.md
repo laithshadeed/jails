@@ -1331,6 +1331,22 @@ applies, and inferring it would have `sync` install things nobody asked for.
 
 Run `jails adopt --pretend` first.
 
+### Optional query filters
+
+```
+jails g query TicketsByStatus status:string! category:string? --on Ticket
+```
+
+A `?` filter means **absent is unfiltered**, which is one answer rather than a
+guess. It generates `(cast(:category as text) is null or category = :category)`
+— and the cast is load-bearing rather than tidiness: PostgreSQL rejects a bare
+`$1 is null` with *"could not determine data type of parameter"*, because that
+position gives the parameter no type to infer from. The second occurrence needs
+none; the column supplies it.
+
+A **collection** filter is still refused. `in (...)`, `= any(...)` and "every
+one of them" are three different queries, and jails will not choose.
+
 ### An enum constant's wire value
 
 ```

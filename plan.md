@@ -984,9 +984,22 @@ The nine endpoints, verbatim from `customer.js` and `admin.js`:
       nothing else -- a form carrying `status=open` was a 400, measured.
       Proved end to end on the checkout: form in, `"status":"open"` out, and
       an unknown value 400 rather than a null.
-- [ ] **P10.5** **M16 — the admin list filters are optional and independent.**
+- [x] **P10.5** **M16 — the admin list filters are optional and independent.**
       Status, category and priority, any subset, and `g query` takes required
       scalars only.
+      Done: a `?` filter is `(cast(:x as type) is null or col = :x)`, and the
+      cast is what PostgreSQL needs -- a bare `$1 is null` is "could not
+      determine data type of parameter", since that position gives the
+      parameter no type to infer from. A collection is still refused, because
+      `in (...)`, `= any(...)` and "every one of them" are three queries.
+      Proved by real `mvn clean verify` against PostgreSQL: the minicom
+      manifest grew `MessagesByDirection` with an optional filter, and its
+      `IT` runs that SQL (failsafe 8 -> 9 reports, 11 -> 12 tests).
+      M17 went with it, having closed earlier and never been deleted:
+      `--order-by`/`--limit` shipped with P8.2, and `sql::ordering` makes the
+      default `<timestamp> desc, <key>` rather than `order by id` -- which is
+      the half M17 called "looks like working software", since an escalated
+      list meant to show newest first was showing oldest.
 - [ ] **P10.6** A path with a variable in it: `/admin_api/messages/{userId}`
       returns `{messages, conversation}`. Check what `--path` accepts today
       before deciding whether this is a gap or a doc line.

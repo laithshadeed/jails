@@ -672,6 +672,34 @@ pub const SCENARIOS: &[Scenario] = &[
             &["g", "seed", "Widget"],
         ],
     },
+    // `missing.md` M16: three independent filters, any subset. The generated
+    // `IT` is what proves the cast is right, because it runs against a real
+    // PostgreSQL.
+    Scenario {
+        name: "query-optional-filters",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[
+            &["add", "db", "--no-start"],
+            &[
+                "g",
+                "scaffold",
+                "Ticket",
+                "id:long@pk",
+                "status:string!",
+                "category:string?",
+            ],
+            &[
+                "g",
+                "query",
+                "TicketsByStatus",
+                "status:string!",
+                "category:string?",
+                "--on",
+                "Ticket",
+            ],
+        ],
+    },
     // `missing.md` M14: the three closed sets one real project needed and
     // `g enum` could not spell -- lowercase, TitleCase, and two that are not
     // identifiers in any casing.

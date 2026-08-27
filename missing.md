@@ -67,7 +67,6 @@ Taken feature by feature rather than stopping at the schema:
 |---|---|---|
 | `User`, `Message`, `Issue` + their enums | yes | `g scaffold`, `g enum` |
 | FKs `message.to_user`, `issue.user` | yes | `g association` |
-| `Meta.ordering = ['timestamp']` / `['-created_at']` | **no** | **M17** — every list is `order by id` |
 | `User.get_or_create_from_email` | **no** | **M6** — used by 4 of the 5 endpoints |
 | `unread_messages()` / `unread_count()` | partial | list yes; `count()` no — **M5** |
 | `Message.mark_read()` | partial | `g transition`, after adding `version` — **M11** |
@@ -145,8 +144,6 @@ you are allowed to rewrite — they are the fixed side of the contract.
 Four separate causes, three of them new:
 
 - **the paths are derived** — M8
-- **the admin filters are optional** — any subset of status/category/priority —
-  and `g query` takes required scalars only — **M16**
 
 This is the clearest answer available to "can jails do 100%": for a service
 with an existing client, **the domain half is free and the contract half is
@@ -194,51 +191,6 @@ minimum, `fix: jails add db --no-start` on that line.
 
 ---
 
-## M16 — query filters are all-or-nothing, so no filtered list view works
-
-```sh
-jails g query UsersFiltered 'status:Status?' 'category:Category?' --on Conversation
-```
-
-```
-jails: query UsersFiltered filter `status` is optional or a collection. This first
-       query contract only accepts required scalar equality filters so null/list
-       semantics are never guessed.
-```
-
-The refusal names itself "this first query contract", so the limit is known.
-But an inbox filter bar is the ordinary case: `minicom-15-01-2026`'s admin
-website sends any subset of `?status=&category=&priority=`, which is eight
-combinations. jails can express exactly one of them per generated query, and
-the unfiltered list is a different endpoint again.
-
-`sql::Column` already knows each filter's column and nullability, which is what
-"absent means no predicate" needs. The semantics that must not be guessed are
-`IS NULL` versus "no filter" — naming that explicitly (`--optional-filter`, or
-`?` meaning "omit the predicate when absent") is the whole feature.
-
----
-
-## M17 — list ordering is fixed at `order by id`
-
-Every generated read orders by the primary key, in both the repository and the
-query adapter:
-
-```java
-// Ordered explicitly: SQL does not otherwise promise row order.
-select … from messages order by id
-```
-
-The comment is right that an order is needed. The problem is that it is the
-only one available, and `jails g --help` has no `--order-by`.
-
-`minicom-05-02-2026` needs `ordering = ['timestamp']` on messages and
-`['-created_at']` on issues. The second is not merely unsupported, it comes out
-**backwards** — the escalated-issues panel is meant to show newest first and
-`order by id` ascending shows oldest first, which looks like working software.
-
----
-
 ## M18 — no back-office surface
 
 Every Django checkout registers its models with the Django admin — list
@@ -282,9 +234,9 @@ and should stay that way. It is the observation that *get-or-create by natural
 key*, *read across an association*, and *bidirectional push* are three generic
 primitives, and that all six of these projects needed all three.
 
-The second cluster is smaller and cheaper: **M16 is the one remaining missing
-knob** — an optional filter. A route path (M8), a form binding (M15) and an
-enum's wire value (M14) were the other three, and all have shipped. None of
+The second cluster is smaller and cheaper, and it is **closed**: a route path
+(M8), a form binding (M15), an enum's wire value (M14) and an optional filter
+(M16) were four missing knobs, and all four have shipped. None of
 them asks jails to understand anything new. Together they are the whole reason
 `mc-15-01` matched zero of ten endpoints while modelling the domain perfectly,
 and they are what separates "scaffolds a new service" from "can be pointed at

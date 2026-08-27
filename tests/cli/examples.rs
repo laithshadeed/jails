@@ -317,13 +317,17 @@ fn unheld_maven_example_manifest_passes_real_verification() {
             // 19 -> 20: `UserSeederTest`, which binds the shipped
             // `db/seeds/users.json` to the record on every build -- the file
             // is otherwise read only under the seed profile (M10, P8.9).
-            reports: 20,
+            // 20 -> 21: `MessagesByDirectionQueryControllerTest`, from the
+            // optional filter M16 asked for -- the admin list's three
+            // independent filters, any subset (P10.5).
+            reports: 21,
             // 51 -> 52: `SendMessageUseCaseTest` gained the case missing.md
             // M3 says would have caught a create that never assigns a key.
             // 52 -> 53: `MarkAsReadControllerTest` gained the case for a
             // request with no `If-Match`, which used to apply blind.
             // 55 -> 56 with `UserSeederTest`'s one case.
-            tests: 56,
+            // 56 -> 57 with the optional-filter query's controller test.
+            tests: 57,
             failures: 0,
             errors: 0,
             skipped: 0,
@@ -341,8 +345,13 @@ fn unheld_maven_example_manifest_passes_real_verification() {
             // are the ones a module-level dict cannot pass -- a second node
             // sees the join, one node leaving does not evict the other, and a
             // claim nobody refreshed stops counting (M4b, P8.5).
-            reports: 8,
-            tests: 11,
+            // 8 -> 9, 11 -> 12: `JdbcMessagesByDirectionQueryIT`. This is the
+            // one that matters for P10.5 -- it runs
+            // `cast(:direction as text) is null or ...` against a real
+            // PostgreSQL, which is the form the database needs and the reason
+            // the cast is there rather than a bare `:x is null`.
+            reports: 9,
+            tests: 12,
             failures: 0,
             errors: 0,
             skipped: 0,

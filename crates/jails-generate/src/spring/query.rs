@@ -35,13 +35,20 @@ pub(crate) fn query_files(
             "query {name} needs at least one typed filter; use the scaffold's list endpoint for an unfiltered read"
         ).into());
     }
-    if let Some(field) = fields.iter().find(|field| {
-        field.optionality == crate::generate::Optionality::Nullable || field.collection
-    }) {
+    // A collection filter is still refused: `status:TaskStatus[]` could mean
+    // `in (...)`, `= any(...)` or "all of these", and jails is not going to
+    // pick one. An **optional** filter is a different question with one
+    // answer -- absent means "do not filter on this" -- and `missing.md` M16
+    // is what refusing it cost: an admin list with three independent filters
+    // is eight queries, or none.
+    if let Some(field) = fields.iter().find(|field| field.collection) {
         return Err(format!(
-            "query {name} filter `{}` is optional or a collection. This first query contract only accepts required scalar equality filters so null/list semantics are never guessed.",
+            "query {name} filter `{}` is a collection. A list could mean `in (...)`, `= \
+             any(...)` or every one of them, and jails will not choose.\n       fix: declare \
+             it as a scalar, or write the query by hand.",
             field.name
-        ).into());
+        )
+        .into());
     }
     let target_fields = Target::read(slice, "query", name, target)?.fields;
     let join = via
@@ -284,7 +291,23 @@ fn jdbc_query_java(slice: &Slice, name: &str, target: &str, projection: &Project
     let predicates = filter_columns
         .iter()
         .zip(&projection.filter_qualifiers)
-        .map(|(column, qualifier)| format!("{qualifier}{} = :{}", column.name, column.name))
+        .map(|(column, qualifier)| {
+            let equality = format!("{qualifier}{} = :{}", column.name, column.name);
+            if column.not_null {
+                return equality;
+            }
+            // `(cast(:x as type) is null or col = :x)`, and the cast is
+            // load-bearing rather than decoration: PostgreSQL rejects a bare
+            // `$1 is null` with "could not determine data type of parameter",
+            // because that position gives the parameter no type to infer
+            // from. The second occurrence needs none -- the column supplies
+            // it. jails knows the type here because `Column` carries the one
+            // the DDL declared.
+            format!(
+                "(cast(:{} as {}) is null or {equality})",
+                column.name, column.sql_type
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n                          and ");
     let from = match &projection.join {
