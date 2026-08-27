@@ -7,7 +7,9 @@ line that could not be written with the CLI.
 **A closed entry is deleted from this file, not marked done.**
 `git log -p -- missing.md` is the record.
 
-Closed and deleted, so a re-report can be recognised as one: `--set` (an
+Closed and deleted, so a re-report can be recognised as one: `jails
+architecture baseline` (the ArchUnit freeze store, granted through system
+properties for one run so `archunit.properties` stays strict), `--set` (an
 endpoint pins a component the caller must not choose), `--via` on a use case
 (a write resolves its foreign key from a component of the parent), `--path` on
 a scaffold (a collection whose URL is a fixed contract), `--if-match optional`
@@ -52,26 +54,6 @@ frontend actually calls is one command). `jails fmt` on Gradle is a *deliberate*
 - **So the table is the better authority, not the Java.** Columns already map to and from `spec::Field` in both directions (`sql::Column`), and jails already observes schemas (`introspect db`, `pull`, `schema diff`). `jails adopt resource Message --table messages` can be *exact* where reading the class would be a guess.
 - **Adoption must not claim jails wrote the schema.** This project's DDL is in `schema.sql`, not a Flyway lineage jails sealed. An adopted resource is storage-backed by a table jails did not create, so `--storage drop` has to stay refused for it -- the recorded lineage is the authority for what jails may retire, and adoption must not forge one.
 - **Whatever cannot be read is confirmed, not defaulted.** A column says `varchar(64)` and not `@unique`; a record read off disk already carries no constraints for exactly this reason. The precedent to follow is `destroy --storage drop --confirm-table`: ask for the evidence rather than invent it.
-
-### Adopting the ArchUnit baseline (`jails architecture baseline`)
-
-Measured on `minicom-15-01-2026-org`: after every jails command in the feature
-list had run and the project compiled, `./gradlew test` was red on exactly one
-class -- `ArchitectureTest`, over 24 violations in code jails did not write
-(`java.sql.Timestamp` in the legacy `Message` and `User` POJOs and the three
-hand-written controllers).
-
-- `g scaffold` already **warns** and names the bootstrap, so nothing is hidden.
-  What it names is four manual steps in a file jails wrote: set both
-  `allowStoreCreation` and `allowStoreUpdate` true in
-  `src/test/resources/archunit.properties`, run the suite once, set both back,
-  commit `.jails/architecture-baseline`.
-- Doing it by hand takes a minute and is the last thing standing between a
-  legacy checkout and a green `jails check` -- which is the whole adoption
-  story, so it is the wrong place to hand the reader a four-step recipe.
-- **Expected**: `jails architecture baseline` performs those four steps as one
-  transition and reports what it froze, so the violations that were already
-  there are recorded and any *new* one still fails the build.
 
 ### `modernize` does not re-plan jails' own output
 

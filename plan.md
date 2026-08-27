@@ -28,13 +28,14 @@ Four documents describe what jails does not do yet:
 | document | open | subject |
 |---|---:|---|
 | `bugs.md` | 0 | B46–B51 all closed; the file holds the convention and the coverage note |
-| `missing.md` | 7 | adoption (`adopt resource`, `architecture baseline`), `modernize` re-planning, and four generator shapes |
+| `missing.md` | 6 | `adopt resource`, `modernize` re-planning, and four generator shapes |
 | `modern.md` | 8 | the generated Java assessed against `java.md`/`backend.md` |
 | `research.md` | 9 | the remaining product direction |
 
 Phases P0–P5, P7 and P11 are closed and deleted. What remains is P6 (generated
-prose and the real defects behind it), P8 (one scope decision), P9
-(`research.md`) and P10, which is down to its adoption half.
+prose and the real defects behind it), P8 (one scope decision) and P9
+(`research.md`). **P10 is closed**: P10.7's five blockers shipped and P10.8 is
+`jails architecture baseline`.
 
 **P10.7 is closed.** The mission is implemented on the untouched checkout with
 jails commands only, and separately from an empty directory; both are verified
@@ -192,6 +193,9 @@ In `research.md` §9's own order.
 
 ## P10 — the wire contract, driven by one untouched take-home
 
+**Closed.** Kept as a heading only until the next phase renumbering, so a
+`plan.md P10.7` citation still resolves.
+
 `minicom-15-01-2026` is the checkout jails has to be able to finish: a Spring
 Boot backend with four endpoints, and two hand-written frontends that already
 call **nine**. The frontends are the specification and they are not negotiable
@@ -213,16 +217,6 @@ verbatim from `customer.js` and `admin.js`:
 | PATCH | `/admin_api/conversations/{userId}/status` | JSON `{status}` |
 | PATCH | `/admin_api/conversations/{userId}/category` | JSON `{category}` |
 | PATCH | `/admin_api/conversations/{userId}/priority` | JSON `{priority}` |
-
-- [ ] **P10.8** **`jails architecture baseline`.** The *warning* half shipped:
-      `g scaffold` into a project that already reaches `java.sql` outside
-      `adapters` names the files and says the suite will fail on them. What is
-      still four manual steps in a file jails wrote is accepting them --
-      set both `freeze.store.default.allowStoreCreation` and
-      `allowStoreUpdate` true, run the suite once, set both back, commit
-      `.jails/architecture-baseline`. Doing it by hand takes a minute and is
-      the last thing between a legacy checkout and a green `jails check`,
-      which is the wrong place to hand the reader a four-step recipe.
 
 ---
 
