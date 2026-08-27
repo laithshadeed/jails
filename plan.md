@@ -27,15 +27,25 @@ Four documents describe what jails does not do yet:
 
 | document | open | subject |
 |---|---:|---|
-| `bugs.md` | 6 | defects reproduced from an empty directory, B46–B51 |
-| `missing.md` | 1 | M18, the one deliberate scope line, recorded as a decision |
+| `bugs.md` | 0 | B46–B51 all closed; the file holds the convention and the coverage note |
+| `missing.md` | 7 | adoption (`adopt resource`, `architecture baseline`), `modernize` re-planning, and four generator shapes |
 | `modern.md` | 8 | the generated Java assessed against `java.md`/`backend.md` |
 | `research.md` | 9 | the remaining product direction |
 
-Phases P0–P5 and P7 are closed and deleted. What remains is P6 (generated
+Phases P0–P5, P7 and P11 are closed and deleted. What remains is P6 (generated
 prose and the real defects behind it), P8 (one scope decision), P9
-(`research.md`), P10 (the wire contract of one untouched take-home) and P11
-(the defects the last dogfooding pass found).
+(`research.md`) and P10, which is down to its adoption half.
+
+**P10.7 is closed.** The mission is implemented on the untouched checkout with
+jails commands only, and separately from an empty directory; both are verified
+by a real build, and the greenfield one by an actual two-way conversation over
+HTTP against a running application. The five things that were not expressible
+are `--set` (pin a component the endpoint decides), `--via` on a use case
+(resolve a foreign key on the way in), `--if-match optional` plus `--set` on a
+transition (a partial update an ordinary browser page can reach), `--path` on a
+scaffold (a collection route that is a fixed contract) and `--bind` (a request
+parameter whose name is neither the component's nor its snake_case). The
+command log is `minicom/minicom-org/spring-commands.sh`.
 
 **Every *defect* below is reproducible from a clean `jails new`**, and states
 the command that produced it. That is the bar, because goldens compare bytes
@@ -108,7 +118,11 @@ retires it.
 
 ## P8 — the primitives the real projects needed
 
-- [ ] **P8.11** Delete `missing.md`. Blocked on **M18** alone, and M18 is a
+- [ ] **P8.11** Delete `missing.md`. No longer blocked on M18 alone: the file
+      is four entries now, and three are adoption work rather than a scope
+      line -- `adopt resource`, `architecture baseline` (P10.8) and
+      `modernize` re-planning what the ledger records. M18 itself is still a
+      *decision* rather than work:
       *decision* rather than work: jails generates a REST surface and no
       operator surface, which is the one thing every Django port gets free and
       every jails port does not. Either build the back-office generator or
@@ -200,93 +214,15 @@ verbatim from `customer.js` and `admin.js`:
 | PATCH | `/admin_api/conversations/{userId}/category` | JSON `{category}` |
 | PATCH | `/admin_api/conversations/{userId}/priority` | JSON `{priority}` |
 
-- [ ] **P10.7** Implement the mission on the checkout itself, with jails
-      commands only, and record the command log. The mission is two-way
-      communication: a customer replies, and the admin sees the reply.
-      *In progress.* The generators the mission needs work on the checkout --
-      three scaffolds, four closed sets, an association, a path-variable query
-      and two form-bound use cases -- and every defect in `bugs.md` was found
-      by running its build. Five things are not expressible by any jails
-      command, each blocking a named endpoint. All five re-confirmed against
-      HEAD on 2026-08-27:
-
-      - **a use case cannot pin a component to a constant.** `POST
-        /admin_api/messages` must write `sender_type = ADMIN` and
-        `/customer_api/messages` must write `CUSTOMER`; today both take it
-        from the caller, so either endpoint can forge the other's messages.
-      - **a use case cannot resolve a foreign key on a write.** `POST
-        /customer_api/messages` carries `email`, not `user_id`. `g query
-        --via` does this on the read side and there is no write equivalent.
-      - **a use case returns its target, and two endpoints must return
-        something else.** `POST /customer_api/ping` returns the *unread
-        messages* for the email it was given; `POST /customer_api/read`
-        returns nothing and mutates a flag.
-      - **there is no generator for a partial update.** The three `PATCH
-        /admin_api/conversations/{userId}/{field}` endpoints are one shape
-        repeated: set one column on the row a path variable selects.
-      - **a resource's route is not settable.** `g scaffold User` serves
-        `/users`; the frontend calls `/admin_api/users`. `--path` is refused
-        by name here -- *"`--path` applies to a controller, a use case or a
-        query"* -- which is the honest answer and not yet the useful one.
-- [ ] **P10.8** **`g scaffold` writes an ArchUnit fitness function that fails
-      on the project it was generated into.** `RAW_JDBC_STAYS_IN_ADAPTERS` went
-      red on `minicom-15-01-2026` because the reader's own
-      `UsersController`/`MessagesController` hold a `JdbcTemplate` -- code
-      jails did not write and was not asked about. A generated test that fails
-      over pre-existing code turns "try jails on this project" into "jails
-      broke my build", which is the adoption story in one line. Options are a
-      scope limited to packages jails owns rows for, or writing the rule only
-      into a project that starts clean; measure which before choosing.
-
----
-
-## P11 — the defects the last dogfooding pass found
-
-Six reports, all reproduced from an empty directory against `jails 0.1.0` built
-from HEAD. Full transcripts are in `bugs.md`; the item is the fix.
-
-- [ ] **P11.1** **B46** — the second `destroy --storage drop` on a re-created
-      resource refuses with jails' own internal-bug message and writes nothing,
-      so a resource that has been dropped once can never be dropped again. The
-      drop planner walks the whole sealed lineage while the read set declares
-      only the current head, and the guard fires on the first command with more
-      than one create to walk. Declare the superseded creates in the read set;
-      the refusal itself is correct behaviour for an undeclared read.
-- [ ] **P11.2** **B47** — `doctor` reports `25 checks, all clear` over a
-      `.jails/ledger.toml` no mutating command can read. `compat` already
-      classifies the store as absent / current / unreadable and `doctor` never
-      asks. Add the check, and make `resource status` name the cause instead of
-      answering `state: ambiguous`. This is the two-oracles-disagreeing shape,
-      in its worst form: the command you run when something is wrong is the one
-      that says nothing is.
-- [ ] **P11.3** **B48** — a `--path` query with a path variable generates a
-      controller test that POSTs to a GET-only route, with `{userId}` never
-      expanded, carrying a JSON body for a `@PathVariable`. It fails at the URI
-      with `IllegalArgumentException: Not enough variable values available to
-      expand`. The controller renderer already worked out which criteria come
-      from the URL; the test renderer branches on the criteria record and does
-      not know. Pass the same resolved value to both.
-- [ ] **P11.4** **B49** — `--method` is accepted and silently ignored by
-      `g query`: `--method post` emits `@GetMapping`. Deriving the verb from
-      whether every filter is a path variable is right; accepting a flag that
-      contradicts the derivation and saying nothing is not. Refuse by name, the
-      way `--path` on `g scaffold` already does.
-- [ ] **P11.5** **B50** — `g record String value:string` emits
-      `public record String(String value)`, whose component is typed as the
-      record rather than as text, because a package member outranks the
-      implicit `java.lang` import. Both it and its generated test compile, so
-      the tier that answers the question this tool exists for is green over it.
-      `Name` already refuses Java reserved words; every reserved word is
-      lowercase and the name is capitalised before the check, so the check
-      never fires. `java.lang`'s type names are a closed list and belong in the
-      same place.
-- [ ] **P11.6** **B51** — `jails explain query` still says "Required scalar
-      equality filters only" and optional filters ship. `explain` is a
-      hand-written table by design, and `every_kind_has_an_explanation` checks
-      only that a kind *has* a row. Nothing checks that the row is still true —
-      the same oracle-drift shape
-      `every_command_a_message_tells_the_reader_to_run_is_one_that_exists`
-      exists to catch on the other side.
+- [ ] **P10.8** **`jails architecture baseline`.** The *warning* half shipped:
+      `g scaffold` into a project that already reaches `java.sql` outside
+      `adapters` names the files and says the suite will fail on them. What is
+      still four manual steps in a file jails wrote is accepting them --
+      set both `freeze.store.default.allowStoreCreation` and
+      `allowStoreUpdate` true, run the suite once, set both back, commit
+      `.jails/architecture-baseline`. Doing it by hand takes a minute and is
+      the last thing between a legacy checkout and a green `jails check`,
+      which is the wrong place to hand the reader a four-step recipe.
 
 ---
 

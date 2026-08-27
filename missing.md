@@ -7,7 +7,15 @@ line that could not be written with the CLI.
 **A closed entry is deleted from this file, not marked done.**
 `git log -p -- missing.md` is the record.
 
-Closed and deleted, so a re-report can be recognised as one: the `websocket`
+Closed and deleted, so a re-report can be recognised as one: `--set` (an
+endpoint pins a component the caller must not choose), `--via` on a use case
+(a write resolves its foreign key from a component of the parent), `--path` on
+a scaffold (a collection whose URL is a fixed contract), `--if-match optional`
+(a transition an ordinary browser page can reach, since `$.ajax` sends no
+conditional header and Spring answers 400 before generated code runs),
+`--bind` (a request parameter whose name is neither the component's nor its
+snake_case -- the brief's own page reads `message.id` and posts `message_id`),
+the `websocket`
 capability (`jails g socket <Name>` is the slice, and `jails add websocket`
 now says so), first-class `devtools` (one dependency and no code, so `jails
 add dependency` is the verb -- both `run --watch` and `doctor` name it now),
@@ -80,8 +88,17 @@ hand-written controllers).
 
 ### Dual-Format `consumes = [json, form]` Request Support
 
-- Current generators support `--consumes json` or `--consumes form`, but real-world web applications (like Minicom with jQuery `$.post` and API clients) frequently require endpoints that accept both form-urlencoded and JSON payloads without returning HTTP 415.
-- **Expected**: Generator support for hybrid request binders or unified payload parsing.
+- `--consumes json` and `--consumes form` each work, and `--bind` now names the
+  request parameter a form field arrives under. What is still unexpressible is
+  *one endpoint that accepts both*: `@RequestBody` and `@ModelAttribute` are
+  different method parameters and a handler cannot carry both, so answering
+  both content types means two handlers over one command, or a binder that
+  reads whichever arrived.
+- Real pages send form-urlencoded and real API clients send JSON, and the
+  minicom frontends are the first kind, so the shipped half is the one the
+  brief needs. This is what is left.
+- **Expected**: `--consumes json,form` generating one route that binds either,
+  with the generated proof posting both.
 
 ### In-Memory / Room-Based Presence Generators
 - `jails g presence` generates PostgreSQL cluster-backed presence, but lightweight in-memory group/room chat presence (e.g. admin online tracking per customer email channel) is a common pattern that lacks a generator recipe.

@@ -121,16 +121,16 @@ the wrong migration.
 
 Generated code lives in a managed source root. Custom application logic lives
 in reader-owned source and implements generated ports. If the reader really
-wants to edit a generated controller:
+wants to own a generated controller implementation:
 
 ```text
-jails eject entity.note:http
+jails eject implementation.entity.note.http-controller
 ```
 
-Jails copies that facet to reader source, marks it external in the model and
-never overwrites or destroys it again. Later model changes can diagnose that
-the ejected implementation is stale, but ownership is no longer guessed from
-bytes.
+Jails copies that implementation to reader source, marks it external in the
+model and never overwrites or destroys it again. Its generated port/DTO ABI
+stays managed; an incompatible later model change fails linking until the
+external declaration is updated. Ownership is no longer guessed from bytes.
 
 ### What disappears
 
@@ -172,21 +172,33 @@ is checked end-to-end, not because the system is refactored on faith.
 
 The repository already has a strong base:
 
-- 29 Rust integration-test files with roughly 412 `#[test]` entry points;
-- 60 registered generation/capability scenarios and 61 golden directories;
+- 29 Rust integration-test source files under `tests/`, plus the separate
+  `jails-commit` crash target, with more than 400 authored test entry points;
+- 61 registered generation/capability scenarios and 62 golden directories;
 - byte-for-byte generated-tree snapshots through the real `jails` binary;
-- a help-derived gate that refuses a generator kind or capability with no
-  scenario;
+- a help-derived gate that gives every one of the 39 generator kinds a golden
+  scenario and covers 24 of 25 capabilities (`format` is explicitly exempt);
 - generate/destroy agreement checks;
 - portable-plan, app, history, effects and engine tests;
 - real Maven/JDK generated-project compilation and test-report assertions;
-- crash/failpoint tests and protocol golden fixtures.
+- crash/failpoint tests and five protocol fixtures.
 
-That is not yet a sufficient rewrite firewall. Goldens deliberately exclude
-executor state, one minimal scenario does not cover every option interaction,
-real-toolchain tests can self-skip unless `JAILS_REQUIRE_TOOLCHAIN=1`, and the
-crash audit found failpoint names that do not prove they fired. A snapshot can
-also preserve broken behavior or be blindly regenerated.
+That is a useful regression suite, but the test count is not the same as E2E
+coverage. The source audit found concrete holes:
+
+| Surface | What is proved now | Rewrite risk still open |
+|---|---|---|
+| Golden CLI | one real-binary invocation and complete output-tree bytes for each registered scenario | executor state is excluded; `scaffold-plain` is an orphan golden directory; one scenario per kind does not cover option interactions |
+| Real Java builds | strong Maven/Gradle fixtures, with several suites pinning XML report/test counts | the shared strict toolbox exercises only about 32 of 39 kinds; several tests generate project A but compile toolbox B; some Spring suites check only Maven exit status |
+| CLI/engine | broad command parsing and route coverage | hundreds of CLI tests and dozens of engine tests include component/in-process checks, so they must not be advertised collectively as black-box E2E |
+| Crash/recovery | enumerated injected `Err`/unwind sweeps | `before-directory` and `after-file-rename` are advertised but have no matching trip; `after-root-sync` is tripped but unadvertised; no child-process death matrix proves durable recovery |
+| Protocol | three useful referenced compatibility fixtures | `testd-request.hex` and `testd-reply.hex` have no source reference, so their presence proves nothing |
+| Automation | a local pre-push hook runs `cargo build` and `cargo test` | no repository CI configuration was found; the hook omits `--workspace` crate tests and does not set `JAILS_REQUIRE_TOOLCHAIN=1`, so toolchain checks may self-skip |
+
+The tests named “every generator and capability together” currently run the
+same explicit toolbox subset, not every advertised feature. Goldens can also
+preserve an existing bug or be mass-regenerated to bless one. Those are the
+first coverage defects to fix; they are not reasons to slow the rewrite down.
 
 ### Differential E2E harness
 
@@ -226,29 +238,38 @@ canonical `StateView`/`ReceiptView` describing their semantics. Intentional
 changes require a checked-in expectation or migration rule; an agent may not
 silently refresh every golden.
 
-### Fast gate stack
+### Required E2E gates
 
 These are merge gates, not a timeline:
 
-- **G0 — protocol:** old wire fixtures decode; new canonical encodings are
-  golden; compatibility refusals are exact.
+- **G0 — mandatory execution and protocol:** create one `verify-rewrite`
+  command that runs format/clippy, `cargo build --workspace` and
+  `JAILS_REQUIRE_TOOLCHAIN=1 cargo test --workspace`; pre-push and CI invoke
+  only that command. Scenario names and golden directories match exactly;
+  every protocol fixture has a source reference; old fixtures decode and new
+  canonical encodings are golden.
 - **G1 — differential CLI:** all registered scenarios run through both
   binaries and compare exit, plan, output tree, rerun and destroy semantics.
-- **G2 — behavior matrix:** option interactions, failure/refusal paths,
-  adoption, rename and schema evolution compare semantically.
-- **G3 — real toolchain:** generated Maven and Gradle projects compile and
-  their Surefire/Failsafe/Gradle XML reports prove tests actually executed.
-  Required CI sets `JAILS_REQUIRE_TOOLCHAIN=1`; skipping is failure.
+- **G2 — behavior journeys:** all 98 command paths map to at least one
+  checked-in journey. Cover success/refusal, CLI/manifest equivalence, reader
+  edits and conflicts, lifecycle operations, plan portability, old-state
+  import and pairwise option interactions.
+- **G3 — exact real toolchain:** maintain a machine-readable map from every
+  generator kind and capability to a build fixture. Build the exact generated
+  tree under test—not a neighboring toolbox—and pin Surefire, Failsafe and
+  Gradle report counts plus unexpected skips.
 - **G4 — crash/recovery:** each advertised fault is asserted to fire in a
-  child process; kill/restart reaches exactly pre-plan or post-plan state and
-  preserves effects.
-- **G5 — real-project corpus:** anonymized or local copies of actual adopted,
-  edited Spring/plain projects run plan/apply/build before and after.
+  child process that dies without unwinding; restart reaches exactly pre-plan
+  or post-plan state, a second restart is idempotent, and effects are
+  preserved. Generate the registry and trip sites from one declaration.
+- **G5 — real-project corpus:** promote the proof manifests and `validation/`
+  workouts, then add sanitized adopted and reader-edited Spring/plain projects.
+  Each runs legacy and new plan/apply/build plus semantic comparison and rerun.
 
 Independent AI agents can rewrite model, compiler, emitters, command schema
 and executor in parallel. No workstream merges unless its relevant old-vs-new
 gate is green. Once all gates are green, cut over once and delete the legacy
-path; there is no need to stretch this into a calendar-driven migration.
+path.
 
 ## Audit basis
 
@@ -262,12 +283,12 @@ delta, not an inference from the module graph:
 | Scope | Rust files | Raw lines | Main concern |
 |---|---:|---:|---|
 | `crates/jails-engine` + root `src` | 66 | 18,973 | orchestration and CLI |
-| `jails-generate` + `jails-java` | 64 | 27,956 | lowering and rendering |
-| `jails-protocol` + `jails-project` + `jails-spec` + `jails-state` | 87 | 39,219 | domain, wire values and project state |
+| `jails-generate` + `jails-java` | 64 | 27,952 | lowering and rendering |
+| `jails-protocol` + `jails-project` + `jails-spec` + `jails-state` | 87 | 39,221 | domain, wire values and project state |
 | `jails-commit` + `jails-prepare` + `jails-drive` + `jails-report` + `jails-support` + `jails-testkit` | 83 | 36,511 | planning, transactions and tools |
-| **Total** | **300** | **122,659** | **96,569 nonblank code lines** |
+| **Total** | **300** | **122,657** | **96,567 nonblank code lines** |
 
-The totals include colocated tests and should not be read as 96,569 lines of
+The totals include colocated tests and should not be read as 96,567 lines of
 production logic. They are useful for scale and coverage, not as a productivity
 metric.
 
@@ -618,25 +639,10 @@ What can be simplified is the number of meanings carried through the kernel.
 Preparation currently has parallel resource, operation, ledger and effect
 representations. Commit stores its own journal and receipt forms, object
 images, preconditions and recovery state. This creates enough surface for the
-normal and recovery paths to drift. The audit found examples worth treating as
-architectural warnings:
-
-- recovery reconstructs a receipt with no post-commit effects in
-  `jails-commit/src/recover.rs:173`, while journal validation compares exact
-  effects in `journal.rs:611`;
-- normal execution promotes durable objects in `execute.rs:267`, while the
-  corresponding roll-forward path in `recover.rs:150` does not show the same
-  action;
-- several external/machine preconditions are accepted by the model but cannot
-  be checked by the executor's runtime context (`execute.rs:656` and
-  `execute.rs:736`);
-- prepare computes `ledger_after` only on one pipeline branch
-  (`jails-prepare/src/pipeline.rs:779`), while other lifecycle plans depend on
-  special defaults or placeholder bytes.
-
-These observations need focused correctness tests before being called live
-data-loss bugs, but they demonstrate the maintenance cost: the safety protocol
-is large enough that mirrored paths no longer obviously mirror each other.
+normal and recovery paths to drift. The concrete defects and the tests they
+need are collected under “Transaction defects the rewrite must cover” below.
+The architectural point is that mirrored paths no longer obviously mirror
+each other.
 
 The long-term transaction kernel should accept one canonical `Plan`, persist
 that same value once, and execute a small sequence of idempotent operations.
@@ -724,7 +730,7 @@ This moves Jails into its target ecosystem and makes generated-source roots a
 natural build concept. It also adds JVM startup, plugin-version compatibility,
 two build-tool adapters and a harder adoption story. SQL migration allocation
 still cannot safely happen as an incidental annotation-processing side effect.
-Treat this as a prototype or eventual backend, not the first migration step.
+Treat this as a prototype or alternative backend, not the core vision.
 
 ## Recommended semantic model
 
@@ -835,20 +841,34 @@ struct AppModel {
 
 struct Entity {
     id: EntityId,
-    names: NameSet,
+    names: EntityNames,
     fields: Vec<Field>,
     constraints: Vec<Constraint>,
     facets: BTreeSet<Facet>,
 }
 
-struct NameSet {
+struct EntityNames {
     java_type: JavaTypeName,
-    java_member: JavaMemberName,
     sql_table: SqlIdent,
     route_segment: RouteSegment,
     config_prefix: ConfigPrefix,
 }
+
+struct FieldNames {
+    java_member: JavaMemberName,
+    sql_column: SqlIdent,
+}
+
+struct OperationNames {
+    java_type: JavaTypeName,
+    route_segment: RouteSegment,
+}
 ```
+
+Each node owns only the projections that make sense for that node; this must
+not become another universal `NameSet` full of `Option`s. Name derivation is a
+pure projection from the semantic node, while explicit model values override
+that projection.
 
 `scaffold` becomes a profile that adds a known set of facets to one entity. It
 does not need its own monolithic implementation. `destroy scaffold` removes
@@ -1232,7 +1252,7 @@ history belongs in Git. Keep Jails history only for execution/recovery and
 evolution evidence. Undo becomes “apply the inverse model patch and compile,”
 except for database migrations, whose inverse is a new forward migration.
 
-### Correctness firewall before migration
+### Transaction defects the rewrite must cover
 
 Do not build the new architecture on unverified transaction assumptions. The
 transaction audit identified these paths for immediate tests or temporary
@@ -1483,18 +1503,20 @@ state is:
 
 ```text
 jails-model
-  semantic IDs, AppModel, ModelPatch, diagnostics, generated wire DTOs
+  semantic IDs, AppModel, ModelPatch, ProjectFacts, artifact/plan DTOs,
+  diagnostics and generated wire DTOs; no filesystem or compiler behavior
 
 jails-compiler
   link/validate, facets, type algebra, dependency graph, schema evolution,
-  Java/SQL/HTTP emitters; no filesystem access
+  Java/SQL/HTTP emitters; depends only on jails-model
 
 jails-workspace
-  capture/adoption, ProjectView, document backends, Plan executor,
-  SQLite state and recovery
+  capture/adoption, document backends, Plan executor, SQLite state and
+  recovery; depends only on jails-model
 
 jails-cli
-  generated command catalog, front ends, plan/review/apply reporting
+  composition root, generated command catalog, front ends and reporting;
+  depends on jails-model + jails-compiler + jails-workspace
 
 jails-tools-*
   optional run/test/db/log/editor/contract processes behind a versioned seam
@@ -1503,11 +1525,19 @@ jails-testkit
   shared test-only primitives
 ```
 
-`jails-compiler` consumes only the semantic model and explicit project facts.
-`jails-workspace` constructs those facts and executes compiler output. The CLI
-is the composition root. Optional tools do not import the mutation protocol.
+The dependency arrows are deliberately acyclic:
 
-The current thirteen crates may temporarily collapse during migration because
+```text
+jails-cli ──> jails-compiler ──> jails-model
+    └──────> jails-workspace ──> jails-model
+```
+
+The CLI asks `jails-workspace` for one captured `ProjectFacts`, passes those
+facts plus `AppModel` to `jails-compiler`, and hands the returned plan to the
+workspace executor. Compiler and workspace never import one another. Optional
+tools are subprocess clients and do not import the mutation protocol.
+
+The current thirteen crates may temporarily collapse during the rewrite because
 moving a concept is easier inside one crate. That is not itself a success
 metric. Five crates containing the same fifteen representations would be the
 same architecture with fewer `Cargo.toml` files.
@@ -1527,20 +1557,6 @@ symlink policy, filesystem activation, database migrations or external
 effects. Requiring the reader's worktree to be clean would simplify further
 but would be a major UX change. Prototype it as a storage backend, not as an
 assumption baked into the semantic model.
-
-### A Java annotation processor or build plugin
-
-The most aggressive ecosystem-aligned move is to make `.jails/app.toml` (or a
-future DSL) input to a Java build-time compiler. A processor/plugin can generate
-Java with native type models and place it in standard generated-source roots.
-The Rust binary can shrink to model editing, planning, schema evolution and
-workspace operations—or eventually disappear.
-
-This is compelling if the team accepts a build-time Jails dependency. It is
-less compelling if “one standalone binary, no Jails artifact in the project”
-is core. Annotation processors also should not allocate persistent migration
-versions as an incidental compile side effect. Keep migration planning in an
-explicit CLI/build task.
 
 ### Database-first authority
 
@@ -1641,21 +1657,19 @@ reader-owned patches are not. Shrink the recovery domain first, then shrink the
 journal. Do not weaken crash safety while the current broad mutation contract
 still exists.
 
-### An extreme LOC promise
+### LOC is not the limiting variable
 
-The audit found 96,000-plus Rust code lines, including extensive tests, across
-hundreds of product behaviors. Typed IR will remove synchronization code but
-will not make the security, schema, workflow, build-tool and testing opinions
-free. Any claim that a template engine and crate merge alone can remove 80–90%
-is not an engineering estimate. Measure one migrated vertical slice before
-setting a repository-wide target.
+AI can replace this volume quickly. The hard part is deciding which behavior
+deserves to survive and proving the replacement preserves it. Do not make LOC
+or elapsed time an architecture constraint. Freeze the contracts, shard the
+rewrite aggressively, and let the differential suite decide whether the new
+implementation is done.
 
 ## AI-native rewrite DAG
 
-Do not migrate recipe by recipe or dual-write two transaction stores for
-months. Make the few serial decisions once, freeze the old binary as the E2E
-oracle, fan the implementation out across agents, integrate, cut over and
-delete.
+Do not port recipe by recipe or dual-write two transaction stores. Make the
+few serial decisions once, freeze the old binary as the E2E oracle, fan the
+implementation out across agents, integrate, cut over and delete.
 
 ### Serial root decisions
 
@@ -1679,7 +1693,7 @@ lanes concurrently:
 | Lane | Delivers | Does not wait for |
 |---|---|---|
 | Model/linker | `AppModel`, explicit IDs, `ModelPatch`, reference graph, legacy-state importer, typed evolution programs | renderers or executor |
-| Compiler kernel | facet IR, `TypeSemantics`, `NameSet`, requirement graph, schema projection, `Plan` builder | CLI or SQLite implementation |
+| Compiler kernel | facet IR, `TypeSemantics`, node-specific name projections, requirement graph, schema projection, `Plan` builder | CLI or SQLite implementation |
 | Emitters | Java/SQL/HTTP/build emitters, split by independent facet families; existing templates reused where byte-stable | other emitter families |
 | Workspace | one captured `ProjectView`, Maven/Gradle/properties/compose document backends, managed-root integration | command frontends |
 | Executor | SQLite journal, exact blob replay, fsync/rename state machine, effects, `StateView`/`ReceiptView`, legacy receipt reader | generator internals |
@@ -1708,9 +1722,8 @@ Once validated, agents port all remaining facet families in parallel.
 7. Delete the old engine, protocol translations, render paths and transaction
    store in the same cutover change.
 
-There is no shadow production engine, long dual-write period or calendar
-milestone in this plan. Parallel AI throughput handles the volume; the E2E
-firewall handles the risk.
+There is no shadow production engine or long dual-write period in this plan.
+Parallel AI throughput handles the volume; the E2E firewall handles the risk.
 
 ## Concrete deletion map
 
@@ -1771,11 +1784,10 @@ The crazy idea that fits the evidence is not “write a new language.” It is:
 > reader reviewed.
 
 Build the application compiler plus separate wire-codec and command-catalog
-generators. Keep
-the current syntax as compatibility front ends. Use typed facet and artifact
-IR rather than strings, generated source as output rather than state, stable
-logical identities rather than name inference, and SQLite as a simplifier for
-the remaining durable kernel.
+generators. Keep the current syntax as compatibility front ends. Use typed
+facet and artifact IR rather than strings, generated source as output rather
+than state, explicit stable IDs rather than name inference, and SQLite as a
+simplifier for the remaining durable kernel.
 
 The largest code deletion will not come from shorter render functions. It will
 come from making these questions disappear:
