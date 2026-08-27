@@ -96,3 +96,11 @@ name = "EnsureUser"
 fields = ["email:string!"]
 on = "User"
 on_conflict = "email"
+
+# `consumers.py` tracks admin presence in a module-level dict, under a comment
+# saying it works *because* there is one Daphne process. It is correct on one
+# node and wrong on two, and nothing reports the difference — so the state goes
+# in PostgreSQL and the generated IT asks a second node.
+[[generate]]
+kind = "presence"
+name = "Admin"

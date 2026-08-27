@@ -333,8 +333,12 @@ fn unheld_maven_example_manifest_passes_real_verification() {
             // 6 -> 7, 7 -> 8: `EnsuringEnsureUserUseCaseIT`, which is the only
             // place `on conflict` means anything -- and the only check that
             // the column it names actually carries a unique index.
-            reports: 7,
-            tests: 8,
+            // 7 -> 8, 8 -> 11: `JdbcAdminPresenceIT`'s three cases, which
+            // are the ones a module-level dict cannot pass -- a second node
+            // sees the join, one node leaving does not evict the other, and a
+            // claim nobody refreshed stops counting (M4b, P8.5).
+            reports: 8,
+            tests: 11,
             failures: 0,
             errors: 0,
             skipped: 0,

@@ -556,6 +556,16 @@ there the unit is a whole service block rather than a setting.)
   evicted rather than retried forever or allowed to stop the broadcast; and the
   handshake stays same-origin, with the registration saying where to widen it
   rather than widening it, because that is a security decision.
+- `jails generate|g presence <Name>` — who is connected, in PostgreSQL rather
+  than in one process's memory. An in-memory presence map is silently correct
+  on one node and silently wrong on two: it does not throw and it does not
+  warn, it answers a question about the cluster from one process. A row per
+  `(scope, member, node)`, because a member connected twice is present until
+  both claims are gone, and a `seen_at` window rather than a leave-only
+  protocol, because a process that dies never sends `leave`. Scope and member
+  are strings the caller picks — jails does not know what is present in what.
+  The generated `IT` is the point: two adapters are two nodes, one joins and
+  the other is asked. Needs `jails add db`.
 - `jails generate|g event <Name> [--on <Entity>]` — a Kafka slice: the payload
   record, a publisher, a listener that deliberately does not catch (swallowing
   commits an offset for a message never processed), and an `IT` that publishes

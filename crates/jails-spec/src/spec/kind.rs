@@ -355,6 +355,9 @@ pub enum ArtifactKind {
     /// server-to-client half only; this is the half a chat needs (Spring only)
     #[value(alias = "websocket", alias = "ws")]
     Socket,
+    /// Who is connected, in PostgreSQL rather than in one process's memory,
+    /// so two nodes give one answer. Needs `jails add db` (Spring only)
+    Presence,
     /// A `<Name>Test` skeleton
     Test,
     /// A disabled `<Name>IT` skeleton for a real boundary test; also splices

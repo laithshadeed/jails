@@ -730,7 +730,7 @@ All three of `missing.md`'s named primitives, in full, plus the smaller entries.
       change rather than changing it. The Spring toolbox generates one and runs
       `mvn test` over it, so the starter splice is checked by the compiler
       rather than asserted.
-- [ ] **P8.5** M4b (`missing.md` renumbered this from M4's second half) — the
+- [x] **P8.5** M4b (`missing.md` renumbered this from M4's second half) — the
       presence primitive. The Django original tracks admin
       presence in a module-level dict with a comment saying it only works
       because there is one process: the author knew it was wrong and shipped it
@@ -739,6 +739,18 @@ All three of `missing.md`'s named primitives, in full, plus the smaller entries.
       "the default is wrong in a way nothing reports" that `g auth` and
       `add sse` exist for, so the generated **test** is what keeps the fix in
       place.
+      *Done:* `g presence <Name>` writes a port, a PostgreSQL adapter keyed by
+      `(scope, member, node)`, the migration, the `@EnableScheduling` the sweep
+      needs, and the IT that is the whole argument — two adapters are two
+      nodes, one joins and the other is asked, which a module-level dict fails
+      and a shared table passes. Two decisions beside it: a row per *node*,
+      because a member connected twice is present until both claims are gone,
+      and a `seen_at` window rather than a leave-only protocol, because a
+      process that dies never sends `leave` and presence built on explicit
+      departure is permanently wrong after the first crash. Domain-blind like
+      `g idempotency`: scope and member are strings the caller picks.
+      `minicom` carries `g presence Admin` and passes `jails check`
+      (Failsafe 8 → 11 tests).
 - [ ] **P8.6** M9 — an index on an existing table: `resource index`, or
       `--index` on `g field`. `g field` can already add a *column* to a live
       table with a data plan, which is the harder problem; an index has no data

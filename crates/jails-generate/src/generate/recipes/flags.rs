@@ -36,6 +36,16 @@ pub(super) fn refuse_misplaced(recipe: &Recipe<'_>) -> Result<()> {
         "the recipe that creates a row",
         recipe.on_conflict.is_some(),
     )?;
+    takes_only_a_name(
+        recipe,
+        ArtifactKind::Socket,
+        "a socket carries whatever the endpoint sends, and jails has no way to know what",
+    )?;
+    takes_only_a_name(
+        recipe,
+        ArtifactKind::Presence,
+        "a scope and a member are runtime values the caller picks, not generation-time ones",
+    )?;
     // The outbox wraps `Storing{X}UseCase` by name, and `--on-conflict`
     // replaces that class with a JdbcClient adapter. Refused rather than
     // silently picking one: an outbox over a get-or-create is a real thing to
@@ -72,6 +82,24 @@ fn only_for(
         "{flags} only applies to a {}, {why}.\n       fix: drop it from `jails g {} {}`.",
         label(owner),
         label(recipe.kind),
+        recipe.name
+    )
+    .into())
+}
+
+/// A kind whose whole request is its name, so anything positional is a
+/// misunderstanding rather than an extra.
+fn takes_only_a_name(recipe: &Recipe<'_>, kind: ArtifactKind, why: &str) -> Result<()> {
+    if recipe.kind != kind || recipe.fields.is_empty() {
+        return Ok(());
+    }
+    use clap::ValueEnum;
+    let label = kind
+        .to_possible_value()
+        .expect("every kind has a clap value");
+    Err(format!(
+        "`{}` takes only a name: {why}.\n       fix: run `jails g {0} {}`.",
+        label.get_name(),
         recipe.name
     )
     .into())

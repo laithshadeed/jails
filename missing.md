@@ -159,27 +159,6 @@ deep design commitment.
 
 ---
 
-## M4b — the presence primitive
-
-*The handler half is closed (plan.md P8.4): `g socket <Name>` writes a
-`TextWebSocketHandler`, its `WebSocketConfigurer` registration, the starter and
-a test. What is left is the second piece, which is the valuable one.*
-
-`minicom-05-02-2026/django/minicom/consumers.py` tracks admin presence in a
-module-level dict and says in a comment why that is allowed:
-
-```python
-# Module-level presence tracker: { group_name: set(channel_names) }
-# Works because InMemoryChannelLayer = single Daphne process.
-```
-
-— which is to say the author knew it was wrong and shipped it anyway. That is
-the same class of "the default is wrong in a way nothing reports" that `g auth`
-and `add sse` exist for: an in-memory presence map is silently correct on one
-node and silently wrong on two, with no error either way. The generated
-`{Name}SocketHandler`'s own session registry has exactly this shape and says
-nothing about it.
-
 ## M7 — `g client` ignores `--method`, `--on` and `--returns` without saying so
 
 Two problems. The shape is fixed to a REST collection, and — the worse half —

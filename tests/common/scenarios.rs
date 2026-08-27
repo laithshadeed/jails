@@ -631,6 +631,12 @@ pub const SCENARIOS: &[Scenario] = &[
         ],
     },
     Scenario {
+        name: "presence",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[&["add", "db", "--no-start"], &["g", "presence", "Room"]],
+    },
+    Scenario {
         name: "idempotency",
         fixture: Fixture::Spring,
         seed: &[],

@@ -182,6 +182,22 @@ const EXPLANATIONS: &[Explanation] = &[
                than making a security decision for you.",
     },
     Explanation {
+        kind: ArtifactKind::Presence,
+        summary: "Who is connected, shared across nodes rather than held in one process.",
+        body: "An in-memory presence map is silently correct on one node and silently wrong on \
+               two. It does not throw and it does not warn -- it answers a question about the \
+               cluster using one process's memory. The Django original this came from says so \
+               in a comment: \"works because InMemoryChannelLayer = single Daphne \
+               process\".\n\n\
+               So the state is a PostgreSQL table keyed by (scope, member, node), and the \
+               generated IT is what keeps it there: two adapters with different node ids, one \
+               joins, the other is asked. A map fails that test; a table passes it.\n\n\
+               A row per node, not per member, because a member connected twice is present \
+               until both claims are gone. And a `seen_at` window rather than a leave-only \
+               protocol, because a process that dies never sends `leave` -- presence built on \
+               explicit departure is permanently wrong after the first crash.",
+    },
+    Explanation {
         kind: ArtifactKind::Dto,
         summary: "Request and response records at the HTTP boundary, with validation.",
         body: "Separate from the domain record on purpose: the wire shape belongs to whoever \
