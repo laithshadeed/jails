@@ -18,10 +18,6 @@ Identified during the end-to-end implementation of **Minicom 2.0** (`minicom/pro
 
 ---
 
-## 3. Inspection & Static Analysis Tooling
-
----
-
 ## 4. Code Generation & Architecture Helpers
 
 ### Dual-Format `consumes = [json, form]` Request Support
