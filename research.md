@@ -1,6 +1,6 @@
 # Research Report: 1000x Developer Experience for `jails`
 
-Date: 2026-08-25. **Pruned to what is still open: 2026-08-26 at HEAD `e3c7041`.**
+Date: 2026-08-25. **Pruned to what is still open: 2026-08-27 at HEAD `99d2288`.**
 Status: engineering proposal grounded in the current `jails` worktree and upstream implementations.
 
 ## What this file is now, and how to read the parts that are gone
@@ -17,56 +17,6 @@ the code is the authority.
 **Section numbers are stable and never reused.** A `research.md §7.4` citation
 in the source still resolves to a subject through git even though §7.4 is no
 longer here.
-
-### Delivered since the report was written, and therefore removed
-
-Verified against HEAD by running the binary, not by reading the roadmap:
-
-- **§2.1, §6.6, §7.8 — the unified test front door.** `jails test` has the full
-  Section 6.6 grammar (`--scope`, `--engine auto|build|warm`,
-  `--compile auto|ide|build|none`, `--watch`, `--affected`, `--failed`, `--tag`,
-  `--fail-fast`, `--slowest`, `--until-fail`, `--repeat`, `--timeout`,
-  `--explain-selection`), backed by `TestExecutionPlanV1`, `TestEngine` and
-  `TestEnginePolicy` in `jails-protocol`.
-- **§2.2, §6.5, §7.18 — explicit run ownership.** `--launcher
-  auto|classpath|build-tool|jar`, `--compile`, `--services existing|start|none`.
-- **§2.5, §6.2, §7.4 — the SQL contract compiler.** `jails sql check|generate`
-  with `--offline`, `--live`, `--datasource`, `--frozen`, `--no-cache`, and the
-  `EvidenceLevel { Parsed, VerifiedOffline, VerifiedLive, Executed }` vocabulary
-  in `jails-protocol::vocabulary::database`.
-- **§3.2 — the dry-run and diff contract.** Global `--pretend`, `--diff`, `--ast`.
-- **§3.4, §4.3, §6.3, §7.5 — bounded schema observation.** `jails introspect`,
-  `pull`, `schema diff`, and `SchemaObjectId`.
-- **§3.5 — migration linting by risk.** `jails migrate lint`.
-- **§3.6, §6.7 — evidence-tagged diagnostics.** `CauseNode` in
-  `jails-report::why`; reports carry `evidence:` and `limitation:` lines.
-- **§3.7 — architectural fitness gates.** `jails-generate::architecture` emits
-  an ArchUnit suite and `.jails/architecture.toml`; `jails lint`.
-- **§3.8, §6.8, §7.11 — reversibility and portable plans.** `jails history`,
-  `show`, `undo`, and global `--plan-out` / `--plan-in`.
-- **§3.9, §6.9 — HTTP contracts.** `jails contract emit|check`.
-- **§4.8 — JDK 26 default with a 21 floor.** `pom::TARGET_RELEASE`.
-- **§4.9, §6.11, §7.15 — the editor protocol.** `jails editor`.
-- **§4.10, §6.12, §7.16 — the application tool gateway.** `jails request`,
-  `runner`, `logs`, `console`, `db console`.
-- **§4.11, §6.13, §7.17 — coordinated rename.** `jails rename resource|storage`
-  with `--strategy preserve-table|single-cutover|rolling`. *(Reachable only with
-  a slice selector; see §4.2 below and `bugs.md` B2.)*
-- **§4.12, §6.14, §7.19 — the resource lifecycle.** `jails resource
-  status|repair|revive|field add|rename|type|nullability|drop`, append-only
-  migration sealing, preserved-table tombstones.
-- **§7.1, §7.7 — one execution protocol and machine-readable results.** The v2
-  command envelope, now including a failure envelope with `timings`.
-- **§8 — the Java blueprints.** They are `templates/**.java` now; the files are
-  the authority and an editor can check them.
-- **§0.2 — the three Phase-0 defects.** No `PROBE` output remains; a plain-Maven
-  scaffold refuses before writing rather than emitting Spring imports.
-- **§0.4 — the acceptance portfolio.** `examples/proof-policy.tsv` is enforced by
-  `tests/cli/examples.rs`; `minicom` and `minicom-spring` are both held, with an
-  explicit tier and cadence per manifest.
-- **Timing spans** are in the JSON envelope under `timings`.
-
-Everything below is what remains.
 
 ---
 
@@ -89,20 +39,16 @@ Everything below is what remains.
 
 ## Section 1: What remains of the top twelve
 
+Only the rows that are not finished. The eight shipped ones are deleted; `git
+log -p -- research.md` has them.
+
 | Rank | Breakthrough | State | What is left |
 |---:|---|---|---|
-| 1 | SQL Contract Compiler | **shipped** | — |
-| 2 | Evidence-Carrying Prepared Diffs | **shipped** | — |
 | 3 | Safe Resource Lifecycle and Coordinated Rename | **mostly shipped** | the logical→physical column binding (§3.10); rename reachable without slices (§4.2) |
 | 4 | Unified Fast Test and Run Loop | **Maven only** | warm-engine parity for Gradle (§5.1) |
 | 5 | Maven/Gradle Behavioral Parity | **partial** | §5.1 |
 | 6 | Existing App-Manifest Extension | **open** | §4.1, §4.2, §4.7 |
-| 7 | Bounded Schema Observation | **shipped** | — |
-| 8 | Evidence-Bounded Diagnostics | **shipped** | — |
 | 9 | Generated Test Economy | **partial** | §4.6 — `g factory` exists; states, seeds and the repository contract test do not |
-| 10 | Application Tool Gateway | **shipped** | — |
-| 11 | Versioned Editor Bridge | **shipped** | — |
-| 12 | Adoptable Architecture Fitness | **shipped** | — |
 
 ---
 
@@ -452,10 +398,16 @@ enforced there; only jails' reviewed-diff guarantee is absent.
 **Exit gate:** `jails test`, `--engine build` and `--engine warm` discover the
 same requested test universe in Maven and Gradle fixtures, and human/JSON reports
 have identical test identities, outcomes, durations, output ownership and exit
-status across engines. **Blocker:** no `gradle` binary is installed on the
-development machine, so every Gradle claim in this repository is currently
-inferred from file contents rather than observed. Installing one is the
-prerequisite for the whole row.
+status across engines.
+
+**No longer blocked.** The prerequisite was read as "install a `gradle`
+binary", and none is on PATH — but two checkouts ship their own wrapper and
+run it: `minicom/minicom-15-01-2026/spring` (Boot 4.1 after `jails modernize`)
+and `minicom/old/mc-01-06-2026/spring` (Gradle 8.5 / Boot 2.7.18 / JDK 21,
+which needs `JAVA_HOME` pointed at 21 — Gradle 8.5 refuses JDK 26 with
+`Unsupported class file major version 70`; `./gradlew build` passes there).
+Those are two Gradle *generations* against which a claim can be observed rather
+than inferred, which is what the gate actually wanted.
 
 ---
 
@@ -528,7 +480,8 @@ by leverage rather than by phase number.
 3. **Slices** (§4.2), then the extended field grammar (§4.1), then policy
    matrices (§4.7). In that order: the grammar and the policy form both name
    slices.
-4. **Gradle warm-engine parity** (§5.1), gated on installing a `gradle` binary.
+4. **Gradle warm-engine parity** (§5.1). No longer gated: two checkouts under
+   `minicom/` ship their own wrapper, so the claims can be observed.
 5. **Semantic readiness** (§2.4c), **service identity labels** (§2.4b),
     **test-dependency hints** (§2.4a), **the shared source index** (§2.3) — each
     behind a dated measurement, not an assumption.
