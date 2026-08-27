@@ -71,6 +71,8 @@ struct GenerateIntent {
     /// The route a generated endpoint answers.
     path: Option<String>,
     method: Option<jails_spec::spec::kind::HttpMethod>,
+    /// How that endpoint reads its request: `json` (the default) or `form`.
+    consumes: Option<jails_spec::spec::kind::WireFormat>,
 }
 
 impl GenerateIntent {
@@ -128,6 +130,7 @@ impl GenerateIntent {
             on_conflict: self.on_conflict,
             path: self.path,
             method: self.method,
+            consumes: self.consumes,
         })
     }
 }

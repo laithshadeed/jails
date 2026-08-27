@@ -149,6 +149,7 @@ pub(super) fn evolve_existing(
                 on_conflict: on_conflict.as_deref(),
                 path: path.as_deref(),
                 method: after.method,
+                consumes: after.consumes,
             },
             package,
         )?,

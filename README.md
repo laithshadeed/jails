@@ -1331,6 +1331,27 @@ applies, and inferring it would have `sync` install things nobody asked for.
 
 Run `jails adopt --pretend` first.
 
+### `--consumes json|form`
+
+Every endpoint jails generated used to be `@Valid @RequestBody` — a JSON body.
+`$.post(url, {email})`, which is what a jQuery page and an HTML form send, is
+`application/x-www-form-urlencoded`, and a `@RequestBody` endpoint answers it
+**415** with a message about a content type rather than about the code.
+
+```
+jails g usecase Ping email:string! --on User --consumes form --path /customer_api/ping
+```
+
+emits `@Valid @ModelAttribute` instead, which Spring binds from request
+parameters through the record's canonical constructor. Valid on `controller`,
+`usecase`, `query` and `transition` — the four recipes that bind one request
+body. `handler` writes a whole CRUD surface rather than one route, and
+`webhook` reads the raw bytes *before* the signature is checked, which is the
+bug that kind exists to avoid; both refuse the flag by name.
+
+Recorded on the intent, so `jails sync` and `jails app apply` regenerate the
+same shape, and changing it is an edit to a known entity rather than a new one.
+
 ### Where a scaffold's `create table` goes
 
 Two places, and which one is decided by what the project already has:

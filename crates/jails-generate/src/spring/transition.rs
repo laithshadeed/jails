@@ -26,6 +26,7 @@ pub(crate) fn transition_files(
     name: &str,
     target: &str,
     fields: &[crate::generate::Field],
+    endpoint: Endpoint<'_>,
 ) -> jails_support::Result<Vec<Artifact>> {
     let root: &Path = slice.project().root();
     let service: &str = &slice.placed(Layer::Service);
@@ -151,7 +152,7 @@ pub(crate) fn transition_files(
         Artifact {
             kind: "transition controller",
             path: main_web.join(format!("{name}Controller.java")),
-            contents: transition_controller_java(slice, name, target, fields),
+            contents: transition_controller_java(slice, name, target, fields, endpoint),
         },
         Artifact {
             kind: "transition controller test",
@@ -374,6 +375,7 @@ fn transition_controller_java(
     name: &str,
     target: &str,
     fields: &[crate::generate::Field],
+    endpoint: Endpoint<'_>,
 ) -> String {
     let security: &str = slice.base();
     let service: &str = &slice.placed(Layer::Service);
@@ -418,6 +420,8 @@ fn transition_controller_java(
             ("target", target),
             ("scope_parameter", &*scope_parameter),
             ("scope_checks", &*scope_checks),
+            ("binding", endpoint.binding()),
+            ("binding_import", endpoint.binding_import()),
         ],
     )
 }

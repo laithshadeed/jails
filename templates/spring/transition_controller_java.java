@@ -6,8 +6,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PutMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
+{{binding_import}}import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
@@ -36,7 +35,7 @@ public final class {{name}}Controller {
     @PutMapping
     public ResponseEntity<{{target}}Response> execute(
             @RequestHeader(HttpHeaders.IF_MATCH) String ifMatch,
-            @Valid @RequestBody {{name}}Command command{{scope_parameter}}) {
+            @Valid @{{binding}} {{name}}Command command{{scope_parameter}}) {
 {{scope_checks}}
         {{version_type}} expected = expectedVersion(ifMatch);
         // No `default`: the port's outcomes are sealed, so a fourth one stops

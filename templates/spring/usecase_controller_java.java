@@ -5,8 +5,7 @@ import java.net.URI;
 import java.util.Objects;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
+{{binding_import}}import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /** HTTP adapter for one application use case; the operation itself knows nothing about HTTP. */
@@ -27,7 +26,7 @@ public final class {{name}}Controller {
 
     @PostMapping
     public ResponseEntity<{{target}}Response> execute(
-            @Valid @RequestBody {{name}}Command command{{scope_parameter}}) {
+            @Valid @{{binding}} {{name}}Command command{{scope_parameter}}) {
 {{scope_checks}}
         var created = useCase.execute(command);
         return ResponseEntity.created(URI.create(RESOURCE_PATH + "/" + created.id()))

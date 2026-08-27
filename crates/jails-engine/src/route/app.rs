@@ -66,6 +66,8 @@ pub struct Intent {
     pub path: Option<String>,
     /// The HTTP verb, for the one recipe that answers HTTP.
     pub method: Option<jails_spec::spec::kind::HttpMethod>,
+    /// How that endpoint reads its request. `missing.md` M15.
+    pub consumes: Option<jails_spec::spec::kind::WireFormat>,
 }
 
 /// Apply a whole manifest in one transition.
@@ -172,6 +174,7 @@ fn declare(
             on_conflict: intent.on_conflict.as_deref(),
             path: intent.path.as_deref(),
             method: intent.method,
+            consumes: intent.consumes,
         };
         let change = with_test_support(
             &planned,

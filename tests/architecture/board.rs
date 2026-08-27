@@ -732,9 +732,13 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // logical cohesion this row's `why` describes rather than a
                 // regression; the row is at a fifth of its target.
                 //
-                // 545 -> 547 for `mod socket;`, 547 -> 549 for `mod presence;`
-                // and 549 -> 551 for `mod seed;`, each with its re-export --
-                // the same two lines a new submodule always costs here. The row is a
+                // 545 -> 547 for `mod socket;`, 547 -> 549 for `mod presence;`,
+                // 549 -> 551 for `mod seed;` and 551 -> 553 for
+                // `mod endpoint;`, each with its re-export -- the same two
+                // lines a new submodule always costs here. `Endpoint` went
+                // into a module rather than into this file precisely because
+                // this row asked: as three lines of struct plus an impl it
+                // took the number to 564. The row is a
                 // measure of what `spring.rs` *holds*, and it holds nothing
                 // more than it did.
                 // 543 -> 545 for `mod identity;` and its re-export. That is
@@ -743,7 +747,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // its own module rather than into this file. A submodule
                 // declaration costing two lines is not the growth the gate
                 // exists to stop.
-                ceiling: 551,
+                ceiling: 553,
                 target: 2500,
                 why: "Logical cohesion: one file for everything sharing the `require_spring` \
                       precondition. abstract.md §6.2 says turning that precondition into data \

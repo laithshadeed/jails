@@ -63,7 +63,6 @@ pub(super) struct Join {
 pub(crate) struct Bounds<'a> {
     pub(crate) order_by: Option<&'a str>,
     pub(crate) limit: Option<u32>,
-    pub(crate) path: Option<&'a str>,
 }
 
 /// The declared order, as column names, or empty for the adapter's own rule.

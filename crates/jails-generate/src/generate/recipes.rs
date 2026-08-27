@@ -56,6 +56,14 @@ pub(crate) fn artifacts_for(
 
     flags::refuse_misplaced(recipe)?;
 
+    // The HTTP surface this call asked for, built once: three recipes take it
+    // and each used to take `path` positionally beside whatever else it
+    // needed.
+    let endpoint = crate::spring::Endpoint {
+        route: path,
+        consumes: recipe.request_format(),
+    };
+
     let artifacts = match recipe.kind {
         ArtifactKind::Scaffold => {
             // A scaffold includes a Spring MVC controller and a JdbcClient
@@ -309,7 +317,7 @@ pub(crate) fn artifacts_for(
                 &capitalize(target),
                 &parsed,
                 on_conflict,
-                path,
+                endpoint,
             )?;
             if let Some(event) = strategy_yields {
                 files.extend(crate::spring::outbox_files(
@@ -344,11 +352,8 @@ pub(crate) fn artifacts_for(
                 &capitalize(target),
                 &parsed,
                 via.map(capitalize).as_deref(),
-                crate::spring::Bounds {
-                    order_by,
-                    limit,
-                    path,
-                },
+                crate::spring::Bounds { order_by, limit },
+                endpoint,
             )?
         }
         ArtifactKind::Transition => {
@@ -367,7 +372,7 @@ pub(crate) fn artifacts_for(
             }
             let slice = crate::model::Slice::new(project, package);
             let parsed = parse_fields(fields)?;
-            crate::spring::transition_files(&slice, name, &capitalize(target), &parsed)?
+            crate::spring::transition_files(&slice, name, &capitalize(target), &parsed, endpoint)?
         }
         ArtifactKind::Presence => {
             require_spring_project(project, "presence")?;

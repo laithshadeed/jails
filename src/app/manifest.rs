@@ -105,6 +105,13 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<Intent>)> {
                             .map_err(|why| format!("line {line_number}: {why}"))?,
                     );
                 }
+                "consumes" => {
+                    let value = string(value, line_number, key)?;
+                    intent.consumes = Some(
+                        jails_spec::spec::kind::WireFormat::parse(value)
+                            .map_err(|why| format!("line {line_number}: {why}"))?,
+                    );
+                }
                 "package" => intent.package = Some(string(value, line_number, key)?.to_string()),
                 // `on` and `yields` are the names. `strategy_on` and
                 // `strategy_yields` are kept as deprecated aliases because

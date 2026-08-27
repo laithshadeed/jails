@@ -589,6 +589,16 @@ pub(crate) enum Command {
         /// carries one; `--returns <Type>` is what the handler returns.
         #[arg(long, value_name = "METHOD")]
         method: Option<jails_spec::spec::kind::HttpMethod>,
+        /// How the generated endpoint reads its request. Defaults to `json`.
+        ///
+        ///   jails g usecase Ping email:string! --on User --consumes form
+        ///
+        /// `form` is `application/x-www-form-urlencoded` -- what an HTML form
+        /// and jQuery's `$.post(url, object)` send, and what a `@RequestBody`
+        /// endpoint answers 415 to. Valid on `controller`, `usecase`,
+        /// `query` and `transition`.
+        #[arg(long, value_name = "FORMAT")]
+        consumes: Option<jails_spec::spec::kind::WireFormat>,
     },
     /// Add one or more capabilities to an existing project: dependencies, code and tests
     ///

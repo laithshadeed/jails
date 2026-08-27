@@ -378,6 +378,10 @@ pub struct Recipe<'a> {
     /// place that renders a mapping annotation, not spread across every
     /// caller that has no endpoint to describe.
     pub method: Option<jails_spec::spec::kind::HttpMethod>,
+    /// How this recipe's endpoint reads its request, when it has one.
+    ///
+    /// `None` is "not asked", never "JSON", for the same reason `method`'s is.
+    pub consumes: Option<jails_spec::spec::kind::WireFormat>,
 }
 
 impl Recipe<'_> {
@@ -390,6 +394,16 @@ impl Recipe<'_> {
     pub fn http_method(&self) -> jails_spec::spec::kind::HttpMethod {
         self.method
             .unwrap_or(jails_spec::spec::kind::HttpMethod::Get)
+    }
+
+    /// How this recipe's endpoint reads its request, with the default applied.
+    ///
+    /// JSON, because that is what every endpoint jails wrote before
+    /// `--consumes` existed and what an API client sends. Stated once, here,
+    /// so no template has to remember it.
+    pub fn request_format(&self) -> jails_spec::spec::kind::WireFormat {
+        self.consumes
+            .unwrap_or(jails_spec::spec::kind::WireFormat::Json)
     }
 }
 

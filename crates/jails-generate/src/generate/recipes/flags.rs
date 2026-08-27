@@ -36,6 +36,33 @@ pub(super) fn refuse_misplaced(recipe: &Recipe<'_>) -> Result<()> {
         "the recipe that creates a row",
         recipe.on_conflict.is_some(),
     )?;
+    // Four recipes take a request body jails renders as one bound parameter --
+    // a `query`'s criteria record is one, which is why it is here. `handler`
+    // writes a whole CRUD surface rather than one route, and `webhook` reads
+    // the raw bytes *before* the signature is checked, since binding them
+    // first is the bug that kind exists to avoid.
+    if recipe.consumes.is_some()
+        && !matches!(
+            recipe.kind,
+            ArtifactKind::Controller
+                | ArtifactKind::Usecase
+                | ArtifactKind::Transition
+                | ArtifactKind::Query
+        )
+    {
+        use clap::ValueEnum;
+        return Err(format!(
+            "`--consumes` applies to a controller, a use case, a query or a transition -- the \
+             recipes that bind one request body.\n       fix: drop it from `jails g {} {}`.",
+            recipe
+                .kind
+                .to_possible_value()
+                .expect("every kind has a clap value")
+                .get_name(),
+            recipe.name
+        )
+        .into());
+    }
     // Four recipes answer or call HTTP on a route a caller might have to
     // match.
     // `handler` writes a whole CRUD surface rather than one route and

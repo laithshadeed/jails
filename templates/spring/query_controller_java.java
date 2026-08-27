@@ -4,8 +4,7 @@ package {{web}};
 import java.util.List;
 import java.util.Objects;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
+{{binding_import}}import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /** HTTP adapter for a typed read-side port. */
@@ -25,7 +24,7 @@ public final class {{name}}QueryController {
 
     @PostMapping
     public List<{{target}}Response> execute(
-            @Valid @RequestBody {{name}}Criteria criteria{{scope_parameter}}) {
+            @Valid @{{binding}} {{name}}Criteria criteria{{scope_parameter}}) {
 {{scope_checks}}
         return query.execute(criteria).stream().map({{target}}Response::from).toList();
     }

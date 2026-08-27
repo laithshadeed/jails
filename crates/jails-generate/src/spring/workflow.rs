@@ -152,7 +152,7 @@ pub(crate) fn usecase_files(
     target: &str,
     fields: &[crate::generate::Field],
     on_conflict: Option<&str>,
-    route: Option<&str>,
+    endpoint: Endpoint<'_>,
 ) -> jails_support::Result<Vec<Artifact>> {
     require_scope_authorizer(slice, "usecase", name, fields)?;
     let resolved = Target::read(slice, "usecase", name, target)?;
@@ -327,7 +327,7 @@ pub(crate) fn usecase_files(
         Artifact {
             kind: "usecase controller",
             path: main_web.join(format!("{name}Controller.java")),
-            contents: usecase_controller_java(slice, target, name, fields, route),
+            contents: usecase_controller_java(slice, target, name, fields, endpoint),
         },
         Artifact {
             kind: "usecase controller test",
@@ -617,8 +617,9 @@ fn usecase_controller_java(
     target: &str,
     name: &str,
     fields: &[crate::generate::Field],
-    route: Option<&str>,
+    endpoint: Endpoint<'_>,
 ) -> String {
+    let route = endpoint.route;
     let security: &str = slice.base();
     let service: &str = &slice.placed(Layer::Service);
     let web: &str = &slice.placed(Layer::Web);
@@ -661,6 +662,8 @@ fn usecase_controller_java(
             ("target", target),
             ("scope_parameter", &*scope_parameter),
             ("scope_checks", &*scope_checks),
+            ("binding", endpoint.binding()),
+            ("binding_import", endpoint.binding_import()),
         ],
     )
 }
@@ -855,7 +858,7 @@ mod usecase_tests {
             "Note",
             &fields,
             None,
-            None,
+            Endpoint::json(),
         )
         .unwrap();
         let implementation = &files
@@ -913,7 +916,7 @@ mod usecase_tests {
             "WorkItem",
             &fields,
             None,
-            None,
+            Endpoint::json(),
         )
         .unwrap();
         let implementation = &files
@@ -968,7 +971,7 @@ mod usecase_tests {
             "Membership",
             &[],
             None,
-            None,
+            Endpoint::json(),
         )
         .unwrap_err();
 
@@ -991,7 +994,7 @@ mod usecase_tests {
             "Tenant",
             &fields,
             None,
-            None,
+            Endpoint::json(),
         )
         .unwrap_err();
 
@@ -1071,8 +1074,8 @@ mod query_tests {
             Bounds {
                 order_by: None,
                 limit: None,
-                path: None,
             },
+            Endpoint::json(),
         )
         .unwrap();
         let adapter = &files
@@ -1124,8 +1127,8 @@ mod query_tests {
             Bounds {
                 order_by: None,
                 limit: None,
-                path: None,
             },
+            Endpoint::json(),
         )
         .unwrap_err();
 
@@ -1148,8 +1151,8 @@ mod query_tests {
             Bounds {
                 order_by: None,
                 limit: None,
-                path: None,
             },
+            Endpoint::json(),
         )
         .unwrap_err();
 

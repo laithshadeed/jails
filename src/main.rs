@@ -127,6 +127,7 @@ fn main() -> std::process::ExitCode {
             on_conflict,
             path,
             method,
+            consumes,
         } => {
             // Built once, outside the closure: a route may be called twice --
             // a plan for a confirmation, then the commit -- and the intent is
@@ -146,6 +147,7 @@ fn main() -> std::process::ExitCode {
                 on_conflict,
                 path,
                 method,
+                consumes,
             };
             dispatch::mutate(invocation, false, |run| {
                 jails_engine::route::recipe_with_field_data(

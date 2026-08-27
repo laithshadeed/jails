@@ -22,6 +22,7 @@ pub(crate) fn query_files(
     fields: &[crate::generate::Field],
     via: Option<&str>,
     bounds: Bounds<'_>,
+    endpoint: Endpoint<'_>,
 ) -> jails_support::Result<Vec<Artifact>> {
     let root: &Path = slice.project().root();
     let service: &str = &slice.placed(Layer::Service);
@@ -180,7 +181,7 @@ pub(crate) fn query_files(
         Artifact {
             kind: "query controller",
             path: main_web.join(format!("{name}QueryController.java")),
-            contents: query_controller_java(slice, name, target, fields, bounds.path),
+            contents: query_controller_java(slice, name, target, fields, endpoint),
         },
         Artifact {
             kind: "query controller test",
@@ -469,8 +470,9 @@ fn query_controller_java(
     name: &str,
     target: &str,
     fields: &[crate::generate::Field],
-    route: Option<&str>,
+    endpoint: Endpoint<'_>,
 ) -> String {
+    let route = endpoint.route;
     let security: &str = slice.base();
     let service: &str = &slice.placed(Layer::Service);
     let web: &str = &slice.placed(Layer::Web);
@@ -512,6 +514,8 @@ fn query_controller_java(
             ("target", target),
             ("scope_parameter", &*scope_parameter),
             ("scope_checks", &*scope_checks),
+            ("binding", endpoint.binding()),
+            ("binding_import", endpoint.binding_import()),
         ],
     )
 }
@@ -631,8 +635,8 @@ mod join_tests {
             Bounds {
                 order_by: None,
                 limit: None,
-                path: None,
             },
+            Endpoint::json(),
         )
         .unwrap();
         let adapter = &files[2].contents;
@@ -677,8 +681,8 @@ mod join_tests {
             Bounds {
                 order_by: None,
                 limit: None,
-                path: None,
             },
+            Endpoint::json(),
         )
         .unwrap_err();
 
@@ -702,8 +706,8 @@ mod join_tests {
                 // exactly one column, and refusing one would be arbitrary.
                 order_by: Some("name desc, id"),
                 limit: Some(20),
-                path: None,
             },
+            Endpoint::json(),
         )
         .unwrap();
         let adapter = &files[2].contents;
@@ -726,8 +730,8 @@ mod join_tests {
             Bounds {
                 order_by: Some("sentAt desc"),
                 limit: None,
-                path: None,
             },
+            Endpoint::json(),
         )
         .unwrap_err();
 
@@ -749,8 +753,8 @@ mod join_tests {
             Bounds {
                 order_by: None,
                 limit: Some(0),
-                path: None,
             },
+            Endpoint::json(),
         )
         .unwrap_err();
 
@@ -771,8 +775,8 @@ mod join_tests {
             Bounds {
                 order_by: None,
                 limit: None,
-                path: None,
             },
+            Endpoint::json(),
         )
         .unwrap_err();
 

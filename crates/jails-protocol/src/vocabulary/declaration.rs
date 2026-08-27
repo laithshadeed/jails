@@ -310,6 +310,15 @@ pub struct IntentSpec {
     /// what every recipe that has no endpoint holds -- and the renderer's
     /// default is stated where the default belongs, at the one call site.
     pub method: Option<jails_spec::spec::kind::HttpMethod>,
+    /// How a generated endpoint reads the request it is sent.
+    ///
+    /// Content, not identity, for the same reason `method` is: moving an
+    /// endpoint from JSON to form data is an *edit* to a known entity, so the
+    /// regenerate-and-merge repair applies rather than orphaning the class.
+    ///
+    /// `None` is "not asked", not "JSON" -- the default belongs at the one
+    /// place that renders a binding annotation. `missing.md` M15.
+    pub consumes: Option<jails_spec::spec::kind::WireFormat>,
 }
 
 impl IntentSpec {
@@ -383,6 +392,7 @@ impl IntentSpec {
             on: None,
             yields: None,
             method: None,
+            consumes: None,
             via: None,
             order_by: Vec::new(),
             limit: None,
@@ -416,7 +426,10 @@ impl Codec for IntentSpec {
         }
         encoder.option(self.limit.as_ref(), |e, limit| e.string(&limit.to_string()))?;
         encoder.option(self.on_conflict.as_ref(), |e, name| name.encode(e))?;
-        encoder.option(self.path.as_ref(), |e, path| path.encode(e))
+        encoder.option(self.path.as_ref(), |e, path| path.encode(e))?;
+        // The label, not the discriminant, on the same rule as `method`: a
+        // recorded value must not change meaning when the enum is reordered.
+        encoder.option(self.consumes.as_ref(), |e, format| e.string(format.label()))
     }
 
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
@@ -459,6 +472,8 @@ impl Codec for IntentSpec {
                 .map_err(|_| jails_support::Failure::Told("bad query limit".to_string()))?,
             on_conflict: decoder.option(crate::identity::Name::decode)?,
             path: decoder.option(crate::identity::RoutePath::decode)?,
+            consumes: decoder
+                .option(|d| jails_spec::spec::kind::WireFormat::parse(&d.string()?))?,
         })
     }
 }

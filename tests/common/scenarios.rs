@@ -672,6 +672,30 @@ pub const SCENARIOS: &[Scenario] = &[
             &["g", "seed", "Widget"],
         ],
     },
+    // `--consumes form`: the wire format `missing.md` M15 counted, on the
+    // recipe that needs it most. A form post is what every jQuery page sends
+    // and what a `@RequestBody` endpoint answers 415 to.
+    Scenario {
+        name: "usecase-form",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[
+            &["add", "db", "--no-start"],
+            &["g", "scaffold", "Ticket", "id:long@pk", "subject:string!"],
+            &[
+                "g",
+                "usecase",
+                "OpenTicket",
+                "subject:string!",
+                "--on",
+                "Ticket",
+                "--consumes",
+                "form",
+                "--path",
+                "/customer_api/open",
+            ],
+        ],
+    },
     Scenario {
         name: "presence",
         fixture: Fixture::Spring,
@@ -920,6 +944,7 @@ pub struct Invocation {
     pub on: Option<String>,
     pub yields: Option<String>,
     pub method: Option<jails_spec::spec::kind::HttpMethod>,
+    pub consumes: Option<jails_spec::spec::kind::WireFormat>,
     pub timestamps: bool,
 }
 
@@ -940,6 +965,9 @@ pub fn invocation(step: &[&str]) -> Option<Invocation> {
             "--yields" | "--returns" => parsed.yields = Some((*rest.next()?).to_string()),
             "--method" => {
                 parsed.method = jails_spec::spec::kind::HttpMethod::parse(rest.next()?).ok()
+            }
+            "--consumes" => {
+                parsed.consumes = jails_spec::spec::kind::WireFormat::parse(rest.next()?).ok()
             }
             "--index" => parsed.indexes.push((*rest.next()?).to_string()),
             other if other.starts_with('-') => return None,

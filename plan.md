@@ -936,11 +936,18 @@ The nine endpoints, verbatim from `customer.js` and `admin.js`:
       broke my build", which is the adoption story in one line. Options are a
       scope limited to packages jails owns rows for, or writing the rule only
       into a project that starts clean; measure which before choosing.
-- [ ] **P10.2** **M15 — every generated endpoint binds JSON, and the clients
+- [x] **P10.2** **M15 — every generated endpoint binds JSON, and the clients
       post forms.** `$.post` sends `application/x-www-form-urlencoded`; the
       generated controller is `@Valid @RequestBody`, so six of the nine
       endpoints reject every real request with a 415. Five of the six carry a
       body jails already models as a request record.
+      Done: `--consumes json|form` on `controller`, `usecase`, `query` and
+      `transition`, recorded on the intent (payload codec 7 -> 8) so a re-plan
+      reproduces it. `form` renders `@Valid @ModelAttribute`, which Spring
+      binds from request parameters through the record's canonical
+      constructor. Proved against a running server rather than asserted:
+      `curl -X POST -d "userId=7&status=open"` at a generated endpoint returns
+      201 with `Location: /conversations/1` and the row in H2.
 - [ ] **P10.3** **The JSON key case is jails', not the client's.** The pages
       read `message.sender_type`, `message.created_at` and `user.id`; a
       generated response record emits `senderType` and `createdAt`. jails has

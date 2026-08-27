@@ -513,6 +513,7 @@ fn add_field_with_syntax(
                 // like the references -- is whatever that intent already
                 // recorded.
                 method: None,
+                consumes: None,
             },
             package,
         )?,

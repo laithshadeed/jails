@@ -145,7 +145,6 @@ you are allowed to rewrite — they are the fixed side of the contract.
 Four separate causes, three of them new:
 
 - **the paths are derived** — M8
-- **the requests are form-encoded**, and jails only binds `@RequestBody` JSON — **M15**
 - **three of the four enums have wire values jails cannot spell**: `open`,
   `in_progress` (lowercase), `Product`, `Billing` (TitleCase), and `-`, `!`,
   `!!` (not identifiers at all) — **M14**
@@ -241,33 +240,6 @@ error in jails, but an unspellable enum constant is quietly rewritten.
 
 ---
 
-## M15 — every generated endpoint binds JSON, and the clients post forms
-
-Each of the eight websites across these checkouts calls the backend with
-jQuery's `$.post(url, {email})`, which sends
-`application/x-www-form-urlencoded`. Every jails controller binds
-`@RequestBody`:
-
-```java
-@PostMapping
-public ResponseEntity<MessageResponse> execute(@Valid @RequestBody PostMessageCommand command)
-```
-
-```java
-@PostMapping
-public ResponseEntity<UserResponse> create(@Valid @RequestBody UserRequest request)
-```
-
-There is no flag on `g controller`, `g usecase` or `g query` to bind
-`@ModelAttribute` / `@RequestParam` instead, so a jails endpoint answers a form
-post with 415. The Spring backend that ships in `minicom-15-01-2026` binds
-`@RequestParam Map<String, String>`, which is what the frontends need.
-
-JSON is the right default. What is missing is the ability to say otherwise for
-a service whose callers already exist.
-
----
-
 ## M16 — query filters are all-or-nothing, so no filtered list view works
 
 ```sh
@@ -356,12 +328,13 @@ and should stay that way. It is the observation that *get-or-create by natural
 key*, *read across an association*, and *bidirectional push* are three generic
 primitives, and that all six of these projects needed all three.
 
-The second cluster is smaller and cheaper: **M8, M14, M15 and M16 are four
-missing knobs** — a route path, an enum's wire value, a form binding, an
-optional filter. None of them asks jails to understand anything new. Together
-they are the whole reason `mc-15-01` matches zero of ten endpoints while
-modelling the domain perfectly, and they are what separates "scaffolds a new
-service" from "can be pointed at an existing client".
+The second cluster is smaller and cheaper: **M14 and M16 are two remaining
+missing knobs** — an enum's wire value and an optional filter. A route path
+(M8) and a form binding (M15) were the other two, and both have shipped. None
+of them asks jails to understand anything new. Together they are the whole
+reason `mc-15-01` matches zero of ten endpoints while modelling the domain
+perfectly, and they are what separates "scaffolds a new service" from "can be
+pointed at an existing client".
 
 M1 and M2 were different again: defects rather than absences, and both
 invisible to the suite for the same reason — the golden scenarios exercise one

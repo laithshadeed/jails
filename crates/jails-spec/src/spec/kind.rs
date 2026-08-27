@@ -149,6 +149,71 @@ impl Dialect {
     }
 }
 
+/// How a generated endpoint reads the request it is sent.
+///
+/// **Two, because a browser form and a JSON API are the two things that
+/// actually arrive**, and Spring binds them through different machinery:
+/// `@RequestBody` runs Jackson over the body, `@ModelAttribute` runs the data
+/// binder over request parameters. A method parameter cannot be both, so a
+/// controller that guesses wrong answers 415 to every real request and says
+/// only "Content-Type 'application/x-www-form-urlencoded' is not supported".
+///
+/// `missing.md` M15 is that failure, counted: `$.post(url, {email})` is what
+/// every jQuery page in the wild sends, and every endpoint jails generated was
+/// `@RequestBody`.
+///
+/// `json` is a JSON body bound by Jackson -- the default, and what an API
+/// client sends. `form` is `application/x-www-form-urlencoded`, bound by
+/// Spring's data binder from request parameters, which is what an HTML form
+/// and jQuery's `$.post(url, object)` send.
+///
+/// **No per-variant doc comments, deliberately**, the same shape
+/// [`HttpMethod`] has. clap renders those as a bulleted value list under the
+/// option, and `tests/editor.rs` scrapes `jails generate --help` for exactly
+/// that shape to find the artifact kinds -- so a documented variant here
+/// reads as a kind called `form`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, ValueEnum)]
+pub enum WireFormat {
+    Json,
+    Form,
+}
+
+impl WireFormat {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Json => "json",
+            Self::Form => "form",
+        }
+    }
+
+    pub fn parse(text: &str) -> Result<Self> {
+        match text {
+            "json" => Ok(Self::Json),
+            "form" => Ok(Self::Form),
+            other => Err(format!(
+                "unknown request format `{other}`.\n       fix: one of json, form"
+            )
+            .into()),
+        }
+    }
+
+    /// Spring's annotation for binding the request into one parameter.
+    pub fn binding(self) -> &'static str {
+        match self {
+            Self::Json => "RequestBody",
+            Self::Form => "ModelAttribute",
+        }
+    }
+
+    /// The `org.springframework.web.bind.annotation` type that annotation is.
+    pub fn binding_import(self) -> &'static str {
+        match self {
+            Self::Json => "import org.springframework.web.bind.annotation.RequestBody;\n",
+            Self::Form => "import org.springframework.web.bind.annotation.ModelAttribute;\n",
+        }
+    }
+}
+
 /// The HTTP method a generated endpoint answers.
 ///
 /// A `ValueEnum` for the reason every closed vocabulary here is one: it is the

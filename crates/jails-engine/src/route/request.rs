@@ -117,6 +117,7 @@ pub(super) fn declared(
     // the *same* entity with new content, which is what makes it an edit the
     // three-way merge can carry rather than an orphan and a rewrite.
     spec.method = recipe.method;
+    spec.consumes = recipe.consumes;
     Ok(Declared {
         id: identity(project, recipe.kind, recipe.name, package)?,
         spec,
