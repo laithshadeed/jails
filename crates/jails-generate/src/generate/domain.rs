@@ -313,9 +313,19 @@ pub(crate) fn sample_value(field: &Field, project: &Project, pkg: &str) -> Optio
     if !field.owned {
         return Some(sample_literal(&field.java_type).to_string());
     }
-    project
-        .declares_enum(pkg, &field.java_type)
-        .then(|| format!("{}.values()[0]", field.java_type))
+    if !project.declares_enum(pkg, &field.java_type) {
+        return None;
+    }
+    // The constant by name, not by position. `Status.values()[0]` changes
+    // meaning when somebody reorders the `g enum`, and nothing in the diff
+    // says so -- the sample simply starts standing for a different value.
+    // Falling back where the constants cannot be read keeps the old
+    // behaviour rather than dropping the sample. plan.md P6.5.
+    Some(
+        first_enum_constant(project, pkg, &field.java_type)
+            .map(|constant| format!("{}.{constant}", field.java_type))
+            .unwrap_or_else(|| format!("{}.values()[0]", field.java_type)),
+    )
 }
 
 /// `sample_value`, plus the one case it cannot answer for callers outside the

@@ -3522,7 +3522,11 @@ fn generators_compose_through_user_owned_field_types() {
         root.join("src/test/java/com/example/gym/domain/CanonicalTransactionTest.java"),
     )
     .unwrap();
-    assert!(test.contains("Currency.values()[0]"), "{test}");
+    // The constant by name rather than by position: `values()[0]` starts
+    // standing for a different value the moment somebody reorders the enum,
+    // and nothing in the diff says so. plan.md P6.5.
+    assert!(test.contains("Currency.GBP"), "{test}");
+    assert!(!test.contains("values()[0]"), "{test}");
     assert!(
         test.contains("new SourceRef("),
         "a component whose type is a record on disk is sampled from it: {test}"

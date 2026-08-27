@@ -23,7 +23,7 @@ public class Storing{{name}}UseCase implements {{name}}UseCase {
 {{annotation}}    @Override
     public {{target}} execute({{name}}Command command) {
         Objects.requireNonNull(command, "command is required");
-        {{target}} {{var}} = new {{target}}(
+{{preamble}}        {{target}} {{var}} = new {{target}}(
 {{args}});
         return repository.save({{var}});
     }

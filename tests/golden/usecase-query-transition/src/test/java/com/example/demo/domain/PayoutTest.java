@@ -12,7 +12,7 @@ class PayoutTest {
     @Test
     void rejectsANullComponent() {
         assertThatNullPointerException()
-                .isThrownBy(() -> new Payout(null, 1L, PayoutStatus.values()[0], 1L, Instant.parse("2024-01-01T00:00:00Z")))
+                .isThrownBy(() -> new Payout(null, 1L, PayoutStatus.PENDING, 1L, Instant.parse("2024-01-01T00:00:00Z")))
                 .withMessageContaining("id");
     }
 }

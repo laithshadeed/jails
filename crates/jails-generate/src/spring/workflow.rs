@@ -138,6 +138,9 @@ impl Target {
 struct Defaults {
     expressions: Vec<String>,
     imports: Vec<String>,
+    /// The lines that go above the constructor call, or empty. Today that is
+    /// the single hoisted clock read every timestamp default shares.
+    preamble: &'static str,
 }
 
 pub(crate) fn usecase_files(
@@ -207,7 +210,7 @@ pub(crate) fn usecase_files(
         .into());
     }
 
-    let mut expressions = Vec::with_capacity(target_fields.len());
+    let mut expressions: Vec<String> = Vec::with_capacity(target_fields.len());
     let mut default_imports = Vec::new();
     for field in target_fields {
         if fields.iter().any(|input| input.name == field.name) {
@@ -225,9 +228,26 @@ pub(crate) fn usecase_files(
     }
     default_imports.sort();
     default_imports.dedup();
+    // One clock read for every timestamp this create fills in, and the same
+    // explanation the scaffold's `toDomain` already gives -- `modern.md`
+    // §13.9 found the two disagreeing about the same record in the same
+    // package. Two `Instant.now()` calls in one constructor differ by
+    // microseconds, which is enough for a freshly created row to look already
+    // edited. plan.md P6.5.
+    let preamble = if expressions.iter().filter(|e| *e == "Instant.now()").count() > 1 {
+        for expression in &mut expressions {
+            if expression == "Instant.now()" {
+                "now".clone_into(expression);
+            }
+        }
+        crate::spring::dto::AUDIT_PREAMBLE
+    } else {
+        ""
+    };
     let defaults = Defaults {
         expressions,
         imports: default_imports,
+        preamble,
     };
 
     let transactional = slice.project().has_jdbc();
@@ -310,10 +330,14 @@ fn usecase_default(slice: &Slice, field: &crate::generate::Field) -> Option<(Str
         "short" | "Short" => Some(("(short) 0".to_string(), Vec::new())),
         "byte" | "Byte" => Some(("(byte) 0".to_string(), Vec::new())),
         "boolean" | "Boolean" => Some(("false".to_string(), Vec::new())),
+        // The constant by name. `Status.values()[0]` is a default that
+        // silently changes meaning when somebody reorders the `g enum` --
+        // every create written after that reorder starts storing a different
+        // status, and nothing in the diff says so. plan.md P6.5.
         owned if field.owned && field.name == "status" => {
-            crate::generate::first_enum_constant(project, domain, owned).map(|_| {
+            crate::generate::first_enum_constant(project, domain, owned).map(|constant| {
                 (
-                    format!("{owned}.values()[0]"),
+                    format!("{owned}.{constant}"),
                     vec![format!("{domain}.{owned}")],
                 )
             })
@@ -409,6 +433,7 @@ fn usecase_impl_java(
             ("annotation", annotation),
             ("var", &*var),
             ("args", &*args),
+            ("preamble", defaults.preamble),
         ],
     )
 }
@@ -746,6 +771,55 @@ mod usecase_tests {
         .unwrap();
     }
 
+    /// Both audit columns get the same `Instant`, and say so in the same
+    /// words the scaffold's `toDomain` uses.
+    ///
+    /// `modern.md` §13.9: one generator hoisted the clock read and explained
+    /// precisely why, and this one called `Instant.now()` once per column --
+    /// the same record, the same package, minutes apart. Two `now()` calls in
+    /// one constructor differ by microseconds, which is enough for a freshly
+    /// created row to look already edited. plan.md P6.5.
+    #[test]
+    fn one_create_reads_the_clock_once_for_every_timestamp_it_fills_in() {
+        let root = scratch("one-clock-read");
+        std::fs::write(root.join("pom.xml"), "<project></project>").unwrap();
+        write_record(
+            &root,
+            "Note",
+            &[
+                "id:uuid",
+                "body:string!",
+                "createdAt:instant",
+                "updatedAt:instant",
+            ],
+        );
+        let fields = crate::generate::parse_fields(&["body:string!".to_string()]).unwrap();
+
+        let project = Project::load(&root).unwrap();
+        let files =
+            usecase_files(&Slice::new(&project, None), "WriteNote", "Note", &fields).unwrap();
+        let implementation = &files
+            .iter()
+            .find(|artifact| artifact.kind == "usecase implementation")
+            .unwrap()
+            .contents;
+
+        assert_eq!(
+            implementation.matches("Instant.now()").count(),
+            1,
+            "{implementation}"
+        );
+        assert_eq!(implementation.matches("\n                now,").count(), 1);
+        assert!(
+            implementation.contains("\n                now);"),
+            "{implementation}"
+        );
+        assert!(
+            implementation.contains(crate::spring::dto::AUDIT_PREAMBLE),
+            "{implementation}"
+        );
+    }
+
     #[test]
     fn usecase_derives_only_conservative_defaults_and_persists_the_result() {
         let root = scratch("defaults");
@@ -796,10 +870,13 @@ mod usecase_tests {
             implementation.contains("command.seedUrl()"),
             "{implementation}"
         );
+        // The constant by name: `values()[0]` changes meaning when somebody
+        // reorders the enum, and nothing in the diff says so. plan.md P6.5.
         assert!(
-            implementation.contains("WorkStatus.values()[0]"),
+            implementation.contains("WorkStatus.QUEUED"),
             "{implementation}"
         );
+        assert!(!implementation.contains("values()[0]"), "{implementation}");
         assert!(implementation.contains("0L"), "{implementation}");
         assert!(
             implementation.contains("Optional.empty()"),

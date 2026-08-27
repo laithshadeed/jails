@@ -30,12 +30,12 @@ class JdbcPayoutsByStatusQueryIT {
         Payout stored = repository.save(new Payout(
                 UUID.fromString("00000000-0000-0000-0000-000000000001"),
                 1L,
-                PayoutStatus.values()[0],
+                PayoutStatus.PENDING,
                 1L,
                 Instant.parse("2024-01-01T00:00:00Z")));
 
         var found = query.execute(new PayoutsByStatusCriteria(
-                PayoutStatus.values()[0]));
+                PayoutStatus.PENDING));
 
         assertThat(found).contains(stored);
     }

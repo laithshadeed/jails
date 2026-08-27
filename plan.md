@@ -559,12 +559,21 @@ commit as the change that causes it.
       non-blank lines in `templates/**.java` that are comment; it is 21 and
       the ceiling holds it there rather than driving it down, because what
       remains is the load-bearing prose §12 asks to keep.
-- [ ] **P6.5** Two generators, two answers, one arguing against the other: the
+- [x] **P6.5** Two generators, two answers, one arguing against the other: the
       scaffold path sets both audit columns to one `Instant` and explains why,
       the use-case path calls the clock twice (modern §13.9). And a `usecase`
       defaults an enum **positionally** — `IssueStatus.values()[0]` — so
       reordering a `g enum` silently changes every generated create
       (missing.md, "two smaller things").
+      *Done:* the use case hoists one `Instant now` whenever it fills in more
+      than one timestamp, and the explanation is a single `dto::AUDIT_PREAMBLE`
+      both paths read — one text and one rule, since two generators disagreeing
+      about a decision is worse than either answer alone. The enum default and
+      the enum *sample* both name the constant now
+      (`ConversationStatus.OPEN`, `Currency.GBP`), falling back to
+      `values()[0]` only where the constants cannot be read at all.
+      `one_create_reads_the_clock_once_for_every_timestamp_it_fills_in` pins
+      the first; the proof apps show it end to end.
 - [ ] **P6.6** Delete `modern.md`. Every remaining entry is closed by here.
 
 ## P7 — evolution keeps derived code true (cause F)

@@ -30,7 +30,7 @@ public class StoringRequestPayoutUseCase implements RequestPayoutUseCase {
         Payout payout = new Payout(
                 command.id(),
                 command.amount(),
-                PayoutStatus.values()[0],
+                PayoutStatus.PENDING,
                 0L,
                 Instant.now());
         return repository.save(payout);

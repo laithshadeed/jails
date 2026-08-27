@@ -221,6 +221,22 @@ fn needs_optional(fields: &[crate::generate::Field]) -> bool {
 /// the caller sends. Reading a lone `createdAt` as an audit column would
 /// silently drop a component somebody asked for, which is a worse failure than
 /// the one this fixes.
+/// The one explanation both create paths give for reading the clock once.
+///
+/// `modern.md` §13.9 found the scaffold's `toDomain` hoisting an `Instant` and
+/// explaining precisely why both audit columns must be the same value, while
+/// `Storing<X>UseCase` -- the same record, the same package, generated minutes
+/// apart by the same command sequence -- called `Instant.now()` once per
+/// column. Two generators disagreeing about one decision is worse than either
+/// answer would be alone, so there is one text and one rule, and both read it
+/// from here.
+pub(crate) const AUDIT_PREAMBLE: &str = concat!(
+    "        // Audit columns: set here rather than received, and one\n",
+    "        // instant for all of them, so a freshly created row does not\n",
+    "        // look already edited.\n",
+    "        Instant now = Instant.now();\n",
+);
+
 pub(crate) fn has_audit_pair(fields: &[crate::generate::Field]) -> bool {
     ["createdAt", "updatedAt"].iter().all(|conventional| {
         fields
@@ -353,12 +369,7 @@ pub(crate) fn request_java_for(
     let audited = pair && wire.len() != fields.len();
     let mut preamble = String::new();
     if audited {
-        preamble.push_str(concat!(
-            "        // Audit columns: set here rather than received, and one\n",
-            "        // instant for both, so a freshly created row does not look\n",
-            "        // already edited.\n",
-            "        Instant now = Instant.now();\n",
-        ));
+        preamble.push_str(AUDIT_PREAMBLE);
     }
     let placeholder = assigned
         .and_then(|key| fields.iter().find(|field| field.name == key))
