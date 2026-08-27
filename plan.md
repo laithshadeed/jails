@@ -824,11 +824,23 @@ All three of `missing.md`'s named primitives, in full, plus the smaller entries.
       under the profile, so a renamed component would otherwise surface as a
       start-up that dies on one machine. Proved by the minicom manifest under
       real `mvn clean verify` (surefire 19 -> 20 reports, 55 -> 56 tests).
-- [ ] **P8.10** M11 and the two smaller entries — `g transition --unguarded`
+- [x] **P8.10** M11 and the two smaller entries — `g transition --unguarded`
       (or an `explain transition` line naming the escape hatch), and
       `g strategy` generating the evaluator its port's Javadoc describes, with
       ordering, since `FallbackBotRule` must run last or it swallows every
       message and nothing in the generated code says so.
+      The escape hatch, not the flag: an unguarded transition is a lost update
+      nothing reports, which is the one thing this kind exists to prevent, so
+      `explain transition` names `g usecase` plus a `save` through the port as
+      the place that decision belongs — and the refusal that sent readers
+      looking now prints the two-command sequence itself
+      (`jails g field <Target> version:long --default-literal 0`).
+      `g strategy` writes `<Name>Evaluator` beside the beans and `@Order`s each
+      implementation; the field it holds them in goes through
+      `sql::table_name`, since gluing an `s` on produced `eligibilitys`. Both
+      compile under real Maven in the Spring toolbox. The third entry — a
+      usecase defaulting an enum positionally — closed with P6.5 and its text
+      went with the rest.
 - [ ] **P8.11** Delete `missing.md`.
 
 ## P9 — research.md's remaining sections

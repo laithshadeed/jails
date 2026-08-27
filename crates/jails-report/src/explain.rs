@@ -82,6 +82,12 @@ const EXPLANATIONS: &[Explanation] = &[
         summary: "An open port plus one bean per implementation, collected by Spring into a List.",
         body: "The failure mode is silent: an implementation missing `@Component` is simply \
                absent from the injected list, so it never runs and nothing reports a problem.\n\n\
+               The evaluator is generated with them: the fold `--yields` makes unambiguous, \
+               taking the whole `List<Port>` as one constructor parameter so adding an \
+               implementation is writing the class. Each one carries an explicit `@Order`, \
+               because without one the list is whatever component scanning produced -- so a \
+               rule that answers everything can silently come first and nothing after it is \
+               ever reached.\n\n\
                `destroy strategy` therefore reads the implementations back off disk rather than \
                from a stored list, so an implementation you added by hand is still one of this \
                strategy's classes and is not left behind implementing a deleted interface.",
@@ -125,6 +131,13 @@ const EXPLANATIONS: &[Explanation] = &[
                optional filter would make \"absent\" and \"null\" the same query, and they are \
                not. It needs `version:long` or `version:int` -- the compare-and-set column is \
                what makes the update safe under concurrency rather than last-write-wins.\n\n\
+               A ported schema that has no such column grows one: \
+               `jails g field Loan version:long --default-literal 0`, then this command. \
+               There is deliberately no unguarded mode -- an update with no compare-and-set \
+               is a lost update nothing reports, and the escape hatch, when the guard is \
+               genuinely not wanted, is `jails g usecase` plus a `save` through the \
+               repository port, where last-write-wins is the reader's decision rather than \
+               jails' silent default.\n\n\
                Example: `jails g transition RenameLoan id:uuid title:string! version:long --on Loan`.",
     },
     Explanation {

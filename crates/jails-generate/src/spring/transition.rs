@@ -68,10 +68,22 @@ pub(crate) fn transition_files(
         .iter()
         .find(|field| field.name == "id")
         .ok_or_else(|| format!("transition {name} needs the target's required `id` field"))?;
+    // `missing.md` M11: both halves of this were good refusals and neither
+    // said what to type, so a ported schema met the column requirement, then
+    // met `g field`'s data-plan requirement, and only then had the two
+    // commands. The sequence is knowable from here, so it is printed from
+    // here.
     let version = fields
         .iter()
         .find(|field| field.name == "version")
-        .ok_or_else(|| format!("transition {name} needs a required numeric `version` field"))?;
+        .ok_or_else(|| {
+            format!(
+                "transition {name} needs a required numeric `version` field: the update is a \
+                 compare-and-set, so the row has to carry the version the caller matched \
+                 against.\n       fix: run `jails g field {target} version:long \
+                 --default-literal 0`, then add `version:long` to this command."
+            )
+        })?;
     if !matches!(usecase_normalized_type(&version.java_type), "long" | "int") {
         return Err(format!(
             "transition {name} needs `version:long` or `version:int`, not version:{}",

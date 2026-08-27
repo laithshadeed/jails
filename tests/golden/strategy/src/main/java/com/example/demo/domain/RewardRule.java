@@ -9,14 +9,9 @@ import java.util.Optional;
  * into a {@code List<RewardRule>}. Implementations are independent and each one
  * sees every input, so more than one may answer.
  *
- * <p>Take the whole set as a constructor parameter rather than naming
- * implementations one by one -- that is what makes adding one a matter of
- * writing the class and nothing else:
- *
- * {@snippet :
- * private final List<RewardRule> rewardRules;
- * Evaluator(List<RewardRule> rewardRules) { this.rewardRules = List.copyOf(rewardRules); }
- * }
+ * <p>{@link RewardRuleEvaluator} is where the whole set is taken as one
+ * constructor parameter, which is what makes adding an implementation a
+ * matter of writing the class and nothing else.
  *
  * <p>Evaluation should be pure -- no clock beyond one the implementation was
  * built with, no database, no network -- so the same transaction always

@@ -1077,8 +1077,14 @@ support it. `add`, `remove` and `rename` spell the same thing `--dry-run`.
   ```
 
   writes `RewardRule` (`Optional<Reward> apply(Transaction)`),
-  `CoffeeRewardRule` and `LargeTransactionRewardRule` — each `@Component`, each
-  with a `@Disabled` test naming what to prove. A variant that already carries
+  `CoffeeRewardRule` and `LargeTransactionRewardRule` — each `@Component`,
+  each `@Order`ed, each with a `@Disabled` test naming what to prove — plus
+  `RewardRuleEvaluator`, the fold: it takes the whole `List<RewardRule>` as one
+  constructor parameter and answers `first(...)` (the first rule that grants
+  anything) and `all(...)` (everything granted, in order). The order is
+  explicit because without it the injected list is whatever component scanning
+  produced, so a rule that answers everything can silently come first and
+  nothing after it is ever reached. A variant that already carries
   the interface's name keeps it rather than doubling it. Without `--yields` the
   strategy is a predicate returning `boolean`; with it, an implementation
   declines by returning `Optional.empty()`, which is what lets every

@@ -159,45 +159,6 @@ deep design commitment.
 
 ---
 
-## M11 — `transition` requires a `version` column the original schema does not have
-
-Marking a message read is, in all three Django apps, `is_read = True; save()`.
-
-### Reproduce
-
-```sh
-jails g scaffold Message id:long@pk content:string! isRead:boolean
-jails g transition MarkRead id:long isRead:boolean --on Message --pretend
-```
-
-```
-jails: transition MarkRead needs a required numeric `version` field
-```
-
-```sh
-jails g field Message version:long --pretend
-```
-
-```
-jails: required field `version` needs a data plan for existing rows.
-       fix: pass `--default-literal <typed-value>` or `--backfill-file <project-path>`.
-```
-
-So the working sequence is two commands and a column the schema's owner did not
-ask for:
-
-```sh
-jails g field Message version:long --default-literal 0
-jails g transition MarkRead id:long isRead:boolean version:long --on Message
-```
-
-Both refusals are good ones and `explain transition` argues the compare-and-set
-case well. The friction is that there is no unguarded alternative, so a schema
-being *ported* grows a column to satisfy the tool. Worth either an
-`--unguarded` that states in the generated Javadoc what was given up, or a line
-in `explain transition` naming `g usecase` plus a manual update as the escape
-hatch. Recording it as friction, not as a defect.
-
 ## M12 — a fully applied transaction exits 1 because an external effect failed
 
 `add db` writes every file, records the ledger, and then returns a failure
@@ -376,37 +337,6 @@ jails port does not, and that `jails.toml` plus the ledger already know the
 field model such a view would need.
 
 ---
-
-## Two smaller things, with their one-line checks
-
-**`g strategy` generates no evaluator, and has no ordering.**
-
-```sh
-grep -rn 'List<BotRule>' src/main/java/ | grep -v '\*'      # nothing outside Javadoc
-grep -rn '@Order\|Ordered' src/main/java/com/x/domain/       # nothing
-```
-
-The port's Javadoc shows the fold you are meant to write, and `--yields` makes
-the return shape unambiguous, so the fold is derivable. Ordering matters here
-specifically: `FallbackBotRule` must run last or it swallows every message, and
-nothing in the generated code says so.
-
-**A `usecase` defaults an enum positionally.**
-
-```sh
-jails g enum IssueStatus OPEN IN_PROGRESS RESOLVED
-jails g scaffold Issue id:long@pk summary:string! status:IssueStatus
-jails g usecase EscalateIssue summary:string! --on Issue
-grep -n 'IssueStatus' src/main/java/com/x/service/DefaultEscalateIssueUseCase.java
-```
-
-```java
-IssueStatus.values()[0],
-```
-
-It happened to be `OPEN`, which is what the Django `default='OPEN'` says — by
-luck of declaration order. Reordering the `g enum` arguments silently changes
-the default of every generated create, and no test would notice.
 
 ## What this exercise says about the tool
 

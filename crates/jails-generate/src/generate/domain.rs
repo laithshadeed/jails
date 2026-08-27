@@ -836,7 +836,10 @@ mod tests {
             "CoffeeRewardRule",
             "Transaction",
             Some("Reward"),
-            true,
+            Bean {
+                spring: true,
+                order: 2,
+            },
             ported,
         );
         assert!(spring.contains("@Component"), "{spring}");
@@ -849,6 +852,10 @@ mod tests {
             "{spring}"
         );
         assert!(spring.contains("its absence is silent"), "{spring}");
+        // The order is explicit because without one the injected list is
+        // whatever component scanning produced -- so a rule that answers
+        // everything can silently come first and nothing after it runs.
+        assert!(spring.contains("@Order(20)"), "{spring}");
 
         // A plain Maven project has no Spring on the classpath, so the
         // annotation would not resolve and the import would not compile.
@@ -858,11 +865,60 @@ mod tests {
             "CoffeeRewardRule",
             "Transaction",
             Some("Reward"),
-            false,
+            Bean {
+                spring: false,
+                order: 2,
+            },
             ported,
         );
         assert!(!plain.contains("@Component"), "{plain}");
         assert!(!plain.contains("springframework"), "{plain}");
+        assert!(!plain.contains("@Order"), "{plain}");
+    }
+
+    /// The fold the port's Javadoc used to describe and leave to the reader,
+    /// and the plural it is held in.
+    ///
+    /// `missing.md`'s smaller entry: every project wrote this by hand, and
+    /// `eligibilitys` is what gluing an `s` on produces -- which is why the
+    /// name goes through `sql::table_name`, the one pluraliser.
+    #[test]
+    fn a_strategy_evaluator_folds_its_rules_through_the_one_pluraliser() {
+        let yielding = strategy_evaluator_java(
+            "com.example.demo.service",
+            "RewardRule",
+            "Transaction",
+            Some("Reward"),
+            true,
+            "",
+        );
+        assert!(
+            yielding.contains("List<RewardRule> rewardRules"),
+            "{yielding}"
+        );
+        assert!(
+            yielding.contains("public Optional<Reward> first(Transaction transaction)"),
+            "{yielding}"
+        );
+        assert!(yielding.contains("@Component"), "{yielding}");
+
+        let predicate = strategy_evaluator_java(
+            "com.example.demo.service",
+            "Eligibility",
+            "Transaction",
+            None,
+            false,
+            "",
+        );
+        assert!(
+            predicate.contains("List<Eligibility> eligibilities"),
+            "{predicate}"
+        );
+        assert!(
+            predicate.contains("public boolean anyMatch(Transaction transaction)"),
+            "{predicate}"
+        );
+        assert!(!predicate.contains("springframework"), "{predicate}");
     }
 
     /// `apply` + `s` reads `applys`. A generated test whose name is

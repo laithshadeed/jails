@@ -630,89 +630,23 @@ pub(crate) fn artifacts_for(
             ]
         }
         ArtifactKind::Strategy => {
-            let variants = parse_variants(fields)?;
-            let slice = crate::model::Slice::new(project, package);
-            let domain = place(layout::DOMAIN);
-            let on = strategy_on.ok_or_else(|| {
-                format!(
-                    "`generate strategy` needs the type the strategy examines, e.g. \
-                     `jails g strategy {name} Coffee Large --on Transaction --yields Reward`.\n\n\
-                     Without it jails would have to invent the one method every \
-                     implementation overrides, and every implementation would then have \
-                     to be rewritten."
-                )
-            })?;
-            let spring = matches!(
-                crate::pom::read(&root).map(|p| crate::pom::flavor(&p)),
-                Ok(crate::pom::Flavor::SpringBoot)
-            );
             // The generated signature names types jails did not write. If one
-            // is not in the project yet, say so here rather than letting the
-            // next `mvn` be what tells you -- a compile error for a line you
-            // did not write is the plumbing this tool exists to remove.
-            for missing in missing_types(&root, [Some(on), strategy_yields]) {
+            // is not in the project yet, say so rather than letting the next
+            // `mvn` be what tells you. It is said *here* because it is
+            // terminal output, and this is the layer that owns some.
+            for missing in missing_types(&root, [strategy_on, strategy_yields]) {
                 println!(
                     "note: {missing} is not in this project yet -- \
                      `jails g record {missing} <field:type ...>` writes one"
                 );
             }
-            // Where `--on` and `--yields` already live. They are somebody
-            // else's types, so their home is the conventional one whatever
-            // `--package` says about this call's own classes.
-            let owner = slice.owned(Layer::Domain);
-            let signature = |user: &str| {
-                let mut imports = crate::generate::import_of(user, &owner, on);
-                if let Some(yields) = strategy_yields {
-                    imports += &crate::generate::import_of(user, &owner, yields);
-                }
-                imports
-            };
-            // A `@Component` in `domain` violates the ArchUnit rule
-            // `g scaffold` writes, and the annotation is load-bearing: without
-            // it the bean is silently absent from the injected `List<Port>`.
-            // Two first-party generators cannot disagree about where the
-            // domain boundary is, so the beans live a layer up and the port --
-            // which needs no framework at all -- stays where it belongs. On a
-            // plain-Maven project there is no annotation and no rule, but the
-            // placement stays the same, because one layout is easier to
-            // explain than one that depends on the build file.
-            let beans = place(layout::SERVICE);
-            let mut artifacts = vec![Artifact {
-                kind: "strategy",
-                path: main_dir(&root, &domain).join(format!("{name}.java")),
-                contents: strategy_interface_java(
-                    &domain,
-                    name,
-                    &variants,
-                    on,
-                    strategy_yields,
-                    &signature(&domain),
-                ),
-            }];
-            let mut extra = crate::generate::import_of(&beans, &domain, name);
-            extra += &signature(&beans);
-            for variant in &variants {
-                let class = strategy_class(variant, name);
-                artifacts.push(Artifact {
-                    kind: "strategy implementation",
-                    path: main_dir(&root, &beans).join(format!("{class}.java")),
-                    contents: strategy_impl_java(
-                        &beans,
-                        name,
-                        &class,
-                        on,
-                        strategy_yields,
-                        spring,
-                        &extra,
-                    ),
-                });
-                artifacts.push(Artifact {
-                    kind: "strategy implementation test",
-                    path: test_dir(&root, &beans).join(format!("{class}Test.java")),
-                    contents: strategy_impl_test(&beans, name, &class, on, strategy_yields),
-                });
-            }
-            artifacts
+            strategy_artifacts(
+                &crate::model::Slice::new(project, package),
+                name,
+                &parse_variants(fields)?,
+                strategy_on,
+                strategy_yields,
+            )?
         }
         ArtifactKind::Command => {
             let cli = project.package(Layer::Cli, package);

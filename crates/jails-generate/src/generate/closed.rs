@@ -319,19 +319,11 @@ pub(super) fn strategy_interface_java(
          * sees every input, so more than one may answer.\n"
     );
     out += " *\n";
-    out += " * <p>Take the whole set as a constructor parameter rather than naming\n \
-         * implementations one by one -- that is what makes adding one a matter of\n \
-         * writing the class and nothing else:\n";
-    out += " *\n";
-    out += " * {@snippet :\n";
-    out += &format!(" * private final List<{name}> {}s;\n", lower_first(name));
     out += &format!(
-        " * Evaluator(List<{name}> {}s) {{ this.{}s = List.copyOf({}s); }}\n",
-        lower_first(name),
-        lower_first(name),
-        lower_first(name)
+        " * <p>{{@link {name}Evaluator}} is where the whole set is taken as one\n \
+         * constructor parameter, which is what makes adding an implementation a\n \
+         * matter of writing the class and nothing else.\n"
     );
-    out += " * }\n";
     out += " *\n";
     out += &format!(
         " * <p>Evaluation should be pure -- no clock beyond one the implementation was\n \
@@ -353,15 +345,231 @@ pub(super) fn strategy_interface_java(
     out
 }
 
+/// `g strategy`: the port, the evaluator, and one bean per implementation.
+///
+/// Extracted whole from `artifacts_for`'s arm, which is the only kind whose
+/// arm carried this many decisions -- where the beans live against where the
+/// port lives, which types the signature names that jails did not write, and
+/// now the order the injected list arrives in.
+pub(super) fn strategy_artifacts(
+    slice: &crate::model::Slice<'_>,
+    name: &str,
+    variants: &[String],
+    strategy_on: Option<&str>,
+    strategy_yields: Option<&str>,
+) -> Result<Vec<Artifact>> {
+    let project = slice.project();
+    let root: &Path = project.root();
+
+    let domain = slice.placed(Layer::Domain);
+    let on = strategy_on.ok_or_else(|| {
+        format!(
+            "`generate strategy` needs the type the strategy examines, e.g. \
+                 `jails g strategy {name} Coffee Large --on Transaction --yields Reward`.\n\n\
+                 Without it jails would have to invent the one method every \
+                 implementation overrides, and every implementation would then have \
+                 to be rewritten."
+        )
+    })?;
+    let spring = matches!(
+        crate::pom::read(root).map(|p| crate::pom::flavor(&p)),
+        Ok(crate::pom::Flavor::SpringBoot)
+    );
+    // Where `--on` and `--yields` already live. They are somebody
+    // else's types, so their home is the conventional one whatever
+    // `--package` says about this call's own classes.
+    let owner = slice.owned(Layer::Domain);
+    let signature = |user: &str| {
+        let mut imports = crate::generate::import_of(user, &owner, on);
+        if let Some(yields) = strategy_yields {
+            imports += &crate::generate::import_of(user, &owner, yields);
+        }
+        imports
+    };
+    // A `@Component` in `domain` violates the ArchUnit rule
+    // `g scaffold` writes, and the annotation is load-bearing: without
+    // it the bean is silently absent from the injected `List<Port>`.
+    // Two first-party generators cannot disagree about where the
+    // domain boundary is, so the beans live a layer up and the port --
+    // which needs no framework at all -- stays where it belongs. On a
+    // plain-Maven project there is no annotation and no rule, but the
+    // placement stays the same, because one layout is easier to
+    // explain than one that depends on the build file.
+    let beans = slice.placed(Layer::Service);
+    let mut artifacts = vec![Artifact {
+        kind: "strategy",
+        path: main_dir(root, &domain).join(format!("{name}.java")),
+        contents: strategy_interface_java(
+            &domain,
+            name,
+            variants,
+            on,
+            strategy_yields,
+            &signature(&domain),
+        ),
+    }];
+    let mut extra = crate::generate::import_of(&beans, &domain, name);
+    extra += &signature(&beans);
+    artifacts.push(Artifact {
+        kind: "strategy evaluator",
+        path: main_dir(root, &beans).join(format!("{name}Evaluator.java")),
+        contents: strategy_evaluator_java(&beans, name, on, strategy_yields, spring, &extra),
+    });
+    for (position, variant) in variants.iter().enumerate() {
+        let class = strategy_class(variant, name);
+        artifacts.push(Artifact {
+            kind: "strategy implementation",
+            path: main_dir(root, &beans).join(format!("{class}.java")),
+            contents: strategy_impl_java(
+                &beans,
+                name,
+                &class,
+                on,
+                strategy_yields,
+                Bean {
+                    spring,
+                    order: position + 1,
+                },
+                &extra,
+            ),
+        });
+        artifacts.push(Artifact {
+            kind: "strategy implementation test",
+            path: test_dir(root, &beans).join(format!("{class}Test.java")),
+            contents: strategy_impl_test(&beans, name, &class, on, strategy_yields),
+        });
+    }
+    Ok(artifacts)
+}
+
+/// A Java field name for "all the {name}s", through the one pluraliser.
+///
+/// `sql::table_name` is it -- `web::resource_path` already delegates there for
+/// the same reason. Gluing an `s` on gave `eligibilitys`, and a second
+/// pluraliser is how a resource came to be served at `/categorys` out of a
+/// table called `categories`.
+fn collection_name(name: &str) -> String {
+    let plural = crate::sql::table_name(name);
+    let mut words = plural.split('_');
+    let mut out = words.next().unwrap_or_default().to_string();
+    for word in words {
+        let mut characters = word.chars();
+        if let Some(initial) = characters.next() {
+            out.extend(initial.to_uppercase());
+            out.push_str(characters.as_str());
+        }
+    }
+    out
+}
+
+/// The evaluator the port's Javadoc used to describe and leave to the reader.
+///
+/// `missing.md`'s smaller entry: `--yields` makes the return shape
+/// unambiguous, so the fold is derivable, and every project wrote it by hand.
+/// It has no companion test for the same reason `{Name}ClientConfig` has none
+/// -- the body is a stream over injected beans, and the logic each rule
+/// carries is tested in that rule's own test. What this file adds is the
+/// order, which no single rule's test can see.
+pub(super) fn strategy_evaluator_java(
+    pkg: &str,
+    name: &str,
+    on: &str,
+    yields: Option<&str>,
+    spring: bool,
+    extra: &str,
+) -> String {
+    let (_, method, _) = strategy_method(on, yields);
+    let param_name = lower_first(on);
+    let field = collection_name(name);
+    let mut out = format!("package {pkg};\n\nimport java.util.List;\n");
+    if yields.is_some() {
+        out += "import java.util.Optional;\n";
+    }
+    out += extra;
+    if spring {
+        out += "import org.springframework.stereotype.Component;\n";
+    }
+    out += &format!("\n/**\n * Every {name}, asked about the same {param_name} in one place.\n");
+    out += " *\n";
+    if spring {
+        out += " * <p>The whole set arrives as one constructor parameter, so adding an\n \
+                 * implementation is writing the class. The order is {@code @Order}'s and it\n \
+                 * decides the answer: a rule that responds to everything has to come last,\n \
+                 * or nothing after it is ever reached.\n";
+    } else {
+        out += " * <p>The whole set arrives as one constructor parameter, in the caller's\n \
+                 * order -- which decides the answer: a rule that responds to everything has\n \
+                 * to come last, or nothing after it is ever reached.\n";
+    }
+    out += " */\n";
+    if spring {
+        out += "@Component\n";
+    }
+    out += &format!("public final class {name}Evaluator {{\n\n");
+    out += &format!("    private final List<{name}> {field};\n\n");
+    out += &format!("    public {name}Evaluator(List<{name}> {field}) {{\n");
+    out += &format!("        this.{field} = List.copyOf({field});\n");
+    out += "    }\n\n";
+    match yields {
+        Some(out_type) => {
+            out += &format!(
+                "    /** What the first {name} to answer grants, or empty when none does. */\n"
+            );
+            out += &format!(
+                "    public Optional<{out_type}> first({on} {param_name}) {{\n\
+                 \x20       return {field}.stream()\n\
+                 \x20               .map(rule -> rule.{method}({param_name}))\n\
+                 \x20               .flatMap(Optional::stream)\n\
+                 \x20               .findFirst();\n    }}\n\n"
+            );
+            out += &format!("    /** What every {name} that answers grants, in order. */\n");
+            out += &format!(
+                "    public List<{out_type}> all({on} {param_name}) {{\n\
+                 \x20       return {field}.stream()\n\
+                 \x20               .map(rule -> rule.{method}({param_name}))\n\
+                 \x20               .flatMap(Optional::stream)\n\
+                 \x20               .toList();\n    }}\n"
+            );
+        }
+        None => {
+            out += &format!("    /** Whether any {name} matches. */\n");
+            out += &format!(
+                "    public boolean anyMatch({on} {param_name}) {{\n\
+                 \x20       return {field}.stream().anyMatch(rule -> rule.{method}({param_name}));\n    }}\n\n"
+            );
+            out += &format!("    /** Every {name} that matches, in order. */\n");
+            out += &format!(
+                "    public List<{name}> matching({on} {param_name}) {{\n\
+                 \x20       return {field}.stream().filter(rule -> rule.{method}({param_name})).toList();\n    }}\n"
+            );
+        }
+    }
+    out += "}\n";
+    out
+}
+
+/// How one implementation reaches the injected `List<Port>`: whether it is a
+/// bean at all, and where in the list it sits.
+///
+/// The two travel together because they are one decision -- a plain-Maven
+/// project has neither, and a Spring one cannot have the first without the
+/// second without leaving the order to component scanning.
+#[derive(Clone, Copy)]
+pub(super) struct Bean {
+    pub spring: bool,
+    pub order: usize,
+}
+
 pub(super) fn strategy_impl_java(
     pkg: &str,
     name: &str,
     class: &str,
     on: &str,
     yields: Option<&str>,
-    spring: bool,
+    bean: Bean,
     extra: &str,
 ) -> String {
+    let Bean { spring, order } = bean;
     let (ret, method, param) = strategy_method(on, yields);
     let param_name = lower_first(on);
     let mut out = format!("package {pkg};\n\n");
@@ -375,6 +583,7 @@ pub(super) fn strategy_impl_java(
     // contradicting each other.
     out += extra;
     if spring {
+        out += "import org.springframework.core.annotation.Order;\n";
         out += "import org.springframework.stereotype.Component;\n";
     }
     out += "\n/**\n";
@@ -384,12 +593,16 @@ pub(super) fn strategy_impl_java(
         out += &format!(
             " * <p>The {{@code @Component}} is load-bearing and its absence is silent:\n \
              * without it this class is simply not in the {{@code List<{name}>}}, so it\n \
-             * never runs and nothing reports a problem.\n"
+             * never runs and nothing reports a problem. {{@code @Order}} is why the list\n \
+             * has a defined order at all -- without one it is whatever component scanning\n \
+             * happened to produce, so a rule that answers everything can silently come\n \
+             * first.\n"
         );
     }
     out += " */\n";
     if spring {
         out += "@Component\n";
+        out += &format!("@Order({})\n", order * 10);
     }
     out += &format!("public final class {class} implements {name} {{\n\n");
     out += "    @Override\n";
