@@ -1000,9 +1000,23 @@ The nine endpoints, verbatim from `customer.js` and `admin.js`:
       default `<timestamp> desc, <key>` rather than `order by id` -- which is
       the half M17 called "looks like working software", since an escalated
       list meant to show newest first was showing oldest.
-- [ ] **P10.6** A path with a variable in it: `/admin_api/messages/{userId}`
+- [x] **P10.6** A path with a variable in it: `/admin_api/messages/{userId}`
       returns `{messages, conversation}`. Check what `--path` accepts today
       before deciding whether this is a gap or a doc line.
+      It was a gap, and a silent one: `--path` took the template as *text*, so
+      the controller carried it in `@RequestMapping`, declared no
+      `@PathVariable`, and Spring matched the URL then looked for a body
+      nobody sent. A variable now has to name a filter, becomes a
+      `@PathVariable`, and turns the endpoint into a GET with no body; a
+      variable naming no filter and a mix of path and body are both refused.
+      **A much larger bug fell out of testing it.** The GET returned `[]` for
+      a row a POST had just created, because `Project::has_dependency` read
+      the build file as XML whatever the build tool was -- so on Gradle every
+      answer was a confident *no*, `repository_wiring` made the *in-memory*
+      adapter the bean, and the project wrote to a HashMap while the query
+      adapter read the real table. It is build-aware now, and `has_jdbc`
+      accepts `spring-boot-starter-data-jdbc`, which declares the narrow
+      starter (verified in `deps/spring-boot`).
 - [ ] **P10.7** Implement the mission on the checkout itself, with jails
       commands only, and record the command log. The mission is two-way
       communication: a customer replies, and the admin sees the reply.

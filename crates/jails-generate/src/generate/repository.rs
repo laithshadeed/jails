@@ -120,7 +120,13 @@ pub(super) fn repository_wiring(project: &crate::model::Project) -> RepositoryWi
     // The starter is what brings `JdbcClientAutoConfiguration` in. Checking
     // for it rather than for `compose.yaml` or a migration directory means
     // the answer matches what Spring will actually do at startup.
-    if project.has_dependency("org.springframework.boot", "spring-boot-starter-jdbc") {
+    //
+    // Through `has_jdbc`, which knows that `spring-boot-starter-data-jdbc`
+    // declares the narrower one. Asking for the narrow name alone made a
+    // Spring Data JDBC project get the in-memory adapter as its bean while a
+    // generated query read the real table -- writes to a HashMap, reads from
+    // an empty database, and nothing to say so.
+    if project.has_jdbc() {
         RepositoryWiring::JdbcClientBean
     } else {
         // `JdbcClient` lives in spring-jdbc, which the starter brings in.

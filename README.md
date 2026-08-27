@@ -1331,6 +1331,26 @@ applies, and inferring it would have `sync` install things nobody asked for.
 
 Run `jails adopt --pretend` first.
 
+### A path that addresses its filters
+
+```
+jails g query TicketsFor userId:long --on Ticket --path '/admin_api/tickets/{userId}'
+```
+
+A `{name}` in the path must name a filter this query takes. It becomes a
+`@PathVariable` and the endpoint becomes a **GET with no body** — the criteria
+record is still what the port takes, so the port never learns that some of its
+input came from a URL.
+
+**All or none.** A variable naming no filter is refused (the value would go
+nowhere), and so is a mix — the controller would have to build the criteria
+from a partial body plus some path variables, and "which half came from where"
+is a rule nobody would remember.
+
+Before this, a template in `--path` was accepted as text: the controller
+carried it in `@RequestMapping`, declared no `@PathVariable`, and Spring
+matched the URL then looked for a request body nobody sent.
+
 ### Optional query filters
 
 ```

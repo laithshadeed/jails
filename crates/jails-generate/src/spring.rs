@@ -433,7 +433,7 @@ pub(crate) fn api_slice(slice: &Slice) -> Change {
 /// right in one pass whenever `db` is declared before `api`, and `jails sync`
 /// is the repair in every other order.
 pub(crate) fn handles_duplicate_keys(project: &crate::model::Project) -> bool {
-    project.has_dependency("org.springframework.boot", "spring-boot-starter-jdbc")
+    project.has_jdbc()
 }
 
 /// The `DuplicateKeyException` arm, as rendered text or nothing.

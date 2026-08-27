@@ -50,6 +50,43 @@ pub(crate) fn query_files(
         )
         .into());
     }
+    // A path template names filters, and every one of them has to be a filter
+    // this query takes -- otherwise the URL matches and the value goes
+    // nowhere. All or none, deliberately: a mix would need the controller to
+    // build the criteria from a partial body plus some path variables, and
+    // "which half came from where" is a rule nobody would remember.
+    let variables = path_variables(endpoint.route);
+    if !variables.is_empty() {
+        let declared: Vec<&str> = fields.iter().map(|field| field.name.as_str()).collect();
+        if let Some(unknown) = variables
+            .iter()
+            .find(|variable| !declared.contains(&variable.as_str()))
+        {
+            return Err(format!(
+                "query {name}'s path names `{{{unknown}}}`, which is not one of its \
+                 filters.\n       fix: declare it -- this query takes {}.",
+                declared.join(", ")
+            )
+            .into());
+        }
+        if variables.len() != fields.len() {
+            let missing: Vec<&str> = declared
+                .iter()
+                .copied()
+                .filter(|field| !variables.iter().any(|variable| variable == field))
+                .collect();
+            return Err(format!(
+                "query {name}'s path addresses {} of its {} filters, and {} would have to come \
+                 from a request body.\n       fix: put {} in the path too, or take the \
+                 template variables out of it.",
+                variables.len(),
+                fields.len(),
+                missing.join(", "),
+                missing.join(" and ")
+            )
+            .into());
+        }
+    }
     let target_fields = Target::read(slice, "query", name, target)?.fields;
     let join = via
         .map(|parent| resolve_join(slice, name, target, &target_fields, parent))
@@ -498,6 +535,29 @@ fn jdbc_query_it_java(
     )
 }
 
+/// The filters a route addresses by name, in the order the URL names them.
+///
+/// `--path /admin_api/messages/{userId}` used to be accepted as *text*: the
+/// controller carried the template in its `@RequestMapping` and declared no
+/// `@PathVariable` at all, so Spring matched the URL and then looked for a
+/// request body nobody sent. A path jails cannot honour is a path jails must
+/// not accept.
+pub(super) fn path_variables(route: Option<&str>) -> Vec<String> {
+    let Some(route) = route else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    let mut rest = route;
+    while let Some(open) = rest.find('{') {
+        let Some(close) = rest[open..].find('}') else {
+            break;
+        };
+        found.push(rest[open + 1..open + close].to_string());
+        rest = &rest[open + close..];
+    }
+    found
+}
+
 fn query_controller_java(
     slice: &Slice,
     name: &str,
@@ -506,6 +566,10 @@ fn query_controller_java(
     endpoint: Endpoint<'_>,
 ) -> String {
     let route = endpoint.route;
+    let variables = path_variables(route);
+    if !variables.is_empty() {
+        return query_controller_path_java(slice, name, target, fields, endpoint);
+    }
     let security: &str = slice.base();
     let service: &str = &slice.placed(Layer::Service);
     let web: &str = &slice.placed(Layer::Web);
@@ -549,6 +613,68 @@ fn query_controller_java(
             ("scope_checks", &*scope_checks),
             ("binding", endpoint.binding()),
             ("binding_import", endpoint.binding_import()),
+        ],
+    )
+}
+
+/// The GET-by-path variant: every filter is in the URL, so there is no body.
+fn query_controller_path_java(
+    slice: &Slice,
+    name: &str,
+    target: &str,
+    fields: &[crate::generate::Field],
+    endpoint: Endpoint<'_>,
+) -> String {
+    let security: &str = slice.base();
+    let service: &str = &slice.placed(Layer::Service);
+    let web: &str = &slice.placed(Layer::Web);
+    let query_import = crate::generate::import_of(web, service, &format!("{name}Criteria"));
+    let port_import = crate::generate::import_of(web, service, &format!("{name}Query"));
+    let (
+        scope_import,
+        scope_field,
+        scope_constructor,
+        scope_assignment,
+        scope_parameter,
+        scope_checks,
+    ) = scope_controller_parts(security, web, fields, "criteria");
+    // Declared in the order the *record* takes them, not the order the URL
+    // spells them: the criteria is constructed positionally, and a URL that
+    // happened to name them the other way round would compile and silently
+    // swap two values of the same type.
+    let path_parameters = fields
+        .iter()
+        .map(|field| {
+            format!(
+                "@PathVariable {} {}",
+                crate::generate::declared_type(field),
+                field.name
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let criteria_arguments = fields
+        .iter()
+        .map(|field| field.name.clone())
+        .collect::<Vec<_>>()
+        .join(", ");
+    crate::template::render(
+        crate::template_here!("spring/query_controller_path_java.java"),
+        &[
+            ("web", web),
+            ("query_import", &*query_import),
+            ("port_import", &*port_import),
+            ("scope_import", &*scope_import),
+            ("name", name),
+            ("path", endpoint.route.unwrap_or_default()),
+            ("scope_field", &*scope_field),
+            ("scope_constructor", &*scope_constructor),
+            ("scope_assignment", &*scope_assignment),
+            ("target", target),
+            ("scope_parameter", &*scope_parameter),
+            ("scope_checks", &*scope_checks),
+            ("path_parameters", &*path_parameters),
+            ("criteria_arguments", &*criteria_arguments),
         ],
     )
 }

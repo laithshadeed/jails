@@ -5594,3 +5594,171 @@ fn an_enum_constant_can_be_called_something_else_on_the_wire() {
             .exists()
     );
 }
+
+/// A path that names its filters, and the two refusals that keep it honest.
+///
+/// `--path /admin_api/messages/{userId}` used to be accepted as *text*: the
+/// controller carried the template in `@RequestMapping` and declared no
+/// `@PathVariable`, so Spring matched the URL and then looked for a request
+/// body nobody sent. A path jails cannot honour is a path jails must not
+/// accept.
+///
+/// All-or-none, deliberately. A mix would need the controller to build the
+/// criteria from a partial body plus some path variables, and "which half came
+/// from where" is a rule nobody would remember.
+#[test]
+fn a_query_path_may_address_its_filters_by_name() {
+    let root = temp_dir("query-path");
+    write_spring_fixture(&root);
+    let status = jails_cmd(&root, None)
+        .args([
+            "g",
+            "scaffold",
+            "Ticket",
+            "id:long@pk",
+            "userId:long",
+            "subject:string!",
+        ])
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let output = jails_cmd(&root, None)
+        .args([
+            "g",
+            "query",
+            "TicketsFor",
+            "userId:long",
+            "--on",
+            "Ticket",
+            "--path",
+            "/admin_api/tickets/{userId}",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let controller = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/web/TicketsForQueryController.java"),
+    )
+    .unwrap();
+    // A GET with no body, and the variable actually bound.
+    assert!(controller.contains("@GetMapping"), "{controller}");
+    assert!(
+        controller.contains("execute(@PathVariable long userId)"),
+        "{controller}"
+    );
+    assert!(
+        controller.contains("new TicketsForCriteria(userId)"),
+        "{controller}"
+    );
+    assert!(!controller.contains("RequestBody"), "{controller}");
+
+    // A variable that names no filter goes nowhere, so it is refused.
+    let output = jails_cmd(&root, None)
+        .args([
+            "g",
+            "query",
+            "Bad",
+            "userId:long",
+            "--on",
+            "Ticket",
+            "--path",
+            "/x/{nope}",
+        ])
+        .output()
+        .unwrap();
+    let error = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        error.contains("`{nope}`, which is not one of its filters"),
+        "{error}"
+    );
+
+    // A mix is refused naming the ones that would have had nowhere to come
+    // from.
+    let output = jails_cmd(&root, None)
+        .args([
+            "g",
+            "query",
+            "Mixed",
+            "userId:long",
+            "subject:string!",
+            "--on",
+            "Ticket",
+            "--path",
+            "/x/{userId}",
+        ])
+        .output()
+        .unwrap();
+    let error = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        error.contains("subject would have to come from a request body"),
+        "{error}"
+    );
+}
+
+/// The dependency reader on a Gradle project, and what its blindness cost.
+///
+/// `Project::has_dependency` read the cached build file **as XML** whatever
+/// the build tool was, so on Gradle it answered a confident *no* to every
+/// question. The consequence was not small: `repository_wiring` gave the
+/// scaffold the in-memory adapter as its `@Component` while a generated query
+/// kept its JDBC adapter, so one generated project wrote to a HashMap and read
+/// from an empty database. Both halves ran and the list simply came back
+/// empty.
+///
+/// Measured on `minicom-15-01-2026` before it was written down: a POST
+/// returned 201 and the matching GET returned `[]`.
+#[test]
+fn a_gradle_projects_dependencies_are_read_from_its_gradle_file() {
+    let root = temp_dir("gradle-jdbc-wiring");
+    write_project_skeleton(&root);
+    fs::remove_file(root.join("pom.xml")).unwrap();
+    fs::write(
+        root.join("build.gradle"),
+        concat!(
+            "plugins {\n    id 'java'\n",
+            "    id 'org.springframework.boot' version '4.1.0'\n}\n\n",
+            "dependencies {\n",
+            // The wider starter, which declares the narrow one -- verified in
+            // `deps/spring-boot`.
+            "    implementation 'org.springframework.boot:spring-boot-starter-data-jdbc'\n",
+            "    implementation 'org.springframework.boot:spring-boot-starter-web'\n}\n",
+        ),
+    )
+    .unwrap();
+
+    let output = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Ticket", "id:long@pk", "subject:string!"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let jdbc = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/adapters/JdbcTicketRepository.java"),
+    )
+    .unwrap();
+    let memory = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/adapters/InMemoryTicketRepository.java"),
+    )
+    .unwrap();
+    // Exactly one of them is the bean, and it is the one that talks to the
+    // database the query adapter also reads.
+    assert!(jdbc.contains("@Component"), "{jdbc}");
+    assert!(jdbc.contains("JdbcClient"), "{jdbc}");
+    assert!(
+        !memory
+            .lines()
+            .any(|line| line.trim_start().starts_with("@Component")),
+        "{memory}"
+    );
+}

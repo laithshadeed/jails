@@ -668,13 +668,21 @@ impl Project {
         resolve_package(&self.base, package.unwrap_or(self.layers.named(default)))
     }
 
-    /// Whether the resolved pom declares this dependency.
+    /// Whether this project is known to declare a dependency.
     ///
-    /// Reads the cached pom. A renderer asking this question used to call
-    /// `pom::read` mid-render, which is what made rendering impure and so made
-    /// a path impossible to compute without a body.
+    /// **`Some(true)` and nothing else.** This read `self.pom` as XML whatever
+    /// the build tool was, so on a Gradle project it answered a confident
+    /// *no* to every question -- and the consequences were not small: the
+    /// scaffold's repository bean became the in-memory one while a query's
+    /// adapter read the real table, so a generated project wrote to a HashMap
+    /// and read from an empty database. Both halves ran, neither complained,
+    /// and the list simply came back empty.
+    ///
+    /// "Cannot tell" stays *no* here, which is where it was already: a Gradle
+    /// file this module cannot read is one jails must not claim things about.
+    /// What changes is that a file it *can* read is now believed.
     pub fn has_dependency(&self, group_id: &str, artifact_id: &str) -> bool {
-        pom::has_dependency(&self.pom, group_id, artifact_id)
+        self.declares_dependency(group_id, artifact_id) == Some(true)
     }
 
     /// True once `add db` has put the JDBC starter on the classpath, which is
@@ -701,7 +709,14 @@ impl Project {
     }
 
     pub fn has_jdbc(&self) -> bool {
+        // Either starter. `spring-boot-starter-data-jdbc` declares
+        // `api(spring-boot-starter-jdbc)` -- verified in `deps/spring-boot` --
+        // so a project with it has `JdbcClient`, the auto-configured
+        // `DataSource` and everything else this answer decides. Matching only
+        // the narrower name reported "no JDBC" on a project built entirely on
+        // Spring Data JDBC.
         self.has_dependency("org.springframework.boot", "spring-boot-starter-jdbc")
+            || self.has_dependency("org.springframework.boot", "spring-boot-starter-data-jdbc")
     }
 
     /// The Spring Boot major version, defaulting to 3 when the build file
