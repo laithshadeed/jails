@@ -648,7 +648,19 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // file. Four lines: the second spelling, and the sentence
                 // saying what the override costs, which is the half a reader
                 // acts on.
-                ceiling: 1485,
+                //
+                // 1485 -> 1509. A Gradle wrapper pins a distribution, and a
+                // distribution cannot launch on an arbitrarily new JDK -- it
+                // dies compiling its own build script, before reading the
+                // project. `doctor` reported `ok gradle project wrapper` and
+                // `ok jdk` over exactly that, which is the one situation this
+                // command exists to prevent (bugs.md B52). 24 lines: read the
+                // wrapper's pin, ask `gradle::launches_on`, and name the JDK
+                // to use. It sits in `environment.rs` beside the rest of "ask
+                // the machine", and the fact it asks lives in `gradle.rs`
+                // where the other Gradle version facts already are -- so this
+                // row grows by the question, not by the answer.
+                ceiling: 1509,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.

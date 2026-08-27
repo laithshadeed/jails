@@ -20,15 +20,6 @@ Identified during the end-to-end implementation of **Minicom 2.0** (`minicom/pro
 
 ## 3. Inspection & Static Analysis Tooling
 
-### WebSocket Route Discovery in `jails routes`
-- `jails routes` only inspects `@RestController`, `@Controller`, and `@RequestMapping` annotations.
-- Endpoints registered via Spring's `WebSocketConfigurer#registerWebSocketHandlers` (e.g. `/ws/chat/{email}/**`) are omitted from the route inventory.
-- **Expected**: `jails routes` should detect `WebSocketConfigurer` registrations and list WebSocket endpoints (e.g. `WS /ws/chat/{email}/** ChatWebSocketHandler`).
-
-### Complex `@Value` and SpEL Parsing in `jails beans`
-- `jails beans` static parser fails to parse constructors with nested parentheses or SpEL default expressions inside `@Value("${property:#{environment.VAR ?: ''}}")`, reporting `needs ) String (external)`.
-- **Expected**: The AST extractor should balance quotes and parentheses before splitting constructor parameter names and types.
-
 ---
 
 ## 4. Code Generation & Architecture Helpers

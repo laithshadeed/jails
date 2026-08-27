@@ -446,10 +446,52 @@ fn widest_constructor(text: &str, class_name: &str) -> Vec<Param> {
     widest
 }
 
+/// Remove each annotation *and its argument list* from a parameter list.
+///
+/// `bugs.md` B53: dropping annotations by discarding whitespace-separated
+/// words that start with `@` works only while the argument has no spaces in
+/// it. `@Value("${k:#{env.K ?: \'\'}}")` is three such words, two of which do
+/// not start with `@`, so `?:` and `\'\'}}")` survived into the type and
+/// `jails beans` reported a dependency called `)` that no bean could supply.
+///
+/// Structure is read off `blanked()` -- a `(` inside a string literal is not a
+/// bracket -- and the spans are cut from the original, which is
+/// `annotations()`'s rule one level down.
+fn without_annotations(list: &str) -> String {
+    let masked = blanked(list);
+    let bytes = masked.as_bytes();
+    let mut out = String::with_capacity(list.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'@' {
+            out.push_str(&list[i..i + 1]);
+            i += 1;
+            continue;
+        }
+        // `@` then the annotation's name, then optionally `(...)`.
+        let mut at = i + 1;
+        while at < bytes.len()
+            && (bytes[at].is_ascii_alphanumeric() || matches!(bytes[at], b'_' | b'.'))
+        {
+            at += 1;
+        }
+        let open = skip_space(&masked, at);
+        i = match bytes.get(open) {
+            Some(b'(') => match_paren(&masked, open) + 1,
+            _ => at,
+        };
+        // One space so `@Qualifier("x")List<Reward> rs` cannot glue the
+        // annotation's neighbours into one word.
+        out.push(' ');
+    }
+    out
+}
+
 /// Split a parameter list into (type, name) pairs. Annotations and generic
 /// arguments on a parameter are dropped -- `@Qualifier("x") List<Reward> rs`
 /// becomes `List` / `rs`.
 fn params(list: &str) -> Vec<Param> {
+    let list = &without_annotations(list);
     let mut out = Vec::new();
     let mut depth = 0usize;
     let mut current = String::new();
@@ -544,7 +586,7 @@ pub(crate) fn skip_space(text: &str, mut at: usize) -> usize {
 
 /// Offset of the `)` closing the `(` at `open`. Returns the last byte when
 /// the source is unbalanced, so a truncated file cannot panic the caller.
-pub(crate) fn match_paren(text: &str, open: usize) -> usize {
+pub fn match_paren(text: &str, open: usize) -> usize {
     match_delim(text, open, b'(', b')')
 }
 
@@ -827,6 +869,41 @@ public final class InMemoryRewardRepository implements RewardRepository {
         assert_eq!(info.constructor_params[0].type_name, "Optional");
         assert_eq!(info.constructor_params[0].raw_type, "Optional<String>");
         assert_eq!(info.constructor_params[1].raw_type, "List<Money>");
+    }
+
+    /// An annotation argument with spaces in it is not part of the type.
+    ///
+    /// `bugs.md` B53: `jails beans` reported `needs )` for a constructor whose
+    /// only parameter was a `String` behind a `@Value` with a SpEL default.
+    /// Annotations were dropped by discarding words beginning with `@`, and
+    /// `@Value("${k:#{env.K ?: ''}}")` is three words, two of which do not.
+    #[test]
+    fn an_annotation_argument_with_spaces_is_not_read_as_a_type() {
+        let source = r#"
+            package com.example.service;
+
+            @Service
+            public class AiService {
+                public AiService(
+                        @Value("${openrouter.api.key:#{environment.OPENROUTER_API_KEY ?: ''}}")
+                                String openRouterApiKey,
+                        @Qualifier("primary") MessageRepository repository) {
+                }
+            }
+        "#;
+        let info = type_info(source).expect("a class");
+        let params: Vec<(&str, &str)> = info
+            .constructor_params
+            .iter()
+            .map(|param| (param.type_name.as_str(), param.name.as_str()))
+            .collect();
+        assert_eq!(
+            params,
+            vec![
+                ("String", "openRouterApiKey"),
+                ("MessageRepository", "repository")
+            ]
+        );
     }
 
     #[test]

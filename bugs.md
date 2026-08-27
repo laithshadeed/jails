@@ -121,24 +121,6 @@ but every reserved word is lowercase and the name is capitalised before the
 check, so `class`, `int` and `String` all pass. `java.lang`'s own type names
 are a closed list and the same check is the place for them.
 
-## B53 — `jails beans` static AST parser misparses complex `@Value` annotations as unresolved dependency names
-
-When a Spring component constructor includes `@Value` annotations with nested colons or SpEL expressions:
-
-```java
-public AiService(
-    @Value("${openrouter.api.key:#{environment.OPENROUTER_API_KEY ?: ''}}") String openRouterApiKey
-)
-```
-
-`jails beans` parses this as:
-```
-@Service AiService com/intercom/spring/services/AiService.java
-           needs ) String (external -- the framework or a library is expected to supply it)
-```
-
-The regex/AST extractor splits at the first closing parenthesis `)` inside the `@Value` string instead of matching the full annotation before extracting the parameter type and identifier.
-
 ## B55 — `jails add websocket` is rejected as an invalid capability
 
 While `jails g socket <Name>` exists to scaffold WebSocket handlers, `jails add websocket` (and `jails add socket`) is rejected:
@@ -148,12 +130,6 @@ error: invalid value 'websocket' for '<CAPABILITIES>...'
 ```
 
 Adding `websocket` as a recognized capability in `jails add` should install `spring-boot-starter-websocket` into `pom.xml` / `build.gradle` and configure `[project] capabilities = ["websocket"]`.
-
-## B56 — `jails routes` does not discover WebSocket endpoints registered via `WebSocketConfigurer`
-
-`jails routes` inspects `@RequestMapping` controller routes from source, but ignores WebSocket endpoints mapped via `WebSocketConfigurer#registerWebSocketHandlers` (e.g. `registry.addHandler(handler, "/ws/chat")`).
-
-WebSocket routes should be listed alongside HTTP routes (e.g. `WS /ws/chat ChatSocketHandler#handleTextMessage`).
 
 ---
 

@@ -21,6 +21,8 @@ use crate::java::Target;
 use crate::spec::find_project_root;
 use jails_support::Result;
 
+mod socket;
+
 /// One HTTP route: verb, path, and the method behind it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Route {
@@ -121,6 +123,27 @@ fn file_routes(source: &str, label: &str) -> Vec<Route> {
                 line: line_of(source, "handle("),
             })
             .collect();
+    }
+
+    // A WebSocket endpoint is registered programmatically, so it carries no
+    // mapping annotation and every scanner that looks for one misses it --
+    // including this one, over a registration `jails g socket` had just
+    // written (`bugs.md` B56). Two things jails emits and cannot see is worse
+    // than a gap: the reader has no way to tell an unlisted route from an
+    // absent one.
+    //
+    // Read the same way the `HttpHandler` arm above reads its constant: off
+    // the *blanked* copy, so an `addHandler(` inside the Javadoc example this
+    // template carries is not a registration, and sliced out of the original,
+    // because blanking replaces the quotes too.
+    if info
+        .as_ref()
+        .is_some_and(|i| i.supertypes.iter().any(|s| s == "WebSocketConfigurer"))
+    {
+        let routes = socket::registered_routes(source, &type_name, label, info.as_ref());
+        if !routes.is_empty() {
+            return routes;
+        }
     }
 
     let is_controller = annotations
@@ -553,6 +576,59 @@ public final class RewardController {
     @PostMapping(path = "/", consumes = "application/json")
     public Reward create(@RequestBody Reward reward) { return null; }
 }"#;
+
+    #[test]
+    fn a_websocket_registration_is_a_route() {
+        // `bugs.md` B56: `jails g socket Chat` writes this file and `jails
+        // routes` then reported "No routes found under src/main/java". A
+        // route jails emitted and cannot see is worse than a gap -- the
+        // reader cannot tell an unlisted route from an absent one.
+        let source = r#"
+package com.example.web;
+
+/**
+ * Where the handler answers.
+ *
+ * <p>Example: {@code registry.addHandler(other, "/ws/from-the-javadoc");}
+ */
+@Configuration
+@EnableWebSocket
+public class ChatSocketConfig implements WebSocketConfigurer {
+
+    private final ChatSocketHandler handler;
+
+    public ChatSocketConfig(ChatSocketHandler handler) {
+        this.handler = handler;
+    }
+
+    @Override
+    public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
+        registry.addHandler(handler, "/ws/chat", "/ws/chat/{email}");
+    }
+}
+"#;
+        let routes = file_routes(source, "web/ChatSocketConfig.java");
+        let seen: Vec<(&str, &str, &str)> = routes
+            .iter()
+            .map(|route| {
+                (
+                    route.verb.as_str(),
+                    route.path.as_str(),
+                    route.handler.as_str(),
+                )
+            })
+            .collect();
+        // Both registered paths, the handler resolved to the class that
+        // answers rather than the field that holds it -- and nothing from the
+        // Javadoc example, which `blanked()` is what keeps out.
+        assert_eq!(
+            seen,
+            vec![
+                ("WS", "/ws/chat", "ChatSocketHandler"),
+                ("WS", "/ws/chat/{email}", "ChatSocketHandler"),
+            ]
+        );
+    }
 
     #[test]
     fn routes_join_the_type_level_prefix() {
