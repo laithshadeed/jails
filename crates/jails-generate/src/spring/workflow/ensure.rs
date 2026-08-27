@@ -82,9 +82,13 @@ pub(super) fn conflict_column(
     {
         return Err(format!(
             "usecase {name} uses `--on-conflict`, which generates PostgreSQL's `insert ... on \
-             conflict ... do nothing returning`, and this project's driver is H2 -- which has \
-             no form of it.\n       fix: drop `--on-conflict` and let the caller handle a \
-             duplicate, or point the project at PostgreSQL (`jails add db`)."
+             conflict ({component}) do nothing returning ...`, and this project's driver is \
+             H2.\n       H2 parses `on conflict do nothing` only under `MODE=PostgreSQL`, and \
+             only in that\n       bare form -- no conflict target and no `returning` -- so it \
+             cannot say which row\n       already held the key, which is the whole answer this \
+             use case exists to give.\n       fix: drop `--on-conflict` and let the caller \
+             handle a duplicate, or point the\n            project at PostgreSQL (`jails add \
+             db`)."
         )
         .into());
     }
@@ -291,13 +295,13 @@ pub(super) fn ensuring_usecase_it_java(
     let pkg: &str = &slice.owned(Layer::Adapters);
     let service: &str = &slice.placed(Layer::Service);
     let domain: &str = &slice.owned(Layer::Domain);
-    let base: String = slice.root_package();
     let target: &str = &resolved.name;
     let samples = fields
         .iter()
         .map(|field| crate::generate::sample_value(field, project, domain))
         .collect::<Option<Vec<_>>>();
     let disabled = samples.is_none();
+    let support = crate::spring::support::TestSupport::resolve(project, pkg);
     let args = samples.unwrap_or_default().join(",\n                ");
     let imports = java_literal_imports(fields, domain)
         .into_iter()
@@ -319,14 +323,12 @@ pub(super) fn ensuring_usecase_it_java(
                 "port_import",
                 &crate::generate::import_of(pkg, service, &format!("{name}UseCase")),
             ),
-            (
-                "container_import",
-                &crate::generate::import_of(pkg, &base, "TestcontainersConfig"),
-            ),
+            ("container_import", &support.import),
+            ("container_annotation", &support.annotation),
             ("imports", &imports),
             (
                 "disabled_import",
-                if disabled {
+                if disabled || !support.disabled_import.is_empty() {
                     "import org.junit.jupiter.api.Disabled;\n"
                 } else {
                     ""
@@ -334,7 +336,12 @@ pub(super) fn ensuring_usecase_it_java(
             ),
             (
                 "annotation",
-                if disabled {
+                // Two independent reasons to disable, and the more specific
+                // one wins: a missing container config is a thing the reader
+                // can act on, missing samples is a thing jails cannot supply.
+                if !support.disabled.is_empty() {
+                    support.disabled
+                } else if disabled {
                     "@Disabled(\"todo: supply command samples jails cannot fabricate\")\n"
                 } else {
                     ""

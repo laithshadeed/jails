@@ -744,7 +744,11 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // 545 -> 547 for `mod socket;`, 547 -> 549 for `mod presence;`,
                 // 549 -> 551 for `mod seed;` and 551 -> 553 for
                 // `mod endpoint;`, each with its re-export -- the same two
-                // lines a new submodule always costs here. `Endpoint` went
+                // lines a new submodule always costs here. 553 -> 554 for
+                // `mod support;`, which needs no re-export: `TestSupport` is
+                // named by three generators in this crate, and asking where a
+                // project's container config lives is a question about test
+                // wiring rather than a thing `require_spring` gates. `Endpoint` went
                 // into a module rather than into this file precisely because
                 // this row asked: as three lines of struct plus an impl it
                 // took the number to 564. The row is a
@@ -756,7 +760,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // its own module rather than into this file. A submodule
                 // declaration costing two lines is not the growth the gate
                 // exists to stop.
-                ceiling: 553,
+                ceiling: 554,
                 target: 2500,
                 why: "Logical cohesion: one file for everything sharing the `require_spring` \
                       precondition. abstract.md §6.2 says turning that precondition into data \

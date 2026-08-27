@@ -44,6 +44,7 @@ pub(crate) fn presence_files(slice: &Slice, name: &str) -> Result<Vec<Artifact>>
     let root: &Path = slice.project().root();
     let app: &str = &slice.placed(Layer::App);
     let adapters: &str = &slice.placed(Layer::Adapters);
+    let support = crate::spring::support::TestSupport::resolve(slice.project(), adapters);
     let table = format!("{}_presence", crate::sql::snake_case(name));
     let port = format!("{name}Presence");
     Ok(vec![
@@ -92,10 +93,10 @@ pub(crate) fn presence_files(slice: &Slice, name: &str) -> Result<Vec<Artifact>>
                     ("adapters", adapters),
                     ("name", name),
                     ("table", &table),
-                    (
-                        "container_import",
-                        &crate::generate::import_of(adapters, slice.base(), "TestcontainersConfig"),
-                    ),
+                    ("container_import", &support.import),
+                    ("container_annotation", &support.annotation),
+                    ("disabled_import", support.disabled_import),
+                    ("annotation", support.disabled),
                 ],
             ),
         },

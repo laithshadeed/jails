@@ -37,6 +37,7 @@ mod security;
 mod seed;
 mod socket;
 mod sse;
+pub(crate) mod support;
 mod transition;
 mod webhook;
 mod workflow;

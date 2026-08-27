@@ -5762,3 +5762,63 @@ fn a_gradle_projects_dependencies_are_read_from_its_gradle_file() {
         "{memory}"
     );
 }
+
+/// A generated integration test degrades rather than failing to compile when
+/// the project has a database of its own and no Testcontainers.
+///
+/// The real one: `minicom`'s Spring app runs on an H2 file, so JDBC is on the
+/// classpath and `TestcontainersConfig` is not. `g usecase --on-conflict` and
+/// `g presence` both wrote `@Import(TestcontainersConfig.class)`
+/// unconditionally, and `./gradlew build` stopped on `cannot find symbol` in a
+/// test jails had written seconds earlier -- exactly the compile error for a
+/// file the reader did not write that `CLAUDE.md` says a generator must not
+/// hand out. `g scaffold`'s JDBC round trip already degraded; these did not.
+#[test]
+fn an_integration_test_is_disabled_rather_than_uncompilable_without_a_container_config() {
+    let root = temp_dir("no-container-config");
+    write_spring_fixture(&root);
+
+    for args in [
+        vec![
+            "add",
+            "dependency",
+            "org.springframework.boot:spring-boot-starter-jdbc",
+        ],
+        vec!["g", "presence", "Room"],
+    ] {
+        let output = jails_cmd(&root, None).args(&args).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let it = fs::read_to_string(
+        root.join("src/test/java/com/example/demo/adapters/JdbcRoomPresenceIT.java"),
+    )
+    .unwrap();
+    assert!(!it.contains("@Import(TestcontainersConfig.class)"), "{it}");
+    assert!(
+        !it.contains("import com.example.demo.TestcontainersConfig;"),
+        "{it}"
+    );
+    // And nothing left over pointing at it either.
+    assert!(
+        !it.contains("import org.springframework.context.annotation.Import;"),
+        "{it}"
+    );
+    assert!(it.contains("@Disabled(\"todo: run jails add db"), "{it}");
+    assert!(
+        it.contains("import org.junit.jupiter.api.Disabled;"),
+        "{it}"
+    );
+    // The rest of the class is untouched: `@Disabled` is the whole
+    // degradation, because the body never named the container config.
+    assert!(it.contains("@SpringBootTest"), "{it}");
+    assert!(
+        it.contains("aMemberJoinedOnOneNodeIsPresentOnTheOther"),
+        "{it}"
+    );
+}

@@ -3,12 +3,10 @@ package {{pkg}};
 {{target_import}}{{command_import}}{{port_import}}{{container_import}}{{imports}}{{disabled_import}}import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-{{annotation}}@Import(TestcontainersConfig.class)
-@SpringBootTest
+{{annotation}}{{container_annotation}}@SpringBootTest
 @org.springframework.transaction.annotation.Transactional
 class Ensuring{{name}}UseCaseIT {
 

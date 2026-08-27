@@ -1,10 +1,9 @@
 package {{adapters}};
 
-{{container_import}}import java.time.Duration;
+{{container_import}}{{disabled_import}}import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -14,8 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * nodes, one records a join and the <em>other</em> is asked. A module-level
  * dict answers empty here and says nothing about why.
  */
-@Import(TestcontainersConfig.class)
-@SpringBootTest
+{{annotation}}{{container_annotation}}@SpringBootTest
 @org.springframework.transaction.annotation.Transactional
 class Jdbc{{name}}PresenceIT {
 
