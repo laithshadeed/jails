@@ -28,8 +28,6 @@ public final class {{name}}Controller {
     public ResponseEntity<{{target}}Response> execute(
             @Valid @{{binding}} {{name}}Command command{{scope_parameter}}) {
 {{scope_checks}}
-        var created = useCase.execute(command);
-        return ResponseEntity.created(URI.create(RESOURCE_PATH + "/" + created.id()))
-                .body({{target}}Response.from(created));
+{{outcome}}
     }
 }

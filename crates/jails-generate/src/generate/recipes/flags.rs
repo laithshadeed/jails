@@ -15,13 +15,23 @@ use super::*;
 /// Refuse a flag that belongs to another recipe, and one pair that cannot be
 /// combined.
 pub(super) fn refuse_misplaced(recipe: &Recipe<'_>) -> Result<()> {
-    only_for(
-        recipe,
-        ArtifactKind::Query,
-        "`--via`",
-        "the one recipe that reads a second table",
-        recipe.via.is_some(),
-    )?;
+    // Two recipes cross a reference, from the two ends: a query *reads*
+    // across it, and a use case *resolves* it on the way in -- the caller
+    // sends the parent's email and the row needs its id.
+    if recipe.via.is_some() && !matches!(recipe.kind, ArtifactKind::Query | ArtifactKind::Usecase) {
+        use clap::ValueEnum;
+        return Err(format!(
+            "`--via` applies to a query or a use case -- the recipes that cross a reference \
+             between two resources.\n       fix: drop it from `jails g {} {}`.",
+            recipe
+                .kind
+                .to_possible_value()
+                .expect("every kind has a clap value")
+                .get_name(),
+            recipe.name
+        )
+        .into());
+    }
     only_for(
         recipe,
         ArtifactKind::Query,

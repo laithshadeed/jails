@@ -8,7 +8,6 @@
 //! two halves share a subject and not a secret.
 
 use super::*;
-use crate::model::{Layer, Slice};
 
 /// The two column lists one query reads through: what it selects, and what it
 /// filters on. Both are derived from the same field spec in one place, which

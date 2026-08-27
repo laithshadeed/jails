@@ -1,0 +1,24 @@
+@baseUrl = http://localhost:8080
+
+### Create Note
+POST {{baseUrl}}/notes
+Content-Type: application/json
+
+{
+  "authorId": 1,
+  "body": "sample-body",
+  "senderType": "CUSTOMER"
+}
+
+### List Note
+GET {{baseUrl}}/notes
+Accept: application/json
+
+@id = 1
+
+### Get Note
+GET {{baseUrl}}/notes/{{id}}
+Accept: application/json
+
+### Delete Note
+DELETE {{baseUrl}}/notes/{{id}}

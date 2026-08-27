@@ -8,8 +8,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class {{name}}ControllerTest {
 
     private final MockMvcTester mvc = MockMvcTester.of(new {{name}}Controller(
-            command -> new {{target}}(
-                    {{target_args}}){{scope_argument}}));
+            command -> {{fake_result}}{{scope_argument}}));
 
 {{disabled}}    @Test
     void postExecutesTheUseCase() {

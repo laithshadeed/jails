@@ -324,6 +324,7 @@ pub(crate) fn artifacts_for(
                 &parsed,
                 crate::spring::Written {
                     on_conflict,
+                    via,
                     pins: recipe.pins,
                     endpoint,
                 },

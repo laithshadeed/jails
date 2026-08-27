@@ -7035,3 +7035,182 @@ fn a_form_bound_endpoint_is_proved_by_a_form_post() {
         "{proof}"
     );
 }
+
+/// A write that resolves its foreign key from a component of the parent.
+///
+/// The customer sends the email they logged in with and the row needs a
+/// `user_id`. `g query --via` reads across that reference; nothing wrote
+/// across it, so the only expressible endpoint was one that trusts the caller
+/// for a key that is not theirs to choose -- which is the same class of defect
+/// `--set` closes on the other side of the same request.
+#[test]
+fn a_use_case_can_resolve_its_key_from_the_parent_the_caller_names() {
+    let root = temp_dir("usecase-resolved-key");
+    write_spring_fixture(&root);
+
+    for args in [
+        vec!["add", "db", "--no-start"],
+        vec!["g", "enum", "SenderType", "CUSTOMER", "ADMIN"],
+        vec![
+            "g",
+            "scaffold",
+            "Author",
+            "id:long@pk",
+            "email:string!@unique",
+        ],
+        vec![
+            "g",
+            "scaffold",
+            "Note",
+            "id:long@pk",
+            "authorId:long@index",
+            "body:string!",
+            "senderType:SenderType",
+        ],
+        vec![
+            "g",
+            "usecase",
+            "PostNote",
+            "email:string!",
+            "body:string!",
+            "--on",
+            "Note",
+            "--via",
+            "Author",
+            "--set",
+            "senderType=CUSTOMER",
+        ],
+    ] {
+        assert!(
+            jails_cmd(&root, None)
+                .args(&args)
+                .status()
+                .unwrap()
+                .success(),
+            "{args:?}"
+        );
+    }
+
+    let main = root.join("src/main/java/com/example/demo");
+    let adapter = fs::read_to_string(main.join("adapters/ResolvingPostNoteUseCase.java")).unwrap();
+    // One statement: the key is *selected* from the parent's row rather than
+    // read first and inserted second, so there is no window where the parent
+    // is deleted between the two and no way to name a key you do not own.
+    assert!(
+        adapter.contains("insert into notes (author_id, body, sender_type)"),
+        "{adapter}"
+    );
+    assert!(
+        adapter.contains("select authors.id, :body, :sender_type"),
+        "{adapter}"
+    );
+    assert!(
+        adapter.contains("where authors.email = :email"),
+        "{adapter}"
+    );
+    // The pinned component travels through the column's own write expression,
+    // so an enum is still stored by name.
+    assert!(
+        adapter.contains(".param(\"sender_type\", SenderType.CUSTOMER.name())"),
+        "{adapter}"
+    );
+    // And there is no binding for the reference: it never was a parameter.
+    assert!(!adapter.contains(".param(\"author_id\""), "{adapter}");
+
+    // "No such parent" is an expected outcome, so it is a return value.
+    let port = fs::read_to_string(main.join("service/PostNoteUseCase.java")).unwrap();
+    assert!(
+        port.contains("Optional<Note> execute(PostNoteCommand command);"),
+        "{port}"
+    );
+    let controller = fs::read_to_string(main.join("web/PostNoteController.java")).unwrap();
+    assert!(
+        controller.contains(".orElseGet(() -> ResponseEntity.notFound().build())"),
+        "{controller}"
+    );
+
+    // The proof is the only thing that observes the empty result.
+    let integration = fs::read_to_string(
+        root.join("src/test/java/com/example/demo/adapters/ResolvingPostNoteUseCaseIT.java"),
+    )
+    .unwrap();
+    assert!(
+        integration.contains("assertThat(useCase.execute(command)).isEmpty();"),
+        "{integration}"
+    );
+    assert!(
+        integration.contains(".authorId()).isEqualTo(parent.id())"),
+        "{integration}"
+    );
+}
+
+/// Every way `--via` can be ambiguous is refused, naming the alternatives.
+#[test]
+fn a_lookup_that_cannot_be_resolved_is_refused_and_names_what_would_work() {
+    let root = temp_dir("usecase-via-refusals");
+    write_spring_fixture(&root);
+
+    for args in [
+        vec!["add", "db", "--no-start"],
+        vec![
+            "g",
+            "scaffold",
+            "Author",
+            "id:long@pk",
+            "email:string!@unique",
+            "handle:string!",
+        ],
+        vec![
+            "g",
+            "scaffold",
+            "Note",
+            "id:long@pk",
+            "authorId:long@index",
+            "body:string!",
+        ],
+    ] {
+        assert!(
+            jails_cmd(&root, None)
+                .args(&args)
+                .status()
+                .unwrap()
+                .success(),
+            "{args:?}"
+        );
+    }
+
+    for (fields, expected) in [
+        // No field names a parent component: the refusal lists the ones that
+        // could have.
+        (
+            vec!["body:string!"],
+            "none of its fields names a component of Author",
+        ),
+        // Two do: one identifies the parent, and picking is not jails' to do.
+        (
+            vec!["email:string!", "handle:string!", "body:string!"],
+            "names 2 components of Author",
+        ),
+    ] {
+        let mut args = vec!["g", "usecase", "Probe"];
+        args.extend(fields.iter().copied());
+        args.extend(["--on", "Note", "--via", "Author"]);
+        let output = jails_cmd(&root, None).args(&args).output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "{fields:?} was accepted");
+        assert!(stderr.contains(expected), "{fields:?}: {stderr}");
+        assert!(stderr.contains("fix:"), "{fields:?}: {stderr}");
+    }
+
+    // And a recipe with no reference to cross refuses the flag.
+    let output = jails_cmd(&root, None)
+        .args(["g", "record", "Probe", "a:string", "--via", "Author"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("`--via` applies to a query or a use case"),
+        "{stderr}"
+    );
+}

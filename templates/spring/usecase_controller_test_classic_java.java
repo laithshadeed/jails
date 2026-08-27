@@ -14,8 +14,7 @@ import static org.springframework.test.web.servlet.setup.MockMvcBuilders.standal
 class {{name}}ControllerTest {
 
     private final MockMvc mvc = standaloneSetup(new {{name}}Controller(
-            command -> new {{target}}(
-                    {{target_args}}){{scope_argument}})).build();
+            command -> {{fake_result}}{{scope_argument}})).build();
 
 {{disabled}}    @Test
     void postExecutesTheUseCase() throws Exception {

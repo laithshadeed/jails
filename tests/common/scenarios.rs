@@ -740,6 +740,52 @@ pub const SCENARIOS: &[Scenario] = &[
             ],
         ],
     },
+    // The customer's reply: the caller sends the email they logged in with and
+    // the row needs a `user_id`. `g query --via` reads across that reference
+    // and nothing wrote across it, so the only expressible endpoint was one
+    // that trusts the caller for a key that is not theirs to choose.
+    Scenario {
+        name: "usecase-resolved-key",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[
+            &["add", "db", "--no-start"],
+            &["g", "enum", "SenderType", "CUSTOMER", "ADMIN"],
+            &[
+                "g",
+                "scaffold",
+                "Author",
+                "id:long@pk",
+                "email:string!@unique",
+            ],
+            &[
+                "g",
+                "scaffold",
+                "Note",
+                "id:long@pk",
+                "authorId:long@index",
+                "body:string!",
+                "senderType:SenderType",
+            ],
+            &[
+                "g",
+                "usecase",
+                "PostNote",
+                "email:string!",
+                "body:string!",
+                "--on",
+                "Note",
+                "--via",
+                "Author",
+                "--set",
+                "senderType=CUSTOMER",
+                "--consumes",
+                "form",
+                "--path",
+                "/customer_api/notes",
+            ],
+        ],
+    },
     // A mark-as-read route, which is the shape a browser page actually sends:
     // one form field, no conditional header, and the column it sets decided by
     // the endpoint. Both halves are needed -- Spring answers 400 for a missing
