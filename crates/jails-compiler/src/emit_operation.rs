@@ -7,7 +7,9 @@ mod transition;
 use crate::CompileError;
 use crate::emit_java::{JAVA_ROOT, entity, render};
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile, RenderedTree};
-use jails_model::{AppModel, Entity, Facet, Field, Operation, OperationKind, StableId};
+use jails_model::{
+    AppModel, BuiltinType, Entity, Facet, Field, Operation, OperationKind, StableId, TypeRef,
+};
 use std::collections::BTreeSet;
 
 pub(crate) fn lower_and_emit(
@@ -133,4 +135,47 @@ fn operation_file(
 
 fn java_string(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+fn scopes(entity: &Entity) -> Vec<&Field> {
+    entity
+        .fields
+        .values()
+        .filter(|field| field.semantics.scope.is_some())
+        .collect()
+}
+
+fn context_parameter(model: &AppModel, entity: &Entity, imports: &mut BTreeSet<String>) -> String {
+    if scopes(entity).is_empty() {
+        String::new()
+    } else {
+        imports.insert(format!(
+            "{}.application.ExecutionContext",
+            model.project.base_package
+        ));
+        "ExecutionContext context, ".to_string()
+    }
+}
+
+fn context_value(field: &Field, imports: &mut BTreeSet<String>) -> String {
+    let scope = field
+        .semantics
+        .scope
+        .as_ref()
+        .expect("context values are requested only for scope fields");
+    let claim = java_string(&scope.claim);
+    match field.ty {
+        TypeRef::Builtin(BuiltinType::String) => format!("context.claim({claim})"),
+        TypeRef::Builtin(BuiltinType::Uuid) => {
+            imports.insert("java.util.UUID".to_string());
+            format!("UUID.fromString(context.claim({claim}))")
+        }
+        TypeRef::Builtin(BuiltinType::Integer) => {
+            format!("Integer.parseInt(context.claim({claim}))")
+        }
+        TypeRef::Builtin(BuiltinType::Long) => {
+            format!("Long.parseLong(context.claim({claim}))")
+        }
+        _ => unreachable!("the linker accepts only string, uuid, int, and long scope fields"),
+    }
 }

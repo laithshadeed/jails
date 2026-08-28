@@ -1,5 +1,6 @@
 //! Lower semantic facets into deterministic Java source units.
 
+mod execution_context;
 mod record_validation;
 mod time_ordered_uuid;
 
@@ -19,6 +20,11 @@ pub(crate) fn lower_and_emit(
     spring_boot: bool,
 ) -> Result<(), CompileError> {
     crate::emit_unit::lower_and_emit(model, output)?;
+    if let Some(unit) = execution_context::lower(model)? {
+        output
+            .insert(unit.path, unit.file)
+            .map_err(CompileError::new)?;
+    }
     if let Some(unit) = time_ordered_uuid::lower(model)? {
         output
             .insert(unit.path, unit.file)
@@ -210,10 +216,11 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
             let mut imports = BTreeSet::from([domain_import(model, entity)]);
             let fields = fields(entity, &command.fields)?;
             let input = indent(&record_shape("Input", &fields, &mut imports), 4);
+            let context = operation_context(model, entity, &mut imports);
             let type_name = with_suffix(&operation.names.java_type, "Command");
             let route = route_constant(command.route.as_deref());
             let body = format!(
-                "public interface {type_name} {{\n{route}\n    {} execute(Input input);\n\n{input}\n}}",
+                "public interface {type_name} {{\n{route}\n    {} execute({context}Input input);\n\n{input}\n}}",
                 entity.names.java_type
             );
             ("application.commands", type_name, body, imports)
@@ -224,13 +231,14 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
                 BTreeSet::from(["java.util.List".to_string(), domain_import(model, entity)]);
             let fields = fields(entity, &query.filters)?;
             let input = indent(&record_shape("Input", &fields, &mut imports), 4);
+            let context = operation_context(model, entity, &mut imports);
             let type_name = with_suffix(&operation.names.java_type, "Query");
             let route = route_constant(query.route.as_deref());
             let limit = query.limit.map_or_else(String::new, |limit| {
                 format!("    int DEFAULT_LIMIT = {limit};\n\n")
             });
             let body = format!(
-                "public interface {type_name} {{\n{route}{limit}    List<{}> execute(Input input);\n\n{input}\n}}",
+                "public interface {type_name} {{\n{route}{limit}    List<{}> execute({context}Input input);\n\n{input}\n}}",
                 entity.names.java_type
             );
             ("application.queries", type_name, body, imports)
@@ -242,10 +250,11 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
             let key_type = java_type(primary_key, &mut imports);
             let fields = fields(entity, &transition.fields)?;
             let input = indent(&record_shape("Input", &fields, &mut imports), 4);
+            let context = operation_context(model, entity, &mut imports);
             let type_name = with_suffix(&operation.names.java_type, "Transition");
             let route = route_constant(transition.route.as_deref());
             let body = format!(
-                "public interface {type_name} {{\n{route}\n    {} execute({key_type} id, Input input);\n\n{input}\n}}",
+                "public interface {type_name} {{\n{route}\n    {} execute({context}{key_type} id, Input input);\n\n{input}\n}}",
                 entity.names.java_type
             );
             ("application.transitions", type_name, body, imports)
@@ -289,6 +298,22 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
             },
         },
     })
+}
+
+fn operation_context(model: &AppModel, entity: &Entity, imports: &mut BTreeSet<String>) -> String {
+    if entity
+        .fields
+        .values()
+        .any(|field| field.semantics.scope.is_some())
+    {
+        imports.insert(format!(
+            "{}.application.ExecutionContext",
+            model.project.base_package
+        ));
+        "ExecutionContext context, ".to_string()
+    } else {
+        String::new()
+    }
 }
 
 fn lower_fake_repository(

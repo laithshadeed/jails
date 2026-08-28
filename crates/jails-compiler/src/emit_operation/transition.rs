@@ -1,4 +1,7 @@
-use super::{java_string, operation_file, resolve_fields, stored_entity};
+use super::{
+    context_parameter, context_value, java_string, operation_file, resolve_fields, scopes,
+    stored_entity,
+};
 use crate::CompileError;
 use crate::emit_java::{domain_import, java_type, primary_key, with_suffix};
 use jails_contracts::{ProjectPath, RenderedFile};
@@ -55,6 +58,8 @@ pub(super) fn lower(
         "org.springframework.transaction.annotation.Transactional".to_string(),
     ]);
     let key_type = java_type(primary_key, &mut imports);
+    let context = context_parameter(model, target, &mut imports);
+    let scope_fields = scopes(target);
     let (event_member, event_parameter, event_assignment, result) = if let Some(event_id) =
         &transition.yields
     {
@@ -143,6 +148,12 @@ pub(super) fn lower(
     });
     let predicate_seed = std::iter::once(format!("{} = :id", primary_key.names.sql_column))
         .chain(required_guards)
+        .chain(scope_fields.iter().map(|field| {
+            format!(
+                "{} = :scope_{}",
+                field.names.sql_column, field.names.sql_column
+            )
+        }))
         .map(|predicate| java_string(&predicate))
         .collect::<Vec<_>>()
         .join(", ");
@@ -186,6 +197,16 @@ pub(super) fn lower(
             }
         })
         .collect::<String>();
+    let scope_params = scope_fields
+        .iter()
+        .map(|field| {
+            let value = context_value(field, &mut imports);
+            format!(
+                "        statement = statement.param(\"scope_{}\", {value});\n",
+                field.names.sql_column
+            )
+        })
+        .collect::<String>();
     let columns = target
         .fields
         .values()
@@ -193,7 +214,7 @@ pub(super) fn lower(
         .collect::<Vec<_>>()
         .join(", ");
     let body = format!(
-        "@Repository\npublic final class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;{event_member}\n\n    public {type_name}(JdbcClient jdbc{event_parameter}) {{\n        this.jdbc = jdbc;{event_assignment}\n    }}\n\n    @Override\n    @Transactional\n    public {} execute({key_type} id, {port_type}.Input input) {{\n        var predicates = new ArrayList<>(List.of({predicate_seed}));\n{optional_guards}        var sql = \"update {} set {assignments} where \" + String.join(\" and \", predicates) + \" returning {columns}\";\n        JdbcClient.StatementSpec statement = jdbc.sql(sql);\n        statement = statement.param(\"id\", id);\n{set_params}{guard_params}{result}\n    }}\n}}",
+        "@Repository\npublic final class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;{event_member}\n\n    public {type_name}(JdbcClient jdbc{event_parameter}) {{\n        this.jdbc = jdbc;{event_assignment}\n    }}\n\n    @Override\n    @Transactional\n    public {} execute({context}{key_type} id, {port_type}.Input input) {{\n        var predicates = new ArrayList<>(List.of({predicate_seed}));\n{optional_guards}        var sql = \"update {} set {assignments} where \" + String.join(\" and \", predicates) + \" returning {columns}\";\n        JdbcClient.StatementSpec statement = jdbc.sql(sql);\n        statement = statement.param(\"id\", id);\n{set_params}{guard_params}{scope_params}{result}\n    }}\n}}",
         target.names.java_type, target.names.sql_table
     );
     operation_file(

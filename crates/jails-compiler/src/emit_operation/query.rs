@@ -1,4 +1,4 @@
-use super::{java_string, operation_file};
+use super::{context_parameter, context_value, java_string, operation_file, scopes};
 use crate::CompileError;
 use crate::emit_java::{domain_import, java_type, with_suffix};
 use jails_contracts::{ProjectPath, RenderedFile};
@@ -38,6 +38,8 @@ pub(super) fn lower(
     for field in filters {
         let _ = java_type(field, &mut imports);
     }
+    let context = context_parameter(model, target, &mut imports);
+    let scope_fields = scopes(target);
     let columns = target
         .fields
         .values()
@@ -48,6 +50,12 @@ pub(super) fn lower(
         .iter()
         .filter(|field| field.required)
         .map(|field| format!("{} = :{}", field.names.sql_column, field.label))
+        .chain(scope_fields.iter().map(|field| {
+            format!(
+                "{} = :scope_{}",
+                field.names.sql_column, field.names.sql_column
+            )
+        }))
         .collect::<Vec<_>>();
     let predicate_seed = if predicates.is_empty() {
         "new ArrayList<>()".to_string()
@@ -103,8 +111,18 @@ pub(super) fn lower(
             )
         })
         .collect::<String>();
+    let scope_params = scope_fields
+        .iter()
+        .map(|field| {
+            let value = context_value(field, &mut imports);
+            format!(
+                "        statement = statement.param(\"scope_{}\", {value});\n",
+                field.names.sql_column
+            )
+        })
+        .collect::<String>();
     let body = format!(
-        "@Repository\npublic final class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;\n\n    public {type_name}(JdbcClient jdbc) {{\n        this.jdbc = jdbc;\n    }}\n\n    @Override\n    public List<{}> execute({port_type}.Input input) {{\n        var sql = new StringBuilder(\"select {columns} from {}\");\n        var predicates = {predicate_seed};\n{optional_predicates}        if (!predicates.isEmpty()) {{\n            sql.append(\" where \").append(String.join(\" and \", predicates));\n        }}\n{ordering}        sql.append(\" limit {limit}\");\n        JdbcClient.StatementSpec statement = jdbc.sql(sql.toString());\n{required_params}{optional_params}        return statement.query({}.class).list();\n    }}\n}}",
+        "@Repository\npublic final class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;\n\n    public {type_name}(JdbcClient jdbc) {{\n        this.jdbc = jdbc;\n    }}\n\n    @Override\n    public List<{}> execute({context}{port_type}.Input input) {{\n        var sql = new StringBuilder(\"select {columns} from {}\");\n        var predicates = {predicate_seed};\n{optional_predicates}        if (!predicates.isEmpty()) {{\n            sql.append(\" where \").append(String.join(\" and \", predicates));\n        }}\n{ordering}        sql.append(\" limit {limit}\");\n        JdbcClient.StatementSpec statement = jdbc.sql(sql.toString());\n{required_params}{optional_params}{scope_params}        return statement.query({}.class).list();\n    }}\n}}",
         target.names.java_type, target.names.sql_table, target.names.java_type
     );
     operation_file(

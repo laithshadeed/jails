@@ -2369,4 +2369,124 @@ entity Metric {
             "{transition}"
         );
     }
+
+    #[test]
+    fn scoped_operations_lower_execution_context_through_every_managed_boundary() {
+        let model = jails_model::parse_jdl(
+            r#"jdl 1
+app Work {
+  pkg com.example.work
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+cap api
+cap security
+
+entity Task {
+  use scaffold
+  id: uuid @pk
+  tenantId: uuid @scope(claim: "tenant")
+  title: string
+  version: long @version @nonnegative
+  updatedAt: instant @default(now()) @updated
+
+  command Create(title) {
+    route POST "/tasks"
+  }
+
+  query All() {
+    route GET "/tasks"
+  }
+
+  transition Rename(version, title) {
+    update [title]
+    if-match required
+    route PATCH "/tasks/{id}"
+  }
+}
+"#,
+        )
+        .unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.1.0".to_string());
+        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let source = |suffix: &str| {
+            draft
+                .generated
+                .files
+                .iter()
+                .find(|(path, _)| path.as_str().ends_with(suffix))
+                .map(|(_, file)| String::from_utf8(file.bytes.clone()).unwrap())
+                .unwrap_or_else(|| panic!("missing generated source `{suffix}`"))
+        };
+
+        let context_path = ProjectPath::parse(
+            ".jails/generated/main/java/com/example/work/application/ExecutionContext.java",
+        )
+        .unwrap();
+        let context = draft.generated.files.get(&context_path).unwrap();
+        assert_eq!(context.provenance.artifact_id, "art_app_execution_context");
+        assert!(!context.provenance.ejectable);
+        assert!(
+            String::from_utf8(context.bytes.clone())
+                .unwrap()
+                .contains("public String claim(String name)")
+        );
+
+        let command_port = source("/application/commands/CreateCommand.java");
+        assert!(
+            command_port.contains("Task execute(ExecutionContext context, Input input)"),
+            "{command_port}"
+        );
+        let command = source("/adapters/jdbc/JdbcCreateCommand.java");
+        assert!(
+            command.contains("UUID.fromString(context.claim(\"tenant\"))"),
+            "{command}"
+        );
+        assert!(command.contains("tenant_id"), "{command}");
+
+        let query = source("/adapters/jdbc/JdbcAllQuery.java");
+        assert!(query.contains("tenant_id = :scope_tenant_id"), "{query}");
+        assert!(
+            query.contains(
+                "statement.param(\"scope_tenant_id\", UUID.fromString(context.claim(\"tenant\")))"
+            ),
+            "{query}"
+        );
+
+        let transition = source("/adapters/jdbc/JdbcRenameTransition.java");
+        assert!(
+            transition.contains("tenant_id = :scope_tenant_id"),
+            "{transition}"
+        );
+        assert!(
+            transition.contains(
+                "execute(ExecutionContext context, UUID id, RenameTransition.Input input)"
+            ),
+            "{transition}"
+        );
+
+        let controller = source("/adapters/http/CreateController.java");
+        assert!(
+            controller.contains("Authentication authentication"),
+            "{controller}"
+        );
+        assert!(
+            controller.contains("Map.entry(\"tenant\", scopes.claim(authentication, \"tenant\"))"),
+            "{controller}"
+        );
+        assert!(
+            controller.contains("return operation.execute(context, input)"),
+            "{controller}"
+        );
+        let authorizer = source("/ScopeAuthorizer.java");
+        assert!(
+            authorizer.contains("public String claim(Authentication authentication, String claim)"),
+            "{authorizer}"
+        );
+    }
 }

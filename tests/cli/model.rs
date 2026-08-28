@@ -336,6 +336,228 @@ app Notes {
 }
 
 #[test]
+fn scoped_execution_context_survives_evolution_and_binds_tenant_at_runtime() {
+    let root = jdl_project(
+        "jdl-v1-scoped-execution-context",
+        r#"jdl 1
+app Work {
+  pkg com.example.work
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+cap api
+cap security
+
+entity Task {
+  use scaffold
+  id: uuid @pk
+  tenantId: uuid @scope(claim: "tenant")
+  title: string
+  version: long @version @nonnegative
+  updatedAt: instant @default(now()) @updated
+
+  command Create(title) {
+    route POST "/tasks"
+  }
+
+  query All() {
+    route GET "/tasks"
+  }
+
+  transition Rename(version, title) {
+    update [title]
+    if-match required
+    route PATCH "/tasks/{id}"
+  }
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    apply_canonical_model(&root, "scoped-context");
+
+    let generated = root.join(".jails/generated/main/java/com/example/work");
+    let context = generated.join("application/ExecutionContext.java");
+    let query = generated.join("adapters/jdbc/JdbcAllQuery.java");
+    let transition = generated.join("adapters/jdbc/JdbcRenameTransition.java");
+    let controller = generated.join("adapters/http/CreateController.java");
+    for path in [&context, &query, &transition, &controller] {
+        assert!(path.is_file(), "missing {}", path.display());
+    }
+    assert!(
+        fs::read_to_string(&query)
+            .unwrap()
+            .contains("tenant_id = :scope_tenant_id")
+    );
+    assert!(
+        fs::read_to_string(&transition)
+            .unwrap()
+            .contains("tenant_id = :scope_tenant_id")
+    );
+    let controller_source = fs::read_to_string(&controller).unwrap();
+    assert!(
+        controller_source
+            .contains("Map.entry(\"tenant\", scopes.claim(authentication, \"tenant\"))"),
+        "{controller_source}"
+    );
+
+    let context_source = fs::read_to_string(&context).unwrap();
+    let split = context_source.rfind("\n}").unwrap();
+    fs::write(
+        &context,
+        format!(
+            "{}\n\n    public String readerMarker() {{ return \"kept\"; }}{}",
+            &context_source[..split],
+            &context_source[split..]
+        ),
+    )
+    .unwrap();
+    let evolved = jails_cmd(&root, None)
+        .args(["g", "field", "Task", "priority:int?"])
+        .output()
+        .unwrap();
+    assert!(
+        evolved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evolved.stderr)
+    );
+    assert!(
+        fs::read_to_string(&context)
+            .unwrap()
+            .contains("readerMarker()"),
+        "regeneration lost a clean edit in the managed execution-context ABI"
+    );
+    assert!(
+        fs::read_to_string(&query)
+            .unwrap()
+            .contains("select id, tenant_id, title, updated_at, version, priority from task"),
+        "model evolution did not reach the scoped query"
+    );
+
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+
+    if real_mvn_available() && real_java_supports_target_release() {
+        let test_dir = root.join("src/test/java/com/example/work");
+        fs::create_dir_all(&test_dir).unwrap();
+        fs::write(
+            test_dir.join("ScopedExecutionTest.java"),
+            r#"package com.example.work;
+
+import com.example.work.adapters.http.CreateController;
+import com.example.work.adapters.jdbc.JdbcAllQuery;
+import com.example.work.application.ExecutionContext;
+import com.example.work.application.commands.CreateCommand;
+import com.example.work.application.queries.AllQuery;
+import java.lang.reflect.Proxy;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.mock.env.MockEnvironment;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class ScopedExecutionTest {
+
+    @Test
+    void httpAuthenticationBecomesManagedExecutionContext() {
+        var tenant = UUID.randomUUID();
+        var captured = new AtomicReference<ExecutionContext>();
+        CreateCommand operation = (context, input) -> {
+            captured.set(context);
+            return null;
+        };
+        var environment = new MockEnvironment()
+                .withProperty("app.security.dev.scopes.tenant", tenant.toString());
+        var controller = new CreateController(operation, new ScopeAuthorizer(environment));
+
+        controller.execute(new CreateCommand.Input("one"), null);
+
+        assertEquals(tenant.toString(), captured.get().claim("tenant"));
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void queryAlwaysBindsTenantFromContext() {
+        var tenant = UUID.randomUUID();
+        var sql = new AtomicReference<String>();
+        var scoped = new AtomicReference<Object>();
+        JdbcClient.MappedQuerySpec<com.example.work.domain.Task> rows =
+                (JdbcClient.MappedQuerySpec<com.example.work.domain.Task>) Proxy.newProxyInstance(
+                        getClass().getClassLoader(),
+                        new Class<?>[] {JdbcClient.MappedQuerySpec.class},
+                        (proxy, method, arguments) -> {
+                            if (method.getName().equals("list")) {
+                                return List.of();
+                            }
+                            throw new UnsupportedOperationException(method.toString());
+                        });
+        var statement = (JdbcClient.StatementSpec) Proxy.newProxyInstance(
+                getClass().getClassLoader(),
+                new Class<?>[] {JdbcClient.StatementSpec.class},
+                (proxy, method, arguments) -> {
+                    if (method.getName().equals("param")) {
+                        if ("scope_tenant_id".equals(arguments[0])) {
+                            scoped.set(arguments[1]);
+                        }
+                        return proxy;
+                    }
+                    if (method.getName().equals("query")) {
+                        return rows;
+                    }
+                    throw new UnsupportedOperationException(method.toString());
+                });
+        var jdbc = (JdbcClient) Proxy.newProxyInstance(
+                getClass().getClassLoader(),
+                new Class<?>[] {JdbcClient.class},
+                (proxy, method, arguments) -> {
+                    if (method.getName().equals("sql")) {
+                        sql.set((String) arguments[0]);
+                        return statement;
+                    }
+                    throw new UnsupportedOperationException(method.toString());
+                });
+
+        var result = new JdbcAllQuery(jdbc).execute(
+                new ExecutionContext(Map.of("tenant", tenant.toString())),
+                new AllQuery.Input());
+
+        assertTrue(sql.get().contains("tenant_id = :scope_tenant_id"));
+        assertEquals(tenant, scoped.get());
+        assertEquals(List.of(), result);
+    }
+}
+"#,
+        )
+        .unwrap();
+        let path = real_path_without_mvnd();
+        let tested = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "-Dtest=ScopedExecutionTest", "test"])
+            .output()
+            .unwrap();
+        assert!(
+            tested.status.success(),
+            "generated scoped execution path failed its real Maven test:\n{}\n{}",
+            String::from_utf8_lossy(&tested.stdout),
+            String::from_utf8_lossy(&tested.stderr)
+        );
+    }
+}
+
+#[test]
 fn compiler_managed_create_values_stay_out_of_the_request_and_compile_end_to_end() {
     let root = jdl_project(
         "jdl-v1-command-default-ownership",

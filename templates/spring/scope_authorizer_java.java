@@ -40,6 +40,15 @@ public final class ScopeAuthorizer {
         }
     }
 
+    public String claim(Authentication authentication, String claim) {
+        Objects.requireNonNull(claim, "claim is required");
+        var value = expected(authentication, claim);
+        if ("*".equals(value)) {
+            throw new ResponseStatusException(NOT_FOUND, "scope context is not configured");
+        }
+        return value;
+    }
+
     private String expected(Authentication authentication, String claim) {
         if (isProduction()) {
             if (authentication == null || !(authentication.getPrincipal() instanceof Jwt jwt)) {

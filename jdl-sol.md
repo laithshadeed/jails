@@ -49,10 +49,16 @@ database defaults; required versioned transitions increment `@version` and set
 defaults from inserts, generate RFC 9562 UUIDv7 values in the application,
 initialize `@updated` without exposing it in the command input, and return the
 complete database row. The UUIDv7 support file is itself merge-managed and has
-a generate-edit-generate E2E proof. Scope-context materialization, broader
-chosen/derived prerequisite semantics, the exhaustive CLI equivalence matrix,
-convention-derived output roles, and direct rich-node consumption by every
-emitter remain open. This checkpoint is not the ship claim in section 20.
+a generate-edit-generate E2E proof. Scoped entities now produce a non-ejectable,
+merge-managed `ExecutionContext` ABI. Command, query, and transition ports carry
+that context; HTTP adapters derive it from authenticated claims; create adapters
+bind scoped columns from it; and query/transition predicates always bind every
+scope column. A generate-edit-generate E2E preserves reader additions to the ABI,
+and a real Maven test exercises authenticated context construction plus JDBC
+tenant binding. Broader chosen/derived prerequisite semantics, the exhaustive
+CLI equivalence matrix, convention-derived output roles, and direct rich-node
+consumption by every emitter remain open. This checkpoint is not the ship claim
+in section 20.
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** have their usual
 RFC 2119 meanings.

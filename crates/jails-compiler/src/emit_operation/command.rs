@@ -1,4 +1,4 @@
-use super::{operation_file, resolve_fields, stored_entity};
+use super::{context_parameter, context_value, operation_file, resolve_fields, stored_entity};
 use crate::CompileError;
 use crate::emit_java::{domain_import, primary_key, with_suffix};
 use jails_contracts::{ProjectPath, RenderedFile};
@@ -24,6 +24,7 @@ pub(super) fn lower(
         "org.springframework.jdbc.core.simple.JdbcClient".to_string(),
         "org.springframework.stereotype.Repository".to_string(),
     ]);
+    let context = context_parameter(model, target, &mut imports);
     let mut params = String::new();
     let mut columns = Vec::new();
     let mut values = Vec::new();
@@ -36,10 +37,7 @@ pub(super) fn lower(
                 InsertValue::Parameter(format!("input.{member}().orElse(null)"))
             }
         } else if field.semantics.scope.is_some() {
-            return Err(CompileError::new(format!(
-                "canonical command `{}` needs execution context for scope field `{}`\n       fix: compile the scoped command through a context-aware adapter or eject its implementation boundary",
-                operation.label, field.label
-            )));
+            InsertValue::Parameter(context_value(field, &mut imports))
         } else if field.semantics.updated {
             InsertValue::Expression("current_timestamp")
         } else if matches!(
@@ -96,7 +94,7 @@ pub(super) fn lower(
     let port_type = with_suffix(&operation.names.java_type, "Command");
     let type_name = format!("Jdbc{port_type}");
     let body = format!(
-        "@Repository\npublic final class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;\n\n    public {type_name}(JdbcClient jdbc) {{\n        this.jdbc = jdbc;\n    }}\n\n    @Override\n    public {} execute({port_type}.Input input) {{\n        JdbcClient.StatementSpec statement = jdbc.sql(\"{insert} returning {returning}\");\n{params}        return statement.query({}.class).single();\n    }}\n}}",
+        "@Repository\npublic final class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;\n\n    public {type_name}(JdbcClient jdbc) {{\n        this.jdbc = jdbc;\n    }}\n\n    @Override\n    public {} execute({context}{port_type}.Input input) {{\n        JdbcClient.StatementSpec statement = jdbc.sql(\"{insert} returning {returning}\");\n{params}        return statement.query({}.class).single();\n    }}\n}}",
         target.names.java_type, target.names.java_type
     );
     operation_file(

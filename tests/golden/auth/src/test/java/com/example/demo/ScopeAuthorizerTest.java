@@ -1,5 +1,6 @@
 package com.example.demo;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Map;
@@ -56,5 +57,18 @@ class ScopeAuthorizerTest {
         guard.require(null, "tenantId", TENANT);
         assertThatThrownBy(() -> guard.require(null, "tenantId", UUID.randomUUID()))
                 .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
+    }
+
+    @Test
+    void executionContextClaimsMustBeConcrete() {
+        var environment = new MockEnvironment()
+                .withProperty("app.security.dev.scopes.tenantId", TENANT.toString());
+        var guard = new ScopeAuthorizer(environment);
+
+        assertThat(guard.claim(null, "tenantId")).isEqualTo(TENANT.toString());
+        assertThatThrownBy(() -> new ScopeAuthorizer(new MockEnvironment())
+                        .claim(null, "tenantId"))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+                .hasMessageContaining("404");
     }
 }
