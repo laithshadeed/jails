@@ -240,6 +240,7 @@ fn run_entity(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     model_generate::validate_entity_args(&args)?;
     let model_path = PathBuf::from(MODEL_PATH);
     let current_source = read_model()?;
+    let v1 = is_v1_source(&current_source);
     let current_model = parse(&current_source)?;
     let entity_label = java_to_label(&args.name);
     let entity_id = EntityId::parse(format!("ent_{entity_label}"))
@@ -252,23 +253,18 @@ fn run_entity(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         ]);
     }
     let declaration = match args.kind {
-        ArtifactKind::Enum => enum_declaration(
-            &args.name,
-            &entity_label,
-            &fields,
-            is_v1_source(&current_source),
-        )?,
+        ArtifactKind::Enum => enum_declaration(&args.name, &entity_label, &fields, v1)?,
         ArtifactKind::Record | ArtifactKind::Value | ArtifactKind::Scaffold => entity_declaration(
             &args.name,
             &entity_label,
             args.kind == ArtifactKind::Scaffold,
             &fields,
-            is_v1_source(&current_source),
+            v1,
         )?,
         _ => unreachable!("run only accepts entity kinds"),
     };
     if let Some(existing) = current_model.entity(&entity_id) {
-        let requested = declaration_entity(&current_model, &declaration, &entity_id)?;
+        let requested = declaration_entity(&current_model, &declaration, &entity_id, v1)?;
         if !same_entity_contribution(existing, &requested) {
             return Err(Failure::Told(format!(
                 "canonical entity `{}` is already declared with a different shape.\n       fix: evolve it with `jails g field`, `jails resource field`, or `jails rename resource`",
@@ -313,6 +309,7 @@ fn declaration_entity(
     model: &jails_model::AppModel,
     declaration: &str,
     entity_id: &EntityId,
+    v1: bool,
 ) -> Result<jails_model::Entity> {
     let storage = match model.project.dialect.as_str() {
         "postgresql" => "postgres",
@@ -320,14 +317,24 @@ fn declaration_entity(
         "sqlite" => "sqlite",
         _ => "none",
     };
-    let source = format!(
-        "jdl 1\napp Comparison @id(project_comparison) {{\n  pkg {}\n  java {}\n  platform {}\n  build {}\n  storage {storage}\n}}\n\n{}",
-        model.project.base_package,
-        model.project.java_release,
-        model.project.platform,
-        model.project.build,
-        declaration
-    );
+    let source = if v1 {
+        format!(
+            "jdl 1\napp Comparison @id(project_comparison) {{\n  pkg {}\n  java {}\n  platform {}\n  build {}\n  storage {storage}\n}}\n\n{}",
+            model.project.base_package,
+            model.project.java_release,
+            model.project.platform,
+            model.project.build,
+            declaration
+        )
+    } else {
+        format!(
+            "application Comparison @id(project_comparison)\npackage {}\njava {}\ndialect {}\n\n{}",
+            model.project.base_package,
+            model.project.java_release,
+            model.project.dialect,
+            declaration
+        )
+    };
     parse(&source)?
         .entity(entity_id)
         .cloned()
