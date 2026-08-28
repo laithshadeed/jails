@@ -97,9 +97,16 @@ pub(super) fn v1_declaration(
 
 fn component_parameter(source: &str) -> Result<String> {
     let field = crate::model_generate::parse_field(source)?;
-    if field.primary_key || field.unique || field.indexed {
+    if field.primary_key
+        || field.unique
+        || field.indexed
+        || field.scoped
+        || field.version
+        || field.updated
+        || field.mapped_column.is_some()
+    {
         return Err(Failure::Told(format!(
-            "component parameter `{}` cannot carry entity storage markers.\n       fix: remove `@pk`, `@unique`, and `@index`",
+            "component parameter `{}` cannot carry entity storage or compiler-managed markers.\n       fix: keep only payload constraints and defaults",
             field.java_name
         )));
     }
@@ -109,8 +116,8 @@ fn component_parameter(source: &str) -> Result<String> {
         field.type_name,
         if field.required { "" } else { "?" }
     );
-    if field.non_blank {
-        rendered.push_str(" @notBlank");
+    if let Some(default) = &field.default {
+        rendered.push_str(&format!(" @default({default})"));
     }
     if field.min_length.is_some() || field.max_length.is_some() {
         rendered.push_str(&format!(
@@ -124,6 +131,15 @@ fn component_parameter(source: &str) -> Result<String> {
                 .map(|value| value.to_string())
                 .unwrap_or_default(),
         ));
+    }
+    if field.nonnegative {
+        rendered.push_str(" @nonnegative");
+    }
+    if field.non_blank {
+        rendered.push_str(" @notBlank");
+    }
+    if field.positive {
+        rendered.push_str(" @positive");
     }
     Ok(rendered)
 }

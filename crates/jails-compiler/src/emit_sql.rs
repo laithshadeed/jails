@@ -1,5 +1,6 @@
 //! Stable-ID schema diffing and conservative PostgreSQL migration lowering.
 
+mod field_semantics;
 mod index;
 mod sqlite;
 
@@ -11,6 +12,8 @@ use jails_model::{
     TypeChangeStrategy, TypeRef,
 };
 use std::collections::{BTreeMap, BTreeSet};
+
+use field_semantics::{SqlDefault, initial_column, length_check, numeric_check, sql_default};
 
 pub(crate) fn derive(
     snapshot: &WorkspaceSnapshot,
@@ -492,25 +495,7 @@ fn create_table(model: &AppModel, entity: &Entity) -> Result<Vec<String>, Compil
     let mut columns = Vec::new();
     let mut indexes = Vec::new();
     for field in entity.fields.values() {
-        let mut column = format!("    {} {}", field.names.sql_column, sql_type(model, field)?);
-        if field.required {
-            column.push_str(" not null");
-        }
-        if field.primary_key {
-            column.push_str(" primary key");
-        } else if field.unique {
-            column.push_str(" unique");
-        }
-        if field.non_blank {
-            column.push_str(&format!(
-                " check (length(btrim({})) > 0)",
-                field.names.sql_column
-            ));
-        }
-        if let Some(check) = length_check(field) {
-            column.push_str(&format!(" check ({check})"));
-        }
-        columns.push(column);
+        columns.push(initial_column(field, sql_type(model, field)?)?);
         if field.indexed && !field.primary_key && !field.unique {
             indexes.push(format!(
                 "create index idx_{}_{} on {} ({});",
@@ -617,6 +602,11 @@ fn add_column(
             "alter table {table} add constraint chk_{table}_{column}_length check ({check});"
         ));
     }
+    if let Some(check) = numeric_check(field) {
+        output.push(format!(
+            "alter table {table} add constraint chk_{table}_{column}_numeric check ({check});"
+        ));
+    }
     if field.unique {
         output.push(format!(
             "alter table {table} add constraint uq_{table}_{column} unique ({column});"
@@ -626,20 +616,19 @@ fn add_column(
             "create index idx_{table}_{column} on {table} ({column});"
         ));
     }
-    Ok(output)
-}
-
-fn length_check(field: &Field) -> Option<String> {
-    let range = field.length.as_ref()?;
-    let column = &field.names.sql_column;
-    Some(match (range.min, range.max) {
-        (Some(min), Some(max)) => {
-            format!("char_length({column}) between {min} and {max}")
+    match sql_default(field)? {
+        Some(SqlDefault::Expression(value)) => output.push(format!(
+            "alter table {table} alter column {column} set default {value};"
+        )),
+        Some(SqlDefault::Identity) => {
+            return Err(CompileError::new(format!(
+                "identity field `{}` cannot be added as an ordinary field\n       fix: model primary-key creation with the entity",
+                field.label
+            )));
         }
-        (Some(min), None) => format!("char_length({column}) >= {min}"),
-        (None, Some(max)) => format!("char_length({column}) <= {max}"),
-        (None, None) => unreachable!("linked length ranges have at least one bound"),
-    })
+        Some(SqlDefault::Application) | None => {}
+    }
+    Ok(output)
 }
 
 fn sql_type(model: &AppModel, field: &Field) -> Result<&'static str, CompileError> {

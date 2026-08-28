@@ -228,6 +228,114 @@ entity Task {
 }
 
 #[test]
+fn familiar_field_syntax_materializes_typed_jdl_v1_semantics_end_to_end() {
+    let root = jdl_project(
+        "jdl-v1-familiar-field-semantics",
+        r#"jdl 1
+app Notes {
+  pkg com.example.notes
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    let generated = jails_cmd(&root, None)
+        .args([
+            "g",
+            "scaffold",
+            "Task",
+            "id:long@pk",
+            "tenantId:uuid@scope",
+            "attempts:int@positive",
+            "credits:decimal?@nonnegative",
+            "externalId:string@column(external_id)",
+            "--timestamps",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+
+    let source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    for expected in [
+        "tenantId: uuid @id(fld_task_tenant_id) @scope",
+        "attempts: int @id(fld_task_attempts) @positive",
+        "credits: decimal? @id(fld_task_credits) @nonnegative",
+        "externalId: string @id(fld_task_external_id) @map(\"external_id\")",
+        "createdAt: instant @id(fld_task_created_at) @default(now())",
+        "updatedAt: instant @id(fld_task_updated_at) @default(now()) @updated",
+    ] {
+        assert!(source.contains(expected), "missing `{expected}`:\n{source}");
+    }
+    let format_check = jails_cmd(&root, None)
+        .args(["model", "fmt", "--check"])
+        .output()
+        .unwrap();
+    assert!(
+        format_check.status.success(),
+        "familiar field edit was not canonical JDL v1:\n{}",
+        String::from_utf8_lossy(&format_check.stderr)
+    );
+    let linked = jails_model::parse_jdl(&source).unwrap();
+    let task = linked
+        .entities
+        .values()
+        .find(|entity| entity.label == "task")
+        .unwrap();
+    let field = |label: &str| {
+        task.fields
+            .values()
+            .find(|field| field.label == label)
+            .unwrap()
+    };
+    assert!(field("tenant_id").semantics.scope.is_some());
+    assert!(field("attempts").semantics.positive);
+    assert!(field("credits").semantics.nonnegative);
+    assert_eq!(field("external_id").names.sql_column, "external_id");
+    assert!(field("created_at").semantics.default.is_some());
+    assert!(field("updated_at").semantics.updated);
+
+    let record = fs::read_to_string(
+        root.join(".jails/generated/main/java/com/example/notes/domain/Task.java"),
+    )
+    .unwrap();
+    assert!(record.contains("attempts must be positive"), "{record}");
+    assert!(record.contains("credits.isPresent()"), "{record}");
+    let migration =
+        fs::read_to_string(root.join("src/main/resources/db/migration/V001__create_task.sql"))
+            .unwrap();
+    assert!(migration.contains("attempts > 0"), "{migration}");
+    assert!(migration.contains("credits >= 0"), "{migration}");
+    assert!(
+        migration.contains("generated always as identity"),
+        "{migration}"
+    );
+    assert!(
+        migration.contains("default current_timestamp"),
+        "{migration}"
+    );
+
+    if real_mvn_available() && real_java_supports_target_release() {
+        let compiled = real_maven_cmd(&root, &real_path_without_mvnd())
+            .args(["-q", "-B", "-DskipTests", "compile"])
+            .output()
+            .unwrap();
+        assert!(
+            compiled.status.success(),
+            "generated rich-field project did not compile:\n{}\n{}",
+            String::from_utf8_lossy(&compiled.stdout),
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+    }
+}
+
+#[test]
 fn reviewed_model_format_refuses_a_concurrent_source_edit() {
     let root = jdl_project(
         "jdl-v1-format-stale",
@@ -287,7 +395,7 @@ app Notes {
     .unwrap();
     let commands = [
         vec!["g", "scaffold", "Task", "id:uuid@pk", "title:string!"],
-        vec!["g", "field", "Task", "done:boolean"],
+        vec!["g", "field", "Task", "done:boolean?"],
         vec!["g", "factory", "Task"],
         vec!["g", "dto", "Task"],
         vec!["g", "class", "Clock"],
@@ -456,7 +564,7 @@ app Notes {
         "component controller TaskApi @id(cmp_controller_task_api)",
         "component test Smoke @id(cmp_test_smoke)",
         "component integration-test Database @id(cmp_integration_test_database)",
-        "done: boolean @id(fld_task_done)",
+        "done: boolean? @id(fld_task_done)",
         "cap fake @id(cap_fake)",
         "dep org.jsoup:jsoup @id(dep_",
         "@version(\"1.18.3\") @scope(test)",

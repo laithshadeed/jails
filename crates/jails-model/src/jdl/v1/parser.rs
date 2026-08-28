@@ -179,6 +179,27 @@ impl<'a> Parser<'a> {
             "none" => "none",
             _ => unreachable!("storage was checked while parsing"),
         };
+        let mut capabilities = self.capabilities;
+        if let Some(kind) = match storage.as_str() {
+            "postgres" => Some("db"),
+            "h2" => Some("h2"),
+            "sqlite" => Some("sqlite"),
+            "none" => None,
+            _ => unreachable!("storage was checked while parsing"),
+        } && !capabilities
+            .values()
+            .any(|capability| capability.kind == kind)
+        {
+            capabilities.insert(
+                kind.to_string(),
+                source::Capability {
+                    id: format!("cap_{kind}"),
+                    kind: kind.to_string(),
+                    name: None,
+                    package: None,
+                },
+            );
+        }
         let project_label = stable_fragment(&app.name);
         let source = source::Document {
             schema: "jails.model.v1".to_string(),
@@ -191,7 +212,7 @@ impl<'a> Parser<'a> {
                 platform,
                 build,
             },
-            capabilities: self.capabilities,
+            capabilities,
             dependencies: self.dependencies,
             settings: self.settings,
             ejections: self.ejections,

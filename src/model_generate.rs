@@ -591,6 +591,39 @@ pub(crate) struct ParsedField {
     pub(crate) indexed: bool,
     pub(crate) min_length: Option<u32>,
     pub(crate) max_length: Option<u32>,
+    pub(crate) positive: bool,
+    pub(crate) nonnegative: bool,
+    pub(crate) scoped: bool,
+    pub(crate) version: bool,
+    pub(crate) default: Option<String>,
+    pub(crate) updated: bool,
+    pub(crate) mapped_column: Option<String>,
+}
+
+impl ParsedField {
+    pub(crate) fn require_v1_for_rich_semantics(&self) -> Result<()> {
+        let marker = if self.positive {
+            Some("@positive")
+        } else if self.nonnegative {
+            Some("@nonnegative")
+        } else if self.scoped {
+            Some("@scope")
+        } else if self.version {
+            Some("@version")
+        } else if self.default.is_some() {
+            Some("@default")
+        } else if self.updated {
+            Some("@updated")
+        } else {
+            None
+        };
+        if let Some(marker) = marker {
+            return Err(Failure::Told(format!(
+                "field marker `{marker}` requires `jdl 1`.\n       fix: upgrade `.jails/model.jdl` to JDL v1 or author the field there"
+            )));
+        }
+        Ok(())
+    }
 }
 
 pub(crate) fn entity_declaration(
@@ -645,6 +678,7 @@ pub(crate) fn enum_declaration(label: &str, java_name: &str, values: &[String]) 
 }
 
 pub(crate) fn field_declaration(entity: &str, field: &ParsedField) -> Result<String> {
+    field.require_v1_for_rich_semantics()?;
     let mut output = format!(
         "[entities.{entity}.fields.{}]\nid = {}\njava_name = {}\ntype = {}\nrequired = {}\nnon_blank = {}\nprimary_key = {}\nunique = {}\nindexed = {}\n",
         field.label,
@@ -662,6 +696,9 @@ pub(crate) fn field_declaration(entity: &str, field: &ParsedField) -> Result<Str
     }
     if let Some(max) = field.max_length {
         output.push_str(&format!("max_length = {max}\n"));
+    }
+    if let Some(column) = &field.mapped_column {
+        output.push_str(&format!("column = {}\n", quoted(column)?));
     }
     Ok(output)
 }

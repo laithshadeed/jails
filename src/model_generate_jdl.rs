@@ -247,10 +247,17 @@ fn run_entity(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         .map_err(|error| Failure::Told(format!("could not assign entity identity: {error}")))?;
     let mut fields = args.fields.clone();
     if args.timestamps {
-        fields.extend([
-            "createdAt:instant".to_string(),
-            "updatedAt:instant".to_string(),
-        ]);
+        fields.extend(if v1 {
+            [
+                "createdAt:instant@default(now())".to_string(),
+                "updatedAt:instant@default(now())@updated".to_string(),
+            ]
+        } else {
+            [
+                "createdAt:instant".to_string(),
+                "updatedAt:instant".to_string(),
+            ]
+        });
     }
     let declaration = match args.kind {
         ArtifactKind::Enum => enum_declaration(&args.name, &entity_label, &fields, v1)?,
@@ -408,7 +415,7 @@ pub(crate) fn entity_declaration(
     let mut output = format!("entity {java_name} @id(ent_{entity_label}) {{\n");
     if scaffold {
         if v1 {
-            output.push_str("  use scaffold\n");
+            output.push_str("  use scaffold\n\n");
         } else {
             output = output.replacen(" {", " @scaffold {", 1);
         }
@@ -417,7 +424,7 @@ pub(crate) fn entity_declaration(
         let line = if v1 {
             render_v1_field_line(entity_label, field)
         } else {
-            render_field_line(entity_label, field)
+            render_field_line(entity_label, field)?
         };
         output.push_str(&line);
         output.push('\n');
@@ -461,7 +468,8 @@ pub(crate) fn enum_declaration(
     Ok(output)
 }
 
-pub(crate) fn render_field_line(entity_label: &str, field: &ParsedField) -> String {
+pub(crate) fn render_field_line(entity_label: &str, field: &ParsedField) -> Result<String> {
+    field.require_v1_for_rich_semantics()?;
     let suffix = if !field.required {
         "?"
     } else if field.non_blank {
@@ -497,7 +505,10 @@ pub(crate) fn render_field_line(entity_label: &str, field: &ParsedField) -> Stri
     if field.indexed {
         output.push_str(" @index");
     }
-    output
+    if let Some(column) = &field.mapped_column {
+        output.push_str(&format!(" @column({column})"));
+    }
+    Ok(output)
 }
 
 pub(crate) fn render_v1_field_line(entity_label: &str, field: &ParsedField) -> String {
@@ -506,11 +517,14 @@ pub(crate) fn render_v1_field_line(entity_label: &str, field: &ParsedField) -> S
         "  {}: {}{} @id(fld_{}_{})",
         field.java_name, field.type_name, optional, entity_label, field.label
     );
+    if let Some(default) = &field.default {
+        output.push_str(&format!(" @default({default})"));
+    }
     if field.primary_key {
         output.push_str(" @pk");
     }
-    if field.non_blank {
-        output.push_str(" @notBlank");
+    if field.version {
+        output.push_str(" @version");
     }
     if field.min_length.is_some() || field.max_length.is_some() {
         output.push_str(&format!(
@@ -525,11 +539,30 @@ pub(crate) fn render_v1_field_line(entity_label: &str, field: &ParsedField) -> S
                 .unwrap_or_default(),
         ));
     }
-    if field.unique {
-        output.push_str(" @unique");
+    if field.nonnegative {
+        output.push_str(" @nonnegative");
+    }
+    if field.non_blank {
+        output.push_str(" @notBlank");
+    }
+    if field.positive {
+        output.push_str(" @positive");
     }
     if field.indexed {
         output.push_str(" @index");
+    }
+    if field.scoped {
+        output.push_str(" @scope");
+    }
+    if field.unique {
+        output.push_str(" @unique");
+    }
+    if field.updated {
+        output.push_str(" @updated");
+    }
+    if let Some(column) = &field.mapped_column {
+        let column = serde_json::to_string(column).expect("string serialization cannot fail");
+        output.push_str(&format!(" @map({column})"));
     }
     output
 }

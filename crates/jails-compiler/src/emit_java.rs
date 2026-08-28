@@ -1,5 +1,7 @@
 //! Lower semantic facets into deterministic Java source units.
 
+mod record_validation;
+
 use crate::CompileError;
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile, RenderedTree};
 use jails_model::{
@@ -495,7 +497,7 @@ fn record_shape(type_name: &str, fields: &[&Field], imports: &mut BTreeSet<Strin
         .join(",\n");
     let statements = fields
         .iter()
-        .flat_map(|field| record_checks(field, imports))
+        .flat_map(|field| record_validation::record_checks(field, imports))
         .collect::<Vec<_>>();
     let constructor = if statements.is_empty() {
         String::new()
@@ -549,50 +551,6 @@ fn indent(value: &str, spaces: usize) -> String {
         .map(|line| format!("{prefix}{line}"))
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-fn record_checks(field: &Field, imports: &mut BTreeSet<String>) -> Vec<String> {
-    let name = &field.names.java_member;
-    if !field.required {
-        imports.insert("java.util.Objects".to_string());
-        return vec![format!(
-            "{name} = Objects.requireNonNullElse({name}, Optional.empty());"
-        )];
-    }
-    if primitive(field) {
-        return Vec::new();
-    }
-    imports.insert("java.util.Objects".to_string());
-    let mut statements = vec![format!("Objects.requireNonNull({name}, \"{name}\");")];
-    if field.non_blank {
-        statements.extend([
-            format!("{name} = {name}.trim();"),
-            format!(
-                "if ({name}.isEmpty()) {{\n            throw new IllegalArgumentException(\"{name} must not be blank\");\n        }}"
-            ),
-        ]);
-    }
-    if let Some(length) = &field.length {
-        let (condition, message) = match (length.min, length.max) {
-            (Some(min), Some(max)) => (
-                format!("{name}.length() < {min} || {name}.length() > {max}"),
-                format!("{name} length must be between {min} and {max}"),
-            ),
-            (Some(min), None) => (
-                format!("{name}.length() < {min}"),
-                format!("{name} length must be at least {min}"),
-            ),
-            (None, Some(max)) => (
-                format!("{name}.length() > {max}"),
-                format!("{name} length must be at most {max}"),
-            ),
-            (None, None) => unreachable!("linked length ranges have at least one bound"),
-        };
-        statements.push(format!(
-            "if ({condition}) {{\n            throw new IllegalArgumentException(\"{message}\");\n        }}"
-        ));
-    }
-    statements
 }
 
 pub(crate) fn primary_key(entity: &Entity) -> Result<&Field, CompileError> {

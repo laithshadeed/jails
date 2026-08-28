@@ -315,7 +315,7 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
         let line = if crate::model_generate_jdl::is_v1_source(&current_source) {
             crate::model_generate_jdl::render_v1_field_line(&entity_label, &parsed)
         } else {
-            crate::model_generate_jdl::render_field_line(&entity_label, &parsed)
+            crate::model_generate_jdl::render_field_line(&entity_label, &parsed)?
         };
         crate::model_generate_jdl::insert_field(&current_source, &entity_java_name, &line)?
     } else {

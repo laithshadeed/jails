@@ -121,6 +121,18 @@ pub(super) fn lower(
     let assignments = sets
         .iter()
         .map(|field| format!("{} = :{}", field.names.sql_column, field.names.sql_column))
+        .chain(target.fields.values().filter_map(|field| {
+            if field.semantics.version {
+                Some(format!(
+                    "{} = {} + 1",
+                    field.names.sql_column, field.names.sql_column
+                ))
+            } else if field.semantics.updated {
+                Some(format!("{} = current_timestamp", field.names.sql_column))
+            } else {
+                None
+            }
+        }))
         .collect::<Vec<_>>()
         .join(", ");
     let required_guards = guards.iter().filter(|field| field.required).map(|field| {

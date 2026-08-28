@@ -2247,4 +2247,95 @@ route = "PATCH /notes/{id}"
         let error = Compiler::compile(&snapshot, None).unwrap_err();
         assert!(error.to_string().contains("needs a backfill"), "{error}");
     }
+
+    #[test]
+    fn rich_field_semantics_lower_into_java_and_initial_postgres_schema() {
+        let model = jails_model::parse_jdl(
+            r#"jdl 1
+app Metrics {
+  pkg com.example.metrics
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+entity Metric {
+  use scaffold
+  id: long @pk
+  score: int @positive
+  balance: decimal? @nonnegative
+  version: long @version @nonnegative
+  createdAt: instant @default(now())
+  updatedAt: instant @default(now()) @updated
+
+  transition Rescore(score, version) {
+    update [score]
+    if-match required
+  }
+}
+"#,
+        )
+        .unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.build_system = BuildSystem::Maven;
+        let draft = Compiler::compile(&snapshot, None).unwrap();
+
+        let record = draft
+            .generated
+            .files
+            .iter()
+            .find(|(path, _)| path.as_str().ends_with("/domain/Metric.java"))
+            .map(|(_, file)| String::from_utf8(file.bytes.clone()).unwrap())
+            .expect("record projection");
+        assert!(record.contains("if (score <= 0)"), "{record}");
+        assert!(record.contains("score must be positive"), "{record}");
+        assert!(
+            record.contains("balance.isPresent() && (balance.orElseThrow().signum() < 0)"),
+            "{record}"
+        );
+
+        let sql = String::from_utf8(draft.migrations[0].bytes.clone()).unwrap();
+        assert!(
+            sql.contains("id bigint generated always as identity not null primary key"),
+            "{sql}"
+        );
+        assert!(
+            sql.contains("score integer not null check (score > 0)"),
+            "{sql}"
+        );
+        assert!(
+            sql.contains("balance numeric check (balance >= 0)"),
+            "{sql}"
+        );
+        assert!(sql.contains("version bigint default 0 not null"), "{sql}");
+        assert!(
+            sql.contains("created_at timestamptz default current_timestamp not null"),
+            "{sql}"
+        );
+        assert!(
+            sql.contains("updated_at timestamptz default current_timestamp not null"),
+            "{sql}"
+        );
+
+        let transition = draft
+            .generated
+            .files
+            .iter()
+            .find(|(path, _)| {
+                path.as_str()
+                    .ends_with("/adapters/jdbc/JdbcRescoreTransition.java")
+            })
+            .map(|(_, file)| String::from_utf8(file.bytes.clone()).unwrap())
+            .expect("versioned transition adapter");
+        assert!(
+            transition
+                .contains("score = :score, updated_at = current_timestamp, version = version + 1"),
+            "{transition}"
+        );
+        assert!(
+            transition.contains("version = :guard_version"),
+            "{transition}"
+        );
+    }
 }

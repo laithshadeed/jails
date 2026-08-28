@@ -124,6 +124,13 @@ entity Task @id(ent_task) {
         let model = parse(CORE).unwrap();
         assert_eq!(model.project.id.as_str(), "project_notes");
         assert_eq!(model.project.dialect, "postgresql");
+        assert!(
+            model
+                .capabilities
+                .values()
+                .any(|capability| capability.kind == "db"),
+            "primary PostgreSQL storage must derive database support"
+        );
         let task = model
             .entities
             .values()

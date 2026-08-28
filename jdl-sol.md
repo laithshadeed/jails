@@ -38,10 +38,17 @@ typed field semantics. Explicit scope-claim/default evidence is distinguished
 from compiler-derived claims and defaults; UUID/integer primary keys and
 versions receive typed derived defaults. Intrinsic field/type rules, unique
 scope claims, routed-scope security, managed input/update roles, and explicit
-if-match/version relationships fail closed in the linker. Broader
-chosen/derived prerequisite semantics, the exhaustive CLI equivalence matrix,
-convention-derived output roles, and direct rich-node consumption by every
-emitter remain open. This checkpoint is not the ship claim in section 20.
+if-match/version relationships fail closed in the linker. The compact familiar
+field syntax now materializes scope, numeric, mapping, default, version, and
+updated facts into JDL v1, and `--timestamps` writes `now()`/`@updated` rather
+than replay-dependent shorthand. Primary `storage postgres|h2|sqlite` derives
+its implementation support in the linked model without a redundant source
+cap. Record and PostgreSQL emitters consume numeric constraints and typed
+database defaults; required versioned transitions increment `@version` and set
+`@updated` in the same statement. Broader chosen/derived prerequisite
+semantics, the exhaustive CLI equivalence matrix, convention-derived output
+roles, and direct rich-node consumption by every emitter remain open. This
+checkpoint is not the ship claim in section 20.
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** have their usual
 RFC 2119 meanings.
