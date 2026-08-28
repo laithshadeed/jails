@@ -466,9 +466,9 @@ fn attribute_end<'a>(
 fn attribute_rank(name: &str) -> (u8, &str) {
     let group = match name {
         "id" => 0,
-        "default" | "pk" => 1,
+        "default" | "pk" | "version" => 1,
         "length" | "nonnegative" | "notBlank" | "positive" => 2,
-        "index" | "internal" | "scope" | "target" | "unique" | "version" => 3,
+        "index" | "internal" | "scope" | "target" | "unique" | "updated" => 3,
         "map" => 4,
         "retired" => 5,
         _ => 6,
@@ -580,9 +580,13 @@ app Demo {
  storage postgres
 }
 cap fake
+cap security
 dep org.example:demo @scope(test) @version("1.0") @id(dep_demo)
 entity Task {
  title: string @map("ti\u0074le") @unique @length(1..100) @id(fld_task_title)
+ tenantId: uuid @map("tenant_id") @scope(claim: "tenant") @id(fld_task_tenant)
+ version: long @nonnegative @version
+ updatedAt: instant @updated @default(now())
  createdAt: instant
  query Open() @id(op_open) {
  order by [title asc, createdAt desc]
@@ -597,12 +601,17 @@ entity Task {
             ),
             "{formatted}"
         );
+        assert!(formatted.contains(
+            "tenantId: uuid @id(fld_task_tenant) @scope(claim: \"tenant\") @map(\"tenant_id\")"
+        ));
+        assert!(formatted.contains("version: long @version @nonnegative"));
+        assert!(formatted.contains("updatedAt: instant @default(now()) @updated"));
         assert!(
-            formatted.contains("dep org.example:demo @id(dep_demo) @scope(test) @version(\"1.0\")"),
+            formatted.contains("dep org.example:demo @id(dep_demo) @version(\"1.0\") @scope(test)"),
             "{formatted}"
         );
-        assert!(formatted.contains("}\n\ncap fake\ndep org.example:demo"));
-        assert!(formatted.contains("@version(\"1.0\")\n\nentity Task"));
+        assert!(formatted.contains("}\n\ncap fake\ncap security\ndep org.example:demo"));
+        assert!(formatted.contains("@scope(test)\n\nentity Task"));
         assert!(
             formatted.contains("order by [title, createdAt desc]"),
             "{formatted}"

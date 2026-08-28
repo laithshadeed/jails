@@ -161,6 +161,38 @@ pub struct Field {
     pub indexed: bool,
     #[serde(default)]
     pub length: Option<LengthRange>,
+    #[serde(default, skip_serializing_if = "FieldSemantics::is_empty")]
+    pub semantics: FieldSemantics,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FieldSemantics {
+    pub positive: bool,
+    pub nonnegative: bool,
+    pub scope: Option<FieldScope>,
+    pub version: bool,
+    pub default: Option<FieldDefault>,
+    pub updated: bool,
+}
+
+impl FieldSemantics {
+    fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FieldScope {
+    pub claim: String,
+    /// True when the claim name was pinned explicitly in source.
+    pub pinned: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FieldDefault {
+    pub value: crate::operation::Value,
+    /// True when the compiler derived the value from another field rule.
+    pub derived: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

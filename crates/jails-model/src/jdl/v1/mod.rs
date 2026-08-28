@@ -63,6 +63,7 @@ mod tests {
         OperationKind, ParameterSource, Precondition, RequestFormat, SettingTarget, SortDirection,
         StableId, UnitId, Value,
     };
+    use std::collections::BTreeSet;
 
     const CORE: &str = r#"// retained lead comment
 jdl 1
@@ -157,6 +158,239 @@ entity Task @id(ent_task) {
     }
 
     #[test]
+    fn field_attributes_link_explicit_and_derived_semantics() {
+        let model = parse(
+            r#"jdl 1
+app Work {
+  pkg com.example.work
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+enum Status {
+  OPEN
+}
+
+entity Task {
+  id: uuid @pk
+  tenantId: uuid @scope
+  organizationId: long @scope(claim: "organization")
+  attempts: int @positive @default(1)
+  version: long @version @nonnegative
+  status: Status @default(OPEN)
+  createdAt: instant @default(now())
+  updatedAt: datetime @default(now()) @updated
+  note: string? @length(..200)
+}
+"#,
+        )
+        .unwrap();
+        let task = model
+            .entities
+            .values()
+            .find(|entity| entity.label == "task")
+            .unwrap();
+        let field = |label: &str| {
+            task.fields
+                .values()
+                .find(|field| field.label == label)
+                .unwrap()
+        };
+
+        let id_default = field("id").semantics.default.as_ref().unwrap();
+        assert!(id_default.derived);
+        assert!(matches!(
+            id_default.value,
+            Value::Function { ref name, ref arguments }
+                if name == "uuid7" && arguments.is_empty()
+        ));
+        assert_eq!(
+            field("tenant_id").semantics.scope.as_ref().unwrap().claim,
+            "tenantId"
+        );
+        assert!(!field("tenant_id").semantics.scope.as_ref().unwrap().pinned);
+        assert_eq!(
+            field("organization_id")
+                .semantics
+                .scope
+                .as_ref()
+                .unwrap()
+                .claim,
+            "organization"
+        );
+        assert!(
+            field("organization_id")
+                .semantics
+                .scope
+                .as_ref()
+                .unwrap()
+                .pinned
+        );
+        assert!(field("attempts").semantics.positive);
+        assert!(
+            !field("attempts")
+                .semantics
+                .default
+                .as_ref()
+                .unwrap()
+                .derived
+        );
+        assert!(field("version").semantics.version);
+        assert!(matches!(
+            field("version")
+                .semantics
+                .default
+                .as_ref()
+                .unwrap()
+                .value,
+            Value::Integer(ref value) if value == "0"
+        ));
+        assert!(field("updated_at").semantics.updated);
+        assert_eq!(field("note").length.as_ref().unwrap().max, Some(200));
+    }
+
+    #[test]
+    fn field_semantics_fail_closed_with_specific_diagnostics() {
+        let app = "jdl 1\napp Demo {\n pkg com.example.demo\n java 26\n platform spring\n build maven\n storage postgres\n}\n";
+        let diagnostic = |field: &str| {
+            parse(&format!("{app}entity Task {{\n {field}\n}}\n"))
+                .unwrap_err()
+                .diagnostics[0]
+                .code
+        };
+
+        assert_eq!(
+            diagnostic("value: string @positive"),
+            "model-numeric-constraint-type"
+        );
+        assert_eq!(diagnostic("tenantId: uuid? @scope"), "model-scope-required");
+        assert_eq!(diagnostic("version: int @version"), "model-version-type");
+        assert_eq!(
+            diagnostic("updatedAt: string @updated"),
+            "model-updated-type"
+        );
+        assert_eq!(
+            diagnostic("id: long @default(identity())"),
+            "model-field-default-type"
+        );
+        assert_eq!(diagnostic("name: string @default(name)"), "JDL0917");
+        assert_eq!(diagnostic("id: uuid @pk @pk"), "jdl-syntax");
+        assert_eq!(diagnostic("id: uuid @pk()"), "jdl-syntax");
+        assert_eq!(diagnostic("tenantId: uuid @scope()"), "JDL0513");
+
+        let duplicate_claim = parse(&format!(
+            "{app}entity Task {{\n tenantId: uuid @scope(claim: \"tenant\")\n ownerId: long @scope(claim: \"tenant\")\n}}\n"
+        ))
+        .unwrap_err();
+        assert!(
+            duplicate_claim
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "model-scope-claim-collision")
+        );
+    }
+
+    #[test]
+    fn scope_and_managed_fields_are_checked_across_operations() {
+        let valid = parse(
+            r#"jdl 1
+app Work {
+  pkg com.example.work
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+cap security
+
+entity Task {
+  id: uuid @pk
+  tenantId: uuid @scope(claim: "tenant")
+  title: string
+  version: long @version @nonnegative
+  updatedAt: instant @default(now()) @updated
+
+  query All() {
+    route GET "/tasks"
+  }
+
+  transition Rename(version, title) {
+    update [title]
+    if-match required
+    route PATCH "/tasks/{id}"
+  }
+}
+"#,
+        )
+        .unwrap();
+        assert_eq!(valid.operations.len(), 2);
+
+        let without_security = parse(
+            r#"jdl 1
+app Work {
+  pkg com.example.work
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+entity Task {
+  id: uuid @pk
+  tenantId: uuid @scope
+  query All() {
+    route GET "/tasks"
+  }
+}
+"#,
+        )
+        .unwrap_err();
+        assert!(
+            without_security
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "model-scope-security")
+        );
+
+        let app = "jdl 1\napp Work {\n pkg com.example.work\n java 26\n platform spring\n build maven\n storage postgres\n}\ncap security\n";
+        let managed = parse(&format!(
+            "{app}entity Task {{\n id: uuid @pk\n tenantId: uuid @scope\n updatedAt: instant @updated\n command Create(tenantId) {{\n  set updatedAt = ZERO\n }}\n}}\n"
+        ))
+        .unwrap_err();
+        let codes = managed
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect::<BTreeSet<_>>();
+        assert!(codes.contains("model-managed-field-input"), "{codes:?}");
+        assert!(codes.contains("model-managed-field-target"), "{codes:?}");
+
+        let missing_version = parse(&format!(
+            "{app}entity Task {{\n id: uuid @pk\n title: string\n transition Rename(title) {{\n  update [title]\n  if-match required\n }}\n}}\n"
+        ))
+        .unwrap_err();
+        assert!(
+            missing_version
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "model-transition-version-count")
+        );
+
+        let duplicate_version = parse(&format!(
+            "{app}entity Task {{\n id: uuid @pk\n firstVersion: long @version\n secondVersion: long @version\n}}\n"
+        ))
+        .unwrap_err();
+        assert!(
+            duplicate_version
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "model-version-count")
+        );
+    }
+
+    #[test]
     fn missing_version_and_unknown_v1_words_have_stable_diagnostics() {
         let missing = parse("app Demo {}\n").unwrap_err();
         assert_eq!(missing.diagnostics[0].code, "JDL0001");
@@ -201,7 +435,7 @@ entity Task {
   authorId: uuid
   title: string
   status: string
-  version: long
+  version: long @version
 
   command Open(Author.email as email, title) {
     resolve authorId from Author.id where Author.email = email

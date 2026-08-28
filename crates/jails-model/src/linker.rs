@@ -190,6 +190,15 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
                 &field_path,
                 &mut linker,
             );
+            let semantics = field::semantics(
+                field.semantics,
+                &java_member,
+                field.required,
+                field.primary_key,
+                ty.as_ref(),
+                &field_path,
+                &mut linker,
+            );
 
             if let (Some(field_id), Some(ty)) = (field_id, ty) {
                 field_labels.insert(field_label.clone(), field_id.clone());
@@ -209,10 +218,13 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
                         unique: field.unique,
                         indexed: field.indexed,
                         length,
+                        semantics,
                     },
                 );
             }
         }
+
+        field::validate_scope_claims(&path, &fields, &mut linker);
 
         let requires_primary_key = entity.facets.iter().any(|facet| {
             matches!(
@@ -313,6 +325,7 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
         &mut routes,
         &mut linker,
     );
+    operation::validate_field_rules(&operations, &entities, &capabilities, &mut linker);
     let components = component::link(
         document.components,
         &entities,

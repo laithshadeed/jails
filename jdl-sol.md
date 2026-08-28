@@ -33,11 +33,15 @@ JSON string encodings, HTTP method case, explicit ascending order, and
 attribute rank as well as whitespace, newline shape, and comma-safe wrapping
 to the 100-column target. It orders entity member classes, separates member
 and top-level declaration groups, and removes only comment-free identical
-`use` selections. Expanded field attributes, scope and chosen/derived
-prerequisite semantics,
-the exhaustive CLI equivalence matrix, convention-derived output roles, and
-direct rich-node consumption by every emitter remain open. This checkpoint is
-not the ship claim in section 20.
+`use` selections. The complete closed field-attribute vocabulary now lowers to
+typed field semantics. Explicit scope-claim/default evidence is distinguished
+from compiler-derived claims and defaults; UUID/integer primary keys and
+versions receive typed derived defaults. Intrinsic field/type rules, unique
+scope claims, routed-scope security, managed input/update roles, and explicit
+if-match/version relationships fail closed in the linker. Broader
+chosen/derived prerequisite semantics, the exhaustive CLI equivalence matrix,
+convention-derived output roles, and direct rich-node consumption by every
+emitter remain open. This checkpoint is not the ship claim in section 20.
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** have their usual
 RFC 2119 meanings.

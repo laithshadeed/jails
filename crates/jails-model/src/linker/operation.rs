@@ -1,3 +1,4 @@
+mod field_rules;
 mod semantics;
 
 use super::Linker;
@@ -13,6 +14,15 @@ use semantics::{
     link_resolution, link_route, link_visible_field,
 };
 use std::collections::{BTreeMap, BTreeSet};
+
+pub(super) fn validate_field_rules(
+    operations: &BTreeMap<OperationId, Operation>,
+    entities: &BTreeMap<EntityId, Entity>,
+    capabilities: &BTreeMap<crate::CapabilityId, crate::Capability>,
+    linker: &mut Linker,
+) {
+    field_rules::validate(operations, entities, capabilities, linker);
+}
 
 struct EventRegistry<'a> {
     operation_ids: &'a BTreeMap<String, OperationId>,

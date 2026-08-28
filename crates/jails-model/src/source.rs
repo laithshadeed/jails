@@ -197,6 +197,29 @@ pub(crate) struct Field {
     pub(crate) indexed: bool,
     pub(crate) min_length: Option<u32>,
     pub(crate) max_length: Option<u32>,
+    #[serde(default)]
+    pub(crate) semantics: FieldSemantics,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FieldSemantics {
+    #[serde(default)]
+    pub(crate) positive: bool,
+    #[serde(default)]
+    pub(crate) nonnegative: bool,
+    pub(crate) scope: Option<FieldScope>,
+    #[serde(default)]
+    pub(crate) version: bool,
+    pub(crate) default: Option<Value>,
+    #[serde(default)]
+    pub(crate) updated: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FieldScope {
+    pub(crate) claim: Option<String>,
 }
 
 const fn required() -> bool {

@@ -51,8 +51,8 @@ pub use jdl::v1::{
 };
 pub use model::{
     AppModel, BuiltinType, Capability, Dependency, DependencyScope, Ejection, Entity, EntityNames,
-    Facet, Field, FieldNames, Index, IndexColumn, IndexDirection, LengthRange, Setting,
-    SettingTarget, TypeRef,
+    Facet, Field, FieldDefault, FieldNames, FieldScope, FieldSemantics, Index, IndexColumn,
+    IndexDirection, LengthRange, Setting, SettingTarget, TypeRef,
 };
 pub use operation::{
     Assignment, BindingSource, Command, CommandSemantics, Event, EventSemantics, FieldMapping,

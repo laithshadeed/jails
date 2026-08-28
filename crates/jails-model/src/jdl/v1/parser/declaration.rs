@@ -372,7 +372,21 @@ impl Parser<'_> {
         let attributes = self.attributes()?;
         reject_unknown_attributes(
             &attributes,
-            &["id", "map", "pk", "notBlank", "unique", "index", "length"],
+            &[
+                "id",
+                "map",
+                "pk",
+                "notBlank",
+                "unique",
+                "index",
+                "length",
+                "positive",
+                "nonnegative",
+                "scope",
+                "version",
+                "default",
+                "updated",
+            ],
             self,
         )?;
         let field_label = stable_fragment(&name);
@@ -380,6 +394,16 @@ impl Parser<'_> {
             .unwrap_or_else(|| format!("fld_{}_{}", entity.id, field_label));
         let column = one_arg(&attributes, "map")?;
         let (min_length, max_length) = length(&attributes, self)?;
+        let semantics = source::FieldSemantics {
+            positive: flag_attribute(&attributes, "positive")?,
+            nonnegative: flag_attribute(&attributes, "nonnegative")?,
+            scope: field_scope(&attributes, self)?,
+            version: flag_attribute(&attributes, "version")?,
+            default: one_raw_arg(&attributes, "default")?
+                .map(|value| operation::value_from_attribute(&value, self))
+                .transpose()?,
+            updated: flag_attribute(&attributes, "updated")?,
+        };
         self.end_line()?;
         entity.fields.insert(
             field_label,
@@ -389,12 +413,13 @@ impl Parser<'_> {
                 column,
                 type_name,
                 required,
-                non_blank: has_attribute(&attributes, "notBlank"),
-                primary_key: has_attribute(&attributes, "pk"),
-                unique: has_attribute(&attributes, "unique"),
-                indexed: has_attribute(&attributes, "index"),
+                non_blank: flag_attribute(&attributes, "notBlank")?,
+                primary_key: flag_attribute(&attributes, "pk")?,
+                unique: flag_attribute(&attributes, "unique")?,
+                indexed: flag_attribute(&attributes, "index")?,
                 min_length,
                 max_length,
+                semantics,
             },
         );
         self.member(

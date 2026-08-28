@@ -42,6 +42,8 @@ struct EntityDraft {
 struct Attribute {
     name: String,
     args: Vec<String>,
+    raw_args: Vec<String>,
+    parenthesized: bool,
 }
 
 pub(super) fn parse(input: &str, tokens: Vec<Token>) -> Result<ParsedDocument, Diagnostics> {
@@ -262,7 +264,9 @@ impl<'a> Parser<'a> {
         while self.consume("@") {
             let name = self.take_word("attribute name")?;
             let mut args = Vec::new();
-            if self.consume("(") {
+            let mut raw_args = Vec::new();
+            let parenthesized = self.consume("(");
+            if parenthesized {
                 let mut current = String::new();
                 let mut depth = 0_u32;
                 loop {
@@ -276,13 +280,17 @@ impl<'a> Parser<'a> {
                     if self.at(")") && depth == 0 {
                         self.bump();
                         if !current.trim().is_empty() {
-                            args.push(decode_argument(current.trim())?);
+                            let raw = current.trim().to_string();
+                            args.push(decode_argument(&raw)?);
+                            raw_args.push(raw);
                         }
                         break;
                     }
                     if self.at(",") && depth == 0 {
                         self.bump();
-                        args.push(decode_argument(current.trim())?);
+                        let raw = current.trim().to_string();
+                        args.push(decode_argument(&raw)?);
+                        raw_args.push(raw);
                         current.clear();
                         continue;
                     }
@@ -296,7 +304,12 @@ impl<'a> Parser<'a> {
                     current.push_str(&text);
                 }
             }
-            attributes.push(Attribute { name, args });
+            attributes.push(Attribute {
+                name,
+                args,
+                raw_args,
+                parenthesized,
+            });
         }
         Ok(attributes)
     }
@@ -521,6 +534,18 @@ fn reject_unknown_attributes(
 }
 
 fn one_arg(attributes: &[Attribute], name: &str) -> Result<Option<String>, Diagnostics> {
+    one_attribute(attributes, name, |attribute| attribute.args[0].clone())
+}
+
+fn one_raw_arg(attributes: &[Attribute], name: &str) -> Result<Option<String>, Diagnostics> {
+    one_attribute(attributes, name, |attribute| attribute.raw_args[0].clone())
+}
+
+fn one_attribute(
+    attributes: &[Attribute],
+    name: &str,
+    value: impl FnOnce(&Attribute) -> String,
+) -> Result<Option<String>, Diagnostics> {
     let matches = attributes
         .iter()
         .filter(|attribute| attribute.name == name)
@@ -542,11 +567,89 @@ fn one_arg(attributes: &[Attribute], name: &str) -> Result<Option<String>, Diagn
             format!("write `@{name}(value)`"),
         ));
     }
-    Ok(Some(attribute.args[0].clone()))
+    Ok(Some(value(attribute)))
 }
 
 fn has_attribute(attributes: &[Attribute], name: &str) -> bool {
     attributes.iter().any(|attribute| attribute.name == name)
+}
+
+fn flag_attribute(attributes: &[Attribute], name: &str) -> Result<bool, Diagnostics> {
+    let matches = attributes
+        .iter()
+        .filter(|attribute| attribute.name == name)
+        .collect::<Vec<_>>();
+    if matches.len() > 1 {
+        return Err(Diagnostics::jdl_syntax(
+            1,
+            format!("attribute `@{name}` is repeated"),
+            "keep one attribute of each kind",
+        ));
+    }
+    let Some(attribute) = matches.first() else {
+        return Ok(false);
+    };
+    if attribute.parenthesized {
+        return Err(Diagnostics::jdl_syntax(
+            1,
+            format!("attribute `@{name}` does not accept arguments"),
+            format!("write `@{name}`"),
+        ));
+    }
+    Ok(true)
+}
+
+fn field_scope(
+    attributes: &[Attribute],
+    parser: &Parser<'_>,
+) -> Result<Option<source::FieldScope>, Diagnostics> {
+    let matches = attributes
+        .iter()
+        .filter(|attribute| attribute.name == "scope")
+        .collect::<Vec<_>>();
+    if matches.len() > 1 {
+        return Err(parser.here(
+            "JDL0513",
+            "attribute `@scope` is repeated",
+            "keep one scope attribute",
+        ));
+    }
+    let Some(attribute) = matches.first() else {
+        return Ok(None);
+    };
+    if !attribute.parenthesized {
+        return Ok(Some(source::FieldScope { claim: None }));
+    }
+    if attribute.raw_args.len() != 1 {
+        return Err(parser.here(
+            "JDL0513",
+            "attribute `@scope` accepts only one named claim argument",
+            "write `@scope` or `@scope(claim: \"name\")`",
+        ));
+    }
+    let raw = &attribute.raw_args[0];
+    let Some(encoded) = raw.strip_prefix("claim:") else {
+        return Err(parser.here(
+            "JDL0513",
+            "attribute `@scope` accepts only the named argument `claim`",
+            "write `@scope(claim: \"name\")`",
+        ));
+    };
+    let claim = serde_json::from_str::<String>(encoded).map_err(|_| {
+        parser.here(
+            "JDL0513",
+            "the scope claim must be a quoted JSON string",
+            "write `@scope(claim: \"name\")`",
+        )
+    })?;
+    if claim.is_empty() {
+        return Err(parser.here(
+            "JDL0513",
+            "the scope claim cannot be empty",
+            "provide the authenticated claim name",
+        ));
+    }
+    Ok(Some(source::FieldScope { claim: Some(claim) }))
 }
 
 fn length(

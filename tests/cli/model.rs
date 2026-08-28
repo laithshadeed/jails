@@ -151,6 +151,83 @@ fn model_fmt_checks_then_atomically_formats_only_the_jdl_source() {
 }
 
 #[test]
+fn model_fmt_keeps_typed_field_semantics_and_refuses_invalid_rules_atomically() {
+    let root = jdl_project(
+        "jdl-v1-field-semantics",
+        r#"jdl 1
+app Notes {
+ pkg com.example.notes
+ java 26
+ platform spring
+ build maven
+ storage postgres
+}
+entity Task {
+ updatedAt: instant @updated @default(now())
+ version: long @nonnegative @version
+ tenantId: uuid @map("tenant_id") @scope(claim: "tenant") @id(fld_task_tenant)
+ id: uuid @pk
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    let model_path = root.join(".jails/model.jdl");
+
+    let formatted = jails_cmd(&root, None)
+        .args(["model", "fmt"])
+        .output()
+        .unwrap();
+    assert!(
+        formatted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&formatted.stderr)
+    );
+    let source = fs::read_to_string(&model_path).unwrap();
+    assert!(source.contains("updatedAt: instant @default(now()) @updated"));
+    assert!(source.contains("version: long @version @nonnegative"));
+    assert!(source.contains(
+        "tenantId: uuid @id(fld_task_tenant) @scope(claim: \"tenant\") @map(\"tenant_id\")"
+    ));
+
+    let model = jails_model::parse_jdl(&source).unwrap();
+    let task = model
+        .entities
+        .values()
+        .find(|entity| entity.label == "task")
+        .unwrap();
+    let version = task
+        .fields
+        .values()
+        .find(|field| field.label == "version")
+        .unwrap();
+    assert!(version.semantics.version);
+    assert!(version.semantics.default.as_ref().unwrap().derived);
+    let tenant = task
+        .fields
+        .values()
+        .find(|field| field.label == "tenant_id")
+        .unwrap();
+    let scope = tenant.semantics.scope.as_ref().unwrap();
+    assert_eq!(scope.claim, "tenant");
+    assert!(scope.pinned);
+
+    let invalid = source.replace("tenantId: uuid ", "tenantId: uuid? ");
+    fs::write(&model_path, &invalid).unwrap();
+    let before = fs::read(&model_path).unwrap();
+    let refused = jails_cmd(&root, None)
+        .args(["model", "fmt"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("model-scope-required"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert_eq!(fs::read(&model_path).unwrap(), before);
+}
+
+#[test]
 fn reviewed_model_format_refuses_a_concurrent_source_edit() {
     let root = jdl_project(
         "jdl-v1-format-stale",

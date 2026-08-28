@@ -1,4 +1,7 @@
-use super::{Parser, has_attribute, length, one_arg, reject_unknown_attributes, stable_fragment};
+use super::{
+    Parser, flag_attribute, length, one_arg, one_raw_arg, reject_unknown_attributes,
+    stable_fragment,
+};
 use crate::source;
 use crate::{Diagnostics, EndpointMethod, RequestFormat};
 
@@ -51,7 +54,7 @@ impl Parser<'_> {
         };
         reject_unknown_attributes(&attributes, allowed, self)?;
         let id = one_arg(&attributes, "id")?.unwrap_or_else(|| format!("op_{label}"));
-        let internal = has_attribute(&attributes, "internal");
+        let internal = flag_attribute(&attributes, "internal")?;
 
         let mut command = source::CommandSemantics {
             parameters,
@@ -210,13 +213,14 @@ impl Parser<'_> {
                     required,
                     optional_filter: false,
                     constraints: source::ParameterConstraints {
-                        default: one_arg(&attributes, "default")?
-                            .map(|value| value_from_attribute(&value)),
-                        non_blank: has_attribute(&attributes, "notBlank"),
+                        default: one_raw_arg(&attributes, "default")?
+                            .map(|value| value_from_attribute(&value, self))
+                            .transpose()?,
+                        non_blank: flag_attribute(&attributes, "notBlank")?,
                         min_length,
                         max_length,
-                        positive: has_attribute(&attributes, "positive"),
-                        nonnegative: has_attribute(&attributes, "nonnegative"),
+                        positive: flag_attribute(&attributes, "positive")?,
+                        nonnegative: flag_attribute(&attributes, "nonnegative")?,
                     },
                 });
             } else {
@@ -615,26 +619,46 @@ fn compatibility_route(route: &source::OperationRoute) -> String {
     format!("{method} {}", route.path)
 }
 
-fn value_from_attribute(value: &str) -> source::Value {
-    if value == "true" {
-        source::Value::Boolean(true)
+pub(super) fn value_from_attribute(
+    value: &str,
+    parser: &Parser<'_>,
+) -> Result<source::Value, Diagnostics> {
+    if value.starts_with('"') {
+        serde_json::from_str(value)
+            .map(source::Value::String)
+            .map_err(|error| {
+                parser.here(
+                    "JDL0917",
+                    format!("invalid default string: {error}"),
+                    "use a valid JSON string literal",
+                )
+            })
+    } else if value == "true" {
+        Ok(source::Value::Boolean(true))
     } else if value == "false" {
-        source::Value::Boolean(false)
+        Ok(source::Value::Boolean(false))
     } else if value.parse::<i128>().is_ok() {
-        source::Value::Integer(value.to_string())
+        Ok(source::Value::Integer(value.to_string()))
     } else if value.parse::<f64>().is_ok() && value.contains('.') {
-        source::Value::Decimal(value.to_string())
+        Ok(source::Value::Decimal(value.to_string()))
     } else if let Some(name) = value.strip_suffix("()") {
-        source::Value::Function(source::FunctionCall {
+        Ok(source::Value::Function(source::FunctionCall {
             name: name.to_string(),
             arguments: Vec::new(),
-        })
+        }))
     } else if value.chars().all(|character| {
         character.is_ascii_uppercase() || character.is_ascii_digit() || character == '_'
-    }) {
-        source::Value::EnumConstant(value.to_string())
+    }) && value
+        .chars()
+        .any(|character| character.is_ascii_uppercase())
+    {
+        Ok(source::Value::EnumConstant(value.to_string()))
     } else {
-        source::Value::String(value.to_string())
+        Err(parser.here(
+            "JDL0917",
+            format!("`{value}` is not a closed default expression"),
+            "quote strings or use a scalar, enum constant, uuid7(), identity(), now(), or today()",
+        ))
     }
 }
 
