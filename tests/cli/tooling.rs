@@ -602,6 +602,19 @@ fn migrate_check_does_not_restart_a_database_that_already_answers() {
     let fake = temp_dir("migrate-ready-postgres-bin");
     let log = fake.join("log.txt");
     write_fake_maven(&fake, &["docker", "psql"], &log);
+    // `migrate --check` sends SQL on stdin. A fake that exits without
+    // consuming it races the parent writer and can produce EPIPE under the
+    // full parallel suite, even though the command contract is otherwise
+    // satisfied. Model psql's stdin behavior so this remains deterministic.
+    fs::write(
+        fake.join("psql"),
+        format!(
+            "#!/bin/sh\necho \"$0 $*\" >> \"{}\"\nwhile IFS= read -r _; do :; done\nexit 0\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    set_executable(&fake.join("psql"));
 
     let output = jails_cmd(&root, Some(&fake))
         .args(["migrate", "--check"])

@@ -1,0 +1,675 @@
+//! Spring-specific declarative capability data.
+//!
+//! The generic pack emitter owns merge identity, ejection, dependency
+//! reconciliation, and property reconciliation. This module only declares the
+//! Spring projections, including their version predicates.
+
+use super::*;
+
+mod names;
+use names::*;
+
+const H2_FILES: &[JavaFile] = &[JavaFile {
+    suffix: "test",
+    template: include_str!("../../../../templates/spring/h2_database_test_java.java"),
+    before_boot: None,
+    source_set: SourceSet::Test,
+    class_name: h2_test_class,
+    template_class: h2_test_class,
+}];
+
+const ACTUATOR_FILES: &[JavaFile] = &[JavaFile {
+    suffix: "endpoints_test",
+    template: include_str!("../../../../templates/spring/actuator_test_java.java"),
+    before_boot: None,
+    source_set: SourceSet::Test,
+    class_name: actuator_test_class,
+    template_class: actuator_test_class,
+}];
+
+const CACHE_FILES: &[JavaFile] = &[
+    JavaFile {
+        suffix: "config",
+        template: include_str!("../../../../templates/spring/cache_config_java.java"),
+        before_boot: None,
+        source_set: SourceSet::Main,
+        class_name: cache_config_class,
+        template_class: cache_config_class,
+    },
+    JavaFile {
+        suffix: "test",
+        template: include_str!("../../../../templates/spring/cache_test_java.java"),
+        before_boot: None,
+        source_set: SourceSet::Test,
+        class_name: cache_test_class,
+        template_class: cache_test_class,
+    },
+];
+
+const CORS_FILES: &[JavaFile] = &[
+    JavaFile {
+        suffix: "config",
+        template: include_str!("../../../../templates/spring/cors_config_java.java"),
+        before_boot: None,
+        source_set: SourceSet::Main,
+        class_name: cors_config_class,
+        template_class: cors_config_class,
+    },
+    JavaFile {
+        suffix: "test",
+        template: include_str!("../../../../templates/spring/cors_config_test_java.java"),
+        before_boot: Some((
+            4,
+            include_str!("../../../../templates/spring/cors_config_test_classic_java.java"),
+        )),
+        source_set: SourceSet::Test,
+        class_name: cors_test_class,
+        template_class: cors_test_class,
+    },
+];
+
+const OBSERVABILITY_FILES: &[JavaFile] = &[
+    JavaFile {
+        suffix: "metrics_config",
+        template: include_str!("../../../../templates/spring/metrics_config_java.java"),
+        before_boot: None,
+        source_set: SourceSet::Main,
+        class_name: metrics_config_class,
+        template_class: metrics_config_class,
+    },
+    JavaFile {
+        suffix: "app_metrics",
+        template: include_str!("../../../../templates/spring/app_metrics_java.java"),
+        before_boot: None,
+        source_set: SourceSet::Main,
+        class_name: app_metrics_class,
+        template_class: app_metrics_class,
+    },
+    JavaFile {
+        suffix: "app_metrics_test",
+        template: include_str!("../../../../templates/spring/app_metrics_test_java.java"),
+        before_boot: None,
+        source_set: SourceSet::Test,
+        class_name: app_metrics_test_class,
+        template_class: app_metrics_test_class,
+    },
+    JavaFile {
+        suffix: "prometheus_scrape_test",
+        template: include_str!("../../../../templates/spring/prometheus_scrape_test_java.java"),
+        before_boot: None,
+        source_set: SourceSet::Test,
+        class_name: prometheus_scrape_test_class,
+        template_class: prometheus_scrape_test_class,
+    },
+];
+
+const SECURITY_FILES: &[JavaFile] = &[
+    JavaFile {
+        suffix: "config",
+        template: include_str!("../../../../templates/spring/security_config_java.java"),
+        before_boot: None,
+        source_set: SourceSet::Main,
+        class_name: security_config_class,
+        template_class: security_config_class,
+    },
+    JavaFile {
+        suffix: "production_config",
+        template: include_str!("../../../../templates/spring/production_security_config_java.java"),
+        before_boot: None,
+        source_set: SourceSet::Main,
+        class_name: production_security_config_class,
+        template_class: production_security_config_class,
+    },
+    JavaFile {
+        suffix: "scope_authorizer",
+        template: include_str!("../../../../templates/spring/scope_authorizer_java.java"),
+        before_boot: None,
+        source_set: SourceSet::Main,
+        class_name: scope_authorizer_class,
+        template_class: scope_authorizer_class,
+    },
+    JavaFile {
+        suffix: "config_test",
+        template: include_str!("../../../../templates/spring/security_test_java.java"),
+        before_boot: None,
+        source_set: SourceSet::Test,
+        class_name: security_config_test_class,
+        template_class: security_config_test_class,
+    },
+    JavaFile {
+        suffix: "scope_authorizer_test",
+        template: include_str!("../../../../templates/spring/scope_authorizer_test_java.java"),
+        before_boot: None,
+        source_set: SourceSet::Test,
+        class_name: scope_authorizer_test_class,
+        template_class: scope_authorizer_test_class,
+    },
+];
+
+const SSE_FILES: &[JavaFile] = &[
+    JavaFile {
+        suffix: "hub",
+        template: include_str!("../../../../templates/spring/sse_hub_java.java"),
+        before_boot: None,
+        source_set: SourceSet::Main,
+        class_name: event_hub_class,
+        template_class: event_name,
+    },
+    JavaFile {
+        suffix: "scheduling",
+        template: include_str!("../../../../templates/spring/scheduling_config_java.java"),
+        before_boot: None,
+        source_set: SourceSet::Main,
+        class_name: scheduling_config_class,
+        template_class: scheduling_config_class,
+    },
+    JavaFile {
+        suffix: "controller",
+        template: include_str!("../../../../templates/spring/sse_controller_java.java"),
+        before_boot: None,
+        source_set: SourceSet::Main,
+        class_name: event_stream_controller_class,
+        template_class: event_name,
+    },
+    JavaFile {
+        suffix: "hub_test",
+        template: include_str!("../../../../templates/spring/sse_hub_test_java.java"),
+        before_boot: None,
+        source_set: SourceSet::Test,
+        class_name: event_hub_test_class,
+        template_class: event_name,
+    },
+];
+
+const REDIS_FILES: &[JavaFile] = &[
+    JavaFile {
+        suffix: "store",
+        template: include_str!("../../../../templates/spring/key_value_store_java.java"),
+        before_boot: None,
+        source_set: SourceSet::Main,
+        class_name: key_value_store_class,
+        template_class: key_value_store_class,
+    },
+    JavaFile {
+        suffix: "store_it",
+        template: include_str!("../../../../templates/spring/key_value_store_it_java.java"),
+        before_boot: None,
+        source_set: SourceSet::IntegrationTest,
+        class_name: key_value_store_it_class,
+        template_class: key_value_store_class,
+    },
+];
+
+const H2_DEPENDENCIES: &[DependencySpec] = &[
+    DependencySpec {
+        group: "org.springframework.boot",
+        artifact: "spring-boot-starter-jdbc",
+        version: None,
+        scope: DependencyScope::Compile,
+        spring_managed_version: true,
+        only_when_build_exists: false,
+        boot: BootCondition::Any,
+    },
+    DependencySpec {
+        group: "com.h2database",
+        artifact: "h2",
+        version: None,
+        scope: DependencyScope::Runtime,
+        spring_managed_version: true,
+        only_when_build_exists: false,
+        boot: BootCondition::Any,
+    },
+    DependencySpec {
+        group: "org.springframework.boot",
+        artifact: "spring-boot-h2console",
+        version: None,
+        scope: DependencyScope::Compile,
+        spring_managed_version: true,
+        only_when_build_exists: false,
+        boot: BootCondition::AtLeast(4),
+    },
+];
+
+const ACTUATOR_DEPENDENCIES: &[DependencySpec] = &[DependencySpec {
+    group: "org.springframework.boot",
+    artifact: "spring-boot-starter-actuator",
+    version: None,
+    scope: DependencyScope::Compile,
+    spring_managed_version: true,
+    only_when_build_exists: false,
+    boot: BootCondition::Any,
+}];
+
+const CACHE_DEPENDENCIES: &[DependencySpec] = &[
+    DependencySpec {
+        group: "org.springframework.boot",
+        artifact: "spring-boot-starter-cache",
+        version: None,
+        scope: DependencyScope::Compile,
+        spring_managed_version: true,
+        only_when_build_exists: false,
+        boot: BootCondition::Any,
+    },
+    DependencySpec {
+        group: "com.github.ben-manes.caffeine",
+        artifact: "caffeine",
+        version: None,
+        scope: DependencyScope::Compile,
+        spring_managed_version: true,
+        only_when_build_exists: false,
+        boot: BootCondition::Any,
+    },
+];
+
+const CORS_DEPENDENCIES: &[DependencySpec] = &[DependencySpec {
+    group: "org.springframework.boot",
+    artifact: "spring-boot-starter-webmvc-test",
+    version: None,
+    scope: DependencyScope::Test,
+    spring_managed_version: true,
+    only_when_build_exists: false,
+    boot: BootCondition::AtLeast(4),
+}];
+
+const OBSERVABILITY_DEPENDENCIES: &[DependencySpec] = &[
+    DependencySpec {
+        group: "org.springframework.boot",
+        artifact: "spring-boot-starter-actuator",
+        version: None,
+        scope: DependencyScope::Compile,
+        spring_managed_version: true,
+        only_when_build_exists: false,
+        boot: BootCondition::Any,
+    },
+    DependencySpec {
+        group: "io.micrometer",
+        artifact: "micrometer-registry-prometheus",
+        version: None,
+        scope: DependencyScope::Compile,
+        spring_managed_version: true,
+        only_when_build_exists: false,
+        boot: BootCondition::Any,
+    },
+];
+
+const SECURITY_DEPENDENCIES: &[DependencySpec] = &[
+    DependencySpec {
+        group: "org.springframework.boot",
+        artifact: "spring-boot-starter-security",
+        version: None,
+        scope: DependencyScope::Compile,
+        spring_managed_version: true,
+        only_when_build_exists: false,
+        boot: BootCondition::Any,
+    },
+    DependencySpec {
+        group: "org.springframework.boot",
+        artifact: "spring-boot-starter-oauth2-resource-server",
+        version: None,
+        scope: DependencyScope::Compile,
+        spring_managed_version: true,
+        only_when_build_exists: false,
+        boot: BootCondition::Any,
+    },
+    DependencySpec {
+        group: "org.springframework.security",
+        artifact: "spring-security-test",
+        version: None,
+        scope: DependencyScope::Test,
+        spring_managed_version: true,
+        only_when_build_exists: false,
+        boot: BootCondition::Any,
+    },
+    DependencySpec {
+        group: "org.springframework.boot",
+        artifact: "spring-boot-starter-webmvc-test",
+        version: None,
+        scope: DependencyScope::Test,
+        spring_managed_version: true,
+        only_when_build_exists: false,
+        boot: BootCondition::AtLeast(4),
+    },
+];
+
+const SSE_DEPENDENCIES: &[DependencySpec] = &[DependencySpec {
+    group: "org.springframework.boot",
+    artifact: "spring-boot-starter-web",
+    version: None,
+    scope: DependencyScope::Compile,
+    spring_managed_version: true,
+    only_when_build_exists: false,
+    boot: BootCondition::Any,
+}];
+
+const REDIS_DEPENDENCIES: &[DependencySpec] = &[
+    DependencySpec {
+        group: "org.springframework.boot",
+        artifact: "spring-boot-starter-data-redis",
+        version: None,
+        scope: DependencyScope::Compile,
+        spring_managed_version: true,
+        only_when_build_exists: false,
+        boot: BootCondition::Any,
+    },
+    DependencySpec {
+        group: "org.testcontainers",
+        artifact: "testcontainers",
+        version: Some("2.0.5"),
+        scope: DependencyScope::Test,
+        spring_managed_version: false,
+        only_when_build_exists: false,
+        boot: BootCondition::Any,
+    },
+    DependencySpec {
+        group: "org.springframework.boot",
+        artifact: "spring-boot-testcontainers",
+        version: None,
+        scope: DependencyScope::Test,
+        spring_managed_version: true,
+        only_when_build_exists: false,
+        boot: BootCondition::Any,
+    },
+];
+
+const H2_PROPERTIES: &[PropertySpec] = &[
+    PropertySpec {
+        key: "spring.datasource.url",
+        value: "jdbc:h2:file:./data/app;AUTO_SERVER=TRUE",
+        target: SettingTarget::Main,
+        boot: BootCondition::Any,
+    },
+    PropertySpec {
+        key: "spring.h2.console.enabled",
+        value: "true",
+        target: SettingTarget::Main,
+        boot: BootCondition::Any,
+    },
+    PropertySpec {
+        key: "spring.h2.console.path",
+        value: "/h2-console",
+        target: SettingTarget::Main,
+        boot: BootCondition::Any,
+    },
+    PropertySpec {
+        key: "spring.persistence.exceptiontranslation.enabled",
+        value: "false",
+        target: SettingTarget::Main,
+        boot: BootCondition::AtLeast(4),
+    },
+    PropertySpec {
+        key: "spring.dao.exceptiontranslation.enabled",
+        value: "false",
+        target: SettingTarget::Main,
+        boot: BootCondition::Before(4),
+    },
+    PropertySpec {
+        key: "spring.datasource.url",
+        value: "jdbc:h2:mem:test;DB_CLOSE_DELAY=-1",
+        target: SettingTarget::Test,
+        boot: BootCondition::Any,
+    },
+];
+
+const ACTUATOR_PROPERTIES: &[PropertySpec] = &[
+    PropertySpec {
+        key: "management.endpoints.web.exposure.include",
+        value: "health,info,prometheus,threaddump",
+        target: SettingTarget::Main,
+        boot: BootCondition::Any,
+    },
+    PropertySpec {
+        key: "management.server.port",
+        value: "8081",
+        target: SettingTarget::Main,
+        boot: BootCondition::Any,
+    },
+    PropertySpec {
+        key: "management.endpoints.web.base-path",
+        value: "/management",
+        target: SettingTarget::Main,
+        boot: BootCondition::Any,
+    },
+    PropertySpec {
+        key: "management.endpoint.health.cache.time-to-live",
+        value: "5s",
+        target: SettingTarget::Main,
+        boot: BootCondition::Any,
+    },
+    PropertySpec {
+        key: "management.endpoint.health.group.liveness.include",
+        value: "ping",
+        target: SettingTarget::Main,
+        boot: BootCondition::Any,
+    },
+    PropertySpec {
+        key: "management.endpoint.health.group.readiness.include",
+        value: "ping",
+        target: SettingTarget::Main,
+        boot: BootCondition::Any,
+    },
+    PropertySpec {
+        key: "management.endpoint.health.show-details",
+        value: "when-authorized",
+        target: SettingTarget::Main,
+        boot: BootCondition::Any,
+    },
+    PropertySpec {
+        key: "info.app.name",
+        value: "@project.name@",
+        target: SettingTarget::Main,
+        boot: BootCondition::Any,
+    },
+    PropertySpec {
+        key: "info.app.version",
+        value: "@project.version@",
+        target: SettingTarget::Main,
+        boot: BootCondition::Any,
+    },
+];
+
+const CACHE_PROPERTIES: &[PropertySpec] = &[
+    PropertySpec {
+        key: "spring.cache.type",
+        value: "caffeine",
+        target: SettingTarget::Main,
+        boot: BootCondition::Any,
+    },
+    PropertySpec {
+        key: "spring.cache.caffeine.spec",
+        value: "maximumSize=1000,expireAfterWrite=60s",
+        target: SettingTarget::Main,
+        boot: BootCondition::Any,
+    },
+];
+
+const CORS_PROPERTIES: &[PropertySpec] = &[PropertySpec {
+    key: "app.cors.allowed-origins",
+    value: "https://example.invalid",
+    target: SettingTarget::Main,
+    boot: BootCondition::Any,
+}];
+
+const OBSERVABILITY_PROPERTIES: &[PropertySpec] = &[
+    property(
+        "management.endpoints.web.exposure.include",
+        "health,info,prometheus,threaddump",
+    ),
+    property("management.server.port", "8081"),
+    property("management.endpoints.web.base-path", "/management"),
+    property("management.endpoint.health.cache.time-to-live", "5s"),
+    property("management.endpoint.health.group.liveness.include", "ping"),
+    property("management.endpoint.health.group.readiness.include", "ping"),
+    property("management.endpoint.health.show-details", "when-authorized"),
+    property(
+        "management.metrics.distribution.slo.http.server.requests",
+        "100ms,250ms,500ms,1s,2s,5s,10s",
+    ),
+    property(
+        "management.metrics.distribution.percentiles-histogram.http.server.requests",
+        "false",
+    ),
+    property(
+        "management.metrics.distribution.percentiles.http.server.requests",
+        "0.5,0.9,0.95,0.99",
+    ),
+    property(
+        "management.metrics.distribution.minimum-expected-value.http.server.requests",
+        "1ms",
+    ),
+    property(
+        "management.metrics.distribution.maximum-expected-value.http.server.requests",
+        "10s",
+    ),
+    property("management.tracing.propagation.type", "w3c"),
+    property("management.tracing.sampling.probability", "0.1"),
+    property(
+        "management.tracing.baggage.correlation.fields",
+        "request-id",
+    ),
+    property("management.tracing.baggage.tag-fields", "request-id"),
+    property("management.tracing.baggage.local-fields", "request-id"),
+    property("server.tomcat.accesslog.enabled", "true"),
+    property("server.tomcat.accesslog.directory", "/dev"),
+    property("server.tomcat.accesslog.prefix", "stdout"),
+    property("server.tomcat.accesslog.suffix", ""),
+    property("server.tomcat.accesslog.file-date-format", ""),
+    property("server.tomcat.accesslog.buffered", "false"),
+    property("management.server.tomcat.accesslog.prefix", "stdout"),
+];
+
+const SSE_PROPERTIES: &[PropertySpec] = &[PropertySpec {
+    key: "spring.task.scheduling.pool.size",
+    value: "4",
+    target: SettingTarget::Main,
+    boot: BootCondition::Any,
+}];
+
+const REDIS_PROPERTIES: &[PropertySpec] = &[
+    property("spring.data.redis.host", "localhost"),
+    property("spring.data.redis.port", "6379"),
+    property("app.redis.default-ttl", "PT10M"),
+];
+
+const REDIS_COMPOSE: &[ComposeService] = &[ComposeService {
+    name: "redis",
+    marker: "redis",
+    body: "image: redis:7-alpine\nports:\n  - \"6379:6379\"\nhealthcheck:\n  test: [\"CMD\", \"redis-cli\", \"ping\"]\n  interval: 2s\n  timeout: 5s\n  retries: 10",
+}];
+
+const SSE_PACKAGE_OVERRIDES: &[PackageOverride] = &[PackageOverride {
+    suffix: "controller",
+    project_subpackage: "web",
+}];
+
+const fn property(key: &'static str, value: &'static str) -> PropertySpec {
+    PropertySpec {
+        key,
+        value,
+        target: SettingTarget::Main,
+        boot: BootCondition::Any,
+    }
+}
+
+pub(super) const H2_PACK: Pack = Pack {
+    files: H2_FILES,
+    files_when: BootCondition::Any,
+    resources: NO_RESOURCES,
+    dependencies: H2_DEPENDENCIES,
+    properties: H2_PROPERTIES,
+    compose_services: NO_COMPOSE_SERVICES,
+    build_features: NO_BUILD_FEATURES,
+    default_package: adapters_package,
+    package_overrides: NO_PACKAGE_OVERRIDES,
+    minimum_boot: None,
+};
+
+pub(super) const ACTUATOR_PACK: Pack = Pack {
+    files: ACTUATOR_FILES,
+    files_when: BootCondition::Any,
+    resources: NO_RESOURCES,
+    dependencies: ACTUATOR_DEPENDENCIES,
+    properties: ACTUATOR_PROPERTIES,
+    compose_services: NO_COMPOSE_SERVICES,
+    build_features: NO_BUILD_FEATURES,
+    default_package: root_package,
+    package_overrides: NO_PACKAGE_OVERRIDES,
+    minimum_boot: None,
+};
+
+pub(super) const CACHE_PACK: Pack = Pack {
+    files: CACHE_FILES,
+    files_when: BootCondition::Any,
+    resources: NO_RESOURCES,
+    dependencies: CACHE_DEPENDENCIES,
+    properties: CACHE_PROPERTIES,
+    compose_services: NO_COMPOSE_SERVICES,
+    build_features: NO_BUILD_FEATURES,
+    default_package: root_package,
+    package_overrides: NO_PACKAGE_OVERRIDES,
+    minimum_boot: None,
+};
+
+pub(super) const CORS_PACK: Pack = Pack {
+    files: CORS_FILES,
+    files_when: BootCondition::Any,
+    resources: NO_RESOURCES,
+    dependencies: CORS_DEPENDENCIES,
+    properties: CORS_PROPERTIES,
+    compose_services: NO_COMPOSE_SERVICES,
+    build_features: NO_BUILD_FEATURES,
+    default_package: root_package,
+    package_overrides: NO_PACKAGE_OVERRIDES,
+    minimum_boot: None,
+};
+
+pub(super) const OBSERVABILITY_PACK: Pack = Pack {
+    files: OBSERVABILITY_FILES,
+    files_when: BootCondition::Any,
+    resources: NO_RESOURCES,
+    dependencies: OBSERVABILITY_DEPENDENCIES,
+    properties: OBSERVABILITY_PROPERTIES,
+    compose_services: NO_COMPOSE_SERVICES,
+    build_features: NO_BUILD_FEATURES,
+    default_package: root_package,
+    package_overrides: NO_PACKAGE_OVERRIDES,
+    minimum_boot: None,
+};
+
+pub(super) const SECURITY_PACK: Pack = Pack {
+    files: SECURITY_FILES,
+    files_when: BootCondition::Any,
+    resources: NO_RESOURCES,
+    dependencies: SECURITY_DEPENDENCIES,
+    properties: NO_PROPERTIES,
+    compose_services: NO_COMPOSE_SERVICES,
+    build_features: NO_BUILD_FEATURES,
+    default_package: root_package,
+    package_overrides: NO_PACKAGE_OVERRIDES,
+    minimum_boot: Some(3),
+};
+
+pub(super) const SSE_PACK: Pack = Pack {
+    files: SSE_FILES,
+    files_when: BootCondition::Any,
+    resources: NO_RESOURCES,
+    dependencies: SSE_DEPENDENCIES,
+    properties: SSE_PROPERTIES,
+    compose_services: NO_COMPOSE_SERVICES,
+    build_features: NO_BUILD_FEATURES,
+    default_package: root_package,
+    package_overrides: SSE_PACKAGE_OVERRIDES,
+    minimum_boot: None,
+};
+
+pub(super) const REDIS_PACK: Pack = Pack {
+    files: REDIS_FILES,
+    files_when: BootCondition::Any,
+    resources: NO_RESOURCES,
+    dependencies: REDIS_DEPENDENCIES,
+    properties: REDIS_PROPERTIES,
+    compose_services: REDIS_COMPOSE,
+    build_features: NO_BUILD_FEATURES,
+    default_package: adapters_package,
+    package_overrides: NO_PACKAGE_OVERRIDES,
+    minimum_boot: None,
+};

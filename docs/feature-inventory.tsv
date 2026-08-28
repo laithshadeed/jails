@@ -6,6 +6,12 @@ app	jails	dispatch-only	app::run
 app init	jails-engine	project-mutation	route::app_init
 app plan	jails-engine	read-only	route::app_apply (pretend)
 app apply	jails-engine	project-mutation	route::app_apply
+model	jails	dispatch-only	model_command::run
+model check	jails-model	read-only	jails_model::parse_jdl / jails_model::parse_toml
+model plan	jails-compiler/jails-workspace	read-only+optional-report-output	Compiler::compile / materialize
+model apply	jails-workspace	project-mutation	execute
+model eject	jails-compiler/jails-workspace	project-mutation	model_eject::run
+model import	jails-state/jails-workspace	project-mutation	model_import::run
 generate	jails-engine	project-mutation	route::recipe
 add	jails-engine	project-mutation	route::install
 add dependency	jails-engine	project-mutation	route::add_dependency
@@ -56,6 +62,7 @@ resource field nullability	jails-engine	project-mutation	route::set_field_nullab
 resource field drop	jails-engine	project-mutation	route::drop_field
 resource index	jails	dispatch-only	main command dispatch
 resource index add	jails-engine	project-mutation	route::add_index
+resource index remove	jails-model/jails-compiler/jails-workspace	project-mutation	model_index::remove
 test	jails-drive	external-process+conditional-project-mutation	run::test
 test daemon	jails-drive	dispatch-only	main command dispatch
 test daemon restart	jails-drive	machine-daemon+external-process	testd::testd

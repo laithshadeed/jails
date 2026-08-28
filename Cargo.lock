@@ -209,17 +209,22 @@ dependencies = [
  "clap",
  "clap_complete",
  "jails-commit",
+ "jails-compiler",
+ "jails-contracts",
  "jails-drive",
  "jails-engine",
  "jails-generate",
  "jails-java",
+ "jails-model",
  "jails-prepare",
  "jails-project",
  "jails-protocol",
  "jails-report",
  "jails-spec",
+ "jails-state",
  "jails-support",
  "jails-testkit",
+ "jails-workspace",
  "serde_json",
  "tempfile",
 ]
@@ -233,6 +238,24 @@ dependencies = [
  "jails-protocol",
  "jails-state",
  "jails-support",
+]
+
+[[package]]
+name = "jails-compiler"
+version = "0.1.0"
+dependencies = [
+ "jails-contracts",
+ "jails-model",
+ "serde_json",
+]
+
+[[package]]
+name = "jails-contracts"
+version = "0.1.0"
+dependencies = [
+ "jails-model",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -289,6 +312,15 @@ name = "jails-java"
 version = "0.1.0"
 dependencies = [
  "jails-support",
+]
+
+[[package]]
+name = "jails-model"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml",
 ]
 
 [[package]]
@@ -374,6 +406,20 @@ dependencies = [
 [[package]]
 name = "jails-testkit"
 version = "0.1.0"
+
+[[package]]
+name = "jails-workspace"
+version = "0.1.0"
+dependencies = [
+ "fs2",
+ "jails-compiler",
+ "jails-contracts",
+ "jails-model",
+ "jails-support",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
 
 [[package]]
 name = "libc"

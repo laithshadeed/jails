@@ -34,6 +34,10 @@ fn owns_terminal_output(path: &Path) -> bool {
         || relative == "src/contract_command.rs"
         || relative == "src/tool_command.rs"
         || relative == "src/history_command.rs"
+        || relative == "src/model_command.rs"
+        || relative == "src/model_generate.rs"
+        || relative == "src/model_import.rs"
+        || relative == "src/parse_error.rs"
         || relative.starts_with("src/new/")
         || relative == "crates/jails-support/src/lib.rs"
         || relative == "crates/jails-support/src/process.rs"
@@ -190,6 +194,16 @@ fn no_module_depends_on_a_layer_above_its_own() {
             if *other_crate == krate || *other_level <= level {
                 continue;
             }
+            // `crate::model` names this crate's `model` when it has one. It
+            // cannot simultaneously name another crate's module with the same
+            // basename. Module identity is `(crate, module)`; resolving by the
+            // second half alone recreates the collision this table was changed
+            // to eliminate.
+            if LAYERS.iter().any(|(candidate_crate, candidate, _)| {
+                *candidate_crate == krate && *candidate == *other
+            }) {
+                continue;
+            }
             if file.production.contains(&format!("crate::{other}::"))
                 || file.production.contains(&format!("crate::{other};"))
             {
@@ -256,10 +270,11 @@ fn layers_lists_each_module_once() {
     assert_eq!(before, names.len(), "`LAYERS` lists one module twice");
 }
 
-/// Which crate each module ships in, lowest first. The 7-crate workspace this
-/// documents is `jails-support`, `jails-java`, `jails-spec`, `jails-project`,
-/// `jails-generate`, `jails-tooling` and the `jails-cli` binary.
+/// Which crate each module ships in, lowest first. Legacy and canonical
+/// compiler modules coexist during cutover; every module stays classified so
+/// deleting the legacy half cannot silently loosen a boundary.
 const LAYERS: &[(&str, &str, usize)] = &[
+    ("jails-model", "capability", 2),
     // jails-support: no jails concepts at all -- writing, running, encoding.
     ("jails-support", "apply", 0),
     ("jails-support", "process", 0),
@@ -280,6 +295,46 @@ const LAYERS: &[(&str, &str, usize)] = &[
     // what a field means, and the closed CLI vocabularies.
     ("jails-spec", "build", 2),
     ("jails-spec", "spec", 2),
+    // Canonical semantic model: closed source schema -> linked stable IDs.
+    ("jails-model", "diagnostic", 2),
+    ("jails-model", "dependency", 2),
+    ("jails-model", "ejection", 2),
+    ("jails-model", "enum_constant", 2),
+    ("jails-model", "facet", 2),
+    ("jails-model", "id", 2),
+    ("jails-model", "index", 2),
+    ("jails-model", "jdl", 2),
+    ("jails-model", "patch", 2),
+    ("jails-model", "linker", 2),
+    ("jails-model", "model", 2),
+    ("jails-model", "naming", 2),
+    ("jails-model", "source", 2),
+    ("jails-model", "setting", 2),
+    ("jails-model", "syntax_edit", 2),
+    ("jails-model", "unit", 2),
+    // Portable values shared by the pure compiler and filesystem boundary.
+    ("jails-contracts", "draft", 3),
+    ("jails-contracts", "path", 3),
+    ("jails-contracts", "plan", 3),
+    ("jails-contracts", "snapshot", 3),
+    // Pure lowering: semantic world -> desired artifact tree.
+    ("jails-compiler", "emit_dto", 4),
+    ("jails-compiler", "emit_capability", 4),
+    ("jails-compiler", "emit_enum", 4),
+    ("jails-compiler", "emit_factory", 4),
+    ("jails-compiler", "emit_http", 4),
+    ("jails-compiler", "emit_java", 4),
+    ("jails-compiler", "emit_operation", 4),
+    ("jails-compiler", "emit_sql", 4),
+    ("jails-compiler", "emit_unit", 4),
+    // The only canonical filesystem capture/materialization/execution owner.
+    ("jails-workspace", "capture", 5),
+    ("jails-workspace", "documents", 5),
+    ("jails-workspace", "execute", 5),
+    ("jails-workspace", "materialize", 5),
+    ("jails-workspace", "merge", 5),
+    ("jails-workspace", "reader_facet", 5),
+    ("jails-workspace", "reconcile", 5),
     // jails-protocol: the validated values every closed format is built from.
     ("jails-protocol", "compatibility", 3),
     ("jails-protocol", "durable", 3),
@@ -385,6 +440,22 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails", "contract_command", 9),
     ("jails", "tool_command", 9),
     ("jails", "history_command", 9),
+    ("jails", "model_command", 9),
+    ("jails", "model_capability", 9),
+    ("jails", "model_destroy", 9),
+    ("jails", "model_eject", 9),
+    ("jails", "model_field_evolution", 9),
+    ("jails", "model_field_parse", 9),
+    ("jails", "model_generate", 9),
+    ("jails", "model_generate_jdl", 9),
+    ("jails", "model_import", 9),
+    ("jails", "model_index", 9),
+    ("jails", "model_jdl_edit", 9),
+    ("jails", "model_rename", 9),
+    ("jails", "model_resource", 9),
+    ("jails", "model_setting", 9),
+    ("jails", "canonical_support", 9),
+    ("jails", "parse_error", 9),
     ("jails", "facade", 9),
     ("jails", "template_macro", 9),
     ("jails", "cli", 9),
@@ -392,6 +463,58 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails", "plan_command", 9),
     ("jails", "arguments", 9),
 ];
+
+#[test]
+fn canonical_compiler_is_pure_after_capture() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/jails-compiler/src");
+    let banned = [
+        "std::fs",
+        "std::env",
+        "std::process",
+        "std::path",
+        "PathBuf",
+        "Command::new",
+    ];
+    let mut offenders = Vec::new();
+    for file in sources()
+        .into_iter()
+        .filter(|file| file.path.starts_with(&root))
+    {
+        for name in banned {
+            if file.production.contains(name) {
+                offenders.push(format!("  {}: {name}", file.path.display()));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "the canonical compiler reached through its WorkspaceSnapshot boundary:\n{}",
+        offenders.join("\n")
+    );
+}
+
+#[test]
+fn canonical_workspace_has_one_mutation_owner() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/jails-workspace/src");
+    let mut offenders = Vec::new();
+    for file in sources().into_iter().filter(|file| {
+        file.path.starts_with(&root)
+            && file
+                .path
+                .file_name()
+                .is_none_or(|name| name != "execute.rs")
+    }) {
+        let count = mutation_sites(std::slice::from_ref(&file), MUTATION_APIS);
+        if count != 0 {
+            offenders.push(format!("  {}: {count} mutation calls", file.path.display()));
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "canonical workspace mutation escaped execute.rs:\n{}",
+        offenders.join("\n")
+    );
+}
 
 /// Every module that starts a process, and which R6.6 row it is.
 ///
@@ -624,6 +747,14 @@ fn a_gate_that_reached_its_target_is_never_reopened() {
 /// executed. Naming a test that does not exist fails too, so the entry cannot
 /// decay into a comment.
 const DEFAULT_BRANCH_IS_EXECUTED: &[(&str, &str)] = &[
+    (
+        "crates/jails-compiler/src/emit_capability.rs",
+        "canonical_observability_pack_merges_ejects_and_serves_prometheus",
+    ),
+    (
+        "crates/jails-compiler/src/lib.rs",
+        "canonical_security_pack_merges_ejects_and_keeps_cors_buildable",
+    ),
     (
         "crates/jails-generate/src/generate/recipes.rs",
         "generate_scaffold_produces_a_project_that_compiles_and_passes_tests",

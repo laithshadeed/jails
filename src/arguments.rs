@@ -26,6 +26,14 @@ impl DependencyScope {
             Self::Test => MavenScope::Test,
         }
     }
+
+    pub(crate) fn canonical(self) -> jails_model::DependencyScope {
+        match self {
+            Self::Compile => jails_model::DependencyScope::Compile,
+            Self::Runtime => jails_model::DependencyScope::Runtime,
+            Self::Test => jails_model::DependencyScope::Test,
+        }
+    }
 }
 
 /// Returns [`ExitCode`] rather than calling [`std::process::exit`].

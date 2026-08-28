@@ -1,0 +1,8809 @@
+use super::*;
+
+const MODEL: &str = r#"
+schema = "jails.model.v1"
+
+[project]
+id = "project_notes"
+name = "Notes"
+base_package = "com.example.notes"
+java_release = 26
+dialect = "postgresql"
+
+[entities.note]
+id = "ent_note"
+facets = ["record", "repository", "http"]
+
+[entities.note.fields.id]
+id = "fld_note_id"
+type = "uuid"
+primary_key = true
+
+[entities.note.fields.title]
+id = "fld_note_title"
+type = "string"
+non_blank = true
+
+[operations.create_note]
+kind = "command"
+id = "op_create_note"
+on = "note"
+fields = ["title"]
+route = "POST /notes"
+"#;
+
+const EMPTY_MODEL: &str = r#"
+schema = "jails.model.v1"
+
+[project]
+id = "project_notes"
+name = "Notes"
+base_package = "com.example.notes"
+java_release = 26
+dialect = "postgresql"
+"#;
+
+fn model_project(label: &str, source: &str) -> PathBuf {
+    let root = temp_dir(label);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(root.join(".jails/model.toml"), source).unwrap();
+    root
+}
+
+fn jdl_project(label: &str, source: &str) -> PathBuf {
+    let root = temp_dir(label);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(root.join(".jails/model.jdl"), source).unwrap();
+    root
+}
+
+fn eject_model_project(label: &str) -> PathBuf {
+    let source = format!("{MODEL}\n[capabilities.fake]\nid = \"cap_fake\"\nkind = \"fake\"\n");
+    model_project(label, &source)
+}
+
+fn apply_canonical_model(root: &Path, label: &str) {
+    let bundle = root.join(format!("{label}.json"));
+    let planned = jails_cmd(root, None)
+        .args(["model", "plan", "--bundle"])
+        .arg(&bundle)
+        .output()
+        .unwrap();
+    assert!(
+        planned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
+    let applied = jails_cmd(root, None)
+        .args(["model", "apply", "--bundle"])
+        .arg(&bundle)
+        .output()
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+}
+
+#[test]
+fn jdl_v1_drives_the_real_generate_edit_generate_loop() {
+    let root = jdl_project(
+        "jdl-v1-generate-edit-generate",
+        r#"jdl 1
+
+app Notes @id(project_notes) {
+  pkg com.example.notes
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+entity Task @id(ent_task) {
+  use record
+  id: uuid @id(fld_task_id) @pk
+  title: string @id(fld_task_title) @notBlank
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    apply_canonical_model(&root, "jdl-v1-initial");
+
+    let record = root.join(".jails/generated/main/java/com/example/notes/domain/Task.java");
+    let source = fs::read_to_string(&record).unwrap();
+    let split = source.rfind("\n}").unwrap();
+    fs::write(
+        &record,
+        format!(
+            "{}\n\n    public String readerMethod() {{ return title; }}{}",
+            &source[..split],
+            &source[split..]
+        ),
+    )
+    .unwrap();
+
+    let model_path = root.join(".jails/model.jdl");
+    let model = fs::read_to_string(&model_path).unwrap();
+    fs::write(
+        &model_path,
+        model.replace(
+            "  title: string @id(fld_task_title) @notBlank\n",
+            "  title: string @id(fld_task_title) @notBlank\n  done: boolean @id(fld_task_done)\n",
+        ),
+    )
+    .unwrap();
+    apply_canonical_model(&root, "jdl-v1-evolved");
+
+    let evolved = fs::read_to_string(&record).unwrap();
+    assert!(evolved.contains("readerMethod()"), "{evolved}");
+    assert!(evolved.contains("boolean done"), "{evolved}");
+}
+
+#[test]
+fn canonical_source_units_merge_every_main_and_test_file_and_wire_both_roots() {
+    let root = temp_dir("canonical-source-units-loop");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+
+    for command in [
+        ["g", "class", "Clock"].as_slice(),
+        ["g", "interface", "Port"].as_slice(),
+        ["g", "service", "BillingService"].as_slice(),
+    ] {
+        let output = jails_cmd(&root, None).args(command).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let files = [
+        ".jails/generated/main/java/com/example/demo/Clock.java",
+        ".jails/generated/test/java/com/example/demo/ClockTest.java",
+        ".jails/generated/main/java/com/example/demo/Port.java",
+        ".jails/generated/main/java/com/example/demo/service/BillingService.java",
+        ".jails/generated/test/java/com/example/demo/service/BillingServiceTest.java",
+    ];
+    for (index, relative) in files.iter().enumerate() {
+        let path = root.join(relative);
+        let source = fs::read_to_string(&path).unwrap();
+        let split = source.rfind("\n}").unwrap();
+        fs::write(
+            &path,
+            format!(
+                "{}\n\n    // reader-edit-{index}{}",
+                &source[..split],
+                &source[split..]
+            ),
+        )
+        .unwrap();
+    }
+
+    let rerun = jails_cmd(&root, None)
+        .args(["g", "class", "Queue"])
+        .output()
+        .unwrap();
+    assert!(
+        rerun.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rerun.stderr)
+    );
+    for (index, relative) in files.iter().enumerate() {
+        let source = fs::read_to_string(root.join(relative)).unwrap();
+        assert!(
+            source.contains(&format!("reader-edit-{index}")),
+            "{relative}: {source}"
+        );
+    }
+
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("<source>.jails/generated/main/java</source>"));
+    assert!(pom.contains("<source>.jails/generated/test/java</source>"));
+    assert!(pom.contains("<goal>add-source</goal>"));
+    assert!(pom.contains("<goal>add-test-source</goal>"));
+
+    let jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(jdl.contains("class Clock @id(unit_class_clock)"));
+    assert!(jdl.contains("interface Port @id(unit_interface_port)"));
+    assert!(jdl.contains("service Billing @id(unit_service_billing)"));
+
+    fs::write(
+        root.join(".jails/model.jdl"),
+        jdl.replace(
+            "class Clock @id(unit_class_clock)",
+            "class Clock @id(unit_class_clock) @package(core)",
+        ),
+    )
+    .unwrap();
+    let before = snapshot_tree(&root);
+    let planned = jails_cmd(&root, None)
+        .args(["model", "plan"])
+        .output()
+        .unwrap();
+    assert!(
+        planned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
+    assert_eq!(
+        snapshot_tree(&root),
+        before,
+        "planning wrote part of the plan"
+    );
+    apply_canonical_model(&root, "move-source-unit");
+    let old = root.join(".jails/generated/main/java/com/example/demo/Clock.java");
+    let moved = root.join(".jails/generated/main/java/com/example/demo/core/Clock.java");
+    assert!(!old.exists());
+    assert!(fs::read_to_string(moved).unwrap().contains("reader-edit-0"));
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn canonical_standalone_tests_merge_reader_edits_and_refuse_edited_build_wiring() {
+    let root = temp_dir("canonical-standalone-tests-loop");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+
+    for command in [
+        ["g", "test", "ParserTest"].as_slice(),
+        ["g", "integration-test", "CheckoutIT"].as_slice(),
+    ] {
+        let output = jails_cmd(&root, None).args(command).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let files = [
+        ".jails/generated/test/java/com/example/demo/ParserTest.java",
+        ".jails/generated/test/java/com/example/demo/CheckoutIT.java",
+    ];
+    for (index, relative) in files.iter().enumerate() {
+        let path = root.join(relative);
+        let source = fs::read_to_string(&path).unwrap();
+        let split = source.rfind("\n}").unwrap();
+        fs::write(
+            path,
+            format!(
+                "{}\n\n    // standalone-reader-edit-{index}{}",
+                &source[..split],
+                &source[split..]
+            ),
+        )
+        .unwrap();
+    }
+
+    let rerun = jails_cmd(&root, None)
+        .args(["g", "test", "Formatter"])
+        .output()
+        .unwrap();
+    assert!(
+        rerun.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rerun.stderr)
+    );
+    for (index, relative) in files.iter().enumerate() {
+        let source = fs::read_to_string(root.join(relative)).unwrap();
+        assert!(
+            source.contains(&format!("standalone-reader-edit-{index}")),
+            "{relative}: {source}"
+        );
+    }
+
+    let pom_path = root.join("pom.xml");
+    let pom = fs::read_to_string(&pom_path).unwrap();
+    assert_eq!(pom.matches("maven-failsafe-plugin").count(), 1, "{pom}");
+    assert!(pom.contains("<goal>integration-test</goal>"), "{pom}");
+    assert!(pom.contains("<goal>verify</goal>"), "{pom}");
+    assert!(!pom.contains("<version>3.5.6</version>"), "{pom}");
+
+    let jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(jdl.contains("test Parser @id(unit_test_parser)"), "{jdl}");
+    assert!(
+        jdl.contains("integration-test Checkout @id(unit_integration_test_checkout)"),
+        "{jdl}"
+    );
+
+    fs::write(
+        &pom_path,
+        pom.replace("<goal>verify</goal>", "<goal>reader-edited</goal>"),
+    )
+    .unwrap();
+    let before = snapshot_tree(&root);
+    let refused = jails_cmd(&root, None)
+        .args(["g", "test", "Later"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("was edited"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), before, "refusal wrote part of a plan");
+
+    fs::write(&pom_path, &pom).unwrap();
+    let integration_path = root.join(files[1]);
+    let integration = fs::read_to_string(&integration_path).unwrap();
+    fs::write(
+        &integration_path,
+        integration.replace(
+            "throw new UnsupportedOperationException(\"todo\");",
+            "throw new UnsupportedOperationException(\"reader wording\");",
+        ),
+    )
+    .unwrap();
+    let jdl_path = root.join(".jails/model.jdl");
+    let jdl = fs::read_to_string(&jdl_path).unwrap();
+    fs::write(
+        &jdl_path,
+        jdl.replace(
+            "integration-test Checkout @id(unit_integration_test_checkout)",
+            "test Checkout @id(unit_integration_test_checkout)",
+        ),
+    )
+    .unwrap();
+    let before = snapshot_tree(&root);
+    let refused = jails_cmd(&root, None)
+        .args(["model", "plan"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("overlap"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert_eq!(
+        snapshot_tree(&root),
+        before,
+        "Java overlap refusal wrote part of a plan"
+    );
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn canonical_sealed_types_evolve_through_merge_and_destroy_as_one_semantic_unit() {
+    let root = temp_dir("canonical-sealed-loop");
+    write_plain_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+
+    let generated = jails_cmd(&root, None)
+        .args(["g", "sealed", "Outcome", "Accepted", "Rejected"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let files = [
+        ".jails/generated/main/java/com/example/demo/domain/Outcome.java",
+        ".jails/generated/test/java/com/example/demo/domain/OutcomeTest.java",
+    ];
+    for (index, relative) in files.iter().enumerate() {
+        let path = root.join(relative);
+        let source = fs::read_to_string(&path).unwrap();
+        let anchor = if index == 0 {
+            "public sealed interface Outcome permits Outcome.Accepted, Outcome.Rejected {\n"
+        } else {
+            "class OutcomeTest {\n"
+        };
+        assert!(source.contains(anchor), "{relative}: {source}");
+        fs::write(
+            path,
+            source.replace(
+                anchor,
+                &format!("{anchor}\n    // sealed-reader-edit-{index}\n"),
+            ),
+        )
+        .unwrap();
+    }
+    let jdl_path = root.join(".jails/model.jdl");
+    let jdl = fs::read_to_string(&jdl_path).unwrap();
+    fs::write(
+        &jdl_path,
+        jdl.replace(
+            "sealed Outcome Accepted Rejected @id(unit_sealed_outcome)",
+            "sealed Outcome Accepted Rejected @id(unit_sealed_outcome) // reader model note",
+        ),
+    )
+    .unwrap();
+
+    let evolved = jails_cmd(&root, None)
+        .args(["g", "sealed", "Outcome", "Accepted", "Rejected", "Pending"])
+        .output()
+        .unwrap();
+    assert!(
+        evolved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evolved.stderr)
+    );
+    for (index, relative) in files.iter().enumerate() {
+        let source = fs::read_to_string(root.join(relative)).unwrap();
+        assert!(
+            source.contains(&format!("sealed-reader-edit-{index}")),
+            "{relative}: {source}"
+        );
+        assert!(source.contains("Pending"), "{relative}: {source}");
+    }
+    let jdl = fs::read_to_string(&jdl_path).unwrap();
+    assert!(
+        jdl.contains(
+            "sealed Outcome Accepted Rejected Pending @id(unit_sealed_outcome) // reader model note"
+        ),
+        "{jdl}"
+    );
+
+    let first = snapshot_tree(&root);
+    let rerun = jails_cmd(&root, None)
+        .args(["g", "sealed", "Outcome", "Accepted", "Rejected", "Pending"])
+        .output()
+        .unwrap();
+    assert!(rerun.status.success());
+    assert_eq!(snapshot_tree(&root), first, "identical rerun changed bytes");
+    if real_mvn_available() && real_java_supports_target_release() {
+        let path = real_path_without_mvnd();
+        let compiled = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "test"])
+            .output()
+            .unwrap();
+        assert!(
+            compiled.status.success(),
+            "canonical sealed type did not compile and test:\n{}\n{}",
+            String::from_utf8_lossy(&compiled.stdout),
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+    }
+
+    let main_path = root.join(files[0]);
+    let clean_reader_delta = fs::read_to_string(&main_path).unwrap();
+    fs::write(
+        &main_path,
+        clean_reader_delta.replace(
+            "record Pending() implements Outcome {}",
+            "record Pending(String readerValue) implements Outcome {}",
+        ),
+    )
+    .unwrap();
+    let before = snapshot_tree(&root);
+    let refused = jails_cmd(&root, None)
+        .args(["g", "sealed", "Outcome", "Accepted", "Rejected"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("overlap"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), before, "overlap wrote part of a plan");
+
+    fs::write(
+        &main_path,
+        clean_reader_delta
+            .replace("\n    // sealed-reader-edit-0\n", "\n")
+            .replace("{\n\n\n    /**", "{\n\n    /**"),
+    )
+    .unwrap();
+    let test_path = root.join(files[1]);
+    let test = fs::read_to_string(&test_path).unwrap();
+    fs::write(
+        &test_path,
+        test.replace("\n    // sealed-reader-edit-1\n", "\n")
+            .replace("{\n\n\n    private", "{\n\n    private"),
+    )
+    .unwrap();
+    let destroyed = jails_cmd(&root, None)
+        .args(["destroy", "sealed", "Outcome", "--force"])
+        .output()
+        .unwrap();
+    assert!(
+        destroyed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&destroyed.stderr)
+    );
+    assert!(files.iter().all(|relative| !root.join(relative).exists()));
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn canonical_factory_tracks_entity_fields_without_owning_the_record() {
+    let root = temp_dir("canonical-factory-loop");
+    write_plain_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+
+    let record_output = jails_cmd(&root, None)
+        .args(["g", "record", "Note", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(
+        record_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&record_output.stderr)
+    );
+    let jdl_path = root.join(".jails/model.jdl");
+    let jdl = fs::read_to_string(&jdl_path).unwrap();
+    fs::write(
+        &jdl_path,
+        jdl.replace(
+            "entity Note @id(ent_note) {",
+            "entity Note @id(ent_note) { // reader model wording",
+        ),
+    )
+    .unwrap();
+    let factory_output = jails_cmd(&root, None)
+        .args(["g", "factory", "Note"])
+        .output()
+        .unwrap();
+    assert!(
+        factory_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&factory_output.stderr)
+    );
+    assert!(
+        fs::read_to_string(&jdl_path)
+            .unwrap()
+            .contains("@factory { // reader model wording")
+    );
+    let factory = root.join(".jails/generated/test/java/com/example/demo/testkit/NoteFactory.java");
+    let record = root.join(".jails/generated/main/java/com/example/demo/domain/Note.java");
+    let source = fs::read_to_string(&factory).unwrap();
+    fs::write(
+        &factory,
+        source.replace(
+            "    public static NoteFactory aNote() {\n        return new NoteFactory();\n    }\n",
+            "    public static NoteFactory aNote() {\n        return new NoteFactory();\n    }\n\n    public String readerMethod() { return \"reader\"; }\n",
+        ),
+    )
+    .unwrap();
+
+    let evolved = jails_cmd(&root, None)
+        .args(["g", "field", "Note", "done:boolean"])
+        .output()
+        .unwrap();
+    assert!(
+        evolved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evolved.stderr)
+    );
+    let evolved_factory = fs::read_to_string(&factory).unwrap();
+    assert!(
+        evolved_factory.contains("readerMethod()"),
+        "{evolved_factory}"
+    );
+    assert!(
+        evolved_factory.contains("withDone(boolean value)"),
+        "{evolved_factory}"
+    );
+    assert!(
+        fs::read_to_string(&record)
+            .unwrap()
+            .contains("boolean done"),
+        "record did not evolve with its factory"
+    );
+    let stable = snapshot_tree(&root);
+    let rerun = jails_cmd(&root, None)
+        .args(["g", "factory", "Note"])
+        .output()
+        .unwrap();
+    assert!(rerun.status.success());
+    assert_eq!(snapshot_tree(&root), stable, "factory rerun changed bytes");
+
+    if real_mvn_available() && real_java_supports_target_release() {
+        let path = real_path_without_mvnd();
+        let compiled = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "test"])
+            .output()
+            .unwrap();
+        assert!(
+            compiled.status.success(),
+            "canonical factory did not compile:\n{}\n{}",
+            String::from_utf8_lossy(&compiled.stdout),
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+    }
+
+    fs::write(
+        &factory,
+        evolved_factory.replace(
+            "private boolean done = false;",
+            "private boolean done = true;",
+        ),
+    )
+    .unwrap();
+    let jdl = fs::read_to_string(&jdl_path).unwrap();
+    fs::write(&jdl_path, jdl.replace("done: boolean", "done: string")).unwrap();
+    let before = snapshot_tree(&root);
+    let refused = jails_cmd(&root, None)
+        .args(["model", "plan"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("overlap"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), before, "factory overlap wrote bytes");
+
+    fs::write(&jdl_path, jdl).unwrap();
+    fs::write(
+        &factory,
+        evolved_factory.replace(
+            "\n    public String readerMethod() { return \"reader\"; }\n",
+            "",
+        ),
+    )
+    .unwrap();
+    let destroyed = jails_cmd(&root, None)
+        .args(["destroy", "factory", "Note", "--force"])
+        .output()
+        .unwrap();
+    assert!(
+        destroyed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&destroyed.stderr)
+    );
+    assert!(!factory.exists());
+    assert!(record.exists(), "factory destroy removed the managed ABI");
+    let jdl = fs::read_to_string(jdl_path).unwrap();
+    assert!(!jdl.contains("@factory"), "{jdl}");
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn canonical_strategy_evolves_all_implementation_boundaries_in_one_plan() {
+    let root = temp_dir("canonical-strategy-loop");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+    for command in [
+        ["g", "record", "Post", "title:string!"].as_slice(),
+        ["g", "record", "Tag", "value:string!"].as_slice(),
+        ["g", "record", "Other", "name:string!"].as_slice(),
+        [
+            "g", "strategy", "PostRule", "Featured", "Standard", "--on", "Post", "--yields", "Tag",
+        ]
+        .as_slice(),
+    ] {
+        let output = jails_cmd(&root, None).args(command).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let jdl_path = root.join(".jails/model.jdl");
+    let jdl = fs::read_to_string(&jdl_path).unwrap();
+    fs::write(
+        &jdl_path,
+        jdl.replace(
+            " @on(Post) @yields(Tag)\n",
+            " @on(Post) @yields(Tag) // reader strategy wording\n",
+        ),
+    )
+    .unwrap();
+    let managed = root.join(".jails/generated");
+    let existing = [
+        managed.join("main/java/com/example/demo/domain/PostRule.java"),
+        managed.join("main/java/com/example/demo/service/PostRuleEvaluator.java"),
+        managed.join("main/java/com/example/demo/service/FeaturedPostRule.java"),
+        managed.join("main/java/com/example/demo/service/StandardPostRule.java"),
+        managed.join("test/java/com/example/demo/service/FeaturedPostRuleTest.java"),
+        managed.join("test/java/com/example/demo/service/StandardPostRuleTest.java"),
+    ];
+    for (index, path) in existing.iter().enumerate() {
+        let source = fs::read_to_string(path).unwrap();
+        let split = source.rfind("\n}").unwrap();
+        fs::write(
+            path,
+            format!(
+                "{}\n\n    // strategy-reader-edit-{index}{}",
+                &source[..split],
+                &source[split..]
+            ),
+        )
+        .unwrap();
+    }
+
+    let evolved = jails_cmd(&root, None)
+        .args([
+            "g", "strategy", "PostRule", "Featured", "Standard", "Premium", "--on", "Post",
+            "--yields", "Tag",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        evolved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evolved.stderr)
+    );
+    for (index, path) in existing.iter().enumerate() {
+        assert!(
+            fs::read_to_string(path)
+                .unwrap()
+                .contains(&format!("strategy-reader-edit-{index}")),
+            "reader edit was lost from {}",
+            path.display()
+        );
+    }
+    let premium = [
+        managed.join("main/java/com/example/demo/service/PremiumPostRule.java"),
+        managed.join("test/java/com/example/demo/service/PremiumPostRuleTest.java"),
+    ];
+    assert!(premium.iter().all(|path| path.is_file()));
+    assert!(
+        fs::read_to_string(&jdl_path)
+            .unwrap()
+            .contains("@yields(Tag) // reader strategy wording")
+    );
+
+    let port = &existing[0];
+    let clean_port = fs::read_to_string(port).unwrap();
+    fs::write(
+        port,
+        clean_port.replace("evaluate(Post value)", "evaluate(Post readerOwnedValue)"),
+    )
+    .unwrap();
+    let before = snapshot_tree(&root);
+    let refused = jails_cmd(&root, None)
+        .args([
+            "g", "strategy", "PostRule", "Featured", "Standard", "Premium", "--on", "Other",
+            "--yields", "Tag",
+        ])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("overlap"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), before, "strategy overlap wrote bytes");
+
+    fs::write(port, clean_port).unwrap();
+    let changed = jails_cmd(&root, None)
+        .args([
+            "g", "strategy", "PostRule", "Featured", "Standard", "Premium", "--on", "Other",
+            "--yields", "Tag",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        changed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&changed.stderr)
+    );
+    assert!(
+        fs::read_to_string(port)
+            .unwrap()
+            .contains("evaluate(Other value)")
+    );
+    for (index, path) in existing.iter().enumerate() {
+        assert!(
+            fs::read_to_string(path)
+                .unwrap()
+                .contains(&format!("strategy-reader-edit-{index}")),
+            "signature evolution lost {}",
+            path.display()
+        );
+    }
+
+    let before_ejection = snapshot_tree(&root);
+    let refused_ejection = jails_cmd(&root, None)
+        .args(["model", "eject", "art_unit_strategy_post_rule_abi"])
+        .output()
+        .unwrap();
+    assert!(!refused_ejection.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused_ejection.stderr).contains("managed ABI"),
+        "{}",
+        String::from_utf8_lossy(&refused_ejection.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), before_ejection);
+
+    let stable = snapshot_tree(&root);
+    let rerun = jails_cmd(&root, None)
+        .args([
+            "g", "strategy", "PostRule", "Featured", "Standard", "Premium", "--on", "Other",
+            "--yields", "Tag",
+        ])
+        .output()
+        .unwrap();
+    assert!(rerun.status.success());
+    assert_eq!(snapshot_tree(&root), stable, "strategy rerun changed bytes");
+
+    if real_mvn_available() && real_java_supports_target_release() {
+        let path = real_path_without_mvnd();
+        let compiled = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "test"])
+            .output()
+            .unwrap();
+        assert!(
+            compiled.status.success(),
+            "canonical strategy did not compile:\n{}\n{}",
+            String::from_utf8_lossy(&compiled.stdout),
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+    }
+
+    for (index, path) in existing.iter().enumerate() {
+        let source = fs::read_to_string(path).unwrap();
+        fs::write(
+            path,
+            source.replace(&format!("\n\n    // strategy-reader-edit-{index}"), ""),
+        )
+        .unwrap();
+    }
+    let destroyed = jails_cmd(&root, None)
+        .args(["destroy", "strategy", "PostRule", "--force"])
+        .output()
+        .unwrap();
+    assert!(
+        destroyed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&destroyed.stderr)
+    );
+    assert!(existing.iter().chain(&premium).all(|path| !path.exists()));
+    assert!(
+        root.join(".jails/generated/main/java/com/example/demo/domain/Post.java")
+            .is_file(),
+        "strategy destroy removed an input ABI"
+    );
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn canonical_controller_merges_both_files_and_refuses_overlapping_route_edits() {
+    let root = temp_dir("canonical-controller-loop");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+    for command in [
+        ["g", "record", "Request", "value:string!"].as_slice(),
+        ["g", "record", "Response", "value:string!"].as_slice(),
+        [
+            "g",
+            "controller",
+            "Verify",
+            "--method",
+            "post",
+            "--on",
+            "Request",
+            "--returns",
+            "Response",
+            "--path",
+            "/v1/verify",
+            "--consumes",
+            "json",
+        ]
+        .as_slice(),
+    ] {
+        let output = jails_cmd(&root, None).args(command).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let jdl_path = root.join(".jails/model.jdl");
+    let jdl = fs::read_to_string(&jdl_path).unwrap();
+    fs::write(
+        &jdl_path,
+        jdl.replace(
+            " @consumes(json)\n",
+            " @consumes(json) // reader route wording\n",
+        ),
+    )
+    .unwrap();
+    let files = [
+        root.join(".jails/generated/main/java/com/example/demo/web/VerifyController.java"),
+        root.join(".jails/generated/test/java/com/example/demo/web/VerifyControllerTest.java"),
+    ];
+    for (index, path) in files.iter().enumerate() {
+        let source = fs::read_to_string(path).unwrap();
+        let split = source.rfind("\n}").unwrap();
+        fs::write(
+            path,
+            format!(
+                "{}\n\n    // controller-reader-edit-{index}{}",
+                &source[..split],
+                &source[split..]
+            ),
+        )
+        .unwrap();
+    }
+
+    let evolve = [
+        "g",
+        "controller",
+        "Verify",
+        "--method",
+        "put",
+        "--on",
+        "Request",
+        "--returns",
+        "Response",
+        "--path",
+        "/v2/verify",
+        "--consumes",
+        "json",
+    ];
+    let evolved = jails_cmd(&root, None).args(evolve).output().unwrap();
+    assert!(
+        evolved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evolved.stderr)
+    );
+    for (index, path) in files.iter().enumerate() {
+        let source = fs::read_to_string(path).unwrap();
+        assert!(source.contains(&format!("controller-reader-edit-{index}")));
+        assert!(
+            source.contains("/v2/verify"),
+            "{}: {source}",
+            path.display()
+        );
+    }
+    assert!(
+        fs::read_to_string(&files[0])
+            .unwrap()
+            .contains("@PutMapping")
+    );
+    assert!(
+        fs::read_to_string(&jdl_path)
+            .unwrap()
+            .contains("@consumes(json) // reader route wording")
+    );
+
+    let stable = snapshot_tree(&root);
+    let rerun = jails_cmd(&root, None).args(evolve).output().unwrap();
+    assert!(rerun.status.success());
+    assert_eq!(
+        snapshot_tree(&root),
+        stable,
+        "controller rerun changed bytes"
+    );
+
+    let clean_controller = fs::read_to_string(&files[0]).unwrap();
+    fs::write(
+        &files[0],
+        clean_controller.replace("@PutMapping(path =", "@DeleteMapping(path ="),
+    )
+    .unwrap();
+    let before = snapshot_tree(&root);
+    let refused = jails_cmd(&root, None)
+        .args([
+            "g",
+            "controller",
+            "Verify",
+            "--method",
+            "patch",
+            "--on",
+            "Request",
+            "--returns",
+            "Response",
+            "--path",
+            "/v3/verify",
+            "--consumes",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("overlap"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert_eq!(
+        snapshot_tree(&root),
+        before,
+        "controller overlap wrote bytes"
+    );
+    fs::write(&files[0], clean_controller).unwrap();
+
+    let before_body_refusal = snapshot_tree(&root);
+    let bodyless = jails_cmd(&root, None)
+        .args([
+            "g",
+            "controller",
+            "Verify",
+            "--method",
+            "get",
+            "--on",
+            "Request",
+        ])
+        .output()
+        .unwrap();
+    assert!(!bodyless.status.success());
+    assert!(
+        String::from_utf8_lossy(&bodyless.stderr).contains("does not carry"),
+        "{}",
+        String::from_utf8_lossy(&bodyless.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), before_body_refusal);
+
+    if real_mvn_available() && real_java_supports_target_release() {
+        let path = real_path_without_mvnd();
+        let compiled = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "test"])
+            .output()
+            .unwrap();
+        assert!(
+            compiled.status.success(),
+            "canonical controller did not compile:\n{}\n{}",
+            String::from_utf8_lossy(&compiled.stdout),
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+    }
+
+    for (index, path) in files.iter().enumerate() {
+        let source = fs::read_to_string(path).unwrap();
+        fs::write(
+            path,
+            source.replace(&format!("\n\n    // controller-reader-edit-{index}"), ""),
+        )
+        .unwrap();
+    }
+    let destroyed = jails_cmd(&root, None)
+        .args(["destroy", "controller", "Verify", "--force"])
+        .output()
+        .unwrap();
+    assert!(
+        destroyed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&destroyed.stderr)
+    );
+    assert!(files.iter().all(|path| !path.exists()));
+    assert!(
+        root.join(".jails/generated/main/java/com/example/demo/domain/Request.java")
+            .exists()
+    );
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn canonical_controller_ejection_transfers_the_whole_http_adapter_boundary() {
+    let root = temp_dir("canonical-controller-ejection");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+    let generated = jails_cmd(&root, None)
+        .args(["g", "controller", "Health", "--path", "/health"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let managed = [
+        root.join(".jails/generated/main/java/com/example/demo/web/HealthController.java"),
+        root.join(".jails/generated/test/java/com/example/demo/web/HealthControllerTest.java"),
+    ];
+    for (index, path) in managed.iter().enumerate() {
+        let source = fs::read_to_string(path).unwrap();
+        let split = source.rfind("\n}").unwrap();
+        fs::write(
+            path,
+            format!(
+                "{}\n\n    // ejected-controller-edit-{index}{}",
+                &source[..split],
+                &source[split..]
+            ),
+        )
+        .unwrap();
+    }
+
+    let ejected = jails_cmd(&root, None)
+        .args(["model", "eject", "art_unit_controller_health_http"])
+        .output()
+        .unwrap();
+    assert!(
+        ejected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ejected.stderr)
+    );
+    let reader = [
+        root.join("src/main/java/com/example/demo/web/HealthController.java"),
+        root.join("src/test/java/com/example/demo/web/HealthControllerTest.java"),
+    ];
+    assert!(managed.iter().all(|path| !path.exists()));
+    for (index, path) in reader.iter().enumerate() {
+        assert!(
+            fs::read_to_string(path)
+                .unwrap()
+                .contains(&format!("ejected-controller-edit-{index}"))
+        );
+    }
+    let exact = reader
+        .iter()
+        .map(|path| fs::read(path).unwrap())
+        .collect::<Vec<_>>();
+
+    let evolved = jails_cmd(&root, None)
+        .args(["g", "controller", "Health", "--path", "/healthz"])
+        .output()
+        .unwrap();
+    assert!(
+        evolved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evolved.stderr)
+    );
+    for (index, path) in reader.iter().enumerate() {
+        assert_eq!(fs::read(path).unwrap(), exact[index]);
+    }
+    assert!(
+        fs::read_to_string(root.join(".jails/model.jdl"))
+            .unwrap()
+            .contains("@path(/healthz)")
+    );
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn canonical_loadtest_merges_every_project_file_and_refuses_route_overlap_atomically() {
+    let root = temp_dir("canonical-loadtest-loop");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+    for arguments in [
+        ["g", "controller", "Health", "--path", "/health"].as_slice(),
+        ["add", "loadtest", "--no-start"].as_slice(),
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let load_tests = root.join("load-tests");
+    let api_path = load_tests.join("api.js");
+    let readme_path = load_tests.join("README.md");
+    let token_path = load_tests.join("token-cache.js");
+    let initial_api = fs::read_to_string(&api_path).unwrap();
+    assert!(
+        initial_api
+            .contains("{ method: \"GET\", path: \"/health\", handler: \"HealthController#get\" }")
+    );
+    for (path, edit) in [
+        (&readme_path, "\nReader load-test notes.\n"),
+        (&token_path, "\nexport const readerTokenHook = true;\n"),
+    ] {
+        let mut source = fs::read_to_string(path).unwrap();
+        source.push_str(edit);
+        fs::write(path, source).unwrap();
+    }
+
+    let evolved = jails_cmd(&root, None)
+        .args(["g", "controller", "Health", "--path", "/healthz"])
+        .output()
+        .unwrap();
+    assert!(
+        evolved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evolved.stderr)
+    );
+    let clean_api = fs::read_to_string(&api_path).unwrap();
+    assert!(clean_api.contains("path: \"/healthz\""), "{clean_api}");
+    assert!(
+        fs::read_to_string(&readme_path)
+            .unwrap()
+            .contains("Reader load-test notes.")
+    );
+    assert!(
+        fs::read_to_string(&token_path)
+            .unwrap()
+            .contains("readerTokenHook")
+    );
+
+    let stable = snapshot_tree(&root);
+    let rerun = jails_cmd(&root, None)
+        .args(["g", "controller", "Health", "--path", "/healthz"])
+        .output()
+        .unwrap();
+    assert!(rerun.status.success());
+    assert_eq!(snapshot_tree(&root), stable);
+
+    fs::write(
+        &api_path,
+        clean_api.replace("path: \"/healthz\"", "path: \"/reader-health\""),
+    )
+    .unwrap();
+    let before = snapshot_tree(&root);
+    let refused = jails_cmd(&root, None)
+        .args(["g", "controller", "Health", "--path", "/health-next"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("overlap"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), before, "loadtest refusal wrote files");
+
+    fs::write(&api_path, clean_api).unwrap();
+    let before_remove = snapshot_tree(&root);
+    let edited_remove = jails_cmd(&root, None)
+        .args(["remove", "loadtest"])
+        .output()
+        .unwrap();
+    assert!(!edited_remove.status.success());
+    assert!(
+        String::from_utf8_lossy(&edited_remove.stderr).contains("edited by you"),
+        "{}",
+        String::from_utf8_lossy(&edited_remove.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), before_remove);
+
+    let clean_readme = include_str!("../golden/cap-loadtest/load-tests/README.md");
+    let clean_token = include_str!("../golden/cap-loadtest/load-tests/token-cache.js");
+    fs::write(&readme_path, clean_readme).unwrap();
+    fs::write(&token_path, clean_token).unwrap();
+    let removed = jails_cmd(&root, None)
+        .args(["remove", "loadtest"])
+        .output()
+        .unwrap();
+    assert!(
+        removed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    assert!(!load_tests.exists() || snapshot_tree(&load_tests).is_empty());
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn canonical_repository_is_a_managed_abi_facet_of_the_record() {
+    let root = temp_dir("canonical-repository-loop");
+    write_plain_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+
+    let record_output = jails_cmd(&root, None)
+        .args(["g", "record", "Note", "id:int@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(
+        record_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&record_output.stderr)
+    );
+    let jdl_path = root.join(".jails/model.jdl");
+    let jdl = fs::read_to_string(&jdl_path).unwrap();
+    fs::write(
+        &jdl_path,
+        jdl.replace(
+            "entity Note @id(ent_note) {",
+            "entity Note @id(ent_note) { // reader model wording",
+        ),
+    )
+    .unwrap();
+
+    let generated = jails_cmd(&root, None)
+        .args(["g", "repo", "Note"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    assert!(
+        fs::read_to_string(&jdl_path)
+            .unwrap()
+            .contains("@repository { // reader model wording")
+    );
+    let repository =
+        root.join(".jails/generated/main/java/com/example/demo/repository/NoteRepository.java");
+    let record = root.join(".jails/generated/main/java/com/example/demo/domain/Note.java");
+    let source = fs::read_to_string(&repository).unwrap();
+    let reader_source = source.replace(
+        "\n}\n",
+        "\n\n    default String readerMethod() { return \"reader\"; }\n}\n",
+    );
+    fs::write(&repository, &reader_source).unwrap();
+
+    let evolved = jails_cmd(&root, None)
+        .args(["g", "field", "Note", "done:boolean"])
+        .output()
+        .unwrap();
+    assert!(
+        evolved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evolved.stderr)
+    );
+    let evolved_repository = fs::read_to_string(&repository).unwrap();
+    assert!(evolved_repository.contains("readerMethod()"));
+    assert!(
+        fs::read_to_string(&record)
+            .unwrap()
+            .contains("boolean done"),
+        "record did not evolve alongside its repository ABI"
+    );
+    let stable = snapshot_tree(&root);
+    let rerun = jails_cmd(&root, None)
+        .args(["g", "repo", "Note"])
+        .output()
+        .unwrap();
+    assert!(rerun.status.success());
+    assert_eq!(
+        snapshot_tree(&root),
+        stable,
+        "repository rerun changed bytes"
+    );
+
+    fs::write(
+        &repository,
+        evolved_repository.replace("findById(int id)", "findById(int readerOwnedId)"),
+    )
+    .unwrap();
+    let before = snapshot_tree(&root);
+    let refused = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "type",
+            "Note",
+            "id",
+            "--to",
+            "long",
+            "--strategy",
+            "safe",
+        ])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("overlap"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert_eq!(
+        snapshot_tree(&root),
+        before,
+        "repository overlap wrote bytes"
+    );
+
+    fs::write(&repository, &evolved_repository).unwrap();
+    let changed = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "type",
+            "Note",
+            "id",
+            "--to",
+            "long",
+            "--strategy",
+            "safe",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        changed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&changed.stderr)
+    );
+    let changed_repository = fs::read_to_string(&repository).unwrap();
+    assert!(changed_repository.contains("findById(long id)"));
+    assert!(changed_repository.contains("readerMethod()"));
+
+    let before_ejection = snapshot_tree(&root);
+    let refused_ejection = jails_cmd(&root, None)
+        .args(["model", "eject", "art_ent_note_repository"])
+        .output()
+        .unwrap();
+    assert!(!refused_ejection.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused_ejection.stderr).contains("managed ABI"),
+        "{}",
+        String::from_utf8_lossy(&refused_ejection.stderr)
+    );
+    assert_eq!(
+        snapshot_tree(&root),
+        before_ejection,
+        "repository ABI ejection wrote bytes"
+    );
+
+    fs::write(
+        &repository,
+        changed_repository.replace(
+            "\n    default String readerMethod() { return \"reader\"; }\n",
+            "",
+        ),
+    )
+    .unwrap();
+    let destroyed = jails_cmd(&root, None)
+        .args(["destroy", "repo", "Note", "--force"])
+        .output()
+        .unwrap();
+    assert!(
+        destroyed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&destroyed.stderr)
+    );
+    assert!(!repository.exists());
+    assert!(record.exists(), "repository destroy removed the record ABI");
+    let jdl = fs::read_to_string(jdl_path).unwrap();
+    assert!(!jdl.contains("@repository"), "{jdl}");
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn canonical_dto_evolves_three_merge_managed_abi_files_without_losing_reader_edits() {
+    let root = temp_dir("canonical-dto-loop");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+
+    for command in [
+        [
+            "g",
+            "record",
+            "Task",
+            "id:int@pk",
+            "title:string!",
+            "note:string?",
+        ]
+        .as_slice(),
+        ["g", "dto", "Task"].as_slice(),
+    ] {
+        let output = jails_cmd(&root, None).args(command).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let generated = root.join(".jails/generated");
+    let request = generated.join("main/java/com/example/demo/web/TaskRequest.java");
+    let response = generated.join("main/java/com/example/demo/web/TaskResponse.java");
+    let test = generated.join("test/java/com/example/demo/web/TaskDtoTest.java");
+    let record = generated.join("main/java/com/example/demo/domain/Task.java");
+    for path in [&request, &response, &test] {
+        assert!(path.is_file(), "missing {}", path.display());
+    }
+    assert!(
+        fs::read_to_string(root.join(".jails/model.jdl"))
+            .unwrap()
+            .contains("entity Task @id(ent_task) @dto {")
+    );
+    assert!(
+        fs::read_to_string(root.join("pom.xml"))
+            .unwrap()
+            .contains("spring-boot-starter-validation")
+    );
+
+    for (path, method) in [
+        (
+            &request,
+            "    public String readerRequestMethod() { return title; }",
+        ),
+        (
+            &response,
+            "    public String readerResponseMethod() { return title; }",
+        ),
+        (&test, "    private static void readerTestHelper() {}"),
+    ] {
+        let source = fs::read_to_string(path).unwrap();
+        let split = source.rfind("\n}").unwrap();
+        fs::write(
+            path,
+            format!("{}\n\n{method}{}", &source[..split], &source[split..]),
+        )
+        .unwrap();
+    }
+
+    let evolved = jails_cmd(&root, None)
+        .args(["g", "field", "Task", "done:boolean"])
+        .output()
+        .unwrap();
+    assert!(
+        evolved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evolved.stderr)
+    );
+    for (path, reader_edit) in [
+        (&request, "readerRequestMethod"),
+        (&response, "readerResponseMethod"),
+        (&test, "readerTestHelper"),
+    ] {
+        let source = fs::read_to_string(path).unwrap();
+        assert!(source.contains(reader_edit), "{source}");
+        assert!(source.contains("done"), "{source}");
+    }
+    let request_with_reader_edits = fs::read_to_string(&request).unwrap();
+
+    let stable = snapshot_tree(&root);
+    let rerun = jails_cmd(&root, None)
+        .args(["g", "dto", "Task"])
+        .output()
+        .unwrap();
+    assert!(rerun.status.success());
+    assert_eq!(snapshot_tree(&root), stable, "DTO rerun changed bytes");
+
+    fs::write(
+        &request,
+        request_with_reader_edits.replace("int id", "int readerOwnedId"),
+    )
+    .unwrap();
+    let before = snapshot_tree(&root);
+    let refused = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "type",
+            "Task",
+            "id",
+            "--to",
+            "long",
+            "--strategy",
+            "safe",
+        ])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("overlap"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), before, "DTO overlap wrote bytes");
+
+    fs::write(&request, &request_with_reader_edits).unwrap();
+    let changed = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "type",
+            "Task",
+            "id",
+            "--to",
+            "long",
+            "--strategy",
+            "safe",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        changed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&changed.stderr)
+    );
+    let changed_request = fs::read_to_string(&request).unwrap();
+    assert!(changed_request.contains("long id"), "{changed_request}");
+    assert!(
+        changed_request.contains("readerRequestMethod"),
+        "{changed_request}"
+    );
+
+    let before_ejection = snapshot_tree(&root);
+    let refused_ejection = jails_cmd(&root, None)
+        .args(["model", "eject", "art_ent_task_dto_request"])
+        .output()
+        .unwrap();
+    assert!(!refused_ejection.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused_ejection.stderr).contains("managed ABI"),
+        "{}",
+        String::from_utf8_lossy(&refused_ejection.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), before_ejection);
+
+    if real_mvn_available() && real_java_supports_target_release() {
+        let path = real_path_without_mvnd();
+        let verified = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "test"])
+            .output()
+            .unwrap();
+        assert!(
+            verified.status.success(),
+            "canonical DTO sources did not compile and test:\n{}\n{}",
+            String::from_utf8_lossy(&verified.stdout),
+            String::from_utf8_lossy(&verified.stderr)
+        );
+    }
+
+    fs::write(
+        &request,
+        changed_request.replace(
+            "\n    public String readerRequestMethod() { return title; }\n",
+            "",
+        ),
+    )
+    .unwrap();
+    fs::write(
+        &response,
+        fs::read_to_string(&response).unwrap().replace(
+            "\n    public String readerResponseMethod() { return title; }\n",
+            "",
+        ),
+    )
+    .unwrap();
+    fs::write(
+        &test,
+        fs::read_to_string(&test)
+            .unwrap()
+            .replace("\n    private static void readerTestHelper() {}\n", ""),
+    )
+    .unwrap();
+    let destroyed = jails_cmd(&root, None)
+        .args(["destroy", "dto", "Task", "--force"])
+        .output()
+        .unwrap();
+    assert!(
+        destroyed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&destroyed.stderr)
+    );
+    assert!(!request.exists());
+    assert!(!response.exists());
+    assert!(!test.exists());
+    assert!(record.exists(), "DTO destroy removed its domain record");
+    assert!(
+        !fs::read_to_string(root.join(".jails/model.jdl"))
+            .unwrap()
+            .contains("@dto")
+    );
+
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn canonical_source_unit_destroy_removes_only_the_selected_artifacts() {
+    let root = temp_dir("canonical-source-unit-destroy");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+    let generated = jails_cmd(&root, None)
+        .args(["g", "service", "BillingService"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let destroyed = jails_cmd(&root, None)
+        .args(["destroy", "service", "BillingService", "--force"])
+        .output()
+        .unwrap();
+    assert!(
+        destroyed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&destroyed.stderr)
+    );
+    assert!(
+        !root
+            .join(".jails/generated/main/java/com/example/demo/service/BillingService.java")
+            .exists()
+    );
+    assert!(
+        !root
+            .join(".jails/generated/test/java/com/example/demo/service/BillingServiceTest.java")
+            .exists()
+    );
+
+    let generated = jails_cmd(&root, None)
+        .args(["g", "integration-test", "CheckoutIT"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    assert!(
+        fs::read_to_string(root.join("pom.xml"))
+            .unwrap()
+            .contains("maven-failsafe-plugin")
+    );
+    let destroyed = jails_cmd(&root, None)
+        .args(["destroy", "integration-test", "CheckoutIT", "--force"])
+        .output()
+        .unwrap();
+    assert!(
+        destroyed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&destroyed.stderr)
+    );
+    assert!(
+        !root
+            .join(".jails/generated/test/java/com/example/demo/CheckoutIT.java")
+            .exists()
+    );
+    assert!(
+        !fs::read_to_string(root.join("pom.xml"))
+            .unwrap()
+            .contains("maven-failsafe-plugin")
+    );
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
+fn legacy_record_import_adopts_live_bytes_then_joins_the_iterative_merge_loop() {
+    let root = temp_dir("model-import-record");
+    write_spring_fixture(&root);
+    let generated = jails_cmd(&root, None)
+        .args(["g", "record", "Task", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let reader = root.join("src/main/java/com/example/demo/domain/Task.java");
+    let original = fs::read_to_string(&reader).unwrap();
+    let split = original.rfind("\n}").unwrap();
+    let edited = format!(
+        "{}\n\n    public String handWritten() {{ return \"reader\"; }}{}",
+        &original[..split],
+        &original[split..]
+    );
+    fs::write(&reader, &edited).unwrap();
+    let ledger_before = fs::read(root.join(".jails/ledger.toml")).unwrap();
+
+    let imported = jails_cmd(&root, None)
+        .args(["model", "import"])
+        .output()
+        .unwrap();
+    assert!(
+        imported.status.success(),
+        "{}",
+        String::from_utf8_lossy(&imported.stderr)
+    );
+    let managed = root.join(".jails/generated/main/java/com/example/demo/domain/Task.java");
+    assert!(!reader.exists(), "import left a duplicate reader type");
+    let adopted = fs::read_to_string(&managed).unwrap();
+    assert!(
+        adopted.contains("handWritten()"),
+        "import lost the reader delta while translating templates: {adopted}"
+    );
+    assert!(
+        adopted.contains("Generated by jails from art_ent_task_record"),
+        "import did not establish the canonical template: {adopted}"
+    );
+    assert_eq!(
+        fs::read(root.join(".jails/ledger.toml")).unwrap(),
+        ledger_before,
+        "the one-way importer mutated its legacy evidence"
+    );
+    assert!(root.join(".jails/model.jdl").is_file());
+    assert!(!root.join(".jails/model.toml").exists());
+
+    let evolved = jails_cmd(&root, None)
+        .args(["g", "field", "Task", "done:boolean"])
+        .output()
+        .unwrap();
+    assert!(
+        evolved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evolved.stderr)
+    );
+    let after = fs::read_to_string(&managed).unwrap();
+    assert!(after.contains("boolean done"), "{after}");
+    assert!(after.contains("handWritten()"), "{after}");
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+}
+
+#[test]
+fn legacy_enum_import_adopts_the_abi_and_converter_then_keeps_both_in_the_merge_loop() {
+    let root = temp_dir("model-import-enum");
+    write_spring_fixture(&root);
+    let generated = jails_cmd(&root, None)
+        .args(["g", "enum", "Status", "OPEN", "IN_PROGRESS=in_progress"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let reader_enum = root.join("src/main/java/com/example/demo/domain/Status.java");
+    let reader_converter = root.join("src/main/java/com/example/demo/web/StatusConverter.java");
+    for (path, method) in [
+        (
+            &reader_enum,
+            "public boolean handWritten() { return true; }",
+        ),
+        (
+            &reader_converter,
+            "public String handWritten() { return \"converter\"; }",
+        ),
+    ] {
+        let source = fs::read_to_string(path).unwrap();
+        let split = source.rfind("\n}").unwrap();
+        fs::write(
+            path,
+            format!("{}\n\n    {method}{}", &source[..split], &source[split..]),
+        )
+        .unwrap();
+    }
+
+    let imported = jails_cmd(&root, None)
+        .args(["model", "import"])
+        .output()
+        .unwrap();
+    assert!(
+        imported.status.success(),
+        "{}",
+        String::from_utf8_lossy(&imported.stderr)
+    );
+    let managed_enum = root.join(".jails/generated/main/java/com/example/demo/domain/Status.java");
+    let managed_converter =
+        root.join(".jails/generated/main/java/com/example/demo/web/StatusConverter.java");
+    assert!(!reader_enum.exists());
+    assert!(!reader_converter.exists());
+    assert!(
+        fs::read_to_string(&managed_enum)
+            .unwrap()
+            .contains("handWritten()")
+    );
+    assert!(
+        fs::read_to_string(&managed_converter)
+            .unwrap()
+            .contains("handWritten()")
+    );
+
+    let model_path = root.join(".jails/model.jdl");
+    let model = fs::read_to_string(&model_path).unwrap();
+    fs::write(
+        &model_path,
+        model.replace(
+            "  IN_PROGRESS=in_progress\n}",
+            "  IN_PROGRESS=in_progress\n  CLOSED=closed\n}",
+        ),
+    )
+    .unwrap();
+    let synced = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    let enum_source = fs::read_to_string(&managed_enum).unwrap();
+    let converter_source = fs::read_to_string(&managed_converter).unwrap();
+    assert!(enum_source.contains("CLOSED(\"closed\")"), "{enum_source}");
+    assert!(enum_source.contains("handWritten()"), "{enum_source}");
+    assert!(
+        converter_source.contains("handWritten()"),
+        "{converter_source}"
+    );
+}
+
+#[test]
+fn legacy_import_plan_refuses_a_later_reader_edit_before_any_cutover_write() {
+    let root = temp_dir("model-import-stale");
+    write_spring_fixture(&root);
+    let generated = jails_cmd(&root, None)
+        .args(["g", "record", "Task", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success());
+    let reader = root.join("src/main/java/com/example/demo/domain/Task.java");
+    let bundle = root.join("import-plan.json");
+    let planned = jails_cmd(&root, None)
+        .args(["model", "import", "--plan-out"])
+        .arg(&bundle)
+        .output()
+        .unwrap();
+    assert!(
+        planned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
+    let mut changed = fs::read_to_string(&reader).unwrap();
+    changed.push_str("\n// changed after review\n");
+    fs::write(&reader, &changed).unwrap();
+    let before = snapshot_tree(&root);
+
+    let refused = jails_cmd(&root, None)
+        .args(["model", "apply", "--bundle"])
+        .arg(&bundle)
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8(refused.stderr).unwrap();
+    assert!(stderr.contains("stale exact plan"), "{stderr}");
+    let without_executor_lock = |mut tree: Vec<(PathBuf, Vec<u8>)>| {
+        tree.retain(|(path, _)| !path.ends_with(".jails/apply.lock"));
+        tree
+    };
+    assert_eq!(
+        without_executor_lock(snapshot_tree(&root)),
+        without_executor_lock(before),
+        "stale import wrote part of cutover"
+    );
+    assert!(!root.join(".jails/model.jdl").exists());
+    assert!(!root.join(".jails/model.toml").exists());
+    assert!(!root.join(".jails/generated").exists());
+}
+
+#[test]
+fn model_check_links_the_real_model_through_the_binary() {
+    let root = model_project("model-check", MODEL);
+    let before = snapshot_tree(&root);
+    let output = jails_cmd(&root, None)
+        .args(["model", "check"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("model valid: .jails/model.toml"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("5 nodes, 1 entities, 1 operations"),
+        "{stdout}"
+    );
+    assert_eq!(
+        snapshot_tree(&root),
+        before,
+        "model check must be read-only"
+    );
+}
+
+#[test]
+fn jdl_is_compiled_directly_as_the_single_authoring_source() {
+    let root = jdl_project(
+        "model-jdl",
+        r#"
+application Notes @id(project_notes)
+package com.example.notes
+java 26
+dialect postgresql
+
+entity Task @id(ent_task) {
+  title: string! @id(fld_task_title)
+  done: boolean?
+}
+
+enum Status {
+  OPEN
+  CLOSED
+}
+"#,
+    );
+    let checked = jails_cmd(&root, None)
+        .args(["model", "check"])
+        .output()
+        .unwrap();
+    assert!(
+        checked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&checked.stdout).contains(".jails/model.jdl"),
+        "{}",
+        String::from_utf8_lossy(&checked.stdout)
+    );
+
+    let synced = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    let task = fs::read_to_string(
+        root.join(".jails/generated/main/java/com/example/notes/domain/Task.java"),
+    )
+    .unwrap();
+    assert!(task.contains("String title"), "{task}");
+    assert!(task.contains("Optional<Boolean> done"), "{task}");
+    assert!(
+        root.join(".jails/generated/main/java/com/example/notes/domain/Status.java")
+            .is_file()
+    );
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+}
+
+#[test]
+fn two_editable_model_sources_refuse_instead_of_choosing_an_authority() {
+    let root = jdl_project(
+        "model-two-sources",
+        "application Notes\npackage com.example.notes\njava 26\ndialect postgresql\n",
+    );
+    fs::write(root.join(".jails/model.toml"), EMPTY_MODEL).unwrap();
+    let before = snapshot_tree(&root);
+    let refused = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8(refused.stderr).unwrap();
+    assert!(
+        stderr.contains("two editable application models"),
+        "{stderr}"
+    );
+    assert_eq!(snapshot_tree(&root), before);
+}
+
+#[test]
+fn jdl_destroy_removes_nested_operations_and_entities_without_legacy_state() {
+    let root = jdl_project(
+        "model-jdl-destroy",
+        "application Notes\npackage com.example.notes\njava 26\ndialect postgresql\n",
+    );
+    for arguments in [
+        vec!["g", "record", "Task", "title:string!"],
+        vec!["g", "enum", "Status", "OPEN", "CLOSED"],
+        vec!["g", "query", "OpenTasks", "title", "--on", "Task"],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let destroyed_query = jails_cmd(&root, None)
+        .args(["destroy", "query", "OpenTasks"])
+        .output()
+        .unwrap();
+    assert!(
+        destroyed_query.status.success(),
+        "{}",
+        String::from_utf8_lossy(&destroyed_query.stderr)
+    );
+    let source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(!source.contains("query OpenTasks"), "{source}");
+    assert!(source.contains("entity Task"), "{source}");
+
+    let destroyed_enum = jails_cmd(&root, None)
+        .args(["destroy", "enum", "Status", "--force"])
+        .output()
+        .unwrap();
+    assert!(
+        destroyed_enum.status.success(),
+        "{}",
+        String::from_utf8_lossy(&destroyed_enum.stderr)
+    );
+    let source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(!source.contains("enum Status"), "{source}");
+    assert!(source.contains("entity Task"), "{source}");
+
+    let destroyed_entity = jails_cmd(&root, None)
+        .args(["destroy", "record", "Task", "--force"])
+        .output()
+        .unwrap();
+    assert!(
+        destroyed_entity.status.success(),
+        "{}",
+        String::from_utf8_lossy(&destroyed_entity.stderr)
+    );
+    let source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(!source.contains("entity Task"), "{source}");
+    assert!(!root.join(".jails/ledger.toml").exists());
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(frozen.status.success());
+}
+
+#[test]
+fn jdl_storage_preserve_and_revive_toggle_one_entity_declaration() {
+    let root = jdl_project(
+        "model-jdl-retire-revive",
+        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+    );
+    write_spring_fixture(&root);
+    for arguments in [
+        vec![
+            "g",
+            "scaffold",
+            "Note",
+            "id:uuid@pk",
+            "title:string!(1..200)",
+        ],
+        vec!["add", "db"],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(output.status.success());
+    }
+    let migration = root.join("src/main/resources/db/migration/V001__create_note.sql");
+    let migration_before = fs::read(&migration).unwrap();
+    let record = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
+    let initial_migration =
+        fs::read_to_string(root.join("src/main/resources/db/migration/V001__create_note.sql"))
+            .unwrap();
+    assert!(
+        initial_migration.contains("check (char_length(title) between 1 and 200)"),
+        "{initial_migration}"
+    );
+
+    let retired = jails_cmd(&root, None)
+        .args(["destroy", "scaffold", "Note", "--storage", "preserve"])
+        .output()
+        .unwrap();
+    assert!(
+        retired.status.success(),
+        "{}",
+        String::from_utf8_lossy(&retired.stderr)
+    );
+    let retired_jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(retired_jdl.contains("entity Note @id(ent_note) @scaffold @inactive {"));
+    assert!(!record.exists());
+    assert_eq!(fs::read(&migration).unwrap(), migration_before);
+
+    let revived = jails_cmd(&root, None)
+        .args(["resource", "revive", "Note", "--table", "note"])
+        .output()
+        .unwrap();
+    assert!(
+        revived.status.success(),
+        "{}",
+        String::from_utf8_lossy(&revived.stderr)
+    );
+    let active_jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(active_jdl.contains("entity Note @id(ent_note) @scaffold {"));
+    assert!(!active_jdl.contains("@inactive"));
+    assert!(record.is_file());
+    assert_eq!(fs::read(&migration).unwrap(), migration_before);
+}
+
+#[test]
+fn jdl_dependencies_and_settings_edit_one_source_and_reconcile_reader_files() {
+    let root = jdl_project(
+        "model-jdl-dependency-setting",
+        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+    );
+    fs::write(
+        root.join("pom.xml"),
+        "<project>\n    <modelVersion>4.0.0</modelVersion>\n</project>\n",
+    )
+    .unwrap();
+    let properties = root.join("src/main/resources/application.properties");
+    fs::create_dir_all(properties.parent().unwrap()).unwrap();
+    fs::write(&properties, "reader.key=keep\n").unwrap();
+
+    let dependency = jails_cmd(&root, None)
+        .args([
+            "add",
+            "dependency",
+            "org.jsoup:jsoup",
+            "--version",
+            "1.18.3",
+            "--scope",
+            "test",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        dependency.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dependency.stderr)
+    );
+    let set = jails_cmd(&root, None)
+        .args(["set", "server.port=8080"])
+        .output()
+        .unwrap();
+    assert!(
+        set.status.success(),
+        "{}",
+        String::from_utf8_lossy(&set.stderr)
+    );
+    let first_jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(
+        first_jdl.contains("dependency org.jsoup:jsoup @id(dep_"),
+        "{first_jdl}"
+    );
+    assert!(
+        first_jdl.contains("@scope(test) = \"1.18.3\""),
+        "{first_jdl}"
+    );
+    assert!(
+        first_jdl.contains("setting server.port @id(set_"),
+        "{first_jdl}"
+    );
+    assert!(
+        first_jdl.contains("@target(main) = \"8080\""),
+        "{first_jdl}"
+    );
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("<groupId>org.jsoup</groupId>"), "{pom}");
+    assert!(pom.contains("<artifactId>jsoup</artifactId>"), "{pom}");
+    assert!(pom.contains("<version>1.18.3</version>"), "{pom}");
+    assert!(pom.contains("<scope>test</scope>"), "{pom}");
+    assert_eq!(
+        fs::read_to_string(&properties).unwrap(),
+        "reader.key=keep\nserver.port=8080\n"
+    );
+
+    let first_model = jails_model::parse_jdl(&first_jdl).unwrap();
+    let setting_id = first_model.settings.values().next().unwrap().id.clone();
+    let updated = jails_cmd(&root, None)
+        .args(["set", "server.port=9090"])
+        .output()
+        .unwrap();
+    assert!(updated.status.success());
+    let updated_model =
+        jails_model::parse_jdl(&fs::read_to_string(root.join(".jails/model.jdl")).unwrap())
+            .unwrap();
+    assert_eq!(
+        updated_model.settings.values().next().unwrap().id,
+        setting_id
+    );
+    assert_eq!(
+        fs::read_to_string(&properties).unwrap(),
+        "reader.key=keep\nserver.port=9090\n"
+    );
+
+    let removed_dependency = jails_cmd(&root, None)
+        .args(["remove", "dependency", "org.jsoup:jsoup"])
+        .output()
+        .unwrap();
+    assert!(removed_dependency.status.success());
+    let unset = jails_cmd(&root, None)
+        .args(["unset", "server.port"])
+        .output()
+        .unwrap();
+    assert!(unset.status.success());
+    let final_jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(
+        !final_jdl.contains("dependency org.jsoup:jsoup"),
+        "{final_jdl}"
+    );
+    assert!(!final_jdl.contains("setting server.port"), "{final_jdl}");
+    assert!(
+        !fs::read_to_string(root.join("pom.xml"))
+            .unwrap()
+            .contains("org.jsoup:jsoup")
+    );
+    assert_eq!(
+        fs::read_to_string(&properties).unwrap(),
+        "reader.key=keep\n"
+    );
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(frozen.status.success());
+}
+
+#[test]
+fn jdl_capability_commands_edit_the_authoring_source_and_recompile() {
+    let root = jdl_project(
+        "model-jdl-capability",
+        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+    );
+    let scaffold = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Note", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(scaffold.status.success());
+
+    let added = jails_cmd(&root, None)
+        .args(["add", "fake"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(jdl.contains("capability fake @id(cap_fake)"), "{jdl}");
+    let adapter_path = root.join(
+        ".jails/generated/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
+    );
+    assert!(adapter_path.is_file());
+
+    let removed = jails_cmd(&root, None)
+        .args(["remove", "fake"])
+        .output()
+        .unwrap();
+    assert!(
+        removed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    let jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(!jdl.contains("capability fake"), "{jdl}");
+    assert!(!adapter_path.exists());
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(frozen.status.success());
+}
+
+#[test]
+fn jdl_generate_edit_generate_preserves_clean_edits_and_refuses_overlap() {
+    let root = jdl_project(
+        "model-jdl-iterative-record",
+        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+    );
+    let generated = root.join(".jails/generated/main/java/com/example/notes/domain/Task.java");
+
+    let first = jails_cmd(&root, None)
+        .args(["g", "record", "Task", "title:string!(1..200)"])
+        .output()
+        .unwrap();
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(jdl.contains("entity Task @id(ent_task)"), "{jdl}");
+    assert!(jdl.contains("@id(fld_task_title)"), "{jdl}");
+    assert!(jdl.contains("title: string!(1..200)"), "{jdl}");
+
+    let source = fs::read_to_string(&generated).unwrap();
+    assert!(
+        source.contains("title length must be between 1 and 200"),
+        "{source}"
+    );
+    let split = source.rfind("\n}").unwrap();
+    fs::write(
+        &generated,
+        format!(
+            "{}\n\n    public String handWritten() {{ return title; }}{}",
+            &source[..split],
+            &source[split..]
+        ),
+    )
+    .unwrap();
+
+    let second = jails_cmd(&root, None)
+        .args(["g", "field", "Task", "done:boolean"])
+        .output()
+        .unwrap();
+    assert!(
+        second.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let source = fs::read_to_string(&generated).unwrap();
+    assert!(source.contains("handWritten()"), "{source}");
+    assert!(source.contains("boolean done"), "{source}");
+
+    fs::write(
+        &generated,
+        source.replace("title must not be blank", "give me a useful title"),
+    )
+    .unwrap();
+    let third = jails_cmd(&root, None)
+        .args(["g", "field", "Task", "priority:int"])
+        .output()
+        .unwrap();
+    assert!(
+        third.status.success(),
+        "{}",
+        String::from_utf8_lossy(&third.stderr)
+    );
+    let source = fs::read_to_string(&generated).unwrap();
+    assert!(source.contains("give me a useful title"), "{source}");
+    assert!(source.contains("int priority"), "{source}");
+
+    fs::write(&generated, source.replace("int priority", "long priority")).unwrap();
+    let before = snapshot_tree(&root);
+    let conflict = jails_cmd(&root, None)
+        .args(["g", "field", "Task", "dueAt:instant"])
+        .output()
+        .unwrap();
+    assert!(!conflict.status.success());
+    let stderr = String::from_utf8(conflict.stderr).unwrap();
+    assert!(stderr.contains("overlapping edit"), "{stderr}");
+    assert_eq!(snapshot_tree(&root), before);
+}
+
+#[test]
+fn compiler_upgrade_uses_the_exact_accepted_projection_as_merge_base() {
+    let root = jdl_project(
+        "model-compiler-upgrade-base",
+        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+    );
+    let generated = root.join(".jails/generated/main/java/com/example/notes/domain/Task.java");
+    let first = jails_cmd(&root, None)
+        .args(["g", "record", "Task", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let current_projection = fs::read_to_string(&generated).unwrap();
+    let old_projection = current_projection.replace(
+        "title must not be blank",
+        "title used to have old emitter wording",
+    );
+    assert_ne!(old_projection, current_projection);
+    let split = old_projection.rfind("\n}").unwrap();
+    let live = format!(
+        "{}\n\n    public String handWritten() {{ return title; }}{}",
+        &old_projection[..split],
+        &old_projection[split..]
+    );
+    fs::write(&generated, live).unwrap();
+
+    let lock_path = root.join(".jails/compiler.lock.json");
+    let mut lock: serde_json::Value =
+        serde_json::from_slice(&fs::read(&lock_path).unwrap()).unwrap();
+    let mut projection: jails_contracts::RenderedTree =
+        serde_json::from_value(lock["projection"].clone()).unwrap();
+    let generated_path = jails_contracts::ProjectPath::parse(
+        ".jails/generated/main/java/com/example/notes/domain/Task.java",
+    )
+    .unwrap();
+    projection.files.get_mut(&generated_path).unwrap().bytes = old_projection.into_bytes();
+    let projection_bytes = serde_json::to_vec(&projection).unwrap();
+    lock["compiler"] = serde_json::Value::String("0.0.0-previous-emitter".to_string());
+    lock["projection_digest"] = serde_json::Value::String(format!(
+        "sha256:{}",
+        jails_support::codec::hex(&jails_support::codec::sha256(&projection_bytes))
+    ));
+    lock["projection"] = serde_json::to_value(projection).unwrap();
+    fs::write(&lock_path, serde_json::to_vec_pretty(&lock).unwrap()).unwrap();
+
+    let evolved = jails_cmd(&root, None)
+        .args(["g", "field", "Task", "done:boolean"])
+        .output()
+        .unwrap();
+    assert!(
+        evolved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evolved.stderr)
+    );
+    let merged = fs::read_to_string(&generated).unwrap();
+    assert!(merged.contains("handWritten()"), "{merged}");
+    assert!(merged.contains("boolean done"), "{merged}");
+    assert!(merged.contains("title must not be blank"), "{merged}");
+    assert!(!merged.contains("old emitter wording"), "{merged}");
+}
+
+#[test]
+fn jdl_generate_writes_enum_and_scaffold_declarations() {
+    let root = jdl_project(
+        "model-jdl-generate-profiles",
+        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+    );
+    let enumeration = jails_cmd(&root, None)
+        .args(["g", "enum", "Status", "OPEN", "IN_PROGRESS=in_progress"])
+        .output()
+        .unwrap();
+    assert!(
+        enumeration.status.success(),
+        "{}",
+        String::from_utf8_lossy(&enumeration.stderr)
+    );
+    let scaffold = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(
+        scaffold.status.success(),
+        "{}",
+        String::from_utf8_lossy(&scaffold.stderr)
+    );
+    let jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(jdl.contains("enum Status @id(ent_status)"), "{jdl}");
+    assert!(jdl.contains("IN_PROGRESS=in_progress"), "{jdl}");
+    assert!(jdl.contains("entity Task @id(ent_task) @scaffold"), "{jdl}");
+    assert!(jdl.contains("id: uuid @id(fld_task_id) @pk"), "{jdl}");
+}
+
+#[test]
+fn canonical_sync_recompiles_model_state_without_the_legacy_store() {
+    let root = model_project("model-sync", MODEL);
+    apply_canonical_model(&root, "initial-sync");
+    let record = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
+    let contents = fs::read_to_string(&record).unwrap();
+    let split = contents.rfind("\n}").unwrap();
+    fs::write(
+        &record,
+        format!(
+            "{}\n\n    public String handWritten() {{ return \"reader\"; }}{}",
+            &contents[..split],
+            &contents[split..]
+        ),
+    )
+    .unwrap();
+    let model_path = root.join(".jails/model.toml");
+    let mut source = fs::read_to_string(&model_path).unwrap();
+    source.push_str("\n[capabilities.fake]\nid = \"cap_fake\"\nkind = \"fake\"\n");
+    fs::write(&model_path, source).unwrap();
+
+    let synced = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    assert!(fs::read_to_string(&record).unwrap().contains("handWritten"));
+    assert!(
+        root.join(
+            ".jails/generated/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java"
+        )
+        .is_file()
+    );
+    for legacy in ["objects", "receipts", "journal", "state"] {
+        assert!(
+            !root.join(".jails").join(legacy).exists(),
+            "canonical sync created legacy state `{legacy}`"
+        );
+    }
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+}
+
+#[test]
+fn canonical_fast_test_is_model_owned_and_never_journaled() {
+    let root = model_project("model-fast-test", MODEL);
+    write_spring_fixture(&root);
+    apply_canonical_model(&root, "initial-fast-test");
+    let fake_dir = temp_dir("model-fast-test-bin");
+    let log = fake_dir.join("maven.log");
+    write_fake_maven(&fake_dir, &["mvn"], &log);
+
+    let installed = jails_cmd(&root, Some(&fake_dir))
+        .args(["test", "NoteTest", "--fast", "--explain-selection"])
+        .output()
+        .unwrap();
+    assert!(
+        installed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&installed.stderr)
+    );
+    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    assert!(model.contains("[capabilities.fast_test]"), "{model}");
+    assert!(model.contains("kind = \"fast-test\""), "{model}");
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("junit-platform-console"), "{pom}");
+    for legacy in ["objects", "receipts", "journal", "state"] {
+        assert!(!root.join(".jails").join(legacy).exists());
+    }
+
+    let removed = jails_cmd(&root, Some(&fake_dir))
+        .args(["remove", "fast-test"])
+        .output()
+        .unwrap();
+    assert!(
+        removed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    assert!(
+        !fs::read_to_string(root.join(".jails/model.toml"))
+            .unwrap()
+            .contains("fast-test")
+    );
+    assert!(
+        !fs::read_to_string(root.join("pom.xml"))
+            .unwrap()
+            .contains("junit-platform-console")
+    );
+}
+
+#[test]
+fn jdl_fast_test_is_a_capability_in_the_authoring_source() {
+    let root = jdl_project(
+        "model-jdl-fast-test",
+        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+    );
+    write_spring_fixture(&root);
+    apply_canonical_model(&root, "initial-jdl-fast-test");
+    let fake_dir = temp_dir("model-jdl-fast-test-bin");
+    let log = fake_dir.join("maven.log");
+    write_fake_maven(&fake_dir, &["mvn"], &log);
+
+    let installed = jails_cmd(&root, Some(&fake_dir))
+        .args(["test", "NoteTest", "--fast", "--explain-selection"])
+        .output()
+        .unwrap();
+    assert!(
+        installed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&installed.stderr)
+    );
+    let jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(
+        jdl.contains("capability fast-test @id(cap_fast_test)"),
+        "{jdl}"
+    );
+    assert!(
+        fs::read_to_string(root.join("pom.xml"))
+            .unwrap()
+            .contains("junit-platform-console")
+    );
+
+    let removed = jails_cmd(&root, Some(&fake_dir))
+        .args(["remove", "fast-test"])
+        .output()
+        .unwrap();
+    assert!(removed.status.success());
+    assert!(
+        !fs::read_to_string(root.join(".jails/model.jdl"))
+            .unwrap()
+            .contains("fast-test")
+    );
+    assert!(
+        !fs::read_to_string(root.join("pom.xml"))
+            .unwrap()
+            .contains("junit-platform-console")
+    );
+}
+
+#[test]
+fn canonical_projects_fail_closed_before_legacy_mutation_routes() {
+    let root = model_project("model-no-legacy-routes", MODEL);
+    apply_canonical_model(&root, "initial-no-legacy-routes");
+    for arguments in [
+        vec!["undo", "00000000000000000000000000000000"],
+        vec!["rename", "Note", "Memo"],
+        vec!["adopt"],
+        vec!["modernize"],
+        vec!["fmt"],
+    ] {
+        let before = snapshot_tree(&root);
+        let output = jails_cmd(&root, None).args(&arguments).output().unwrap();
+        assert!(
+            !output.status.success(),
+            "{arguments:?} unexpectedly passed"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("does not route"), "{arguments:?}: {stderr}");
+        assert_eq!(snapshot_tree(&root), before, "{arguments:?} wrote files");
+    }
+}
+
+#[test]
+fn model_check_json_exposes_the_resolved_stable_id_world() {
+    let root = model_project("model-json", MODEL);
+    let output = jails_cmd(&root, None)
+        .args(["model", "check", "--output", "json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["schema"], "jails.model-check.v1");
+    assert_eq!(report["valid"], true);
+    assert_eq!(report["model"]["entities"]["ent_note"]["label"], "note");
+    assert_eq!(
+        report["model"]["operations"]["op_create_note"]["kind"]["Command"]["on"],
+        "ent_note"
+    );
+}
+
+#[test]
+fn model_check_reports_all_semantic_failures_as_one_json_document() {
+    let invalid = MODEL
+        .replace("fields = [\"title\"]", "fields = [\"missing\"]")
+        .replace("id = \"op_create_note\"", "id = \"ent_note\"");
+    let root = model_project("model-invalid", &invalid);
+    let output = jails_cmd(&root, None)
+        .args(["--output", "json", "model", "check"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stderr.is_empty(), "failure was reported twice");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["valid"], false);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic["code"] == "model-id-collision")
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic["code"] == "model-field-reference")
+    );
+}
+
+#[test]
+fn model_check_names_the_fix_when_the_default_model_is_missing() {
+    let root = temp_dir("model-missing");
+    let output = jails_cmd(&root, None)
+        .args(["model", "check"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains(".jails/model.jdl"), "{stderr}");
+    assert!(stderr.contains("--manifest <path>"), "{stderr}");
+}
+
+#[test]
+fn model_plan_is_deterministic_and_writes_a_self_verifying_bundle() {
+    let root = model_project("model-plan", MODEL);
+    let first = root.join("first-plan.json");
+    let second = root.join("second-plan.json");
+    for path in [&first, &second] {
+        let output = jails_cmd(&root, None)
+            .args(["model", "plan", "--bundle"])
+            .arg(path)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    assert_eq!(fs::read(&first).unwrap(), fs::read(&second).unwrap());
+    let bundle: jails_contracts::PlanBundle =
+        serde_json::from_slice(&fs::read(&first).unwrap()).unwrap();
+    jails_workspace::verify_bundle(&bundle).unwrap();
+    assert_eq!(bundle.plan.operations.len(), 2);
+    assert_eq!(bundle.plan.summary.managed_files, 4);
+    assert_eq!(bundle.plan.id, bundle.plan.digest.as_str());
+}
+
+#[test]
+fn model_apply_consumes_the_reviewed_plan_without_recompiling() {
+    let root = model_project("model-apply", MODEL);
+    let plan = root.join("plan.json");
+    let planned = jails_cmd(&root, None)
+        .args(["model", "plan", "--bundle"])
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(planned.status.success());
+
+    let applied = jails_cmd(&root, None)
+        .args(["model", "apply", "--bundle"])
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    let record = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
+    let source = fs::read_to_string(record).unwrap();
+    assert!(source.contains("public record Note"), "{source}");
+    assert!(source.contains("UUID id"), "{source}");
+    let command = fs::read_to_string(root.join(
+        ".jails/generated/main/java/com/example/notes/application/commands/CreateNoteCommand.java",
+    ))
+    .unwrap();
+    assert!(
+        command.contains("String ROUTE = \"POST /notes\""),
+        "{command}"
+    );
+    assert!(command.contains("Note execute(Input input)"), "{command}");
+    assert!(command.contains("public record Input"), "{command}");
+
+    let retried = jails_cmd(&root, None)
+        .args(["--output", "json", "model", "apply", "--bundle"])
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(retried.status.success());
+    let execution: serde_json::Value = serde_json::from_slice(&retried.stdout).unwrap();
+    assert_eq!(execution["files_written"], 0);
+
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+}
+
+#[test]
+fn model_apply_rejects_a_stale_plan_before_writing() {
+    let root = model_project("model-stale", MODEL);
+    let plan = root.join("plan.json");
+    let planned = jails_cmd(&root, None)
+        .args(["model", "plan", "--bundle"])
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(planned.status.success());
+    fs::write(
+        root.join(".jails/model.toml"),
+        format!("{MODEL}\n# changed\n"),
+    )
+    .unwrap();
+
+    let applied = jails_cmd(&root, None)
+        .args(["model", "apply", "--bundle"])
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(!applied.status.success());
+    let stderr = String::from_utf8(applied.stderr).unwrap();
+    assert!(stderr.contains("stale exact plan"), "{stderr}");
+    assert!(!root.join(".jails/generated").exists());
+}
+
+#[test]
+fn model_eject_transfers_generated_java_once_and_reader_edits_survive() {
+    let root = eject_model_project("model-eject");
+    apply_canonical_model(&root, "initial-plan");
+    let generated = root.join(
+        ".jails/generated/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
+    );
+    let reader =
+        root.join("src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java");
+    let generated_bytes = fs::read(&generated).unwrap();
+    let model_before = fs::read(root.join(".jails/model.toml")).unwrap();
+
+    let preview = jails_cmd(&root, None)
+        .args([
+            "model",
+            "eject",
+            "art_cap_fake_ent_note_repository",
+            "--pretend",
+            "--diff",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    assert_eq!(
+        fs::read(root.join(".jails/model.toml")).unwrap(),
+        model_before
+    );
+    assert_eq!(fs::read(&generated).unwrap(), generated_bytes);
+    assert!(!reader.exists());
+
+    let applied = jails_cmd(&root, None)
+        .args(["model", "eject", "art_cap_fake_ent_note_repository"])
+        .output()
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    assert!(!generated.exists());
+    assert_eq!(fs::read(&reader).unwrap(), generated_bytes);
+    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    assert!(model.contains("[ejections.eject_"), "{model}");
+    assert!(
+        model.contains("target = \"art_cap_fake_ent_note_repository\""),
+        "{model}"
+    );
+    assert!(
+        root.join(".jails/generated/main/java/com/example/notes/domain/Note.java")
+            .exists()
+    );
+    assert!(
+        root.join(".jails/generated/main/java/com/example/notes/repository/NoteRepository.java")
+            .exists()
+    );
+
+    let mut edited = fs::read_to_string(&reader).unwrap();
+    edited.push_str("// reader-owned customization\n");
+    fs::write(&reader, &edited).unwrap();
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+    assert_eq!(fs::read_to_string(&reader).unwrap(), edited);
+
+    let before_retry = snapshot_tree(&root);
+    let retried = jails_cmd(&root, None)
+        .args(["model", "eject", "art_cap_fake_ent_note_repository"])
+        .output()
+        .unwrap();
+    assert!(!retried.status.success());
+    let stderr = String::from_utf8(retried.stderr).unwrap();
+    assert!(stderr.contains("already reader-owned"), "{stderr}");
+    assert_eq!(snapshot_tree(&root), before_retry);
+}
+
+#[test]
+fn jdl_ejection_transfers_only_one_artifact_and_records_inline_ownership() {
+    let root = jdl_project(
+        "model-jdl-eject",
+        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+    );
+    let scaffold = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Note", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(scaffold.status.success());
+    let fake = jails_cmd(&root, None)
+        .args(["add", "fake"])
+        .output()
+        .unwrap();
+    assert!(fake.status.success());
+
+    let generated = root.join(
+        ".jails/generated/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
+    );
+    let reader =
+        root.join("src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java");
+    let generated_bytes = fs::read(&generated).unwrap();
+    let ejected = jails_cmd(&root, None)
+        .args(["model", "eject", "art_cap_fake_ent_note_repository"])
+        .output()
+        .unwrap();
+    assert!(
+        ejected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ejected.stderr)
+    );
+    assert!(!generated.exists());
+    assert_eq!(fs::read(&reader).unwrap(), generated_bytes);
+    let jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(
+        jdl.contains("eject art_cap_fake_ent_note_repository @id(eject_"),
+        "{jdl}"
+    );
+    assert!(
+        root.join(".jails/generated/main/java/com/example/notes/domain/Note.java")
+            .is_file()
+    );
+    assert!(
+        root.join(".jails/generated/main/java/com/example/notes/repository/NoteRepository.java")
+            .is_file()
+    );
+
+    let mut edited = fs::read_to_string(&reader).unwrap();
+    edited.push_str("// reader owns this implementation\n");
+    fs::write(&reader, &edited).unwrap();
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(frozen.status.success());
+    assert_eq!(fs::read_to_string(&reader).unwrap(), edited);
+}
+
+#[test]
+fn factory_ejection_transfers_only_the_testkit_implementation_boundary() {
+    let root = jdl_project(
+        "model-jdl-factory-eject",
+        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+    );
+    for command in [
+        ["g", "record", "Note", "title:string!"].as_slice(),
+        ["g", "factory", "Note"].as_slice(),
+    ] {
+        let output = jails_cmd(&root, None).args(command).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let generated =
+        root.join(".jails/generated/test/java/com/example/notes/testkit/NoteFactory.java");
+    let reader = root.join("src/test/java/com/example/notes/testkit/NoteFactory.java");
+    let record = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
+    let ejected = jails_cmd(&root, None)
+        .args(["model", "eject", "art_ent_note_factory"])
+        .output()
+        .unwrap();
+    assert!(
+        ejected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ejected.stderr)
+    );
+    assert!(!generated.exists());
+    assert!(record.exists(), "factory ejection removed the record ABI");
+    let mut owned = fs::read_to_string(&reader).unwrap();
+    owned.push_str("// reader owns only this factory\n");
+    fs::write(&reader, &owned).unwrap();
+
+    let evolved = jails_cmd(&root, None)
+        .args(["g", "field", "Note", "priority:int"])
+        .output()
+        .unwrap();
+    assert!(
+        evolved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evolved.stderr)
+    );
+    assert!(
+        fs::read_to_string(&record)
+            .unwrap()
+            .contains("int priority"),
+        "managed ABI did not evolve"
+    );
+    assert_eq!(fs::read_to_string(&reader).unwrap(), owned);
+    assert!(!generated.exists());
+
+    let before = snapshot_tree(&root);
+    let refused = jails_cmd(&root, None)
+        .args(["destroy", "factory", "Note", "--force"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("reader-owned"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), before, "ejected destroy wrote bytes");
+}
+
+#[test]
+fn model_eject_refuses_a_reader_destination_collision_without_writing() {
+    let root = eject_model_project("model-eject-collision");
+    apply_canonical_model(&root, "initial-plan");
+    let reader =
+        root.join("src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java");
+    fs::create_dir_all(reader.parent().unwrap()).unwrap();
+    fs::write(&reader, "package com.example.notes.domain;\n// mine\n").unwrap();
+    let before = snapshot_tree(&root);
+
+    let output = jails_cmd(&root, None)
+        .args(["model", "eject", "art_cap_fake_ent_note_repository"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("already exists"), "{stderr}");
+    assert!(stderr.contains("move or remove"), "{stderr}");
+    assert_eq!(snapshot_tree(&root), before);
+}
+
+#[test]
+fn model_eject_plan_refuses_a_destination_created_after_review() {
+    let root = eject_model_project("model-eject-stale");
+    apply_canonical_model(&root, "initial-plan");
+    let plan = root.join("eject-plan.json");
+    let planned = jails_cmd(&root, None)
+        .args([
+            "model",
+            "eject",
+            "art_cap_fake_ent_note_repository",
+            "--plan-out",
+        ])
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(
+        planned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
+    let model_before = fs::read(root.join(".jails/model.toml")).unwrap();
+    let generated = root.join(
+        ".jails/generated/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
+    );
+    let reader =
+        root.join("src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java");
+    fs::create_dir_all(reader.parent().unwrap()).unwrap();
+    fs::write(
+        &reader,
+        "package com.example.notes.domain;\n// appeared later\n",
+    )
+    .unwrap();
+
+    let applied = jails_cmd(&root, None)
+        .args(["model", "apply", "--bundle"])
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(!applied.status.success());
+    let stderr = String::from_utf8(applied.stderr).unwrap();
+    assert!(stderr.contains("stale exact plan"), "{stderr}");
+    assert_eq!(
+        fs::read(root.join(".jails/model.toml")).unwrap(),
+        model_before
+    );
+    assert!(generated.exists());
+    assert_eq!(
+        fs::read_to_string(&reader).unwrap(),
+        "package com.example.notes.domain;\n// appeared later\n"
+    );
+}
+
+#[test]
+fn familiar_record_generation_is_a_model_patch_in_canonical_projects() {
+    let root = model_project("model-generate-record", EMPTY_MODEL);
+    let preview = jails_cmd(&root, None)
+        .args([
+            "g",
+            "record",
+            "Note",
+            "title:string!",
+            "body:string?",
+            "at:instant",
+            "--pretend",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(root.join(".jails/model.toml")).unwrap(),
+        EMPTY_MODEL
+    );
+    assert!(!root.join(".jails/generated").exists());
+
+    let applied = jails_cmd(&root, None)
+        .args([
+            "g",
+            "record",
+            "Note",
+            "title:string!",
+            "body:string?",
+            "at:instant",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    assert!(model.contains("[entities.note]"), "{model}");
+    assert!(model.contains("id = \"ent_note\""), "{model}");
+    assert!(model.contains("id = \"fld_note_title\""), "{model}");
+
+    let source = fs::read_to_string(
+        root.join(".jails/generated/main/java/com/example/notes/domain/Note.java"),
+    )
+    .unwrap();
+    assert!(source.contains("Optional<String> body"), "{source}");
+    assert!(source.contains("Objects.requireNonNull(title"), "{source}");
+    assert!(source.contains("title = title.trim()"), "{source}");
+    assert!(source.contains("title must not be blank"), "{source}");
+
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+}
+
+#[test]
+fn canonical_generate_edit_generate_preserves_clean_edits_and_refuses_overlap() {
+    let root = model_project("model-iterative-record", EMPTY_MODEL);
+    let generated = root.join(".jails/generated/main/java/com/example/notes/domain/Task.java");
+
+    let first = jails_cmd(&root, None)
+        .args(["g", "record", "Task", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let source = fs::read_to_string(&generated).unwrap();
+    let split = source.rfind("\n}").unwrap();
+    let edited = format!(
+        "{}\n\n    public String handWritten() {{ return title; }}{}",
+        &source[..split],
+        &source[split..]
+    );
+    fs::write(&generated, edited).unwrap();
+
+    let second = jails_cmd(&root, None)
+        .args(["g", "field", "Task", "done:boolean"])
+        .output()
+        .unwrap();
+    assert!(
+        second.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let source = fs::read_to_string(&generated).unwrap();
+    assert!(source.contains("handWritten()"), "{source}");
+    assert!(source.contains("boolean done"), "{source}");
+
+    let edited = source.replace("title must not be blank", "give me a useful title");
+    fs::write(&generated, edited).unwrap();
+    let third = jails_cmd(&root, None)
+        .args(["g", "field", "Task", "priority:int"])
+        .output()
+        .unwrap();
+    assert!(
+        third.status.success(),
+        "{}",
+        String::from_utf8_lossy(&third.stderr)
+    );
+    let source = fs::read_to_string(&generated).unwrap();
+    assert!(source.contains("give me a useful title"), "{source}");
+    assert!(source.contains("int priority"), "{source}");
+
+    fs::write(&generated, source.replace("int priority", "long priority")).unwrap();
+    let before = snapshot_tree(&root);
+    let conflict = jails_cmd(&root, None)
+        .args(["g", "field", "Task", "dueAt:instant"])
+        .output()
+        .unwrap();
+    assert!(!conflict.status.success());
+    let stderr = String::from_utf8(conflict.stderr).unwrap();
+    assert!(stderr.contains("overlapping edit"), "{stderr}");
+    assert_eq!(snapshot_tree(&root), before);
+}
+
+#[test]
+fn canonical_enum_frontend_writes_a_typed_wire_vocabulary() {
+    let root = model_project("model-enum", EMPTY_MODEL);
+    let generated = jails_cmd(&root, None)
+        .args(["g", "enum", "Status", "OPEN", "IN_PROGRESS=in_progress"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    assert!(model.contains("facets = [\"enum\"]"), "{model}");
+    assert!(
+        model.contains("values = [\"OPEN\", \"IN_PROGRESS=in_progress\"]"),
+        "{model}"
+    );
+    let source = fs::read_to_string(
+        root.join(".jails/generated/main/java/com/example/notes/domain/Status.java"),
+    )
+    .unwrap();
+    assert!(source.contains("IN_PROGRESS(\"in_progress\")"), "{source}");
+    assert!(source.contains("Status fromWire(String value)"), "{source}");
+}
+
+#[test]
+fn canonical_preserve_table_rename_moves_artifacts_and_keeps_hand_edits() {
+    let root = model_project("model-rename-preserve-edits", EMPTY_MODEL);
+    let old = root.join(".jails/generated/main/java/com/example/notes/domain/Task.java");
+    let new = root.join(".jails/generated/main/java/com/example/notes/domain/WorkItem.java");
+    let generated = jails_cmd(&root, None)
+        .args(["g", "record", "Task", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let source = fs::read_to_string(&old).unwrap();
+    let split = source.rfind("\n}").unwrap();
+    fs::write(
+        &old,
+        format!(
+            "{}\n\n    public String handWritten() {{ return title; }}{}",
+            &source[..split],
+            &source[split..]
+        ),
+    )
+    .unwrap();
+
+    let renamed = jails_cmd(&root, None)
+        .args([
+            "rename",
+            "resource",
+            "Task",
+            "WorkItem",
+            "--strategy",
+            "preserve-table",
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        renamed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&renamed.stderr)
+    );
+    assert!(!old.exists());
+    let source = fs::read_to_string(&new).unwrap();
+    assert!(source.contains("public record WorkItem("), "{source}");
+    assert!(source.contains("handWritten()"), "{source}");
+    let model =
+        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
+            .unwrap();
+    let entity = model.entities.values().next().unwrap();
+    assert_eq!(entity.id.to_string(), "ent_task");
+    assert_eq!(entity.names.java_type, "WorkItem");
+    assert_eq!(entity.names.sql_table, "task");
+    assert!(
+        fs::read_to_string(root.join(".jails/model.toml"))
+            .unwrap()
+            .contains("java_name = \"WorkItem\"")
+    );
+}
+
+#[test]
+fn jdl_rename_keeps_the_stable_identity_and_reader_edits() {
+    let root = jdl_project(
+        "model-jdl-rename-preserve-edits",
+        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+    );
+    let old = root.join(".jails/generated/main/java/com/example/notes/domain/Task.java");
+    let new = root.join(".jails/generated/main/java/com/example/notes/domain/WorkItem.java");
+    let generated = jails_cmd(&root, None)
+        .args(["g", "record", "Task", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success());
+    let source = fs::read_to_string(&old).unwrap();
+    let split = source.rfind("\n}").unwrap();
+    fs::write(
+        &old,
+        format!(
+            "{}\n\n    public String handWritten() {{ return title; }}{}",
+            &source[..split],
+            &source[split..]
+        ),
+    )
+    .unwrap();
+
+    let renamed = jails_cmd(&root, None)
+        .args([
+            "rename",
+            "resource",
+            "Task",
+            "WorkItem",
+            "--strategy",
+            "preserve-table",
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        renamed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&renamed.stderr)
+    );
+    assert!(!old.exists());
+    let source = fs::read_to_string(&new).unwrap();
+    assert!(source.contains("public record WorkItem("), "{source}");
+    assert!(source.contains("handWritten()"), "{source}");
+    let jdl_source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(
+        jdl_source.contains("entity WorkItem @id(ent_task) @as(task)"),
+        "{jdl_source}"
+    );
+    let model = jails_model::parse_jdl(&jdl_source).unwrap();
+    let entity = model.entities.values().next().unwrap();
+    assert_eq!(entity.id.to_string(), "ent_task");
+    assert_eq!(entity.label, "task");
+    assert_eq!(entity.names.java_type, "WorkItem");
+}
+
+#[test]
+fn canonical_preserve_table_rename_refuses_overlap_without_writes() {
+    let root = model_project("model-rename-conflict", EMPTY_MODEL);
+    let generated = root.join(".jails/generated/main/java/com/example/notes/domain/Task.java");
+    let first = jails_cmd(&root, None)
+        .args(["g", "record", "Task", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(first.status.success());
+    let source = fs::read_to_string(&generated).unwrap();
+    fs::write(
+        &generated,
+        source.replace("public record Task(", "public record ManualTask("),
+    )
+    .unwrap();
+    let before = snapshot_tree(&root);
+
+    let renamed = jails_cmd(&root, None)
+        .args([
+            "rename",
+            "resource",
+            "Task",
+            "WorkItem",
+            "--strategy",
+            "preserve-table",
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(!renamed.status.success());
+    let stderr = String::from_utf8(renamed.stderr).unwrap();
+    assert!(stderr.contains("overlapping edit"), "{stderr}");
+    assert_eq!(snapshot_tree(&root), before);
+}
+
+#[test]
+fn canonical_preserve_table_rename_refuses_a_destination_collision() {
+    let root = model_project("model-rename-collision", EMPTY_MODEL);
+    let generated = jails_cmd(&root, None)
+        .args(["g", "record", "Task", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success());
+    let destination =
+        root.join(".jails/generated/main/java/com/example/notes/domain/WorkItem.java");
+    fs::write(&destination, "// reader-owned collision\n").unwrap();
+    let before = snapshot_tree(&root);
+
+    let renamed = jails_cmd(&root, None)
+        .args([
+            "rename",
+            "resource",
+            "Task",
+            "WorkItem",
+            "--strategy",
+            "preserve-table",
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(!renamed.status.success());
+    let stderr = String::from_utf8(renamed.stderr).unwrap();
+    assert!(stderr.contains("already exists"), "{stderr}");
+    assert_eq!(snapshot_tree(&root), before);
+}
+
+#[test]
+fn familiar_scaffold_generation_is_one_semantic_entity_profile() {
+    let root = model_project("model-generate-scaffold", EMPTY_MODEL);
+    let applied = jails_cmd(&root, None)
+        .args([
+            "g",
+            "scaffold",
+            "Note",
+            "id:uuid@pk",
+            "title:string!",
+            "--timestamps",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+
+    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    assert!(
+        model.contains("facets = [\"record\", \"repository\", \"service\", \"http\"]"),
+        "{model}"
+    );
+    assert!(model.contains("id = \"fld_note_created_at\""), "{model}");
+    assert!(model.contains("id = \"fld_note_updated_at\""), "{model}");
+
+    for relative in [
+        "domain/Note.java",
+        "repository/NoteRepository.java",
+        "service/NoteService.java",
+        "ports/http/NoteHttpPort.java",
+    ] {
+        assert!(
+            root.join(".jails/generated/main/java/com/example/notes")
+                .join(relative)
+                .is_file(),
+            "semantic scaffold profile did not emit {relative}"
+        );
+    }
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+}
+
+#[test]
+fn scaffold_profile_preserves_the_legacy_domain_and_repository_contracts() {
+    let legacy = temp_dir("model-scaffold-legacy");
+    write_spring_fixture(&legacy);
+    let legacy_output = jails_cmd(&legacy, None)
+        .args(["g", "scaffold", "Note", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(
+        legacy_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&legacy_output.stderr)
+    );
+
+    let compiled = model_project("model-scaffold-compiled", EMPTY_MODEL);
+    let compiled_output = jails_cmd(&compiled, None)
+        .args(["g", "scaffold", "Note", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(
+        compiled_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled_output.stderr)
+    );
+
+    let old_record =
+        fs::read_to_string(legacy.join("src/main/java/com/example/demo/domain/Note.java")).unwrap();
+    let new_record = fs::read_to_string(
+        compiled.join(".jails/generated/main/java/com/example/notes/domain/Note.java"),
+    )
+    .unwrap();
+    for contract in [
+        "UUID id",
+        "String title",
+        "Objects.requireNonNull(title",
+        "title = title.trim()",
+        "title must not be blank",
+    ] {
+        assert!(old_record.contains(contract), "legacy lost `{contract}`");
+        assert!(new_record.contains(contract), "compiler lost `{contract}`");
+    }
+
+    let old_repository =
+        fs::read_to_string(legacy.join("src/main/java/com/example/demo/app/NoteRepository.java"))
+            .unwrap();
+    let new_repository = fs::read_to_string(
+        compiled
+            .join(".jails/generated/main/java/com/example/notes/repository/NoteRepository.java"),
+    )
+    .unwrap();
+    for contract in [
+        "Optional<Note> findById(UUID id)",
+        "List<Note> findAll()",
+        "Note save(Note note)",
+        "boolean deleteById(UUID id)",
+    ] {
+        assert!(
+            old_repository.contains(contract),
+            "legacy lost `{contract}`"
+        );
+        assert!(
+            new_repository.contains(contract),
+            "compiler lost `{contract}`"
+        );
+    }
+}
+
+#[test]
+fn every_operation_kind_lowers_to_a_typed_managed_abi() {
+    let source = format!(
+        "{MODEL}\n\
+         [operations.note_created]\n\
+         kind = \"event\"\n\
+         id = \"op_note_created\"\n\
+         java_name = \"NoteCreated\"\n\
+         on = \"note\"\n\
+         fields = [\"id\", \"title\"]\n\n\
+         [operations.open_notes]\n\
+         kind = \"query\"\n\
+         id = \"op_open_notes\"\n\
+         on = \"note\"\n\
+         filters = [\"title\"]\n\
+         order_by = [\"id\"]\n\
+         limit = 50\n\
+         route = \"GET /notes\"\n\n\
+         [operations.rename_note]\n\
+         kind = \"transition\"\n\
+         id = \"op_rename_note\"\n\
+         on = \"note\"\n\
+         fields = [\"title\"]\n\
+         sets = [\"title\"]\n\
+         yields = \"note_created\"\n\
+         route = \"PATCH /notes/{{id}}\"\n"
+    );
+    let root = model_project("model-operation-abi", &source);
+    let plan = root.join("plan.json");
+    let planned = jails_cmd(&root, None)
+        .args(["model", "plan", "--bundle"])
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(
+        planned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
+    let applied = jails_cmd(&root, None)
+        .args(["model", "apply", "--bundle"])
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+
+    let generated = root.join(".jails/generated/main/java/com/example/notes");
+    let query =
+        fs::read_to_string(generated.join("application/queries/OpenNotesQuery.java")).unwrap();
+    assert!(query.contains("String ROUTE = \"GET /notes\""), "{query}");
+    assert!(query.contains("int DEFAULT_LIMIT = 50"), "{query}");
+    assert!(query.contains("List<Note> execute(Input input)"), "{query}");
+
+    let transition =
+        fs::read_to_string(generated.join("application/transitions/RenameNoteTransition.java"))
+            .unwrap();
+    assert!(
+        transition.contains("String ROUTE = \"PATCH /notes/{id}\""),
+        "{transition}"
+    );
+    assert!(
+        transition.contains("Note execute(UUID id, Input input)"),
+        "{transition}"
+    );
+
+    let event = fs::read_to_string(generated.join("domain/events/NoteCreatedEvent.java")).unwrap();
+    assert!(event.contains("public record NoteCreatedEvent"), "{event}");
+    assert!(event.contains("UUID id"), "{event}");
+    assert!(event.contains("String title"), "{event}");
+
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+}
+
+#[test]
+fn familiar_operation_commands_are_model_patches_not_legacy_routes() {
+    let root = model_project("model-operation-frontends", EMPTY_MODEL);
+    for arguments in [
+        vec!["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
+        vec!["g", "event", "NoteCreated", "id", "title", "--on", "Note"],
+        vec![
+            "g",
+            "usecase",
+            "CreateNote",
+            "title",
+            "--on",
+            "Note",
+            "--path",
+            "/notes",
+        ],
+        vec![
+            "g",
+            "query",
+            "OpenNotes",
+            "title",
+            "--on",
+            "Note",
+            "--limit",
+            "50",
+            "--path",
+            "/notes/search",
+        ],
+        vec![
+            "g",
+            "transition",
+            "RenameNote",
+            "title",
+            "--on",
+            "Note",
+            "--yields",
+            "NoteCreated",
+            "--path",
+            "/notes/{id}",
+            "--method",
+            "patch",
+        ],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    for declaration in [
+        "[operations.note_created]",
+        "[operations.create_note]",
+        "[operations.open_notes]",
+        "[operations.rename_note]",
+        "route = \"POST /notes\"",
+        "route = \"POST /notes/search\"",
+        "route = \"PATCH /notes/{id}\"",
+        "yields = \"note_created\"",
+    ] {
+        assert!(
+            model.contains(declaration),
+            "missing `{declaration}`:\n{model}"
+        );
+    }
+    let generated = root.join(".jails/generated/main/java/com/example/notes");
+    for relative in [
+        "domain/events/NoteCreatedEvent.java",
+        "application/commands/CreateNoteCommand.java",
+        "application/queries/OpenNotesQuery.java",
+        "application/transitions/RenameNoteTransition.java",
+    ] {
+        assert!(generated.join(relative).is_file(), "missing {relative}");
+    }
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+}
+
+#[test]
+fn familiar_operation_commands_edit_nested_jdl_and_compile_typed_abis() {
+    let root = jdl_project(
+        "model-jdl-operation-frontends",
+        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+    );
+    for arguments in [
+        vec!["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
+        vec!["g", "event", "NoteCreated", "id", "title", "--on", "Note"],
+        vec![
+            "g",
+            "usecase",
+            "CreateNote",
+            "title",
+            "--on",
+            "Note",
+            "--path",
+            "/notes",
+        ],
+        vec![
+            "g",
+            "query",
+            "OpenNotes",
+            "title",
+            "--on",
+            "Note",
+            "--limit",
+            "50",
+            "--path",
+            "/notes/search",
+        ],
+        vec![
+            "g",
+            "transition",
+            "RenameNote",
+            "title",
+            "--on",
+            "Note",
+            "--yields",
+            "NoteCreated",
+            "--path",
+            "/notes/{id}",
+            "--method",
+            "patch",
+        ],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    for declaration in [
+        "event NoteCreated(id, title) @id(op_note_created)",
+        "command CreateNote(title) @id(op_create_note)",
+        "query OpenNotes(title) @id(op_open_notes)",
+        "transition RenameNote(title) @id(op_rename_note)",
+        "route: POST /notes",
+        "route: POST /notes/search",
+        "route: PATCH /notes/{id}",
+        "yields: note_created",
+    ] {
+        assert!(jdl.contains(declaration), "missing `{declaration}`:\n{jdl}");
+    }
+    let generated = root.join(".jails/generated/main/java/com/example/notes");
+    for relative in [
+        "domain/events/NoteCreatedEvent.java",
+        "application/commands/CreateNoteCommand.java",
+        "application/queries/OpenNotesQuery.java",
+        "application/transitions/RenameNoteTransition.java",
+    ] {
+        assert!(generated.join(relative).is_file(), "missing {relative}");
+    }
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+}
+
+#[test]
+fn canonical_api_adapters_merge_then_eject_at_the_operation_boundary() {
+    let source = format!(
+        "{MODEL}\n\
+         [operations.open_notes]\n\
+         kind = \"query\"\n\
+         id = \"op_open_notes\"\n\
+         on = \"note\"\n\
+         filters = [\"title\"]\n\
+         route = \"GET /notes/search\"\n\n\
+         [operations.rename_note]\n\
+         kind = \"transition\"\n\
+         id = \"op_rename_note\"\n\
+         on = \"note\"\n\
+         fields = [\"title\"]\n\
+         sets = [\"title\"]\n\
+         route = \"PATCH /notes/{{id}}\"\n"
+    );
+    let root = model_project("model-api-operation-adapters", &source);
+    write_spring_fixture(&root);
+
+    let added = jails_cmd(&root, None)
+        .args(["add", "api"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let generated = root.join(".jails/generated/main/java/com/example/notes");
+    let command = generated.join("adapters/http/CreateNoteController.java");
+    let query =
+        fs::read_to_string(generated.join("adapters/http/OpenNotesController.java")).unwrap();
+    let transition =
+        fs::read_to_string(generated.join("adapters/http/RenameNoteController.java")).unwrap();
+    assert!(
+        fs::read_to_string(&command)
+            .unwrap()
+            .contains("RequestMethod.POST")
+    );
+    assert!(query.contains("@ModelAttribute OpenNotesQuery.Input input"));
+    assert!(query.contains("RequestMethod.GET"));
+    assert!(
+        transition.contains("@PathVariable(\"id\") UUID id"),
+        "{transition}"
+    );
+    assert!(transition.contains("RequestMethod.PATCH"), "{transition}");
+    assert!(
+        fs::read_to_string(root.join("pom.xml"))
+            .unwrap()
+            .contains("spring-boot-starter-web")
+    );
+
+    let contents = fs::read_to_string(&command).unwrap();
+    let split = contents.rfind("\n}").unwrap();
+    fs::write(
+        &command,
+        format!(
+            "{}\n\n    public String handWritten() {{ return \"reader\"; }}{}",
+            &contents[..split],
+            &contents[split..]
+        ),
+    )
+    .unwrap();
+    let evolved = jails_cmd(&root, None)
+        .args(["resource", "field", "add", "Note", "summary:string?"])
+        .output()
+        .unwrap();
+    assert!(
+        evolved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evolved.stderr)
+    );
+    assert!(
+        fs::read_to_string(&command)
+            .unwrap()
+            .contains("handWritten")
+    );
+
+    let ejected = jails_cmd(&root, None)
+        .args(["model", "eject", "art_op_create_note_http"])
+        .output()
+        .unwrap();
+    assert!(
+        ejected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ejected.stderr)
+    );
+    let reader =
+        root.join("src/main/java/com/example/notes/adapters/http/CreateNoteController.java");
+    assert!(!command.exists());
+    assert!(fs::read_to_string(&reader).unwrap().contains("handWritten"));
+    assert!(
+        generated
+            .join("application/commands/CreateNoteCommand.java")
+            .is_file(),
+        "ejecting the controller must not eject its managed ABI"
+    );
+    let reader_bytes = fs::read(&reader).unwrap();
+    let evolved_again = jails_cmd(&root, None)
+        .args(["resource", "field", "add", "Note", "priority:int?"])
+        .output()
+        .unwrap();
+    assert!(
+        evolved_again.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evolved_again.stderr)
+    );
+    assert_eq!(fs::read(&reader).unwrap(), reader_bytes);
+    assert!(!command.exists());
+
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+    if real_mvn_available() && real_java_supports_target_release() {
+        let path = real_path_without_mvnd();
+        let compiled = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "-DskipTests", "compile"])
+            .output()
+            .unwrap();
+        assert!(
+            compiled.status.success(),
+            "canonical API adapters did not compile:\n{}\n{}",
+            String::from_utf8_lossy(&compiled.stdout),
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+    }
+}
+
+#[test]
+fn operation_frontend_refuses_field_type_drift_without_writing() {
+    let root = model_project("model-operation-field-drift", EMPTY_MODEL);
+    let scaffold = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Note", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(scaffold.status.success());
+    let before = snapshot_tree(&root);
+    let refused = jails_cmd(&root, None)
+        .args(["g", "query", "OpenNotes", "title:int", "--on", "Note"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8(refused.stderr).unwrap();
+    assert!(
+        stderr.contains("disagrees with canonical entity field"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("fix:"), "{stderr}");
+    assert_eq!(snapshot_tree(&root), before, "refusal mutated the project");
+}
+
+#[test]
+fn canonical_destroy_is_model_subtraction_and_whole_tree_recompilation() {
+    let root = model_project("model-destroy-entity", EMPTY_MODEL);
+    let generated = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Note", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success());
+    let before = snapshot_tree(&root);
+
+    let preview = jails_cmd(&root, None)
+        .args(["d", "scaffold", "Note", "--pretend"])
+        .output()
+        .unwrap();
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), before, "destroy preview wrote files");
+
+    let plan_directory = temp_dir("model-destroy-plan");
+    let plan = plan_directory.join("destroy.json");
+    let planned = jails_cmd(&root, None)
+        .args(["d", "scaffold", "Note", "--plan-out"])
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(
+        planned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), before, "plan-out applied destroy");
+    let bundle: jails_contracts::PlanBundle =
+        serde_json::from_slice(&fs::read(&plan).unwrap()).unwrap();
+    assert!(bundle.plan.operations.iter().any(|operation| matches!(
+        operation,
+        jails_contracts::PlannedOperation::PublishMergedTree { .. }
+    )));
+    assert!(bundle.plan.operations.iter().any(|operation| matches!(
+        operation,
+        jails_contracts::PlannedOperation::ReplaceModelFile { .. }
+    )));
+    assert!(matches!(
+        bundle.plan.operations.last(),
+        Some(jails_contracts::PlannedOperation::ReplaceStateFile { path, .. })
+            if path.as_str() == ".jails/compiler.lock.json"
+    ));
+
+    let applied = jails_cmd(&root, None)
+        .args(["model", "apply", "--bundle"])
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    assert!(!model.contains("[entities.note]"), "{model}");
+    assert!(
+        !root
+            .join(".jails/generated/main/java/com/example/notes/domain/Note.java")
+            .exists()
+    );
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+}
+
+#[test]
+fn canonical_destroy_refuses_while_operations_reference_the_entity() {
+    let root = model_project("model-destroy-referenced", EMPTY_MODEL);
+    for arguments in [
+        vec!["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
+        vec!["g", "query", "OpenNotes", "title", "--on", "Note"],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(output.status.success());
+    }
+    let before = snapshot_tree(&root);
+    let refused = jails_cmd(&root, None)
+        .args(["d", "scaffold", "Note"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8(refused.stderr).unwrap();
+    assert!(stderr.contains("open_notes"), "{stderr}");
+    assert!(stderr.contains("remove those operations"), "{stderr}");
+    assert_eq!(snapshot_tree(&root), before, "refusal mutated the project");
+
+    let removed_query = jails_cmd(&root, None)
+        .args(["d", "query", "OpenNotes"])
+        .output()
+        .unwrap();
+    assert!(
+        removed_query.status.success(),
+        "{}",
+        String::from_utf8_lossy(&removed_query.stderr)
+    );
+    assert!(
+        !root
+            .join(".jails/generated/main/java/com/example/notes/application/queries/OpenNotesQuery.java")
+            .exists()
+    );
+    let removed_entity = jails_cmd(&root, None)
+        .args(["d", "scaffold", "Note"])
+        .output()
+        .unwrap();
+    assert!(
+        removed_entity.status.success(),
+        "{}",
+        String::from_utf8_lossy(&removed_entity.stderr)
+    );
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(frozen.status.success());
+}
+
+#[test]
+fn fake_capability_is_a_global_compiler_profile_and_remove_is_recompilation() {
+    let root = model_project("model-capability-fake", EMPTY_MODEL);
+    let scaffold = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Note", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(scaffold.status.success());
+    let before = snapshot_tree(&root);
+    let preview = jails_cmd(&root, None)
+        .args(["add", "fake", "--pretend"])
+        .output()
+        .unwrap();
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    assert_eq!(
+        snapshot_tree(&root),
+        before,
+        "capability preview wrote files"
+    );
+
+    let added = jails_cmd(&root, None)
+        .args(["add", "fake"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    assert!(model.contains("[capabilities.fake]"), "{model}");
+    assert!(model.contains("id = \"cap_fake\""), "{model}");
+    let adapter_path = root.join(
+        ".jails/generated/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
+    );
+    let adapter = fs::read_to_string(&adapter_path).unwrap();
+    assert!(adapter.contains("implements NoteRepository"), "{adapter}");
+    assert!(adapter.contains("Map<UUID, Note> rows"), "{adapter}");
+    assert!(adapter.contains("rows.put(value.id(), value)"), "{adapter}");
+
+    let reapplied = jails_cmd(&root, None)
+        .args(["--output", "json", "add", "fake"])
+        .output()
+        .unwrap();
+    assert!(reapplied.status.success());
+    let execution: serde_json::Value = serde_json::from_slice(&reapplied.stdout).unwrap();
+    assert_eq!(execution["files_written"], 0);
+
+    let removed = jails_cmd(&root, None)
+        .args(["remove", "fake"])
+        .output()
+        .unwrap();
+    assert!(
+        removed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    assert!(!adapter_path.exists());
+    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    assert!(!model.contains("[capabilities.fake]"), "{model}");
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(frozen.status.success());
+}
+
+#[test]
+fn dependency_is_semantic_model_data_and_one_exact_maven_projection() {
+    let root = model_project("model-dependency", EMPTY_MODEL);
+    fs::write(
+        root.join("pom.xml"),
+        "<project>\n    <modelVersion>4.0.0</modelVersion>\n    <!-- reader-owned -->\n</project>\n",
+    )
+    .unwrap();
+    let before = snapshot_tree(&root);
+    let preview = jails_cmd(&root, None)
+        .args([
+            "add",
+            "dependency",
+            "org.jsoup:jsoup",
+            "--version",
+            "1.18.3",
+            "--scope",
+            "runtime",
+            "--pretend",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    assert_eq!(
+        snapshot_tree(&root),
+        before,
+        "dependency preview wrote files"
+    );
+
+    let added = jails_cmd(&root, None)
+        .args([
+            "add",
+            "dependency",
+            "org.jsoup:jsoup",
+            "--version",
+            "1.18.3",
+            "--scope",
+            "runtime",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    assert!(model.contains("[dependencies.dep_"), "{model}");
+    assert!(model.contains("group = \"org.jsoup\""), "{model}");
+    assert!(model.contains("artifact = \"jsoup\""), "{model}");
+    assert!(model.contains("scope = \"runtime\""), "{model}");
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("<!-- reader-owned -->"), "{pom}");
+    assert!(pom.contains("<!-- jails:dependencies -->"), "{pom}");
+    assert!(pom.contains("<groupId>org.jsoup</groupId>"), "{pom}");
+    assert!(pom.contains("<artifactId>jsoup</artifactId>"), "{pom}");
+    assert!(pom.contains("<version>1.18.3</version>"), "{pom}");
+    assert!(pom.contains("<scope>runtime</scope>"), "{pom}");
+
+    let reapplied = jails_cmd(&root, None)
+        .args([
+            "--output",
+            "json",
+            "add",
+            "dependency",
+            "org.jsoup:jsoup",
+            "--version",
+            "1.18.3",
+            "--scope",
+            "runtime",
+        ])
+        .output()
+        .unwrap();
+    assert!(reapplied.status.success());
+    let execution: serde_json::Value = serde_json::from_slice(&reapplied.stdout).unwrap();
+    assert_eq!(execution["files_written"], 0);
+
+    let removed = jails_cmd(&root, None)
+        .args(["remove", "dependency", "org.jsoup:jsoup"])
+        .output()
+        .unwrap();
+    assert!(
+        removed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    assert!(!model.contains("org.jsoup"), "{model}");
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("<!-- reader-owned -->"), "{pom}");
+    assert!(!pom.contains("jails:dependencies"), "{pom}");
+    assert!(!pom.contains("jsoup"), "{pom}");
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+}
+
+#[test]
+fn dependency_reconciliation_crosses_the_kotlin_gradle_binary_boundary() {
+    let root = model_project("model-dependency-gradle", EMPTY_MODEL);
+    fs::write(root.join("build.gradle.kts"), "plugins { java }\n").unwrap();
+    let added = jails_cmd(&root, None)
+        .args([
+            "add",
+            "dependency",
+            "org.jsoup:jsoup",
+            "--version",
+            "1.18.3",
+            "--scope",
+            "test",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let build = fs::read_to_string(root.join("build.gradle.kts")).unwrap();
+    assert!(build.contains("// jails:dependencies"), "{build}");
+    assert!(
+        build.contains("testImplementation(\"org.jsoup:jsoup:1.18.3\")"),
+        "{build}"
+    );
+    assert!(
+        build.contains("java.srcDir(\".jails/generated/main/java\")"),
+        "{build}"
+    );
+
+    let removed = jails_cmd(&root, None)
+        .args(["remove", "dependency", "org.jsoup:jsoup"])
+        .output()
+        .unwrap();
+    assert!(
+        removed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    let build = fs::read_to_string(root.join("build.gradle.kts")).unwrap();
+    assert!(!build.contains("org.jsoup:jsoup"), "{build}");
+    assert!(!build.contains("jails:dependencies"), "{build}");
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+}
+
+#[test]
+fn unsupported_capabilities_refuse_before_the_legacy_engine_can_write() {
+    let root = model_project("model-capability-refusal", EMPTY_MODEL);
+    let before = snapshot_tree(&root);
+    let refused = jails_cmd(&root, None).args(["add", "db"]).output().unwrap();
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8(refused.stderr).unwrap();
+    assert!(stderr.contains("canonical"), "{stderr}");
+    assert!(stderr.contains("fix:"), "{stderr}");
+    assert_eq!(
+        snapshot_tree(&root),
+        before,
+        "unsupported capability entered a mutation path"
+    );
+}
+
+#[test]
+fn record_compiler_preserves_the_legacy_semantic_contract() {
+    let legacy = temp_dir("model-record-legacy");
+    write_spring_fixture(&legacy);
+    let legacy_output = jails_cmd(&legacy, None)
+        .args([
+            "g",
+            "record",
+            "Note",
+            "title:string!",
+            "body:string?",
+            "at:instant",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        legacy_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&legacy_output.stderr)
+    );
+
+    let compiled = model_project("model-record-compiled", EMPTY_MODEL);
+    let compiled_output = jails_cmd(&compiled, None)
+        .args([
+            "g",
+            "record",
+            "Note",
+            "title:string!",
+            "body:string?",
+            "at:instant",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compiled_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled_output.stderr)
+    );
+
+    let old =
+        fs::read_to_string(legacy.join("src/main/java/com/example/demo/domain/Note.java")).unwrap();
+    let new = fs::read_to_string(
+        compiled.join(".jails/generated/main/java/com/example/notes/domain/Note.java"),
+    )
+    .unwrap();
+    for contract in [
+        "Optional<String> body",
+        "Objects.requireNonNull(title",
+        "Objects.requireNonNull(at",
+        "Objects.requireNonNullElse(body, Optional.empty())",
+        "title = title.trim()",
+        "title must not be blank",
+    ] {
+        assert!(
+            old.contains(contract),
+            "legacy oracle lost `{contract}`:\n{old}"
+        );
+        assert!(
+            new.contains(contract),
+            "new compiler lost `{contract}`:\n{new}"
+        );
+    }
+}
+
+#[test]
+fn maven_source_root_is_an_exact_reader_patch_and_converges() {
+    let root = model_project("model-maven-source-root", MODEL);
+    fs::write(
+        root.join("pom.xml"),
+        "<project>\n    <modelVersion>4.0.0</modelVersion>\n    <groupId>com.example</groupId>\n    <artifactId>notes</artifactId>\n    <version>1</version>\n</project>\n",
+    )
+    .unwrap();
+    let plan = root.join("plan.json");
+    let planned = jails_cmd(&root, None)
+        .args(["model", "plan", "--bundle"])
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(
+        planned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
+    let bundle: jails_contracts::PlanBundle =
+        serde_json::from_slice(&fs::read(&plan).unwrap()).unwrap();
+    assert!(bundle.plan.operations.iter().any(|operation| matches!(
+        operation,
+        jails_contracts::PlannedOperation::PatchReaderFile { path, .. }
+            if path.as_str() == "pom.xml"
+    )));
+
+    let applied = jails_cmd(&root, None)
+        .args(["model", "apply", "--bundle"])
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("jails:generated-source-root"), "{pom}");
+    assert!(pom.contains("build-helper-maven-plugin"), "{pom}");
+    assert!(
+        pom.contains("<source>.jails/generated/main/java</source>"),
+        "{pom}"
+    );
+    assert!(
+        root.join(".jails/generated/main/java/com/example/notes/domain/Note.java")
+            .is_file()
+    );
+
+    let converged = root.join("converged.json");
+    let replanned = jails_cmd(&root, None)
+        .args(["model", "plan", "--bundle"])
+        .arg(&converged)
+        .output()
+        .unwrap();
+    assert!(
+        replanned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&replanned.stderr)
+    );
+    let bundle: jails_contracts::PlanBundle =
+        serde_json::from_slice(&fs::read(converged).unwrap()).unwrap();
+    assert!(
+        bundle.plan.operations.is_empty(),
+        "{:#?}",
+        bundle.plan.operations
+    );
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+}
+
+#[test]
+fn gradle_source_root_is_an_exact_reader_patch_and_converges() {
+    let root = model_project("model-gradle-source-root", MODEL);
+    fs::write(root.join("build.gradle"), "plugins { id 'java' }\n").unwrap();
+    let plan = root.join("plan.json");
+    let planned = jails_cmd(&root, None)
+        .args(["model", "plan", "--bundle"])
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(
+        planned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
+    let bundle: jails_contracts::PlanBundle =
+        serde_json::from_slice(&fs::read(&plan).unwrap()).unwrap();
+    assert!(bundle.plan.operations.iter().any(|operation| matches!(
+        operation,
+        jails_contracts::PlannedOperation::PatchReaderFile { path, .. }
+            if path.as_str() == "build.gradle"
+    )));
+
+    let applied = jails_cmd(&root, None)
+        .args(["model", "apply", "--bundle"])
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    let build = fs::read_to_string(root.join("build.gradle")).unwrap();
+    assert!(build.contains("jails:generated-source-root"), "{build}");
+    assert!(
+        build.contains("java.srcDir('.jails/generated/main/java')"),
+        "{build}"
+    );
+
+    let converged = root.join("converged.json");
+    let replanned = jails_cmd(&root, None)
+        .args(["model", "plan", "--bundle"])
+        .arg(&converged)
+        .output()
+        .unwrap();
+    assert!(
+        replanned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&replanned.stderr)
+    );
+    let bundle: jails_contracts::PlanBundle =
+        serde_json::from_slice(&fs::read(converged).unwrap()).unwrap();
+    assert!(
+        bundle.plan.operations.is_empty(),
+        "{:#?}",
+        bundle.plan.operations
+    );
+}
+
+#[test]
+fn reader_build_file_precondition_blocks_all_writes_from_a_stale_plan() {
+    let root = model_project("model-stale-reader-file", MODEL);
+    fs::write(root.join("pom.xml"), "<project>\n</project>\n").unwrap();
+    let plan = root.join("plan.json");
+    let planned = jails_cmd(&root, None)
+        .args(["model", "plan", "--bundle"])
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(planned.status.success());
+    fs::write(
+        root.join("pom.xml"),
+        "<project>\n    <!-- reader edit -->\n</project>\n",
+    )
+    .unwrap();
+
+    let applied = jails_cmd(&root, None)
+        .args(["model", "apply", "--bundle"])
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(!applied.status.success());
+    let stderr = String::from_utf8(applied.stderr).unwrap();
+    assert!(stderr.contains("stale exact plan"), "{stderr}");
+    assert!(stderr.contains("pom.xml"), "{stderr}");
+    assert!(!root.join(".jails/generated").exists());
+    assert_eq!(
+        fs::read_to_string(root.join("pom.xml")).unwrap(),
+        "<project>\n    <!-- reader edit -->\n</project>\n"
+    );
+}
+
+#[test]
+fn canonical_settings_preview_update_reconcile_and_unset_end_to_end() {
+    let root = model_project("model-setting-main", EMPTY_MODEL);
+    let properties = root.join("src/main/resources/application.properties");
+    fs::create_dir_all(properties.parent().unwrap()).unwrap();
+    fs::write(&properties, "# reader\nreader.key=keep\n").unwrap();
+    let before = snapshot_tree(&root);
+
+    let preview = jails_cmd(&root, None)
+        .args(["set", "server.port=8080", "--pretend"])
+        .output()
+        .unwrap();
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), before, "setting preview wrote files");
+
+    let added = jails_cmd(&root, None)
+        .args(["set", "server.port=8080"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let first_model =
+        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
+            .unwrap();
+    let first = first_model.settings.values().next().unwrap();
+    let stable_id = first.id.clone();
+    assert_eq!(first.key, "server.port");
+    assert_eq!(first.value, "8080");
+    assert_eq!(first.target, jails_model::SettingTarget::Main);
+    assert_eq!(
+        fs::read_to_string(&properties).unwrap(),
+        "# reader\nreader.key=keep\nserver.port=8080\n"
+    );
+
+    let updated = jails_cmd(&root, None)
+        .args(["set", "server.port=9090"])
+        .output()
+        .unwrap();
+    assert!(
+        updated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&updated.stderr)
+    );
+    let updated_model =
+        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
+            .unwrap();
+    let updated_setting = updated_model.settings.values().next().unwrap();
+    assert_eq!(updated_setting.id, stable_id);
+    assert_eq!(updated_setting.value, "9090");
+    assert_eq!(
+        fs::read_to_string(&properties).unwrap(),
+        "# reader\nreader.key=keep\nserver.port=9090\n"
+    );
+
+    let repeated = jails_cmd(&root, None)
+        .args(["--output", "json", "set", "server.port=9090"])
+        .output()
+        .unwrap();
+    assert!(repeated.status.success());
+    let execution: serde_json::Value = serde_json::from_slice(&repeated.stdout).unwrap();
+    assert_eq!(execution["files_written"], 0);
+
+    let removed = jails_cmd(&root, None)
+        .args(["unset", "server.port"])
+        .output()
+        .unwrap();
+    assert!(
+        removed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(&properties).unwrap(),
+        "# reader\nreader.key=keep\n"
+    );
+    let final_model =
+        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
+            .unwrap();
+    assert!(final_model.settings.is_empty());
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+}
+
+#[test]
+fn canonical_test_setting_creates_the_additive_config_overlay() {
+    let root = model_project("model-setting-test", EMPTY_MODEL);
+    let output = jails_cmd(&root, None)
+        .args(["set", "spring.datasource.url=jdbc:h2:mem:test", "--tests"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !root
+            .join("src/main/resources/application.properties")
+            .exists()
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("src/test/resources/config/application.properties")).unwrap(),
+        "spring.datasource.url=jdbc:h2:mem:test\n"
+    );
+    let model =
+        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
+            .unwrap();
+    let setting = model.settings.values().next().unwrap();
+    assert_eq!(setting.target, jails_model::SettingTarget::Test);
+}
+
+#[test]
+fn canonical_setting_refuses_reader_owned_collision_without_writes() {
+    let root = model_project("model-setting-collision", EMPTY_MODEL);
+    let properties = root.join("src/main/resources/application.properties");
+    fs::create_dir_all(properties.parent().unwrap()).unwrap();
+    fs::write(&properties, "server.port=7000\n").unwrap();
+    let before = snapshot_tree(&root);
+    let output = jails_cmd(&root, None)
+        .args(["set", "server.port=8080"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("reader-owned"), "{stderr}");
+    assert_eq!(
+        snapshot_tree(&root),
+        before,
+        "collision refusal wrote files"
+    );
+}
+
+#[test]
+fn canonical_setting_plan_is_stale_if_a_missing_reader_file_appears() {
+    let root = model_project("model-setting-stale-missing", EMPTY_MODEL);
+    let plan = root.join("setting-plan.json");
+    let planned = jails_cmd(&root, None)
+        .args(["set", "server.port=8080", "--plan-out"])
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(
+        planned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
+    let model_before = fs::read(root.join(".jails/model.toml")).unwrap();
+    let properties = root.join("src/main/resources/application.properties");
+    fs::create_dir_all(properties.parent().unwrap()).unwrap();
+    fs::write(&properties, "reader.key=late\n").unwrap();
+
+    let applied = jails_cmd(&root, None)
+        .args(["model", "apply", "--bundle"])
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(!applied.status.success());
+    let stderr = String::from_utf8(applied.stderr).unwrap();
+    assert!(
+        stderr.contains("precondition") || stderr.contains("changed"),
+        "{stderr}"
+    );
+    assert_eq!(
+        fs::read(root.join(".jails/model.toml")).unwrap(),
+        model_before,
+        "stale setting plan changed the model"
+    );
+    assert_eq!(fs::read_to_string(properties).unwrap(), "reader.key=late\n");
+}
+
+#[test]
+fn maven_build_compiles_the_managed_source_root_end_to_end() {
+    if !real_mvn_available() {
+        skip("mvn not found on PATH");
+        return;
+    }
+    if !real_java_supports_target_release() {
+        skip(&format!(
+            "javac on PATH does not support --release {TARGET_RELEASE}"
+        ));
+        return;
+    }
+
+    let root = model_project("model-maven-real-compile", EMPTY_MODEL);
+    fs::write(
+        root.join("pom.xml"),
+        format!(
+            "<project>\n    <modelVersion>4.0.0</modelVersion>\n    <groupId>com.example</groupId>\n    <artifactId>notes</artifactId>\n    <version>1</version>\n    <properties><maven.compiler.release>{TARGET_RELEASE}</maven.compiler.release></properties>\n    <build>\n        <plugins>\n            <plugin>\n                <groupId>org.apache.maven.plugins</groupId>\n                <artifactId>maven-compiler-plugin</artifactId>\n                <version>3.14.1</version>\n            </plugin>\n        </plugins>\n    </build>\n</project>\n"
+        ),
+    )
+    .unwrap();
+    let applied = jails_cmd(&root, None)
+        .args([
+            "g",
+            "scaffold",
+            "Note",
+            "id:uuid@pk",
+            "title:string!",
+            "--timestamps",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    let fake = jails_cmd(&root, None)
+        .args(["add", "fake"])
+        .output()
+        .unwrap();
+    assert!(
+        fake.status.success(),
+        "{}",
+        String::from_utf8_lossy(&fake.stderr)
+    );
+
+    let mut model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    model.push_str(
+        "\n[operations.create_note]\nkind = \"command\"\nid = \"op_create_note\"\non = \"note\"\nfields = [\"title\"]\nroute = \"POST /notes\"\n\n[operations.open_notes]\nkind = \"query\"\nid = \"op_open_notes\"\non = \"note\"\nfilters = [\"title\"]\nlimit = 25\nroute = \"GET /notes\"\n\n[operations.rename_note]\nkind = \"transition\"\nid = \"op_rename_note\"\non = \"note\"\nfields = [\"title\"]\nsets = [\"title\"]\nroute = \"PATCH /notes/{id}\"\n\n[operations.note_created]\nkind = \"event\"\nid = \"op_note_created\"\non = \"note\"\nfields = [\"id\", \"title\"]\n",
+    );
+    fs::write(root.join(".jails/model.toml"), model).unwrap();
+    let operation_plan = root.join("operations.json");
+    let planned = jails_cmd(&root, None)
+        .args(["model", "plan", "--bundle"])
+        .arg(&operation_plan)
+        .output()
+        .unwrap();
+    assert!(
+        planned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
+    let applied = jails_cmd(&root, None)
+        .args(["model", "apply", "--bundle"])
+        .arg(&operation_plan)
+        .output()
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+
+    let path = real_path_without_mvnd();
+    let compiled = real_maven_cmd(&root, &path)
+        .args(["-q", "-B", "compile"])
+        .output()
+        .unwrap();
+    assert!(
+        compiled.status.success(),
+        "managed source root did not compile through Maven:\n{}\n{}",
+        String::from_utf8_lossy(&compiled.stdout),
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    assert!(
+        root.join("target/classes/com/example/notes/domain/Note.class")
+            .is_file(),
+        "Maven succeeded without compiling the managed Java source"
+    );
+    for class in [
+        "repository/NoteRepository.class",
+        "service/NoteService.class",
+        "ports/http/NoteHttpPort.class",
+        "adapters/memory/InMemoryNoteRepository.class",
+        "application/commands/CreateNoteCommand.class",
+        "application/queries/OpenNotesQuery.class",
+        "application/transitions/RenameNoteTransition.class",
+        "domain/events/NoteCreatedEvent.class",
+    ] {
+        assert!(
+            root.join("target/classes/com/example/notes")
+                .join(class)
+                .is_file(),
+            "Maven did not compile semantic scaffold facet {class}"
+        );
+    }
+}
+
+fn canonical_database_project(label: &str) -> PathBuf {
+    let root = model_project(label, EMPTY_MODEL);
+    write_spring_fixture(&root);
+    for arguments in [
+        vec!["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
+        vec!["add", "db"],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    root
+}
+
+#[test]
+fn canonical_data_capability_packs_keep_the_iterative_loop_and_eject_as_one_boundary() {
+    let root = temp_dir("model-data-capability-packs");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+
+    let csv = jails_cmd(&root, None)
+        .args(["add", "csv", "--name", "Dataset", "--package", "ingest"])
+        .output()
+        .unwrap();
+    assert!(
+        csv.status.success(),
+        "{}",
+        String::from_utf8_lossy(&csv.stderr)
+    );
+    let json = jails_cmd(&root, None)
+        .args(["add", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        json.status.success(),
+        "{}",
+        String::from_utf8_lossy(&json.stderr)
+    );
+
+    let csv_main =
+        root.join(".jails/generated/main/java/com/example/notes/ingest/DatasetReader.java");
+    let csv_test =
+        root.join(".jails/generated/test/java/com/example/notes/ingest/DatasetReaderTest.java");
+    let json_main = root.join(".jails/generated/main/java/com/example/notes/adapters/Json.java");
+    let json_test =
+        root.join(".jails/generated/test/java/com/example/notes/adapters/JsonTest.java");
+    for path in [&csv_main, &csv_test, &json_main, &json_test] {
+        assert!(path.is_file(), "missing {}", path.display());
+    }
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(model.contains("capability csv @id(cap_csv) @name(Dataset) @package(ingest)"));
+    assert!(model.contains("capability json @id(cap_json)"));
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("<artifactId>commons-csv</artifactId>"));
+    assert!(pom.contains("<version>1.14.1</version>"));
+    assert!(pom.contains("<artifactId>jackson-databind</artifactId>"));
+    let clean_json_main = fs::read(&json_main).unwrap();
+    let clean_json_test = fs::read(&json_test).unwrap();
+
+    for (path, marker) in [
+        (&csv_main, "readerCsvMethod"),
+        (&csv_test, "readerCsvTestHelper"),
+        (&json_main, "readerJsonMethod"),
+        (&json_test, "readerJsonTestHelper"),
+    ] {
+        let source = fs::read_to_string(path).unwrap();
+        let at = source.rfind("\n}").unwrap();
+        fs::write(
+            path,
+            format!(
+                "{}\n\n    void {marker}() {{}}{}",
+                &source[..at],
+                &source[at..]
+            ),
+        )
+        .unwrap();
+    }
+
+    let rerun = jails_cmd(&root, None)
+        .args(["add", "csv", "--name", "Dataset", "--package", "ingest"])
+        .output()
+        .unwrap();
+    assert!(
+        rerun.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rerun.stderr)
+    );
+    assert!(
+        fs::read_to_string(&csv_main)
+            .unwrap()
+            .contains("readerCsvMethod")
+    );
+    assert!(
+        fs::read_to_string(&csv_test)
+            .unwrap()
+            .contains("readerCsvTestHelper")
+    );
+
+    let model_path = root.join(".jails/model.jdl");
+    let moved_model = fs::read_to_string(&model_path)
+        .unwrap()
+        .replace("@package(ingest)", "@package(imports)");
+    fs::write(&model_path, moved_model).unwrap();
+    let moved = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(
+        moved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&moved.stderr)
+    );
+    let moved_main =
+        root.join(".jails/generated/main/java/com/example/notes/imports/DatasetReader.java");
+    let moved_test =
+        root.join(".jails/generated/test/java/com/example/notes/imports/DatasetReaderTest.java");
+    assert!(!csv_main.exists());
+    assert!(!csv_test.exists());
+    assert!(
+        fs::read_to_string(&moved_main)
+            .unwrap()
+            .contains("readerCsvMethod")
+    );
+    assert!(
+        fs::read_to_string(&moved_test)
+            .unwrap()
+            .contains("readerCsvTestHelper")
+    );
+    assert!(
+        fs::read_to_string(&json_main)
+            .unwrap()
+            .contains("readerJsonMethod")
+    );
+    assert!(
+        fs::read_to_string(&json_test)
+            .unwrap()
+            .contains("readerJsonTestHelper")
+    );
+
+    let clean_main = fs::read_to_string(&moved_main).unwrap();
+    fs::write(
+        &moved_main,
+        clean_main.replace(
+            "package com.example.notes.imports;",
+            "package com.example.notes.imports; // reader changed compiler-owned line",
+        ),
+    )
+    .unwrap();
+    fs::write(
+        &model_path,
+        fs::read_to_string(&model_path)
+            .unwrap()
+            .replace("@package(imports)", "@package(feeds)"),
+    )
+    .unwrap();
+    let before_overlap = snapshot_tree(&root);
+    let refused = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("overlap"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), before_overlap);
+
+    fs::write(&moved_main, clean_main).unwrap();
+    let retried = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(
+        retried.status.success(),
+        "{}",
+        String::from_utf8_lossy(&retried.stderr)
+    );
+    let feeds_main =
+        root.join(".jails/generated/main/java/com/example/notes/feeds/DatasetReader.java");
+    let feeds_test =
+        root.join(".jails/generated/test/java/com/example/notes/feeds/DatasetReaderTest.java");
+    assert!(
+        fs::read_to_string(&feeds_main)
+            .unwrap()
+            .contains("readerCsvMethod")
+    );
+    assert!(
+        fs::read_to_string(&feeds_test)
+            .unwrap()
+            .contains("readerCsvTestHelper")
+    );
+
+    let ejected = jails_cmd(&root, None)
+        .args(["model", "eject", "cap_csv"])
+        .output()
+        .unwrap();
+    assert!(
+        ejected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ejected.stderr)
+    );
+    let reader_main = root.join("src/main/java/com/example/notes/feeds/DatasetReader.java");
+    let reader_test = root.join("src/test/java/com/example/notes/feeds/DatasetReaderTest.java");
+    assert!(!feeds_main.exists());
+    assert!(!feeds_test.exists());
+    assert!(reader_main.is_file());
+    assert!(reader_test.is_file());
+    let reader_main_bytes = fs::read(&reader_main).unwrap();
+    let reader_test_bytes = fs::read(&reader_test).unwrap();
+
+    let before_edited_remove = snapshot_tree(&root);
+    let refused_remove = jails_cmd(&root, None)
+        .args(["remove", "json"])
+        .output()
+        .unwrap();
+    assert!(!refused_remove.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused_remove.stderr).contains("edited by you"),
+        "{}",
+        String::from_utf8_lossy(&refused_remove.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), before_edited_remove);
+
+    fs::write(&json_main, clean_json_main).unwrap();
+    fs::write(&json_test, clean_json_test).unwrap();
+    let removed_json = jails_cmd(&root, None)
+        .args(["remove", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        removed_json.status.success(),
+        "{}",
+        String::from_utf8_lossy(&removed_json.stderr)
+    );
+    assert!(!json_main.exists());
+    assert!(!json_test.exists());
+    assert_eq!(fs::read(&reader_main).unwrap(), reader_main_bytes);
+    assert_eq!(fs::read(&reader_test).unwrap(), reader_test_bytes);
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("<artifactId>commons-csv</artifactId>"));
+    assert!(!pom.contains("<artifactId>jackson-databind</artifactId>"));
+
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+    if real_mvn_available() && real_java_supports_target_release() {
+        let path = real_path_without_mvnd();
+        let compiled = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "test"])
+            .output()
+            .unwrap();
+        assert!(
+            compiled.status.success(),
+            "canonical data capability packs did not compile and test after ejection:\n{}\n{}",
+            String::from_utf8_lossy(&compiled.stdout),
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+    }
+}
+
+#[test]
+fn canonical_http_and_fake_packs_merge_and_eject_as_complete_boundaries() {
+    let root = temp_dir("model-http-fake-capability-packs");
+    write_plain_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    let model_path = root.join(".jails/model.jdl");
+    fs::write(
+        &model_path,
+        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+
+    for arguments in [
+        vec!["add", "fake"],
+        vec!["add", "http", "--name", "Admin", "--package", "gateway"],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let fake = root.join(".jails/generated/test/java/com/example/notes/testkit/Fake.java");
+    let fake_test = root.join(".jails/generated/test/java/com/example/notes/testkit/FakeTest.java");
+    let http = root.join(".jails/generated/main/java/com/example/notes/gateway/AdminServer.java");
+    let http_test =
+        root.join(".jails/generated/test/java/com/example/notes/gateway/AdminServerTest.java");
+    for (index, path) in [&fake, &fake_test, &http, &http_test].iter().enumerate() {
+        let source = fs::read_to_string(path).unwrap();
+        let at = source.rfind("\n}").unwrap();
+        fs::write(
+            path,
+            format!(
+                "{}\n\n    // reader-owned-pack-edit-{index}{}",
+                &source[..at],
+                &source[at..]
+            ),
+        )
+        .unwrap();
+    }
+
+    let trigger = jails_cmd(&root, None)
+        .args(["add", "csv"])
+        .output()
+        .unwrap();
+    assert!(
+        trigger.status.success(),
+        "{}",
+        String::from_utf8_lossy(&trigger.stderr)
+    );
+    for (index, path) in [&fake, &fake_test, &http, &http_test].iter().enumerate() {
+        assert!(
+            fs::read_to_string(path)
+                .unwrap()
+                .contains(&format!("reader-owned-pack-edit-{index}")),
+            "lost edit in {}",
+            path.display()
+        );
+    }
+
+    fs::write(
+        &model_path,
+        fs::read_to_string(&model_path)
+            .unwrap()
+            .replace("@package(gateway)", "@package(transport)"),
+    )
+    .unwrap();
+    let moved = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(
+        moved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&moved.stderr)
+    );
+    let moved_http =
+        root.join(".jails/generated/main/java/com/example/notes/transport/AdminServer.java");
+    let moved_http_test =
+        root.join(".jails/generated/test/java/com/example/notes/transport/AdminServerTest.java");
+    assert!(!http.exists());
+    assert!(!http_test.exists());
+    assert!(
+        fs::read_to_string(&moved_http)
+            .unwrap()
+            .contains("reader-owned-pack-edit-2")
+    );
+    assert!(
+        fs::read_to_string(&moved_http_test)
+            .unwrap()
+            .contains("reader-owned-pack-edit-3")
+    );
+
+    let http_bytes = fs::read(&moved_http).unwrap();
+    let http_test_bytes = fs::read(&moved_http_test).unwrap();
+    let ejected_http = jails_cmd(&root, None)
+        .args(["model", "eject", "cap_http"])
+        .output()
+        .unwrap();
+    assert!(
+        ejected_http.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ejected_http.stderr)
+    );
+    let reader_http = root.join("src/main/java/com/example/notes/transport/AdminServer.java");
+    let reader_http_test =
+        root.join("src/test/java/com/example/notes/transport/AdminServerTest.java");
+    assert_eq!(fs::read(&reader_http).unwrap(), http_bytes);
+    assert_eq!(fs::read(&reader_http_test).unwrap(), http_test_bytes);
+    assert!(!moved_http.exists());
+    assert!(!moved_http_test.exists());
+
+    let fake_bytes = fs::read(&fake).unwrap();
+    let fake_test_bytes = fs::read(&fake_test).unwrap();
+    let ejected_fake = jails_cmd(&root, None)
+        .args(["model", "eject", "cap_fake"])
+        .output()
+        .unwrap();
+    assert!(
+        ejected_fake.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ejected_fake.stderr)
+    );
+    let reader_fake = root.join("src/test/java/com/example/notes/testkit/Fake.java");
+    let reader_fake_test = root.join("src/test/java/com/example/notes/testkit/FakeTest.java");
+    assert_eq!(fs::read(reader_fake).unwrap(), fake_bytes);
+    assert_eq!(fs::read(reader_fake_test).unwrap(), fake_test_bytes);
+    assert!(!fake.exists());
+    assert!(!fake_test.exists());
+
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+}
+
+#[test]
+fn canonical_testkit_merges_and_ejects_java_and_resources_as_one_boundary() {
+    let root = temp_dir("model-testkit-capability-pack");
+    write_plain_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+    let added = jails_cmd(&root, None)
+        .args(["add", "testkit"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+
+    let generated = root.join(".jails/generated");
+    let java = generated.join("test/java/com/example/notes/testkit/Clocks.java");
+    let fixture = generated.join("test/resources/fixtures/example.json");
+    let source = fs::read_to_string(&java).unwrap();
+    let at = source.rfind("\n}").unwrap();
+    fs::write(
+        &java,
+        format!(
+            "{}\n\n    // reader-owned-testkit-java{}",
+            &source[..at],
+            &source[at..]
+        ),
+    )
+    .unwrap();
+    fs::write(
+        &fixture,
+        fs::read_to_string(&fixture)
+            .unwrap()
+            .replace("bolt", "reader-bolt"),
+    )
+    .unwrap();
+
+    let trigger = jails_cmd(&root, None)
+        .args(["add", "fake"])
+        .output()
+        .unwrap();
+    assert!(
+        trigger.status.success(),
+        "{}",
+        String::from_utf8_lossy(&trigger.stderr)
+    );
+    assert!(
+        fs::read_to_string(&java)
+            .unwrap()
+            .contains("reader-owned-testkit-java")
+    );
+    assert!(
+        fs::read_to_string(&fixture)
+            .unwrap()
+            .contains("reader-bolt")
+    );
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("<goal>add-test-resource</goal>"), "{pom}");
+    assert!(
+        pom.contains("<directory>.jails/generated/test/resources</directory>"),
+        "{pom}"
+    );
+
+    let expected = [
+        "test/java/com/example/notes/testkit/Clocks.java",
+        "test/java/com/example/notes/testkit/Ids.java",
+        "test/java/com/example/notes/testkit/Fixtures.java",
+        "test/java/com/example/notes/testkit/Cli.java",
+        "test/java/com/example/notes/testkit/TestkitTest.java",
+        "test/resources/fixtures/example.json",
+    ];
+    let bytes = expected
+        .iter()
+        .map(|path| fs::read(generated.join(path)).unwrap())
+        .collect::<Vec<_>>();
+    let ejected = jails_cmd(&root, None)
+        .args(["model", "eject", "cap_testkit"])
+        .output()
+        .unwrap();
+    assert!(
+        ejected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ejected.stderr)
+    );
+    for (index, path) in expected.iter().enumerate() {
+        assert!(!generated.join(path).exists(), "managed {path} survived");
+        assert_eq!(
+            fs::read(root.join("src").join(path)).unwrap(),
+            bytes[index],
+            "ejection changed {path}"
+        );
+    }
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+}
+
+#[test]
+fn canonical_sqlite_pack_moves_merges_ejects_and_builds_as_one_boundary() {
+    let root = temp_dir("model-sqlite-capability-pack");
+    write_plain_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    let model_path = root.join(".jails/model.jdl");
+    fs::write(
+        &model_path,
+        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+    let added = jails_cmd(&root, None)
+        .args(["add", "sqlite", "--name", "Store", "--package", "storage"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+
+    let generated = root.join(".jails/generated");
+    let database = generated.join("main/java/com/example/notes/storage/StoreDatabase.java");
+    let migrations = generated.join("main/java/com/example/notes/storage/StoreMigrations.java");
+    let test = generated.join("test/java/com/example/notes/storage/StoreDatabaseTest.java");
+    let migration = root.join("src/main/resources/db/migration/V001__sqlite_init.sql");
+    for (index, path) in [&database, &migrations, &test].iter().enumerate() {
+        let source = fs::read_to_string(path).unwrap();
+        let at = source.rfind("\n}").unwrap();
+        fs::write(
+            path,
+            format!(
+                "{}\n\n    // reader-owned-sqlite-{index}{}",
+                &source[..at],
+                &source[at..]
+            ),
+        )
+        .unwrap();
+    }
+    fs::write(
+        &migration,
+        fs::read_to_string(&migration)
+            .unwrap()
+            .replace("Applied once", "Reader wording survives; applied once"),
+    )
+    .unwrap();
+
+    let trigger = jails_cmd(&root, None)
+        .args(["add", "fake"])
+        .output()
+        .unwrap();
+    assert!(
+        trigger.status.success(),
+        "{}",
+        String::from_utf8_lossy(&trigger.stderr)
+    );
+    fs::write(
+        &model_path,
+        fs::read_to_string(&model_path)
+            .unwrap()
+            .replace("@package(storage)", "@package(persistence)"),
+    )
+    .unwrap();
+    let moved = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(
+        moved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&moved.stderr)
+    );
+    let moved_files = [
+        generated.join("main/java/com/example/notes/persistence/StoreDatabase.java"),
+        generated.join("main/java/com/example/notes/persistence/StoreMigrations.java"),
+        generated.join("test/java/com/example/notes/persistence/StoreDatabaseTest.java"),
+    ];
+    assert!(!database.exists());
+    assert!(!migrations.exists());
+    assert!(!test.exists());
+    for (index, path) in moved_files.iter().enumerate() {
+        assert!(
+            fs::read_to_string(path)
+                .unwrap()
+                .contains(&format!("reader-owned-sqlite-{index}")),
+            "lost edit in {}",
+            path.display()
+        );
+    }
+    assert!(
+        fs::read_to_string(&migration)
+            .unwrap()
+            .contains("Reader wording survives")
+    );
+    let expected = [
+        (
+            "main/java/com/example/notes/persistence/StoreDatabase.java",
+            &moved_files[0],
+        ),
+        (
+            "main/java/com/example/notes/persistence/StoreMigrations.java",
+            &moved_files[1],
+        ),
+        (
+            "test/java/com/example/notes/persistence/StoreDatabaseTest.java",
+            &moved_files[2],
+        ),
+    ];
+    let bytes = expected
+        .iter()
+        .map(|(_, path)| fs::read(path).unwrap())
+        .collect::<Vec<_>>();
+    let ejected = jails_cmd(&root, None)
+        .args(["model", "eject", "cap_sqlite"])
+        .output()
+        .unwrap();
+    assert!(
+        ejected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ejected.stderr)
+    );
+    for (index, (path, managed)) in expected.iter().enumerate() {
+        assert!(!managed.exists(), "managed {path} survived");
+        assert_eq!(
+            fs::read(root.join("src").join(path)).unwrap(),
+            bytes[index],
+            "ejection changed {path}"
+        );
+    }
+    assert!(migration.exists(), "ejection deleted migration history");
+    assert!(
+        fs::read_to_string(&migration)
+            .unwrap()
+            .contains("Reader wording survives"),
+        "ejection changed the reader-edited migration"
+    );
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(
+        pom.contains("<artifactId>sqlite-jdbc</artifactId>"),
+        "{pom}"
+    );
+    assert!(!pom.contains("<goal>add-resource</goal>"), "{pom}");
+
+    if real_mvn_available() && real_java_supports_target_release() {
+        let path = real_path_without_mvnd();
+        let built = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "test"])
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "canonical SQLite pack did not compile and test:\n{}\n{}",
+            String::from_utf8_lossy(&built.stdout),
+            String::from_utf8_lossy(&built.stderr)
+        );
+    }
+}
+
+#[test]
+fn canonical_h2_pack_merges_ejects_and_builds() {
+    let root = temp_dir("model-h2-capability-pack");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect h2\n",
+    )
+    .unwrap();
+    let added = jails_cmd(&root, None).args(["add", "h2"]).output().unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+
+    let managed =
+        root.join(".jails/generated/test/java/com/example/demo/adapters/H2DatabaseTest.java");
+    let source = fs::read_to_string(&managed).unwrap();
+    let at = source.rfind("\n}").unwrap();
+    let edited = format!(
+        "{}\n\n    // reader-owned-h2-helper{}",
+        &source[..at],
+        &source[at..]
+    );
+    fs::write(&managed, &edited).unwrap();
+    let main_properties = root.join("src/main/resources/application.properties");
+    let test_properties = root.join("src/test/resources/config/application.properties");
+    fs::write(
+        &main_properties,
+        format!(
+            "{}reader.h2.main=survives\n",
+            fs::read_to_string(&main_properties).unwrap()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        &test_properties,
+        format!(
+            "{}reader.h2.test=survives\n",
+            fs::read_to_string(&test_properties).unwrap()
+        ),
+    )
+    .unwrap();
+
+    let synced = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    assert!(
+        fs::read_to_string(&managed)
+            .unwrap()
+            .contains("reader-owned-h2-helper")
+    );
+    assert!(
+        fs::read_to_string(&main_properties)
+            .unwrap()
+            .contains("reader.h2.main=survives")
+    );
+    assert!(
+        fs::read_to_string(&test_properties)
+            .unwrap()
+            .contains("reader.h2.test=survives")
+    );
+
+    let live_bytes = fs::read(&managed).unwrap();
+    let ejected = jails_cmd(&root, None)
+        .args(["model", "eject", "cap_h2"])
+        .output()
+        .unwrap();
+    assert!(
+        ejected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ejected.stderr)
+    );
+    let reader = root.join("src/test/java/com/example/demo/adapters/H2DatabaseTest.java");
+    assert!(!managed.exists());
+    assert_eq!(fs::read(&reader).unwrap(), live_bytes);
+
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    for artifact in ["spring-boot-starter-jdbc", "h2", "spring-boot-h2console"] {
+        assert!(
+            pom.contains(&format!("<artifactId>{artifact}</artifactId>")),
+            "{pom}"
+        );
+    }
+    let main = fs::read_to_string(&main_properties).unwrap();
+    assert!(main.contains("jdbc:h2:file:./data/app;AUTO_SERVER=TRUE"));
+    assert!(main.contains("spring.persistence.exceptiontranslation.enabled=false"));
+    let test = fs::read_to_string(&test_properties).unwrap();
+    assert!(test.contains("jdbc:h2:mem:test;DB_CLOSE_DELAY=-1"));
+
+    if real_mvn_available() && real_java_supports_target_release() {
+        let path = real_path_without_mvnd();
+        let built = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "test"])
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "canonical H2 pack did not compile and test:\n{}\n{}",
+            String::from_utf8_lossy(&built.stdout),
+            String::from_utf8_lossy(&built.stderr)
+        );
+    }
+}
+
+#[test]
+fn canonical_actuator_pack_merges_ejects_only_java_and_builds() {
+    let root = temp_dir("model-actuator-capability-pack");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+    let added = jails_cmd(&root, None)
+        .args(["add", "actuator"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+
+    let managed =
+        root.join(".jails/generated/test/java/com/example/demo/ActuatorEndpointsTest.java");
+    let source = fs::read_to_string(&managed).unwrap();
+    let at = source.rfind("\n}").unwrap();
+    let edited = format!(
+        "{}\n\n    // reader-owned-actuator-helper{}",
+        &source[..at],
+        &source[at..]
+    );
+    fs::write(&managed, &edited).unwrap();
+    let properties = root.join("src/main/resources/application.properties");
+    fs::write(
+        &properties,
+        format!(
+            "{}reader.actuator=survives\n",
+            fs::read_to_string(&properties).unwrap()
+        ),
+    )
+    .unwrap();
+
+    let synced = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    assert!(
+        fs::read_to_string(&managed)
+            .unwrap()
+            .contains("reader-owned-actuator-helper")
+    );
+    assert!(
+        fs::read_to_string(&properties)
+            .unwrap()
+            .contains("reader.actuator=survives")
+    );
+
+    let live_bytes = fs::read(&managed).unwrap();
+    let ejected = jails_cmd(&root, None)
+        .args(["model", "eject", "cap_actuator"])
+        .output()
+        .unwrap();
+    assert!(
+        ejected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ejected.stderr)
+    );
+    let reader = root.join("src/test/java/com/example/demo/ActuatorEndpointsTest.java");
+    assert!(!managed.exists());
+    assert_eq!(fs::read(&reader).unwrap(), live_bytes);
+
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(
+        pom.contains("<artifactId>spring-boot-starter-actuator</artifactId>"),
+        "{pom}"
+    );
+    let properties = fs::read_to_string(&properties).unwrap();
+    for owned in [
+        "management.endpoints.web.exposure.include=health,info,prometheus,threaddump",
+        "management.server.port=8081",
+        "management.endpoints.web.base-path=/management",
+        "management.endpoint.health.group.readiness.include=ping",
+        "info.app.version=@project.version@",
+    ] {
+        assert!(properties.contains(owned), "missing {owned}: {properties}");
+    }
+    assert!(properties.contains("reader.actuator=survives"));
+    assert!(!properties.contains("management.endpoints.web.exposure.include=*"));
+
+    if real_mvn_available() && real_java_supports_target_release() {
+        let path = real_path_without_mvnd();
+        let built = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "test"])
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "canonical Actuator pack did not compile and test after Java-only ejection:\n{}\n{}",
+            String::from_utf8_lossy(&built.stdout),
+            String::from_utf8_lossy(&built.stderr)
+        );
+    }
+}
+
+#[test]
+fn canonical_cache_pack_merges_ejects_the_java_boundary_and_builds() {
+    let root = temp_dir("model-cache-capability-pack");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+    let added = jails_cmd(&root, None)
+        .args(["add", "cache"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+
+    let managed = [
+        root.join(".jails/generated/main/java/com/example/demo/CacheConfig.java"),
+        root.join(".jails/generated/test/java/com/example/demo/CacheConfigTest.java"),
+    ];
+    for (index, path) in managed.iter().enumerate() {
+        let source = fs::read_to_string(path).unwrap();
+        let edited = if let Some(at) = source.rfind("\n}") {
+            format!(
+                "{}\n\n    // reader-owned-cache-helper-{index}{}",
+                &source[..at],
+                &source[at..]
+            )
+        } else {
+            let at = source.rfind("{}").expect("Java type has no closing body");
+            format!(
+                "{}{{\n\n    // reader-owned-cache-helper-{index}\n}}{}",
+                &source[..at],
+                &source[at + 2..]
+            )
+        };
+        fs::write(path, edited).unwrap();
+    }
+    let properties = root.join("src/main/resources/application.properties");
+    fs::write(
+        &properties,
+        format!(
+            "{}reader.cache=survives\n",
+            fs::read_to_string(&properties).unwrap()
+        ),
+    )
+    .unwrap();
+
+    let synced = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    for (index, path) in managed.iter().enumerate() {
+        assert!(
+            fs::read_to_string(path)
+                .unwrap()
+                .contains(&format!("reader-owned-cache-helper-{index}"))
+        );
+    }
+
+    let live_bytes = managed.each_ref().map(|path| fs::read(path).unwrap());
+    let ejected = jails_cmd(&root, None)
+        .args(["model", "eject", "cap_cache"])
+        .output()
+        .unwrap();
+    assert!(
+        ejected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ejected.stderr)
+    );
+    let reader = [
+        root.join("src/main/java/com/example/demo/CacheConfig.java"),
+        root.join("src/test/java/com/example/demo/CacheConfigTest.java"),
+    ];
+    for ((managed, reader), expected) in managed.iter().zip(&reader).zip(live_bytes) {
+        assert!(!managed.exists());
+        assert_eq!(fs::read(reader).unwrap(), expected);
+    }
+
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    for artifact in ["spring-boot-starter-cache", "caffeine"] {
+        assert!(
+            pom.contains(&format!("<artifactId>{artifact}</artifactId>")),
+            "{pom}"
+        );
+    }
+    let properties = fs::read_to_string(&properties).unwrap();
+    for required in [
+        "reader.cache=survives",
+        "spring.cache.type=caffeine",
+        "spring.cache.caffeine.spec=maximumSize=1000,expireAfterWrite=60s",
+    ] {
+        assert!(
+            properties.contains(required),
+            "missing {required}: {properties}"
+        );
+    }
+
+    if real_mvn_available() && real_java_supports_target_release() {
+        let path = real_path_without_mvnd();
+        let built = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "test"])
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "canonical Cache pack did not compile and test after ejection:\n{}\n{}",
+            String::from_utf8_lossy(&built.stdout),
+            String::from_utf8_lossy(&built.stderr)
+        );
+    }
+}
+
+#[test]
+fn canonical_cors_pack_merges_ejects_the_java_boundary_and_builds() {
+    let root = temp_dir("model-cors-capability-pack");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+    let added = jails_cmd(&root, None)
+        .args(["add", "cors"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+
+    let managed = [
+        root.join(".jails/generated/main/java/com/example/demo/CorsConfig.java"),
+        root.join(".jails/generated/test/java/com/example/demo/CorsConfigTest.java"),
+    ];
+    let modern_test = fs::read_to_string(&managed[1]).unwrap();
+    assert!(
+        modern_test.contains("servlet.assertj.MockMvcTester"),
+        "the default Boot project did not compile the modern CORS branch: {modern_test}"
+    );
+    for (index, path) in managed.iter().enumerate() {
+        let source = fs::read_to_string(path).unwrap();
+        let at = source.rfind("\n}").expect("CORS Java type has no body");
+        fs::write(
+            path,
+            format!(
+                "{}\n\n    // reader-owned-cors-helper-{index}{}",
+                &source[..at],
+                &source[at..]
+            ),
+        )
+        .unwrap();
+    }
+    let properties = root.join("src/main/resources/application.properties");
+    fs::write(
+        &properties,
+        format!(
+            "{}reader.cors=survives\n",
+            fs::read_to_string(&properties).unwrap()
+        ),
+    )
+    .unwrap();
+
+    let synced = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    for (index, path) in managed.iter().enumerate() {
+        assert!(
+            fs::read_to_string(path)
+                .unwrap()
+                .contains(&format!("reader-owned-cors-helper-{index}"))
+        );
+    }
+
+    let live_bytes = managed.each_ref().map(|path| fs::read(path).unwrap());
+    let ejected = jails_cmd(&root, None)
+        .args(["model", "eject", "cap_cors"])
+        .output()
+        .unwrap();
+    assert!(
+        ejected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ejected.stderr)
+    );
+    let reader = [
+        root.join("src/main/java/com/example/demo/CorsConfig.java"),
+        root.join("src/test/java/com/example/demo/CorsConfigTest.java"),
+    ];
+    for ((managed, reader), expected) in managed.iter().zip(&reader).zip(live_bytes) {
+        assert!(!managed.exists());
+        assert_eq!(fs::read(reader).unwrap(), expected);
+    }
+    let properties = fs::read_to_string(&properties).unwrap();
+    assert!(properties.contains("app.cors.allowed-origins=https://example.invalid"));
+    assert!(properties.contains("reader.cors=survives"));
+
+    if real_mvn_available() && real_java_supports_target_release() {
+        let path = real_path_without_mvnd();
+        let built = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "test"])
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "canonical CORS pack did not compile and test after ejection:\n{}\n{}",
+            String::from_utf8_lossy(&built.stdout),
+            String::from_utf8_lossy(&built.stderr)
+        );
+    }
+}
+
+#[test]
+fn canonical_observability_pack_merges_ejects_and_serves_prometheus() {
+    let root = temp_dir("model-observability-capability-pack");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+    let added = jails_cmd(&root, None)
+        .args(["add", "observability"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+
+    let managed = [
+        root.join(".jails/generated/main/java/com/example/demo/MetricsConfig.java"),
+        root.join(".jails/generated/main/java/com/example/demo/AppMetrics.java"),
+        root.join(".jails/generated/test/java/com/example/demo/AppMetricsTest.java"),
+        root.join(".jails/generated/test/java/com/example/demo/PrometheusScrapeTest.java"),
+    ];
+    assert!(
+        fs::read_to_string(&managed[0])
+            .unwrap()
+            .contains("boot.micrometer.metrics.autoconfigure.MeterRegistryCustomizer")
+    );
+    for (index, path) in managed.iter().enumerate() {
+        let source = fs::read_to_string(path).unwrap();
+        let at = source
+            .rfind("\n}")
+            .expect("observability Java type has no body");
+        fs::write(
+            path,
+            format!(
+                "{}\n\n    // reader-owned-observability-helper-{index}{}",
+                &source[..at],
+                &source[at..]
+            ),
+        )
+        .unwrap();
+    }
+    let properties = root.join("src/main/resources/application.properties");
+    fs::write(
+        &properties,
+        format!(
+            "{}reader.observability=survives\n",
+            fs::read_to_string(&properties).unwrap()
+        ),
+    )
+    .unwrap();
+
+    let synced = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    for (index, path) in managed.iter().enumerate() {
+        assert!(
+            fs::read_to_string(path)
+                .unwrap()
+                .contains(&format!("reader-owned-observability-helper-{index}"))
+        );
+    }
+
+    let live_bytes = managed.each_ref().map(|path| fs::read(path).unwrap());
+    let ejected = jails_cmd(&root, None)
+        .args(["model", "eject", "cap_observability"])
+        .output()
+        .unwrap();
+    assert!(
+        ejected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ejected.stderr)
+    );
+    let reader = [
+        root.join("src/main/java/com/example/demo/MetricsConfig.java"),
+        root.join("src/main/java/com/example/demo/AppMetrics.java"),
+        root.join("src/test/java/com/example/demo/AppMetricsTest.java"),
+        root.join("src/test/java/com/example/demo/PrometheusScrapeTest.java"),
+    ];
+    for ((managed, reader), expected) in managed.iter().zip(&reader).zip(live_bytes) {
+        assert!(!managed.exists());
+        assert_eq!(fs::read(reader).unwrap(), expected);
+    }
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    for artifact in [
+        "spring-boot-starter-actuator",
+        "micrometer-registry-prometheus",
+    ] {
+        assert!(pom.contains(&format!("<artifactId>{artifact}</artifactId>")));
+    }
+    let properties = fs::read_to_string(&properties).unwrap();
+    for required in [
+        "reader.observability=survives",
+        "management.endpoints.web.exposure.include=health,info,prometheus,threaddump",
+        "management.metrics.distribution.percentiles-histogram.http.server.requests=false",
+        "management.tracing.baggage.local-fields=request-id",
+        "server.tomcat.accesslog.directory=/dev",
+    ] {
+        assert!(
+            properties.contains(required),
+            "missing {required}: {properties}"
+        );
+    }
+
+    if real_mvn_available() && real_java_supports_target_release() {
+        let path = real_path_without_mvnd();
+        let built = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "test"])
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "canonical Observability pack did not serve Prometheus after ejection:\n{}\n{}",
+            String::from_utf8_lossy(&built.stdout),
+            String::from_utf8_lossy(&built.stderr)
+        );
+    }
+}
+
+#[test]
+fn canonical_security_pack_merges_ejects_and_keeps_cors_buildable() {
+    let root = temp_dir("model-security-capability-pack");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+    for capability in ["security", "cors"] {
+        let added = jails_cmd(&root, None)
+            .args(["add", capability])
+            .output()
+            .unwrap();
+        assert!(
+            added.status.success(),
+            "{}",
+            String::from_utf8_lossy(&added.stderr)
+        );
+    }
+
+    let managed = [
+        root.join(".jails/generated/main/java/com/example/demo/SecurityConfig.java"),
+        root.join(".jails/generated/main/java/com/example/demo/ProductionSecurityConfig.java"),
+        root.join(".jails/generated/main/java/com/example/demo/ScopeAuthorizer.java"),
+        root.join(".jails/generated/test/java/com/example/demo/SecurityConfigTest.java"),
+        root.join(".jails/generated/test/java/com/example/demo/ScopeAuthorizerTest.java"),
+    ];
+    assert!(
+        fs::read_to_string(&managed[3])
+            .unwrap()
+            .contains("boot.webmvc.test.autoconfigure.WebMvcTest")
+    );
+    for (index, path) in managed.iter().enumerate() {
+        let source = fs::read_to_string(path).unwrap();
+        let at = source.rfind("\n}").expect("security Java type has no body");
+        fs::write(
+            path,
+            format!(
+                "{}\n\n    // reader-owned-security-helper-{index}{}",
+                &source[..at],
+                &source[at..]
+            ),
+        )
+        .unwrap();
+    }
+
+    let synced = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    for (index, path) in managed.iter().enumerate() {
+        assert!(
+            fs::read_to_string(path)
+                .unwrap()
+                .contains(&format!("reader-owned-security-helper-{index}"))
+        );
+    }
+
+    let live_bytes = managed.each_ref().map(|path| fs::read(path).unwrap());
+    let ejected = jails_cmd(&root, None)
+        .args(["model", "eject", "cap_security"])
+        .output()
+        .unwrap();
+    assert!(
+        ejected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ejected.stderr)
+    );
+    let reader = [
+        root.join("src/main/java/com/example/demo/SecurityConfig.java"),
+        root.join("src/main/java/com/example/demo/ProductionSecurityConfig.java"),
+        root.join("src/main/java/com/example/demo/ScopeAuthorizer.java"),
+        root.join("src/test/java/com/example/demo/SecurityConfigTest.java"),
+        root.join("src/test/java/com/example/demo/ScopeAuthorizerTest.java"),
+    ];
+    for ((managed, reader), expected) in managed.iter().zip(&reader).zip(live_bytes) {
+        assert!(!managed.exists());
+        assert_eq!(fs::read(reader).unwrap(), expected);
+    }
+    for cors in [
+        root.join(".jails/generated/main/java/com/example/demo/CorsConfig.java"),
+        root.join(".jails/generated/test/java/com/example/demo/CorsConfigTest.java"),
+    ] {
+        assert!(
+            cors.is_file(),
+            "security ejection removed {}",
+            cors.display()
+        );
+    }
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    for artifact in [
+        "spring-boot-starter-security",
+        "spring-boot-starter-oauth2-resource-server",
+        "spring-security-test",
+        "spring-boot-starter-webmvc-test",
+    ] {
+        assert!(pom.contains(&format!("<artifactId>{artifact}</artifactId>")));
+    }
+
+    if real_mvn_available() && real_java_supports_target_release() {
+        let path = real_path_without_mvnd();
+        let built = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "test"])
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "canonical Security/CORS stack did not compile and test after ejection:\n{}\n{}",
+            String::from_utf8_lossy(&built.stdout),
+            String::from_utf8_lossy(&built.stderr)
+        );
+    }
+}
+
+#[test]
+fn canonical_sse_pack_merges_ejects_across_packages_and_runs_its_proof() {
+    let root = temp_dir("model-sse-capability-pack");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+    let added = jails_cmd(&root, None)
+        .args(["add", "sse"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+
+    let managed = [
+        root.join(".jails/generated/main/java/com/example/demo/EventHub.java"),
+        root.join(".jails/generated/main/java/com/example/demo/SchedulingConfig.java"),
+        root.join(".jails/generated/main/java/com/example/demo/web/EventStreamController.java"),
+        root.join(".jails/generated/test/java/com/example/demo/EventHubTest.java"),
+    ];
+    let controller = fs::read_to_string(&managed[2]).unwrap();
+    assert!(controller.contains("import com.example.demo.EventHub;"));
+    assert!(controller.contains("/events/{topic}/stream"));
+    for (index, path) in managed.iter().enumerate() {
+        let source = fs::read_to_string(path).unwrap();
+        let edited = if let Some(at) = source.rfind("\n}") {
+            format!(
+                "{}\n\n    // reader-owned-sse-helper-{index}{}",
+                &source[..at],
+                &source[at..]
+            )
+        } else {
+            let at = source.rfind("{}").expect("SSE Java type has no body");
+            format!(
+                "{}{{\n\n    // reader-owned-sse-helper-{index}\n}}{}",
+                &source[..at],
+                &source[at + 2..]
+            )
+        };
+        fs::write(path, edited).unwrap();
+    }
+    let properties = root.join("src/main/resources/application.properties");
+    fs::write(
+        &properties,
+        format!(
+            "{}reader.sse=survives\n",
+            fs::read_to_string(&properties).unwrap()
+        ),
+    )
+    .unwrap();
+
+    let synced = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    for (index, path) in managed.iter().enumerate() {
+        assert!(
+            fs::read_to_string(path)
+                .unwrap()
+                .contains(&format!("reader-owned-sse-helper-{index}"))
+        );
+    }
+
+    let live_bytes = managed.each_ref().map(|path| fs::read(path).unwrap());
+    let ejected = jails_cmd(&root, None)
+        .args(["model", "eject", "cap_sse"])
+        .output()
+        .unwrap();
+    assert!(
+        ejected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ejected.stderr)
+    );
+    let reader = [
+        root.join("src/main/java/com/example/demo/EventHub.java"),
+        root.join("src/main/java/com/example/demo/SchedulingConfig.java"),
+        root.join("src/main/java/com/example/demo/web/EventStreamController.java"),
+        root.join("src/test/java/com/example/demo/EventHubTest.java"),
+    ];
+    for ((managed, reader), expected) in managed.iter().zip(&reader).zip(live_bytes) {
+        assert!(!managed.exists());
+        assert_eq!(fs::read(reader).unwrap(), expected);
+    }
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("<artifactId>spring-boot-starter-web</artifactId>"));
+    let properties = fs::read_to_string(&properties).unwrap();
+    for required in ["reader.sse=survives", "spring.task.scheduling.pool.size=4"] {
+        assert!(
+            properties.contains(required),
+            "missing {required}: {properties}"
+        );
+    }
+
+    if real_mvn_available() && real_java_supports_target_release() {
+        let path = real_path_without_mvnd();
+        let built = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "test"])
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "canonical SSE pack did not compile and run after ejection:\n{}\n{}",
+            String::from_utf8_lossy(&built.stdout),
+            String::from_utf8_lossy(&built.stderr)
+        );
+        assert_surefire_test_count(&root, "EventHubTest", 4);
+    }
+}
+
+#[test]
+fn canonical_redis_pack_keeps_source_and_compose_in_the_iterative_loop() {
+    let root = temp_dir("model-redis-capability-pack");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+    let added = jails_cmd(&root, None)
+        .args(["add", "redis"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&added.stdout),
+        String::from_utf8_lossy(&added.stderr)
+    );
+
+    let managed = [
+        root.join(".jails/generated/main/java/com/example/demo/adapters/KeyValueStore.java"),
+        root.join(".jails/generated/test/java/com/example/demo/adapters/KeyValueStoreIT.java"),
+    ];
+    for (index, path) in managed.iter().enumerate() {
+        let source = fs::read_to_string(path).unwrap();
+        let at = source.rfind("\n}").unwrap();
+        fs::write(
+            path,
+            format!(
+                "{}\n\n    // reader-owned-redis-helper-{index}{}",
+                &source[..at],
+                &source[at..]
+            ),
+        )
+        .unwrap();
+    }
+    let compose = root.join("compose.yaml");
+    let source = fs::read_to_string(&compose).unwrap();
+    fs::write(
+        &compose,
+        source
+            .replace(
+                "    healthcheck:\n",
+                "    restart: unless-stopped\n    healthcheck:\n",
+            )
+            .replace(
+                "services:\n",
+                "services:\n  reader-service:\n    image: reader:latest\n",
+            ),
+    )
+    .unwrap();
+
+    let synced = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&synced.stdout),
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    for (index, path) in managed.iter().enumerate() {
+        assert!(
+            fs::read_to_string(path)
+                .unwrap()
+                .contains(&format!("reader-owned-redis-helper-{index}"))
+        );
+    }
+    let compose_source = fs::read_to_string(&compose).unwrap();
+    for expected in [
+        "image: redis:7-alpine",
+        "restart: unless-stopped",
+        "reader-service:",
+    ] {
+        assert!(
+            compose_source.contains(expected),
+            "missing {expected}: {compose_source}"
+        );
+    }
+    assert!(!compose_source.contains("redis-data"), "{compose_source}");
+
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    for artifact in [
+        "spring-boot-starter-data-redis",
+        "testcontainers",
+        "spring-boot-testcontainers",
+        "maven-failsafe-plugin",
+    ] {
+        assert!(pom.contains(artifact), "missing {artifact}: {pom}");
+    }
+    let properties =
+        fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
+    for property in [
+        "spring.data.redis.host=localhost",
+        "spring.data.redis.port=6379",
+        "app.redis.default-ttl=PT10M",
+    ] {
+        assert!(
+            properties.contains(property),
+            "missing {property}: {properties}"
+        );
+    }
+
+    if real_mvn_available() && real_java_supports_target_release() {
+        let path = real_path_without_mvnd();
+        let built = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "test"])
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "canonical Redis pack did not compile with real Maven:\n{}\n{}",
+            String::from_utf8_lossy(&built.stdout),
+            String::from_utf8_lossy(&built.stderr)
+        );
+        assert!(
+            root.join("target/test-classes/com/example/demo/adapters/KeyValueStoreIT.class")
+                .is_file(),
+            "real Maven did not compile KeyValueStoreIT"
+        );
+    }
+}
+
+#[test]
+fn canonical_kafka_pack_keeps_source_and_compose_in_the_iterative_loop() {
+    let root = temp_dir("model-kafka-capability-pack");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+    let added = jails_cmd(&root, None)
+        .args(["add", "kafka", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&added.stdout),
+        String::from_utf8_lossy(&added.stderr)
+    );
+
+    let managed = [
+        root.join(".jails/generated/main/java/com/example/demo/messaging/KafkaConfig.java"),
+        root.join(
+            ".jails/generated/main/java/com/example/demo/messaging/NonRetryableException.java",
+        ),
+        root.join(".jails/generated/test/java/com/example/demo/messaging/KafkaConfigTest.java"),
+        root.join(".jails/generated/test/java/com/example/demo/KafkaTestcontainersConfig.java"),
+    ];
+    for (index, path) in managed.iter().enumerate() {
+        let source = fs::read_to_string(path).unwrap();
+        let at = source.rfind("\n}").unwrap();
+        fs::write(
+            path,
+            format!(
+                "{}\n\n    // reader-owned-kafka-helper-{index}{}",
+                &source[..at],
+                &source[at..]
+            ),
+        )
+        .unwrap();
+    }
+    let compose = root.join("compose.yaml");
+    let source = fs::read_to_string(&compose).unwrap();
+    fs::write(
+        &compose,
+        source
+            .replace(
+                "    healthcheck:\n",
+                "    restart: unless-stopped\n    healthcheck:\n",
+            )
+            .replace(
+                "services:\n",
+                "services:\n  reader-service:\n    image: reader:latest\n",
+            ),
+    )
+    .unwrap();
+
+    let synced = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&synced.stdout),
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    for (index, path) in managed.iter().enumerate() {
+        assert!(
+            fs::read_to_string(path)
+                .unwrap()
+                .contains(&format!("reader-owned-kafka-helper-{index}"))
+        );
+    }
+    let compose_source = fs::read_to_string(&compose).unwrap();
+    for expected in [
+        "image: apache/kafka:4.1.0",
+        "restart: unless-stopped",
+        "reader-service:",
+    ] {
+        assert!(
+            compose_source.contains(expected),
+            "missing {expected}: {compose_source}"
+        );
+    }
+
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    for artifact in [
+        "spring-boot-starter-kafka",
+        "micrometer-core",
+        "spring-boot-testcontainers",
+        "testcontainers-kafka",
+        "testcontainers-junit-jupiter",
+        "awaitility",
+    ] {
+        assert!(pom.contains(artifact), "missing {artifact}: {pom}");
+    }
+    let properties =
+        fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
+    for property in [
+        "spring.kafka.consumer.group-id=demo",
+        "spring.kafka.consumer.auto-offset-reset=earliest",
+        "spring.kafka.consumer.properties.spring.json.trusted.packages=com.example.demo,com.example.demo.*",
+        "spring.kafka.consumer.properties.group.protocol=consumer",
+    ] {
+        assert!(
+            properties.contains(property),
+            "missing {property}: {properties}"
+        );
+    }
+
+    if real_mvn_available() && real_java_supports_target_release() {
+        let path = real_path_without_mvnd();
+        let built = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "test"])
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "canonical Kafka pack did not compile with real Maven:\n{}\n{}",
+            String::from_utf8_lossy(&built.stdout),
+            String::from_utf8_lossy(&built.stderr)
+        );
+        assert!(
+            root.join("target/test-classes/com/example/demo/messaging/KafkaConfigTest.class")
+                .is_file(),
+            "real Maven did not compile KafkaConfigTest"
+        );
+    }
+}
+
+#[test]
+fn canonical_mail_pack_keeps_source_and_compose_in_the_iterative_loop() {
+    let root = temp_dir("model-mail-capability-pack");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+    let added = jails_cmd(&root, None)
+        .args(["add", "mail", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&added.stdout),
+        String::from_utf8_lossy(&added.stderr)
+    );
+
+    let managed = [
+        root.join(".jails/generated/main/java/com/example/demo/Mailer.java"),
+        root.join(".jails/generated/test/java/com/example/demo/MailerIT.java"),
+    ];
+    for (index, path) in managed.iter().enumerate() {
+        let source = fs::read_to_string(path).unwrap();
+        let at = source.rfind("\n}").unwrap();
+        fs::write(
+            path,
+            format!(
+                "{}\n\n    // reader-owned-mail-helper-{index}{}",
+                &source[..at],
+                &source[at..]
+            ),
+        )
+        .unwrap();
+    }
+    let compose = root.join("compose.yaml");
+    let source = fs::read_to_string(&compose).unwrap();
+    fs::write(
+        &compose,
+        source
+            .replace("    ports:\n", "    restart: unless-stopped\n    ports:\n")
+            .replace(
+                "services:\n",
+                "services:\n  reader-service:\n    image: reader:latest\n",
+            ),
+    )
+    .unwrap();
+
+    let synced = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&synced.stdout),
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    for (index, path) in managed.iter().enumerate() {
+        assert!(
+            fs::read_to_string(path)
+                .unwrap()
+                .contains(&format!("reader-owned-mail-helper-{index}"))
+        );
+    }
+    let compose_source = fs::read_to_string(&compose).unwrap();
+    for expected in [
+        "image: axllent/mailpit:v1.21",
+        "restart: unless-stopped",
+        "reader-service:",
+    ] {
+        assert!(
+            compose_source.contains(expected),
+            "missing {expected}: {compose_source}"
+        );
+    }
+
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    for artifact in [
+        "spring-boot-starter-mail",
+        "spring-boot-starter-mail-test",
+        "awaitility",
+        "testcontainers",
+        "testcontainers-junit-jupiter",
+        "maven-failsafe-plugin",
+    ] {
+        assert!(pom.contains(artifact), "missing {artifact}: {pom}");
+    }
+    let properties =
+        fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
+    for property in [
+        "spring.mail.host=localhost",
+        "spring.mail.port=1025",
+        "app.mail.from=no-reply@example.com",
+    ] {
+        assert!(
+            properties.contains(property),
+            "missing {property}: {properties}"
+        );
+    }
+
+    if real_mvn_available() && real_java_supports_target_release() {
+        let path = real_path_without_mvnd();
+        let built = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "verify"])
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "canonical Mail pack did not verify with real Maven:\n{}\n{}",
+            String::from_utf8_lossy(&built.stdout),
+            String::from_utf8_lossy(&built.stderr)
+        );
+        assert!(
+            root.join("target/test-classes/com/example/demo/MailerIT.class")
+                .is_file(),
+            "real Maven did not compile MailerIT"
+        );
+    }
+}
+
+#[test]
+fn canonical_toxiproxy_pack_keeps_testkit_edits_and_runs_with_real_maven() {
+    let root = temp_dir("model-toxiproxy-capability-pack");
+    write_plain_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+    let added = jails_cmd(&root, None)
+        .args(["add", "toxiproxy"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&added.stdout),
+        String::from_utf8_lossy(&added.stderr)
+    );
+
+    let managed = [
+        root.join(".jails/generated/test/java/com/example/demo/testkit/Faults.java"),
+        root.join(".jails/generated/test/java/com/example/demo/testkit/FaultsTest.java"),
+    ];
+    let originals = managed
+        .each_ref()
+        .map(|path| fs::read_to_string(path).unwrap());
+    for (index, path) in managed.iter().enumerate() {
+        let source = fs::read_to_string(path).unwrap();
+        let at = source.rfind("\n}").unwrap();
+        fs::write(
+            path,
+            format!(
+                "{}\n\n    // reader-owned-toxiproxy-helper-{index}{}",
+                &source[..at],
+                &source[at..]
+            ),
+        )
+        .unwrap();
+    }
+
+    let generated_again = jails_cmd(&root, None)
+        .args(["add", "fake"])
+        .output()
+        .unwrap();
+    assert!(
+        generated_again.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&generated_again.stdout),
+        String::from_utf8_lossy(&generated_again.stderr)
+    );
+    for (index, path) in managed.iter().enumerate() {
+        assert!(
+            fs::read_to_string(path)
+                .unwrap()
+                .contains(&format!("reader-owned-toxiproxy-helper-{index}"))
+        );
+    }
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    for (artifact, version) in [
+        ("testcontainers-toxiproxy", "2.0.5"),
+        ("toxiproxy-java", "2.1.11"),
+    ] {
+        assert!(pom.contains(artifact), "missing {artifact}: {pom}");
+        assert!(
+            pom.contains(version),
+            "missing {artifact} version {version}: {pom}"
+        );
+    }
+
+    if real_mvn_available() && real_java_supports_target_release() && real_docker_available() {
+        let path = real_path_without_mvnd();
+        let tested = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "test"])
+            .output()
+            .unwrap();
+        assert!(
+            tested.status.success(),
+            "canonical Toxiproxy pack did not pass real Maven tests:\n{}\n{}",
+            String::from_utf8_lossy(&tested.stdout),
+            String::from_utf8_lossy(&tested.stderr)
+        );
+        assert!(
+            root.join("target/test-classes/com/example/demo/testkit/FaultsTest.class")
+                .is_file(),
+            "real Maven did not compile FaultsTest"
+        );
+    }
+
+    for (path, original) in managed.iter().zip(originals) {
+        fs::write(path, original).unwrap();
+    }
+    let removed = jails_cmd(&root, None)
+        .args(["remove", "toxiproxy", "--force"])
+        .output()
+        .unwrap();
+    assert!(
+        removed.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&removed.stdout),
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    assert!(managed.iter().all(|path| !path.exists()));
+    assert!(
+        root.join(".jails/generated/test/java/com/example/demo/testkit/Fake.java")
+            .is_file(),
+        "Toxiproxy ejection removed the independent fake boundary"
+    );
+}
+
+#[test]
+fn canonical_coverage_is_lossless_refuses_owned_edits_and_passes_real_verify() {
+    let root = temp_dir("model-coverage-capability-pack");
+    write_plain_fixture(&root);
+    let test_dir = root.join("src/test/java/com/example/demo");
+    fs::create_dir_all(&test_dir).unwrap();
+    fs::write(
+        test_dir.join("DemoApplicationTest.java"),
+        "package com.example.demo;\n\nimport static org.junit.jupiter.api.Assertions.assertNotNull;\n\nimport org.junit.jupiter.api.Test;\n\nclass DemoApplicationTest {\n    @Test\n    void constructs() {\n        assertNotNull(new DemoApplication());\n    }\n}\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+
+    let added = jails_cmd(&root, None)
+        .args(["add", "coverage"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&added.stdout),
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let pom_path = root.join("pom.xml");
+    let installed = fs::read_to_string(&pom_path).unwrap();
+    for expected in [
+        "jails:coverage",
+        "jacoco-maven-plugin",
+        "<version>0.8.15</version>",
+        "<minimum>0.80</minimum>",
+    ] {
+        assert!(
+            installed.contains(expected),
+            "missing {expected}: {installed}"
+        );
+    }
+    fs::write(
+        &pom_path,
+        installed.replace(
+            "</project>",
+            "    <!-- reader-owned-coverage-note -->\n</project>",
+        ),
+    )
+    .unwrap();
+
+    let generated_again = jails_cmd(&root, None)
+        .args(["add", "fake"])
+        .output()
+        .unwrap();
+    assert!(
+        generated_again.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&generated_again.stdout),
+        String::from_utf8_lossy(&generated_again.stderr)
+    );
+    let clean = fs::read_to_string(&pom_path).unwrap();
+    assert!(clean.contains("reader-owned-coverage-note"), "{clean}");
+
+    fs::write(
+        &pom_path,
+        clean.replace("<minimum>0.80</minimum>", "<minimum>0.75</minimum>"),
+    )
+    .unwrap();
+    let before = snapshot_tree(&root);
+    let conflict = jails_cmd(&root, None)
+        .args(["add", "json"])
+        .output()
+        .unwrap();
+    assert!(!conflict.status.success());
+    assert!(
+        String::from_utf8_lossy(&conflict.stderr).contains("coverage block was edited"),
+        "{}",
+        String::from_utf8_lossy(&conflict.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), before, "coverage refusal wrote files");
+    fs::write(&pom_path, &clean).unwrap();
+
+    if real_mvn_available() && real_java_supports_target_release() {
+        let path = real_path_without_mvnd();
+        let verified = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "verify"])
+            .output()
+            .unwrap();
+        assert!(
+            verified.status.success(),
+            "canonical coverage did not pass real Maven verify:\n{}\n{}",
+            String::from_utf8_lossy(&verified.stdout),
+            String::from_utf8_lossy(&verified.stderr)
+        );
+        assert!(
+            root.join("target/site/jacoco/jacoco.xml").is_file(),
+            "JaCoCo did not publish its report"
+        );
+    }
+
+    let removed = jails_cmd(&root, None)
+        .args(["remove", "coverage", "--force"])
+        .output()
+        .unwrap();
+    assert!(
+        removed.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&removed.stdout),
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    let pom = fs::read_to_string(&pom_path).unwrap();
+    assert!(!pom.contains("jails:coverage"), "{pom}");
+    assert!(!pom.contains("jacoco-maven-plugin"), "{pom}");
+    assert!(pom.contains("reader-owned-coverage-note"), "{pom}");
+    assert!(
+        root.join(".jails/generated/test/java/com/example/demo/testkit/Fake.java")
+            .is_file(),
+        "coverage removal touched the independent fake boundary"
+    );
+}
+
+#[test]
+fn canonical_database_query_keeps_the_iterative_loop_and_ejects_only_its_adapter() {
+    let root = jdl_project(
+        "model-db-query-loop",
+        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+    );
+    write_spring_fixture(&root);
+    for arguments in [
+        vec![
+            "g",
+            "scaffold",
+            "Note",
+            "id:uuid@pk",
+            "title:string!",
+            "status:string?",
+        ],
+        vec![
+            "g",
+            "query",
+            "OpenNotes",
+            "title",
+            "status",
+            "--on",
+            "Note",
+            "--order-by",
+            "title",
+            "--limit",
+            "25",
+        ],
+        vec!["add", "db"],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let managed = root.join(".jails/generated/main/java/com/example/notes");
+    let adapter = managed.join("adapters/jdbc/JdbcOpenNotesQuery.java");
+    let abi = managed.join("application/queries/OpenNotesQuery.java");
+    let original = fs::read_to_string(&adapter).unwrap();
+    for contract in [
+        "implements OpenNotesQuery",
+        "select id, status, title from note",
+        "new ArrayList<>(List.of(\"title = :title\"))",
+        "if (input.status().isPresent())",
+        "predicates.add(\"status = :status\")",
+        "order by title",
+        "limit 25",
+    ] {
+        assert!(
+            original.contains(contract),
+            "missing `{contract}`:\n{original}"
+        );
+    }
+    assert!(abi.is_file(), "query ABI was not generated");
+
+    let split = original.rfind("\n}").unwrap();
+    let hand_edited = format!(
+        "{}\n\n    public String handWritten() {{ return \"reader\"; }}{}",
+        &original[..split],
+        &original[split..]
+    );
+    fs::write(&adapter, &hand_edited).unwrap();
+    let evolved = jails_cmd(&root, None)
+        .args(["resource", "field", "add", "Note", "summary:string?"])
+        .output()
+        .unwrap();
+    assert!(
+        evolved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evolved.stderr)
+    );
+    let evolved_source = fs::read_to_string(&adapter).unwrap();
+    assert!(evolved_source.contains("handWritten()"), "{evolved_source}");
+    assert!(
+        evolved_source.contains("select id, status, summary, title from note"),
+        "{evolved_source}"
+    );
+
+    let stable = snapshot_tree(&root);
+    let synced = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), stable, "query rerun changed bytes");
+
+    fs::write(
+        &adapter,
+        evolved_source.replace(
+            "select id, status, summary, title from note",
+            "select id, status, summary, title from note /* reader owns this line */",
+        ),
+    )
+    .unwrap();
+    let before_overlap = snapshot_tree(&root);
+    let refused = jails_cmd(&root, None)
+        .args(["resource", "field", "add", "Note", "priority:int?"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("overlap"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert_eq!(
+        snapshot_tree(&root),
+        before_overlap,
+        "query overlap refusal wrote bytes"
+    );
+
+    fs::write(&adapter, &evolved_source).unwrap();
+    let retried = jails_cmd(&root, None)
+        .args(["resource", "field", "add", "Note", "priority:int?"])
+        .output()
+        .unwrap();
+    assert!(
+        retried.status.success(),
+        "{}",
+        String::from_utf8_lossy(&retried.stderr)
+    );
+    let before_ejection = fs::read(&adapter).unwrap();
+    assert!(
+        String::from_utf8_lossy(&before_ejection)
+            .contains("select id, priority, status, summary, title from note")
+    );
+
+    let ejected = jails_cmd(&root, None)
+        .args(["model", "eject", "art_cap_db_op_open_notes_query"])
+        .output()
+        .unwrap();
+    assert!(
+        ejected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ejected.stderr)
+    );
+    let reader = root.join("src/main/java/com/example/notes/adapters/jdbc/JdbcOpenNotesQuery.java");
+    assert!(!adapter.exists(), "ejected query adapter stayed managed");
+    assert_eq!(fs::read(&reader).unwrap(), before_ejection);
+    assert!(abi.is_file(), "ejecting an adapter removed its managed ABI");
+
+    let reader_bytes = fs::read(&reader).unwrap();
+    let evolved_after_ejection = jails_cmd(&root, None)
+        .args(["resource", "field", "add", "Note", "archived:boolean?"])
+        .output()
+        .unwrap();
+    assert!(
+        evolved_after_ejection.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evolved_after_ejection.stderr)
+    );
+    assert_eq!(
+        fs::read(&reader).unwrap(),
+        reader_bytes,
+        "generation rewrote the ejected query adapter"
+    );
+    assert!(
+        abi.is_file(),
+        "managed ABI disappeared after model evolution"
+    );
+
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+    if real_mvn_available() && real_java_supports_target_release() {
+        let path = real_path_without_mvnd();
+        let compiled = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "-DskipTests", "compile"])
+            .output()
+            .unwrap();
+        assert!(
+            compiled.status.success(),
+            "canonical JDBC query did not compile after ejection:\n{}\n{}",
+            String::from_utf8_lossy(&compiled.stdout),
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+    }
+}
+
+#[test]
+fn canonical_database_commands_and_transitions_are_independent_iterative_boundaries() {
+    let root = jdl_project(
+        "model-db-write-operation-loop",
+        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+    );
+    write_spring_fixture(&root);
+    for arguments in [
+        vec![
+            "g",
+            "scaffold",
+            "Note",
+            "id:uuid@pk",
+            "title:string!",
+            "status:string?",
+        ],
+        vec!["g", "event", "NoteRenamed", "id", "title", "--on", "Note"],
+        vec!["g", "usecase", "CreateNote", "title", "--on", "Note"],
+        vec![
+            "g",
+            "transition",
+            "RenameNote",
+            "title",
+            "--on",
+            "Note",
+            "--yields",
+            "NoteRenamed",
+        ],
+        vec!["add", "db"],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let managed = root.join(".jails/generated/main/java/com/example/notes");
+    let command = managed.join("adapters/jdbc/JdbcCreateNoteCommand.java");
+    let transition = managed.join("adapters/jdbc/JdbcRenameNoteTransition.java");
+    let command_abi = managed.join("application/commands/CreateNoteCommand.java");
+    let transition_abi = managed.join("application/transitions/RenameNoteTransition.java");
+    let command_source = fs::read_to_string(&command).unwrap();
+    for contract in [
+        "implements CreateNoteCommand",
+        "insert into note (id, status, title) values (:id, :status, :title)",
+        "UUID.randomUUID()",
+        "statement.query(Note.class).single()",
+    ] {
+        assert!(
+            command_source.contains(contract),
+            "missing `{contract}`:\n{command_source}"
+        );
+    }
+    let transition_source = fs::read_to_string(&transition).unwrap();
+    for contract in [
+        "implements RenameNoteTransition",
+        "update note set title = :title where",
+        "id = :id",
+        "@Transactional",
+        "events.publishEvent(new NoteRenamedEvent(result.id(), result.title()))",
+    ] {
+        assert!(
+            transition_source.contains(contract),
+            "missing `{contract}`:\n{transition_source}"
+        );
+    }
+
+    let split = command_source.rfind("\n}").unwrap();
+    fs::write(
+        &command,
+        format!(
+            "{}\n\n    public String readerCommandMethod() {{ return \"reader\"; }}{}",
+            &command_source[..split],
+            &command_source[split..]
+        ),
+    )
+    .unwrap();
+    let split = transition_source.rfind("\n}").unwrap();
+    fs::write(
+        &transition,
+        format!(
+            "{}\n\n    public String readerTransitionMethod() {{ return \"reader\"; }}{}",
+            &transition_source[..split],
+            &transition_source[split..]
+        ),
+    )
+    .unwrap();
+
+    let evolved = jails_cmd(&root, None)
+        .args(["resource", "field", "add", "Note", "summary:string?"])
+        .output()
+        .unwrap();
+    assert!(
+        evolved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evolved.stderr)
+    );
+    let evolved_command = fs::read_to_string(&command).unwrap();
+    let evolved_transition = fs::read_to_string(&transition).unwrap();
+    assert!(evolved_command.contains("readerCommandMethod()"));
+    assert!(evolved_transition.contains("readerTransitionMethod()"));
+    assert!(
+        evolved_command.contains(
+            "insert into note (id, status, summary, title) values (:id, :status, :summary, :title)"
+        ),
+        "{evolved_command}"
+    );
+    assert!(
+        evolved_transition.contains("returning id, status, summary, title"),
+        "{evolved_transition}"
+    );
+
+    fs::write(
+        &command,
+        evolved_command.replace(
+            "insert into note (id, status, summary, title)",
+            "insert into note /* reader owns this SQL */ (id, status, summary, title)",
+        ),
+    )
+    .unwrap();
+    let before_overlap = snapshot_tree(&root);
+    let refused = jails_cmd(&root, None)
+        .args(["resource", "field", "add", "Note", "priority:int?"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("overlap"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert_eq!(
+        snapshot_tree(&root),
+        before_overlap,
+        "one command overlap partially rewrote the transition or model"
+    );
+
+    fs::write(&command, &evolved_command).unwrap();
+    let retried = jails_cmd(&root, None)
+        .args(["resource", "field", "add", "Note", "priority:int?"])
+        .output()
+        .unwrap();
+    assert!(
+        retried.status.success(),
+        "{}",
+        String::from_utf8_lossy(&retried.stderr)
+    );
+    let stable = snapshot_tree(&root);
+    let synced = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(synced.status.success());
+    assert_eq!(
+        snapshot_tree(&root),
+        stable,
+        "write-operation sync changed bytes"
+    );
+
+    let ejected_command = jails_cmd(&root, None)
+        .args(["model", "eject", "art_cap_db_op_create_note_command"])
+        .output()
+        .unwrap();
+    assert!(
+        ejected_command.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ejected_command.stderr)
+    );
+    let reader_command =
+        root.join("src/main/java/com/example/notes/adapters/jdbc/JdbcCreateNoteCommand.java");
+    assert!(!command.exists());
+    assert!(
+        transition.exists(),
+        "command ejection moved the transition too"
+    );
+    assert!(command_abi.exists());
+    assert!(transition_abi.exists());
+    let reader_command_bytes = fs::read(&reader_command).unwrap();
+
+    let evolved_after_command_ejection = jails_cmd(&root, None)
+        .args(["resource", "field", "add", "Note", "category:string?"])
+        .output()
+        .unwrap();
+    assert!(
+        evolved_after_command_ejection.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evolved_after_command_ejection.stderr)
+    );
+    assert_eq!(fs::read(&reader_command).unwrap(), reader_command_bytes);
+    let transition_before_ejection = fs::read(&transition).unwrap();
+    assert!(
+        String::from_utf8_lossy(&transition_before_ejection)
+            .contains("returning category, id, priority, status, summary, title")
+    );
+
+    let ejected_transition = jails_cmd(&root, None)
+        .args(["model", "eject", "art_cap_db_op_rename_note_transition"])
+        .output()
+        .unwrap();
+    assert!(
+        ejected_transition.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ejected_transition.stderr)
+    );
+    let reader_transition =
+        root.join("src/main/java/com/example/notes/adapters/jdbc/JdbcRenameNoteTransition.java");
+    assert!(!transition.exists());
+    assert_eq!(
+        fs::read(&reader_transition).unwrap(),
+        transition_before_ejection
+    );
+    let reader_transition_bytes = fs::read(&reader_transition).unwrap();
+
+    let evolved_after_both_ejections = jails_cmd(&root, None)
+        .args(["resource", "field", "add", "Note", "tag:string?"])
+        .output()
+        .unwrap();
+    assert!(
+        evolved_after_both_ejections.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evolved_after_both_ejections.stderr)
+    );
+    assert_eq!(fs::read(&reader_command).unwrap(), reader_command_bytes);
+    assert_eq!(
+        fs::read(&reader_transition).unwrap(),
+        reader_transition_bytes
+    );
+    assert!(command_abi.exists());
+    assert!(transition_abi.exists());
+
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+    if real_mvn_available() && real_java_supports_target_release() {
+        let path = real_path_without_mvnd();
+        let compiled = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "-DskipTests", "compile"])
+            .output()
+            .unwrap();
+        assert!(
+            compiled.status.success(),
+            "canonical write operations did not compile after ejection:\n{}\n{}",
+            String::from_utf8_lossy(&compiled.stdout),
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+    }
+}
+
+#[test]
+fn canonical_preserve_table_rename_keeps_the_accepted_database_projection() {
+    let root = canonical_database_project("model-db-preserve-table-rename");
+    let migration = root.join("src/main/resources/db/migration/V001__create_note.sql");
+    let migration_before = fs::read(&migration).unwrap();
+    let old = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
+    let new = root.join(".jails/generated/main/java/com/example/notes/domain/Memo.java");
+
+    let renamed = jails_cmd(&root, None)
+        .args([
+            "rename",
+            "resource",
+            "Note",
+            "Memo",
+            "--strategy",
+            "preserve-table",
+            "--force",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        renamed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&renamed.stderr)
+    );
+    assert_eq!(fs::read(&migration).unwrap(), migration_before);
+    assert!(
+        !root
+            .join("src/main/resources/db/migration/V002__rename_note.sql")
+            .exists()
+    );
+    assert!(!old.exists());
+    assert!(new.exists());
+    let model =
+        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
+            .unwrap();
+    let entity = model.entities.values().next().unwrap();
+    assert_eq!(entity.id.to_string(), "ent_note");
+    assert_eq!(entity.names.java_type, "Memo");
+    assert_eq!(entity.names.sql_table, "note");
+    let lock: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join(".jails/compiler.lock.json")).unwrap()).unwrap();
+    assert_eq!(
+        lock["model"]["entities"]["ent_note"]["names"]["sql_table"],
+        "note"
+    );
+    assert_eq!(
+        lock["model"]["entities"]["ent_note"]["names"]["java_type"],
+        "Memo"
+    );
+}
+
+#[test]
+fn canonical_database_and_safe_field_evolution_are_one_exact_compiler_path() {
+    let root = model_project("model-db-evolution", EMPTY_MODEL);
+    write_spring_fixture(&root);
+    let scaffold = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Note", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(
+        scaffold.status.success(),
+        "{}",
+        String::from_utf8_lossy(&scaffold.stderr)
+    );
+
+    let before_db = snapshot_tree(&root);
+    let preview = jails_cmd(&root, None)
+        .args(["add", "db", "--pretend", "--ast"])
+        .output()
+        .unwrap();
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), before_db, "db preview wrote files");
+    let db = jails_cmd(&root, None).args(["add", "db"]).output().unwrap();
+    assert!(
+        db.status.success(),
+        "{}",
+        String::from_utf8_lossy(&db.stderr)
+    );
+    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    assert!(model.contains("[capabilities.db]"), "{model}");
+    let initial = root.join("src/main/resources/db/migration/V001__create_note.sql");
+    let initial_sql = fs::read_to_string(&initial).unwrap();
+    assert!(initial_sql.contains("create table note"), "{initial_sql}");
+    assert!(
+        initial_sql.contains("id uuid not null primary key"),
+        "{initial_sql}"
+    );
+    assert!(root.join(".jails/compiler.lock.json").is_file());
+    assert!(
+        root.join(
+            ".jails/generated/main/java/com/example/notes/adapters/jdbc/JdbcNoteRepository.java"
+        )
+        .is_file()
+    );
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    for artifact in [
+        "spring-boot-starter-jdbc",
+        "postgresql",
+        "flyway-core",
+        "flyway-database-postgresql",
+    ] {
+        assert!(pom.contains(artifact), "missing {artifact} in {pom}");
+    }
+
+    let before_refusal = snapshot_tree(&root);
+    let refused = jails_cmd(&root, None)
+        .args(["resource", "field", "add", "Note", "status:string!"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8(refused.stderr).unwrap();
+    assert!(stderr.contains("needs a backfill"), "{stderr}");
+    assert_eq!(
+        snapshot_tree(&root),
+        before_refusal,
+        "required-field refusal mutated the project"
+    );
+
+    let before_preview = snapshot_tree(&root);
+    let preview = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "add",
+            "Note",
+            "summary:string?",
+            "--pretend",
+            "--diff",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    assert_eq!(
+        snapshot_tree(&root),
+        before_preview,
+        "field preview wrote files"
+    );
+    let added = jails_cmd(&root, None)
+        .args(["resource", "field", "add", "Note", "summary:string?"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let second = fs::read_to_string(
+        root.join("src/main/resources/db/migration/V002__add_summary_to_note.sql"),
+    )
+    .unwrap();
+    assert_eq!(
+        second,
+        "-- Generated by jails from the accepted semantic schema.\nalter table note add column summary text;\n"
+    );
+    let record = fs::read_to_string(
+        root.join(".jails/generated/main/java/com/example/notes/domain/Note.java"),
+    )
+    .unwrap();
+    assert!(record.contains("Optional<String> summary"), "{record}");
+
+    let required = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "add",
+            "Note",
+            "status:string!",
+            "--default-literal",
+            "new",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        required.status.success(),
+        "{}",
+        String::from_utf8_lossy(&required.stderr)
+    );
+    let third = fs::read_to_string(
+        root.join("src/main/resources/db/migration/V003__add_status_to_note.sql"),
+    )
+    .unwrap();
+    for statement in [
+        "alter table note add column status text;",
+        "update note set status = 'new' where status is null;",
+        "alter table note alter column status set not null;",
+        "chk_note_status_non_blank",
+    ] {
+        assert!(
+            third.contains(statement),
+            "missing `{statement}` in {third}"
+        );
+    }
+
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+    if real_mvn_available() && real_java_supports_target_release() {
+        let path = real_path_without_mvnd();
+        let compiled = real_maven_cmd(&root, &path)
+            .args(["-q", "-B", "-DskipTests", "compile"])
+            .output()
+            .unwrap();
+        assert!(
+            compiled.status.success(),
+            "canonical JDBC source did not compile:\n{}\n{}",
+            String::from_utf8_lossy(&compiled.stdout),
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        assert!(
+            root.join("target/classes/com/example/notes/adapters/jdbc/JdbcNoteRepository.class")
+                .is_file()
+        );
+    }
+}
+
+#[test]
+fn canonical_field_evolution_preserves_hand_edits_and_lowers_explicit_sql_policies() {
+    let root = canonical_database_project("model-db-field-evolution");
+    let record = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
+    let source = fs::read_to_string(&record).unwrap();
+    let split = source.rfind("\n}").unwrap();
+    fs::write(
+        &record,
+        format!(
+            "{}\n\n    public String handWritten() {{ return \"reader\"; }}{}",
+            &source[..split],
+            &source[split..]
+        ),
+    )
+    .unwrap();
+
+    let preserved = jails_cmd(&root, None)
+        .args([
+            "resource", "field", "rename", "Note", "title", "headline", "--column", "preserve",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        preserved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preserved.stderr)
+    );
+    assert!(
+        !root
+            .join("src/main/resources/db/migration/V002__evolve_title.sql")
+            .exists(),
+        "preserving the physical column must not emit SQL"
+    );
+    let source = fs::read_to_string(&record).unwrap();
+    assert!(source.contains("String headline"), "{source}");
+    assert!(source.contains("handWritten()"), "{source}");
+    let lock: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join(".jails/compiler.lock.json")).unwrap()).unwrap();
+    assert_eq!(
+        lock["model"]["entities"]["ent_note"]["fields"]["fld_note_title"]["names"]["sql_column"],
+        "title"
+    );
+
+    let cutover = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "rename",
+            "Note",
+            "headline",
+            "subject",
+            "--column",
+            "single-cutover",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        cutover.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cutover.stderr)
+    );
+    let rename_sql =
+        fs::read_to_string(root.join("src/main/resources/db/migration/V002__evolve_title.sql"))
+            .unwrap();
+    assert!(
+        rename_sql.contains("alter table note rename column title to subject;"),
+        "{rename_sql}"
+    );
+    let source = fs::read_to_string(&record).unwrap();
+    assert!(source.contains("String subject"), "{source}");
+    assert!(source.contains("handWritten()"), "{source}");
+
+    let add_priority = jails_cmd(&root, None)
+        .args(["g", "field", "Note", "priority:int?"])
+        .output()
+        .unwrap();
+    assert!(
+        add_priority.status.success(),
+        "{}",
+        String::from_utf8_lossy(&add_priority.stderr)
+    );
+    let widened = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "type",
+            "Note",
+            "priority",
+            "--to",
+            "long",
+            "--strategy",
+            "safe",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        widened.status.success(),
+        "{}",
+        String::from_utf8_lossy(&widened.stderr)
+    );
+    let type_sql =
+        fs::read_to_string(root.join("src/main/resources/db/migration/V004__evolve_priority.sql"))
+            .unwrap();
+    assert!(
+        type_sql.contains("alter table note alter column priority type bigint;"),
+        "{type_sql}"
+    );
+    let before_unsafe = snapshot_tree(&root);
+    let unsafe_change = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "type",
+            "Note",
+            "priority",
+            "--to",
+            "string",
+            "--strategy",
+            "safe",
+        ])
+        .output()
+        .unwrap();
+    assert!(!unsafe_change.status.success());
+    assert!(String::from_utf8_lossy(&unsafe_change.stderr).contains("not a proven safe widening"));
+    assert_eq!(snapshot_tree(&root), before_unsafe);
+
+    let added_status = jails_cmd(&root, None)
+        .args(["g", "field", "Note", "status:string?"])
+        .output()
+        .unwrap();
+    assert!(
+        added_status.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added_status.stderr)
+    );
+    fs::create_dir_all(root.join("backfills")).unwrap();
+    fs::write(
+        root.join("backfills/status.sql"),
+        "update note set status = 'new' where status is null;\n",
+    )
+    .unwrap();
+    let required = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "nullability",
+            "Note",
+            "status",
+            "--required",
+            "--backfill-file",
+            "backfills/status.sql",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        required.status.success(),
+        "{}",
+        String::from_utf8_lossy(&required.stderr)
+    );
+    let required_sql =
+        fs::read_to_string(root.join("src/main/resources/db/migration/V006__evolve_status.sql"))
+            .unwrap();
+    let update = required_sql.find("update note set status").unwrap();
+    let constraint = required_sql
+        .find("alter column status set not null")
+        .unwrap();
+    assert!(update < constraint, "{required_sql}");
+
+    let nullable = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "nullability",
+            "Note",
+            "status",
+            "--nullable",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        nullable.status.success(),
+        "{}",
+        String::from_utf8_lossy(&nullable.stderr)
+    );
+    let nullable_sql =
+        fs::read_to_string(root.join("src/main/resources/db/migration/V007__evolve_status.sql"))
+            .unwrap();
+    assert!(nullable_sql.contains("alter column status drop not null"));
+
+    let before_wrong_drop = snapshot_tree(&root);
+    let wrong_drop = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "drop",
+            "Note",
+            "priority",
+            "--confirm-column",
+            "wrong",
+        ])
+        .output()
+        .unwrap();
+    assert!(!wrong_drop.status.success());
+    assert!(String::from_utf8_lossy(&wrong_drop.stderr).contains("does not match"));
+    assert_eq!(snapshot_tree(&root), before_wrong_drop);
+
+    let dropped = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "drop",
+            "Note",
+            "priority",
+            "--confirm-column",
+            "priority",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        dropped.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dropped.stderr)
+    );
+    let drop_sql =
+        fs::read_to_string(root.join("src/main/resources/db/migration/V008__drop_priority.sql"))
+            .unwrap();
+    assert!(drop_sql.contains("alter table note drop column priority;"));
+    let source = fs::read_to_string(&record).unwrap();
+    assert!(!source.contains("priority"), "{source}");
+    assert!(source.contains("handWritten()"), "{source}");
+
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+}
+
+#[test]
+fn canonical_migration_plan_refuses_a_concurrent_history_append_without_writes() {
+    let root = canonical_database_project("model-db-migration-stale");
+    let plan = root.join("field-plan.json");
+    let planned = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "add",
+            "Note",
+            "summary:string?",
+            "--plan-out",
+        ])
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(
+        planned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
+    let bundle: jails_contracts::PlanBundle =
+        serde_json::from_slice(&fs::read(&plan).unwrap()).unwrap();
+    assert!(bundle.plan.operations.iter().any(|operation| matches!(
+        operation,
+        jails_contracts::PlannedOperation::AppendMigration { path, .. }
+            if path.as_str().ends_with("V002__add_summary_to_note.sql")
+    )));
+    assert!(bundle.plan.operations.iter().any(|operation| matches!(
+        operation,
+        jails_contracts::PlannedOperation::ReplaceStateFile { path, .. }
+            if path.as_str() == ".jails/compiler.lock.json"
+    )));
+    let model_before = fs::read(root.join(".jails/model.toml")).unwrap();
+    let generated_before =
+        fs::read(root.join(".jails/generated/main/java/com/example/notes/domain/Note.java"))
+            .unwrap();
+    fs::write(
+        root.join("src/main/resources/db/migration/V002__reader_change.sql"),
+        "select 1;\n",
+    )
+    .unwrap();
+    let applied = jails_cmd(&root, None)
+        .args(["model", "apply", "--bundle"])
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(!applied.status.success());
+    let stderr = String::from_utf8(applied.stderr).unwrap();
+    assert!(stderr.contains("stale exact plan"), "{stderr}");
+    assert!(stderr.contains("directory"), "{stderr}");
+    assert_eq!(
+        fs::read(root.join(".jails/model.toml")).unwrap(),
+        model_before
+    );
+    assert_eq!(
+        fs::read(root.join(".jails/generated/main/java/com/example/notes/domain/Note.java"))
+            .unwrap(),
+        generated_before
+    );
+    assert!(
+        !root
+            .join("src/main/resources/db/migration/V002__add_summary_to_note.sql")
+            .exists()
+    );
+}
+
+#[test]
+fn canonical_reader_sql_is_exact_plan_input_and_stale_changes_refuse_all_writes() {
+    let root = canonical_database_project("model-db-reader-backfill-stale");
+    fs::create_dir_all(root.join("backfills")).unwrap();
+    let backfill = root.join("backfills/status.sql");
+    fs::write(
+        &backfill,
+        "update note set status = 'new' where status is null;\n",
+    )
+    .unwrap();
+    let plan = root.join("field-plan.json");
+    let planned = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "add",
+            "Note",
+            "status:string!",
+            "--backfill-file",
+            "backfills/status.sql",
+            "--plan-out",
+        ])
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(
+        planned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
+    let bundle: jails_contracts::PlanBundle =
+        serde_json::from_slice(&fs::read(&plan).unwrap()).unwrap();
+    assert!(
+        String::from_utf8_lossy(&bundle.plan.input.bytes).contains("reader-owned-sql"),
+        "reader SQL policy was not represented in canonical input"
+    );
+    let model_before = fs::read(root.join(".jails/model.toml")).unwrap();
+    let record = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
+    let record_before = fs::read(&record).unwrap();
+    fs::write(
+        &backfill,
+        "update note set status = 'ready' where status is null;\n",
+    )
+    .unwrap();
+    let stale = jails_cmd(&root, None)
+        .args(["model", "apply", "--bundle"])
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(!stale.status.success());
+    assert!(
+        String::from_utf8_lossy(&stale.stderr).contains("stale exact plan"),
+        "{}",
+        String::from_utf8_lossy(&stale.stderr)
+    );
+    assert_eq!(
+        fs::read(root.join(".jails/model.toml")).unwrap(),
+        model_before
+    );
+    assert_eq!(fs::read(&record).unwrap(), record_before);
+    assert!(
+        !root
+            .join("src/main/resources/db/migration/V002__add_status_to_note.sql")
+            .exists()
+    );
+
+    let applied = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "add",
+            "Note",
+            "status:string!",
+            "--backfill-file",
+            "backfills/status.sql",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    let migration = fs::read_to_string(
+        root.join("src/main/resources/db/migration/V002__add_status_to_note.sql"),
+    )
+    .unwrap();
+    let update = migration.find("update note set status = 'ready'").unwrap();
+    let constraint = migration.find("alter column status set not null").unwrap();
+    assert!(update < constraint, "{migration}");
+}
+
+#[test]
+fn canonical_field_evolution_refuses_campaigns_and_referenced_field_drop_atomically() {
+    let root = model_project("model-field-policy-refusals", EMPTY_MODEL);
+    for arguments in [
+        vec!["g", "record", "Note", "title:string!"],
+        vec!["g", "query", "OpenNotes", "title", "--on", "Note"],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    for (arguments, expected) in [
+        (
+            vec![
+                "resource", "field", "rename", "Note", "title", "headline", "--column", "rolling",
+            ],
+            "multi-release campaign",
+        ),
+        (
+            vec![
+                "resource",
+                "field",
+                "type",
+                "Note",
+                "title",
+                "--to",
+                "long",
+                "--strategy",
+                "expand-contract",
+            ],
+            "multi-release campaign",
+        ),
+        (
+            vec![
+                "resource",
+                "field",
+                "drop",
+                "Note",
+                "title",
+                "--confirm-column",
+                "title",
+            ],
+            "still referenced by operations",
+        ),
+    ] {
+        let before = snapshot_tree(&root);
+        let refused = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(!refused.status.success());
+        assert!(
+            String::from_utf8_lossy(&refused.stderr).contains(expected),
+            "{}",
+            String::from_utf8_lossy(&refused.stderr)
+        );
+        assert_eq!(snapshot_tree(&root), before, "refusal mutated the project");
+    }
+}
+
+#[test]
+fn jdl_field_evolution_keeps_ids_edits_and_forward_schema_history() {
+    let root = jdl_project(
+        "model-jdl-field-evolution",
+        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+    );
+    write_spring_fixture(&root);
+    for arguments in [
+        vec!["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
+        vec!["add", "db"],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(output.status.success());
+    }
+    let record = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
+    let source = fs::read_to_string(&record).unwrap();
+    let split = source.rfind("\n}").unwrap();
+    fs::write(
+        &record,
+        format!(
+            "{}\n\n    public String handWritten() {{ return \"reader\"; }}{}",
+            &source[..split],
+            &source[split..]
+        ),
+    )
+    .unwrap();
+
+    let renamed = jails_cmd(&root, None)
+        .args([
+            "resource", "field", "rename", "Note", "title", "headline", "--column", "preserve",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        renamed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&renamed.stderr)
+    );
+    let renamed_jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(renamed_jdl.contains("headline: string! @id(fld_note_title) @as(title)"));
+    let renamed_model = jails_model::parse_jdl(&renamed_jdl).unwrap();
+    let title = renamed_model
+        .entities
+        .values()
+        .next()
+        .unwrap()
+        .fields
+        .values()
+        .find(|field| field.id.to_string() == "fld_note_title")
+        .unwrap();
+    assert_eq!(title.label, "title");
+    assert_eq!(title.names.java_member, "headline");
+    assert_eq!(title.names.sql_column, "title");
+
+    let added = jails_cmd(&root, None)
+        .args(["g", "field", "Note", "priority:int?"])
+        .output()
+        .unwrap();
+    assert!(added.status.success());
+    let widened = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "type",
+            "Note",
+            "priority",
+            "--to",
+            "long",
+            "--strategy",
+            "safe",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        widened.status.success(),
+        "{}",
+        String::from_utf8_lossy(&widened.stderr)
+    );
+    fs::create_dir_all(root.join("backfills")).unwrap();
+    fs::write(
+        root.join("backfills/priority.sql"),
+        "update note set priority = 0 where priority is null;\n",
+    )
+    .unwrap();
+    let required = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "nullability",
+            "Note",
+            "priority",
+            "--required",
+            "--backfill-file",
+            "backfills/priority.sql",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        required.status.success(),
+        "{}",
+        String::from_utf8_lossy(&required.stderr)
+    );
+    let evolved_jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(evolved_jdl.contains("priority: long @id(fld_note_priority)"));
+
+    let dropped = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "field",
+            "drop",
+            "Note",
+            "priority",
+            "--confirm-column",
+            "priority",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        dropped.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dropped.stderr)
+    );
+    let final_jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(!final_jdl.contains("priority:"), "{final_jdl}");
+    let record_source = fs::read_to_string(&record).unwrap();
+    assert!(record_source.contains("handWritten()"), "{record_source}");
+    assert!(record_source.contains("String headline"), "{record_source}");
+    assert!(!record_source.contains("priority"), "{record_source}");
+    let migrations = fs::read_dir(root.join("src/main/resources/db/migration"))
+        .unwrap()
+        .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+    for sql in [
+        "alter column priority type bigint",
+        "alter column priority set not null",
+        "drop column priority",
+    ] {
+        assert!(migrations.contains(sql), "missing `{sql}`:\n{migrations}");
+    }
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(frozen.status.success());
+}
+
+#[test]
+fn canonical_composite_index_is_model_data_and_one_forward_migration() {
+    let root = canonical_database_project("model-db-composite-index");
+    let record = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
+    let source = fs::read_to_string(&record).unwrap();
+    let split = source.rfind("\n}").unwrap();
+    fs::write(
+        &record,
+        format!(
+            "{}\n\n    public String handWritten() {{ return \"reader\"; }}{}",
+            &source[..split],
+            &source[split..]
+        ),
+    )
+    .unwrap();
+
+    let added = jails_cmd(&root, None)
+        .args(["resource", "index", "add", "Note", "title, id desc"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let migration_path = fs::read_dir(root.join("src/main/resources/db/migration"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("V002__add_idx_note_index_")
+        })
+        .expect("canonical index migration");
+    let migration = fs::read_to_string(migration_path).unwrap();
+    assert!(
+        migration.contains("create index idx_note_index_"),
+        "{migration}"
+    );
+    assert!(
+        migration.contains(" on note (title, id desc);"),
+        "{migration}"
+    );
+    let model =
+        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
+            .unwrap();
+    let entity = model.entities.values().next().unwrap();
+    let index = entity.indexes.values().next().unwrap();
+    assert_eq!(index.columns.len(), 2);
+    assert_eq!(index.columns[0].field.to_string(), "fld_note_title");
+    assert_eq!(index.columns[1].field.to_string(), "fld_note_id");
+    assert!(
+        fs::read_to_string(&record)
+            .unwrap()
+            .contains("handWritten()")
+    );
+
+    for arguments in [
+        vec!["resource", "index", "add", "Note", "title, id desc"],
+        vec!["resource", "index", "add", "Note", "missing"],
+        vec!["resource", "index", "add", "Note", "title nulls first"],
+    ] {
+        let before = snapshot_tree(&root);
+        let refused = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(!refused.status.success());
+        assert_eq!(
+            snapshot_tree(&root),
+            before,
+            "index refusal mutated project"
+        );
+    }
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+}
+
+#[test]
+fn jdl_composite_index_is_nested_model_data_and_preserves_record_edits() {
+    let root = jdl_project(
+        "model-jdl-composite-index",
+        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+    );
+    write_spring_fixture(&root);
+    for arguments in [
+        vec!["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
+        vec!["add", "db"],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let record = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
+    let source = fs::read_to_string(&record).unwrap();
+    let split = source.rfind("\n}").unwrap();
+    fs::write(
+        &record,
+        format!(
+            "{}\n\n    public String handWritten() {{ return \"reader\"; }}{}",
+            &source[..split],
+            &source[split..]
+        ),
+    )
+    .unwrap();
+
+    let added = jails_cmd(&root, None)
+        .args(["resource", "index", "add", "Note", "title, id desc"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(
+        source.contains("index (title, id desc) @id(idx_note_"),
+        "{source}"
+    );
+    let model = jails_model::parse_jdl(&source).unwrap();
+    let index = model
+        .entities
+        .values()
+        .next()
+        .unwrap()
+        .indexes
+        .values()
+        .next()
+        .unwrap();
+    assert_eq!(index.columns.len(), 2);
+    assert!(
+        fs::read_to_string(&record)
+            .unwrap()
+            .contains("handWritten()")
+    );
+    let migration = fs::read_dir(root.join("src/main/resources/db/migration"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("V002__add_")
+        })
+        .expect("JDL index migration");
+    assert!(
+        fs::read_to_string(migration)
+            .unwrap()
+            .contains(" on note (title, id desc);")
+    );
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(frozen.status.success());
+}
+
+#[test]
+fn jdl_index_removal_is_forward_only_atomic_and_preserves_reader_edits() {
+    let root = jdl_project(
+        "model-jdl-index-remove",
+        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+    );
+    write_spring_fixture(&root);
+    for arguments in [
+        vec!["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
+        vec!["add", "db"],
+        vec!["resource", "index", "add", "Note", "title, id desc"],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let record = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
+    let source = fs::read_to_string(&record).unwrap();
+    let split = source.rfind('\n').unwrap();
+    fs::write(
+        &record,
+        format!(
+            "{}\n\n    public String handWritten() {{ return \"reader\"; }}{}",
+            &source[..split],
+            &source[split..]
+        ),
+    )
+    .unwrap();
+
+    let model_source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    let model = jails_model::parse_jdl(&model_source).unwrap();
+    let index = model
+        .entities
+        .values()
+        .next()
+        .unwrap()
+        .indexes
+        .values()
+        .next()
+        .unwrap();
+    let index_id = index.id.to_string();
+    let sql_name = index.sql_name.clone();
+
+    let before_wrong_confirmation = snapshot_tree(&root);
+    let wrong = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "index",
+            "remove",
+            "Note",
+            "title, id desc",
+            "--confirm-index",
+            "wrong_index",
+        ])
+        .output()
+        .unwrap();
+    assert!(!wrong.status.success());
+    assert!(
+        String::from_utf8_lossy(&wrong.stderr).contains(&sql_name),
+        "{}",
+        String::from_utf8_lossy(&wrong.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), before_wrong_confirmation);
+
+    let directly_removed = model_source
+        .split_inclusive('\n')
+        .filter(|line| !line.contains(&index_id))
+        .collect::<String>();
+    fs::write(root.join(".jails/model.jdl"), directly_removed).unwrap();
+    let before_direct_sync = snapshot_tree(&root);
+    let direct = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(!direct.status.success());
+    assert!(
+        String::from_utf8_lossy(&direct.stderr).contains("removed without a drop policy"),
+        "{}",
+        String::from_utf8_lossy(&direct.stderr)
+    );
+    assert_eq!(snapshot_tree(&root), before_direct_sync);
+    fs::write(root.join(".jails/model.jdl"), &model_source).unwrap();
+
+    let removed = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "index",
+            "remove",
+            "Note",
+            "title, id desc",
+            "--confirm-index",
+            &sql_name,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        removed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    let final_jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(!final_jdl.contains(&index_id), "{final_jdl}");
+    assert!(
+        jails_model::parse_jdl(&final_jdl)
+            .unwrap()
+            .entities
+            .values()
+            .next()
+            .unwrap()
+            .indexes
+            .is_empty()
+    );
+    assert!(
+        fs::read_to_string(&record)
+            .unwrap()
+            .contains("handWritten()")
+    );
+
+    let migrations = fs::read_dir(root.join("src/main/resources/db/migration"))
+        .unwrap()
+        .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+        .collect::<Vec<_>>();
+    assert!(
+        migrations
+            .iter()
+            .any(|migration| migration.contains(&format!("create index {sql_name}")))
+    );
+    assert!(
+        migrations
+            .iter()
+            .any(|migration| migration.contains(&format!("drop index {sql_name};")))
+    );
+
+    let before_missing = snapshot_tree(&root);
+    let missing = jails_cmd(&root, None)
+        .args([
+            "resource",
+            "index",
+            "remove",
+            "Note",
+            "title, id desc",
+            "--confirm-index",
+            &sql_name,
+        ])
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    assert_eq!(snapshot_tree(&root), before_missing);
+
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+}
+
+#[test]
+fn canonical_storage_preserve_removes_projections_and_revive_reuses_the_table() {
+    let root = canonical_database_project("model-db-preserve-revive");
+    let initial = root.join("src/main/resources/db/migration/V001__create_note.sql");
+    let initial_bytes = fs::read(&initial).unwrap();
+    let record = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
+
+    let retired = jails_cmd(&root, None)
+        .args(["d", "scaffold", "Note", "--storage", "preserve"])
+        .output()
+        .unwrap();
+    assert!(
+        retired.status.success(),
+        "{}",
+        String::from_utf8_lossy(&retired.stderr)
+    );
+    assert!(!record.exists());
+    assert_eq!(fs::read(&initial).unwrap(), initial_bytes);
+    assert!(
+        !root
+            .join("src/main/resources/db/migration/V002__drop_note.sql")
+            .exists()
+    );
+    let model =
+        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
+            .unwrap();
+    let entity = model.entities.values().next().unwrap();
+    assert!(!entity.active);
+    assert_eq!(entity.names.sql_table, "note");
+    assert_eq!(entity.fields.len(), 2);
+
+    for mutation in [
+        ["resource", "field", "add", "Note", "body:string?"].as_slice(),
+        ["resource", "index", "add", "Note", "title"].as_slice(),
+    ] {
+        let before_mutation = snapshot_tree(&root);
+        let rejected = jails_cmd(&root, None).args(mutation).output().unwrap();
+        assert!(!rejected.status.success());
+        assert!(
+            String::from_utf8_lossy(&rejected.stderr).contains("is retired"),
+            "{}",
+            String::from_utf8_lossy(&rejected.stderr)
+        );
+        assert_eq!(snapshot_tree(&root), before_mutation);
+    }
+
+    let before_wrong = snapshot_tree(&root);
+    let wrong = jails_cmd(&root, None)
+        .args(["resource", "revive", "Note", "--table", "wrong"])
+        .output()
+        .unwrap();
+    assert!(!wrong.status.success());
+    assert_eq!(snapshot_tree(&root), before_wrong);
+
+    let revived = jails_cmd(&root, None)
+        .args(["resource", "revive", "Note", "--table", "note"])
+        .output()
+        .unwrap();
+    assert!(
+        revived.status.success(),
+        "{}",
+        String::from_utf8_lossy(&revived.stderr)
+    );
+    assert!(record.exists());
+    assert_eq!(fs::read(&initial).unwrap(), initial_bytes);
+    assert_eq!(
+        fs::read_dir(root.join("src/main/resources/db/migration"))
+            .unwrap()
+            .count(),
+        1,
+        "revive must not recreate preserved storage"
+    );
+    let model =
+        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
+            .unwrap();
+    assert!(model.entities.values().next().unwrap().active);
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(frozen.status.success());
+}
+
+#[test]
+fn canonical_storage_drop_needs_exact_confirmation_and_appends_one_drop_table() {
+    let root = canonical_database_project("model-db-drop-table");
+    for arguments in [
+        vec!["d", "scaffold", "Note"],
+        vec!["d", "scaffold", "Note", "--storage", "drop"],
+        vec![
+            "d",
+            "scaffold",
+            "Note",
+            "--storage",
+            "drop",
+            "--confirm-table",
+            "wrong",
+        ],
+    ] {
+        let before = snapshot_tree(&root);
+        let refused = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(!refused.status.success());
+        assert_eq!(snapshot_tree(&root), before, "drop refusal mutated project");
+    }
+
+    let dropped = jails_cmd(&root, None)
+        .args([
+            "d",
+            "scaffold",
+            "Note",
+            "--storage",
+            "drop",
+            "--confirm-table",
+            "note",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        dropped.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dropped.stderr)
+    );
+    let migration =
+        fs::read_to_string(root.join("src/main/resources/db/migration/V002__drop_note.sql"))
+            .unwrap();
+    assert_eq!(
+        migration,
+        "-- Generated by jails from the accepted semantic schema.\ndrop table note;\n"
+    );
+    let model =
+        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
+            .unwrap();
+    assert!(model.entities.is_empty());
+    assert!(
+        !root
+            .join(".jails/generated/main/java/com/example/notes/domain/Note.java")
+            .exists()
+    );
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(frozen.status.success());
+}

@@ -367,7 +367,10 @@ fn pinned_gradle_toolchain_available() -> bool {
             let version = String::from_utf8_lossy(&output.stdout);
             output.status.success()
                 && version.contains("Gradle 8.5")
-                && version.lines().any(|line| line.starts_with("JVM: 21"))
+                && version.lines().any(|line| {
+                    line.strip_prefix("JVM:")
+                        .is_some_and(|value| value.trim_start().starts_with("21"))
+                })
         })
 }
 

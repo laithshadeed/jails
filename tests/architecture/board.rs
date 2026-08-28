@@ -980,8 +980,14 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
             Ratchet {
                 name: "percent of generated Java that is comment",
                 rung: "P6.4 — a template that cannot check its claim says less",
-                // 21 is what the templates measure today, after the four false
-                // claims `modern.md` §11.2 found were repaired at their
+                // 22 is what the templates measure today. Extracting the
+                // pre-existing Toxiproxy Java from Rust raw strings made that
+                // generated prose visible to this scanner; the golden-output
+                // test proves the extraction did not add a line to generated
+                // projects. This is a measurement-boundary correction, not a
+                // reopened allowance for new template prose.
+                //
+                // The four false claims `modern.md` §11.2 found were repaired at their
                 // source: the repository Javadoc names the *component* rather
                 // than the column, the publisher no longer claims per-entity
                 // ordering it does not give, the transition says nothing about
@@ -994,8 +1000,8 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // why an NPE is deliberately not fatal. What the number stops
                 // is the next template quietly adding another paragraph nobody
                 // can check beside them.
-                ceiling: 21,
-                target: 21,
+                ceiling: 22,
+                target: 22,
                 why: "A wrong explanation is believed, and a comment restating a decision is                       the fastest thing in a codebase to go stale. Generated prose is worse                       again: it is asserted by a template that has no way to confirm it, and                       it is copied into every project.",
             },
             template_comment_density(),

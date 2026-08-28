@@ -44,6 +44,8 @@ mod command_path;
 pub(crate) use command_path::command_path_from_env;
 mod output;
 pub(crate) use output::Output;
+mod model;
+pub(crate) use model::ModelCommand;
 mod project_args;
 pub(crate) use project_args::{NewArgs, NewCliArgs};
 
@@ -242,6 +244,20 @@ pub(crate) enum ResourceIndexCommand {
         #[arg(long)]
         package: Option<String>,
     },
+    /// Drop one previously declared composite or ordered index
+    ///
+    ///   jails resource index remove Message 'customer_id, created_at desc' \
+    ///     --confirm-index idx_message_index_ab12cd34ef56
+    Remove {
+        entity: String,
+        columns: String,
+        /// Exact physical index name that will be dropped
+        #[arg(long)]
+        confirm_index: String,
+        /// Subpackage containing the generated entity
+        #[arg(long)]
+        package: Option<String>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
@@ -411,6 +427,11 @@ pub(crate) enum Command {
     App {
         #[command(subcommand)]
         command: app::AppCommand,
+    },
+    /// Check, plan, apply, or transfer ownership in the canonical application model
+    Model {
+        #[command(subcommand)]
+        command: ModelCommand,
     },
     /// Check and generate typed named-SQL contracts
     Sql {

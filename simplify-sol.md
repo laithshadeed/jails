@@ -1,5 +1,111 @@
 # Simplifying `jails`: make the hidden compiler explicit
 
+---
+
+## Maintainer decisions (2026-08-27)
+
+**Added by the maintainer. These are decided requirements, not analysis. Where
+they conflict with a recommendation below, they win, and the affected section
+says so.**
+
+### D1 — The iterative edit loop is the product. CONFIRMED.
+
+Already reflected in "The product choice": option **B, merge-managed compiler
+with implementation-boundary ejection**, is chosen and option C is rejected. Recording the
+acceptance test so it cannot be traded away later by an implementation
+convenience:
+
+```
+jails g record Task title:string!
+# hand-add a method to the generated Task.java
+jails g field Task done:boolean      -> my method survives, component added
+# edit a validation message jails itself wrote
+jails g field Task priority:int      -> my wording survives, component added
+# hand-edit the exact line jails rewrites
+jails g field Task dueAt:instant     -> clean refusal, nothing written
+```
+
+All four behaviours exist in the current binary and were verified against it.
+No phase of the rewrite may regress them. "Eject first, then edit" is not an
+acceptable substitute: ejection is for handing an artifact over permanently,
+not for making an ordinary edit.
+
+Two consequences already recorded above and worth keeping visible: **BASE is
+the one exact accepted compiler projection, not a history/object/journal
+system**, and **ejection is scoped by an implementation-boundary ID, not an
+entity ID** — so ejecting one implementation never drags its ports and record
+out with it. File artifact IDs remain unique merge identities. A separate
+ejection ID may intentionally group several files, such as a controller and
+its test, into the one implementation boundary a reader takes over. The
+accepted model alone cannot reproduce BASE across an emitter upgrade; the
+compiler lock therefore carries that single irreducible projection and its
+digest.
+
+### D2 — JDL is a required deliverable. This overrides "A new JDL" below.
+
+The maintainer wants a real authoring grammar. The section
+"What will not simplify Jails by itself → A new JDL" is **overridden as to the
+conclusion**; its reasoning about *sequencing* is kept.
+
+The normative language contract is [JDL v1 — implementation
+specification](jdl-sol.md). That document owns vocabulary, grammar, static
+semantics, conventions, CLI-to-source mappings, evolution rules, diagnostics,
+and conformance examples. This document owns the compiler architecture and
+implementation sequence. If an illustrative JDL spelling here conflicts with
+`jdl-sol.md`, `jdl-sol.md` wins.
+
+What is decided:
+
+- **JDL is the human authoring syntax and the file git tracks.** One authoring
+  format, not two. A machine-readable projection (`jails model show --json`)
+  is an export, never a second editable source — two editable sources is the
+  exact disease this rewrite exists to cure.
+- **JDL is a front end, not the model.** It parses to the same `AppModel` as
+  the CLI does. `AppModel` and `ModelPatch` are still defined first; the
+  grammar targets a settled semantics rather than guessing at one.
+- **The CLI stays.** `jails g scaffold Task ...` edits the JDL file, the way
+  `cargo add` edits `Cargo.toml`. It is not a competing authority.
+
+Sequencing, unchanged from the reasoning below: model and patch types first,
+TOML compatibility front end to get the compiler working, then the JDL front
+end once the semantics stop moving. This is implementation order, not a choice
+between durable source formats. The canonical source shape and complete
+executable example are specified by the [JDL v1 decision](jdl-sol.md#1-decision)
+and [complete example](jdl-sol.md#4-complete-example).
+
+**Stable-ID decision: identity is inline in JDL.** Nodes use unobtrusive
+`@id(...)` annotations, minted by CLI mutations when identity must be
+materialized. Preserve-table and other rename behavior follows the
+[stable-identity rules](jdl-sol.md#8-stable-identity); this document does not
+define a second rename annotation.
+
+A sidecar was rejected because it would create a second synchronization
+surface beside the one reviewed authoring file. Inline identity also makes a
+rename reviewable in an ordinary diff. The linker derives deterministic IDs
+when they are absent; a CLI rename materializes the old effective ID before
+changing the name. Silent identity changes are not acceptable.
+
+### D3 — Ergonomics are a requirement, not a preference.
+
+The concise, nested authoring shape is *why* D2 is wanted. Two specific rules:
+
+- **Keep the compact leaf syntax.** Canonical JDL keeps a field on one line,
+  for example `title: string @notBlank @index`; the exact closed attribute
+  vocabulary belongs to [the field
+  specification](jdl-sol.md#94-field-attributes). `FieldSpec::parse` may remain
+  a CLI or temporary TOML compatibility adapter, but it must lower to canonical
+  JDL rather than define a second source grammar.
+- **Nesting belongs to the thing it describes.** A transition's selected
+  fields, guards, state changes, and emitted events read as one construct, not
+  sibling keys in a flat table. This is the case TOML genuinely loses, and it
+  is the strongest technical argument for D2.
+
+Measure it: the current expanded form costs roughly 25 lines for a five-field
+entity where today's CLI takes one line. That regression is the thing to fix,
+by either route.
+
+---
+
 ## Executive verdict
 
 The architecture is not nonsense. It is a serious attempt to make an unusually
@@ -28,22 +134,242 @@ engine, or a new syntax. It is to give the existing compiler:
 5. a hard boundary between managed output and reader-owned source;
 6. a much smaller transaction kernel that protects only irreproducible state.
 
-There is one product decision that no refactor can evade:
+The product decision is now explicit: **generate, hand-edit, generate again is
+the product**, including edits inside records and every other generated file.
+That requires a three-way merge, but it does not require the legacy object
+store, codec, journal, roll-forward protocol, or entity-granular ownership.
+The compiler lock supplies the exact accepted projection as BASE, workspace
+capture supplies OURS, and the next model renders THEIRS. A clean merge becomes
+an exact plan after-image; an overlap refuses before any write.
 
-- If generated files remain freely editable while Jails must later update,
-  rename and delete them without relying on Git, most ownership, merge, object
-  store and recovery machinery is intrinsic.
-- If generated files are disposable until explicitly **ejected**, the managed
-  tree becomes a pure compiler output. Most of that machinery disappears.
-- If Jails becomes a Rails-style one-shot generator, even more disappears, but
-  so do declarative apply, safe destroy, model-driven evolution and undo.
+The recommended destination is therefore a **merge-managed application
+compiler with implementation-boundary-scoped ejection**. Ejection is for transferring a whole
+replaceable implementation boundary, not for making an ordinary hand edit.
+Records and ports remain managed ABI; adapter implementations can be ejected
+independently. Keep the familiar CLI as a front end. JDL is now the chosen
+human source syntax and lowers into the already-proved model and IR; it is not
+a parallel semantic system.
 
-My recommended destination is the second model: a **managed application
-compiler with an explicit eject escape hatch**—conditional on declarative
-apply, safe evolution and later destroy being product requirements worth
-keeping. If those are not essential, the honest one-shot generator is simpler
-and should win. Keep the current CLI and `app.toml` as front ends initially. Do
-not invent JDL until the model and IR have proved themselves.
+The implementation checkpoint now proves the risky part rather than merely
+describing it. Canonical record and enum ABIs are merge-managed, a Spring enum
+converter is a separate managed artifact, and both TOML compatibility input
+and `.jails/model.jdl` pass the exact generate/edit/generate sequence: disjoint
+methods and wording survive while overlaps refuse before any write. Unique
+artifact IDs scope merge history; implementation-boundary IDs scope ejection.
+JDL currently supports records, value-object record
+profiles, scaffolds, fields, enums, plain classes, interfaces, services,
+sealed types with ordered variants and exhaustive companion tests, standalone
+tests, integration tests, companion tests, entity-derived test factories,
+repository ABI facets, typed open-set strategies, typed HTTP controllers,
+compiler-owned `fake`/`db`/`api` backends, declarative
+`csv`/`json`/`http`/`testkit`/`sqlite`/`h2`/`actuator`/`cache`/`cors`/`observability`/`security`/`sse`/`redis`/`kafka`/`mail`/`toxiproxy`/`coverage`/`loadtest` projections, merge-managed generated resources, and reader-document facets,
+plus preserve-table entity rename and nested
+command/query/transition/event declarations. Familiar generators edit the JDL
+losslessly and mint inline IDs.
+
+The compiler now has one generic whole-project-file facet for outputs outside
+`.jails/generated`. It stores the generated file itself as BASE and uses the
+same three-way merge/refusal kernel as Java. Loadtest is the first consumer:
+all six files remain in `load-tests/`, typed model routes replace source
+rescanning, disjoint edits survive, and overlap or edited removal refuses
+before any write.
+
+The normative `jdl 1` implementation has also started as an independent,
+version-gated frontend rather than another string-to-TOML adapter. Its lexer
+and CST retain every byte and declaration span, the parser calls the typed
+linker directly, local CST replacements preserve unrelated source, and the
+first formatter layer is idempotent. The executable core currently covers app,
+cap, dep, prop, enum, entity/projection/field/constraint, and eject forms. The
+remaining operation/relation/component registries and richer linked nodes are
+still mandatory before the complete example or cutover can be called done.
+
+The mandatory G0 gate is executable as `mise run verify-rewrite` and is green:
+format, strict workspace clippy, build, the full Rust suite, 410 ordinary CLI
+E2Es, and the separately pinned Gradle/JDK real-project test all passed. This is
+the safety floor, not a cutover claim. Since that checkpoint, JDL has gained
+semantic string-length bounds, canonically written as `@length(1..200)`,
+dependencies, settings, indexes, artifact ejections, destroy/retire/revive,
+field evolution, and direct one-way import. Bounds lower to both Java
+validation and SQL checks;
+they are not parser-only metadata. Defaults still need an explicit semantic
+decision (constructor default, storage default, or operation-input default)
+before the grammar accepts them. Remaining work is primarily generator and
+capability backend parity, richer transition semantics and multi-release schema
+campaigns, followed by G1--G5 and legacy deletion.
+Ordinary new projects therefore stay on the compatibility engine; partial
+parity is not called a cutover.
+
+The first G1 canary is executable as `mise run verify-rewrite-g1-canary`. It
+builds `JAILS_LEGACY_REVISION` (the current checked-in revision by default) in
+an isolated temporary tree and runs the exact record generate/edit/generate
+loop through that frozen binary and the canonical JDL path. It compares the
+reader-visible safety contract: disjoint method and message edits survive,
+the next field appears, an overlapping generated-line edit refuses, and the
+refusal changes no byte or executable bit. A second canary proves that an
+identical generation rerun changes no reader-visible state and that destroy
+removes the artifact on both sides. Private object/receipt bytes are normalized
+out of the rerun comparison, while the stronger all-byte comparison remains on
+the refusal path. A third canary covers identical operation reruns and
+operation destroy, plus value-object rerun and destroy. A fifth scenario
+hand-edits every Java artifact emitted by a scaffold and proves a later field
+evolution preserves every edit while updating the record. A sixth does the
+same for enum artifacts, proves an identical rerun is safe, and checks clean
+explicit destroy. A seventh migrates `class`, `interface`, `service`, `test`,
+and `integration-test` onto one typed source-unit node, hand-edits every
+emitted main/test Java file, and proves later generation preserves all edits
+against the frozen legacy binary. The integration-test declaration also
+lowers to one build-tool-neutral feature: Maven renders/removes an exact
+Failsafe block and Gradle renders/removes separate unit/integration task
+wiring. Editing either the Java line or the marked build block that the
+compiler must change refuses the entire plan before a write. Maven uses
+distinct `add-source` and `add-test-source` executions; Gradle uses distinct
+`main` and `test` source-set blocks. Stable artifact identity also
+carries reader edits across a package/path move. An eighth scenario evolves a
+sealed type's ordered variants as one semantic unit while separately
+merge-managing its ABI and exhaustive test. Disjoint edits in both files
+survive, generated switch/variant overlap refuses every write, identical reruns
+are byte-stable, the generated project compiles, and destroy removes both
+artifacts. A ninth scenario exposes an architectural bug rather than
+normalizing it: the frozen legacy engine records a factory as an independent
+recipe, so later `g field` replays that recipe with field arguments and refuses
+atomically. The canonical compiler models factory as an entity facet, evolves
+its record and testkit builder together, preserves a reader-added method, and
+keeps identical factory reruns byte-stable. Its artifact ID is independently
+ejectable, so the factory can become reader-owned while the record ABI keeps
+evolving under the compiler. A tenth scenario preserves the legacy repository
+loop while replacing its independent recipe with an entity facet: reader edits
+to the repository port survive field evolution and identical reruns, and
+destroy removes the port without removing the record ABI. The repository port
+is non-ejectable ABI; fake and database implementations keep their own
+capability-scoped ejection IDs. A new DTO scenario moves the three-file wire
+contract onto an entity facet: request, response, and contract test each keep
+an independent merge artifact ID; all three preserve reader edits across
+field evolution; an overlapping component edit refuses the whole plan before
+writes; real Maven compiles and runs the result; and destroy removes only the
+DTO projections. The wire contracts remain managed ABI rather than ejectable
+implementations. The legacy/canonical canary separately proves identical DTO
+reruns preserve edits and clean destroy is symmetric without treating the
+legacy recipe journal as architecture. An eleventh scenario evolves a strategy's
+ordered variants and preserves edits across its port, evaluator,
+implementations, and tests. It proves identical reruns and symmetric destroy
+against the frozen legacy binary; the port ABI is non-ejectable while every
+implementation boundary has its own artifact ID. A twelfth scenario covers the
+typed controller unit: both controller and test preserve reader edits through
+later generation and identical reruns, and destroy removes both against the
+frozen legacy binary. Canonical controller evolution additionally proves typed
+method/path/body changes, atomic overlap refusal, real Maven compilation, and
+one shared ejection boundary spanning the two independently merge-managed file
+artifacts. The all-scenario G1 gate is now green with 31 tests against the
+frozen pre-cutover binary. The additional scenarios cover CSV/JSON data packs,
+HTTP/Fake test packs, Testkit's five Java files plus fixture resource, and
+SQLite's three-file Java implementation plus append-only migration history.
+They prove edit-preserving regeneration and symmetric implementation removal;
+SQLite removal deliberately retains the reader-edited migration because schema
+history is neither a replaceable implementation facet nor an ejection target.
+The H2 scenario adds a Spring-specific pack with a merge-managed database test,
+Boot-version-aware dependencies, and main/test property sets; unrelated reader
+properties survive both regeneration and capability removal.
+The Actuator scenario adds the same iterative loop around its endpoint contract
+test and key-scoped management properties. Its canonical-only E2E then ejects
+the Java test without surrendering dependency or property ownership. Cache
+extends the same proof to a two-file implementation boundary and bounded
+Caffeine configuration. CORS adds a second two-file boundary whose test source,
+annotation import, and test starter are selected from the captured Spring Boot
+major. Both legacy and canonical routes preserve edits to both Java files and
+unrelated properties through later generation, then remove only CORS-owned
+state; the canonical-only E2E transfers both files byte-for-byte and runs the
+Boot 4 preflight test with real Maven after ejection.
+Observability extends that proof to four independently merge-managed Java
+files under one ejection boundary, a second Boot-version-sensitive import, two
+Spring-managed dependencies, and 24 bounded properties. Its differential
+scenario preserves all four edits and unrelated property state; its canonical
+E2E transfers the exact live bytes and proves the Prometheus scrape with real
+Maven after ejection.
+Security adds five independently merge-managed files, a data-driven Boot 3
+floor, Boot-versioned test imports, and four dependencies under one ejection
+boundary. Its differential scenario caught a real legacy shared-ownership bug:
+removing Security after CORS drops the Boot 4 web MVC test starter. The
+canonical compiler does not copy that defect; dependency reconciliation keeps
+CORS buildable, and a canonical real-Maven E2E proves the stacked project after
+Security's exact-byte Java ejection.
+SSE adds the first declarative pack whose files intentionally span packages:
+the hub, scheduling switch and concurrency test live beside the application,
+while the stream controller remains in the owned web layer. Four stable
+artifact IDs share `cap_sse`; regeneration preserves edits in every file,
+removal takes back only the SSE property and implementation, and ejection
+transfers exact live bytes while the Web dependency and scheduler pool remain
+managed. The canonical real-Maven E2E runs all four generated concurrency
+tests after that transfer.
+Redis extends the same compiler projection beyond files without claiming an
+entire reader document. The accepted lock stores the exact marked Redis service
+block as a stable reader facet; `compose.yaml` remains reader-owned around it.
+Generate/edit/generate therefore preserves hand edits both inside the service
+and in unrelated services, while an emitter change that touches the same line
+refuses through the ordinary `git merge-file` path before publication. Its two
+Java artifacts, three properties, three dependencies, Failsafe feature and
+non-persistent Compose service all come from one declarative pack. The
+differential scenario runs this loop through legacy and canonical binaries,
+and the canonical E2E compiles the resulting integration test with real Maven.
+Kafka validates that reader facets are a general boundary rather than a Redis
+special case. One declarative pack projects four merge-managed Java artifacts,
+the marked broker block, six Spring dependencies and the complete
+serializer/deserializer, consumer-group and producer-durability property set.
+Spring and plain Maven select their dependency/source projections from the
+same pack: plain Maven receives only the pinned client plus Compose service.
+The differential loop preserves edits in every Java file, inside the broker
+block, and outside it; the canonical real-Maven E2E compiles and runs the
+poison-message policy test after regeneration.
+Mail adds a third reader-facet consumer and proves that the abstraction handles
+a service whose model identity (`mail`) differs from its Compose name
+(`mailpit`). Its sender and container-backed delivery proof are separate merge
+artifacts under `cap_mail`; Failsafe, three explicit mail settings,
+Boot-sensitive test dependencies and the marked service are derived from the
+same declaration. The differential loop preserves both Java edits, an edit
+inside Mailpit and unrelated YAML, while the canonical Maven `verify` E2E
+compiles and executes the integration-test boundary.
+Toxiproxy proves the same compiler pack shape does not require Spring or a
+reader-document facet. Its two generated testkit files are independent merge
+artifacts under the single `cap_toxiproxy` implementation boundary, with exact
+test-scoped dependencies. The 290-line inline Rust string emitter was deleted;
+legacy and canonical routes now render the same Java templates. Differential
+coverage edits both files, generates again, and removes only Toxiproxy; the
+canonical E2E additionally runs `FaultsTest` through real Maven and Docker.
+Coverage establishes a separate zero-source pack shape instead of pretending
+every capability emits Java. The model lowers it to `BuildFeature::Coverage`;
+the workspace owns one marked JaCoCo block per Maven or Gradle dialect, stacks
+it independently with integration-test wiring, preserves all reader bytes
+outside the block, and refuses edits inside it before publication. Differential
+coverage proves add/generate/remove parity with the frozen binary; a canonical
+real-Maven `verify` E2E produces `target/site/jacoco/jacoco.xml` and enforces the
+declared threshold.
+Canonical-only E2Es additionally prove package moves, atomic overlap refusal,
+whole-boundary ejection, frozen-model convergence, and real Java compilation.
+The first differential run also caught and
+removed a real ABI drift: required `int`, `long`, `double`, and `boolean`
+fields now remain Java primitives in canonical records and ports, while only
+nullable fields use `Optional` of their boxed type.
+
+The representative database-operation slice is now executable rather than a
+paper spike. Canonical `add db` compiles commands, queries, and transitions to
+separate `JdbcClient` adapters. Commands generate omitted UUID keys, bind
+modeled inputs, map omitted optional values to SQL null, and refuse an omitted
+required value. Queries use required and presence-sensitive optional filters,
+semantic ordering, and a default ceiling of 100. Transitions update by primary
+key, use non-set inputs as guards, and publish a modeled domain event inside the
+transaction.
+
+The query CLI E2E starts from JDL, generates a scaffold/query/database
+capability, hand-edits the adapter, evolves the record, proves the edit
+survives, proves an identical sync is byte-stable, forces an overlapping SQL
+line and verifies zero writes, retries cleanly, ejects only
+`art_cap_db_<operation>_query`, evolves again, and verifies the query ABI stays
+managed. A companion write-operation E2E hand-edits command and transition
+adapters, evolves both, proves one overlap aborts the model and every generated
+file, retries, ejects the command without moving the transition, evolves the
+still-managed transition, ejects that second boundary independently, and then
+proves later field evolution leaves both reader-owned files untouched while
+both ports remain managed. Both scenarios run frozen-model and real Maven
+compilation gates when the host supports Java 26.
 
 ## The new vision, in one page
 
@@ -55,9 +381,11 @@ The source of truth is one versioned application model. The current CLI stays
 pleasant, but every mutating command is only syntax sugar for a `ModelPatch`.
 The compiler pipeline resolves that model once and materializes one immutable
 plan. Preview, confirmation, export and apply all use that exact plan.
-Reproducible source is written to a wholly managed generated tree. Reader code
-lives outside that tree. When a reader must take over generated code, `eject`
-transfers ownership explicitly and permanently.
+Reproducible source is written to a merge-managed generated tree. Readers may
+edit any generated file. Later compilation preserves disjoint edits and
+refuses overlapping edits atomically. When a reader must take over an entire
+replaceable implementation, `eject` transfers only that implementation
+boundary explicitly and permanently while its ABI stays managed.
 
 ```text
                        CURRENT
@@ -144,7 +472,8 @@ This vision deletes categories, not merely files:
 - dependency inference no longer scans generated bytes;
 - field evolution no longer reruns whole generators;
 - rename updates logical model edges instead of text plus cloned stale specs;
-- managed output needs no per-file three-way ownership merge;
+- kind-specific ownership merge code collapses into one artifact-aware
+  three-way merge;
 - preview and commit cannot accidentally plan twice;
 - wire tags/codecs and command metadata come from separate small,
   single-purpose declarations;
@@ -236,13 +565,15 @@ For each scenario, compare:
 8. generated Maven/Gradle compile and executed test counts;
 9. recovery after every real failpoint.
 
-Do not compare new SQLite bytes with old journal-directory bytes. Compare a
-canonical `StateView`/`ReceiptView` describing their semantics. Intentional
-changes require a checked-in expectation or migration rule; an agent may not
-silently refresh every golden. Output comparison is exact by default. A finite
-`CompatibilityMap` may declare specific destination changes such as moving a
-class into the managed root, but it maps individual artifacts and contracts;
-it may not exclude a whole generated directory from comparison.
+Do not compare new compiler-lock bytes with old journal-directory bytes.
+Translate the legacy ledger/receipt into a canonical compatibility view, then
+compare its surviving semantics with the new model, accepted projection and
+reader-visible tree. Intentional changes require a checked-in expectation or
+migration rule; an agent may not silently refresh every golden. Output
+comparison is exact by default. A finite `CompatibilityMap` may declare
+specific destination changes such as moving a class into the managed root, but
+it maps individual artifacts and contracts; it may not exclude a whole
+generated directory from comparison.
 
 ### Required E2E gates
 
@@ -401,24 +732,33 @@ The README promises that the reader may edit generated files, while `remove`
 and `destroy` still know what they may take back. This creates an unavoidable
 information problem. Once a generated `CsvReader` has been edited, its bytes
 do not reveal whether it is still generated, partly generated, or entirely
-reader-owned. Safe later mutation requires retained identity, owners,
-preimages, current images, merge policy and human confirmation.
+reader-owned. Safe later mutation requires stable artifact identity, a
+reproducible base, the live bytes, the next render and one conflict policy.
 
-The current ledger, object blobs, three-way merge, force policy, receipts and
-undo are different answers to that one ambiguity. Deleting them without
-changing the ownership contract would make Jails smaller by making it unsafe.
+The current ledger, object blobs, force policy, receipts and undo are several
+overlapping answers to that ambiguity. The semantic model plus one exact
+accepted projection makes the preimage unambiguous, so they can be deleted
+while retaining one small three-way merge and exact-plan preconditions. That
+single projection is necessary across compiler upgrades; historical objects
+are not.
 
-The way out is not a cleverer merge. It is a state transition users can
-understand:
+The ordinary workflow is a merge users already understand:
+
+```text
+accepted render (BASE) + hand-edited file (OURS) + next render (THEIRS)
+    -> clean exact after-image | atomic conflict refusal
+```
+
+Permanent ownership transfer remains an explicit state transition:
 
 ```text
 managed implementation --jails eject--> reader-owned implementation
 ```
 
-Before ejection, Jails may replace the implementation or entire generated
-tree. After ejection, it never rewrites or destroys that source. Generated
-ports and DTOs remain the managed ABI; an incompatible model change fails
-linking until the external implementation declaration is updated.
+Before ejection, Jails merge-manages the artifact. After ejection, it never
+rewrites or destroys that implementation source. Generated ports and DTOs
+remain the managed ABI; an incompatible model change fails linking until the
+external implementation declaration is updated.
 
 ### 3. No canonical semantic world
 
@@ -646,21 +986,24 @@ for an application model.
 
 ### `jails-prepare` and `jails-commit`
 
-This is the most important place not to confuse deletion with simplification.
-Arbitrary files in an existing directory cannot all be atomically replaced as
-one operation. A crash-safe multi-file mutation needs a lock, staged bytes,
-preconditions, a durable record of intent and idempotent roll-forward. Moving
-the staging directory beside the project or using SQLite does not repeal that
-filesystem fact.
+The legacy kernel tries to provide rollback/roll-forward for a very broad set
+of arbitrary mutations and external effects. That contract forced a lock,
+staged objects, a durable intent journal, receipts and mirrored recovery paths.
+The rewrite should not reproduce that machinery under new names.
 
-What can be simplified is the number of meanings carried through the kernel.
-Preparation currently has parallel resource, operation, ledger and effect
-representations. Commit stores its own journal and receipt forms, object
-images, preconditions and recovery state. This creates enough surface for the
-normal and recovery paths to drift. The concrete defects and the tests they
-need are collected under “Transaction defects the rewrite must cover” below.
-The architectural point is that mirrored paths no longer obviously mirror
-each other.
+Narrow the canonical mutation contract instead: all reproducible source is
+merged before planning; every file write is exact and idempotent; append-only
+migrations have deterministic paths; external effects are outside the source
+commit; and the compiler lock is published last. A crash can leave a mixed but
+valid intermediate checkout which the same semantic command deterministically
+converges. This removes the need for a durable roll-forward protocol while
+retaining precondition checks and refusal on unexpected bytes.
+
+The current preparation layer's parallel resource, operation, ledger and
+effect representations, and commit's journal/receipt/object/recovery forms,
+remain valuable evidence for differential tests. They are not destination
+types. The concrete defects below explain why the old path should be frozen
+and deleted after parity rather than adapted into the new compiler.
 
 The long-term transaction kernel should accept one canonical `Plan`, persist
 that same value once, and execute a small sequence of idempotent operations.
@@ -708,34 +1051,34 @@ primary value is “start me with excellent Java,” not “keep my application
 model reconciled.” It gives up many features the current code has spent most
 of its complexity making safe.
 
-### B. Managed compiler with ejection — recommended
+### B. Merge-managed compiler with implementation-boundary ejection — chosen
 
-The application model is source. Managed Java, tests, HTTP collections and
-reproducible configuration are compiler outputs. Readers extend generated
-ports from ordinary source and explicitly eject a declared implementation
-boundary when they need to own it.
+The application model is semantic source. Managed Java, tests, HTTP
+collections and reproducible configuration are compiler projections, but
+their live files are intentionally editable. Every regeneration performs a
+three-way merge from accepted-model render, live bytes, and next-model render.
+Disjoint edits survive; overlaps refuse before a plan exists. Readers eject a
+declared implementation boundary only when they want Jails to stop generating
+that artifact entirely.
 
 Schema migrations are not reproducible output: they are append-only history
 events produced by a semantic model diff. Rare patches to reader-owned build
 or configuration files are also explicit plan operations, not ordinary
 renderer output.
 
-This keeps declarative apply, preview, safe evolution and deterministic
-generation while removing the ambiguity that drives most merge and ownership
-code. It is a product change, especially for users accustomed to editing a
-generated class in place. That change must be prototyped with real projects
-before the legacy engine is deleted.
+This keeps declarative apply, preview, safe evolution, deterministic generation
+and the iterative edit loop. The merge kernel stays small: read the one
+accepted projection from the compiler lock, shell out to the proven three-way
+merge, and freeze clean merged bytes into the exact plan. Unique artifact IDs,
+rather than entity IDs or file paths, pair projections across rename. Separate
+implementation-boundary IDs scope ejection across one or more artifacts.
 
-### C. Keep editable managed files and refactor in place
+### C. Disposable managed tree with ejection
 
-Typed IR, one model and one plan would still improve the system substantially.
-However, retaining “edit this output and let Jails later merge/delete it” also
-retains ownership records, content blobs, three-way merge, conflict policy and
-multi-file crash recovery. Expect a cleaner implementation, not a small one.
-
-Choose this only if in-place editing plus later management is a defining
-product requirement. It is internally coherent; it simply has an irreducible
-cost.
+This makes generated output replaceable wholesale and requires an explicit
+ejection before any edit. It removes the merge but breaks the defining
+workflow: adding one method to `Task.java` would force ownership transfer before
+the next `jails g field`. It is coherent, but it is not this product.
 
 ### D. JVM build-time compiler
 
@@ -804,10 +1147,10 @@ URL, property and package spellings.
 
 The model file(s) are the **only desired-state authority**. A root file may
 import closed-schema fragments, so “one model” means one linker rather than one
-blob. SQLite may retain the base digest, exact plan bytes and historical model
-images for recovery/audit, but those are observations—not another editable
-source. A CLI `ModelPatch` includes the resulting model-file bytes in the plan.
-Manual edits simply change the next captured digest.
+blob. The compiler lock retains only the accepted model and exact accepted
+projection needed to reproduce the next merge BASE. Git supplies longer-lived
+audit history. A CLI `ModelPatch` includes the resulting model-file bytes in
+the plan. Manual edits simply change the next captured digest.
 
 ### Typed declarations, not an optional-field soup
 
@@ -1135,9 +1478,10 @@ struct Plan {
 
 enum PlannedOperation {
     ReplaceModelFile { before: Option<FileImageRef>, after: FileImageRef },
-    ReplaceManagedTree { root: ProjectPath, before: Option<TreeId>, after: TreeId },
+    PublishMergedTree { root: ProjectPath, before: Option<TreeId>, after: TreeId },
     AppendMigration { path: ProjectPath, after: FileImageRef },
     PatchReaderFile { path: ProjectPath, before: FileImageRef, after: FileImageRef },
+    ReplaceCompilerLock { before: Option<FileImageRef>, after: FileImageRef },
 }
 
 struct TreeEntry {
@@ -1147,29 +1491,35 @@ struct TreeEntry {
 }
 ```
 
-The pure compiler returns `PlanDraft`. The workspace materializer applies its
-document intents to the bytes in the captured `WorkspaceSnapshot`, renders the
-canonical model file, hashes every exact after-image, builds tree manifests,
-and returns a `PlanBundle { plan, trees, blobs }`. That is the only boundary at
-which a semantic patch becomes filesystem bytes:
+The pure compiler returns `PlanDraft`. The workspace materializer first
+reconciles every artifact as `BASE = accepted projection`, `OURS = live file`,
+`THEIRS = next compiler projection`. Only clean merge results enter the tree
+manifest. It then applies document intents to the captured
+`WorkspaceSnapshot`, renders the canonical model file, hashes every exact
+after-image, and returns a `PlanBundle { plan, trees, blobs }`. That is the
+only boundary at which a semantic patch becomes filesystem bytes:
 
 ```text
 WorkspaceSnapshot + CanonicalModelPatch
     -> compiler PlanDraft
+    -> workspace reconcile BASE/OURS/THEIRS
     -> workspace materializer PlanBundle
     -> preview/export OR executor
 ```
 
 Human review, JSON output and portable serialization are projections of the
-one exact `Plan`. Applying it first rechecks `base`; it never reparses argv,
-reruns a document backend or calls the route that originally compiled it. A
-stale plan is rejected. A caller may explicitly request a recompile, but that
-produces a new digest and a new thing to review. `TreeEntry` makes file kind
-and mode part of identity, so the E2E comparison and executor share the same
-definition of a tree. `PlanDigest` commits to the semantic summary,
+one exact `Plan`. `PublishMergedTree` is deliberately not
+`ReplaceGeneratedTree`: its after-tree already contains every surviving reader
+edit. Applying it first rechecks the complete captured base; it never reparses
+argv, reruns a document backend, recompiles, or performs a merge. A stale plan
+is rejected before any write. A caller may explicitly request a recompile, but
+that produces a new digest and a new thing to review. `TreeEntry` makes file
+kind and mode part of identity, so the E2E comparison and executor share the
+same definition of a tree. `PlanDigest` commits to the semantic summary,
 preconditions, ordered operations, every referenced tree/blob digest and the
 effect identities; a portable `PlanBundle` carries those exact referenced
-objects.
+objects. The compiler-lock operation is always last because that lock is the
+commit marker and the exact BASE for the next merge.
 
 `Outcome` can become an execution record over a plan rather than a sum of
 planned, committed, recovered and effect-retry variants with many projection
@@ -1201,33 +1551,45 @@ example:
 ```
 
 or a conventional visible `generated-src/jails/...` equivalent. Maven and
-Gradle each need one stable integration that adds those roots. The exact path
-is a prototype question; the ownership property is not.
+Gradle each receive stable, source-set-aware integration for those roots.
+Maven uses `add-source` for main and `add-test-source` for tests; Gradle patches
+the corresponding `main` and `test` source sets. The ownership property, not a
+build-tool shortcut, is the invariant.
 
 Choose one primary build contract rather than leaving regeneration ambiguous:
-**commit the managed generated tree**. Maven/Gradle receive a one-time source
-root, but no Jails plugin is required in every IDE/build. CI runs
-`jails model check --frozen` and fails when committed output is not the exact
-projection of the model and pinned compiler version. Generated diffs remain
-reviewable, while ownership is still absolute because the whole subtree is
-managed. An optional build plugin can be explored later; ignored build-time
-output is not the default vision.
+**commit the merge-managed generated tree**. Maven/Gradle receive a one-time
+source root, but no Jails plugin is required in every IDE/build. CI runs
+`jails model check --frozen`; generated and hand-written deltas remain
+reviewable together.
 
-Reader code lives only in ordinary `src/main/java` and `src/test/java`. It
-depends on generated ports/types or supplies implementations through explicit
-extension points. Compiler output never performs identifier surgery in that
-tree as part of normal operation.
+Reader code may live in ordinary source or as edits inside the generated tree.
+Jails does not infer semantics from those edits: it carries them as OURS in a
+three-way merge. It performs no identifier surgery in ordinary source as part
+of normal generation.
 
 ### Ejection
 
 Ejection is allowed only at a declared **implementation boundary**, not an
-arbitrary facet or file. A boundary has a generated ABI—ports, DTOs and
-signatures that stay managed—and a replaceable implementation artifact. One
-file cannot be half managed by two boundaries.
+entity and not an arbitrary source span. Merge identity and ownership identity
+are separate:
+
+- every emitted file has a unique `artifact_id`, which pairs its old and new
+  compiler projections for three-way merge;
+- one or more cohesive implementation files may share an `ejection_id`, which
+  is the ownership boundary transferred by `jails eject`;
+- generated ABI records and ports have no ejectable boundary and therefore
+  remain managed.
+
+A controller and its companion test, for example, have different artifact IDs
+but share one HTTP-adapter ejection ID. Editing either file does not eject
+anything; both remain merge-managed. Explicitly ejecting the HTTP adapter
+transfers both together while the request/response records and service port
+stay generated. One file cannot be half managed by two boundaries.
 
 `jails eject <implementation-id>` should:
 
-1. materialize the selected generated source into the reader-owned tree;
+1. materialize every artifact in the selected boundary into the reader-owned
+   tree;
 2. mark that implementation boundary `external` in the model and record the
    symbols/signatures it provides;
 3. remove the managed artifact from the next generation;
@@ -1239,11 +1601,10 @@ Ejection is irreversible by default because silently reclaiming ownership is
 dangerous. A separate `jails adopt` may prove that the external bytes match a
 generated artifact and bring it back under management.
 
-Some current generators produce deliberately empty stubs intended for
-immediate editing. Under the new model those should either be born ejected or
-be replaced with generated interfaces plus reader-owned implementation
-templates. Generating a managed class whose purpose is to be edited recreates
-the paradox.
+Current generators may produce stubs intended for immediate editing. Those
+edits remain merge-managed like edits to records. Ejection is optional and
+boundary-scoped when the reader wants permanent ownership of a replaceable
+implementation.
 
 ### Irreproducible outputs
 
@@ -1254,70 +1615,48 @@ Not everything belongs in the generated tree:
 - secrets and machine-specific settings are never model output;
 - external effects such as starting a service are not files.
 
-The plan type makes these categories explicit. The managed output is one
-`ReplaceManagedTree` operation backed by a complete tree manifest, not one
-database operation per generated file. Migrations, the model file and rare
-reader-file patches remain individual operations because their histories are
-irreproducible.
+The plan type makes these categories explicit. The merge-managed output is one
+`PublishMergedTree` operation backed by the complete, already-reconciled tree
+manifest. Migrations, the model file and rare reader-file patches remain
+individual exact-image operations because their histories are irreproducible.
 
 ## A smaller transaction kernel
 
-SQLite is a good implementation option once the semantic collapse has
-happened, not a substitute for it. A `.jails/state.sqlite` database could
-replace the custom metadata codecs, object directory, GC bookkeeping and
-several ledger/receipt files with a few normalized tables:
+Do not replace the legacy journal with SQLite. Delete the object store, custom
+codec, GC, receipt graph, WAL phases and roll-forward engine. The canonical
+path needs only one project mutex, exact preconditions, atomic single-file
+writes and one compiler lock containing the accepted model plus exact accepted
+compiler projection.
 
-```text
-model_observation(plan_id, before_digest, after_digest)
-plan(id, payload, digest, status)
-operation(plan_id, sequence, kind, payload, status)
-tree(id, manifest_blob)
-blob(digest, bytes)
-effect(plan_id, sequence, kind, idempotency_key, status, detail)
-```
+The algorithm is deliberately convergent rather than rollback-oriented:
 
-The algorithm remains conservative:
+1. capture every input once under a project lock;
+2. render the next compiler projection;
+3. reconcile every file as BASE/OURS/THEIRS and refuse the entire command if
+   any merge conflicts;
+4. freeze the clean merged tree, migrations, reader patches, model update and
+   their complete preconditions into one exact plan;
+5. recheck all preconditions before the first write;
+6. publish each exact after-image with a temporary sibling plus atomic rename;
+7. write `.jails/compiler.lock.json` **last** as the acceptance marker and the
+   BASE for the next generation;
+8. verify the complete after-state, release the lock, then run explicitly
+   idempotent follow-up effects.
 
-1. acquire one project lock;
-2. roll forward an unfinished plan;
-3. validate the plan's snapshot preconditions;
-4. persist the exact `PlanBundle`, tree manifests and after-image blobs with
-   status `Prepared` in one `synchronous=FULL` SQLite transaction;
-5. materialize the complete after-tree in a unique sibling staging directory,
-   then sync every entry and the staging directories;
-6. execute `ReplaceManagedTree` as one logical operation: if the live tree is
-   the before-manifest, rename it to a unique retired path and sync the parent,
-   then rename the staged after-tree into place and sync again; if the live
-   tree already has the after-manifest, activation already succeeded; if live
-   is absent but the retired-before and staged-after trees exist, resume the
-   second rename; any other state is a conflict;
-7. for each model/migration/reader-file operation, compare kind, mode and blob
-   digest: the before-image means apply the exact after-image; the after-image
-   means it already succeeded; anything else is a conflict;
-8. after each create/rename/delete, sync the target and parent directory, then
-   mark that logical operation applied;
-9. once every operation is observably at its after-state, mark the plan and
-   model-file observation committed;
-10. release the lock and run retriable follow-up effects, recording outcomes.
+Every file operation accepts both its captured before-image and its exact
+after-image. Therefore a process death during publication does not require a
+transaction log: before the final compiler-lock write, the old accepted
+projection remains BASE and rerunning the same semantic command converges the
+partially published tree to the same after-state. After the final lock write,
+all reproducible operations have already landed. An unexpected third image is
+a conflict, never a cue to guess or roll forward.
 
-SQLite makes metadata atomic and queryable. It does **not** remove the
-filesystem journal or its crash window; it implements that journal with one
-state machine. If a crash lands after filesystem activation but before the DB
-update, recovery sees the after-digest and advances the operation. Recovery
-always replays the reviewed content-addressed blobs. It never recompiles and
-quietly substitutes new bytes. Reproducibility makes later repair/GC simple,
-not crash recovery nondeterministic.
-
-The two directory renames are intentionally not described as one atomic
-filesystem action. A crash may leave the live managed root temporarily absent;
-the retired/staged names plus the persisted before/after manifests make that
-state unambiguous and recoverable. A platform-specific atomic pointer may
-optimize activation later, but correctness cannot depend on it.
-
-If the model file is committed and the generated tree is reproducible, most
-history belongs in Git. Keep Jails history only for execution/recovery and
-evolution evidence. Undo becomes “apply the inverse model patch and compile,”
-except for database migrations, whose inverse is a new forward migration.
+This trades invisible rollback for an explicit property users can understand:
+a crashed command may leave a temporarily mixed but individually valid tree;
+the next identical generation repairs it deterministically, and no later
+command can accept it as a new baseline prematurely. Most history belongs in
+Git. Database migrations remain forward-only evidence; their inverse is a new
+forward migration, not filesystem rollback.
 
 ### Transaction defects the rewrite must cover
 
@@ -1584,8 +1923,9 @@ jails-compiler
   Java/SQL/HTTP emitters; depends on jails-model + jails-contracts
 
 jails-workspace
-  capture/adoption, document materialization, exact Plan executor, SQLite
-  state and recovery; depends on jails-model + jails-contracts
+  capture/adoption, document materialization, three-way merge, exact Plan
+  executor and compiler-lock acceptance; depends on jails-model +
+  jails-contracts
 
 jails-cli
   composition root, generated command catalog, front ends and reporting;
@@ -1682,22 +2022,33 @@ An append-only stream of `PlanCreated`, `OperationApplied`, `ModelCommitted`,
 SQLite tables plus an event column are a practical version. A custom event log
 would recreate codec, migration, compaction and corruption problems.
 
-Use event sourcing only if historical audit and replay are product
-requirements. A current semantic snapshot plus a bounded transaction/effect
-journal is simpler for most projects.
+Use event sourcing only if historical audit and replay become separate product
+requirements. It is not part of this architecture: the current semantic model,
+accepted projection lock and Git history are enough for the compiler workflow.
 
 ## What will not simplify Jails by itself
 
-### A new JDL
+### A new JDL — SUPERSEDED by maintainer decision D2
 
-The CLI field syntax, generator vocabulary and two application-manifest paths
-are already domain-specific languages. A prettier grammar does not remove any
-semantic duplication. It adds a parser, spans, formatter, migration,
-completion and documentation.
+*The conclusion below is overridden; the sequencing argument is kept and is now
+D2's implementation order. See "Maintainer decisions" at the top and the
+normative [JDL v1 implementation specification](jdl-sol.md).*
 
-Define `AppModel` and `ModelPatch` first. If TOML then proves too clumsy, add a
-grammar as one more frontend and compile it to the same model. That keeps the
-language replaceable and testable.
+The original analysis: the CLI field syntax, generator vocabulary and two
+application-manifest paths are already domain-specific languages, so a prettier
+grammar removes no semantic duplication while adding a parser, spans,
+formatter, migration, completion and documentation.
+
+What survives that reasoning is the *order*, not the refusal. Define `AppModel`
+and `ModelPatch` first and get the compiler working against a TOML front end.
+Then add the grammar as one more front end compiling to the same model, which
+keeps the language replaceable and testable.
+
+What changes: the grammar is a required deliverable rather than a contingency,
+because authoring ergonomics — concise leaves and constructs that nest with the
+thing they describe — are a product requirement (D3), not a preference. TOML
+loses that case on nested operations specifically, and no amount of key
+flattening recovers it.
 
 ### Minijinja or another template engine
 
@@ -1717,10 +2068,11 @@ the goal is one representation per concept and a narrow dependency graph.
 ### “Render in a temp directory and atomically swap it”
 
 This works for a wholly managed new destination and is why
-`src/new/publish.rs` is good. It does not atomically replace arbitrary files in
-an existing nonempty project across platforms. It becomes useful for the new
-disposable managed subtree, not as a replacement for journaling reader-file
-patches.
+`src/new/publish.rs` is good. It does not decide how hand edits merge with a
+new projection, nor does it atomically replace arbitrary reader files in an
+existing nonempty project across platforms. It is a publication technique,
+not a replacement for artifact reconciliation or exact reader-file
+preconditions.
 
 ### A fully dynamic runtime schema
 
@@ -1767,8 +2119,8 @@ interpretations:
 2. declare model files the sole desired-state authority;
 3. choose explicit stable IDs and the exact ejectable implementation ABI;
 4. commit the managed generated tree and require `model check --frozen`;
-5. freeze `PlanV1` as ordered operations over content-addressed blobs;
-6. freeze the SQLite/filesystem replay state machine;
+5. freeze `PlanV1` as ordered exact-image operations;
+6. freeze lock-last publication and deterministic crash convergence;
 7. decide which CLI tool suites remain in the core product;
 8. build and pin `jails-legacy` plus the differential E2E corpus.
 
@@ -1780,10 +2132,10 @@ lanes concurrently:
 | Lane | Delivers | Does not wait for |
 |---|---|---|
 | Model/linker | `AppModel`, explicit IDs, `ModelPatch`, reference graph, legacy-state importer, typed evolution programs | renderers or executor |
-| Compiler kernel | facet IR, `TypeSemantics`, node-specific name projections, requirement graph, schema projection, `PlanDraft` builder | CLI or SQLite implementation |
+| Compiler kernel | facet IR, `TypeSemantics`, node-specific name projections, requirement graph, schema projection, `PlanDraft` builder | CLI or workspace implementation |
 | Emitters | Java/SQL/HTTP/build emitters, split by independent facet families; existing templates reused where byte-stable | other emitter families |
 | Workspace | one captured `WorkspaceSnapshot`, Maven/Gradle/properties/compose document backends, exact-plan materializer, managed-root integration | command frontends |
-| Executor | SQLite journal, exact blob replay, fsync/rename state machine, effects, `StateView`/`ReceiptView`, legacy receipt reader | generator internals |
+| Executor | exact preconditions, atomic after-image publication, lock-last acceptance, legacy receipt reader | generator internals |
 | Frontends | command catalog, Clap, TOML/Serde model, direct CLI-to-patch adapters, plan/report encodings | emitter implementation details |
 | Mechanical generation | wire codec derives, command metadata macro, local semantic registries | application compiler passes |
 | Product split | external run/test/db/log/editor/contract commands and one versioned subprocess seam | compiler cutover |
@@ -1830,7 +2182,7 @@ Parallel AI throughput handles the volume; the E2E firewall handles the risk.
 | per-byte dependency inference | typed IR requirements | `with_test_support`-style scans |
 | route-level rename/field evolution replay | stable IDs + semantic schema diff | whole-generator reruns and hard-coded companions |
 | prepare identity/semantics/prepared representations | one canonical `Plan` | agreement methods and vector cloning |
-| journal/receipt/object directory protocols | SQLite plan/event state plus tiny replay | bespoke storage/GC/rewrite machinery |
+| journal/receipt/object directory protocols | lock-last convergent exact-file executor plus compiler projection lock | bespoke storage, codec, GC, WAL, receipt and roll-forward machinery |
 | `main.rs` dispatch + command-path + pre-Clap parsing | generated command catalog | duplicated command oracles |
 | `new` generation paths | compiler `PlanDraft` plus workspace materializer; keep useful `Publication` mechanics | manual preview path lists and nested engine state |
 | drive/report/tool suites | optional command processes or explicit core modules | facade coupling and duplicated runners/caches |
@@ -1866,15 +2218,17 @@ survives.
 The crazy idea that fits the evidence is not “write a new language.” It is:
 
 > Treat Jails as a compiler whose source is one application model, whose
-> generated tree is disposable until ejected, whose irreversible output is an
-> explicit evolution plan, and whose executor applies exactly the plan the
-> reader reviewed.
+> generated tree is merge-managed by stable artifact identity, whose
+> irreversible output is an explicit evolution plan, and whose executor
+> applies exactly the plan the reader reviewed.
 
 Build the application compiler plus separate wire-codec and command-catalog
-generators. Keep the current syntax as compatibility front ends. Use typed
-facet and artifact IR rather than strings, generated source as output rather
-than state, explicit stable IDs rather than name inference, and SQLite as a
-simplifier for the remaining durable kernel.
+generators, with [JDL v1](jdl-sol.md) as its single durable authoring language.
+Keep the current syntax as compatibility front ends. Use typed
+facet and artifact IR rather than strings, generated source as a projection
+rather than semantic state, explicit stable IDs rather than name inference,
+and a small lock-last, convergent exact-plan executor instead of the legacy
+object store, codec, journal, receipts and roll-forward state machine.
 
 The largest code deletion will not come from shorter render functions. It will
 come from making these questions disappear:

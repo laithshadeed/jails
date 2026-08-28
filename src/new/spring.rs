@@ -74,7 +74,6 @@ pub fn new(request: Request<'_>) -> Result<()> {
     ensure_enforcer(&tree, java)?;
     write_mise(&tree, java)?;
     write_agents(&tree, java)?;
-
     // start.spring.io's zip already ships a .gitignore, so just init.
     if git {
         git_init(&tree, debug);

@@ -120,7 +120,6 @@ pub fn new_cli(request: &Request<'_>) -> Result<()> {
     write_fixtures_dir(&tree)?;
     write_mise(&tree, java)?;
     write_agents(&tree, java)?;
-
     if git {
         tree.put(".gitignore", GITIGNORE)?;
         git_init(&tree, debug);

@@ -1,0 +1,19 @@
+[package]
+name = "jails-workspace"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+jails-contracts.workspace = true
+jails-model.workspace = true
+jails-support.workspace = true
+fs2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+
+[dev-dependencies]
+jails-compiler.workspace = true
+
+[lints]
+workspace = true

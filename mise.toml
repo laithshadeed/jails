@@ -5,3 +5,18 @@
 java = "openjdk-26.0.2"
 maven = "3.9.16"
 mvnd = "1.0.6"
+gradle = "8.5"
+
+[tasks.verify-rewrite]
+description = "Run the single mandatory rewrite verification gate"
+run = [
+  "cargo fmt --all --check",
+  "cargo clippy --workspace --all-targets -- -D warnings",
+  "cargo build --workspace",
+  "JAILS_REQUIRE_TOOLCHAIN=1 cargo test --workspace -- --skip unheld_gradle_example_manifest_builds_on_its_pinned_toolchain",
+  "mise x java@21 gradle@8.5 -- env JAILS_REQUIRE_TOOLCHAIN=1 cargo test --test cli unheld_gradle_example_manifest_builds_on_its_pinned_toolchain",
+]
+
+[tasks.verify-rewrite-g1-canary]
+description = "Build the frozen legacy revision and compare iterative, rerun, and destroy semantics"
+run = "./scripts/verify-rewrite-g1-canary.sh"

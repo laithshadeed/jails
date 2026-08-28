@@ -26,10 +26,13 @@ serde_json = "1.0.151"
 toml = "1.1.4"
 
 jails-commit = { path = "crates/jails-commit" }
+jails-compiler = { path = "crates/jails-compiler" }
+jails-contracts = { path = "crates/jails-contracts" }
 jails-drive = { path = "crates/jails-drive" }
 jails-engine = { path = "crates/jails-engine" }
 jails-generate = { path = "crates/jails-generate" }
 jails-java = { path = "crates/jails-java" }
+jails-model = { path = "crates/jails-model" }
 jails-prepare = { path = "crates/jails-prepare" }
 jails-project = { path = "crates/jails-project" }
 jails-protocol = { path = "crates/jails-protocol" }
@@ -38,6 +41,7 @@ jails-spec = { path = "crates/jails-spec" }
 jails-state = { path = "crates/jails-state" }
 jails-support = { path = "crates/jails-support" }
 jails-testkit = { path = "crates/jails-testkit" }
+jails-workspace = { path = "crates/jails-workspace" }
 
 # One place for the lint policy, so a new crate cannot quietly opt out of it.
 [workspace.lints.rust]
@@ -74,9 +78,14 @@ jails-generate.workspace = true
 jails-project.workspace = true
 jails-spec.workspace = true
 jails-java.workspace = true
+jails-model.workspace = true
+jails-contracts.workspace = true
+jails-compiler.workspace = true
+jails-workspace.workspace = true
 clap.workspace = true
 clap_complete = "4.6.7"
 jails-protocol.workspace = true
+jails-state.workspace = true
 jails-support.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

@@ -115,6 +115,9 @@ const ALLOWED: &[AllowedConcept] = &[
             // Reading the store *is* reading `ledger.toml`, and the reader
             // cannot name the file it opens without naming it.
             "crates/jails-commit/src/store.rs",
+            // The one-way compiler importer decodes the same legacy envelope
+            // solely to leave that store behind; its input type is LedgerV2.
+            "src/model_import.rs",
             // A journal names the ledger-committed phase, which is the point
             // after which recovery must roll forward rather than back.
             "crates/jails-commit/src/journal.rs",

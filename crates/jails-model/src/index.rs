@@ -1,0 +1,166 @@
+//! Linking for composite and ordered database indexes.
+
+use crate::id::{EntityId, FieldId, IndexId};
+use crate::linker::Linker;
+use crate::model::{AppModel, Field, Index, IndexColumn, IndexDirection};
+use crate::source;
+use std::collections::{BTreeMap, BTreeSet};
+
+pub(crate) fn add(model: &mut AppModel, entity: EntityId, index: Index) -> Result<(), String> {
+    let target = model
+        .entities
+        .get_mut(&entity)
+        .ok_or_else(|| format!("entity id `{entity}` does not exist"))?;
+    crate::model::refuse_retired_entity(target)?;
+    let id = index.id.clone();
+    if target.indexes.contains_key(&id) {
+        return Err(format!("index id `{id}` already exists on `{entity}`"));
+    }
+    if target
+        .indexes
+        .values()
+        .any(|existing| existing.columns == index.columns)
+    {
+        return Err(format!(
+            "entity `{entity}` already declares the same index columns"
+        ));
+    }
+    target.indexes.insert(id, index);
+    Ok(())
+}
+
+pub(crate) fn remove(
+    model: &mut AppModel,
+    entity: EntityId,
+    index: IndexId,
+    confirmed_name: String,
+) -> Result<(), String> {
+    let target = model
+        .entities
+        .get_mut(&entity)
+        .ok_or_else(|| format!("entity id `{entity}` does not exist"))?;
+    crate::model::refuse_retired_entity(target)?;
+    let existing = target
+        .indexes
+        .get(&index)
+        .ok_or_else(|| format!("index id `{index}` does not exist on `{entity}`"))?;
+    if existing.sql_name != confirmed_name {
+        return Err(format!(
+            "confirmed index `{confirmed_name}` is not `{}` for `{index}`\n       fix: pass `--confirm-index {}` exactly",
+            existing.sql_name, existing.sql_name
+        ));
+    }
+    target.indexes.remove(&index);
+    Ok(())
+}
+
+pub(crate) fn link(
+    linker: &mut Linker,
+    entity_path: &str,
+    entity_label: &str,
+    sql_table: &str,
+    fields: &BTreeMap<FieldId, Field>,
+    field_labels: &BTreeMap<String, FieldId>,
+    declarations: BTreeMap<String, source::Index>,
+) -> BTreeMap<IndexId, Index> {
+    let mut indexes = BTreeMap::new();
+    let mut index_names = fields
+        .values()
+        .filter(|field| field.indexed && !field.primary_key && !field.unique)
+        .map(|field| {
+            (
+                format!("idx_{sql_table}_{}", field.names.sql_column),
+                format!("{entity_path}.fields.{}.indexed", field.label),
+            )
+        })
+        .collect::<BTreeMap<String, String>>();
+    let mut index_shapes = BTreeMap::<Vec<(FieldId, IndexDirection)>, String>::new();
+    for (index_label, index) in declarations {
+        let index_path = format!("{entity_path}.indexes.{index_label}");
+        linker.label(&index_label, &index_path);
+        linker.register_id(&index.id, &format!("{index_path}.id"));
+        let id = linker.index_id(&index.id, &format!("{index_path}.id"));
+        let sql_name = index
+            .name
+            .unwrap_or_else(|| format!("idx_{sql_table}_{index_label}"));
+        linker.sql_identifier(&sql_name, &format!("{index_path}.name"));
+        if let Some(first) = index_names.insert(sql_name.clone(), index_path.clone()) {
+            linker.problem(
+                "model-sql-index-collision",
+                &index_path,
+                format!("SQL index projection `{sql_name}` is already used at {first}"),
+                "give each declaration a unique SQL index projection",
+            );
+        }
+        if index.columns.is_empty() {
+            linker.problem(
+                "model-index-empty",
+                format!("{index_path}.columns"),
+                "an index needs at least one field",
+                "name one or more entity field labels",
+            );
+        }
+        let mut columns = Vec::new();
+        let mut seen = BTreeSet::new();
+        for (position, column) in index.columns.iter().enumerate() {
+            let column_path = format!("{index_path}.columns[{position}]");
+            let pieces = column.split_whitespace().collect::<Vec<_>>();
+            let (field_label, direction) = match pieces.as_slice() {
+                [field] | [field, "asc"] => (*field, IndexDirection::Asc),
+                [field, "desc"] => (*field, IndexDirection::Desc),
+                _ => {
+                    linker.problem(
+                        "model-index-column",
+                        column_path,
+                        format!("`{column}` is not an index field"),
+                        "use `field`, `field asc`, or `field desc`",
+                    );
+                    continue;
+                }
+            };
+            let Some(field) = field_labels.get(field_label).cloned() else {
+                linker.problem(
+                    "model-index-field-reference",
+                    column_path,
+                    format!("`{field_label}` does not name a field on `{entity_label}`"),
+                    "name an entity field label",
+                );
+                continue;
+            };
+            if !seen.insert(field.clone()) {
+                linker.problem(
+                    "model-index-field-duplicate",
+                    column_path,
+                    format!("field `{field_label}` appears twice in one index"),
+                    "remove the duplicate field",
+                );
+                continue;
+            }
+            columns.push(IndexColumn { field, direction });
+        }
+        let shape = columns
+            .iter()
+            .map(|column| (column.field.clone(), column.direction))
+            .collect::<Vec<_>>();
+        if let Some(first) = index_shapes.insert(shape, index_label.clone()) {
+            linker.problem(
+                "model-index-duplicate",
+                index_path.clone(),
+                format!("index `{index_label}` duplicates `{first}`"),
+                "remove one duplicate index declaration",
+            );
+        }
+        if let Some(id) = id {
+            indexes.insert(
+                id.clone(),
+                Index {
+                    id,
+                    label: index_label,
+                    sql_name,
+                    columns,
+                },
+            );
+        }
+    }
+    indexes
+}

@@ -27,6 +27,7 @@ mod effects;
 mod examples;
 mod generate;
 mod history;
+mod model;
 mod new;
 mod portable_plan;
 mod reports;

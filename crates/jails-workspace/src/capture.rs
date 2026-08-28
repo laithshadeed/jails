@@ -1,0 +1,540 @@
+use jails_contracts::{
+    BuildSystem, CapturedFile, ContentDigest, DirectoryPrecondition, FilePrecondition,
+    MigrationHistory, MigrationRecord, ProjectFacts, ProjectPath, RenderedTree,
+    SnapshotPreconditions, WorkspaceSnapshot,
+};
+use jails_model::AppModel;
+use jails_support::codec::{hex, sha256};
+use serde::Deserialize;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
+
+const MANAGED_ROOT: &str = ".jails/generated";
+pub(crate) const MIGRATION_ROOT: &str = "src/main/resources/db/migration";
+pub(crate) const COMPILER_LOCK: &str = ".jails/compiler.lock.json";
+const COMPILER_LOCK_SCHEMA_V1: &str = "jails.compiler-lock.v1";
+const COMPILER_LOCK_SCHEMA_V2: &str = "jails.compiler-lock.v2";
+
+#[derive(Deserialize)]
+struct CompilerLockV1 {
+    model_digest: ContentDigest,
+    model: AppModel,
+}
+
+#[derive(Deserialize)]
+struct CompilerLockV2 {
+    compiler: String,
+    model_digest: ContentDigest,
+    model: AppModel,
+    projection_digest: ContentDigest,
+    projection: RenderedTree,
+}
+
+#[derive(Debug)]
+struct AcceptedCompilerState {
+    model: AppModel,
+    projection: Option<RenderedTree>,
+    compiler: Option<String>,
+}
+
+pub fn capture(
+    root: &Path,
+    model_path: &Path,
+    model_source: &[u8],
+    model: AppModel,
+) -> Result<WorkspaceSnapshot, String> {
+    capture_with_reader_paths(root, model_path, model_source, model, &[])
+}
+
+pub fn capture_with_reader_paths(
+    root: &Path,
+    model_path: &Path,
+    model_source: &[u8],
+    model: AppModel,
+    reader_paths: &[ProjectPath],
+) -> Result<WorkspaceSnapshot, String> {
+    capture_model_state(root, model_path, model_source, model, reader_paths, true)
+}
+
+/// Capture a project before its one-way canonical model is published.
+///
+/// The supplied source is compiler input, but the model path itself is a
+/// missing-file precondition so a concurrently created model makes the exact
+/// import plan stale rather than being overwritten.
+pub fn capture_import(
+    root: &Path,
+    model_path: &Path,
+    model_source: &[u8],
+    model: AppModel,
+    reader_paths: &[ProjectPath],
+) -> Result<WorkspaceSnapshot, String> {
+    capture_model_state(root, model_path, model_source, model, reader_paths, false)
+}
+
+fn capture_model_state(
+    root: &Path,
+    model_path: &Path,
+    model_source: &[u8],
+    model: AppModel,
+    reader_paths: &[ProjectPath],
+    model_present: bool,
+) -> Result<WorkspaceSnapshot, String> {
+    let relative_model = if model_path.is_absolute() {
+        model_path
+            .strip_prefix(root)
+            .map_err(|_| "model path is outside the project root".to_string())?
+    } else {
+        model_path
+    };
+    let model_path = ProjectPath::parse(path_text(relative_model))?;
+    let model_digest = digest(model_source)?;
+    let mut files = BTreeMap::new();
+    let model_precondition = if model_present {
+        files.insert(
+            model_path.clone(),
+            CapturedFile {
+                bytes: model_source.to_vec(),
+                executable: false,
+            },
+        );
+        FilePrecondition::Present {
+            digest: model_digest.clone(),
+            executable: false,
+        }
+    } else {
+        FilePrecondition::Missing
+    };
+    let mut preconditions = SnapshotPreconditions {
+        files: BTreeMap::from([(model_path, model_precondition)]),
+        directories: BTreeMap::new(),
+    };
+
+    let managed = root.join(MANAGED_ROOT);
+    if managed.exists() {
+        capture_tree(root, &managed, &mut files, &mut preconditions)?;
+    }
+    for reader_file in [
+        "pom.xml",
+        "build.gradle",
+        "build.gradle.kts",
+        "src/main/resources/application.properties",
+        "src/test/resources/config/application.properties",
+        "compose.yaml",
+        "compose.yml",
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        COMPILER_LOCK,
+    ] {
+        capture_optional_file(root, reader_file, &mut files, &mut preconditions)?;
+    }
+    for reader_path in reader_paths {
+        capture_optional_file(root, reader_path.as_str(), &mut files, &mut preconditions)?;
+    }
+    let build_system = match (
+        root.join("pom.xml").is_file(),
+        root.join("build.gradle").is_file() || root.join("build.gradle.kts").is_file(),
+    ) {
+        (true, false) => BuildSystem::Maven,
+        (false, true) => BuildSystem::Gradle,
+        _ => BuildSystem::Unknown,
+    };
+    let project = ProjectFacts {
+        build_system,
+        java_release: model.project.java_release,
+        spring_boot: spring_boot_version(root, build_system),
+        base_package: model.project.base_package.clone(),
+        dependencies: BTreeSet::new(),
+    };
+    let accepted = accepted_compiler_state(&files)?;
+    let accepted_reader_paths = accepted
+        .as_ref()
+        .and_then(|state| state.projection.as_ref())
+        .into_iter()
+        .flat_map(|projection| projection.reader_facets.values())
+        .map(|facet| facet.path.clone())
+        .collect::<BTreeSet<_>>();
+    for path in accepted_reader_paths {
+        capture_optional_file(root, path.as_str(), &mut files, &mut preconditions)?;
+    }
+    let mut snapshot = WorkspaceSnapshot::detached(model);
+    snapshot.model.source_digest = Some(model_digest);
+    if let Some(accepted) = accepted {
+        snapshot.accepted_model = Some(accepted.model);
+        snapshot.accepted_projection = accepted.projection;
+        snapshot.accepted_compiler = accepted.compiler;
+    }
+    snapshot.project = project;
+    snapshot.migration_history = capture_migration_history(root, &mut files, &mut preconditions)?;
+    snapshot.preconditions = preconditions;
+    snapshot.files = files;
+    Ok(snapshot)
+}
+
+fn spring_boot_version(root: &Path, build_system: BuildSystem) -> Option<String> {
+    let path = match build_system {
+        BuildSystem::Maven => root.join("pom.xml"),
+        BuildSystem::Gradle if root.join("build.gradle.kts").is_file() => {
+            root.join("build.gradle.kts")
+        }
+        BuildSystem::Gradle => root.join("build.gradle"),
+        BuildSystem::Unknown => return None,
+    };
+    let source = std::fs::read_to_string(path).ok()?;
+    match build_system {
+        BuildSystem::Maven => {
+            let parent = between(&source, "<parent>", "</parent>")?;
+            if !parent.contains("<groupId>org.springframework.boot</groupId>")
+                || !parent.contains("<artifactId>spring-boot-starter-parent</artifactId>")
+            {
+                return None;
+            }
+            between(parent, "<version>", "</version>")
+                .map(str::trim)
+                .map(str::to_string)
+        }
+        BuildSystem::Gradle => gradle_spring_boot_version(&source),
+        BuildSystem::Unknown => None,
+    }
+}
+
+fn gradle_spring_boot_version(source: &str) -> Option<String> {
+    for marker in [
+        "id(\"org.springframework.boot\")",
+        "id 'org.springframework.boot'",
+    ] {
+        let Some(start) = source.find(marker) else {
+            continue;
+        };
+        let declaration = source[start..].lines().next()?;
+        let version = declaration.split_once("version")?.1.trim();
+        return quoted(version);
+    }
+    None
+}
+
+fn between<'a>(source: &'a str, start: &str, end: &str) -> Option<&'a str> {
+    let source = source.split_once(start)?.1;
+    source.split_once(end).map(|(value, _)| value)
+}
+
+fn quoted(source: &str) -> Option<String> {
+    let quote = source.chars().next()?;
+    if !matches!(quote, '\'' | '"') {
+        return None;
+    }
+    let value = &source[quote.len_utf8()..];
+    value
+        .split_once(quote)
+        .map(|(version, _)| version.to_string())
+}
+
+fn capture_migration_history(
+    root: &Path,
+    files: &mut BTreeMap<ProjectPath, CapturedFile>,
+    preconditions: &mut SnapshotPreconditions,
+) -> Result<MigrationHistory, String> {
+    let migration_root = ProjectPath::parse(MIGRATION_ROOT)?;
+    let absolute = root.join(MIGRATION_ROOT);
+    if !absolute.exists() {
+        preconditions
+            .directories
+            .insert(migration_root, DirectoryPrecondition::Missing);
+        return Ok(MigrationHistory {
+            records: Vec::new(),
+        });
+    }
+    let metadata = std::fs::symlink_metadata(&absolute)
+        .map_err(|error| format!("could not inspect {}: {error}", absolute.display()))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(format!("`{MIGRATION_ROOT}` is not a regular directory"));
+    }
+    capture_tree(root, &absolute, files, preconditions)?;
+    let directory = directory_precondition_from_files(files, &migration_root)?;
+    preconditions
+        .directories
+        .insert(migration_root.clone(), directory);
+
+    let mut records = files
+        .iter()
+        .filter(|(path, _)| path.is_within(&migration_root))
+        .filter_map(|(path, file)| {
+            let name = path.as_str().rsplit('/').next()?;
+            let version = name.strip_prefix('V')?.split_once("__")?.0;
+            name.ends_with(".sql").then(|| {
+                Ok::<_, String>(MigrationRecord {
+                    version: version.to_string(),
+                    path: path.clone(),
+                    digest: digest(&file.bytes)?,
+                })
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    records.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(MigrationHistory { records })
+}
+
+fn accepted_compiler_state(
+    files: &BTreeMap<ProjectPath, CapturedFile>,
+) -> Result<Option<AcceptedCompilerState>, String> {
+    files
+        .get(&ProjectPath::parse(COMPILER_LOCK)?)
+        .map(|file| decode_compiler_lock(&file.bytes))
+        .transpose()
+}
+
+fn decode_compiler_lock(bytes: &[u8]) -> Result<AcceptedCompilerState, String> {
+    let header: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|error| format!("could not decode `{COMPILER_LOCK}`: {error}"))?;
+    let schema = header
+        .get("schema")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    match schema {
+        COMPILER_LOCK_SCHEMA_V1 => {
+            let lock: CompilerLockV1 = serde_json::from_value(header)
+                .map_err(|error| format!("could not decode `{COMPILER_LOCK}`: {error}"))?;
+            verify_model(&lock.model, &lock.model_digest)?;
+            Ok(AcceptedCompilerState {
+                model: lock.model,
+                projection: None,
+                compiler: None,
+            })
+        }
+        COMPILER_LOCK_SCHEMA_V2 => {
+            let lock: CompilerLockV2 = serde_json::from_value(header)
+                .map_err(|error| format!("could not decode `{COMPILER_LOCK}`: {error}"))?;
+            verify_model(&lock.model, &lock.model_digest)?;
+            let projection = serde_json::to_vec(&lock.projection)
+                .map_err(|error| format!("could not verify `{COMPILER_LOCK}`: {error}"))?;
+            if digest(&projection)? != lock.projection_digest {
+                return Err(format!(
+                    "compiler lock `{COMPILER_LOCK}` does not match its accepted projection\n       fix: restore a known-good lock; do not infer merge bases from generated source"
+                ));
+            }
+            Ok(AcceptedCompilerState {
+                model: lock.model,
+                projection: Some(lock.projection),
+                compiler: Some(lock.compiler),
+            })
+        }
+        other => Err(format!(
+            "unsupported compiler lock `{other}`\n       fix: regenerate `{COMPILER_LOCK}` with this version of jails"
+        )),
+    }
+}
+
+fn verify_model(model: &AppModel, expected: &ContentDigest) -> Result<(), String> {
+    let actual = digest(
+        &model
+            .canonical_json()
+            .map_err(|error| format!("could not verify `{COMPILER_LOCK}`: {error}"))?,
+    )?;
+    if &actual != expected {
+        return Err(format!(
+            "compiler lock `{COMPILER_LOCK}` does not match its accepted model\n       fix: restore a known-good lock; do not infer merge bases from generated source"
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn observe_directory(
+    root: &Path,
+    path: &ProjectPath,
+) -> Result<DirectoryPrecondition, String> {
+    let absolute = root.join(path.as_str());
+    let metadata = match std::fs::symlink_metadata(&absolute) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(DirectoryPrecondition::Missing);
+        }
+        Err(error) => return Err(format!("could not inspect {}: {error}", absolute.display())),
+    };
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(format!("`{}` is not a regular directory", path.as_str()));
+    }
+    let mut files = BTreeMap::new();
+    let mut ignored = SnapshotPreconditions::default();
+    capture_tree(root, &absolute, &mut files, &mut ignored)?;
+    directory_precondition_from_files(&files, path)
+}
+
+fn directory_precondition_from_files(
+    files: &BTreeMap<ProjectPath, CapturedFile>,
+    root: &ProjectPath,
+) -> Result<DirectoryPrecondition, String> {
+    let entries = files
+        .iter()
+        .filter(|(path, _)| path.is_within(root))
+        .map(|(path, file)| Ok::<_, String>((path.as_str(), digest(&file.bytes)?, file.executable)))
+        .collect::<Result<Vec<_>, _>>()?;
+    let encoded = serde_json::to_vec(&entries)
+        .map_err(|error| format!("could not encode directory precondition: {error}"))?;
+    Ok(DirectoryPrecondition::Present {
+        digest: digest(&encoded)?,
+    })
+}
+
+fn capture_optional_file(
+    root: &Path,
+    relative: &str,
+    files: &mut BTreeMap<ProjectPath, CapturedFile>,
+    preconditions: &mut SnapshotPreconditions,
+) -> Result<(), String> {
+    let path = root.join(relative);
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            preconditions
+                .files
+                .insert(ProjectPath::parse(relative)?, FilePrecondition::Missing);
+            return Ok(());
+        }
+        Err(error) => return Err(format!("could not inspect {}: {error}", path.display())),
+    };
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(format!("`{relative}` is not a regular reader file"));
+    }
+    let bytes = std::fs::read(&path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let path = ProjectPath::parse(relative)?;
+    let executable = executable(&metadata);
+    preconditions.files.insert(
+        path.clone(),
+        FilePrecondition::Present {
+            digest: digest(&bytes)?,
+            executable,
+        },
+    );
+    files.insert(path, CapturedFile { bytes, executable });
+    Ok(())
+}
+
+fn capture_tree(
+    root: &Path,
+    directory: &Path,
+    files: &mut BTreeMap<ProjectPath, CapturedFile>,
+    preconditions: &mut SnapshotPreconditions,
+) -> Result<(), String> {
+    let entries = std::fs::read_dir(directory)
+        .map_err(|error| format!("could not read {}: {error}", directory.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "could not read an entry under {}: {error}",
+                directory.display()
+            )
+        })?;
+        let path = entry.path();
+        let metadata = std::fs::symlink_metadata(&path)
+            .map_err(|error| format!("could not inspect {}: {error}", path.display()))?;
+        if metadata.file_type().is_symlink() {
+            return Err(format!(
+                "managed output `{}` is a symlink; replace it with a regular file",
+                path.display()
+            ));
+        }
+        if metadata.is_dir() {
+            capture_tree(root, &path, files, preconditions)?;
+            continue;
+        }
+        if !metadata.is_file() {
+            return Err(format!(
+                "managed output `{}` is not a regular file",
+                path.display()
+            ));
+        }
+        let bytes = std::fs::read(&path)
+            .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|_| format!("{} escaped the project root", path.display()))?;
+        let project_path = ProjectPath::parse(path_text(relative))?;
+        let executable = executable(&metadata);
+        preconditions.files.insert(
+            project_path.clone(),
+            FilePrecondition::Present {
+                digest: digest(&bytes)?,
+                executable,
+            },
+        );
+        files.insert(project_path, CapturedFile { bytes, executable });
+    }
+    Ok(())
+}
+
+fn path_text(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn digest(bytes: &[u8]) -> Result<ContentDigest, String> {
+    ContentDigest::parse(format!("sha256:{}", hex(&sha256(bytes))))
+}
+
+#[cfg(unix)]
+fn executable(metadata: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt as _;
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn executable(_metadata: &std::fs::Metadata) -> bool {
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    const MODEL: &str = r#"
+schema = "jails.model.v1"
+
+[project]
+id = "project_notes"
+name = "Notes"
+base_package = "com.example.notes"
+java_release = 26
+dialect = "postgresql"
+"#;
+
+    #[test]
+    fn v1_lock_remains_a_one_way_upgrade_input() {
+        let model = jails_model::parse_toml(MODEL).unwrap();
+        let model_digest = digest(&model.canonical_json().unwrap()).unwrap();
+        let bytes = serde_json::to_vec(&json!({
+            "schema": COMPILER_LOCK_SCHEMA_V1,
+            "model_digest": model_digest,
+            "model": model,
+        }))
+        .unwrap();
+
+        let accepted = decode_compiler_lock(&bytes).unwrap();
+        assert!(accepted.projection.is_none());
+        assert!(accepted.compiler.is_none());
+    }
+
+    #[test]
+    fn v2_lock_refuses_a_projection_that_does_not_match_its_digest() {
+        let model = jails_model::parse_toml(MODEL).unwrap();
+        let model_digest = digest(&model.canonical_json().unwrap()).unwrap();
+        let projection = RenderedTree::new(ProjectPath::parse(MANAGED_ROOT).unwrap());
+        let projection_digest = digest(&serde_json::to_vec(&projection).unwrap()).unwrap();
+        let mut damaged = projection;
+        damaged.root = ProjectPath::parse(".jails/not-generated").unwrap();
+        let bytes = serde_json::to_vec(&json!({
+            "schema": COMPILER_LOCK_SCHEMA_V2,
+            "compiler": "0.1.0",
+            "model_digest": model_digest,
+            "model": model,
+            "projection_digest": projection_digest,
+            "projection": damaged,
+        }))
+        .unwrap();
+
+        let error = decode_compiler_lock(&bytes).unwrap_err();
+        assert!(error.contains("accepted projection"), "{error}");
+    }
+}

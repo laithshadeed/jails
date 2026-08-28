@@ -47,10 +47,163 @@ recreated untracked, so `git show` reaches an *older* tracked version rather
 than that one. `pending.md`'s header says so. `pending.md` carries forward only
 what is still outstanding, re-measured rather than transcribed.
 
-## Workspace
+## Canonical compiler cutover
 
-Thirteen crates, lowest first. A crate may only depend on one below it, and
-Cargo enforces that; `no_module_depends_on_a_layer_above_its_own` in
+The destination architecture is one semantic application compiler. It is
+already present beside the legacy path and is the direction of travel:
+
+```text
+.jails/model.jdl / CLI sugar
+        -> ModelPatch
+        -> AppModel + WorkspaceSnapshot
+        -> pure Compiler
+        -> PlanDraft
+        -> exact content-addressed PlanBundle
+        -> preview or the one Executor
+```
+
+The five contracts are authoritative:
+
+- `AppModel` is desired-state authority. Stable IDs carry identity; Java, SQL,
+  route, and configuration names are projections.
+- `WorkspaceSnapshot` captures every external fact once. Code below the
+  compiler may observe the filesystem; the compiler may not.
+- `Compiler` is pure. Equal snapshot, patch, and compiler version must produce
+  equal desired artifacts.
+- `PlanBundle` is the exact reviewed transition. Preview, export, confirmation,
+  and apply must refer to its digest; apply never replans.
+- `jails-workspace::execute` is the only canonical project writer. It locks,
+  rechecks preconditions, publishes exact after-images, and converges on retry.
+
+Do not make ordinary `new`, offline Spring, Gradle, `new-cli`, or `new --app`
+canonical by default until every advertised follow-up workflow has a compiler
+backend. `.jails/model.jdl` is the intended authoring boundary;
+`.jails/model.toml` remains a temporary compatibility input for existing
+canonical projects; the one-way importer now emits JDL. Never permit both
+editable sources. Default-on
+partial coverage breaks working capability commands.
+
+`model import` is one-way and fail-closed. Its currently supported boundary is
+a ledger containing record and enum intents only. For every source artifact,
+including the Spring enum converter, use the recorded legacy object as BASE,
+live reader Java as OURS, and the canonical render as THEIRS; only a clean merge
+may move into `.jails/generated` and remove the old reader path. Capture every
+source and destination in the exact plan and leave the legacy ledger unchanged.
+Never synthesize a model for an unsupported declaration and leave its source
+behind.
+
+Reproducible output belongs below `.jails/generated` and is merge-managed. The
+accepted model renders BASE, capture supplies OURS, and the next model renders
+THEIRS. Clean merges are frozen into the plan; conflicts refuse without writes.
+The lock advances to THEIRS so hand edits remain deltas. Migrations, model revisions, and explicit
+reader-file patches are irreproducible operations and must remain visible in
+the plan rather than being smuggled into rendering. `model eject <artifact-id>`
+transfers one ejectable adapter implementation into reader source, records the
+transfer, and excludes that artifact from later managed trees. Records and
+ports remain managed ABI. Capture must include every prospective reader
+destination, collision must refuse, and ejection never infers ownership from
+edited bytes or silently reclaims it.
+
+Canonical `rename resource ... --strategy preserve-table` is a projection
+patch, not lifecycle replay. Keep the entity stable ID and SQL table unchanged,
+pair BASE/THEIRS by artifact ID even when paths move, and merge the old live
+file into the new path. A destination collision or overlapping edit must refuse
+before any model, lock, migration, build, or generated-tree write. Do not route
+single-cutover or rolling rename into the legacy engine for a canonical project.
+
+Canonical `resource field rename|type|nullability|drop` must also stay on the
+model/compiler/workspace path. `ReplaceField` preserves stable field ID and
+label and carries exactly one typed policy. Preserve-column rename changes only
+the Java projection and emits no migration; single-cutover changes the SQL
+projection explicitly. Safe type change accepts only the compiler's proven
+PostgreSQL widenings. Required nullability captures the reader-owned backfill
+file as a precondition and embeds those exact bytes before `set not null`.
+Drop requires the accepted SQL column and must refuse while an operation
+references the field. Every successful change still renders THEIRS and
+three-way merges live Java as OURS. Rolling and expand/contract are campaigns,
+not excuses to dispatch a canonical project to the legacy engine.
+
+Canonical crates, lowest first:
+
+| crate | contract |
+|---|---|
+| `jails-model` | closed source schema, stable IDs, linking, semantic diagnostics, `AppModel` and `ModelPatch` |
+| `jails-contracts` | portable `WorkspaceSnapshot`, `PlanDraft`, exact `Plan`, operations, trees and blobs |
+| `jails-compiler` | pure semantic lowering to a desired artifact tree; no filesystem, environment or subprocess access |
+| `jails-workspace` | capture, exact materialization, verification and the single canonical executor |
+
+The workspace boundary currently has lossless, marked adapters for adding
+`.jails/generated/main/java` to Maven and Groovy/Kotlin Gradle projects. Those
+edits are exact `PatchReaderFile` operations with captured before-images;
+arbitrary build-language mutation is deliberately not implied. Canonical
+`set`/`unset` are stable setting-node patches lowered to complete main/test
+property sets. Their adapter preserves unrelated bytes, repairs only keys the
+previous model owned, refuses reader-owned collisions, and guards creation with
+a captured missing-file precondition. Compose and migration adapters still
+belong to the cutover. Ejection uses the same reader-file operation, but its
+before-image must be `Missing`: transfer is creation of a new reader-owned
+source, never reconciliation with an existing one.
+
+During cutover, `.jails/model.jdl` or temporary `.jails/model.toml` opts a
+project into the canonical path.
+`g record` and `g scaffold` are routed through it today; scaffold is one typed
+entity profile over four facets, not a copied planner. Unsupported canonical
+mutations must refuse rather than silently invoking the legacy engine. Delete
+this qualification only when all advertised mutations, capabilities, schema
+evolution and reader-file patches use the canonical contracts and the
+legacy planner/state/executor have been removed.
+
+`jails sync` in a canonical project compiles the current model and executes its
+exact plan directly. Never route canonical sync through `jails-engine`; it is
+the ordinary convergence command and must not create `.jails/objects`,
+receipts, or a legacy journal.
+
+Canonical `test --fast` owns its launcher through the `fast-test` model
+capability. Installation/removal reconciles the build through the exact
+document backend; never call the legacy fast-test precondition for a canonical
+project.
+
+Linked `command`, `query`, `transition` and `event` operations already emit
+typed managed Java ABI. This proves operations are compiler nodes rather than
+dead manifest metadata. Familiar `g usecase|query|transition|event` frontends
+already append those typed declarations with exact field-shape checks; Spring
+HTTP adapters are emitted by the canonical `api` capability. They delegate to
+the managed operation ports and are ejectable independently; business
+implementations are not guessed from incomplete model semantics.
+
+Canonical `destroy record|scaffold|usecase|query|transition|event` is model
+subtraction or explicit stored-entity retirement followed by ordinary
+compilation. Never add a canonical reverse renderer or file table. Removal
+refuses while an operation edge still points at the declaration. A stored
+entity requires `--storage preserve|drop`: preserve keeps an inactive semantic
+node and emits no SQL, exact-table revival reuses it, and confirmed drop
+appends one forward migration. Inactive nodes cannot evolve or receive new
+operation edges.
+
+Indexes are stable entity children. `resource index add` resolves model field
+identity, records ordered columns, and appends one forward migration. Do not
+reconstruct indexes from generated SQL or add a second index ledger; index
+removal remains an explicit unsupported policy until its forward migration
+contract is implemented.
+
+Canonical capability profiles currently include `fake`, `db`, and `api`. They
+emit in-memory repositories, JDBC repositories/schema migrations, and Spring
+operation controllers respectively by ordinary whole-model compilation. Every
+other `add` capability must currently refuse before legacy dispatch; never let
+a canonical project silently create a legacy ledger. Ejecting one of these
+implementation artifacts moves the captured live bytes, including hand edits,
+to reader source; it never ejects the managed ABI. `add dependency` / `remove dependency` are the exception because they
+are not capabilities: each is a stable model node, and the compiler reconciles
+the full set through the exact marked Maven/Gradle dependency adapter.
+`set` / `unset` follow the same rule for settings: `(target, key)` has stable
+identity and the exact properties adapter reconciles the complete target set;
+never route a canonical project through the legacy property ledger.
+
+## Legacy workspace during cutover
+
+Thirteen legacy crates coexist with the four canonical crates above. A crate
+may only depend on one below it, and Cargo enforces that;
+`no_module_depends_on_a_layer_above_its_own` in
 `tests/architecture/` enforces the same rule for module-level edges the
 compiler cannot see, and assigns every module its crate. **That table
 (`LAYERS`, `tests/architecture/rules.rs`) is the authority on which crate a
@@ -1350,7 +1503,7 @@ turns each one into a failure naming what was missing. Use it before believing
 a green run covered the generated-code path:
 
 ```
-JAILS_REQUIRE_TOOLCHAIN=1 cargo test
+JAILS_REQUIRE_TOOLCHAIN=1 cargo test --workspace
 ```
 
 Note `real_path_without_mvnd()` rebuilds PATH for the real-mvn tests, so

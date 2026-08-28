@@ -7,8 +7,9 @@ description: "Scaffolding, evolving and operating Spring Boot and plain Java pro
 
 A Rails-inspired CLI for Java and Spring Boot (JDK 26 default, 21 floor;
 Maven and Groovy Gradle). Ports and adapters, pure records, raw `JdbcClient`,
-**no ORM**. Every mutation is one transaction: prepared in memory, previewable
-byte-for-byte, committed through a write-ahead journal in `.jails/`.
+**no ORM**. Mutations are prepared in memory and previewable byte-for-byte.
+Canonical projects execute content-addressed exact plans; legacy projects use
+the older write-ahead journal while the cutover is in progress.
 
 State of this file: verified against `jails 0.1.0` at HEAD `d05a8af`
 (2026-08-27) by running the binary. All numbered reports in `bugs.md` are closed;
@@ -20,16 +21,120 @@ active implementation phases are tracked in `plan.md`.
    `--dry-run`) stops before the commit; it does not run a second planner. Its
    operation list is byte-identical to the real run's. Add `--diff` for the
    bytes, `--ast` for the semantic edits.
-2. **The ledger is the identity, the files are the projection.** `.jails/ledger.toml`
-   records what jails declared. `destroy` stops declaring something and
-   reconciliation works out what that means — there is no path table.
+2. **Desired state is the identity, files are projections.** In a canonical
+   project, `.jails/model.jdl` and inline `@id(...)` stable IDs are
+   authoritative. `.jails/model.toml` is a temporary compatibility input. In a
+   legacy project, `.jails/ledger.toml` records declarations. Neither
+   architecture uses generated paths as semantic identity.
 3. **Migrations are append-only and sealed at first publication.** Nothing
    replaces or deletes a published `VNNN__*.sql`. Every schema change is a new
    forward migration. There are no down migrations and there never will be.
 
-*(Torn transactions are recovered automatically: `finish_interrupted` runs at the
-entry point of every mutating command and rolls forward uncommitted journaled
-state before planning reads the store.)*
+Canonical generated Java and marked reader-document facets are merge-managed:
+the accepted compiler projection is BASE, live bytes are OURS, and the next
+projection is THEIRS. Clean disjoint hand edits survive; overlap refuses before
+any write. A reader facet records only the generated slice, not the surrounding
+document. The canonical executor rechecks all captured preconditions before
+publishing exact after-images. Legacy torn transactions are still recovered by
+journal roll-forward.
+
+## Canonical project mode
+
+The presence of `.jails/model.jdl` or temporary `.jails/model.toml` opts a
+project into the application compiler; the two sources are mutually exclusive.
+Familiar supported mutations become typed `ModelPatch` inputs and must never
+silently fall back to the legacy ledger/prepare/commit stack. JDL currently
+covers record/scaffold/field/enum/factory/dto/repo/strategy/controller generation, standalone
+class/interface/service/sealed/test/integration-test units, nested operation
+generation, typed strategy and HTTP controller units, `fake`/`db`/`api` capability declarations, and preserve-table
+entity rename.
+`csv`, `json`, `http`, `testkit`, `sqlite`, `h2`, `actuator`, `cache`, `cors`, `observability`, `security`, `sse`, `redis`, `kafka`, `mail`, `toxiproxy`, `coverage`, and `loadtest` are compiler-owned declarative
+packs too. Their Java files and Testkit fixture resource use the same three-way
+merge, and one capability ID ejects the complete implementation boundary.
+SQLite's initial SQL uses append-only migration history, so removing or
+ejecting its Java boundary never deletes that migration.
+H2's pack also reconciles Boot-version-sensitive dependencies and separate
+main/test datasource properties while preserving unrelated reader keys.
+Actuator's pack owns one merge-managed endpoint contract test, its Spring
+starter, and narrow key-scoped management properties. Ejecting `cap_actuator`
+moves only that test into reader source; dependency and property ownership stay
+with the still-declared capability.
+Cache's configuration and proof test are independently merge-managed files in
+one ejectable Java boundary. Its Spring starter, Caffeine dependency, and
+bounded cache properties remain managed after Java ejection.
+CORS owns two merge-managed Java files in one ejectable boundary plus its
+exact-origin property. Captured Boot `<4` selects classic `MockMvc`; Boot 4+
+selects `MockMvcTester`, the moved annotation import, and the web MVC test
+starter. Ejection transfers Java only, leaving the declared property managed.
+Observability owns four merge-managed Java files under one ejection boundary,
+the Actuator and Prometheus dependencies, and bounded metrics/tracing/access-log
+properties. Captured Boot 4+ selects the moved `MeterRegistryCustomizer`
+import. Java ejection keeps the dependency and property contract managed.
+Security owns five merge-managed Java files under one ejection boundary and
+enforces a Boot 3 floor for its main source. Boot 4 selects the moved
+`WebMvcTest` import and starter. Security dependencies remain managed after
+Java ejection, and shared reconciliation must retain CORS's test starter.
+SSE owns four merge-managed Java files spanning the application root and web
+package. `cap_sse` ejects the complete live implementation while its Web
+dependency and scheduler-pool property remain compiler-managed.
+Redis owns two merge-managed Java files, its dependencies/properties/Failsafe
+feature, and one marked Compose service. Only the exact service block is stored
+as merge BASE, so hand edits inside it and unrelated YAML survive later
+generation; overlapping block edits refuse atomically.
+Mail owns a merge-managed sender and integration proof, Boot-sensitive test
+dependencies, Failsafe, three properties, and a marked Mailpit reader facet.
+The same generate/edit/generate guarantees apply to both Java and the service
+block; the rest of Compose stays reader-owned.
+Toxiproxy owns two merge-managed testkit files under one implementation
+boundary and exact test-scoped dependencies. Both engines render the same
+shared templates; edits to either file survive later generation, while removal
+does not touch an independent testkit or fake boundary.
+Coverage is a pure typed build feature: its Maven/Gradle JaCoCo block is
+lossless, independently removable, and refuses an edit inside the owned block
+before any model or workspace write.
+Loadtest owns six merge-managed project files outside `.jails/generated`.
+Typed routes regenerate `api.js`; disjoint edits in any load-test file survive,
+overlaps refuse atomically, and removing an edited file refuses instead of
+deleting reader work.
+Dependencies, settings, indexes, artifact ejections, import, destroy,
+retire/revive, field evolution, and bounded strings now edit JDL directly.
+Unsupported generator and capability backends still refuse before legacy
+dispatch.
+
+Canonical mode is explicit until the compiler covers every advertised
+new-project follow-up. Ordinary Spring, offline Spring, Gradle, plain CLI, and
+`new --app` creation stay on the compatibility engine; an explicit model or
+`model import` opts a project into the compiler.
+
+`model eject <implementation-boundary-id>` transfers one adapter implementation boundary to
+reader ownership. Records and ports remain managed ABI. Ejection is implementation-boundary
+scoped, not entity scoped; editing a record does not require ejection because
+ordinary generated files participate in the three-way merge.
+
+Canonical `integration-test` is also a semantic build feature. Maven receives
+Failsafe with both `integration-test` and `verify`; Gradle receives separate
+unit/integration tasks with `check` depending on the latter. The marked block
+is lossless, refuses edits, and disappears when the last integration-test
+unit is destroyed.
+
+`jails sync` is canonical exact reconciliation. It compiles the current model
+and executes that plan through `jails-workspace`; it must not create or consult
+the legacy object, receipt, or journal state.
+
+`jails test --fast` records a canonical `fast-test` capability and exact JUnit
+console dependency. `jails remove fast-test` removes both; neither command
+enters the legacy mutation engine.
+
+`jails model import` currently accepts legacy ledgers containing record and enum
+declarations. It three-way merges each recorded legacy render, live Java, and
+canonical render while moving the result into the managed tree; an enum and its
+Spring converter are separate artifacts in that transition. Unsupported
+declarations, merge conflicts, and stale reviewed plans refuse before cutover;
+the legacy ledger remains unchanged as evidence, and the imported source is
+written directly as `.jails/model.jdl`.
+
+Reader-owned SQL backfills are captured files and exact plan input. A change
+between plan and apply makes the plan stale and produces no writes.
 
 ## Command map
 
@@ -105,20 +210,38 @@ This is the surface that replaced "destroy and regenerate". Use it.
 ```
 jails resource status <Entity>                     # the lifecycle oracle
 jails resource field add    <Entity> <name:type>  [--default-literal V | --backfill-file P]
-jails resource field rename <Entity> <old> <new>   --column single-cutover
+jails resource field rename <Entity> <old> <new>   --column preserve|single-cutover|rolling
 jails resource field type   <Entity> <field>       --to <type> --strategy safe|expand-contract
 jails resource field nullability <Entity> <field>  --nullable | --required [--backfill-file P]
 jails resource field drop   <Entity> <field>       --confirm-column <exact-column>
-jails resource index add    <Entity> '<columns>'   # appends forward index migration
+jails resource index add    <Entity> '<columns>'   # appends forward create migration
+jails resource index remove <Entity> '<columns>' --confirm-index <exact-sql-name>
 jails resource repair <Entity> --strategy roll-forward
 jails resource revive <Entity> --table <preserved-table>
 jails rename resource <Name> <New> --strategy preserve-table|single-cutover|rolling
 ```
 
-Each writes a new forward migration. The guards ask for exactly the evidence
-they need and no more. Running `g field` or `resource field` on an entity
-automatically re-plans all companions that read it (`query`, `transition`,
-`usecase`, `association`, `durable-job`).
+Storage changes write new forward migrations; a preserve-column Java rename
+does not. Safe type changes accept only proven widenings, required fields need
+typed literal or reader-owned SQL backfill, and drop needs the exact accepted
+column. Rolling rename and expand/contract are multi-release campaigns and
+currently refuse on the canonical path. The guards ask for exactly the
+evidence they need and no more. In canonical projects the compiler re-renders
+all affected stable-ID projections and three-way merges live generated files;
+legacy projects still re-plan the recorded companions.
+
+Canonical `add api` compiles routed command/query/transition ports into Spring
+HTTP controllers. These controller artifacts can be independently ejected;
+ejection transfers the captured live file (including hand edits) to
+`src/main/java`, while the operation interface remains managed. Canonical
+`fake` and `db` use the same artifact-scoped implementation rule. Canonical
+`db` commands, queries, and transitions compile to separate `JdbcClient`
+adapters. Commands generate omitted UUID keys and refuse unmodeled required
+values; queries use required and presence-sensitive optional filters, semantic
+ordering, and a default limit of 100; transitions update by primary key, use
+non-set inputs as guards, and publish modeled events transactionally. Ejecting
+one operation adapter leaves its managed ABI and every other entity facet or
+operation implementation in place.
 
 ### Destroy
 
@@ -130,8 +253,15 @@ jails destroy association <Name>                   # retires FK and appends drop
 ```
 
 A table-backed entity refuses without an explicit storage policy. `--storage
-drop` writes `VNNN__drop_<table>.sql`; regenerating afterwards writes a fresh
-create migration, so the cycle is complete and its history is readable.
+preserve` removes generated projections but keeps the inactive model node and
+table; revive requires that exact preserved table name. `--storage drop` writes
+`VNNN__drop_<table>.sql`; regenerating afterwards writes a fresh create
+migration, so the cycle is complete and its history is readable. Retired
+entities refuse field/index evolution until revived. `resource index add`
+records a stable ordered index node as well as writing its one forward create
+migration. `resource index remove` requires the exact accepted SQL name,
+removes that node, and appends a forward drop migration without rewriting
+sealed history.
 
 ### Verify and inspect
 
