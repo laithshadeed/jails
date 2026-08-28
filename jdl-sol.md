@@ -57,8 +57,11 @@ scope column. A generate-edit-generate E2E preserves reader additions to the ABI
 and a real Maven test exercises authenticated context construction plus JDBC
 tenant binding. Broader chosen/derived prerequisite semantics, the exhaustive
 CLI equivalence matrix, convention-derived output roles, and direct rich-node
-consumption by every emitter remain open. This checkpoint is not the ship claim
-in section 20.
+consumption by every emitter remain open. Command and transition database
+emitters now consume rich constant `set` assignments directly, including
+constant-only transitions; lookup `resolve`, conflict, join, and rich parameter
+ABI lowering are still open. This checkpoint is not the ship claim in section
+20.
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** have their usual
 RFC 2119 meanings.

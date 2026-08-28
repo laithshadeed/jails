@@ -1,6 +1,6 @@
 use super::{
-    context_parameter, context_value, java_string, operation_file, resolve_fields, scopes,
-    stored_entity,
+    assignment_sql_value, context_parameter, context_value, java_string, operation_file,
+    resolve_fields, scopes, stored_entity,
 };
 use crate::CompileError;
 use crate::emit_java::{domain_import, java_type, primary_key, with_suffix};
@@ -17,10 +17,36 @@ pub(super) fn lower(
     let target = stored_entity(model, operation, &transition.on, "transition")?;
     let inputs = resolve_fields(operation, target, &transition.fields, "input")?;
     let sets = resolve_fields(operation, target, &transition.sets, "set")?;
-    if sets.is_empty() {
+    let constant_sets = transition
+        .semantics
+        .assignments
+        .iter()
+        .map(|assignment| {
+            target
+                .fields
+                .get(&assignment.field)
+                .map(|field| (field, &assignment.value))
+                .ok_or_else(|| {
+                    CompileError::new(format!(
+                        "linked transition `{}` references missing assignment field `{}`",
+                        operation.label, assignment.field
+                    ))
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if sets.is_empty() && constant_sets.is_empty() {
         return Err(CompileError::new(format!(
-            "canonical transition `{}` changes no fields\n       fix: declare at least one field in `sets`",
+            "canonical transition `{}` changes no fields\n       fix: declare at least one field in `update` or a constant `set` statement",
             operation.label
+        )));
+    }
+    if let Some((field, _)) = constant_sets
+        .iter()
+        .find(|(field, _)| sets.iter().any(|set| set.id == field.id))
+    {
+        return Err(CompileError::new(format!(
+            "canonical transition `{}` supplies field `{}` from both input and a constant assignment\n       fix: remove the field from `update` or remove its `set` statement",
+            operation.label, field.label
         )));
     }
     for field in &sets {
@@ -32,7 +58,11 @@ pub(super) fn lower(
         }
     }
     let primary_key = primary_key(target)?;
-    if sets.iter().any(|field| field.id == primary_key.id) {
+    if sets.iter().any(|field| field.id == primary_key.id)
+        || constant_sets
+            .iter()
+            .any(|(field, _)| field.id == primary_key.id)
+    {
         return Err(CompileError::new(format!(
             "canonical transition `{}` attempts to rewrite primary key `{}`\n       fix: remove the primary key from `sets`",
             operation.label, primary_key.label
@@ -123,23 +153,32 @@ pub(super) fn lower(
             ),
         )
     };
-    let assignments = sets
+    let mut assignments = sets
         .iter()
         .map(|field| format!("{} = :{}", field.names.sql_column, field.names.sql_column))
-        .chain(target.fields.values().filter_map(|field| {
-            if field.semantics.version {
-                Some(format!(
-                    "{} = {} + 1",
-                    field.names.sql_column, field.names.sql_column
-                ))
-            } else if field.semantics.updated {
-                Some(format!("{} = current_timestamp", field.names.sql_column))
-            } else {
-                None
-            }
-        }))
-        .collect::<Vec<_>>()
-        .join(", ");
+        .collect::<Vec<_>>();
+    assignments.extend(
+        constant_sets
+            .iter()
+            .map(|(field, value)| {
+                assignment_sql_value(operation, field, value)
+                    .map(|value| format!("{} = {value}", field.names.sql_column))
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+    );
+    assignments.extend(target.fields.values().filter_map(|field| {
+        if field.semantics.version {
+            Some(format!(
+                "{} = {} + 1",
+                field.names.sql_column, field.names.sql_column
+            ))
+        } else if field.semantics.updated {
+            Some(format!("{} = current_timestamp", field.names.sql_column))
+        } else {
+            None
+        }
+    }));
+    let assignments = assignments.join(", ");
     let required_guards = guards.iter().filter(|field| field.required).map(|field| {
         format!(
             "{} = :guard_{}",

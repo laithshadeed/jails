@@ -2489,4 +2489,67 @@ entity Task {
             "{authorizer}"
         );
     }
+
+    #[test]
+    fn constant_assignments_lower_from_rich_command_and_transition_nodes() {
+        let model = jails_model::parse_jdl(
+            r#"jdl 1
+app Work {
+  pkg com.example.work
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+entity Task {
+  use scaffold
+  id: uuid @pk
+  title: string
+  status: string
+  updatedAt: instant @updated
+
+  command Open(title) {
+    set status = OPEN
+  }
+
+  transition Archive() {
+    set status = ARCHIVED
+    if-match none
+  }
+}
+"#,
+        )
+        .unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.build_system = BuildSystem::Maven;
+        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let source = |suffix: &str| {
+            draft
+                .generated
+                .files
+                .iter()
+                .find(|(path, _)| path.as_str().ends_with(suffix))
+                .map(|(_, file)| String::from_utf8(file.bytes.clone()).unwrap())
+                .unwrap_or_else(|| panic!("missing generated source `{suffix}`"))
+        };
+
+        let command = source("/adapters/jdbc/JdbcOpenCommand.java");
+        assert!(
+            command.contains(
+                "insert into task (id, status, title, updated_at) values (:id, 'OPEN', :title, current_timestamp)"
+            ),
+            "{command}"
+        );
+        assert!(!command.contains("param(\"status\""), "{command}");
+
+        let transition = source("/adapters/jdbc/JdbcArchiveTransition.java");
+        assert!(
+            transition.contains(
+                "update task set status = 'ARCHIVED', updated_at = current_timestamp where"
+            ),
+            "{transition}"
+        );
+        assert!(!transition.contains("param(\"status\""), "{transition}");
+    }
 }

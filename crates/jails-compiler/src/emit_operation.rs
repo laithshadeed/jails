@@ -8,7 +8,7 @@ use crate::CompileError;
 use crate::emit_java::{JAVA_ROOT, entity, render};
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile, RenderedTree};
 use jails_model::{
-    AppModel, BuiltinType, Entity, Facet, Field, Operation, OperationKind, StableId, TypeRef,
+    AppModel, BuiltinType, Entity, Facet, Field, Operation, OperationKind, StableId, TypeRef, Value,
 };
 use std::collections::BTreeSet;
 
@@ -177,5 +177,78 @@ fn context_value(field: &Field, imports: &mut BTreeSet<String>) -> String {
             format!("Long.parseLong(context.claim({claim}))")
         }
         _ => unreachable!("the linker accepts only string, uuid, int, and long scope fields"),
+    }
+}
+
+fn assignment_sql_value(
+    operation: &Operation,
+    field: &Field,
+    value: &Value,
+) -> Result<String, CompileError> {
+    match value {
+        Value::String(value) | Value::EnumConstant(value) => {
+            Ok(format!("'{}'", value.replace('\'', "''")))
+        }
+        Value::Integer(value) | Value::Decimal(value) if safe_numeric_literal(value) => {
+            Ok(value.clone())
+        }
+        Value::Boolean(value) => Ok(value.to_string()),
+        Value::Function { name, arguments } if name == "now" && arguments.is_empty() => {
+            Ok("current_timestamp".to_string())
+        }
+        _ => Err(CompileError::new(format!(
+            "canonical operation `{}` cannot lower the constant assigned to `{}`\n       fix: use a string, enum, numeric, boolean, or `now()` constant, or eject the implementation boundary",
+            operation.label, field.label
+        ))),
+    }
+}
+
+fn safe_numeric_literal(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let mut index = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+    let integer_start = index;
+    while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+        index += 1;
+    }
+    let mut has_digit = index > integer_start;
+    if bytes.get(index) == Some(&b'.') {
+        index += 1;
+        let fraction_start = index;
+        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+            index += 1;
+        }
+        has_digit |= index > fraction_start;
+    }
+    if !has_digit {
+        return false;
+    }
+    if matches!(bytes.get(index), Some(b'e' | b'E')) {
+        index += 1;
+        if matches!(bytes.get(index), Some(b'+' | b'-')) {
+            index += 1;
+        }
+        let exponent_start = index;
+        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+            index += 1;
+        }
+        if index == exponent_start {
+            return false;
+        }
+    }
+    index == bytes.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::safe_numeric_literal;
+
+    #[test]
+    fn assignment_numbers_are_single_sql_literals_not_token_sequences() {
+        for valid in ["0", "-12", "+3.5", ".25", "6e-4"] {
+            assert!(safe_numeric_literal(valid), "rejected `{valid}`");
+        }
+        for invalid in ["", "+", ".", "1-2", "1e", "0;drop table task"] {
+            assert!(!safe_numeric_literal(invalid), "accepted `{invalid}`");
+        }
     }
 }

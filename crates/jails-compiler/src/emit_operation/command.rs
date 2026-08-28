@@ -1,4 +1,7 @@
-use super::{context_parameter, context_value, operation_file, resolve_fields, stored_entity};
+use super::{
+    assignment_sql_value, context_parameter, context_value, operation_file, resolve_fields,
+    stored_entity,
+};
 use crate::CompileError;
 use crate::emit_java::{domain_import, primary_key, with_suffix};
 use jails_contracts::{ProjectPath, RenderedFile};
@@ -25,6 +28,14 @@ pub(super) fn lower(
         "org.springframework.stereotype.Repository".to_string(),
     ]);
     let context = context_parameter(model, target, &mut imports);
+    for assignment in &command.semantics.assignments {
+        if inputs.iter().any(|input| input.id == assignment.field) {
+            return Err(CompileError::new(format!(
+                "canonical command `{}` supplies field `{}` from both input and a constant assignment\n       fix: remove the field parameter or its `set` statement",
+                operation.label, assignment.field
+            )));
+        }
+    }
     let mut params = String::new();
     let mut columns = Vec::new();
     let mut values = Vec::new();
@@ -36,10 +47,17 @@ pub(super) fn lower(
             } else {
                 InsertValue::Parameter(format!("input.{member}().orElse(null)"))
             }
+        } else if let Some(assignment) = command
+            .semantics
+            .assignments
+            .iter()
+            .find(|assignment| assignment.field == field.id)
+        {
+            InsertValue::Expression(assignment_sql_value(operation, field, &assignment.value)?)
         } else if field.semantics.scope.is_some() {
             InsertValue::Parameter(context_value(field, &mut imports))
         } else if field.semantics.updated {
-            InsertValue::Expression("current_timestamp")
+            InsertValue::Expression("current_timestamp".to_string())
         } else if matches!(
             field.semantics.default.as_ref().map(|default| &default.value),
             Some(Value::Function { name, arguments }) if name == "uuid7" && arguments.is_empty()
@@ -70,7 +88,7 @@ pub(super) fn lower(
             }
             InsertValue::Expression(value) => {
                 columns.push(field.names.sql_column.as_str());
-                values.push(value.to_string());
+                values.push(value);
             }
             InsertValue::Omitted => {}
         }
@@ -112,6 +130,6 @@ pub(super) fn lower(
 
 enum InsertValue {
     Parameter(String),
-    Expression(&'static str),
+    Expression(String),
     Omitted,
 }

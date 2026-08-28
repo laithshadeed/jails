@@ -574,11 +574,19 @@ entity Job {
   use scaffold
   id: uuid @pk
   title: string @notBlank
+  status: string
   version: long @version @nonnegative
   createdAt: instant @default(now())
   updatedAt: instant @updated
 
-  command CreateJob(title) {}
+  command CreateJob(title) {
+    set status = QUEUED
+  }
+
+  transition Archive() {
+    set status = ARCHIVED
+    if-match none
+  }
 }
 "#,
     );
@@ -607,12 +615,22 @@ entity Job {
     assert!(adapter.contains("TimeOrderedUuid.next()"), "{adapter}");
     assert!(
         adapter.contains(
-            "insert into job (id, title, updated_at) values (:id, :title, current_timestamp) returning created_at, id, title, updated_at, version"
+            "insert into job (id, status, title, updated_at) values (:id, 'QUEUED', :title, current_timestamp) returning created_at, id, status, title, updated_at, version"
         ),
         "{adapter}"
     );
+    assert!(!adapter.contains("param(\"status\""), "{adapter}");
     assert!(!adapter.contains("param(\"created_at\""), "{adapter}");
     assert!(!adapter.contains("param(\"version\""), "{adapter}");
+    let transition =
+        fs::read_to_string(generated.join("adapters/jdbc/JdbcArchiveTransition.java")).unwrap();
+    assert!(
+        transition.contains(
+            "update job set status = 'ARCHIVED', updated_at = current_timestamp, version = version + 1 where"
+        ),
+        "{transition}"
+    );
+    assert!(transition.contains("id = :id"), "{transition}");
     let uuid7 = generated.join("domain/TimeOrderedUuid.java");
     let mut helper = fs::read_to_string(&uuid7).unwrap();
     let closing = helper.rfind('}').unwrap();
@@ -633,6 +651,15 @@ entity Job {
     assert!(
         fs::read_to_string(&uuid7).unwrap().contains("readerMarker"),
         "regeneration lost a clean edit in compiler default support"
+    );
+    let evolved_adapter =
+        fs::read_to_string(generated.join("adapters/jdbc/JdbcCreateJobCommand.java")).unwrap();
+    assert!(evolved_adapter.contains("'QUEUED'"), "{evolved_adapter}");
+    let evolved_transition =
+        fs::read_to_string(generated.join("adapters/jdbc/JdbcArchiveTransition.java")).unwrap();
+    assert!(
+        evolved_transition.contains("status = 'ARCHIVED'"),
+        "{evolved_transition}"
     );
 
     if real_mvn_available() && real_java_supports_target_release() {
