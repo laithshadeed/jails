@@ -2,6 +2,7 @@ use super::*;
 
 impl Parser<'_> {
     pub(super) fn parse_relation(&mut self, entity: &mut EntityDraft) -> Result<(), Diagnostics> {
+        let start = self.span().start;
         self.expect("relation", "JDL0550", "expected a relation declaration")?;
         let name = self.take_word("relation name")?;
         self.expect("to", "JDL0551", "a relation needs `to Parent`")?;
@@ -85,7 +86,7 @@ impl Parser<'_> {
                 label,
                 source::Relation {
                     id,
-                    name,
+                    name: name.clone(),
                     target,
                     sql_name,
                     mappings,
@@ -101,6 +102,13 @@ impl Parser<'_> {
                 "give every relation a unique lowerCamel name",
             ));
         }
+        self.member(
+            &stable_fragment(&entity.name),
+            "relation",
+            Some(name),
+            start,
+            self.previous_end(),
+        );
         Ok(())
     }
 }

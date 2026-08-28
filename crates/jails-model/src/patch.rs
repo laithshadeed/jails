@@ -1,9 +1,10 @@
-use crate::SourceUnit;
 use crate::id::{
-    CapabilityId, DependencyId, EntityId, FieldId, IndexId, OperationId, SettingId, UnitId,
+    CapabilityId, ComponentId, DependencyId, EntityId, FieldId, IndexId, OperationId, SettingId,
+    UnitId,
 };
 use crate::model::{Capability, Dependency, Ejection, Entity, Facet, Field, Index, Setting};
 use crate::operation::Operation;
+use crate::{Component, SourceUnit};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ModelPatch {
@@ -18,6 +19,9 @@ pub enum ModelPatch {
     AddUnit(SourceUnit),
     ReplaceUnit(SourceUnit),
     RemoveUnit(UnitId),
+    AddComponent(Component),
+    ReplaceComponent(Component),
+    RemoveComponent(ComponentId),
     AddEntity(Entity),
     AddFacet {
         entity: EntityId,
@@ -65,6 +69,7 @@ pub enum ModelPatch {
     RemoveOperation(OperationId),
     RenameEntityProjection {
         entity: EntityId,
+        label: Option<String>,
         java: Option<String>,
         table: Option<String>,
     },

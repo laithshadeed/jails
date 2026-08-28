@@ -171,6 +171,15 @@ impl Parser<'_> {
                 "give every operation a unique name",
             ));
         }
+        if let Some(owner) = owner {
+            self.member(
+                owner,
+                kind.keyword(),
+                Some(name.clone()),
+                start,
+                self.previous_end(),
+            );
+        }
         self.declaration(kind.keyword(), Some(name), start, self.previous_end());
         Ok(())
     }

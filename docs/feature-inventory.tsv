@@ -8,6 +8,7 @@ app plan	jails-engine	read-only	route::app_apply (pretend)
 app apply	jails-engine	project-mutation	route::app_apply
 model	jails	dispatch-only	model_command::run
 model check	jails-model	read-only	jails_model::parse_jdl / jails_model::parse_toml
+model fmt	jails-model/jails-workspace	project-mutation-or-read-only	model_command::format
 model plan	jails-compiler/jails-workspace	read-only+optional-report-output	Compiler::compile / materialize
 model apply	jails-workspace	project-mutation	execute
 model eject	jails-compiler/jails-workspace	project-mutation	model_eject::run

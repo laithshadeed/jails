@@ -312,6 +312,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-model", "relation", 2),
     ("jails-model", "linker", 2),
     ("jails-model", "model", 2),
+    ("jails-model", "model_apply", 2),
     ("jails-model", "naming", 2),
     ("jails-model", "operation", 2),
     ("jails-model", "source", 2),

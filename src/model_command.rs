@@ -71,6 +71,7 @@ pub(crate) fn run(command: ModelCommand, invocation: Invocation) -> Result<()> {
             let manifest = resolve_manifest(manifest.as_deref())?;
             check(&manifest, frozen, invocation.output)
         }
+        ModelCommand::Fmt { check } => format(check, invocation),
         ModelCommand::Plan { manifest, bundle } => {
             let manifest = resolve_manifest(manifest.as_deref())?;
             plan(&manifest, bundle.as_deref(), invocation.output)
@@ -78,6 +79,76 @@ pub(crate) fn run(command: ModelCommand, invocation: Invocation) -> Result<()> {
         ModelCommand::Apply { bundle } => apply(&bundle, invocation.output),
         ModelCommand::Eject { semantic_id } => crate::model_eject::run(semantic_id, invocation),
     }
+}
+
+fn format(check: bool, invocation: Invocation) -> Result<()> {
+    let model_path = PathBuf::from(JDL_PATH);
+    if !model_path.is_file() {
+        return Err(Failure::Told(format!(
+            "`jails model fmt` requires the JDL authoring source `{JDL_PATH}`.\n       fix: import or create a JDL v1 model before formatting"
+        )));
+    }
+    let current_source = std::fs::read_to_string(&model_path).map_err(|error| {
+        Failure::Told(format!(
+            "could not read canonical model `{JDL_PATH}`: {error}"
+        ))
+    })?;
+    let current_model = jails_model::parse_jdl(&current_source)
+        .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
+    let next_source = jails_model::format_jdl_v1(&current_source)
+        .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
+    let next_model = jails_model::parse_jdl(&next_source)
+        .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
+    if current_model != next_model {
+        return Err(Failure::Told(
+            "the JDL formatter changed linked model semantics.\n       fix: report this formatter bug; the source was not written"
+                .to_string(),
+        ));
+    }
+
+    if check {
+        if current_source != next_source {
+            return Err(Failure::Told(format!(
+                "canonical formatting differs in `{JDL_PATH}`.\n       fix: run `jails model fmt` and review the exact source update"
+            )));
+        }
+        if invocation.output == Output::Human {
+            println!("model format valid: {JDL_PATH}");
+        } else {
+            print_json(&json!({
+                "schema": "jails.model-format.v1",
+                "formatted": true,
+                "changed": false,
+                "manifest": JDL_PATH,
+            }))?;
+        }
+        return Ok(());
+    }
+
+    if current_source == next_source {
+        if invocation.output == Output::Human {
+            println!("model already formatted: {JDL_PATH}");
+        } else {
+            print_json(&json!({
+                "schema": "jails.model-format.v1",
+                "formatted": true,
+                "changed": false,
+                "manifest": JDL_PATH,
+            }))?;
+        }
+        return Ok(());
+    }
+
+    crate::model_generate::finish_generation(crate::model_generate::PreparedMutation {
+        name: "JDL formatting".to_string(),
+        invocation,
+        model_path,
+        current_source,
+        current_model,
+        next_source,
+        patch: jails_model::ModelPatch::Batch(Vec::new()),
+        patch_bytes: br#"{"kind":"format"}"#.to_vec(),
+    })
 }
 
 fn apply(bundle_path: &Path, output: Output) -> Result<()> {

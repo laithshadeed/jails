@@ -87,6 +87,541 @@ fn apply_canonical_model(root: &Path, label: &str) {
 }
 
 #[test]
+fn model_fmt_checks_then_atomically_formats_only_the_jdl_source() {
+    let root = jdl_project(
+        "jdl-v1-format",
+        "jdl 1\r\n\r\napp Notes {\r\n\tpkg com.example.notes  \r\n java 26\r\n platform spring\r\n build maven\r\n storage postgres\r\n}\r\n\r\n// reader comment\r\nentity Task {\r\n\tid: uuid @pk  \r\n}\r\n",
+    );
+    write_spring_fixture(&root);
+    let model_path = root.join(".jails/model.jdl");
+    let before = fs::read(&model_path).unwrap();
+
+    let checked = jails_cmd(&root, None)
+        .args(["model", "fmt", "--check"])
+        .output()
+        .unwrap();
+    assert!(!checked.status.success());
+    assert!(
+        String::from_utf8_lossy(&checked.stderr).contains("run `jails model fmt`"),
+        "{}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    assert_eq!(fs::read(&model_path).unwrap(), before, "check wrote source");
+
+    let previewed = jails_cmd(&root, None)
+        .args(["model", "fmt", "--pretend", "--diff"])
+        .output()
+        .unwrap();
+    assert!(
+        previewed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&previewed.stderr)
+    );
+    assert_eq!(
+        fs::read(&model_path).unwrap(),
+        before,
+        "preview wrote source"
+    );
+
+    let formatted = jails_cmd(&root, None)
+        .args(["model", "fmt"])
+        .output()
+        .unwrap();
+    assert!(
+        formatted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&formatted.stderr)
+    );
+    let after = fs::read_to_string(&model_path).unwrap();
+    assert!(!after.contains('\r'), "{after:?}");
+    assert!(!after.contains('\t'), "{after:?}");
+    assert!(!after.lines().any(|line| line.ends_with(' ')), "{after:?}");
+    assert!(after.contains("// reader comment\n"), "{after}");
+    assert!(after.ends_with('\n'));
+
+    let checked = jails_cmd(&root, None)
+        .args(["model", "fmt", "--check"])
+        .output()
+        .unwrap();
+    assert!(
+        checked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+}
+
+#[test]
+fn reviewed_model_format_refuses_a_concurrent_source_edit() {
+    let root = jdl_project(
+        "jdl-v1-format-stale",
+        "jdl 1\r\napp Notes {\r\n pkg com.example.notes\r\n java 26\r\n platform spring\r\n build maven\r\n storage postgres\r\n}\r\n",
+    );
+    write_spring_fixture(&root);
+    let model_path = root.join(".jails/model.jdl");
+    let bundle = root.join("format-plan.json");
+    let planned = jails_cmd(&root, None)
+        .args(["model", "fmt", "--plan-out"])
+        .arg(&bundle)
+        .output()
+        .unwrap();
+    assert!(
+        planned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
+
+    let mut changed = fs::read_to_string(&model_path).unwrap();
+    changed.push_str("// concurrent reader edit\r\n");
+    fs::write(&model_path, &changed).unwrap();
+    let before = fs::read(&model_path).unwrap();
+    let applied = jails_cmd(&root, None)
+        .args(["model", "apply", "--bundle"])
+        .arg(&bundle)
+        .output()
+        .unwrap();
+    assert!(!applied.status.success());
+    assert!(
+        String::from_utf8_lossy(&applied.stderr).contains("stale exact plan"),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    assert_eq!(fs::read(&model_path).unwrap(), before);
+}
+
+#[test]
+fn familiar_mutations_write_valid_jdl_v1_through_one_cst_pipeline() {
+    let root = jdl_project(
+        "jdl-v1-familiar-mutations",
+        r#"jdl 1
+app Notes {
+  pkg com.example.notes
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    fs::write(
+        root.join("acceptance.md"),
+        "# Acceptance\n\n- creates a task\n- refuses an empty title\n",
+    )
+    .unwrap();
+    let commands = [
+        vec!["g", "scaffold", "Task", "id:uuid@pk", "title:string!"],
+        vec!["g", "field", "Task", "done:boolean"],
+        vec!["g", "factory", "Task"],
+        vec!["g", "dto", "Task"],
+        vec!["g", "class", "Clock"],
+        vec!["g", "interface", "TaskPort"],
+        vec!["g", "service", "Billing"],
+        vec!["g", "sealed", "Outcome", "Success", "Failed"],
+        vec![
+            "g", "strategy", "Policy", "Fast", "Safe", "--on", "Task", "--yields", "Task",
+        ],
+        vec![
+            "g",
+            "controller",
+            "TaskApi",
+            "--on",
+            "Task",
+            "--yields",
+            "Task",
+            "--path",
+            "/task-api",
+        ],
+        vec!["g", "test", "Smoke"],
+        vec!["g", "integration-test", "Database"],
+        vec!["add", "fake"],
+        vec![
+            "add",
+            "dependency",
+            "org.jsoup:jsoup",
+            "--version",
+            "1.18.3",
+            "--scope",
+            "test",
+        ],
+        vec!["set", "server.port=8080"],
+        vec!["g", "event", "TaskCreated", "id", "title", "--on", "Task"],
+        vec![
+            "g",
+            "usecase",
+            "CreateTask",
+            "title",
+            "--on",
+            "Task",
+            "--path",
+            "/tasks",
+        ],
+        vec![
+            "g",
+            "query",
+            "OpenTasks",
+            "title",
+            "--on",
+            "Task",
+            "--limit",
+            "50",
+            "--path",
+            "/tasks/search",
+        ],
+        vec![
+            "g",
+            "transition",
+            "RenameTask",
+            "title",
+            "--on",
+            "Task",
+            "--yields",
+            "TaskCreated",
+            "--path",
+            "/tasks/{id}",
+            "--method",
+            "patch",
+        ],
+        vec!["g", "handler", "Health", "--path", "/healthz"],
+        vec!["g", "cli", "Admin"],
+        vec!["g", "command", "Refresh", "--on", "AdminCli"],
+        vec!["g", "cases", "acceptance.md"],
+        vec![
+            "g",
+            "client",
+            "Audit",
+            "requestId:uuid",
+            "--on",
+            "Task",
+            "--yields",
+            "Task",
+            "--path",
+            "/v1/audit",
+            "--method",
+            "post",
+        ],
+        vec!["g", "fetcher", "Remote"],
+        vec!["g", "job", "Sweep"],
+        vec!["g", "http-workflow", "Crawl", "--on", "RemoteFetcher"],
+        vec![
+            "g",
+            "http-sink",
+            "Delivery",
+            "--on",
+            "CreateTask",
+            "--yields",
+            "TaskCreated",
+        ],
+        vec!["g", "idempotency", "Request"],
+        vec!["g", "auth", "Api"],
+        vec![
+            "g",
+            "webhook",
+            "Stripe",
+            "signature:string!",
+            "--path",
+            "/hooks/stripe",
+            "--method",
+            "post",
+            "--consumes",
+            "form",
+            "--bind",
+            "signature=stripe_signature",
+        ],
+        vec![
+            "g",
+            "durable-job",
+            "Dispatch",
+            "id:uuid",
+            "--on",
+            "CreateTask",
+            "--yields",
+            "Task",
+        ],
+        vec![
+            "g", "socket", "Chat", "--path", "/ws/chat", "--method", "get",
+        ],
+        vec!["g", "presence", "Online"],
+    ];
+    for command in commands {
+        let output = jails_cmd(&root, None).args(&command).output().unwrap();
+        assert!(
+            output.status.success(),
+            "`jails {}` failed:\n{}",
+            command.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+        jails_model::parse_jdl_cst(&source).unwrap_or_else(|diagnostics| {
+            panic!(
+                "`jails {}` wrote invalid CST:\n{diagnostics}",
+                command.join(" ")
+            )
+        });
+        jails_model::parse_jdl(&source).unwrap_or_else(|diagnostics| {
+            panic!(
+                "`jails {}` wrote invalid semantics:\n{diagnostics}",
+                command.join(" ")
+            )
+        });
+    }
+
+    let source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    for declaration in [
+        "use scaffold",
+        "use factory",
+        "use dto",
+        "component class Clock @id(cmp_class_clock)",
+        "component interface TaskPort @id(cmp_interface_task_port)",
+        "component service Billing @id(cmp_service_billing)",
+        "component sealed Outcome @id(cmp_sealed_outcome)",
+        "variant Success @id(var_cmp_sealed_outcome_success)",
+        "component strategy Policy @id(cmp_strategy_policy)",
+        "component controller TaskApi @id(cmp_controller_task_api)",
+        "component test Smoke @id(cmp_test_smoke)",
+        "component integration-test Database @id(cmp_integration_test_database)",
+        "done: boolean @id(fld_task_done)",
+        "cap fake @id(cap_fake)",
+        "dep org.jsoup:jsoup @id(dep_",
+        "@version(\"1.18.3\") @scope(test)",
+        "prop server.port = \"8080\" @id(set_",
+        "event TaskCreated(id, title) @id(op_task_created)",
+        "route POST \"/tasks\"",
+        "limit 50",
+        "emit task_created",
+        "route PATCH \"/tasks/{id}\"",
+        "component handler Health @id(cmp_handler_health)",
+        "component cli Admin @id(cmp_cli_admin)",
+        "component command Refresh @id(cmp_command_refresh)",
+        "on admin",
+        "component cases Acceptance @id(cmp_cases_acceptance)",
+        "source \"acceptance.md\"",
+        "component client Audit(requestId: uuid) @id(cmp_client_audit)",
+        "component fetcher Remote @id(cmp_fetcher_remote)",
+        "component job Sweep @id(cmp_job_sweep)",
+        "component http-workflow Crawl @id(cmp_http_workflow_crawl)",
+        "on remote",
+        "component http-sink Delivery @id(cmp_http_sink_delivery)",
+        "component idempotency Request @id(cmp_idempotency_request)",
+        "component auth Api @id(cmp_auth_api)",
+        "component webhook Stripe(signature: string @notBlank) @id(cmp_webhook_stripe)",
+        "bind signature from form \"stripe_signature\"",
+        "component durable-job Dispatch(id: uuid) @id(cmp_durable_job_dispatch)",
+        "component socket Chat @id(cmp_socket_chat)",
+        "component presence Online @id(cmp_presence_online)",
+    ] {
+        assert!(
+            source.contains(declaration),
+            "missing `{declaration}`:\n{source}"
+        );
+    }
+
+    for command in [
+        vec!["destroy", "factory", "Task"],
+        vec!["destroy", "class", "Clock"],
+        vec!["destroy", "sealed", "Outcome"],
+        vec!["destroy", "handler", "Health"],
+        vec!["destroy", "cases", "acceptance.md"],
+        vec!["destroy", "http-workflow", "Crawl"],
+        vec!["destroy", "durable-job", "Dispatch"],
+        vec!["remove", "fake"],
+        vec!["remove", "dependency", "org.jsoup:jsoup"],
+        vec!["unset", "server.port"],
+    ] {
+        let output = jails_cmd(&root, None).args(&command).output().unwrap();
+        assert!(
+            output.status.success(),
+            "`jails {}` failed:\n{}",
+            command.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    jails_model::parse_jdl(&source).unwrap();
+    assert!(!source.contains("use factory"), "{source}");
+    assert!(!source.contains("component class Clock"), "{source}");
+    assert!(!source.contains("component sealed Outcome"), "{source}");
+    assert!(!source.contains("component handler Health"), "{source}");
+    assert!(!source.contains("component cases Acceptance"), "{source}");
+    assert!(
+        !source.contains("component http-workflow Crawl"),
+        "{source}"
+    );
+    assert!(
+        !source.contains("component durable-job Dispatch"),
+        "{source}"
+    );
+    assert!(!source.contains("cap fake"), "{source}");
+    assert!(!source.contains("dep org.jsoup:jsoup"), "{source}");
+    assert!(!source.contains("prop server.port"), "{source}");
+}
+
+#[test]
+fn jdl_v1_cases_source_is_an_exact_plan_input() {
+    let root = jdl_project(
+        "jdl-v1-cases-stale-source",
+        r#"jdl 1
+app Notes {
+  pkg com.example.notes
+  java 26
+  platform plain
+  build maven
+  storage none
+}
+"#,
+    );
+    let source_path = root.join("acceptance.md");
+    fs::write(&source_path, "# Acceptance\n\n- first behavior\n").unwrap();
+    let bundle = root.join("cases-plan.json");
+    let planned = jails_cmd(&root, None)
+        .args(["g", "cases", "acceptance.md", "--plan-out"])
+        .arg(&bundle)
+        .output()
+        .unwrap();
+    assert!(
+        planned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
+    assert!(bundle.is_file());
+    assert!(
+        !fs::read_to_string(root.join(".jails/model.jdl"))
+            .unwrap()
+            .contains("component cases"),
+        "planning must not write the desired state"
+    );
+
+    fs::write(
+        &source_path,
+        "# Acceptance\n\n- first behavior\n- changed after review\n",
+    )
+    .unwrap();
+    let before = snapshot_tree(&root);
+    let applied = jails_cmd(&root, None)
+        .args(["model", "apply", "--bundle"])
+        .arg(&bundle)
+        .output()
+        .unwrap();
+    assert!(!applied.status.success());
+    assert!(
+        String::from_utf8_lossy(&applied.stderr).contains("stale exact plan"),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    let without_executor_lock = |mut tree: Vec<(PathBuf, Vec<u8>)>| {
+        tree.retain(|(path, _)| !path.ends_with(".jails/apply.lock"));
+        tree
+    };
+    assert_eq!(
+        without_executor_lock(snapshot_tree(&root)),
+        without_executor_lock(before),
+        "a stale cases input wrote part of the component mutation"
+    );
+}
+
+#[test]
+fn jdl_v1_rename_materializes_identity_and_physical_pins_without_losing_edits() {
+    let root = jdl_project(
+        "jdl-v1-rename",
+        r#"jdl 1
+app Notes {
+  pkg com.example.notes
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+entity Task {
+  // keep entity note
+  id: uuid @pk
+  title: string
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    apply_canonical_model(&root, "jdl-v1-rename-initial");
+    let task = root.join(".jails/generated/main/java/com/example/notes/domain/Task.java");
+    let source = fs::read_to_string(&task).unwrap();
+    let split = source.rfind("\n}").unwrap();
+    fs::write(
+        &task,
+        format!(
+            "{}\n\n    public String readerMethod() {{ return title; }}{}",
+            &source[..split],
+            &source[split..]
+        ),
+    )
+    .unwrap();
+
+    let renamed = jails_cmd(&root, None)
+        .args([
+            "rename",
+            "resource",
+            "Task",
+            "WorkItem",
+            "--strategy",
+            "preserve-table",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        renamed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&renamed.stderr)
+    );
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(model.contains("entity WorkItem @id(ent_task) {"), "{model}");
+    assert!(model.contains("table \"task\""), "{model}");
+    assert!(model.contains("// keep entity note"), "{model}");
+    let linked = jails_model::parse_jdl(&model).unwrap();
+    let entity = linked.entities.values().next().unwrap();
+    assert_eq!(entity.id.to_string(), "ent_task");
+    assert_eq!(entity.label, "work_item");
+    assert_eq!(entity.names.sql_table, "task");
+    let moved = root.join(".jails/generated/main/java/com/example/notes/domain/WorkItem.java");
+    assert!(!task.exists());
+    assert!(
+        fs::read_to_string(&moved)
+            .unwrap()
+            .contains("readerMethod()"),
+        "reader edit was lost during rename"
+    );
+
+    let field_renamed = jails_cmd(&root, None)
+        .args([
+            "resource", "field", "rename", "WorkItem", "title", "summary", "--column", "preserve",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        field_renamed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&field_renamed.stderr)
+    );
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(
+        model.contains("summary: string @id(fld_ent_task_title) @map(title)"),
+        "{model}"
+    );
+    let linked = jails_model::parse_jdl(&model).unwrap();
+    let field = linked
+        .entities
+        .values()
+        .next()
+        .unwrap()
+        .fields
+        .values()
+        .find(|field| field.label == "summary")
+        .unwrap();
+    assert_eq!(field.names.sql_column, "title");
+    assert!(
+        fs::read_to_string(moved)
+            .unwrap()
+            .contains("readerMethod()")
+    );
+}
+
+#[test]
 fn jdl_v1_drives_the_real_generate_edit_generate_loop() {
     let root = jdl_project(
         "jdl-v1-generate-edit-generate",

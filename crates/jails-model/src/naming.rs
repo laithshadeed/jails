@@ -16,6 +16,27 @@ pub(crate) fn valid_label(value: &str) -> bool {
         })
 }
 
+pub(crate) fn stable_fragment(value: &str) -> String {
+    let mut output = String::new();
+    let mut previous_was_separator = false;
+    for (position, character) in value.chars().enumerate() {
+        if character.is_ascii_uppercase() {
+            if position > 0 && !previous_was_separator {
+                output.push('_');
+            }
+            output.push(character.to_ascii_lowercase());
+            previous_was_separator = false;
+        } else if character.is_ascii_alphanumeric() {
+            output.push(character.to_ascii_lowercase());
+            previous_was_separator = false;
+        } else if !previous_was_separator && !output.is_empty() {
+            output.push('_');
+            previous_was_separator = true;
+        }
+    }
+    output.trim_matches('_').to_string()
+}
+
 pub(crate) fn valid_java_type(value: &str) -> bool {
     valid_java_identifier(value, Case::Upper)
 }

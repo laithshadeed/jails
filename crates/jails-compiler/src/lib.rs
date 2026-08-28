@@ -28,7 +28,17 @@ pub const MANAGED_ROOT: &str = ".jails/generated";
 /// Frontends capture these before planning so collision/refusal checks are
 /// based on exact live bytes rather than filesystem observations during apply.
 pub fn external_project_paths(model: &jails_model::AppModel) -> Vec<ProjectPath> {
-    emit_capability::external_project_paths(model)
+    let mut paths = emit_capability::external_project_paths(model);
+    paths.extend(
+        model
+            .components
+            .values()
+            .filter_map(|component| component.source.as_ref())
+            .filter_map(|source| ProjectPath::parse(source.clone()).ok()),
+    );
+    paths.sort();
+    paths.dedup();
+    paths
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

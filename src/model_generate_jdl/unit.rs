@@ -1,44 +1,62 @@
 //! Familiar standalone main/test CLI syntax over one source-unit node.
 
+use super::component::{
+    component_kind, component_stem, legacy_unit_kind, reject_v1_options, replace_v1_declaration,
+    v1_declaration,
+};
 use super::{MODEL_PATH, append_declaration, parse, read_model};
 use crate::Invocation;
 use crate::cli::GenerateArgs;
 use crate::generate::ArtifactKind;
 use crate::model_generate::{PreparedMutation, finish_generation};
 use crate::model_resource::java_to_label;
-use jails_model::{ModelPatch, StableId, UnitId, UnitKind};
+use jails_model::{ComponentId, ModelPatch, StableId, UnitId, UnitKind};
 use jails_support::{Failure, Result};
 use serde_json::json;
 use std::path::PathBuf;
 
 pub(super) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
-    reject_unsupported_options(&args)?;
-    let kind = match args.kind {
-        ArtifactKind::Class => ("class", UnitKind::Class),
-        ArtifactKind::Interface => ("interface", UnitKind::Interface),
-        ArtifactKind::Service => ("service", UnitKind::Service),
-        ArtifactKind::Test => ("test", UnitKind::Test),
-        ArtifactKind::IntegrationTest => ("integration-test", UnitKind::IntegrationTest),
-        ArtifactKind::Sealed => ("sealed", UnitKind::Sealed),
-        ArtifactKind::Strategy => ("strategy", UnitKind::Strategy),
-        ArtifactKind::Controller => ("controller", UnitKind::Controller),
-        _ => unreachable!("source-unit generation accepts standalone source kinds"),
-    };
-    let stem = jails_generate::generate::strip_redundant_suffix(args.kind, &args.name);
-    let label = java_to_label(&stem);
-    let unit_id =
-        UnitId::parse(format!("unit_{}_{}", kind.0.replace('-', "_"), label)).map_err(|error| {
-            Failure::Told(format!("could not assign source-unit identity: {error}"))
-        })?;
+    let component_kind = component_kind(args.kind)
+        .expect("the JDL router sends only closed component kinds to this frontend");
+    let legacy_kind = legacy_unit_kind(args.kind);
+    let stem = component_stem(args.kind, &args.name)?;
     let variants = if matches!(args.kind, ArtifactKind::Sealed | ArtifactKind::Strategy) {
         sealed_variants(&args.fields)?
     } else {
         Vec::new()
     };
-    let declaration = declaration(kind.0, &stem, &variants, unit_id.as_str(), &args);
     let model_path = PathBuf::from(MODEL_PATH);
     let current_source = read_model()?;
     let current_model = parse(&current_source)?;
+    if super::is_v1_source(&current_source) {
+        reject_v1_options(&args, component_kind)?;
+        return run_v1(
+            args,
+            invocation,
+            (component_kind.label(), legacy_kind),
+            stem,
+            variants,
+            model_path,
+            current_source,
+            current_model,
+        );
+    }
+    reject_unsupported_options(&args)?;
+    let Some(kind) = legacy_kind else {
+        return Err(Failure::Told(format!(
+            "canonical component `{}` requires `jdl 1`.\n       fix: add the JDL v1 header or migrate the model before generating it",
+            component_kind.label()
+        )));
+    };
+    let label = java_to_label(&stem);
+    let unit_id = UnitId::parse(format!(
+        "unit_{}_{}",
+        component_kind.label().replace('-', "_"),
+        label
+    ))
+    .map_err(|error| Failure::Told(format!("could not assign source-unit identity: {error}")))?;
+    let kind = (component_kind.label(), kind);
+    let declaration = declaration(kind.0, &stem, &variants, unit_id.as_str(), &args);
     let requested = requested_unit(&current_model, &declaration, &unit_id)?;
     if let Some(existing) = current_model.units.get(&unit_id) {
         if existing == &requested {
@@ -83,7 +101,7 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
             kind.0, args.name
         )));
     }
-    let next_source = append_declaration(current_source.clone(), &declaration);
+    let next_source = append_declaration(current_source.clone(), &declaration)?;
     let next_model = parse(&next_source)?;
     let unit = next_model
         .units
@@ -104,6 +122,110 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         current_model,
         next_source,
         patch: ModelPatch::AddUnit(unit),
+        patch_bytes,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_v1(
+    args: GenerateArgs,
+    invocation: Invocation,
+    kind: (&str, Option<UnitKind>),
+    stem: String,
+    variants: Vec<String>,
+    model_path: PathBuf,
+    current_source: String,
+    current_model: jails_model::AppModel,
+) -> Result<()> {
+    if args.package.is_some() {
+        return Err(Failure::Told(format!(
+            "JDL v1 derives the managed destination for component {} `{stem}`.\n       fix: remove `--package`; eject its implementation boundary for a reader-owned destination",
+            kind.0
+        )));
+    }
+    if args.consumes.is_some() && args.path.is_none() {
+        return Err(Failure::Told(
+            "a JDL controller can override its wire format only with an explicit route.\n       fix: add `--path <route>` or remove `--consumes`"
+                .to_string(),
+        ));
+    }
+    let label = crate::model_resource::java_to_label(&stem);
+    let component_id = ComponentId::parse(format!("cmp_{}_{}", kind.0.replace('-', "_"), label))
+        .map_err(Failure::Told)?;
+    let unit_id = kind
+        .1
+        .map(|_| UnitId::parse(component_id.to_string()).map_err(Failure::Told))
+        .transpose()?;
+    let declaration = v1_declaration(
+        kind.0,
+        &stem,
+        &variants,
+        component_id.as_str(),
+        &args,
+        &current_model,
+    )?;
+    let next_source = if current_model.components.contains_key(&component_id) {
+        replace_v1_declaration(&current_source, &stem, &declaration)?
+    } else {
+        append_declaration(current_source.clone(), &declaration)?
+    };
+    let next_model = parse(&next_source)?;
+    let component = next_model
+        .components
+        .get(&component_id)
+        .cloned()
+        .ok_or_else(|| Failure::Told(format!("new component `{component_id}` did not link")))?;
+    let unit = unit_id
+        .as_ref()
+        .map(|unit_id| {
+            next_model.units.get(unit_id).cloned().ok_or_else(|| {
+                Failure::Told(format!("component `{component_id}` has no emitter view"))
+            })
+        })
+        .transpose()?;
+    let existing = current_model.components.get(&component_id);
+    if existing == Some(&component)
+        && unit_id
+            .as_ref()
+            .is_none_or(|unit_id| current_model.units.get(unit_id) == unit.as_ref())
+    {
+        return finish_generation(PreparedMutation {
+            name: args.name,
+            invocation,
+            model_path,
+            current_source: current_source.clone(),
+            current_model,
+            next_source: current_source,
+            patch: ModelPatch::Batch(Vec::new()),
+            patch_bytes: br#"{"kind":"batch","patches":[]}"#.to_vec(),
+        });
+    }
+    let mut patches = if existing.is_some() {
+        vec![ModelPatch::ReplaceComponent(component.clone())]
+    } else {
+        vec![ModelPatch::AddComponent(component.clone())]
+    };
+    if let Some(unit) = unit.clone() {
+        patches.push(if existing.is_some() {
+            ModelPatch::ReplaceUnit(unit)
+        } else {
+            ModelPatch::AddUnit(unit)
+        });
+    }
+    let patch_bytes = serde_json::to_vec(&json!({
+        "kind": if existing.is_some() { "replace-component" } else { "add-component" },
+        "component": component,
+        "unit_view": unit,
+    }))
+    .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
+    finish_generation(PreparedMutation {
+        name: args.name,
+        invocation,
+        model_path,
+        current_source,
+        current_model,
+        next_source,
+        patch: ModelPatch::Batch(patches),
         patch_bytes,
     })
 }
@@ -254,4 +376,57 @@ fn requested_unit(
         .get(id)
         .cloned()
         .ok_or_else(|| Failure::Told(format!("requested source unit `{id}` did not link")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jails_model::ComponentKind;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn familiar_component_frontend_covers_the_closed_v1_registry_exactly() {
+        let artifact_kinds = [
+            ArtifactKind::Class,
+            ArtifactKind::Interface,
+            ArtifactKind::Service,
+            ArtifactKind::Controller,
+            ArtifactKind::Sealed,
+            ArtifactKind::Strategy,
+            ArtifactKind::Handler,
+            ArtifactKind::Command,
+            ArtifactKind::Cli,
+            ArtifactKind::Cases,
+            ArtifactKind::Client,
+            ArtifactKind::Fetcher,
+            ArtifactKind::Job,
+            ArtifactKind::HttpWorkflow,
+            ArtifactKind::HttpSink,
+            ArtifactKind::Idempotency,
+            ArtifactKind::Auth,
+            ArtifactKind::Webhook,
+            ArtifactKind::DurableJob,
+            ArtifactKind::Socket,
+            ArtifactKind::Presence,
+            ArtifactKind::Test,
+            ArtifactKind::IntegrationTest,
+        ];
+        let routed = artifact_kinds
+            .into_iter()
+            .map(|kind| component_kind(kind).expect("component artifact must be routed"))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            routed,
+            ComponentKind::ALL.into_iter().collect(),
+            "CLI and JDL component registries diverged"
+        );
+    }
+
+    #[test]
+    fn cases_component_identity_is_derived_from_its_reader_source() {
+        assert_eq!(
+            component_stem(ArtifactKind::Cases, "specs/01-normalise.md").unwrap(),
+            "Case01Normalise"
+        );
+    }
 }

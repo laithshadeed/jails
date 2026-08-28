@@ -1,9 +1,17 @@
 mod cst;
+mod edit;
 mod format;
 mod parser;
 mod token;
 
-pub use cst::{DeclarationCst, DocumentCst};
+pub use cst::{DeclarationCst, DocumentCst, MemberCst};
+pub use edit::{
+    append_declaration as append_jdl_declaration, insert_entity_member as insert_jdl_entity_member,
+    remove_declaration as remove_jdl_declaration, remove_entity_member as remove_jdl_entity_member,
+    rename_declaration as rename_jdl_declaration,
+    replace_entity_member as replace_jdl_entity_member,
+    set_entity_attribute as set_jdl_entity_attribute,
+};
 pub use format::format;
 pub use token::{Span, Token, TokenKind};
 

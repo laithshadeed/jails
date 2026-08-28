@@ -1,4 +1,4 @@
-use super::cst::{DeclarationCst, DocumentCst};
+use super::cst::{DeclarationCst, DocumentCst, MemberCst};
 use super::token::{Span, Token, TokenKind, problem};
 use crate::source;
 use crate::{DependencyScope, Diagnostics, Facet, SettingTarget};
@@ -53,6 +53,7 @@ struct Parser<'a> {
     tokens: Vec<Token>,
     cursor: usize,
     declarations: Vec<DeclarationCst>,
+    members: Vec<MemberCst>,
     app: Option<AppDraft>,
     capabilities: BTreeMap<String, source::Capability>,
     dependencies: BTreeMap<String, source::Dependency>,
@@ -71,6 +72,7 @@ impl<'a> Parser<'a> {
             tokens,
             cursor: 0,
             declarations: Vec::new(),
+            members: Vec::new(),
             app: None,
             capabilities: BTreeMap::new(),
             dependencies: BTreeMap::new(),
@@ -197,7 +199,12 @@ impl<'a> Parser<'a> {
             operations: self.operations,
             projection_rules: self.projection_rules,
         };
-        let cst = DocumentCst::new(self.input.to_string(), self.tokens, self.declarations);
+        let cst = DocumentCst::new(
+            self.input.to_string(),
+            self.tokens,
+            self.declarations,
+            self.members,
+        );
         Ok(ParsedDocument { cst, source })
     }
 
@@ -457,6 +464,18 @@ impl<'a> Parser<'a> {
         });
     }
 
+    fn member(&mut self, owner: &str, kind: &str, name: Option<String>, start: usize, end: usize) {
+        let start = self.input[..start]
+            .rfind('\n')
+            .map_or(0, |newline| newline + 1);
+        self.members.push(MemberCst {
+            owner: owner.to_string(),
+            kind: kind.to_string(),
+            name,
+            span: Span::new(start, end),
+        });
+    }
+
     fn here(
         &self,
         code: &'static str,
@@ -583,22 +602,5 @@ fn decode_argument(value: &str) -> Result<String, Diagnostics> {
 }
 
 fn stable_fragment(value: &str) -> String {
-    let mut output = String::new();
-    let mut previous_was_separator = false;
-    for (position, character) in value.chars().enumerate() {
-        if character.is_ascii_uppercase() {
-            if position > 0 && !previous_was_separator {
-                output.push('_');
-            }
-            output.push(character.to_ascii_lowercase());
-            previous_was_separator = false;
-        } else if character.is_ascii_alphanumeric() {
-            output.push(character.to_ascii_lowercase());
-            previous_was_separator = false;
-        } else if !previous_was_separator && !output.is_empty() {
-            output.push('_');
-            previous_was_separator = true;
-        }
-    }
-    output.trim_matches('_').to_string()
+    crate::naming::stable_fragment(value)
 }

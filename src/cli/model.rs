@@ -16,6 +16,12 @@ pub(crate) enum ModelCommand {
         #[arg(long)]
         frozen: bool,
     },
+    /// Canonically format the JDL authoring source
+    Fmt {
+        /// Refuse without writing when the source is not canonically formatted
+        #[arg(long)]
+        check: bool,
+    },
     /// Compile the model into one content-addressed exact plan without applying it
     Plan {
         /// Canonical model file to compile

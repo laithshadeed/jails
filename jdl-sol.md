@@ -19,13 +19,20 @@ symbol references, projection arguments, selector membership, ordered relation
 mappings, referential actions, composite keys, cardinality, and exact component
 source paths are retained as explicit linked nodes. Projection prerequisites,
 relation target keys/types/nullability, and required cascade cycles fail closed.
-The eight component kinds
-already supported by emitters also derive temporary `SourceUnit` compatibility
-views; the typed component remains authoritative. Unversioned source continues
-through the pre-v1 compatibility importer. Remaining expanded field attributes,
-scope semantics, convention-derived values, CLI CST mutations, and direct rich
-node consumption by every emitter remain open. This checkpoint is not the ship
-claim in section 20.
+All 23 component kinds are reachable from familiar `jails g` commands through
+one typed CST/model mutation path and can be removed at component scope. The
+eight kinds already supported by emitters also derive temporary `SourceUnit`
+compatibility views; the typed component remains authoritative. A `cases`
+component captures its reader-owned source as an exact plan input, so changing
+the brief after review refuses the entire apply. Familiar entity, field,
+facet, operation, cap, dependency, property, component, destroy, and rename
+commands use local CST edits; `jails model fmt`, `--check`, preview, and sealed
+apply all use the same exact-plan boundary. Unversioned source continues
+through the pre-v1 compatibility importer. Remaining formatter normalization,
+expanded field attributes, scope and chosen/derived prerequisite semantics,
+the exhaustive CLI equivalence matrix, convention-derived output roles, and
+direct rich-node consumption by every emitter remain open. This checkpoint is
+not the ship claim in section 20.
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** have their usual
 RFC 2119 meanings.

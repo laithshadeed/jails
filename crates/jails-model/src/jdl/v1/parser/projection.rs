@@ -2,6 +2,7 @@ use super::*;
 
 impl Parser<'_> {
     pub(super) fn parse_entity_use(&mut self, entity: &mut EntityDraft) -> Result<(), Diagnostics> {
+        let start = self.span().start;
         self.expect("use", "JDL0600", "expected an entity use declaration")?;
         let projections = self.projection_list()?;
         if self.at("for") || self.at("except") {
@@ -13,6 +14,13 @@ impl Parser<'_> {
         }
         self.end_line()?;
         entity.projections.extend(projections);
+        self.member(
+            &stable_fragment(&entity.name),
+            "use",
+            None,
+            start,
+            self.previous_end(),
+        );
         Ok(())
     }
 

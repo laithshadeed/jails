@@ -12,6 +12,7 @@ pub(crate) fn rename_field(
     stable_label: &str,
     next_column: Option<&str>,
 ) -> Result<String> {
+    let v1 = crate::model_generate_jdl::is_v1_source(source);
     rewrite_field(source, entity, field, field_id, |line, declaration| {
         let declaration_at = line
             .find(declaration)
@@ -23,11 +24,20 @@ pub(crate) fn rename_field(
             .trim();
         let mut rewritten = line.to_string();
         rewritten.replace_range(declaration_at..declaration_at + name.len(), next_name);
-        if !declaration.contains("@as(") && java_to_label(next_name) != stable_label {
-            rewritten = set_annotation(&rewritten, "as", stable_label);
-        }
-        if let Some(column) = next_column {
-            rewritten = set_annotation(&rewritten, "column", column);
+        if v1 {
+            if !declaration.contains("@id(") {
+                rewritten = set_annotation(&rewritten, "id", field_id);
+            }
+            if let Some(column) = next_column {
+                rewritten = set_annotation(&rewritten, "map", column);
+            }
+        } else {
+            if !declaration.contains("@as(") && java_to_label(next_name) != stable_label {
+                rewritten = set_annotation(&rewritten, "as", stable_label);
+            }
+            if let Some(column) = next_column {
+                rewritten = set_annotation(&rewritten, "column", column);
+            }
         }
         Ok(rewritten)
     })
@@ -86,6 +96,41 @@ fn rewrite_field(
     field_id: &str,
     edit: impl FnOnce(&str, &str) -> Result<String>,
 ) -> Result<String> {
+    if crate::model_generate_jdl::is_v1_source(source) {
+        let cst = jails_model::parse_jdl_cst(source)
+            .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
+        let owner = java_to_label(entity);
+        let explicit_id = format!("@id({field_id})");
+        let matches = cst
+            .members
+            .iter()
+            .filter(|member| member.owner == owner && member.kind == "field")
+            .filter(|member| member.name.as_deref() == Some(field))
+            .filter(|member| {
+                let text = cst.member_text(member);
+                text.contains(&explicit_id) || !text.contains("@id(")
+            })
+            .collect::<Vec<_>>();
+        let member = match matches.as_slice() {
+            [member] => *member,
+            [] => {
+                return Err(Failure::Told(format!(
+                    "could not find JDL field `{entity}.{field}` with identity `{field_id}`\n       fix: keep it as a direct field member in the parsed entity block"
+                )));
+            }
+            _ => {
+                return Err(Failure::Told(format!(
+                    "JDL field `{entity}.{field}` is ambiguous\n       fix: give the field one explicit `@id({field_id})`"
+                )));
+            }
+        };
+        let line = cst.member_text(member);
+        let declaration = line.split("//").next().unwrap_or_default().trim();
+        let rewritten = edit(line, declaration)?;
+        return cst
+            .replace_span(member.span, &rewritten)
+            .map_err(crate::model_generate_jdl::jdl_edit_failure);
+    }
     let explicit_id = format!("@id({field_id})");
     let mut inside = false;
     let mut depth = 0usize;

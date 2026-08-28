@@ -230,6 +230,65 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         }))
         .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
         (patch, next, bytes)
+    } else if jdl
+        && crate::model_generate_jdl::is_v1_source(&current_source)
+        && crate::model_generate_jdl::component_kind(request.kind).is_some()
+    {
+        if request.storage.is_some() || request.confirm_table.is_some() {
+            return Err(Failure::Told(
+                "components have no independent storage to retire.\n       fix: remove the storage flags"
+                    .to_string(),
+            ));
+        }
+        let kind = crate::model_generate_jdl::component_kind(request.kind)
+            .expect("the component branch checked this kind");
+        let stem = crate::model_generate_jdl::component_stem(request.kind, &request.name)?;
+        let component = current_model
+            .components
+            .values()
+            .find(|component| {
+                component.kind == kind
+                    && if request.kind == ArtifactKind::Cases {
+                        component.source.as_deref() == Some(request.name.as_str())
+                            || component.name == stem
+                    } else {
+                        component.label == label
+                            || component.name == request.name
+                            || component.name == stem
+                    }
+            })
+            .ok_or_else(|| {
+                Failure::Told(format!(
+                    "canonical component {} `{}` does not exist.\n       fix: name a matching component declaration",
+                    kind.label(), request.name
+                ))
+            })?;
+        let id = component.id.clone();
+        let unit = current_model
+            .units
+            .values()
+            .find(|unit| unit.id.as_str() == id.as_str())
+            .map(|unit| unit.id.clone());
+        let next = crate::model_generate_jdl::remove_unit(
+            &current_source,
+            kind.label(),
+            &component.name,
+            id.as_str(),
+        )?;
+        let mut patches = vec![ModelPatch::RemoveComponent(id.clone())];
+        if let Some(unit) = unit.clone() {
+            patches.push(ModelPatch::RemoveUnit(unit));
+        }
+        let patch = ModelPatch::Batch(patches);
+        let mut proof = current_model.clone();
+        proof.apply(patch.clone()).map_err(Failure::Told)?;
+        let bytes = serde_json::to_vec(&json!({
+            "kind": "remove-component",
+            "component": id,
+            "unit_view": unit,
+        }))
+        .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
+        (patch, next, bytes)
     } else if matches!(
         request.kind,
         ArtifactKind::Class
@@ -276,6 +335,15 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                 ))
             })?;
         let id = unit.id.clone();
+        let component = jdl
+            .then(|| {
+                current_model
+                    .components
+                    .values()
+                    .find(|component| component.id.as_str() == id.as_str())
+                    .map(|component| component.id.clone())
+            })
+            .flatten();
         let next = if jdl {
             crate::model_generate_jdl::remove_unit(&current_source, kind.0, &stem, id.as_str())?
         } else {
@@ -285,9 +353,19 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         let bytes = serde_json::to_vec(&json!({
             "kind": "remove-source-unit",
             "unit": id,
+            "component": component,
         }))
         .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
-        (ModelPatch::RemoveUnit(id), next, bytes)
+        let patch = component.map_or_else(
+            || ModelPatch::RemoveUnit(id.clone()),
+            |component| {
+                ModelPatch::Batch(vec![
+                    ModelPatch::RemoveComponent(component),
+                    ModelPatch::RemoveUnit(id.clone()),
+                ])
+            },
+        );
+        (patch, next, bytes)
     } else if operation_kind(request.kind).is_some() {
         let operation = current_model
             .operations

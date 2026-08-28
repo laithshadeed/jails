@@ -127,6 +127,28 @@ pub(crate) fn set_marker(
     marker: &str,
     enabled: bool,
 ) -> Result<String> {
+    if super::is_v1_source(source) {
+        let projection = match marker {
+            "@factory" => "factory",
+            "@dto" => "dto",
+            "@repository" => "repo",
+            _ => {
+                return Err(Failure::Told(format!(
+                    "unsupported JDL v1 projection marker `{marker}`.\n       fix: use factory, dto, or repository through its typed frontend"
+                )));
+            }
+        };
+        if enabled {
+            return jails_model::insert_jdl_entity_member(
+                source,
+                entity_java_name,
+                "use",
+                &format!("  use {projection}"),
+            )
+            .map_err(super::jdl_edit_failure);
+        }
+        return remove_projection(source, entity_java_name, projection);
+    }
     let mut byte_offset = 0;
     for line in source.split_inclusive('\n') {
         let declaration = line.split("//").next().unwrap_or_default().trim();
@@ -163,6 +185,101 @@ pub(crate) fn set_marker(
     )))
 }
 
+fn remove_projection(source: &str, entity_java_name: &str, projection: &str) -> Result<String> {
+    let mut edited = source.to_string();
+    loop {
+        let cst = jails_model::parse_jdl_cst(&edited).map_err(super::jdl_edit_failure)?;
+        let owner = crate::model_resource::java_to_label(entity_java_name);
+        let Some(member) = cst
+            .members
+            .iter()
+            .find(|member| {
+                member.owner == owner
+                    && member.kind == "use"
+                    && projection_segments(cst.member_text(member))
+                        .iter()
+                        .any(|segment| projection_name(segment) == projection)
+            })
+            .cloned()
+        else {
+            return Ok(edited);
+        };
+        let original = cst.member_text(&member);
+        let newline = if original.ends_with("\r\n") {
+            "\r\n"
+        } else if original.ends_with('\n') {
+            "\n"
+        } else {
+            ""
+        };
+        let without_newline = original.trim_end_matches(['\r', '\n']);
+        let (code, comment) = without_newline
+            .split_once("//")
+            .map_or((without_newline, None), |(code, comment)| {
+                (code, Some(comment))
+            });
+        let indentation = &code[..code.len() - code.trim_start().len()];
+        let retained = projection_segments(code)
+            .into_iter()
+            .filter(|segment| projection_name(segment) != projection)
+            .collect::<Vec<_>>();
+        let replacement = if retained.is_empty() {
+            comment.map_or_else(String::new, |comment| {
+                format!("{indentation}//{comment}{newline}")
+            })
+        } else {
+            let comment = comment.map_or_else(String::new, |comment| format!(" //{comment}"));
+            format!("{indentation}use {}{comment}{newline}", retained.join(", "))
+        };
+        edited = cst
+            .replace_span(member.span, &replacement)
+            .map_err(super::jdl_edit_failure)?;
+    }
+}
+
+fn projection_segments(line: &str) -> Vec<String> {
+    let code = line.split_once("//").map_or(line, |(code, _)| code);
+    let Some(body) = code.trim().strip_prefix("use ") else {
+        return Vec::new();
+    };
+    let mut segments = Vec::new();
+    let mut start = 0;
+    let mut depth = 0_u32;
+    let mut string = false;
+    let mut escaped = false;
+    for (offset, character) in body.char_indices() {
+        if string {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                string = false;
+            }
+            continue;
+        }
+        match character {
+            '"' => string = true,
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                segments.push(body[start..offset].trim().to_string());
+                start = offset + character.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    segments.push(body[start..].trim().to_string());
+    segments
+}
+
+fn projection_name(segment: &str) -> &str {
+    segment
+        .split(|character: char| character == '(' || character.is_whitespace())
+        .next()
+        .unwrap_or_default()
+}
+
 fn reject_unsupported_options(args: &GenerateArgs, kind: Kind) -> Result<()> {
     let unsupported = !args.fields.is_empty()
         || args.timestamps
@@ -191,4 +308,37 @@ fn reject_unsupported_options(args: &GenerateArgs, kind: Kind) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SOURCE: &str = r#"jdl 1
+app Demo {
+  pkg com.example.demo
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+entity Task {
+  use repo, factory, dto // keep projection note
+  id: uuid @pk
+}
+"#;
+
+    #[test]
+    fn v1_projection_edits_touch_only_the_selected_use_member() {
+        let removed = set_marker(SOURCE, "Task", "@factory", false).unwrap();
+        assert!(removed.contains("use repo, dto // keep projection note"));
+        assert!(!removed.contains("factory"));
+        jails_model::parse_jdl(&removed).unwrap();
+
+        let restored = set_marker(&removed, "Task", "@factory", true).unwrap();
+        assert!(restored.contains("use repo, dto // keep projection note"));
+        assert!(restored.contains("use factory"));
+        jails_model::parse_jdl(&restored).unwrap();
+    }
 }

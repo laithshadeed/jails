@@ -186,12 +186,14 @@ fn translate(
                     &label,
                     false,
                     &arguments,
+                    false,
                 )?)
             }
             ArtifactKind::Enum => source.push_str(&crate::model_generate_jdl::enum_declaration(
                 intent.name.as_str(),
                 &label,
                 &arguments,
+                false,
             )?),
             _ => unreachable!("the supported recipe guard is exhaustive"),
         }

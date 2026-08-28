@@ -28,16 +28,32 @@ pub(crate) fn add(
     let jdl = crate::model_command::owns_jdl();
     let model_path = model_path(jdl);
     let current_source = read_source(&model_path)?;
+    let v1 = jdl && crate::model_generate_jdl::is_v1_source(&current_source);
+    if v1 && package.is_some() {
+        return Err(Failure::Told(
+            "JDL v1 derives capability packages from the closed projection registry.\n       fix: remove `--package`; eject the implementation boundary if it needs a reader-owned destination"
+                .to_string(),
+        ));
+    }
     let current_model = parse_model(&current_source, jdl)?;
     let mut next_source = current_source.clone();
     let mut patches = Vec::new();
     let mut encoded = Vec::new();
     for capability in capabilities {
         let label = capability.label();
+        let identity_label = if v1 {
+            name.as_ref().map_or_else(
+                || label.to_string(),
+                |name| format!("{label}_{}", crate::model_resource::java_to_label(name)),
+            )
+        } else {
+            label.to_string()
+        };
+        let id = CapabilityId::parse(format!("cap_{identity_label}")).map_err(Failure::Told)?;
         if let Some(existing) = current_model
             .capabilities
             .values()
-            .find(|existing| existing.kind == label)
+            .find(|existing| existing.kind == label && existing.name == name)
         {
             let requested_package = package.as_ref().map(|package| {
                 if package.is_empty() {
@@ -53,21 +69,37 @@ pub(crate) fn add(
             }
             continue;
         }
-        if !next_source.ends_with('\n') {
-            next_source.push('\n');
-        }
         if jdl {
-            next_source.push_str(&format!(
-                "\ncapability {label} @id(cap_{label}){}{}\n",
-                name.as_ref()
-                    .map(|name| format!(" @name({name})"))
-                    .unwrap_or_default(),
-                package
-                    .as_ref()
-                    .map(|package| format!(" @package({package})"))
-                    .unwrap_or_default(),
-            ));
+            if v1 {
+                let declaration = format!(
+                    "cap {label}{} @id({})",
+                    name.as_ref()
+                        .map(|name| format!(" {name}"))
+                        .unwrap_or_default(),
+                    id.as_str(),
+                );
+                next_source = jails_model::append_jdl_declaration(&next_source, &declaration)
+                    .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
+            } else {
+                append_legacy_jdl(
+                    &mut next_source,
+                    &format!(
+                        "capability {label} @id({}){}{}",
+                        id.as_str(),
+                        name.as_ref()
+                            .map(|name| format!(" @name({name})"))
+                            .unwrap_or_default(),
+                        package
+                            .as_ref()
+                            .map(|package| format!(" @package({package})"))
+                            .unwrap_or_default(),
+                    ),
+                );
+            }
         } else {
+            if !next_source.ends_with('\n') {
+                next_source.push('\n');
+            }
             next_source.push_str(&format!(
                 "\n[capabilities.{label}]\nid = {}\nkind = {}\n",
                 quote(&format!("cap_{label}"))?,
@@ -81,9 +113,6 @@ pub(crate) fn add(
             }
         }
         let next_model = parse_model(&next_source, jdl)?;
-        let id = CapabilityId::parse(format!("cap_{label}")).map_err(|error| {
-            Failure::Told(format!("could not assign capability identity: {error}"))
-        })?;
         let declaration = next_model
             .capabilities
             .get(&id)
@@ -161,6 +190,7 @@ pub(crate) fn remove(
                 &next_source,
                 &declaration.kind,
                 declaration.id.as_str(),
+                &declaration.label,
             )?
         } else {
             jails_model::remove_capability_declaration(&next_source, &declaration.label)
@@ -197,6 +227,7 @@ pub(crate) fn add_dependency(
         .expect("validated Maven coordinates contain one separator");
     let model_path = model_path(jdl);
     let current_source = read_source(&model_path)?;
+    let v1 = jdl && crate::model_generate_jdl::is_v1_source(&current_source);
     let current_model = parse_model(&current_source, jdl)?;
     if let Some(existing) = current_model
         .dependencies
@@ -224,21 +255,41 @@ pub(crate) fn add_dependency(
     let label = format!("dep_{suffix}");
     let id = DependencyId::parse(label.clone()).map_err(Failure::Told)?;
     let mut next_source = current_source.clone();
-    if !next_source.ends_with('\n') {
-        next_source.push('\n');
-    }
-    if jdl {
-        next_source.push_str(&format!(
-            "\ndependency {coordinate} @id({}) @scope({}){}\n",
+    if v1 {
+        let declaration = format!(
+            "dep {coordinate} @id({}){}{}",
             id.as_str(),
-            scope_name(scope),
             version
                 .as_ref()
-                .map(|version| quote(version).map(|version| format!(" = {version}")))
+                .map(|version| quote(version).map(|version| format!(" @version({version})")))
                 .transpose()?
                 .unwrap_or_default(),
-        ));
+            if scope != DependencyScope::Compile {
+                format!(" @scope({})", scope_name(scope))
+            } else {
+                String::new()
+            },
+        );
+        next_source = jails_model::append_jdl_declaration(&next_source, &declaration)
+            .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
+    } else if jdl {
+        append_legacy_jdl(
+            &mut next_source,
+            &format!(
+                "dependency {coordinate} @id({}) @scope({}){}",
+                id.as_str(),
+                scope_name(scope),
+                version
+                    .as_ref()
+                    .map(|version| quote(version).map(|version| format!(" = {version}")))
+                    .transpose()?
+                    .unwrap_or_default(),
+            ),
+        );
     } else {
+        if !next_source.ends_with('\n') {
+            next_source.push('\n');
+        }
         next_source.push_str(&format!(
             "\n[dependencies.{label}]\nid = {}\ngroup = {}\nartifact = {}\n",
             quote(id.as_str())?,
@@ -300,6 +351,7 @@ pub(crate) fn remove_dependency(
             &current_source,
             &coordinate,
             dependency.id.as_str(),
+            &dependency.label,
         )?
     } else {
         jails_model::remove_dependency_declaration(&current_source, &dependency.label)
@@ -340,6 +392,7 @@ fn set_tool_capability(
     let jdl = crate::model_command::owns_jdl();
     let model_path = model_path(jdl);
     let current_source = read_source(&model_path)?;
+    let v1 = jdl && crate::model_generate_jdl::is_v1_source(&current_source);
     let current_model = parse_model(&current_source, jdl)?;
     let existing = current_model
         .capabilities
@@ -355,12 +408,21 @@ fn set_tool_capability(
         (true, None) => {
             let id = CapabilityId::parse(format!("cap_{label}")).map_err(Failure::Told)?;
             let mut next = current_source.clone();
-            if !next.ends_with('\n') {
-                next.push('\n');
-            }
-            if jdl {
-                next.push_str(&format!("\ncapability {kind} @id({})\n", id.as_str()));
+            if v1 {
+                next = jails_model::append_jdl_declaration(
+                    &next,
+                    &format!("cap {kind} @id({})", id.as_str()),
+                )
+                .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
+            } else if jdl {
+                append_legacy_jdl(
+                    &mut next,
+                    &format!("capability {kind} @id({})", id.as_str()),
+                );
             } else {
+                if !next.ends_with('\n') {
+                    next.push('\n');
+                }
                 next.push_str(&format!(
                     "\n[capabilities.{label}]\nid = {}\nkind = {}\n",
                     quote(id.as_str())?,
@@ -382,6 +444,7 @@ fn set_tool_capability(
                     &current_source,
                     &capability.kind,
                     capability.id.as_str(),
+                    &capability.label,
                 )?
             } else {
                 jails_model::remove_capability_declaration(&current_source, &capability.label)
@@ -404,6 +467,15 @@ fn set_tool_capability(
         patch,
         patch_bytes,
     })
+}
+
+fn append_legacy_jdl(source: &mut String, declaration: &str) {
+    if !source.ends_with('\n') {
+        source.push('\n');
+    }
+    source.push('\n');
+    source.push_str(declaration);
+    source.push('\n');
 }
 
 fn scope_name(scope: DependencyScope) -> &'static str {

@@ -319,10 +319,18 @@ impl Parser<'_> {
                 match self.text() {
                     "use" => self.parse_entity_use(&mut entity)?,
                     "table" => {
+                        let start = self.span().start;
                         self.bump();
                         let table = self.take_string("table name")?;
                         set_once(&mut entity.table, table, "table", self)?;
                         self.end_line()?;
+                        self.member(
+                            &stable_fragment(&entity.name),
+                            "table",
+                            None,
+                            start,
+                            self.previous_end(),
+                        );
                     }
                     "pk" => self.parse_constraint(&mut entity, "pk")?,
                     "unique" => self.parse_constraint(&mut entity, "unique")?,
@@ -356,6 +364,7 @@ impl Parser<'_> {
     }
 
     fn parse_field(&mut self, entity: &mut EntityDraft) -> Result<(), Diagnostics> {
+        let start = self.span().start;
         let name = self.take_word("field name")?;
         self.expect(":", "JDL0510", "a field declaration needs `:`")?;
         let type_name = self.parse_type_ref()?;
@@ -376,7 +385,7 @@ impl Parser<'_> {
             field_label,
             source::Field {
                 id,
-                java_name: Some(name),
+                java_name: Some(name.clone()),
                 column,
                 type_name,
                 required,
@@ -388,6 +397,13 @@ impl Parser<'_> {
                 max_length,
             },
         );
+        self.member(
+            &stable_fragment(&entity.name),
+            "field",
+            Some(name),
+            start,
+            self.previous_end(),
+        );
         Ok(())
     }
 
@@ -396,6 +412,7 @@ impl Parser<'_> {
         entity: &mut EntityDraft,
         kind: &str,
     ) -> Result<(), Diagnostics> {
+        let start = self.span().start;
         self.bump();
         let columns = self
             .field_list()?
@@ -458,7 +475,15 @@ impl Parser<'_> {
                 .indexes
                 .insert(label, source::Index { id, name, columns });
         }
-        self.end_line()
+        self.end_line()?;
+        self.member(
+            &stable_fragment(&entity.name),
+            kind,
+            None,
+            start,
+            self.previous_end(),
+        );
+        Ok(())
     }
 
     pub(super) fn parse_eject(&mut self) -> Result<(), Diagnostics> {

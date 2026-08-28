@@ -9,6 +9,15 @@ pub struct DeclarationCst {
     pub span: Span,
 }
 
+/// One declaration nested directly inside an entity block.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MemberCst {
+    pub owner: String,
+    pub kind: String,
+    pub name: Option<String>,
+    pub span: Span,
+}
+
 /// Concrete source structure used by syntax-preserving edits.
 ///
 /// `source` plus `tokens` preserves every input byte. Declaration spans make
@@ -18,6 +27,7 @@ pub struct DocumentCst {
     source: String,
     pub tokens: Vec<Token>,
     pub declarations: Vec<DeclarationCst>,
+    pub members: Vec<MemberCst>,
 }
 
 impl DocumentCst {
@@ -25,11 +35,13 @@ impl DocumentCst {
         source: String,
         tokens: Vec<Token>,
         declarations: Vec<DeclarationCst>,
+        members: Vec<MemberCst>,
     ) -> Self {
         Self {
             source,
             tokens,
             declarations,
+            members,
         }
     }
 
@@ -39,6 +51,10 @@ impl DocumentCst {
 
     pub fn declaration_text(&self, declaration: &DeclarationCst) -> &str {
         &self.source[declaration.span.start..declaration.span.end]
+    }
+
+    pub fn member_text(&self, member: &MemberCst) -> &str {
+        &self.source[member.span.start..member.span.end]
     }
 
     pub fn reconstruct(&self) -> String {

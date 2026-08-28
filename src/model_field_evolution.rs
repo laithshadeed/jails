@@ -38,7 +38,11 @@ pub(crate) fn rename(request: RenameRequest, invocation: Invocation) -> Result<(
         }
         CliColumnPolicy::Preserve => (
             ColumnRenamePolicy::Preserve,
-            rename_source_field(&resolved, &request.new_name, None)?,
+            rename_source_field(
+                &resolved,
+                &request.new_name,
+                resolved.jdl.then_some(resolved.field_sql_column.as_str()),
+            )?,
         ),
         CliColumnPolicy::SingleCutover => (
             ColumnRenamePolicy::SingleCutover,
@@ -245,6 +249,7 @@ struct ResolvedField {
     field_id: FieldId,
     field_label: String,
     field_java_name: String,
+    field_sql_column: String,
     has_database: bool,
     jdl: bool,
 }
@@ -293,6 +298,7 @@ fn resolve(entity_name: &str, field_name: &str) -> Result<ResolvedField> {
         field_id: field.id.clone(),
         field_label: field.label.clone(),
         field_java_name: field.names.java_member.clone(),
+        field_sql_column: field.names.sql_column.clone(),
         has_database: current_model
             .capabilities
             .values()

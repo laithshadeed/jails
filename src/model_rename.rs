@@ -3,7 +3,7 @@
 use crate::Invocation;
 use crate::cli::{ExternalRenamePolicy, RenameStrategy};
 use crate::model_generate::{PreparedMutation, finish_generation};
-use jails_model::ModelPatch;
+use jails_model::{ModelPatch, StableId};
 use jails_support::{Failure, Result};
 use serde_json::json;
 use std::path::PathBuf;
@@ -83,25 +83,40 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
     let entity_id = entity.id.clone();
     let entity_label = entity.label.clone();
     let sql_table = entity.names.sql_table.clone();
-    let patch = ModelPatch::RenameEntityProjection {
-        entity: entity_id.clone(),
-        java: Some(request.to.clone()),
-        table: None,
-    };
-    let mut proof = current_model.clone();
-    proof.apply(patch.clone()).map_err(Failure::Told)?;
     let next_source = if jdl {
         crate::model_generate_jdl::rename_entity(
             &current_source,
             &entity.names.java_type,
             &request.to,
             &entity_label,
+            entity.id.as_str(),
+            entity
+                .facets
+                .contains(&jails_model::Facet::Record)
+                .then_some(sql_table.as_str()),
         )?
     } else {
         jails_model::set_entity_java_name(&current_source, &entity_label, &request.to)
             .map_err(Failure::Told)?
     };
     let next_model = parse_model(&next_source, jdl)?;
+    let next_label = next_model
+        .entities
+        .get(&entity_id)
+        .map(|entity| entity.label.clone())
+        .ok_or_else(|| {
+            Failure::Told(format!(
+                "lossless model edit removed entity `{entity_id}`.\n       fix: restore the entity declaration and retry"
+            ))
+        })?;
+    let patch = ModelPatch::RenameEntityProjection {
+        entity: entity_id.clone(),
+        label: Some(next_label),
+        java: Some(request.to.clone()),
+        table: None,
+    };
+    let mut proof = current_model.clone();
+    proof.apply(patch.clone()).map_err(Failure::Told)?;
     if next_model != proof {
         return Err(Failure::Told(
             "lossless model edit did not produce the intended semantic rename.\n       fix: restore a canonical entity table and retry"

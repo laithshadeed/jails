@@ -7,6 +7,16 @@ pub(crate) fn insert(source: &str, entity_java_name: &str, index_line: &str) -> 
 }
 
 pub(crate) fn remove(source: &str, entity_java_name: &str, index_id: &str) -> Result<String> {
+    if super::is_v1_source(source) {
+        return jails_model::remove_jdl_entity_member(
+            source,
+            entity_java_name,
+            &["index"],
+            None,
+            Some(index_id),
+        )
+        .map_err(super::jdl_edit_failure);
+    }
     let explicit_id = format!("@id({index_id})");
     let mut inside_target = false;
     let mut depth = 0usize;
