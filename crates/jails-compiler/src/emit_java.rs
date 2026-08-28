@@ -1,6 +1,7 @@
 //! Lower semantic facets into deterministic Java source units.
 
 mod record_validation;
+mod time_ordered_uuid;
 
 use crate::CompileError;
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile, RenderedTree};
@@ -18,6 +19,11 @@ pub(crate) fn lower_and_emit(
     spring_boot: bool,
 ) -> Result<(), CompileError> {
     crate::emit_unit::lower_and_emit(model, output)?;
+    if let Some(unit) = time_ordered_uuid::lower(model)? {
+        output
+            .insert(unit.path, unit.file)
+            .map_err(CompileError::new)?;
+    }
     for entity in model.entities.values().filter(|entity| entity.active) {
         for facet in &entity.facets {
             if *facet == Facet::Dto {

@@ -336,6 +336,98 @@ app Notes {
 }
 
 #[test]
+fn compiler_managed_create_values_stay_out_of_the_request_and_compile_end_to_end() {
+    let root = jdl_project(
+        "jdl-v1-command-default-ownership",
+        r#"jdl 1
+app Jobs {
+  pkg com.example.jobs
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+entity Job {
+  use scaffold
+  id: uuid @pk
+  title: string @notBlank
+  version: long @version @nonnegative
+  createdAt: instant @default(now())
+  updatedAt: instant @updated
+
+  command CreateJob(title) {}
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    apply_canonical_model(&root, "command-default-ownership");
+
+    let generated = root.join(".jails/generated/main/java/com/example/jobs");
+    let command =
+        fs::read_to_string(generated.join("application/commands/CreateJobCommand.java")).unwrap();
+    assert!(command.contains("public record Input("), "{command}");
+    assert!(command.contains("String title"), "{command}");
+    for managed in [
+        "UUID id",
+        "long version",
+        "Instant createdAt",
+        "Instant updatedAt",
+    ] {
+        assert!(
+            !command.contains(managed),
+            "request exposed `{managed}`:\n{command}"
+        );
+    }
+
+    let adapter =
+        fs::read_to_string(generated.join("adapters/jdbc/JdbcCreateJobCommand.java")).unwrap();
+    assert!(adapter.contains("TimeOrderedUuid.next()"), "{adapter}");
+    assert!(
+        adapter.contains(
+            "insert into job (id, title, updated_at) values (:id, :title, current_timestamp) returning created_at, id, title, updated_at, version"
+        ),
+        "{adapter}"
+    );
+    assert!(!adapter.contains("param(\"created_at\""), "{adapter}");
+    assert!(!adapter.contains("param(\"version\""), "{adapter}");
+    let uuid7 = generated.join("domain/TimeOrderedUuid.java");
+    let mut helper = fs::read_to_string(&uuid7).unwrap();
+    let closing = helper.rfind('}').unwrap();
+    helper.insert_str(
+        closing,
+        "\n    public static String readerMarker() { return \"kept\"; }\n",
+    );
+    fs::write(&uuid7, helper).unwrap();
+    let evolved = jails_cmd(&root, None)
+        .args(["g", "field", "Job", "priority:int?"])
+        .output()
+        .unwrap();
+    assert!(
+        evolved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evolved.stderr)
+    );
+    assert!(
+        fs::read_to_string(&uuid7).unwrap().contains("readerMarker"),
+        "regeneration lost a clean edit in compiler default support"
+    );
+
+    if real_mvn_available() && real_java_supports_target_release() {
+        let compiled = real_maven_cmd(&root, &real_path_without_mvnd())
+            .args(["-q", "-B", "-DskipTests", "compile"])
+            .output()
+            .unwrap();
+        assert!(
+            compiled.status.success(),
+            "generated default-owning command did not compile:\n{}\n{}",
+            String::from_utf8_lossy(&compiled.stdout),
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+    }
+}
+
+#[test]
 fn reviewed_model_format_refuses_a_concurrent_source_edit() {
     let root = jdl_project(
         "jdl-v1-format-stale",
@@ -3545,7 +3637,7 @@ fn model_plan_is_deterministic_and_writes_a_self_verifying_bundle() {
         serde_json::from_slice(&fs::read(&first).unwrap()).unwrap();
     jails_workspace::verify_bundle(&bundle).unwrap();
     assert_eq!(bundle.plan.operations.len(), 2);
-    assert_eq!(bundle.plan.summary.managed_files, 4);
+    assert_eq!(bundle.plan.summary.managed_files, 5);
     assert_eq!(bundle.plan.id, bundle.plan.digest.as_str());
 }
 
@@ -8010,7 +8102,7 @@ fn canonical_database_commands_and_transitions_are_independent_iterative_boundar
     for contract in [
         "implements CreateNoteCommand",
         "insert into note (id, status, title) values (:id, :status, :title)",
-        "UUID.randomUUID()",
+        "TimeOrderedUuid.next()",
         "statement.query(Note.class).single()",
     ] {
         assert!(

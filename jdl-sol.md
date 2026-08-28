@@ -45,10 +45,14 @@ than replay-dependent shorthand. Primary `storage postgres|h2|sqlite` derives
 its implementation support in the linked model without a redundant source
 cap. Record and PostgreSQL emitters consume numeric constraints and typed
 database defaults; required versioned transitions increment `@version` and set
-`@updated` in the same statement. Broader chosen/derived prerequisite
-semantics, the exhaustive CLI equivalence matrix, convention-derived output
-roles, and direct rich-node consumption by every emitter remain open. This
-checkpoint is not the ship claim in section 20.
+`@updated` in the same statement. Create-command adapters omit database-owned
+defaults from inserts, generate RFC 9562 UUIDv7 values in the application,
+initialize `@updated` without exposing it in the command input, and return the
+complete database row. The UUIDv7 support file is itself merge-managed and has
+a generate-edit-generate E2E proof. Scope-context materialization, broader
+chosen/derived prerequisite semantics, the exhaustive CLI equivalence matrix,
+convention-derived output roles, and direct rich-node consumption by every
+emitter remain open. This checkpoint is not the ship claim in section 20.
 
 The key words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** have their usual
 RFC 2119 meanings.

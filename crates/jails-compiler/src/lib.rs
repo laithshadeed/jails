@@ -1961,7 +1961,16 @@ route = "PATCH /notes/{id}"
                 .contains("insert into note (id, title) values (:id, :title) returning id, title"),
             "{command}"
         );
-        assert!(command.contains("UUID.randomUUID()"), "{command}");
+        assert!(command.contains("TimeOrderedUuid.next()"), "{command}");
+        let uuid7 = draft
+            .generated
+            .files
+            .values()
+            .find(|file| file.provenance.artifact_id == "art_app_time_ordered_uuid")
+            .map(|file| String::from_utf8(file.bytes.clone()).unwrap())
+            .expect("time-ordered UUID support");
+        assert!(uuid7.contains("| 0x70"), "{uuid7}");
+        assert!(uuid7.contains("| 0x80"), "{uuid7}");
 
         let transition = draft
             .generated
@@ -2269,6 +2278,8 @@ entity Metric {
   createdAt: instant @default(now())
   updatedAt: instant @default(now()) @updated
 
+  command CreateMetric(score) {}
+
   transition Rescore(score, version) {
     update [score]
     if-match required
@@ -2317,6 +2328,26 @@ entity Metric {
             sql.contains("updated_at timestamptz default current_timestamp not null"),
             "{sql}"
         );
+
+        let command = draft
+            .generated
+            .files
+            .iter()
+            .find(|(path, _)| {
+                path.as_str()
+                    .ends_with("/adapters/jdbc/JdbcCreateMetricCommand.java")
+            })
+            .map(|(_, file)| String::from_utf8(file.bytes.clone()).unwrap())
+            .expect("default-aware command adapter");
+        assert!(
+            command.contains(
+                "insert into metric (balance, score, updated_at) values (:balance, :score, current_timestamp) returning balance, created_at, id, score, updated_at, version"
+            ),
+            "{command}"
+        );
+        assert!(!command.contains("param(\"id\""), "{command}");
+        assert!(!command.contains("param(\"version\""), "{command}");
+        assert!(!command.contains("param(\"created_at\""), "{command}");
 
         let transition = draft
             .generated

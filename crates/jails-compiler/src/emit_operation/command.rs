@@ -2,7 +2,7 @@ use super::{operation_file, resolve_fields, stored_entity};
 use crate::CompileError;
 use crate::emit_java::{domain_import, primary_key, with_suffix};
 use jails_contracts::{ProjectPath, RenderedFile};
-use jails_model::{AppModel, BuiltinType, Command, Operation, TypeRef};
+use jails_model::{AppModel, Command, Operation, Value};
 use std::collections::BTreeSet;
 
 pub(super) fn lower(
@@ -13,7 +13,7 @@ pub(super) fn lower(
 ) -> Result<(ProjectPath, RenderedFile), CompileError> {
     let target = stored_entity(model, operation, &command.on, "command")?;
     let inputs = resolve_fields(operation, target, &command.fields, "input")?;
-    let primary_key = primary_key(target)?;
+    primary_key(target)?;
     let mut imports = BTreeSet::from([
         format!(
             "{}.application.commands.{}",
@@ -25,48 +25,79 @@ pub(super) fn lower(
         "org.springframework.stereotype.Repository".to_string(),
     ]);
     let mut params = String::new();
+    let mut columns = Vec::new();
+    let mut values = Vec::new();
     for field in target.fields.values() {
         let value = if inputs.iter().any(|input| input.id == field.id) {
             let member = &field.names.java_member;
             if field.required {
-                format!("input.{member}()")
+                InsertValue::Parameter(format!("input.{member}()"))
             } else {
-                format!("input.{member}().orElse(null)")
+                InsertValue::Parameter(format!("input.{member}().orElse(null)"))
             }
-        } else if field.id == primary_key.id
-            && matches!(field.ty, TypeRef::Builtin(BuiltinType::Uuid))
-        {
-            imports.insert("java.util.UUID".to_string());
-            "UUID.randomUUID()".to_string()
+        } else if field.semantics.scope.is_some() {
+            return Err(CompileError::new(format!(
+                "canonical command `{}` needs execution context for scope field `{}`\n       fix: compile the scoped command through a context-aware adapter or eject its implementation boundary",
+                operation.label, field.label
+            )));
+        } else if field.semantics.updated {
+            InsertValue::Expression("current_timestamp")
+        } else if matches!(
+            field.semantics.default.as_ref().map(|default| &default.value),
+            Some(Value::Function { name, arguments }) if name == "uuid7" && arguments.is_empty()
+        ) {
+            imports.insert(format!(
+                "{}.domain.TimeOrderedUuid",
+                model.project.base_package
+            ));
+            InsertValue::Parameter("TimeOrderedUuid.next()".to_string())
+        } else if field.semantics.default.is_some() {
+            InsertValue::Omitted
         } else if !field.required {
-            "(Object) null".to_string()
+            InsertValue::Parameter("(Object) null".to_string())
         } else {
             return Err(CompileError::new(format!(
-                "canonical command `{}` cannot construct required field `{}`\n       fix: carry `{}` in the command, or use a UUID primary key that Jails can generate",
+                "canonical command `{}` cannot construct required field `{}`\n       fix: carry `{}` in the command or declare a typed field default",
                 operation.label, field.label, field.label
             )));
         };
-        params.push_str(&format!(
-            "        statement = statement.param(\"{}\", {value});\n",
-            field.names.sql_column
-        ));
+        match value {
+            InsertValue::Parameter(value) => {
+                columns.push(field.names.sql_column.as_str());
+                values.push(format!(":{}", field.names.sql_column));
+                params.push_str(&format!(
+                    "        statement = statement.param(\"{}\", {value});\n",
+                    field.names.sql_column
+                ));
+            }
+            InsertValue::Expression(value) => {
+                columns.push(field.names.sql_column.as_str());
+                values.push(value.to_string());
+            }
+            InsertValue::Omitted => {}
+        }
     }
-    let columns = target
+    let returning = target
         .fields
         .values()
         .map(|field| field.names.sql_column.as_str())
-        .collect::<Vec<_>>();
-    let column_list = columns.join(", ");
-    let values = columns
-        .iter()
-        .map(|column| format!(":{column}"))
         .collect::<Vec<_>>()
         .join(", ");
+    let insert = if columns.is_empty() {
+        format!("insert into {} default values", target.names.sql_table)
+    } else {
+        format!(
+            "insert into {} ({}) values ({})",
+            target.names.sql_table,
+            columns.join(", "),
+            values.join(", ")
+        )
+    };
     let port_type = with_suffix(&operation.names.java_type, "Command");
     let type_name = format!("Jdbc{port_type}");
     let body = format!(
-        "@Repository\npublic final class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;\n\n    public {type_name}(JdbcClient jdbc) {{\n        this.jdbc = jdbc;\n    }}\n\n    @Override\n    public {} execute({port_type}.Input input) {{\n        JdbcClient.StatementSpec statement = jdbc.sql(\"insert into {} ({column_list}) values ({values}) returning {column_list}\");\n{params}        return statement.query({}.class).single();\n    }}\n}}",
-        target.names.java_type, target.names.sql_table, target.names.java_type
+        "@Repository\npublic final class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;\n\n    public {type_name}(JdbcClient jdbc) {{\n        this.jdbc = jdbc;\n    }}\n\n    @Override\n    public {} execute({port_type}.Input input) {{\n        JdbcClient.StatementSpec statement = jdbc.sql(\"{insert} returning {returning}\");\n{params}        return statement.query({}.class).single();\n    }}\n}}",
+        target.names.java_type, target.names.java_type
     );
     operation_file(
         model,
@@ -79,4 +110,10 @@ pub(super) fn lower(
         imports,
         body,
     )
+}
+
+enum InsertValue {
+    Parameter(String),
+    Expression(&'static str),
+    Omitted,
 }
