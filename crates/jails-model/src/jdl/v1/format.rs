@@ -1,16 +1,17 @@
-use super::parse_cst;
+use super::{TokenKind, parse_cst};
 use crate::Diagnostics;
 
 /// Format a valid JDL v1 document without changing declaration ordering.
 ///
 /// The formatter owns whole-document layout, unlike ordinary CST edits. It
-/// canonicalizes line endings, indentation, blank-line runs, horizontal
-/// trailing space, and the final newline while retaining declaration order and
+/// canonicalizes lexical spellings, line endings, indentation, blank-line
+/// runs, horizontal trailing space, and the final newline while retaining
 /// comment text. Token wrapping and member reordering remain deliberately
 /// separate rules.
 pub fn format(input: &str) -> Result<String, Diagnostics> {
-    parse_cst(input)?;
-    let normalized = input.replace("\r\n", "\n").replace('\r', "\n");
+    let normalized = canonicalize_tokens(input)?
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
     let mut brace_depth = 0_u32;
     let mut delimiter_depth = 0_u32;
     let mut lines = Vec::new();
@@ -26,6 +27,8 @@ pub fn format(input: &str) -> Result<String, Diagnostics> {
             continue;
         }
         previous_blank = false;
+        let ordered = order_attributes(trimmed);
+        let trimmed = ordered.as_str();
         let shape = line_shape(trimmed);
         let line_brace_depth = brace_depth.saturating_sub(shape.leading_close_braces);
         let line_delimiter_depth = delimiter_depth.saturating_sub(shape.leading_close_delimiters);
@@ -48,6 +51,192 @@ pub fn format(input: &str) -> Result<String, Diagnostics> {
     let mut output = lines.join("\n");
     output.push('\n');
     Ok(output)
+}
+
+fn canonicalize_tokens(input: &str) -> Result<String, Diagnostics> {
+    let cst = parse_cst(input)?;
+    let remove_asc = explicit_asc_tokens(&cst);
+    let mut output = String::with_capacity(input.len());
+    let mut previous_syntax = None::<String>;
+    for (index, token) in cst.tokens.iter().enumerate() {
+        if token.kind == TokenKind::Eof || remove_asc[index] {
+            continue;
+        }
+        let text = token.text(cst.source());
+        if token.kind == TokenKind::String {
+            let decoded = serde_json::from_str::<String>(text)
+                .expect("the validated JDL lexer accepts only JSON string literals");
+            output.push_str(
+                &serde_json::to_string(&decoded)
+                    .expect("a Rust string always has a JSON representation"),
+            );
+        } else if token.kind == TokenKind::Word && previous_syntax.as_deref() == Some("route") {
+            output.push_str(&text.to_ascii_uppercase());
+        } else {
+            output.push_str(text);
+        }
+        match token.kind {
+            TokenKind::Word | TokenKind::Integer | TokenKind::String | TokenKind::Symbol => {
+                previous_syntax = Some(text.to_string());
+            }
+            TokenKind::Newline => previous_syntax = None,
+            _ => {}
+        }
+    }
+    Ok(output)
+}
+
+fn explicit_asc_tokens(cst: &super::DocumentCst) -> Vec<bool> {
+    let mut remove = vec![false; cst.tokens.len()];
+    let syntax = cst
+        .tokens
+        .iter()
+        .enumerate()
+        .filter(|(_, token)| {
+            matches!(
+                token.kind,
+                TokenKind::Word | TokenKind::Integer | TokenKind::String | TokenKind::Symbol
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut cursor = 0;
+    while cursor + 2 < syntax.len() {
+        if syntax[cursor].1.text(cst.source()) != "order"
+            || syntax[cursor + 1].1.text(cst.source()) != "by"
+            || syntax[cursor + 2].1.text(cst.source()) != "["
+        {
+            cursor += 1;
+            continue;
+        }
+        cursor += 3;
+        let mut expect_field = true;
+        while cursor < syntax.len() {
+            let (token_index, token) = syntax[cursor];
+            let text = token.text(cst.source());
+            if text == "]" {
+                break;
+            }
+            if text == "," {
+                expect_field = true;
+            } else if expect_field {
+                expect_field = false;
+            } else if text == "asc" {
+                remove[token_index] = true;
+                if let Some((whitespace_index, whitespace)) = cst
+                    .tokens
+                    .get(..token_index)
+                    .and_then(|tokens| tokens.iter().enumerate().next_back())
+                    && whitespace.kind == TokenKind::Whitespace
+                {
+                    remove[whitespace_index] = true;
+                }
+            }
+            cursor += 1;
+        }
+    }
+    remove
+}
+
+fn order_attributes(line: &str) -> String {
+    let Ok(tokens) = super::token::lex(line) else {
+        return line.to_string();
+    };
+    let mut edits = Vec::new();
+    let mut cursor = 0;
+    while cursor < tokens.len() {
+        if tokens[cursor].text(line) != "@" {
+            cursor += 1;
+            continue;
+        }
+        let run_start = tokens[cursor].span.start;
+        let mut attributes = Vec::new();
+        let mut next = cursor;
+        let mut run_end = run_start;
+        while let Some((end, name)) = attribute_end(line, &tokens, next) {
+            run_end = tokens[end - 1].span.end;
+            attributes.push((
+                attribute_rank(name),
+                line[tokens[next].span.start..run_end].to_string(),
+            ));
+            next = end;
+            while tokens
+                .get(next)
+                .is_some_and(|token| token.kind == TokenKind::Whitespace)
+            {
+                next += 1;
+            }
+            if tokens.get(next).is_none_or(|token| token.text(line) != "@") {
+                break;
+            }
+        }
+        if attributes.len() > 1 {
+            attributes.sort_by(|left, right| left.0.cmp(&right.0));
+            edits.push((
+                run_start,
+                run_end,
+                attributes
+                    .into_iter()
+                    .map(|(_, text)| text)
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            ));
+        }
+        cursor = next.max(cursor + 1);
+    }
+    let mut output = line.to_string();
+    for (start, end, replacement) in edits.into_iter().rev() {
+        output.replace_range(start..end, &replacement);
+    }
+    output
+}
+
+fn attribute_end<'a>(
+    source: &'a str,
+    tokens: &[super::Token],
+    start: usize,
+) -> Option<(usize, &'a str)> {
+    if tokens.get(start)?.text(source) != "@" {
+        return None;
+    }
+    let name = tokens.get(start + 1)?;
+    if name.kind != TokenKind::Word {
+        return None;
+    }
+    let mut cursor = start + 2;
+    if tokens
+        .get(cursor)
+        .is_none_or(|token| token.text(source) != "(")
+    {
+        return Some((cursor, name.text(source)));
+    }
+    let mut depth = 0_u32;
+    while let Some(token) = tokens.get(cursor) {
+        match token.text(source) {
+            "(" => depth += 1,
+            ")" => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some((cursor + 1, name.text(source)));
+                }
+            }
+            _ => {}
+        }
+        cursor += 1;
+    }
+    None
+}
+
+fn attribute_rank(name: &str) -> (u8, &str) {
+    let group = match name {
+        "id" => 0,
+        "default" | "pk" => 1,
+        "length" | "nonnegative" | "notBlank" | "positive" => 2,
+        "index" | "internal" | "scope" | "target" | "unique" | "version" => 3,
+        "map" => 4,
+        "retired" => 5,
+        _ => 6,
+    };
+    (group, name)
 }
 
 #[derive(Default)]
@@ -136,6 +325,49 @@ mod tests {
         assert!(formatted.contains("\n\napp Demo {\n  pkg"), "{formatted}");
         assert!(formatted.contains("\n  command Create(id) {\n    route"));
         assert!(!formatted.contains("\n\n\n"));
+        assert_eq!(format(&formatted).unwrap(), formatted);
+        assert_eq!(
+            crate::parse_jdl(input).unwrap(),
+            crate::parse_jdl(&formatted).unwrap()
+        );
+    }
+
+    #[test]
+    fn formatter_canonicalizes_strings_routes_ordering_and_attribute_rank() {
+        let input = r#"jdl 1
+app Demo {
+ pkg com.example.demo
+ java 26
+ platform spring
+ build maven
+ storage postgres
+}
+dep org.example:demo @scope(test) @version("1.0") @id(dep_demo)
+entity Task {
+ title: string @map("ti\u0074le") @unique @length(1..100) @id(fld_task_title)
+ createdAt: instant
+ query Open() @id(op_open) {
+ order by [title asc, createdAt desc]
+ route get "\u002ftasks"
+ }
+}
+"#;
+        let formatted = format(input).unwrap();
+        assert!(
+            formatted.contains(
+                "title: string @id(fld_task_title) @length(1..100) @unique @map(\"title\")"
+            ),
+            "{formatted}"
+        );
+        assert!(
+            formatted.contains("dep org.example:demo @id(dep_demo) @scope(test) @version(\"1.0\")"),
+            "{formatted}"
+        );
+        assert!(
+            formatted.contains("order by [title, createdAt desc]"),
+            "{formatted}"
+        );
+        assert!(formatted.contains("route GET \"/tasks\""), "{formatted}");
         assert_eq!(format(&formatted).unwrap(), formatted);
         assert_eq!(
             crate::parse_jdl(input).unwrap(),
