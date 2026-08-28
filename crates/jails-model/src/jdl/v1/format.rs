@@ -1,5 +1,6 @@
 use super::{TokenKind, parse_cst};
 use crate::Diagnostics;
+use std::collections::BTreeSet;
 
 /// Format a valid JDL v1 document without changing declaration ordering.
 ///
@@ -9,7 +10,9 @@ use crate::Diagnostics;
 /// comment text. Token wrapping and member reordering remain deliberately
 /// separate rules.
 pub fn format(input: &str) -> Result<String, Diagnostics> {
-    let normalized = canonicalize_tokens(input)?
+    let reordered = reorder_entity_members(input)?;
+    let grouped = separate_top_level_groups(&reordered)?;
+    let normalized = canonicalize_tokens(&grouped)?
         .replace("\r\n", "\n")
         .replace('\r', "\n");
     let mut brace_depth = 0_u32;
@@ -33,11 +36,12 @@ pub fn format(input: &str) -> Result<String, Diagnostics> {
         let line_brace_depth = brace_depth.saturating_sub(shape.leading_close_braces);
         let line_delimiter_depth = delimiter_depth.saturating_sub(shape.leading_close_delimiters);
         let continuation = u32::from(line_delimiter_depth > 0);
-        lines.push(format!(
+        let rendered = format!(
             "{}{}",
             "  ".repeat((line_brace_depth + continuation) as usize),
             trimmed
-        ));
+        );
+        lines.extend(wrap_line(rendered, line_delimiter_depth));
         brace_depth = brace_depth
             .saturating_add(shape.open_braces)
             .saturating_sub(shape.close_braces);
@@ -51,6 +55,239 @@ pub fn format(input: &str) -> Result<String, Diagnostics> {
     let mut output = lines.join("\n");
     output.push('\n');
     Ok(output)
+}
+
+fn separate_top_level_groups(input: &str) -> Result<String, Diagnostics> {
+    let cst = parse_cst(input)?;
+    let entities = cst
+        .declarations
+        .iter()
+        .filter(|declaration| declaration.kind == "entity")
+        .collect::<Vec<_>>();
+    let mut declarations = cst
+        .declarations
+        .iter()
+        .filter(|declaration| {
+            declaration.kind == "entity"
+                || !entities.iter().any(|entity| {
+                    declaration.span.start > entity.span.start
+                        && declaration.span.end <= entity.span.end
+                })
+        })
+        .collect::<Vec<_>>();
+    declarations.sort_by_key(|declaration| declaration.span.start);
+    let mut insertions = Vec::new();
+    for pair in declarations.windows(2) {
+        if top_level_group(&pair[0].kind) != top_level_group(&pair[1].kind) {
+            insertions.push(pair[0].span.end);
+        }
+    }
+    let mut output = input.to_string();
+    for position in insertions.into_iter().rev() {
+        output.insert(position, '\n');
+    }
+    Ok(output)
+}
+
+fn top_level_group(kind: &str) -> u8 {
+    match kind {
+        "app" => 0,
+        "cap" | "dep" | "prop" => 1,
+        "enum" | "entity" => 2,
+        "use" => 3,
+        "command" | "query" | "transition" | "event" => 4,
+        "component" => 5,
+        "eject" => 6,
+        _ => 7,
+    }
+}
+
+fn reorder_entity_members(input: &str) -> Result<String, Diagnostics> {
+    let cst = parse_cst(input)?;
+    let mut edits = Vec::new();
+    for entity in cst
+        .declarations
+        .iter()
+        .filter(|declaration| declaration.kind == "entity")
+    {
+        let mut members = cst
+            .members
+            .iter()
+            .filter(|member| {
+                member.span.start >= entity.span.start && member.span.end <= entity.span.end
+            })
+            .collect::<Vec<_>>();
+        members.sort_by_key(|member| member.span.start);
+        if members.len() < 2 {
+            continue;
+        }
+        let body_start = cst
+            .tokens
+            .iter()
+            .find(|token| {
+                token.span.start >= entity.span.start
+                    && token.span.end <= entity.span.end
+                    && token.text(cst.source()) == "{"
+            })
+            .map(|token| token.span.end);
+        let body_end = cst
+            .tokens
+            .iter()
+            .filter(|token| {
+                token.span.start >= entity.span.start
+                    && token.span.end <= entity.span.end
+                    && token.text(cst.source()) == "}"
+            })
+            .map(|token| token.span.start)
+            .max();
+        let (Some(body_start), Some(body_end)) = (body_start, body_end) else {
+            continue;
+        };
+        let prefix_end = members[0].span.start;
+        let prefix = &cst.source()[body_start..prefix_end];
+        let mut previous_end = prefix_end;
+        let mut chunks = Vec::new();
+        for (position, member) in members.iter().enumerate() {
+            let chunk = &cst.source()[previous_end..member.span.end];
+            chunks.push((
+                member_rank(&member.kind),
+                position,
+                member.kind.as_str(),
+                member_syntax(cst.member_text(member)),
+                chunk.to_string(),
+            ));
+            previous_end = member.span.end;
+        }
+        chunks.sort_by_key(|(rank, position, ..)| (*rank, *position));
+        let mut seen_uses = BTreeSet::new();
+        let mut replacement = prefix.to_string();
+        let mut previous_rank = None;
+        for (rank, _, kind, syntax, chunk) in chunks {
+            if kind == "use" && !chunk.contains("//") && !seen_uses.insert(syntax) {
+                continue;
+            }
+            if previous_rank.is_some_and(|previous| previous != rank) {
+                replacement.push('\n');
+            }
+            replacement.push_str(&chunk);
+            previous_rank = Some(rank);
+        }
+        replacement.push_str(&cst.source()[previous_end..body_end]);
+        if replacement != cst.source()[body_start..body_end] {
+            edits.push((body_start, body_end, replacement));
+        }
+    }
+    let mut output = input.to_string();
+    edits.sort_by_key(|(start, ..)| *start);
+    for (start, end, replacement) in edits.into_iter().rev() {
+        output.replace_range(start..end, &replacement);
+    }
+    Ok(output)
+}
+
+fn member_rank(kind: &str) -> u8 {
+    match kind {
+        "use" => 0,
+        "table" => 1,
+        "field" => 2,
+        "pk" | "unique" | "index" => 3,
+        "relation" => 4,
+        "command" | "query" | "transition" | "event" => 5,
+        _ => 6,
+    }
+}
+
+fn member_syntax(source: &str) -> String {
+    super::token::lex(source).map_or_else(
+        |_| source.split_whitespace().collect(),
+        |tokens| {
+            tokens
+                .iter()
+                .filter(|token| {
+                    matches!(
+                        token.kind,
+                        TokenKind::Word
+                            | TokenKind::Integer
+                            | TokenKind::String
+                            | TokenKind::Symbol
+                    )
+                })
+                .map(|token| token.text(source))
+                .collect()
+        },
+    )
+}
+
+fn wrap_line(line: String, initial_delimiter_depth: u32) -> Vec<String> {
+    if line.chars().count() <= 100 {
+        return vec![line];
+    }
+    let leading = line.bytes().take_while(|byte| *byte == b' ').count();
+    let continuation_indent = if initial_delimiter_depth > 0 {
+        leading
+    } else {
+        leading + 2
+    };
+    let mut depth = initial_delimiter_depth;
+    let mut current = line;
+    let mut wrapped = Vec::new();
+    loop {
+        let candidates = comma_candidates(&current, depth);
+        let position = candidates
+            .iter()
+            .rev()
+            .find(|(position, _)| current[..*position].chars().count() <= 100)
+            .copied()
+            .or_else(|| candidates.first().copied());
+        let Some((position, next_depth)) = position else {
+            wrapped.push(current);
+            break;
+        };
+        let remainder = current[position..].trim_start();
+        if remainder.is_empty() {
+            wrapped.push(current);
+            break;
+        }
+        wrapped.push(current[..position].trim_end().to_string());
+        current = format!("{}{remainder}", " ".repeat(continuation_indent));
+        depth = next_depth;
+        if current.chars().count() <= 100 {
+            wrapped.push(current);
+            break;
+        }
+    }
+    wrapped
+}
+
+fn comma_candidates(line: &str, initial_depth: u32) -> Vec<(usize, u32)> {
+    let mut candidates = Vec::new();
+    let mut depth = initial_depth;
+    let mut string = false;
+    let mut escaped = false;
+    let mut characters = line.char_indices().peekable();
+    while let Some((offset, character)) = characters.next() {
+        if string {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                string = false;
+            }
+            continue;
+        }
+        if character == '/' && characters.peek().is_some_and(|(_, next)| *next == '/') {
+            break;
+        }
+        match character {
+            '"' => string = true,
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
+            ',' if depth > 0 => candidates.push((offset + character.len_utf8(), depth)),
+            _ => {}
+        }
+    }
+    candidates
 }
 
 fn canonicalize_tokens(input: &str) -> Result<String, Diagnostics> {
@@ -342,6 +579,7 @@ app Demo {
  build maven
  storage postgres
 }
+cap fake
 dep org.example:demo @scope(test) @version("1.0") @id(dep_demo)
 entity Task {
  title: string @map("ti\u0074le") @unique @length(1..100) @id(fld_task_title)
@@ -363,6 +601,8 @@ entity Task {
             formatted.contains("dep org.example:demo @id(dep_demo) @scope(test) @version(\"1.0\")"),
             "{formatted}"
         );
+        assert!(formatted.contains("}\n\ncap fake\ndep org.example:demo"));
+        assert!(formatted.contains("@version(\"1.0\")\n\nentity Task"));
         assert!(
             formatted.contains("order by [title, createdAt desc]"),
             "{formatted}"
@@ -373,5 +613,105 @@ entity Task {
             crate::parse_jdl(input).unwrap(),
             crate::parse_jdl(&formatted).unwrap()
         );
+    }
+
+    #[test]
+    fn formatter_wraps_only_at_delimited_commas_before_the_target_width() {
+        let input = r#"jdl 1
+app Demo {
+ pkg com.example.demo
+ java 26
+ platform spring
+ build maven
+ storage postgres
+}
+entity Composite {
+ firstIdentifier: uuid
+ secondIdentifier: uuid
+ thirdIdentifier: uuid
+ fourthIdentifier: uuid
+ fifthIdentifier: uuid
+ sixthIdentifier: uuid
+ pk [firstIdentifier, secondIdentifier, thirdIdentifier, fourthIdentifier, fifthIdentifier, sixthIdentifier] @id(pk_composite)
+}
+"#;
+        let formatted = format(input).unwrap();
+        assert!(formatted.contains("pk [firstIdentifier, secondIdentifier,"));
+        assert!(formatted.contains("\n    sixthIdentifier"), "{formatted}");
+        assert!(
+            formatted.lines().all(|line| line.chars().count() <= 100),
+            "{formatted}"
+        );
+        assert_eq!(format(&formatted).unwrap(), formatted);
+        assert_eq!(
+            crate::parse_jdl(input).unwrap(),
+            crate::parse_jdl(&formatted).unwrap()
+        );
+    }
+
+    #[test]
+    fn formatter_orders_entity_member_classes_without_detaching_comments() {
+        let input = r#"jdl 1
+app Demo {
+ pkg com.example.demo
+ java 26
+ platform spring
+ build maven
+ storage postgres
+}
+entity Task {
+ query Open()
+ // title contract
+ title: string
+ use repo
+ table "tasks"
+ id: uuid @pk
+ index [title]
+}
+"#;
+        let formatted = format(input).unwrap();
+        let use_at = formatted.find("  use repo").unwrap();
+        let table_at = formatted.find("  table \"tasks\"").unwrap();
+        let id_at = formatted.find("  id: uuid").unwrap();
+        let comment_at = formatted.find("  // title contract").unwrap();
+        let title_at = formatted.find("  title: string").unwrap();
+        let index_at = formatted.find("  index [title]").unwrap();
+        let query_at = formatted.find("  query Open()").unwrap();
+        assert!(use_at < table_at);
+        assert!(table_at < id_at);
+        assert!(comment_at < title_at && title_at < id_at);
+        assert!(id_at < index_at && index_at < query_at);
+        assert!(formatted.contains("  use repo\n\n  table \"tasks\""));
+        assert!(formatted.contains("  id: uuid @pk\n\n  index [title]"));
+        assert!(formatted.contains("  index [title]\n\n  query Open()"));
+        assert_eq!(format(&formatted).unwrap(), formatted);
+        assert_eq!(
+            crate::parse_jdl(input).unwrap(),
+            crate::parse_jdl(&formatted).unwrap()
+        );
+    }
+
+    #[test]
+    fn formatter_removes_only_comment_free_identical_use_members() {
+        let input = r#"jdl 1
+app Demo {
+ pkg com.example.demo
+ java 26
+ platform spring
+ build maven
+ storage postgres
+}
+entity Task {
+ use repo
+ use repo
+ // keep this selection explanation
+ use repo
+ id: uuid @pk
+}
+"#;
+        let formatted = format(input).unwrap();
+        assert_eq!(formatted.matches("use repo").count(), 2, "{formatted}");
+        assert!(formatted.contains("// keep this selection explanation"));
+        assert_eq!(format(&formatted).unwrap(), formatted);
     }
 }

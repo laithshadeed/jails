@@ -30,9 +30,11 @@ commands use local CST edits; `jails model fmt`, `--check`, preview, and sealed
 apply all use the same exact-plan boundary. Unversioned source continues
 through the pre-v1 compatibility importer. The formatter now canonicalizes
 JSON string encodings, HTTP method case, explicit ascending order, and
-attribute rank as well as whitespace and newline shape. Width wrapping,
-entity-member reordering, and duplicate-selector cleanup remain, alongside
-expanded field attributes, scope and chosen/derived prerequisite semantics,
+attribute rank as well as whitespace, newline shape, and comma-safe wrapping
+to the 100-column target. It orders entity member classes, separates member
+and top-level declaration groups, and removes only comment-free identical
+`use` selections. Expanded field attributes, scope and chosen/derived
+prerequisite semantics,
 the exhaustive CLI equivalence matrix, convention-derived output roles, and
 direct rich-node consumption by every emitter remain open. This checkpoint is
 not the ship claim in section 20.
