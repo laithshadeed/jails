@@ -481,4 +481,246 @@ component cases Checkout {
         .unwrap_err();
         assert_eq!(route_collision.diagnostics[0].code, "model-route-collision");
     }
+
+    #[test]
+    fn projection_selectors_expand_after_collection_and_keep_typed_arguments() {
+        let model = parse(
+            r#"jdl 1
+app Work {
+  pkg com.example.work
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+use dto for * except AuditEntry
+use factory for Invoice, RetiredEntity
+use search(fields: [title]) for Invoice
+
+entity AuditEntry {
+  id: uuid @pk
+}
+
+entity Invoice {
+  id: uuid @pk
+  title: string
+}
+
+entity RetiredEntity @retired {
+  id: uuid @pk
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(model.projections.len(), 5);
+        let invoice = model
+            .entities
+            .values()
+            .find(|entity| entity.label == "invoice")
+            .unwrap();
+        let audit = model
+            .entities
+            .values()
+            .find(|entity| entity.label == "audit_entry")
+            .unwrap();
+        let retired = model
+            .entities
+            .values()
+            .find(|entity| entity.label == "retired_entity")
+            .unwrap();
+        assert!(invoice.facets.contains(&Facet::Dto));
+        assert!(invoice.facets.contains(&Facet::Factory));
+        assert!(invoice.facets.contains(&Facet::Search));
+        assert!(!audit.facets.contains(&Facet::Dto));
+        assert!(retired.facets.contains(&Facet::Dto));
+        assert!(retired.facets.contains(&Facet::Factory));
+        assert!(
+            !retired.active,
+            "retired entities retain selector membership"
+        );
+
+        let search = model
+            .projections
+            .values()
+            .find(|projection| projection.kind.label() == "search")
+            .unwrap();
+        let crate::ProjectionKind::Search { fields } = &search.kind else {
+            panic!("search must retain its typed field list");
+        };
+        assert_eq!(fields.len(), 1);
+        assert_eq!(invoice.fields[&fields[0]].label, "title");
+    }
+
+    #[test]
+    fn selectors_fail_closed_for_unknown_names_and_conflicting_arguments() {
+        let app = "jdl 1\napp Demo {\n pkg com.example.demo\n java 26\n platform spring\n build maven\n storage postgres\n}\n";
+        let unknown = parse(&format!(
+            "{app}use dto for Missing\nentity Task {{\n id: uuid @pk\n}}\n"
+        ))
+        .unwrap_err();
+        assert_eq!(
+            unknown.diagnostics[0].code,
+            "model-projection-selector-reference"
+        );
+
+        let conflict = parse(&format!(
+            "{app}use http(path: \"/other\") for Task\nentity Task {{\n use scaffold(path: \"/tasks\")\n id: uuid @pk\n}}\n"
+        ))
+        .unwrap_err();
+        assert_eq!(
+            conflict.diagnostics[0].code,
+            "model-projection-configuration-conflict"
+        );
+    }
+
+    #[test]
+    fn relations_link_ordered_composite_keys_actions_and_cardinality() {
+        let model = parse(
+            r#"jdl 1
+app Work {
+  pkg com.example.work
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+entity Owner {
+  tenantId: uuid
+  id: uuid
+  pk [tenantId, id] @id(pk_owner)
+}
+
+entity Item {
+  id: uuid @pk
+  ownerTenantId: uuid
+  ownerId: uuid
+  unique [ownerTenantId, ownerId] @id(uq_item_owner)
+
+  relation owner to Owner @id(rel_item_owner) {
+    map ownerTenantId -> Owner.tenantId
+    map ownerId -> Owner.id
+    on delete cascade
+    on update restrict
+  }
+}
+"#,
+        )
+        .unwrap();
+
+        let owner = model
+            .entities
+            .values()
+            .find(|entity| entity.label == "owner")
+            .unwrap();
+        assert_eq!(owner.constraints.len(), 1);
+        let relation = model.relations.values().next().unwrap();
+        assert_eq!(relation.id.as_str(), "rel_item_owner");
+        assert_eq!(relation.mappings.len(), 2);
+        assert_eq!(relation.on_delete, crate::ReferentialAction::Cascade);
+        assert_eq!(relation.on_update, crate::ReferentialAction::Restrict);
+        assert_eq!(relation.cardinality, crate::RelationCardinality::OneToOne);
+        assert_eq!(relation.sql_name, "fk_item_owner");
+
+        let mut removal = model.clone();
+        let owner_id = owner.id.clone();
+        assert!(
+            removal
+                .apply(ModelPatch::RemoveEntity(owner_id))
+                .unwrap_err()
+                .contains("owner")
+        );
+        let local = relation.mappings[0].local.clone();
+        let mut removal = model.clone();
+        assert!(
+            removal
+                .apply(ModelPatch::RemoveField {
+                    entity: relation.child.clone(),
+                    field: local,
+                    confirmed_column: "owner_tenant_id".to_string(),
+                })
+                .unwrap_err()
+                .contains("owner")
+        );
+    }
+
+    #[test]
+    fn relation_invariants_reject_partial_nullable_non_keys_and_set_null_required() {
+        let source = r#"jdl 1
+app Work {
+  pkg com.example.work
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+entity Parent {
+  first: uuid
+  second: uuid
+  unique [first, second] @id(uq_parent_pair)
+}
+
+entity Child {
+  id: uuid @pk
+  first: uuid
+  second: uuid?
+  relation parent to Parent {
+    map first -> first
+    map second -> second
+    on delete set-null
+  }
+}
+"#;
+        let error = parse(source).unwrap_err();
+        let codes = error
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect::<Vec<_>>();
+        assert!(codes.contains(&"model-relation-partial-nullability"));
+        assert!(codes.contains(&"model-relation-set-null-required"));
+    }
+
+    #[test]
+    fn required_cascade_cycles_are_rejected_after_all_relations_link() {
+        let error = parse(
+            r#"jdl 1
+app Work {
+  pkg com.example.work
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+entity Alpha {
+  id: uuid @pk
+  betaId: uuid
+  relation beta to Beta {
+    map betaId -> id
+    on delete cascade
+  }
+}
+
+entity Beta {
+  id: uuid @pk
+  alphaId: uuid
+  relation alpha to Alpha {
+    map alphaId -> id
+    on delete cascade
+  }
+}
+"#,
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "model-relation-cascade-cycle")
+        );
+    }
 }

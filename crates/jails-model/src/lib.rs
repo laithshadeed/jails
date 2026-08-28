@@ -5,8 +5,10 @@
 //! explicit stable identity. It does not read files, render Java, allocate a
 //! migration version or know how a plan is persisted.
 
+mod app;
 mod capability;
 mod component;
+mod constraint;
 mod dependency;
 mod diagnostic;
 mod ejection;
@@ -20,19 +22,24 @@ mod model;
 mod naming;
 mod operation;
 mod patch;
+mod projection;
+mod relation;
 mod setting;
 mod source;
 mod syntax_edit;
 mod unit;
 
+pub use app::ProjectIntent;
 pub use component::{
     Component, ComponentKind, ComponentParameter, ComponentReference, ComponentVariant,
 };
+pub use constraint::{ConstraintKind, EntityConstraint};
 pub use diagnostic::{Diagnostic, Diagnostics};
 pub use enum_constant::EnumConstant;
 pub use id::{
-    CapabilityId, ComponentId, ComponentVariantId, DependencyId, EjectionId, EntityId, FieldId,
-    IndexId, OperationId, ProjectId, SettingId, StableId, UnitId,
+    CapabilityId, ComponentId, ComponentVariantId, ConstraintId, DependencyId, EjectionId,
+    EntityId, FieldId, IndexId, OperationId, ProjectId, ProjectionId, RelationId, SettingId,
+    StableId, UnitId,
 };
 pub use jdl::parse as parse_jdl;
 pub use jdl::v1::{
@@ -41,8 +48,8 @@ pub use jdl::v1::{
 };
 pub use model::{
     AppModel, BuiltinType, Capability, Dependency, DependencyScope, Ejection, Entity, EntityNames,
-    Facet, Field, FieldNames, Index, IndexColumn, IndexDirection, LengthRange, ProjectIntent,
-    Setting, SettingTarget, TypeRef,
+    Facet, Field, FieldNames, Index, IndexColumn, IndexDirection, LengthRange, Setting,
+    SettingTarget, TypeRef,
 };
 pub use operation::{
     Assignment, BindingSource, Command, CommandSemantics, Event, EventSemantics, FieldMapping,
@@ -54,6 +61,8 @@ pub use patch::{
     ColumnRenamePolicy, FieldAddPolicy, FieldEvolutionPolicy, ModelPatch, StorageRetirementPolicy,
     TypeChangeStrategy,
 };
+pub use projection::{Projection, ProjectionKind};
+pub use relation::{ReferentialAction, Relation, RelationCardinality, RelationMapping};
 pub use syntax_edit::{
     remove_capability_declaration, remove_dependency_declaration, remove_entity_declaration,
     remove_field_declaration, remove_index_declaration, remove_operation_declaration,

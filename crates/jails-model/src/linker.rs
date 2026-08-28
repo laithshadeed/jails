@@ -6,12 +6,14 @@ mod field;
 mod operation;
 mod unit;
 
+use crate::ProjectIntent;
 use crate::diagnostic::{Diagnostic, Diagnostics};
 use crate::id::{
-    CapabilityId, ComponentId, ComponentVariantId, DependencyId, EjectionId, EntityId, FieldId,
-    IndexId, OperationId, ProjectId, SettingId, StableId, UnitId,
+    CapabilityId, ComponentId, ComponentVariantId, ConstraintId, DependencyId, EjectionId,
+    EntityId, FieldId, IndexId, OperationId, ProjectId, ProjectionId, RelationId, SettingId,
+    StableId, UnitId,
 };
-use crate::model::{AppModel, Entity, EntityNames, Field, FieldNames, ProjectIntent, TypeRef};
+use crate::model::{AppModel, Entity, EntityNames, Field, FieldNames, TypeRef};
 use crate::naming::{
     lower_camel_case, snake_case, upper_camel_case, valid_java_member, valid_java_type,
     valid_label, valid_route,
@@ -59,6 +61,22 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
             "use `postgresql`, `sqlite`, `h2`, or `none`",
         );
     }
+    if !matches!(document.project.platform.as_str(), "spring" | "plain") {
+        linker.problem(
+            "model-platform",
+            "$.project.platform",
+            format!("unknown platform `{}`", document.project.platform),
+            "use `spring` or `plain`",
+        );
+    }
+    if !matches!(document.project.build.as_str(), "maven" | "gradle") {
+        linker.problem(
+            "model-build",
+            "$.project.build",
+            format!("unknown build system `{}`", document.project.build),
+            "use `maven` or `gradle`",
+        );
+    }
 
     let capabilities = crate::capability::link(
         document.capabilities,
@@ -76,6 +94,8 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
     let mut entity_fields = BTreeMap::<EntityId, BTreeMap<String, FieldId>>::new();
     let mut java_types = BTreeMap::<String, String>::new();
     let mut sql_tables = BTreeMap::<String, String>::new();
+    let mut entity_projections = BTreeMap::<EntityId, Vec<source::Projection>>::new();
+    let mut entity_relations = BTreeMap::<EntityId, BTreeMap<String, source::Relation>>::new();
 
     for (label, entity) in document.entities {
         let path = format!("$.entities.{label}");
@@ -208,19 +228,18 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
             !fields.is_empty(),
             !entity.indexes.is_empty(),
         );
-        if primary_keys > 1 || (requires_primary_key && primary_keys != 1) {
-            linker.problem(
-                "model-primary-key-count",
-                format!("{path}.fields"),
-                format!("entity `{label}` declares {primary_keys} primary keys"),
-                if requires_primary_key {
-                    "repository and search entities need exactly one `primary_key = true` field"
-                } else {
-                    "an entity may declare at most one `primary_key = true` field"
-                },
-            );
-        }
-
+        let constraints = crate::constraint::link(
+            &mut linker,
+            &path,
+            &sql_table,
+            &fields,
+            &field_labels,
+            entity.constraints,
+        );
+        let explicit_primary_keys = constraints
+            .values()
+            .filter(|constraint| constraint.kind == crate::ConstraintKind::PrimaryKey)
+            .count();
         let indexes = crate::index::link(
             &mut linker,
             &path,
@@ -231,9 +250,29 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
             entity.indexes,
         );
 
+        if primary_keys + explicit_primary_keys > 1
+            || (requires_primary_key && primary_keys + explicit_primary_keys != 1)
+        {
+            linker.problem(
+                "model-primary-key-count",
+                format!("{path}.constraints"),
+                format!(
+                    "entity `{label}` declares {} primary keys",
+                    primary_keys + explicit_primary_keys
+                ),
+                if requires_primary_key {
+                    "repository and search entities need exactly one primary-key constraint"
+                } else {
+                    "an entity may declare at most one primary-key constraint"
+                },
+            );
+        }
+
         if let Some(id) = id {
             entity_labels.insert(label.clone(), id.clone());
             entity_fields.insert(id.clone(), field_labels);
+            entity_projections.insert(id.clone(), entity.projections);
+            entity_relations.insert(id.clone(), entity.relations);
             entities.insert(
                 id.clone(),
                 Entity {
@@ -248,10 +287,22 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
                     enum_constants,
                     fields,
                     indexes,
+                    constraints,
                 },
             );
         }
     }
+
+    let projections = crate::projection::link(
+        entity_projections,
+        document.projection_rules,
+        &mut entities,
+        &entity_labels,
+        &document.project.platform,
+        &document.project.dialect,
+        &mut linker,
+    );
+    let relations = crate::relation::link(entity_relations, &entities, &entity_labels, &mut linker);
 
     let mut routes = BTreeMap::new();
     let operations = operation::link(
@@ -297,6 +348,8 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
             base_package: document.project.base_package,
             java_release: document.project.java_release,
             dialect: document.project.dialect,
+            platform: document.project.platform,
+            build: document.project.build,
         },
         capabilities,
         dependencies,
@@ -304,6 +357,8 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
         ejections,
         units,
         components,
+        projections,
+        relations,
         entities,
         operations,
     })
@@ -368,6 +423,18 @@ impl Linker {
     }
 
     pub(crate) fn index_id(&mut self, value: &str, path: &str) -> Option<IndexId> {
+        self.stable_id(value, path)
+    }
+
+    pub(crate) fn constraint_id(&mut self, value: &str, path: &str) -> Option<ConstraintId> {
+        self.stable_id(value, path)
+    }
+
+    pub(crate) fn projection_id(&mut self, value: &str, path: &str) -> Option<ProjectionId> {
+        self.stable_id(value, path)
+    }
+
+    pub(crate) fn relation_id(&mut self, value: &str, path: &str) -> Option<RelationId> {
         self.stable_id(value, path)
     }
 
@@ -548,6 +615,9 @@ parse_stable_id!(
     EntityId,
     FieldId,
     IndexId,
+    ConstraintId,
+    ProjectionId,
+    RelationId,
     OperationId,
     ComponentId,
     ComponentVariantId,

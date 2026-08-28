@@ -1,11 +1,15 @@
 use crate::EnumConstant;
 use crate::Operation;
 use crate::SourceUnit;
+use crate::app::ProjectIntent;
+use crate::constraint::EntityConstraint;
 use crate::id::{
-    CapabilityId, ComponentId, DependencyId, EjectionId, EntityId, FieldId, IndexId, OperationId,
-    ProjectId, SettingId, StableId, UnitId,
+    CapabilityId, ComponentId, ConstraintId, DependencyId, EjectionId, EntityId, FieldId, IndexId,
+    OperationId, ProjectionId, RelationId, SettingId, StableId, UnitId,
 };
 use crate::patch::{ModelPatch, StorageRetirementPolicy};
+use crate::projection::Projection;
+use crate::relation::Relation;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -22,6 +26,10 @@ pub struct AppModel {
     pub units: BTreeMap<UnitId, SourceUnit>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub components: BTreeMap<ComponentId, crate::Component>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub projections: BTreeMap<ProjectionId, Projection>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub relations: BTreeMap<RelationId, Relation>,
     pub entities: BTreeMap<EntityId, Entity>,
     pub operations: BTreeMap<OperationId, Operation>,
 }
@@ -42,11 +50,13 @@ impl AppModel {
             + self.ejections.len()
             + self.units.len()
             + self.components.len()
+            + self.projections.len()
+            + self.relations.len()
             + self.entities.len()
             + self
                 .entities
                 .values()
-                .map(|entity| entity.fields.len() + entity.indexes.len())
+                .map(|entity| entity.fields.len() + entity.indexes.len() + entity.constraints.len())
                 .sum::<usize>()
             + self.operations.len()
     }
@@ -186,6 +196,12 @@ impl AppModel {
                             .filter(|component| crate::component::references_entity(component, &id))
                             .map(|component| component.label.as_str()),
                     )
+                    .chain(
+                        self.relations
+                            .values()
+                            .filter(|relation| relation.child == id || relation.parent == id)
+                            .map(|relation| relation.label.as_str()),
+                    )
                     .collect::<Vec<_>>();
                 if !references.is_empty() {
                     return Err(format!(
@@ -213,6 +229,14 @@ impl AppModel {
                                 crate::component::references_entity(component, &entity)
                             })
                             .map(|component| component.label.as_str()),
+                    )
+                    .chain(
+                        self.relations
+                            .values()
+                            .filter(|relation| {
+                                relation.child == entity || relation.parent == entity
+                            })
+                            .map(|relation| relation.label.as_str()),
                     )
                     .collect::<Vec<_>>();
                 if !references.is_empty() {
@@ -328,6 +352,16 @@ impl AppModel {
                             .any(|candidate| candidate == &field)
                     })
                     .map(|operation| operation.label.as_str())
+                    .chain(
+                        self.relations
+                            .values()
+                            .filter(|relation| {
+                                relation.mappings.iter().any(|mapping| {
+                                    mapping.local == field || mapping.remote == field
+                                })
+                            })
+                            .map(|relation| relation.label.as_str()),
+                    )
                     .collect::<Vec<_>>();
                 if !references.is_empty() {
                     return Err(format!(
@@ -433,15 +467,6 @@ fn artifact_mentions(artifact: &str, semantic_id: &str) -> bool {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ProjectIntent {
-    pub id: ProjectId,
-    pub name: String,
-    pub base_package: String,
-    pub java_release: u16,
-    pub dialect: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Capability {
     pub id: CapabilityId,
     pub label: String,
@@ -514,6 +539,8 @@ pub struct Entity {
     pub enum_constants: Vec<EnumConstant>,
     pub fields: BTreeMap<FieldId, Field>,
     pub indexes: BTreeMap<IndexId, Index>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub constraints: BTreeMap<ConstraintId, EntityConstraint>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

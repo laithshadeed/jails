@@ -6,6 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 mod component;
 mod declaration;
 mod operation;
+mod projection;
+mod relation;
 
 pub(super) struct ParsedDocument {
     pub cst: DocumentCst,
@@ -31,6 +33,9 @@ struct EntityDraft {
     facets: BTreeSet<Facet>,
     fields: BTreeMap<String, source::Field>,
     indexes: BTreeMap<String, source::Index>,
+    constraints: Vec<source::EntityConstraint>,
+    relations: BTreeMap<String, source::Relation>,
+    projections: Vec<source::Projection>,
 }
 
 #[derive(Clone, Debug)]
@@ -56,6 +61,7 @@ struct Parser<'a> {
     entities: BTreeMap<String, source::Entity>,
     operations: BTreeMap<String, source::Operation>,
     components: BTreeMap<String, source::Component>,
+    projection_rules: Vec<source::ProjectionRule>,
 }
 
 impl<'a> Parser<'a> {
@@ -73,6 +79,7 @@ impl<'a> Parser<'a> {
             entities: BTreeMap::new(),
             operations: BTreeMap::new(),
             components: BTreeMap::new(),
+            projection_rules: Vec::new(),
         }
     }
 
@@ -110,13 +117,7 @@ impl<'a> Parser<'a> {
                 "enum" => self.parse_enum()?,
                 "entity" => self.parse_entity()?,
                 "eject" => self.parse_eject()?,
-                "use" => {
-                    return Err(self.here(
-                        "JDL0701",
-                        "top-level projection selectors are not linked in this implementation slice",
-                        "move the `use` declaration inside its entity for now",
-                    ));
-                }
+                "use" => self.parse_top_level_use()?,
                 "command" | "query" | "transition" | "event" => self.parse_operation(None)?,
                 "component" => self.parse_component()?,
                 unknown => {
@@ -183,6 +184,8 @@ impl<'a> Parser<'a> {
                 base_package: package,
                 java_release: java,
                 dialect: dialect.to_string(),
+                platform,
+                build,
             },
             capabilities: self.capabilities,
             dependencies: self.dependencies,
@@ -192,6 +195,7 @@ impl<'a> Parser<'a> {
             components: self.components,
             entities: self.entities,
             operations: self.operations,
+            projection_rules: self.projection_rules,
         };
         let cst = DocumentCst::new(self.input.to_string(), self.tokens, self.declarations);
         Ok(ParsedDocument { cst, source })
@@ -288,29 +292,6 @@ impl<'a> Parser<'a> {
             attributes.push(Attribute { name, args });
         }
         Ok(attributes)
-    }
-
-    fn skip_balanced(&mut self, closing: &str) -> Result<(), Diagnostics> {
-        let mut depth = 0_u32;
-        loop {
-            if self.kind() == TokenKind::Eof {
-                return Err(self.here(
-                    "JDL0111",
-                    format!("missing closing `{closing}`"),
-                    format!("add `{closing}`"),
-                ));
-            }
-            if self.at(closing) && depth == 0 {
-                self.bump();
-                return Ok(());
-            }
-            if self.at("(") {
-                depth += 1;
-            } else if self.at(")") {
-                depth = depth.saturating_sub(1);
-            }
-            self.bump_raw();
-        }
     }
 
     fn take_value(&mut self, description: &str) -> Result<String, Diagnostics> {

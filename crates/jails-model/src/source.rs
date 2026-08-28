@@ -24,6 +24,8 @@ pub(crate) struct Document {
     pub(crate) entities: BTreeMap<String, Entity>,
     #[serde(default)]
     pub(crate) operations: BTreeMap<String, Operation>,
+    #[serde(default)]
+    pub(crate) projection_rules: Vec<ProjectionRule>,
 }
 
 #[derive(Deserialize)]
@@ -34,6 +36,18 @@ pub(crate) struct Project {
     pub(crate) base_package: String,
     pub(crate) java_release: u16,
     pub(crate) dialect: String,
+    #[serde(default = "spring_platform")]
+    pub(crate) platform: String,
+    #[serde(default = "maven_build")]
+    pub(crate) build: String,
+}
+
+fn spring_platform() -> String {
+    "spring".to_string()
+}
+
+fn maven_build() -> String {
+    "maven".to_string()
 }
 
 #[derive(Deserialize)]
@@ -151,6 +165,12 @@ pub(crate) struct Entity {
     pub(crate) fields: BTreeMap<String, Field>,
     #[serde(default)]
     pub(crate) indexes: BTreeMap<String, Index>,
+    #[serde(default)]
+    pub(crate) constraints: Vec<EntityConstraint>,
+    #[serde(default)]
+    pub(crate) relations: BTreeMap<String, Relation>,
+    #[serde(default)]
+    pub(crate) projections: Vec<Projection>,
 }
 
 const fn active() -> bool {
@@ -189,6 +209,77 @@ pub(crate) struct Index {
     pub(crate) id: String,
     pub(crate) name: Option<String>,
     pub(crate) columns: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Projection {
+    pub(crate) kind: String,
+    #[serde(default)]
+    pub(crate) fields: Vec<String>,
+    pub(crate) path: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ProjectionRule {
+    pub(crate) projections: Vec<Projection>,
+    pub(crate) selector: ProjectionSelector,
+    #[serde(default)]
+    pub(crate) except: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum ProjectionSelector {
+    All,
+    Named(Vec<String>),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EntityConstraint {
+    pub(crate) id: String,
+    pub(crate) kind: ConstraintKind,
+    pub(crate) name: Option<String>,
+    pub(crate) fields: Vec<String>,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum ConstraintKind {
+    PrimaryKey,
+    Unique,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Relation {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) target: String,
+    pub(crate) sql_name: Option<String>,
+    pub(crate) mappings: Vec<RelationMapping>,
+    #[serde(default)]
+    pub(crate) on_delete: ReferentialAction,
+    #[serde(default)]
+    pub(crate) on_update: ReferentialAction,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RelationMapping {
+    pub(crate) local: String,
+    pub(crate) remote: String,
+}
+
+#[derive(Clone, Copy, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum ReferentialAction {
+    #[default]
+    Restrict,
+    Cascade,
+    SetNull,
 }
 
 #[derive(Deserialize)]

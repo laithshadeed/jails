@@ -101,7 +101,6 @@ app Notes @id(project_notes) {
 }
 
 entity Task @id(ent_task) {
-  use record
   id: uuid @id(fld_task_id) @pk
   title: string @id(fld_task_title) @notBlank
 }

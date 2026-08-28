@@ -276,6 +276,9 @@ impl Parser<'_> {
                 values,
                 fields: BTreeMap::new(),
                 indexes: BTreeMap::new(),
+                constraints: Vec::new(),
+                relations: BTreeMap::new(),
+                projections: Vec::new(),
             },
         );
         self.declaration("enum", Some(name), start, self.previous_end());
@@ -298,6 +301,9 @@ impl Parser<'_> {
             facets: BTreeSet::from([Facet::Record]),
             fields: BTreeMap::new(),
             indexes: BTreeMap::new(),
+            constraints: Vec::new(),
+            relations: BTreeMap::new(),
+            projections: Vec::new(),
         };
         self.expect("{", "JDL0501", "an entity declaration needs a block")?;
         if self.consume("}") {
@@ -324,16 +330,7 @@ impl Parser<'_> {
                     "command" | "query" | "transition" | "event" => {
                         self.parse_operation(Some(&label))?;
                     }
-                    "relation" => {
-                        return Err(self.here(
-                            "JDL0901",
-                            format!(
-                                "typed `{}` lowering belongs to the next JDL slice",
-                                self.text()
-                            ),
-                            "keep this declaration in legacy JDL until that lowering lands",
-                        ));
-                    }
+                    "relation" => self.parse_relation(&mut entity)?,
                     _ => self.parse_field(&mut entity)?,
                 }
             }
@@ -349,66 +346,13 @@ impl Parser<'_> {
                 values: Vec::new(),
                 fields: entity.fields,
                 indexes: entity.indexes,
+                constraints: entity.constraints,
+                relations: entity.relations,
+                projections: entity.projections,
             },
         );
         self.declaration("entity", Some(name), start, self.previous_end());
         Ok(())
-    }
-
-    fn parse_entity_use(&mut self, entity: &mut EntityDraft) -> Result<(), Diagnostics> {
-        self.expect("use", "JDL0600", "expected an entity use declaration")?;
-        loop {
-            let projection = self.take_word("projection kind")?;
-            match projection.as_str() {
-                "scaffold" => entity.facets.extend([
-                    Facet::Record,
-                    Facet::Repository,
-                    Facet::Service,
-                    Facet::Http,
-                ]),
-                "record" => {
-                    entity.facets.insert(Facet::Record);
-                }
-                "factory" => {
-                    entity.facets.insert(Facet::Factory);
-                }
-                "dto" => {
-                    entity.facets.insert(Facet::Dto);
-                }
-                "repo" => {
-                    entity.facets.insert(Facet::Repository);
-                }
-                "service" => {
-                    entity.facets.insert(Facet::Service);
-                }
-                "http" => {
-                    entity.facets.insert(Facet::Http);
-                }
-                "events" => {
-                    entity.facets.insert(Facet::Events);
-                }
-                "search" => {
-                    entity.facets.insert(Facet::Search);
-                }
-                "seed" => {
-                    entity.facets.insert(Facet::Factory);
-                }
-                other => {
-                    return Err(self.here(
-                        "JDL0601",
-                        format!("unknown entity projection `{other}`"),
-                        "use scaffold, record, repo, service, http, factory, dto, events, search, or seed",
-                    ));
-                }
-            }
-            if self.consume("(") {
-                self.skip_balanced(")")?;
-            }
-            if !self.consume(",") {
-                break;
-            }
-        }
-        self.end_line()
     }
 
     fn parse_field(&mut self, entity: &mut EntityDraft) -> Result<(), Diagnostics> {
@@ -453,10 +397,20 @@ impl Parser<'_> {
         kind: &str,
     ) -> Result<(), Diagnostics> {
         self.bump();
-        let columns = self.field_list()?;
+        let columns = self
+            .field_list()?
+            .into_iter()
+            .map(|column| {
+                let mut pieces = column.split_whitespace();
+                let field = stable_fragment(pieces.next().unwrap_or_default());
+                pieces
+                    .next()
+                    .map_or(field.clone(), |direction| format!("{field} {direction}"))
+            })
+            .collect::<Vec<_>>();
         let attributes = self.attributes()?;
         reject_unknown_attributes(&attributes, &["id", "map"], self)?;
-        if matches!(kind, "pk" | "unique") && columns.len() == 1 {
+        if matches!(kind, "pk" | "unique") && columns.len() == 1 && attributes.is_empty() {
             let field_name = columns[0].split_whitespace().next().unwrap_or_default();
             let field = entity.fields.get_mut(field_name).ok_or_else(|| {
                 self.here(
@@ -471,11 +425,25 @@ impl Parser<'_> {
                 field.unique = true;
             }
         } else if kind != "index" {
-            return Err(self.here(
-                "JDL0902",
-                format!("composite `{kind}` is not representable in the current typed model"),
-                "use a single-field constraint until composite-key model nodes land",
-            ));
+            let suffix = columns
+                .iter()
+                .map(|column| stable_fragment(column))
+                .collect::<Vec<_>>()
+                .join("_");
+            let prefix = if kind == "pk" { "pk" } else { "uq" };
+            let id = one_arg(&attributes, "id")?
+                .unwrap_or_else(|| format!("{prefix}_{}_{}", entity.id, suffix));
+            let name = one_arg(&attributes, "map")?;
+            entity.constraints.push(source::EntityConstraint {
+                id,
+                kind: if kind == "pk" {
+                    source::ConstraintKind::PrimaryKey
+                } else {
+                    source::ConstraintKind::Unique
+                },
+                name,
+                fields: columns,
+            });
         } else {
             let suffix = columns
                 .iter()

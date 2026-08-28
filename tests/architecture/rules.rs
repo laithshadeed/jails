@@ -274,8 +274,10 @@ fn layers_lists_each_module_once() {
 /// compiler modules coexist during cutover; every module stays classified so
 /// deleting the legacy half cannot silently loosen a boundary.
 const LAYERS: &[(&str, &str, usize)] = &[
+    ("jails-model", "app", 2),
     ("jails-model", "capability", 2),
     ("jails-model", "component", 2),
+    ("jails-model", "constraint", 2),
     // jails-support: no jails concepts at all -- writing, running, encoding.
     ("jails-support", "apply", 0),
     ("jails-support", "process", 0),
@@ -306,6 +308,8 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-model", "index", 2),
     ("jails-model", "jdl", 2),
     ("jails-model", "patch", 2),
+    ("jails-model", "projection", 2),
+    ("jails-model", "relation", 2),
     ("jails-model", "linker", 2),
     ("jails-model", "model", 2),
     ("jails-model", "naming", 2),

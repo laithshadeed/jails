@@ -221,7 +221,19 @@ fn push(tokens: &mut Vec<Token>, kind: TokenKind, start: usize, end: usize) {
 fn is_symbol(byte: u8) -> bool {
     matches!(
         byte,
-        b'{' | b'}' | b'(' | b')' | b'[' | b']' | b',' | b':' | b'?' | b'@' | b'=' | b'<' | b'>'
+        b'{' | b'}'
+            | b'('
+            | b')'
+            | b'['
+            | b']'
+            | b','
+            | b':'
+            | b'?'
+            | b'@'
+            | b'='
+            | b'<'
+            | b'>'
+            | b'*'
     )
 }
 

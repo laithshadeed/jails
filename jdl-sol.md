@@ -9,17 +9,21 @@ Implementation checkpoint (2026-08-28): `jails-model` now has a version-gated
 `jdl 1` frontend with a lossless UTF-8 byte-span CST, retained comments/blank
 lines/CRLF, stable `JDLxxxx` syntax diagnostics, local CST span replacement,
 and an idempotent encoding-level formatter. The v1 parser lowers app, cap,
-dep, prop, enum, entity, entity `use`, field, table, simple constraint, eject,
-all four operation kinds, and all 23 closed component kinds directly into the
-typed linker boundary; it contains no TOML rendering or TOML parser call.
+dep, prop, enum, entity, local and global `use`, field, table, primary/unique
+constraint, relation, eject, all four operation kinds, and all 23 closed
+component kinds directly into the typed linker boundary; it contains no TOML
+rendering or TOML parser call.
 Operation parameters, joins, assignments, resolutions, roles, emits, routes,
 bindings, event partitions, component parameters, identity-bearing variants,
-symbol references, and exact component source paths are retained as explicit
-linked nodes. Invalid per-kind members fail closed. The eight component kinds
+symbol references, projection arguments, selector membership, ordered relation
+mappings, referential actions, composite keys, cardinality, and exact component
+source paths are retained as explicit linked nodes. Projection prerequisites,
+relation target keys/types/nullability, and required cascade cycles fail closed.
+The eight component kinds
 already supported by emitters also derive temporary `SourceUnit` compatibility
 views; the typed component remains authoritative. Unversioned source continues
-through the pre-v1 compatibility importer. Relations, global selectors,
-remaining expanded field/constraint nodes, CLI CST mutations, and direct rich
+through the pre-v1 compatibility importer. Remaining expanded field attributes,
+scope semantics, convention-derived values, CLI CST mutations, and direct rich
 node consumption by every emitter remain open. This checkpoint is not the ship
 claim in section 20.
 
