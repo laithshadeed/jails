@@ -160,6 +160,8 @@ pub(crate) enum Operation {
         #[serde(default)]
         fields: Vec<String>,
         route: Option<String>,
+        #[serde(default)]
+        semantics: CommandSemantics,
     },
     Query {
         id: String,
@@ -171,6 +173,8 @@ pub(crate) enum Operation {
         order_by: Vec<String>,
         limit: Option<u32>,
         route: Option<String>,
+        #[serde(default)]
+        semantics: QuerySemantics,
     },
     Transition {
         id: String,
@@ -182,6 +186,8 @@ pub(crate) enum Operation {
         sets: Vec<String>,
         yields: Option<String>,
         route: Option<String>,
+        #[serde(default)]
+        semantics: TransitionSemantics,
     },
     Event {
         id: String,
@@ -189,7 +195,214 @@ pub(crate) enum Operation {
         on: Option<String>,
         #[serde(default)]
         fields: Vec<String>,
+        #[serde(default)]
+        semantics: EventSemantics,
     },
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CommandSemantics {
+    #[serde(default)]
+    pub(crate) parameters: Vec<OperationParameter>,
+    #[serde(default)]
+    pub(crate) assignments: Vec<Assignment>,
+    #[serde(default)]
+    pub(crate) resolutions: Vec<Resolution>,
+    #[serde(default)]
+    pub(crate) conflict_key: Vec<String>,
+    #[serde(default)]
+    pub(crate) emits: Vec<String>,
+    #[serde(default)]
+    pub(crate) bindings: Vec<ParameterBinding>,
+    pub(crate) route: Option<OperationRoute>,
+    #[serde(default)]
+    pub(crate) internal: bool,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct QuerySemantics {
+    #[serde(default)]
+    pub(crate) parameters: Vec<OperationParameter>,
+    #[serde(default)]
+    pub(crate) joins: Vec<Join>,
+    #[serde(default)]
+    pub(crate) order: Vec<Ordering>,
+    pub(crate) limit: Option<u32>,
+    #[serde(default)]
+    pub(crate) bindings: Vec<ParameterBinding>,
+    pub(crate) route: Option<OperationRoute>,
+    #[serde(default)]
+    pub(crate) internal: bool,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TransitionSemantics {
+    #[serde(default)]
+    pub(crate) parameters: Vec<OperationParameter>,
+    #[serde(default)]
+    pub(crate) select: Vec<String>,
+    #[serde(default)]
+    pub(crate) update: Vec<String>,
+    #[serde(default)]
+    pub(crate) assignments: Vec<Assignment>,
+    pub(crate) precondition: Option<Precondition>,
+    #[serde(default)]
+    pub(crate) emits: Vec<String>,
+    #[serde(default)]
+    pub(crate) bindings: Vec<ParameterBinding>,
+    pub(crate) route: Option<OperationRoute>,
+    #[serde(default)]
+    pub(crate) internal: bool,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EventSemantics {
+    #[serde(default)]
+    pub(crate) parameters: Vec<OperationParameter>,
+    pub(crate) partition_by: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OperationParameter {
+    pub(crate) name: String,
+    pub(crate) source: ParameterSource,
+    #[serde(default = "required")]
+    pub(crate) required: bool,
+    #[serde(default)]
+    pub(crate) optional_filter: bool,
+    #[serde(default)]
+    pub(crate) constraints: ParameterConstraints,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) enum ParameterSource {
+    Field {
+        path: String,
+    },
+    Typed {
+        #[serde(rename = "type")]
+        type_name: String,
+    },
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ParameterConstraints {
+    pub(crate) default: Option<Value>,
+    #[serde(default)]
+    pub(crate) non_blank: bool,
+    pub(crate) min_length: Option<u32>,
+    pub(crate) max_length: Option<u32>,
+    #[serde(default)]
+    pub(crate) positive: bool,
+    #[serde(default)]
+    pub(crate) nonnegative: bool,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "kebab-case")]
+pub(crate) enum Value {
+    String(String),
+    Integer(String),
+    Decimal(String),
+    Boolean(bool),
+    EnumConstant(String),
+    Function(FunctionCall),
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FunctionCall {
+    pub(crate) name: String,
+    #[serde(default)]
+    pub(crate) arguments: Vec<Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Assignment {
+    pub(crate) field: String,
+    pub(crate) value: Value,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Resolution {
+    pub(crate) target: String,
+    pub(crate) remote_value: String,
+    pub(crate) remote_lookup: String,
+    pub(crate) parameter: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Join {
+    pub(crate) entity: String,
+    pub(crate) alias: String,
+    pub(crate) mappings: Vec<FieldMapping>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FieldMapping {
+    pub(crate) local: String,
+    pub(crate) remote: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Ordering {
+    pub(crate) field: String,
+    #[serde(default)]
+    pub(crate) direction: SortDirection,
+}
+
+#[derive(Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum SortDirection {
+    #[default]
+    Asc,
+    Desc,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum Precondition {
+    Required,
+    Optional,
+    None,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OperationRoute {
+    pub(crate) method: EndpointMethod,
+    pub(crate) path: String,
+    pub(crate) consumes: Option<RequestFormat>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ParameterBinding {
+    pub(crate) parameter: String,
+    pub(crate) source: BindingSource,
+    pub(crate) wire_name: Option<String>,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum BindingSource {
+    Path,
+    Query,
+    Header,
+    Claim,
+    Form,
 }
 
 impl Operation {

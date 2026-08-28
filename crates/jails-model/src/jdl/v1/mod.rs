@@ -50,7 +50,10 @@ fn first_non_comment_line(input: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DependencyScope, Facet, SettingTarget, StableId};
+    use crate::{
+        BindingSource, DependencyScope, Facet, OperationKind, ParameterSource, Precondition,
+        RequestFormat, SettingTarget, SortDirection, StableId, Value,
+    };
 
     const CORE: &str = r#"// retained lead comment
 jdl 1
@@ -163,5 +166,156 @@ entity Task @id(ent_task) {
         let parser = include_str!("parser.rs");
         assert!(!parser.contains("parse_toml"));
         assert!(!parser.contains("toml::"));
+    }
+
+    #[test]
+    fn operation_vocabulary_links_without_dropping_semantic_facts() {
+        let model = parse(
+            r#"jdl 1
+app Work {
+  pkg com.example.work
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+entity Author {
+  use scaffold
+  id: uuid @pk
+  email: string @unique
+}
+
+entity Task {
+  use scaffold
+  id: uuid @pk
+  authorId: uuid
+  title: string
+  status: string
+  version: long
+
+  command Open(Author.email as email, title) {
+    resolve authorId from Author.id where Author.email = email
+    set status = OPEN
+    conflict on [title]
+    emit TaskChanged
+    route POST "/tasks/actions/open" consumes form
+    bind email from form "author_email"
+  }
+
+  query ByAuthor(author.email? as email) {
+    join Author as author on authorId -> author.id
+    order by [title desc, id]
+    limit 20
+  }
+
+  transition Rename(id, version, title) {
+    select [id]
+    update [title]
+    if-match required
+    emit TaskChanged
+  }
+}
+
+event TaskChanged(id: uuid, source: string @notBlank) {
+  partition by id
+}
+"#,
+        )
+        .unwrap();
+
+        let open = model
+            .operations
+            .values()
+            .find(|operation| operation.label == "open")
+            .unwrap();
+        let OperationKind::Command(command) = &open.kind else {
+            panic!("Open must be a command");
+        };
+        assert_eq!(command.semantics.parameters.len(), 2);
+        assert!(matches!(
+            command.semantics.parameters[0].source,
+            ParameterSource::Field(_)
+        ));
+        assert_eq!(command.semantics.assignments.len(), 1);
+        assert!(matches!(
+            command.semantics.assignments[0].value,
+            Value::EnumConstant(ref value) if value == "OPEN"
+        ));
+        assert_eq!(command.semantics.resolutions.len(), 1);
+        assert_eq!(command.semantics.conflict_key.len(), 1);
+        assert_eq!(command.semantics.emits.len(), 1);
+        assert_eq!(
+            command.semantics.route.as_ref().unwrap().consumes,
+            Some(RequestFormat::Form)
+        );
+        assert_eq!(command.semantics.bindings[0].source, BindingSource::Form);
+        assert_eq!(
+            command.semantics.bindings[0].wire_name.as_deref(),
+            Some("author_email")
+        );
+        assert_eq!(command.route.as_deref(), Some("POST /tasks/actions/open"));
+
+        let by_author = model
+            .operations
+            .values()
+            .find(|operation| operation.label == "by_author")
+            .unwrap();
+        let OperationKind::Query(query) = &by_author.kind else {
+            panic!("ByAuthor must be a query");
+        };
+        assert!(query.semantics.parameters[0].optional_filter);
+        assert_eq!(query.semantics.joins.len(), 1);
+        assert_eq!(query.semantics.order.len(), 2);
+        assert_eq!(query.semantics.order[0].direction, SortDirection::Desc);
+        assert_eq!(query.semantics.limit, Some(20));
+        assert_eq!(query.limit, Some(20));
+
+        let rename = model
+            .operations
+            .values()
+            .find(|operation| operation.label == "rename")
+            .unwrap();
+        let OperationKind::Transition(transition) = &rename.kind else {
+            panic!("Rename must be a transition");
+        };
+        assert_eq!(transition.semantics.select.len(), 1);
+        assert_eq!(transition.semantics.update.len(), 1);
+        assert_eq!(
+            transition.semantics.precondition,
+            Some(Precondition::Required)
+        );
+        assert_eq!(transition.semantics.emits.len(), 1);
+
+        let changed = model
+            .operations
+            .values()
+            .find(|operation| operation.label == "task_changed")
+            .unwrap();
+        let OperationKind::Event(event) = &changed.kind else {
+            panic!("TaskChanged must be an event");
+        };
+        assert_eq!(event.semantics.parameters.len(), 2);
+        assert_eq!(event.semantics.partition_by.as_deref(), Some("id"));
+        assert!(matches!(
+            event.semantics.parameters[0].source,
+            ParameterSource::Typed(_)
+        ));
+    }
+
+    #[test]
+    fn operation_grammar_fails_closed_for_wrong_scope_and_wrong_member() {
+        let app = "jdl 1\napp Demo {\n pkg com.example.demo\n java 26\n platform spring\n build maven\n storage postgres\n}\n";
+        let top_command = parse(&format!("{app}command Bad()\n")).unwrap_err();
+        assert_eq!(top_command.diagnostics[0].code, "JDL0903");
+
+        let untyped_event = parse(&format!("{app}event Bad(id)\n")).unwrap_err();
+        assert_eq!(untyped_event.diagnostics[0].code, "JDL0906");
+
+        let wrong_member = parse(&format!(
+            "{app}entity Task {{\n id: uuid @pk\n query Bad() {{\n  set id = 1\n }}\n}}\n"
+        ))
+        .unwrap_err();
+        assert_eq!(wrong_member.diagnostics[0].code, "JDL0916");
     }
 }

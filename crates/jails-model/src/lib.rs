@@ -17,6 +17,7 @@ mod jdl;
 mod linker;
 mod model;
 mod naming;
+mod operation;
 mod patch;
 mod setting;
 mod source;
@@ -35,10 +36,15 @@ pub use jdl::v1::{
     format as format_jdl_v1, parse_cst as parse_jdl_cst,
 };
 pub use model::{
-    AppModel, BuiltinType, Capability, Command, Dependency, DependencyScope, Ejection, Entity,
-    EntityNames, Event, Facet, Field, FieldNames, Index, IndexColumn, IndexDirection, LengthRange,
-    Operation, OperationKind, OperationNames, ProjectIntent, Query, Setting, SettingTarget,
-    Transition, TypeRef,
+    AppModel, BuiltinType, Capability, Dependency, DependencyScope, Ejection, Entity, EntityNames,
+    Facet, Field, FieldNames, Index, IndexColumn, IndexDirection, LengthRange, ProjectIntent,
+    Setting, SettingTarget, TypeRef,
+};
+pub use operation::{
+    Assignment, BindingSource, Command, CommandSemantics, Event, EventSemantics, FieldMapping,
+    Join, Operation, OperationKind, OperationNames, OperationParameter, OperationRoute, Ordering,
+    ParameterBinding, ParameterConstraints, ParameterSource, Precondition, Query, QuerySemantics,
+    Resolution, SortDirection, Transition, TransitionSemantics, Value, VisibleField,
 };
 pub use patch::{
     ColumnRenamePolicy, FieldAddPolicy, FieldEvolutionPolicy, ModelPatch, StorageRetirementPolicy,

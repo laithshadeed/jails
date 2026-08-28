@@ -4,6 +4,7 @@ use crate::source;
 use crate::{DependencyScope, Diagnostics, Facet, SettingTarget};
 use std::collections::{BTreeMap, BTreeSet};
 mod declaration;
+mod operation;
 
 pub(super) struct ParsedDocument {
     pub cst: DocumentCst,
@@ -52,6 +53,7 @@ struct Parser<'a> {
     settings: BTreeMap<String, source::Setting>,
     ejections: BTreeMap<String, source::Ejection>,
     entities: BTreeMap<String, source::Entity>,
+    operations: BTreeMap<String, source::Operation>,
 }
 
 impl<'a> Parser<'a> {
@@ -67,6 +69,7 @@ impl<'a> Parser<'a> {
             settings: BTreeMap::new(),
             ejections: BTreeMap::new(),
             entities: BTreeMap::new(),
+            operations: BTreeMap::new(),
         }
     }
 
@@ -111,7 +114,8 @@ impl<'a> Parser<'a> {
                         "move the `use` declaration inside its entity for now",
                     ));
                 }
-                "event" | "component" => {
+                "command" | "query" | "transition" | "event" => self.parse_operation(None)?,
+                "component" => {
                     return Err(self.here(
                         "JDL0901",
                         format!("`{}` belongs to the next typed JDL lowering slice", self.text()),
@@ -189,7 +193,7 @@ impl<'a> Parser<'a> {
             ejections: self.ejections,
             units: BTreeMap::new(),
             entities: self.entities,
-            operations: BTreeMap::new(),
+            operations: self.operations,
         };
         let cst = DocumentCst::new(self.input.to_string(), self.tokens, self.declarations);
         Ok(ParsedDocument { cst, source })

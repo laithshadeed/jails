@@ -2,6 +2,7 @@
 
 mod enum_type;
 mod field;
+mod operation;
 mod unit;
 
 use crate::diagnostic::{Diagnostic, Diagnostics};
@@ -9,10 +10,7 @@ use crate::id::{
     CapabilityId, DependencyId, EjectionId, EntityId, FieldId, IndexId, OperationId, ProjectId,
     SettingId, StableId, UnitId,
 };
-use crate::model::{
-    AppModel, Command, Entity, EntityNames, Event, Field, FieldNames, Operation, OperationKind,
-    OperationNames, ProjectIntent, Query, Transition, TypeRef,
-};
+use crate::model::{AppModel, Entity, EntityNames, Field, FieldNames, ProjectIntent, TypeRef};
 use crate::naming::{
     lower_camel_case, snake_case, upper_camel_case, valid_java_member, valid_java_type,
     valid_label, valid_route,
@@ -254,183 +252,13 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
         }
     }
 
-    let mut operation_ids = BTreeMap::new();
-    let mut operation_java_types = BTreeMap::new();
-    let mut operation_is_event = BTreeSet::new();
-    for (label, operation) in &document.operations {
-        let path = format!("$.operations.{label}");
-        linker.label(label, &path);
-        let raw_id = operation.id();
-        linker.register_id(raw_id, &format!("{path}.id"));
-        if let Some(id) = linker.stable_id::<OperationId>(raw_id, &format!("{path}.id")) {
-            operation_ids.insert(label.clone(), id);
-        }
-        let java_type = operation
-            .java_name()
-            .map(str::to_string)
-            .unwrap_or_else(|| upper_camel_case(label));
-        linker.java_type(&java_type, &format!("{path}.java_name"));
-        operation_java_types.insert(label.clone(), java_type);
-        if matches!(operation, source::Operation::Event { .. }) {
-            operation_is_event.insert(label.clone());
-        }
-    }
-
-    let mut operations = BTreeMap::new();
-    let mut routes = BTreeMap::<String, String>::new();
-    for (label, operation) in document.operations {
-        let path = format!("$.operations.{label}");
-        let Some(id) = operation_ids.get(&label).cloned() else {
-            continue;
-        };
-        let kind = match operation {
-            source::Operation::Command {
-                on, fields, route, ..
-            } => linker
-                .entity_ref(&on, &format!("{path}.on"), &entity_labels)
-                .map(|entity| {
-                    let fields = linker.field_refs(
-                        &fields,
-                        &format!("{path}.fields"),
-                        &entity,
-                        &entity_fields,
-                    );
-                    linker.route(route.as_deref(), &path, &mut routes);
-                    OperationKind::Command(Command {
-                        on: entity,
-                        fields,
-                        route,
-                    })
-                }),
-            source::Operation::Query {
-                on,
-                filters,
-                order_by,
-                limit,
-                route,
-                ..
-            } => linker
-                .entity_ref(&on, &format!("{path}.on"), &entity_labels)
-                .map(|entity| {
-                    let filters = linker.field_refs(
-                        &filters,
-                        &format!("{path}.filters"),
-                        &entity,
-                        &entity_fields,
-                    );
-                    let order_by = linker.field_refs(
-                        &order_by,
-                        &format!("{path}.order_by"),
-                        &entity,
-                        &entity_fields,
-                    );
-                    if limit == Some(0) {
-                        linker.problem(
-                            "model-query-limit",
-                            format!("{path}.limit"),
-                            "a query limit cannot be zero",
-                            "remove `limit` or use a positive number",
-                        );
-                    }
-                    linker.route(route.as_deref(), &path, &mut routes);
-                    OperationKind::Query(Query {
-                        on: entity,
-                        filters,
-                        order_by,
-                        limit,
-                        route,
-                    })
-                }),
-            source::Operation::Transition {
-                on,
-                fields,
-                sets,
-                yields,
-                route,
-                ..
-            } => linker
-                .entity_ref(&on, &format!("{path}.on"), &entity_labels)
-                .map(|entity| {
-                    let fields = linker.field_refs(
-                        &fields,
-                        &format!("{path}.fields"),
-                        &entity,
-                        &entity_fields,
-                    );
-                    let sets =
-                        linker.field_refs(&sets, &format!("{path}.sets"), &entity, &entity_fields);
-                    let yields = yields.and_then(|target| {
-                        if !operation_is_event.contains(&target) {
-                            linker.problem(
-                                "model-event-reference",
-                                format!("{path}.yields"),
-                                format!("`{target}` does not name an event operation"),
-                                "name an operation whose kind is `event`",
-                            );
-                            return None;
-                        }
-                        operation_ids.get(&target).cloned()
-                    });
-                    linker.route(route.as_deref(), &path, &mut routes);
-                    OperationKind::Transition(Transition {
-                        on: entity,
-                        fields,
-                        sets,
-                        yields,
-                        route,
-                    })
-                }),
-            source::Operation::Event { on, fields, .. } => {
-                let entity = on.as_deref().and_then(|label| {
-                    linker.entity_ref(label, &format!("{path}.on"), &entity_labels)
-                });
-                if entity.is_none() && !fields.is_empty() {
-                    linker.problem(
-                        "model-event-fields",
-                        format!("{path}.fields"),
-                        "an event without `on` cannot reference entity fields",
-                        "set `on` to an entity label or remove `fields`",
-                    );
-                }
-                let fields = entity.as_ref().map_or_else(Vec::new, |entity| {
-                    linker.field_refs(&fields, &format!("{path}.fields"), entity, &entity_fields)
-                });
-                Some(OperationKind::Event(Event { on: entity, fields }))
-            }
-        };
-        if let Some(kind) = kind {
-            let target = match &kind {
-                OperationKind::Command(command) => Some(&command.on),
-                OperationKind::Query(query) => Some(&query.on),
-                OperationKind::Transition(transition) => Some(&transition.on),
-                OperationKind::Event(event) => event.on.as_ref(),
-            };
-            if target
-                .and_then(|entity| entities.get(entity))
-                .is_some_and(|entity| !entity.active)
-            {
-                linker.problem(
-                    "model-retired-entity-reference",
-                    format!("{path}.on"),
-                    "an operation cannot target a retired entity",
-                    "revive the entity or remove the operation",
-                );
-                continue;
-            }
-            let java_type = operation_java_types
-                .remove(&label)
-                .expect("every operation label receives a Java projection");
-            operations.insert(
-                id.clone(),
-                Operation {
-                    id,
-                    label,
-                    names: OperationNames { java_type },
-                    kind,
-                },
-            );
-        }
-    }
+    let operations = operation::link(
+        document.operations,
+        &entities,
+        &entity_labels,
+        &entity_fields,
+        &mut linker,
+    );
 
     let known_targets = capabilities
         .keys()
@@ -731,6 +559,7 @@ fn collision(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::OperationKind;
 
     const VALID: &str = r#"
 schema = "jails.model.v1"

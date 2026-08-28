@@ -2,9 +2,8 @@ use crate::SourceUnit;
 use crate::id::{
     CapabilityId, DependencyId, EntityId, FieldId, IndexId, OperationId, SettingId, UnitId,
 };
-use crate::model::{
-    Capability, Dependency, Ejection, Entity, Facet, Field, Index, Operation, Setting,
-};
+use crate::model::{Capability, Dependency, Ejection, Entity, Facet, Field, Index, Setting};
+use crate::operation::Operation;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ModelPatch {

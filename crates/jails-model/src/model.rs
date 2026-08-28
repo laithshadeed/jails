@@ -1,4 +1,5 @@
 use crate::EnumConstant;
+use crate::Operation;
 use crate::SourceUnit;
 use crate::id::{
     CapabilityId, DependencyId, EjectionId, EntityId, FieldId, IndexId, OperationId, ProjectId,
@@ -165,7 +166,7 @@ impl AppModel {
                 let references = self
                     .operations
                     .values()
-                    .filter(|operation| operation_entity(&operation.kind) == Some(&id))
+                    .filter(|operation| crate::operation::references_entity(&operation.kind, &id))
                     .map(|operation| operation.label.as_str())
                     .collect::<Vec<_>>();
                 if !references.is_empty() {
@@ -183,7 +184,9 @@ impl AppModel {
                 let references = self
                     .operations
                     .values()
-                    .filter(|operation| operation_entity(&operation.kind) == Some(&entity))
+                    .filter(|operation| {
+                        crate::operation::references_entity(&operation.kind, &entity)
+                    })
                     .map(|operation| operation.label.as_str())
                     .collect::<Vec<_>>();
                 if !references.is_empty() {
@@ -294,7 +297,7 @@ impl AppModel {
                     .operations
                     .values()
                     .filter(|operation| {
-                        operation_fields(&operation.kind)
+                        crate::operation::fields(&operation.kind)
                             .into_iter()
                             .any(|candidate| candidate == &field)
                     })
@@ -328,11 +331,9 @@ impl AppModel {
                     .operations
                     .values()
                     .filter(|operation| {
-                        matches!(
-                            &operation.kind,
-                            OperationKind::Transition(transition)
-                                if transition.yields.as_ref() == Some(&id)
-                        )
+                        crate::operation::emits(&operation.kind)
+                            .into_iter()
+                            .any(|emitted| emitted == &id)
                     })
                     .map(|operation| operation.label.as_str())
                     .collect::<Vec<_>>();
@@ -642,67 +643,6 @@ fn valid_java_type(value: &str) -> bool {
         && characters.all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct Operation {
-    pub id: OperationId,
-    pub label: String,
-    pub names: OperationNames,
-    pub kind: OperationKind,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct OperationNames {
-    pub java_type: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub enum OperationKind {
-    Command(Command),
-    Query(Query),
-    Transition(Transition),
-    Event(Event),
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct Command {
-    pub on: EntityId,
-    pub fields: Vec<FieldId>,
-    pub route: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct Query {
-    pub on: EntityId,
-    pub filters: Vec<FieldId>,
-    pub order_by: Vec<FieldId>,
-    pub limit: Option<u32>,
-    pub route: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct Transition {
-    pub on: EntityId,
-    pub fields: Vec<FieldId>,
-    pub sets: Vec<FieldId>,
-    pub yields: Option<OperationId>,
-    pub route: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct Event {
-    pub on: Option<EntityId>,
-    pub fields: Vec<FieldId>,
-}
-
-fn operation_entity(kind: &OperationKind) -> Option<&EntityId> {
-    match kind {
-        OperationKind::Command(command) => Some(&command.on),
-        OperationKind::Query(query) => Some(&query.on),
-        OperationKind::Transition(transition) => Some(&transition.on),
-        OperationKind::Event(event) => event.on.as_ref(),
-    }
-}
-
 pub(crate) fn refuse_retired_entity(entity: &Entity) -> Result<(), String> {
     if entity.active {
         return Ok(());
@@ -711,17 +651,4 @@ pub(crate) fn refuse_retired_entity(entity: &Entity) -> Result<(), String> {
         "entity id `{}` is retired\n       fix: revive the preserved entity before evolving it",
         entity.id
     ))
-}
-
-fn operation_fields(kind: &OperationKind) -> Vec<&FieldId> {
-    match kind {
-        OperationKind::Command(command) => command.fields.iter().collect(),
-        OperationKind::Query(query) => query.filters.iter().chain(query.order_by.iter()).collect(),
-        OperationKind::Transition(transition) => transition
-            .fields
-            .iter()
-            .chain(transition.sets.iter())
-            .collect(),
-        OperationKind::Event(event) => event.fields.iter().collect(),
-    }
 }

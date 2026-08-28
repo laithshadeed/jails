@@ -321,7 +321,10 @@ impl Parser<'_> {
                     "pk" => self.parse_constraint(&mut entity, "pk")?,
                     "unique" => self.parse_constraint(&mut entity, "unique")?,
                     "index" => self.parse_constraint(&mut entity, "index")?,
-                    "relation" | "command" | "query" | "transition" | "event" => {
+                    "command" | "query" | "transition" | "event" => {
+                        self.parse_operation(Some(&label))?;
+                    }
+                    "relation" => {
                         return Err(self.here(
                             "JDL0901",
                             format!(
