@@ -46,6 +46,7 @@ pub(crate) fn derive(
         settings: BTreeMap::new(),
         ejections: BTreeMap::new(),
         units: BTreeMap::new(),
+        components: BTreeMap::new(),
         entities: BTreeMap::new(),
         operations: BTreeMap::new(),
     };

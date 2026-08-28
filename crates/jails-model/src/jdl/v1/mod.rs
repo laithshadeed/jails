@@ -51,8 +51,9 @@ fn first_non_comment_line(input: &str) -> Option<&str> {
 mod tests {
     use super::*;
     use crate::{
-        BindingSource, DependencyScope, Facet, OperationKind, ParameterSource, Precondition,
-        RequestFormat, SettingTarget, SortDirection, StableId, Value,
+        BindingSource, ComponentKind, ComponentReference, DependencyScope, Facet, ModelPatch,
+        OperationKind, ParameterSource, Precondition, RequestFormat, SettingTarget, SortDirection,
+        StableId, UnitId, Value,
     };
 
     const CORE: &str = r#"// retained lead comment
@@ -317,5 +318,167 @@ event TaskChanged(id: uuid, source: string @notBlank) {
         ))
         .unwrap_err();
         assert_eq!(wrong_member.diagnostics[0].code, "JDL0916");
+    }
+
+    #[test]
+    fn closed_component_vocabulary_links_and_projects_supported_emitters() {
+        let model = parse(
+            r#"jdl 1
+app Work {
+  pkg com.example.work
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+entity Task {
+  use scaffold
+  id: uuid @pk
+  name: string
+
+  command AddItem(name) {}
+}
+
+component class Clock
+
+component strategy RewardRule {
+  on Task
+  variant Coffee
+  variant LargeTransaction
+}
+
+component sealed Outcome {
+  variant Accepted(id: uuid)
+  variant Rejected(reason: string @notBlank)
+}
+
+component controller Health(id: uuid) {
+  on Task
+  route POST "/health" consumes json
+  bind id from query "task_id"
+}
+
+component durable-job ItemDispatcher(id: uuid, name: string @notBlank) {
+  on AddItem
+  yields Task
+}
+
+component cases Checkout {
+  source "specs/checkout.md"
+}
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(model.components.len(), 6);
+        let strategy = model
+            .components
+            .values()
+            .find(|component| component.kind == ComponentKind::Strategy)
+            .unwrap();
+        assert_eq!(strategy.variants.len(), 2);
+        assert!(matches!(strategy.on, Some(ComponentReference::Entity(_))));
+
+        let sealed = model
+            .components
+            .values()
+            .find(|component| component.kind == ComponentKind::Sealed)
+            .unwrap();
+        assert_eq!(sealed.variants[0].parameters.len(), 1);
+
+        let durable = model
+            .components
+            .values()
+            .find(|component| component.kind == ComponentKind::DurableJob)
+            .unwrap();
+        assert!(matches!(durable.on, Some(ComponentReference::Operation(_))));
+        assert!(matches!(
+            durable.yields,
+            Some(ComponentReference::Entity(_))
+        ));
+
+        let cases = model
+            .components
+            .values()
+            .find(|component| component.kind == ComponentKind::Cases)
+            .unwrap();
+        assert_eq!(cases.source.as_deref(), Some("specs/checkout.md"));
+
+        assert_eq!(model.units.len(), 4);
+        let controller = model
+            .units
+            .values()
+            .find(|unit| unit.kind == crate::UnitKind::Controller)
+            .unwrap();
+        assert_eq!(controller.java_type, "HealthController");
+        assert_eq!(controller.on.as_deref(), Some("Task"));
+        assert_eq!(controller.endpoint.as_ref().unwrap().path, "/health");
+
+        let add_item = model
+            .operations
+            .values()
+            .find(|operation| operation.label == "add_item")
+            .unwrap();
+        let mut removal = model.clone();
+        assert!(
+            removal
+                .apply(ModelPatch::RemoveOperation(add_item.id.clone()))
+                .unwrap_err()
+                .contains("item_dispatcher")
+        );
+        let mut removal = model.clone();
+        let derived = UnitId::parse(controller.id.to_string()).unwrap();
+        assert!(
+            removal
+                .apply(ModelPatch::RemoveUnit(derived))
+                .unwrap_err()
+                .contains("derived from a typed component")
+        );
+    }
+
+    #[test]
+    fn component_registry_is_exhaustive_and_shapes_fail_closed() {
+        assert_eq!(ComponentKind::ALL.len(), 23);
+        for kind in ComponentKind::ALL {
+            assert_eq!(ComponentKind::parse(kind.label()).unwrap(), kind);
+        }
+
+        let app = "jdl 1\napp Demo {\n pkg com.example.demo\n java 26\n platform spring\n build maven\n storage postgres\n}\n";
+        let unknown = parse(&format!("{app}component mystery Thing\n")).unwrap_err();
+        assert_eq!(unknown.diagnostics[0].code, "JDL0931");
+
+        let incomplete = parse(&format!(
+            "{app}component strategy RewardRule {{\n variant Coffee\n}}\n"
+        ))
+        .unwrap_err();
+        assert_eq!(
+            incomplete.diagnostics[0].code,
+            "model-component-member-missing"
+        );
+
+        let forbidden = parse(&format!(
+            "{app}component handler Ping(id: uuid) {{\n bind id from query\n}}\n"
+        ))
+        .unwrap_err();
+        assert_eq!(
+            forbidden.diagnostics[0].code,
+            "model-component-bindings-forbidden"
+        );
+
+        let internal_http = parse(&format!(
+            "{app}entity Task {{\n id: uuid @pk\n query Hidden() @internal {{\n  route GET \"/hidden\"\n }}\n}}\n"
+        ))
+        .unwrap_err();
+        assert_eq!(
+            internal_http.diagnostics[0].code,
+            "model-operation-internal-http"
+        );
+
+        let route_collision = parse(&format!(
+            "{app}entity Task {{\n id: uuid @pk\n query Ping() {{\n  route GET \"/ping\"\n }}\n}}\ncomponent controller Other {{\n route GET \"/ping\"\n}}\n"
+        ))
+        .unwrap_err();
+        assert_eq!(route_collision.diagnostics[0].code, "model-route-collision");
     }
 }

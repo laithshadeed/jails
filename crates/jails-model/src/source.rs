@@ -1,5 +1,5 @@
 use crate::model::{DependencyScope, Facet, SettingTarget};
-use crate::{EndpointMethod, RequestFormat, UnitKind};
+use crate::{ComponentKind, EndpointMethod, RequestFormat, UnitKind};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -18,6 +18,8 @@ pub(crate) struct Document {
     pub(crate) ejections: BTreeMap<String, Ejection>,
     #[serde(default)]
     pub(crate) units: BTreeMap<String, Unit>,
+    #[serde(default)]
+    pub(crate) components: BTreeMap<String, Component>,
     #[serde(default)]
     pub(crate) entities: BTreeMap<String, Entity>,
     #[serde(default)]
@@ -92,6 +94,45 @@ pub(crate) struct Unit {
     pub(crate) path: Option<String>,
     #[serde(default)]
     pub(crate) consumes: Option<RequestFormat>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Component {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) kind: ComponentKind,
+    #[serde(default)]
+    pub(crate) parameters: Vec<ComponentParameter>,
+    pub(crate) on: Option<String>,
+    pub(crate) yields: Option<String>,
+    pub(crate) route: Option<OperationRoute>,
+    #[serde(default)]
+    pub(crate) bindings: Vec<ParameterBinding>,
+    #[serde(default)]
+    pub(crate) variants: Vec<ComponentVariant>,
+    pub(crate) source: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ComponentParameter {
+    pub(crate) name: String,
+    #[serde(rename = "type")]
+    pub(crate) type_name: String,
+    #[serde(default = "required")]
+    pub(crate) required: bool,
+    #[serde(default)]
+    pub(crate) constraints: ParameterConstraints,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ComponentVariant {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    #[serde(default)]
+    pub(crate) parameters: Vec<ComponentParameter>,
 }
 
 #[derive(Deserialize)]

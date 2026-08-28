@@ -175,7 +175,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    fn parse_parameters(
+    pub(super) fn parse_parameters(
         &mut self,
         typed_only: bool,
     ) -> Result<Vec<source::OperationParameter>, Diagnostics> {
@@ -430,7 +430,7 @@ impl Parser<'_> {
         self.end_line()
     }
 
-    fn parse_route(&mut self) -> Result<source::OperationRoute, Diagnostics> {
+    pub(super) fn parse_route(&mut self) -> Result<source::OperationRoute, Diagnostics> {
         self.bump();
         let method_word = self.take_word("HTTP method")?.to_ascii_lowercase();
         let method = EndpointMethod::parse(&method_word).map_err(|message| {
@@ -461,7 +461,7 @@ impl Parser<'_> {
         })
     }
 
-    fn parse_binding(&mut self) -> Result<source::ParameterBinding, Diagnostics> {
+    pub(super) fn parse_binding(&mut self) -> Result<source::ParameterBinding, Diagnostics> {
         self.bump();
         let parameter = self.take_word("bound parameter")?;
         self.expect("from", "JDL0922", "a binding needs `from`")?;

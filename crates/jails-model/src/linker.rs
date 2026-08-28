@@ -1,5 +1,6 @@
 //! The one boundary between human labels and semantic identities.
 
+mod component;
 mod enum_type;
 mod field;
 mod operation;
@@ -7,8 +8,8 @@ mod unit;
 
 use crate::diagnostic::{Diagnostic, Diagnostics};
 use crate::id::{
-    CapabilityId, DependencyId, EjectionId, EntityId, FieldId, IndexId, OperationId, ProjectId,
-    SettingId, StableId, UnitId,
+    CapabilityId, ComponentId, ComponentVariantId, DependencyId, EjectionId, EntityId, FieldId,
+    IndexId, OperationId, ProjectId, SettingId, StableId, UnitId,
 };
 use crate::model::{AppModel, Entity, EntityNames, Field, FieldNames, ProjectIntent, TypeRef};
 use crate::naming::{
@@ -68,7 +69,7 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
     let dependencies = crate::dependency::link(document.dependencies, &mut linker);
     let settings = crate::setting::link(document.settings, &mut linker);
 
-    let units = unit::link(document.units, &document.project.base_package, &mut linker);
+    let mut units = unit::link(document.units, &document.project.base_package, &mut linker);
 
     let mut entities = BTreeMap::new();
     let mut entity_labels = BTreeMap::new();
@@ -252,11 +253,22 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
         }
     }
 
+    let mut routes = BTreeMap::new();
     let operations = operation::link(
         document.operations,
         &entities,
         &entity_labels,
         &entity_fields,
+        &mut routes,
+        &mut linker,
+    );
+    let components = component::link(
+        document.components,
+        &entities,
+        &operations,
+        &document.project.base_package,
+        &mut units,
+        &mut routes,
         &mut linker,
     );
 
@@ -264,6 +276,7 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
         .keys()
         .map(StableId::as_str)
         .chain(units.keys().map(StableId::as_str))
+        .chain(components.keys().map(StableId::as_str))
         .chain(entities.keys().map(StableId::as_str))
         .chain(operations.keys().map(StableId::as_str))
         .collect::<BTreeSet<_>>();
@@ -290,6 +303,7 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
         settings,
         ejections,
         units,
+        components,
         entities,
         operations,
     })
@@ -535,6 +549,8 @@ parse_stable_id!(
     FieldId,
     IndexId,
     OperationId,
+    ComponentId,
+    ComponentVariantId,
     UnitId
 );
 

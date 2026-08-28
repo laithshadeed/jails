@@ -65,6 +65,8 @@ stable_id!(EntityId, "entity id");
 stable_id!(FieldId, "field id");
 stable_id!(IndexId, "index id");
 stable_id!(OperationId, "operation id");
+stable_id!(ComponentId, "component id");
+stable_id!(ComponentVariantId, "component variant id");
 stable_id!(UnitId, "source unit id");
 stable_id!(CapabilityId, "capability id");
 stable_id!(DependencyId, "dependency id");

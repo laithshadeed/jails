@@ -3,6 +3,7 @@ use super::token::{Span, Token, TokenKind, problem};
 use crate::source;
 use crate::{DependencyScope, Diagnostics, Facet, SettingTarget};
 use std::collections::{BTreeMap, BTreeSet};
+mod component;
 mod declaration;
 mod operation;
 
@@ -54,6 +55,7 @@ struct Parser<'a> {
     ejections: BTreeMap<String, source::Ejection>,
     entities: BTreeMap<String, source::Entity>,
     operations: BTreeMap<String, source::Operation>,
+    components: BTreeMap<String, source::Component>,
 }
 
 impl<'a> Parser<'a> {
@@ -70,6 +72,7 @@ impl<'a> Parser<'a> {
             ejections: BTreeMap::new(),
             entities: BTreeMap::new(),
             operations: BTreeMap::new(),
+            components: BTreeMap::new(),
         }
     }
 
@@ -115,13 +118,7 @@ impl<'a> Parser<'a> {
                     ));
                 }
                 "command" | "query" | "transition" | "event" => self.parse_operation(None)?,
-                "component" => {
-                    return Err(self.here(
-                        "JDL0901",
-                        format!("`{}` belongs to the next typed JDL lowering slice", self.text()),
-                        "keep the declaration in legacy JDL until operation/component lowering lands",
-                    ));
-                }
+                "component" => self.parse_component()?,
                 unknown => {
                     return Err(self.here(
                         "JDL0101",
@@ -192,6 +189,7 @@ impl<'a> Parser<'a> {
             settings: self.settings,
             ejections: self.ejections,
             units: BTreeMap::new(),
+            components: self.components,
             entities: self.entities,
             operations: self.operations,
         };

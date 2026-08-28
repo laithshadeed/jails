@@ -2,8 +2,8 @@ use crate::EnumConstant;
 use crate::Operation;
 use crate::SourceUnit;
 use crate::id::{
-    CapabilityId, DependencyId, EjectionId, EntityId, FieldId, IndexId, OperationId, ProjectId,
-    SettingId, StableId, UnitId,
+    CapabilityId, ComponentId, DependencyId, EjectionId, EntityId, FieldId, IndexId, OperationId,
+    ProjectId, SettingId, StableId, UnitId,
 };
 use crate::patch::{ModelPatch, StorageRetirementPolicy};
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,8 @@ pub struct AppModel {
     pub ejections: BTreeMap<EjectionId, Ejection>,
     #[serde(default)]
     pub units: BTreeMap<UnitId, SourceUnit>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub components: BTreeMap<ComponentId, crate::Component>,
     pub entities: BTreeMap<EntityId, Entity>,
     pub operations: BTreeMap<OperationId, Operation>,
 }
@@ -39,6 +41,7 @@ impl AppModel {
             + self.settings.len()
             + self.ejections.len()
             + self.units.len()
+            + self.components.len()
             + self.entities.len()
             + self
                 .entities
@@ -66,6 +69,15 @@ impl AppModel {
             ModelPatch::ReplaceUnit(unit) => crate::unit::replace(&mut self.units, unit)?,
             ModelPatch::RemoveUnit(id) => {
                 refuse_ejected_target(self, id.as_str())?;
+                if self
+                    .components
+                    .keys()
+                    .any(|component| component.as_str() == id.as_str())
+                {
+                    return Err(format!(
+                        "source unit id `{id}` is derived from a typed component\n       fix: remove or evolve the component declaration instead"
+                    ));
+                }
                 if self.units.remove(&id).is_none() {
                     return Err(format!("source unit id `{id}` does not exist"));
                 }
@@ -168,6 +180,12 @@ impl AppModel {
                     .values()
                     .filter(|operation| crate::operation::references_entity(&operation.kind, &id))
                     .map(|operation| operation.label.as_str())
+                    .chain(
+                        self.components
+                            .values()
+                            .filter(|component| crate::component::references_entity(component, &id))
+                            .map(|component| component.label.as_str()),
+                    )
                     .collect::<Vec<_>>();
                 if !references.is_empty() {
                     return Err(format!(
@@ -188,6 +206,14 @@ impl AppModel {
                         crate::operation::references_entity(&operation.kind, &entity)
                     })
                     .map(|operation| operation.label.as_str())
+                    .chain(
+                        self.components
+                            .values()
+                            .filter(|component| {
+                                crate::component::references_entity(component, &entity)
+                            })
+                            .map(|component| component.label.as_str()),
+                    )
                     .collect::<Vec<_>>();
                 if !references.is_empty() {
                     return Err(format!(
@@ -336,6 +362,14 @@ impl AppModel {
                             .any(|emitted| emitted == &id)
                     })
                     .map(|operation| operation.label.as_str())
+                    .chain(
+                        self.components
+                            .values()
+                            .filter(|component| {
+                                crate::component::references_operation(component, &id)
+                            })
+                            .map(|component| component.label.as_str()),
+                    )
                     .collect::<Vec<_>>();
                 if !references.is_empty() {
                     return Err(format!(
@@ -372,6 +406,7 @@ fn is_ejectable_target(model: &AppModel, target: &str) -> bool {
     target.starts_with("art_")
         || model.capabilities.keys().any(|id| id.as_str() == target)
         || model.units.keys().any(|id| id.as_str() == target)
+        || model.components.keys().any(|id| id.as_str() == target)
         || model.entities.keys().any(|id| id.as_str() == target)
         || model.operations.keys().any(|id| id.as_str() == target)
 }

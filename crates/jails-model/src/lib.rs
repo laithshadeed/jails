@@ -6,6 +6,7 @@
 //! migration version or know how a plan is persisted.
 
 mod capability;
+mod component;
 mod dependency;
 mod diagnostic;
 mod ejection;
@@ -24,11 +25,14 @@ mod source;
 mod syntax_edit;
 mod unit;
 
+pub use component::{
+    Component, ComponentKind, ComponentParameter, ComponentReference, ComponentVariant,
+};
 pub use diagnostic::{Diagnostic, Diagnostics};
 pub use enum_constant::EnumConstant;
 pub use id::{
-    CapabilityId, DependencyId, EjectionId, EntityId, FieldId, IndexId, OperationId, ProjectId,
-    SettingId, StableId, UnitId,
+    CapabilityId, ComponentId, ComponentVariantId, DependencyId, EjectionId, EntityId, FieldId,
+    IndexId, OperationId, ProjectId, SettingId, StableId, UnitId,
 };
 pub use jdl::parse as parse_jdl;
 pub use jdl::v1::{
