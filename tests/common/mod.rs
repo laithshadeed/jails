@@ -485,8 +485,9 @@ impl AppSuiteServices {
                 .unwrap()
                 .as_nanos()
         );
-        let postgres_port = reserve_loopback_port();
-        let kafka_port = reserve_loopback_port();
+        let [postgres_port, kafka_port] = reserve_loopback_ports(2)[..] else {
+            unreachable!("two ports were requested")
+        };
         let endpoints = AppSuiteEndpoints {
             postgres_port,
             kafka_port,
@@ -676,12 +677,34 @@ pub fn listening_loopback_port() -> (TcpListener, u16) {
     (listener, port)
 }
 
-fn reserve_loopback_port() -> u16 {
-    TcpListener::bind(("127.0.0.1", 0))
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+/// `count` distinct free loopback ports, for handing to containers.
+///
+/// **All of them are held at once, then released together**, and that is the
+/// whole reason this takes a count instead of being called in a loop. Asking
+/// the kernel for an ephemeral port means binding port 0, reading what you
+/// got, and closing -- so a second call made *after* the first has closed can
+/// be handed the very same port back. `AppSuiteServices` did exactly that,
+/// reserving PostgreSQL's port and then Kafka's, and the failure it buys is
+/// the confusing kind: two containers are told to publish on one port, the
+/// second `docker run` fails to bind, and the suite reports it as a broker
+/// that would not start.
+///
+/// Holding every listener until all of them are chosen makes that impossible,
+/// because the kernel will not hand out a port it currently has bound.
+///
+/// What it cannot close is the window between this returning and the
+/// container binding: another process on the machine can still take the port
+/// in between. Nothing short of letting the container choose its own port
+/// fixes that, and it is a far smaller window than the one above -- this is
+/// the standard reservation trick, with its one real footgun removed.
+pub fn reserve_loopback_ports(count: usize) -> Vec<u16> {
+    let held: Vec<TcpListener> = (0..count)
+        .map(|_| TcpListener::bind(("127.0.0.1", 0)).expect("could not reserve a loopback port"))
+        .collect();
+    held.iter()
+        .map(|listener| listener.local_addr().unwrap().port())
+        .collect()
+    // `held` drops here: every port is chosen before any is released.
 }
 
 fn database_name(app_name: &str) -> String {

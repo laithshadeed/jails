@@ -705,9 +705,19 @@ fn a_capability_jails_does_not_have_names_the_one_it_does() {
     // A word clap already accepts must not be in the table: `postgres` is a
     // visible_alias for `db`, and an entry for it would claim a capability
     // that works does not exist.
+    //
+    // **`--no-start`, because `postgres` really is `db`.** Being a working
+    // alias is the whole point being asserted, so this call *succeeds* -- and
+    // without this flag it succeeded all the way to `docker compose up`,
+    // starting a real PostgreSQL that the test never connects to and nothing
+    // ever takes down. Each full run leaked a container and, worse, the
+    // compose network beside it; after three runs Docker had no address pool
+    // left and unrelated container tests began failing with `all predefined
+    // address pools have been fully subnetted`. A suite that poisons the
+    // machine for its own next run is a flake with a delay on it.
     for alias in ["postgres", "dbconsole"] {
         let refused = jails_cmd(&root, None)
-            .args(["add", alias])
+            .args(["add", alias, "--no-start"])
             .output()
             .unwrap();
         let stderr = String::from_utf8_lossy(&refused.stderr);

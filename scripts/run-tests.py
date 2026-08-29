@@ -165,6 +165,51 @@ def runtime_environment() -> dict[str, str]:
     return environment
 
 
+def report_leaked_containers() -> None:
+    """Name anything the suite started and did not take down.
+
+    Reporting, never deleting: a run that removes containers by name could
+    take out a concurrent run's, and the point here is to make a regression
+    visible rather than to tidy up after one.
+
+    This exists because the leak's failure mode is *delayed*. Two tests let
+    `jails add` start compose services and never took them down; each run left
+    a container and its compose network behind, and after three runs Docker
+    had no address pool left. What failed then was not either of those tests
+    -- it was `canonical_toxiproxy_pack_keeps_testkit_edits_and_runs_with_real_maven`,
+    with `all predefined address pools have been fully subnetted`, in a run
+    whose own tests were all correct. A line here would have named the cause
+    on the first run instead of the symptom on the third.
+    """
+    def docker(*args: str) -> list[str]:
+        try:
+            done = subprocess.run(
+                ["docker", *args], capture_output=True, text=True, timeout=30
+            )
+        except (OSError, subprocess.SubprocessError):
+            return []
+        if done.returncode != 0:
+            return []
+        return [line for line in done.stdout.splitlines() if line.startswith("jails-")]
+
+    containers = docker("ps", "-a", "--format", "{{.Names}}")
+    networks = docker("network", "ls", "--format", "{{.Name}}")
+    if not containers and not networks:
+        return
+    print(
+        f"\nrun-tests: WARNING -- the suite left {len(containers)} container(s) and "
+        f"{len(networks)} network(s) behind."
+    )
+    for name in sorted(set(containers) | set(networks))[:10]:
+        print(f"  {name}")
+    print(
+        "  A test let `jails add` start compose services without `--no-start` "
+        "and did not take them down.\n"
+        "  Left to accumulate this exhausts Docker's address pool and unrelated "
+        "container tests begin failing."
+    )
+
+
 def key_for(binary: Path) -> str:
     """A binary's name without cargo's content hash.
 
@@ -264,6 +309,8 @@ def main() -> int:
             sys.stdout.write(log.read_text(errors="replace"))
 
     write_ledger(observed)
+
+    report_leaked_containers()
 
     slowest = sorted(observed.items(), key=lambda row: -row[1])[:5]
     print(f"\nrun-tests: {elapsed:.1f}s wall for {len(binaries)} binaries")

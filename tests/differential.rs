@@ -1275,7 +1275,13 @@ fn sse_pack_preserves_all_four_files_and_only_its_owned_configuration() {
 fn redis_pack_keeps_java_and_compose_edits_in_the_generate_edit_generate_loop() {
     let subjects = spring_subjects("redis-capability-pack");
     for subject in &subjects {
-        let added = subject.run(&["add", "redis"]);
+        // `--no-start`: this case is about the *files* -- the Java the pack
+        // writes, the reader edits in them, and the compose block's text --
+        // and it reads every one of them off disk. Starting the service was
+        // incidental, and it leaked a Redis container and its compose network
+        // on every run, which is what eventually exhausted Docker's address
+        // pool and took unrelated container tests down with it.
+        let added = subject.run(&["add", "redis", "--no-start"]);
         if !added.status.success() {
             let output = format!(
                 "{}{}",
