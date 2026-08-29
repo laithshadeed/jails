@@ -731,3 +731,216 @@ fn a_capability_jails_does_not_have_names_the_one_it_does() {
     assert!(helped.status.success());
     assert!(!String::from_utf8_lossy(&helped.stdout).is_empty());
 }
+
+/// Every command path the binary advertises is exercised by some test.
+///
+/// `simplify-sol.md`'s G2: *all live command paths map to at least one
+/// checked-in journey.* The catalog is the oracle -- `jails commands --json`
+/// walks the same `clap::Command` that parses arguments -- so a command added
+/// without a journey fails here rather than shipping untested.
+///
+/// **A journey is an invocation, not a mention.** Comments are stripped before
+/// the scan: prose naming a command is not coverage, and a gate that counted
+/// it would pass on the strength of its own documentation. That is not
+/// hypothetical -- the protocol-fixture gate in `tests/golden.rs` did exactly
+/// that on its first run.
+///
+/// A command that cannot be exercised without infrastructure still needs a
+/// journey: its refusal is behaviour too, and G2 asks for success *and*
+/// refusal. `EXERCISED_ELSEWHERE` is for paths whose journey cannot live in
+/// this workspace at all, and it is empty on purpose.
+#[test]
+fn every_advertised_command_path_has_a_journey() {
+    /// Paths with no journey, each with the reason it cannot have one.
+    /// Empty: every advertised command is reachable from a test, including the
+    /// ones whose only reachable behaviour is a refusal.
+    const EXERCISED_ELSEWHERE: [(&str, &str); 0] = [];
+
+    let surface = jails_cmd(&temp_dir("journey-coverage"), None)
+        .args(["commands", "--json"])
+        .output()
+        .unwrap();
+    assert!(surface.status.success());
+    let surface = String::from_utf8_lossy(&surface.stdout);
+
+    let mut paths = Vec::new();
+    for line in surface.lines() {
+        let Some(at) = line.find("\"name\": \"") else {
+            continue;
+        };
+        let rest = &line[at + "\"name\": \"".len()..];
+        if let Some(end) = rest.find('"') {
+            paths.push(rest[..end].to_string());
+        }
+    }
+    assert!(
+        paths.len() > 90,
+        "the catalog reported only {} command paths -- it has stopped \
+         describing the surface, and this gate would pass over anything",
+        paths.len()
+    );
+
+    let sources = test_sources_without_comments();
+    assert!(
+        sources.len() > 200_000,
+        "the test scan found only {} bytes -- it has lost the suite",
+        sources.len()
+    );
+
+    let mut unexercised = Vec::new();
+    for path in &paths {
+        if EXERCISED_ELSEWHERE.iter().any(|(name, _)| name == path) {
+            continue;
+        }
+        let words: Vec<&str> = path.split(' ').collect();
+        let found = match words.as_slice() {
+            [one] => sources.contains(&format!("\"{one}\"")),
+            [first, second, ..] => {
+                sources.contains(&format!("\"{first}\", \"{second}\""))
+                    || sources.contains(&format!("\"{path}\""))
+            }
+            [] => true,
+        };
+        if !found {
+            unexercised.push(path.clone());
+        }
+    }
+    assert!(
+        unexercised.is_empty(),
+        "these command paths are advertised and no test runs them: \
+         {unexercised:?}\n       fix: add a journey -- a refusal counts, and \
+         for a command that needs infrastructure the refusal is usually the \
+         only behaviour a test can reach"
+    );
+}
+
+/// Every `tests/**/*.rs`, with `//` comments removed.
+fn test_sources_without_comments() -> String {
+    fn walk(dir: &std::path::Path, out: &mut String) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries {
+            let path = entry.expect("failed to read a directory entry").path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                for line in text.lines() {
+                    // Whitespace is collapsed as well as comments dropped:
+                    // `rustfmt` breaks a long `args([...])` across lines, so
+                    // `"editor", "complete"` and `"editor",\n  "complete"`
+                    // are the same invocation and only one of them would match
+                    // a literal search.
+                    out.push_str(line.split("//").next().unwrap_or("").trim());
+                    out.push(' ');
+                }
+            }
+        }
+    }
+    let mut out = String::new();
+    walk(
+        &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests"),
+        &mut out,
+    );
+    out
+}
+
+/// The `kafka` family refuses outside a project, by name.
+///
+/// Eight subcommands that shell into the broker's own CLI tools inside the
+/// compose container. None can do its work without a project and a running
+/// broker, so the behaviour a test can reach is the refusal -- and
+/// `simplify-sol.md`'s G2 asks for refusal journeys as well as success ones.
+/// Before this they had no journey at all: eight advertised commands that no
+/// test had ever run, which is how a panic on an empty directory ships.
+#[test]
+fn every_kafka_subcommand_refuses_outside_a_project_rather_than_panicking() {
+    let root = temp_dir("kafka-outside-a-project");
+    // Each path is written out in full rather than assembled from a prefix
+    // and a loop variable. `every_advertised_command_path_has_a_journey` looks
+    // for the path as a literal, and cannot see one a loop builds -- so a
+    // journey that exists but is invisible to the gate reads exactly like a
+    // missing one.
+    //
+    // `send` takes a required payload; the rest take an optional topic. The
+    // argument is supplied so clap's own "missing argument" refusal does not
+    // stand in for the one being tested -- it would satisfy the assertion
+    // below for the wrong reason.
+    for (path, argument) in [
+        ("kafka topics", None),
+        ("kafka describe", None),
+        ("kafka send", Some("{}")),
+        ("kafka poison", None),
+        ("kafka tail", None),
+        ("kafka dlt", None),
+        ("kafka lag", None),
+        ("kafka reset", None),
+    ] {
+        let subcommand = path.split(' ').nth(1).expect("a two-word path");
+        let mut command = jails_cmd(&root, None);
+        command.args(["kafka", subcommand]);
+        if let Some(argument) = argument {
+            command.arg(argument);
+        }
+        let output = command.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success(),
+            "`kafka {subcommand}` succeeded in a directory with no project"
+        );
+        assert!(
+            stderr.contains("no pom.xml"),
+            "`kafka {subcommand}` refused without naming the missing build \
+             file: {stderr}"
+        );
+    }
+}
+
+/// `architecture baseline` refuses outside a project too.
+#[test]
+fn architecture_baseline_refuses_outside_a_project() {
+    let root = temp_dir("architecture-baseline-outside");
+    let output = jails_cmd(&root, None)
+        .args(["architecture", "baseline"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("no pom.xml"),
+        "the refusal should name the missing build file"
+    );
+}
+
+/// `jails setup` writes to the machine, so its journey gives it a fake one.
+///
+/// It is the one command that edits a file outside any project --
+/// `~/.testcontainers.properties`, through `apply::put_outside_project`, which
+/// is deliberately named so nothing else reaches it by accident. The journey
+/// therefore points `HOME` at a scratch directory: a test that ran this
+/// against the real one would rewrite the developer's own file, which is
+/// exactly the accident the verb's name is about.
+#[test]
+fn setup_writes_the_reuse_key_into_the_home_it_is_given() {
+    let home = temp_dir("setup-fake-home");
+    let output = jails_cmd(&home, None)
+        .arg("setup")
+        .env("HOME", &home)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "setup failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let written = home.join(".testcontainers.properties");
+    assert!(
+        written.is_file(),
+        "setup reported success and wrote no ~/.testcontainers.properties"
+    );
+    let text = std::fs::read_to_string(&written).unwrap();
+    assert!(
+        text.contains("testcontainers.reuse.enable=true"),
+        "setup wrote a file without the key it exists to set: {text}"
+    );
+}

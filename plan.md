@@ -283,8 +283,22 @@ verbatim from `customer.js` and `admin.js`:
       failpoint is named outside the registry. Each was verified by injecting
       a violation.
 
-      **What is left is G2-G5**, and none is a sweep: every live command path
-      mapped to a checked-in journey (G2), a machine-readable kind/capability
+      **G2 is closed too.** All 108 advertised command paths now have a
+      journey, held by `every_advertised_command_path_has_a_journey`, which
+      reads the same `jails commands --json` catalog that walks the parsing
+      `clap::Command`. Ten had none: the eight `kafka` subcommands,
+      `architecture baseline` and `setup`. Their journeys assert refusals,
+      which is what G2 asks for and all that is reachable without a broker --
+      and `setup` is given a scratch `HOME`, because it is the one command
+      that writes outside any project and a journey against the real one would
+      rewrite the developer's own file.
+
+      Two things the gate needed that are worth keeping: it strips comments,
+      because prose naming a command is not coverage; and a journey must name
+      its path *literally* rather than assemble it from a loop variable, since
+      a journey the gate cannot see reads exactly like a missing one.
+
+      **What is left is G3-G5**, and none is a sweep: a machine-readable kind/capability
       to build-fixture map that builds the exact tree under test rather than a
       neighbouring toolbox (G3), a child-process death matrix over the
       failpoint registry (G4 proper -- the gate above proves the registry is
