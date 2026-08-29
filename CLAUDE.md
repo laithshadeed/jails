@@ -876,20 +876,30 @@ taken there is a measurement of the other two tiers**. Measure with
 `JAILS_REQUIRE_TOOLCHAIN=1` or measure nothing.
 
 Measured on a four-core machine with the full toolchain present, so every
-tier actually ran (1838 tests, `JAILS_REQUIRE_TOOLCHAIN=1`):
+tier actually ran (`JAILS_REQUIRE_TOOLCHAIN=1`). **The baseline is this
+branch's own parent**, not some older revision -- the numbers below are what
+*this* change is worth on top of everything already in the tree:
 
 | | before | after |
 |---|---|---|
-| `cargo test --workspace` | 289.1s | 208.6s |
-| `mise run test` (concurrent binaries) | -- | **192.2s** |
-| total CPU | 657.9s | 508.2s |
-| the same binaries with Maven off PATH, serially | 110.5s | 24.8s |
-| the same binaries with Maven off PATH, concurrently | 65.2s | **14.5s** |
+| `cargo test --workspace` | 472.4s | **295.4s** |
+| `mise run test` (concurrent binaries) | -- | **281.7s** |
+| total CPU | 921.0s | 703.3s |
+| every binary with Maven off PATH, concurrently | 64.0s | **22.4s** |
+| CPU for that same set | 178.6s | **30.2s** |
 
-**7.6x on everything that does not shell out to Maven, and 1.5x overall.** The
-gap between those two numbers is the whole story of what is left, and
+**2.9x on everything that does not shell out to Maven -- and nearly 6x less
+CPU for it -- against 1.6x overall.** The gap between those two is the whole
+story of what is left, and
 [the section below](#the-remaining-cost-is-maven-and-it-is-at-the-machines-floor)
 is the measurement of why.
+
+**Re-measure against the current parent, never against a remembered number.**
+An earlier draft of this section quoted 289.1s -> 207.8s, taken before the
+real-toolchain generator sweep landed. Both figures were true of the tree they
+were measured on and neither described this one: the suite grew by roughly
+180 seconds of Maven in between, so the honest ratio moved even though nothing
+about the change did.
 
 The rules that got it there, each one a rule rather than a one-off tidy-up:
 
