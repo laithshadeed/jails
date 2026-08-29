@@ -1051,17 +1051,43 @@ the cache failing: `cargo-Linux-<Cargo.lock hash>` restores 381 MB and the
 third-party crates are all in it. Every one of the twenty *workspace* crates is
 genuinely cold, because the commit changed them.
 
-Two of those rows were paying rather than measuring, and both are fixed:
+Two of those rows were paying rather than measuring, and both are fixed.
+Measured on the runner against `33265322341`, which ran 1856 tests to the
+baseline's 1855 -- close enough that the phases compare directly:
+
+| phase | before | after |
+|---|---|---|
+| `cargo fmt` | 4.4 | 2.2 |
+| `cargo clippy --workspace --all-targets` | 18.4 | 14.7 |
+| `cargo build --workspace` | 82.9 | *removed* |
+| test-harness compilation | 124.7 | 179.4 |
+| **all compilation** | **226.0** | **194.0** |
+| test execution | 314.4 | 322.6 |
+| the pinned Gradle example | 26.6 | 32.1 |
+| **the gate step** | **571.4** | **550.9** |
 
 - **`cargo build --workspace` built nothing the suite did not build anyway.**
-  `mise.toml` has the reasoning and the numbers; it is a barrier between two
-  halves of one compile graph, worth 214.0s -> 177.7s cold.
+  `mise.toml` has the reasoning; it is a barrier between two halves of one
+  compile graph. Predicted from this machine at 214.0s -> 177.7s and measured
+  on the runner at 226.0s -> 194.0s, which is the check that a compile
+  experiment run here can be believed about there. The gate step moved less
+  than compilation did because test execution and the Gradle step each drifted
+  up by a few seconds, which is inside this job's run-to-run variance -- the
+  same gate has come in at 571.4s and 654.2s on work that differed by nothing
+  that matters.
 - **Nothing cached `~/.m2`.** The cargo cache covers Rust and `mise-action`
   covers the tool binaries; the Maven local repository is on neither, and is
   not on the runner image. So every run re-resolved the whole Spring Boot,
   Testcontainers, Flyway, ArchUnit and spotless tree from Central. A cold local
   repository costs **21.8s for the 44 MB the suite's smallest Spring fixture
   needs**, measured on that fixture; the repository a full run fills is 296 MB.
+  `33265322341` wrote 275 MB under `jvm-deps-Linux-v1`, so the first run to
+  restore it is the one after that; its saving is not in the table above.
+
+  The save is a guarded `actions/cache/save` rather than the automatic post
+  step, and `33265079310` is why: it was cancelled mid-gate, and the automatic
+  step would have frozen a nearly empty repository under a key that never
+  changes -- a permanent miss wearing a hit's clothes. The guard skipped it.
 
 Two levers were measured and declined. They are recorded because both are
 obvious enough to be proposed again:
