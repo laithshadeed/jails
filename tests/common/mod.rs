@@ -1165,6 +1165,93 @@ pub fn write_plain_fixture(root: &Path) {
     .unwrap();
 }
 
+/// The reader's own files in [`write_adopted_fixture`], as (path, body).
+///
+/// Public so a caller can assert they come back byte-identical: that is the
+/// property an adopted project is for, and the one easiest to break without
+/// noticing.
+pub const ADOPTED_READER_FILES: [(&str, &str); 4] = [
+    (
+        "OrdersService.java",
+        "package net.acme.legacy;\n\npublic final class OrdersService {\n    public String name() {\n        return \"orders\";\n    }\n}\n",
+    ),
+    (
+        "domain/Money.java",
+        "package net.acme.legacy.domain;\n\npublic record Money(long minor, String currency) {\n    public Money {\n        if (minor < 0) {\n            throw new IllegalArgumentException(\"minor must not be negative\");\n        }\n    }\n}\n",
+    ),
+    (
+        "persistence/OrderStore.java",
+        "package net.acme.legacy.persistence;\n\nimport java.util.List;\n\npublic interface OrderStore {\n    List<String> ids();\n}\n",
+    ),
+    (
+        "web/OrderEndpoint.java",
+        "package net.acme.legacy.web;\n\npublic final class OrderEndpoint {\n    public String route() {\n        return \"/orders\";\n    }\n}\n",
+    ),
+];
+
+/// Where [`ADOPTED_READER_FILES`] live, relative to the project root.
+pub fn adopted_base(root: &Path) -> PathBuf {
+    root.join("src/main/java/net/acme/legacy")
+}
+
+/// A Maven project jails did not write.
+///
+/// `simplify-sol.md`'s G5 asks for *sanitized adopted and reader-edited*
+/// projects, and every manifest in `examples/proof-policy.tsv` is jails' own
+/// output -- so nothing proved the tool against a codebase it did not
+/// generate. A generator can be perfectly correct about its own layout and
+/// wrong about somebody else's.
+///
+/// Deliberately foreign in every respect a generator might assume: its own
+/// groupId and artifactId, a package root that is not `com.example.demo`, a
+/// `persistence` directory where jails would have written `adapters`, and
+/// classes with bodies rather than stubs. The only dependency is JUnit, so a
+/// real build of it is cheap.
+pub fn write_adopted_fixture(root: &Path) {
+    fs::create_dir_all(root).unwrap();
+    fs::write(
+        root.join("pom.xml"),
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>net.acme.legacy</groupId>
+  <artifactId>orders-service</artifactId>
+  <version>2.4.1</version>
+  <properties>
+    <maven.compiler.release>{TARGET_RELEASE}</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>6.1.1</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>
+"#
+        ),
+    )
+    .unwrap();
+    let base = adopted_base(root);
+    for (relative, body) in ADOPTED_READER_FILES {
+        let at = base.join(relative);
+        fs::create_dir_all(at.parent().unwrap()).unwrap();
+        fs::write(&at, body).unwrap();
+    }
+}
+
+/// Every reader file's current bytes, in [`ADOPTED_READER_FILES`] order.
+pub fn adopted_reader_bytes(root: &Path) -> Vec<String> {
+    let base = adopted_base(root);
+    ADOPTED_READER_FILES
+        .iter()
+        .map(|(relative, _)| fs::read_to_string(base.join(relative)).unwrap())
+        .collect()
+}
+
 #[cfg(test)]
 mod permit_pool_tests {
     use super::{

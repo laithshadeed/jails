@@ -2256,67 +2256,12 @@ fn an_adopted_reader_written_project_generates_compiles_and_keeps_its_own_bytes(
     }
     let path = real_path_without_mvnd();
     let root = temp_dir("adopted-foreign-project");
-
-    // A pom jails would never emit: its own coordinates, no jails plugins, and
-    // only the dependency the reader's own test needs.
-    fs::write(
-        root.join("pom.xml"),
-        format!(
-            r#"<?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0">
-  <modelVersion>4.0.0</modelVersion>
-  <groupId>net.acme.legacy</groupId>
-  <artifactId>orders-service</artifactId>
-  <version>2.4.1</version>
-  <properties>
-    <maven.compiler.release>{TARGET_RELEASE}</maven.compiler.release>
-    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-  </properties>
-  <dependencies>
-    <dependency>
-      <groupId>org.junit.jupiter</groupId>
-      <artifactId>junit-jupiter</artifactId>
-      <version>6.1.1</version>
-      <scope>test</scope>
-    </dependency>
-  </dependencies>
-</project>
-"#
-        ),
-    )
-    .unwrap();
-
-    // The reader's own code, in the reader's own packages.
-    let base = root.join("src/main/java/net/acme/legacy");
-    let reader_files = [
-        // A class at the base package, so `base_package()` has an unambiguous
-        // answer -- this project has no `*Application.java` for it to find.
-        (
-            "OrdersService.java",
-            "package net.acme.legacy;\n\npublic final class OrdersService {\n    public String name() {\n        return \"orders\";\n    }\n}\n",
-        ),
-        (
-            "domain/Money.java",
-            "package net.acme.legacy.domain;\n\npublic record Money(long minor, String currency) {\n    public Money {\n        if (minor < 0) {\n            throw new IllegalArgumentException(\"minor must not be negative\");\n        }\n    }\n}\n",
-        ),
-        (
-            "persistence/OrderStore.java",
-            "package net.acme.legacy.persistence;\n\nimport java.util.List;\n\npublic interface OrderStore {\n    List<String> ids();\n}\n",
-        ),
-        (
-            "web/OrderEndpoint.java",
-            "package net.acme.legacy.web;\n\npublic final class OrderEndpoint {\n    public String route() {\n        return \"/orders\";\n    }\n}\n",
-        ),
-    ];
-    for (relative, body) in reader_files {
-        let at = base.join(relative);
-        fs::create_dir_all(at.parent().unwrap()).unwrap();
-        fs::write(&at, body).unwrap();
-    }
-    let before: Vec<String> = reader_files
-        .iter()
-        .map(|(relative, _)| fs::read_to_string(base.join(relative)).unwrap())
-        .collect();
+    // The fixture lives in `tests/common` because `tests/differential.rs` runs
+    // the same project through both implementations. Two copies of a project
+    // that is *defined* by being foreign would drift into two different
+    // foreignnesses.
+    write_adopted_fixture(&root);
+    let before = adopted_reader_bytes(&root);
 
     // 1. Adoption reads a layout jails did not choose.
     let adopted = jails_cmd_with_path(&root, &path)
@@ -2357,13 +2302,11 @@ fn an_adopted_reader_written_project_generates_compiles_and_keeps_its_own_bytes(
     );
 
     // 3. The reader's bytes are the reader's.
-    for ((relative, _), original) in reader_files.iter().zip(&before) {
-        assert_eq!(
-            &fs::read_to_string(base.join(relative)).unwrap(),
-            original,
-            "jails rewrote `{relative}`, which it did not author"
-        );
-    }
+    assert_eq!(
+        adopted_reader_bytes(&root),
+        before,
+        "jails rewrote a file it did not author"
+    );
 
     // 4. Rerun is idempotent, which is what `simplify-sol.md`'s differential
     // list asks for. Re-declaring the same record is not a collision to refuse
@@ -2390,11 +2333,9 @@ fn an_adopted_reader_written_project_generates_compiles_and_keeps_its_own_bytes(
         generated_before,
         "a repeated generate rewrote its own output"
     );
-    for ((relative, _), original) in reader_files.iter().zip(&before) {
-        assert_eq!(
-            &fs::read_to_string(base.join(relative)).unwrap(),
-            original,
-            "a repeated generate rewrote `{relative}`"
-        );
-    }
+    assert_eq!(
+        adopted_reader_bytes(&root),
+        before,
+        "a repeated generate rewrote a file it did not author"
+    );
 }

@@ -7,7 +7,10 @@
 
 mod common;
 
-use common::{temp_dir, write_plain_fixture, write_spring_fixture};
+use common::{
+    adopted_base, adopted_reader_bytes, temp_dir, write_adopted_fixture, write_plain_fixture,
+    write_spring_fixture,
+};
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -2273,4 +2276,128 @@ fn executable(path: &Path) -> bool {
 #[cfg(not(unix))]
 fn executable(_path: &Path) -> bool {
     false
+}
+
+/// Two subjects over a project jails did not write.
+///
+/// The canonical side gets a `.jails/model.jdl` naming the *reader's* base
+/// package, not `com.example.demo`: the whole point of an adopted project is
+/// that jails did not choose where anything lives.
+fn adopted_subjects(label: &str) -> [Subject; 2] {
+    let legacy_root = temp_dir(&format!("differential-{label}-legacy"));
+    let canonical_root = temp_dir(&format!("differential-{label}-canonical"));
+    write_adopted_fixture(&legacy_root);
+    write_adopted_fixture(&canonical_root);
+    // No `model.jdl` yet, deliberately. `adopt` refuses on a canonical project
+    // -- "adopt only before creating the model" -- and it is right to: adoption
+    // is how jails learns a layout it did not choose, which has to happen
+    // before there is a model that claims to know one. The test opts the
+    // canonical subject in after adopting, which is the real order a reader
+    // would follow.
+
+    [
+        Subject {
+            name: "legacy",
+            binary: std::env::var_os("JAILS_LEGACY_BIN")
+                .unwrap_or_else(|| OsString::from(env!("CARGO_BIN_EXE_jails"))),
+            record: legacy_root.join("src/main/java/net/acme/legacy/domain/Receipt.java"),
+            root: legacy_root,
+        },
+        Subject {
+            name: "canonical",
+            binary: OsString::from(env!("CARGO_BIN_EXE_jails")),
+            record: canonical_root
+                .join(".jails/generated/main/java/net/acme/legacy/domain/Receipt.java"),
+            root: canonical_root,
+        },
+    ]
+}
+
+/// Both implementations treat a foreign codebase the same way.
+///
+/// `simplify-sol.md`'s G5, differential half. `tests/cli/tooling.rs` proves the
+/// current binary handles an adopted project; this proves the *replacement*
+/// handles it the way the thing it replaces did -- which is the question a
+/// cutover actually turns on, and the one a single-binary test cannot ask.
+///
+/// Under `scripts/verify-rewrite-g1-canary.sh` the legacy side is a binary
+/// built from a frozen revision, so this keeps meaning something after the
+/// legacy crates are deleted.
+///
+/// What is compared is behaviour, not private state: the two keep their
+/// generated Java in different places by design, so the assertions are about
+/// what the *reader* can see -- their own bytes, and whether a rerun settles.
+#[test]
+fn an_adopted_project_is_treated_the_same_by_both_implementations() {
+    let subjects = adopted_subjects("adopted");
+    for subject in &subjects {
+        let before = adopted_reader_bytes(&subject.root);
+
+        subject.succeeds(&["adopt"]);
+        assert_eq!(
+            adopted_reader_bytes(&subject.root),
+            before,
+            "{} rewrote the reader's source while adopting",
+            subject.name
+        );
+
+        if subject.name == "canonical" {
+            fs::write(
+                subject.root.join(".jails/model.jdl"),
+                "application Orders @id(project_orders)\n\
+                 package net.acme.legacy\njava 26\ndialect postgresql\n",
+            )
+            .unwrap();
+        }
+
+        subject.succeeds(&["g", "record", "Receipt", "id:uuid", "total:long"]);
+        assert!(
+            subject.record.is_file(),
+            "{} did not write {}",
+            subject.name,
+            subject.record.display()
+        );
+        let generated = fs::read_to_string(&subject.record).unwrap();
+        assert!(
+            generated.contains("package net.acme.legacy.domain;"),
+            "{} put the record outside the reader's package: {generated}",
+            subject.name
+        );
+        assert_eq!(
+            adopted_reader_bytes(&subject.root),
+            before,
+            "{} rewrote a file it did not author",
+            subject.name
+        );
+
+        // A rerun settles rather than rewriting. Identity is the entity, so
+        // re-declaring the same record is an update that changes nothing.
+        let again = subject.run(&["g", "record", "Receipt", "id:uuid", "total:long"]);
+        assert!(
+            again.status.success(),
+            "{} failed on a rerun: {}",
+            subject.name,
+            String::from_utf8_lossy(&again.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(&subject.record).unwrap(),
+            generated,
+            "{} rewrote its own output on a rerun",
+            subject.name
+        );
+        assert_eq!(
+            adopted_reader_bytes(&subject.root),
+            before,
+            "{} rewrote the reader's source on a rerun",
+            subject.name
+        );
+
+        // The reader's own directory names survive: `persistence`, which jails
+        // would have called `adapters`.
+        assert!(
+            adopted_base(&subject.root).join("persistence").is_dir(),
+            "{} moved the reader's persistence package",
+            subject.name
+        );
+    }
 }
