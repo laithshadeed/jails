@@ -974,10 +974,12 @@ and the runner reports it as a failing test rather than as its own defect.
 
 ### The remaining cost is Maven, and it is at the machine's floor
 
-`cli` is 194s of the 192s total -- it *is* the critical path -- and inside it
-the real-toolchain tier is nearly all of the cost: the same binary with Maven
-off PATH runs in 6.6s. Five measurements bound what is left, and each one
-closes off a plausible idea:
+`cli` is the critical path and the real-toolchain tier is nearly all of its
+cost: with Maven off PATH the whole suite's binaries finish concurrently in
+22.4s against 295.4s with it. Five measurements bound what is left, and each
+one closes off a plausible idea. **All five were taken on four cores** -- read
+the concurrency one with that in mind, because it is the one that does not
+generalise:
 
 - **One `mvn test` on a cold generated Spring project is 7.1s wall and 9.3s
   CPU**, split 1.9s Maven start, 1.7s javac, **5.7s surefire fork and Spring
@@ -988,11 +990,20 @@ closes off a plausible idea:
   to **21.8s**. Adding `-XX:-UsePerfData`, pinned heap sizes, or
   `-XX:CICompilerCount=2` on top moves nothing. Do not go looking again
   without a measurement.
-- **Concurrency is not the constraint.** Raising the Maven permit cap from six
-  to ten changed 163.5s to 162.3s; removing it entirely (64) reached 158.0s
-  while *raising* total CPU. The box is saturated, not queued -- even though
-  the profile shows 848s of toolchain wall time and 856s of it spent waiting
-  for a permit.
+- **Concurrency is not the constraint *on four cores*.** Raising the Maven
+  permit cap from six to ten changed 163.5s to 162.3s; removing it entirely
+  (64) reached 158.0s while *raising* total CPU. That box is saturated rather
+  than queued, even though the profile shows 848s of toolchain wall time and
+  856s of it spent waiting for a permit.
+
+  **This does not generalise, and the same repository has the counter-example
+  written down.** `default_max_toolchain_processes` records `tests/cli` at
+  113.2s with six permits and 106.3s with twelve, measured on sixteen cores.
+  Four cores cannot distinguish "the cap is right" from "the machine is full",
+  because at four cores every cap above six is the same cap. A permit
+  experiment run here says nothing about a machine with cores to spare, which
+  is exactly why that number is derived from the machine and not written down
+  as a constant.
 - **It is not I/O either.** Moving every scratch tree to a tmpfs took `sys`
   from 56.6s to 50.6s and wall from 155.2s to 160.9s. The page cache was
   already absorbing it.
@@ -1002,7 +1013,7 @@ closes off a plausible idea:
   all, whose classpath contains a per-test temporary path and so can never
   match a shared archive.
 
-So the tier is ~500s of JVM CPU and the floor on four cores is ~125s. **The
+So the tier is ~700s of JVM CPU and the floor on four cores is ~175s. **The
 one lever left is the number of Maven runs**, which means generating several
 tests' artifacts into one project and verifying them with one Maven run --
 sharing one JVM start, one dependency resolution, and, because Spring caches a
