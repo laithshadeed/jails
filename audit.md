@@ -128,6 +128,15 @@ model at all, where the spec says both "materialize the selected `app` axes in
 JDL". A project created by jails is therefore still on the legacy path until
 somebody hand-writes `.jails/model.jdl` or runs `model import`.
 
+**That one is blocked by A1.1, not by effort.** `.jails/model.jdl` is what
+opts a project into the canonical path, so a `jails new` that writes one makes
+every new project canonical — and `CLAUDE.md` states the rule directly: *"Do
+not make ordinary `new`, offline Spring, Gradle, `new-cli`, or `new --app`
+canonical by default until every advertised follow-up workflow has a compiler
+backend … Default-on partial coverage breaks working capability commands."*
+Nineteen generator kinds still refuse there. So this is not the next item on
+this entry; **A1.1 is**, and closing it closes this one with it.
+
 ### A1.5 Five of eleven legacy ownership kinds have no canonical home
 
 `jails_protocol::vocabulary::resource::ResourceKey` is the legacy ownership
@@ -612,23 +621,27 @@ ordered by consequence.
    projection, and add the `derived` records and `model explain` so a
    convention is inspectable rather than implied. Do it *before* more emitters
    land: each one added now picks a placement §9.7 will later have to move.
-2. **A1.4** — make `jails new` write a model, then port `tests/differential.rs`
-   and `tests/cli/model.rs` onto `jdl 1` (**A5.3**). Until that lands the G1
-   gate protects the front end §22 says to delete.
-3. **A5.1 / A5.2** — golden the canonical tree and the three canonical
+2. **A1.1** — the nineteen generator kinds with no compiler backend. It is the
+   cutover's remaining blocker and it now blocks **A1.4**'s last item too: a
+   `jails new` that writes a model makes every new project canonical, which
+   `CLAUDE.md` forbids while coverage is partial.
+3. **A5.3** — port `tests/differential.rs` and `tests/cli/model.rs` onto
+   `jdl 1`, now that `model upgrade` and `model import` both produce it. Until
+   that lands the G1 gate protects the front end §22 says to delete.
+4. **A5.1 / A5.2** — golden the canonical tree and the three canonical
    persisted formats, and add the v1-lock decode test. This session changed
    the serialized shape of `AppModel` twice; both times the lock failed closed
    as it should, and both times nothing compared bytes.
-4. **A1.2b** — give the CST editor for the fourteen unserved component kinds
+5. **A1.2b** — give the CST editor for the fourteen unserved component kinds
    a direct test, replacing the CLI coverage that closing A1.2 removed.
-5. **A5.5** — port G4's child-process method to `jails-workspace::execute`.
+6. **A5.5** — port G4's child-process method to `jails-workspace::execute`.
    The suite `855e438` wrote is the template; what it needs is failpoints on
    the canonical publication sequence and the convergence assertion stated
    against the compiler lock rather than the journal.
-6. **A6.1** — write the module docs while the reasons are still recoverable.
-7. **A2.6** — pluralize table names, or record the divergence from §9.7 as a
+7. **A6.1** — write the module docs while the reasons are still recoverable.
+8. **A2.6** — pluralize table names, or record the divergence from §9.7 as a
    decision. Right now importing a legacy project silently renames its tables.
-8. **A2.2b** — decide whether pre-v1 JDL should carry declaration order, given
+9. **A2.2b** — decide whether pre-v1 JDL should carry declaration order, given
    that the mechanism would also give `.jails/model.toml` an ordering it is
    documented as lacking.
 
