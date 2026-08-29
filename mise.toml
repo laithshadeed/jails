@@ -7,11 +7,23 @@ maven = "3.9.16"
 mvnd = "1.0.6"
 gradle = "8.5"
 
-[tasks.verify-rewrite]
-description = "Run the single mandatory rewrite verification gate"
+# The lint half, separately callable because `pre-commit` needs it without the
+# suite: a multi-minute pre-commit is one people learn to skip with
+# `--no-verify`, which makes it worse than no hook. It is a task rather than a
+# line in two places because those two places had already drifted -- the hook
+# ran clippy without `-D warnings`, so an unused import passed `pre-commit` and
+# failed `pre-push` and CI. Same flags, one definition.
+[tasks.lint]
+description = "Format and lint exactly as the gate does"
 run = [
   "cargo fmt --all --check",
   "cargo clippy --workspace --all-targets -- -D warnings",
+]
+
+[tasks.verify-rewrite]
+description = "Run the single mandatory rewrite verification gate"
+depends = ["lint"]
+run = [
   "cargo build --workspace",
   "JAILS_REQUIRE_TOOLCHAIN=1 cargo test --workspace -- --skip unheld_gradle_example_manifest_builds_on_its_pinned_toolchain",
   "mise x java@21 gradle@8.5 -- env JAILS_REQUIRE_TOOLCHAIN=1 cargo test --test cli unheld_gradle_example_manifest_builds_on_its_pinned_toolchain",

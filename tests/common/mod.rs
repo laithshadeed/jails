@@ -859,29 +859,21 @@ fn test_profile_epoch() -> &'static Instant {
     EPOCH.get_or_init(Instant::now)
 }
 
-/// How many Maven/javac/Testcontainers process trees may run at once.
+/// How many Maven/JDK processes may run at once, when nothing says otherwise.
 ///
-/// **Derived from the machine, not written down as a constant.** This was a
-/// bare `6`, measured on a four-core machine: sixteen concurrent trees there
-/// turned a seven-second build into forty to seventy-five seconds and
-/// eventually killed a Kafka container during start-up, and six did not. But
-/// six is not a fact about Maven, it is that machine's core count and a half
-/// -- and a constant keeps a sixteen-core machine running six trees while ten
-/// cores sit idle through the most expensive tier in the suite.
+/// Six was a constant, and a constant is wrong in both directions: it throttles
+/// a 16-core machine and oversubscribes a 4-core one. Derived from the machine
+/// now, with six kept as the floor because that is the number the suite was
+/// tuned against, and twelve as the ceiling because these are JVMs -- Surefire
+/// forks again underneath each one, so the limit is memory and disk rather than
+/// cores, and past about eight concurrent builds this machine stopped getting
+/// faster. Measured on 16 cores: `tests/cli` 113.2s at six, 106.3s at twelve.
 ///
-/// So the *ratio* is what was measured and what is kept. One and a half trees
-/// per core: each one is a JVM that runs at roughly two cores' worth of CPU
-/// in short bursts separated by I/O, so a little over one per core covers the
-/// waiting without returning to the four-times oversubscription that broke.
-/// On the machine the original number came from this still evaluates to
-/// exactly 6.
-///
-/// `JAILS_TEST_MAX_TOOLCHAIN_PROCESSES` still overrides it, which is what a
-/// machine where the ratio is wrong -- a shared CI box, a laptop on battery
-/// -- should reach for.
+/// `JAILS_TEST_MAX_TOOLCHAIN_PROCESSES` still overrides it.
 fn default_max_toolchain_processes() -> usize {
-    let cores = std::thread::available_parallelism().map_or(4, |value| value.get());
-    (cores * 3 / 2).max(2)
+    std::thread::available_parallelism()
+        .map(|cores| (cores.get() / 2).clamp(6, 12))
+        .unwrap_or(6)
 }
 const MAX_INFRASTRUCTURE_START_PROCESSES: usize = 2;
 static TOOLCHAIN_PROCESSES: PermitPool = PermitPool::new();

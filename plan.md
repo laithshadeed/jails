@@ -283,15 +283,107 @@ verbatim from `customer.js` and `admin.js`:
       failpoint is named outside the registry. Each was verified by injecting
       a violation.
 
-      **What is left is G2-G5**, and none is a sweep: every live command path
-      mapped to a checked-in journey (G2), a machine-readable kind/capability
-      to build-fixture map that builds the exact tree under test rather than a
-      neighbouring toolbox (G3), a child-process death matrix over the
-      failpoint registry (G4 proper -- the gate above proves the registry is
-      honest, not that each fault is exercised), and the real-project corpus
-      (G5). `tests/differential.rs` is G1's harness with 30 journeys;
-      `scripts/verify-rewrite-g1-canary.sh` freezes a legacy revision and runs
-      them against both binaries.
+      **G2 is closed too.** All 108 advertised command paths now have a
+      journey, held by `every_advertised_command_path_has_a_journey`, which
+      reads the same `jails commands --json` catalog that walks the parsing
+      `clap::Command`. Ten had none: the eight `kafka` subcommands,
+      `architecture baseline` and `setup`. Their journeys assert refusals,
+      which is what G2 asks for and all that is reachable without a broker --
+      and `setup` is given a scratch `HOME`, because it is the one command
+      that writes outside any project and a journey against the real one would
+      rewrite the developer's own file.
+
+      Two things the gate needed that are worth keeping: it strips comments,
+      because prose naming a command is not coverage; and a journey must name
+      its path *literally* rather than assemble it from a loop variable, since
+      a journey the gate cannot see reads exactly like a missing one.
+
+      **G3 is closed.** All 39 generator kinds are now compiled by a real
+      toolchain. 13 were not: `every_remaining_generator_kind_compiles_in_one_
+      spring_project` closes 12 of them in **one project and one `mvn test`**
+      (23s), because twelve fixtures would have been twelve Maven invocations
+      against a suite already at 108s (P13.7) -- and what needs proving is that
+      each kind's output compiles, not that it does so alone. The 13th,
+      `socket`, was already covered and the gate could not see it.
+
+      This matters because the golden suite checks *bytes*, not compilability:
+      jails could emit Java that does not compile for any of those kinds and
+      every existing test stayed green. **It was, for one of them.** The first
+      real build found `bugs.md` B58 -- `g event` emits
+      `org.springframework.kafka.*` and neither supplies the dependency nor
+      refuses without it, so a plain `jails new` + `g event` leaves a project
+      that does not compile. That is the defect this gate exists to find, found
+      by it.
+
+      **Getting the number right took four wrong answers**, each worth
+      remembering. The matcher counts braces to find function bodies, and these
+      files are full of Java fixtures -- so a `{` in a string literal is not a
+      block, and counting raw made one body span its whole file and reported
+      *every* kind as compiled. Blanking literals first is `java::blanked()`'s
+      trick. Then the marker list omitted `real_maven_cmd`, which is what the
+      toolbox *builders* call -- so a dozen kinds generated there were reported
+      as never compiled. A coverage gate that under-reports sends people to
+      write tests that already exist.
+
+      **G4 is half-closed, and the other half is blocked on the cutover
+      itself.** `every_named_failpoint_converges` already arms every entry in
+      `fault::POINTS` and asserts convergence, and the registry is now honest
+      in both directions (above). What G4 asks for beyond that is a fault
+      firing *in a child process that dies without unwinding* -- and
+      `crates/jails-commit/tests/crash.rs` says why it cannot be written yet,
+      in its own header: that "needs a child process and `abort()`, which needs
+      the CLI to route through this executor". It is a cutover dependency, not
+      a missing test.
+
+      **G5's corpus exists and is enforced.** `examples/proof-policy.tsv` is
+      the machine-readable map -- six manifests, each with its build tool,
+      highest tier, cadence, gate name and prerequisites, checked by
+      `tests/cli/examples.rs`. Two run at tier 2 with real containers.
+
+      What G5 asks for beyond that is *adopted* projects: sanitized Spring and
+      plain trees jails did not generate, reader-edited, each run through both
+      implementations with a semantic comparison. That is the one gate whose
+      inputs do not exist yet -- every manifest in the policy is jails' own
+      output, so nothing in the suite proves the tool against a codebase it did
+      not write. `minicom-public/spring` is the obvious first candidate: it is
+      the project that reversed the no-Gradle rule, and `CLAUDE.md` records it
+      as one that has to be worked in daily.
+
+- [ ] **P13.7** **The suite is 108s of `tests/cli` because it compiles 36 Java
+      projects, and the remaining lever is Maven's JVM startup.** Profiled with
+      the harness's own `JAILS_TEST_PROFILE=1` (it needs `-- --nocapture`;
+      cargo captures stderr otherwise):
+
+      - **153 subprocesses, 547s of run time, 449s queued** behind the permit
+        pool, against ~108s wall.
+      - **`mvn`: 339s over 39 invocations.** The `jails` binary itself is 199s
+        over 106. Docker is 9s.
+      - **36 distinct project directories**, so there is almost nothing
+        redundant to remove: three are built twice, everything else once. The
+        cost *is* the coverage.
+
+      Done: `DEFAULT_MAX_TOOLCHAIN_PROCESSES` was the constant 6 and is derived
+      from the machine now, clamped to `[6, 12]`. Worth 113.2s -> 108.4s here.
+      Past about eight concurrent builds this machine stops getting faster --
+      these are JVMs that fork Surefire again underneath, so the limit is
+      memory and disk, not cores.
+
+      **The one large lever left is `mvnd`, and it needs an experiment rather
+      than a patch.** Warm `mvnd` is 0.6s against `mvn`'s 2.2s on a trivial
+      project -- the whole difference is JVM startup, which is a fixed ~1.6s on
+      every one of those 39 invocations, so roughly 62s of the 339s. The
+      real-toolchain tests deliberately avoid it: `real_path_without_mvnd()`
+      strips it from PATH, because `CLAUDE.md` records the daemon as flaky
+      under JDK 26 with a native-library extraction bug.
+
+      That claim now needs re-testing rather than trusting: mvnd 1.0.6 ran
+      **20/20 green** here under JDK 26. But 20 runs of a plain project is not
+      evidence about the case the note describes -- concurrent daemons across a
+      parallel suite, Spring projects, Testcontainers. The experiment is to run
+      the real-toolchain tier on the mvnd path repeatedly and count failures;
+      if it holds, `real_path_without_mvnd` and the `CLAUDE.md` note both go,
+      and the suite loses about a fifth of its Maven time. **Do not flip it on
+      a handful of green runs** -- that is what the note is there to prevent.
 
 - [ ] **P13.2** **Five production files parse Maven XML; the document asks for
       one.** `jails-project/src/pom.rs` is the path being replaced,

@@ -104,3 +104,47 @@ observed: `minicom/old/mc-01-06-2026/spring` (8.5 / Boot 2.7.18 / JDK 21),
 `minicom/minicom-15-01-2026/spring`, and the same checkout after `jails
 modernize` took it to Gradle 9.7 / Boot 4.1 / JDK 26, where `./gradlew build`
 runs 60 unit and 23 integration tests green.
+
+## B58 — `g event` emits Kafka code and neither supplies the dependency nor refuses
+
+`jails g event <Name>` writes `<Name>Publisher.java` and `<Name>Listener.java`
+importing `org.springframework.kafka.core`, `org.springframework.kafka.support`
+and `org.springframework.kafka.annotation`, plus a `<Name>MessagingIT`. In a
+project without `jails add kafka` none of that is on the classpath, so the
+generate succeeds, prints its created files, and leaves a project that does not
+compile.
+
+That is the exact failure `CLAUDE.md` says a generator must not cause: *"A
+generator that emits code must supply the dependency it needs ... Handing the
+reader a compile error for a line they did not write is exactly the plumbing
+this tool exists to remove."*
+
+**Why nothing caught it.** The `event` golden scenario is `g event Transaction`
+against a Spring fixture with no capability, and the golden suite compares
+*bytes* — it never compiles. `simplify-sol.md`'s G3 is about exactly this gap,
+and closing it surfaced this on the first real build.
+
+**The fix is a refusal, not a splice.** `add kafka` supplies three dependencies
+(the Boot starter, `testcontainers-kafka` for the generated IT, and
+`micrometer-core`, which `spring-kafka` declares `optionalApi` so it is not
+inherited) as well as the error handler and DLT routing. Splicing one of them
+would trade a missing-import error for a missing-bean one. The pattern this
+repository already uses is the right one: `usecase --yields` refuses without
+`add json` and names it —
+
+```
+usecase X --yields Y needs the generic JSON capability for durable payloads.
+       fix: run `jails add json` first.
+```
+
+`g event` should refuse the same way, keyed on the same projection check
+(`project.projected_main_sources()`, not disk, so a well-ordered `app apply`
+that installs the capability in the same transition is not refused).
+
+**Reproduce:**
+
+```
+jails new demo && cd demo
+jails g event Transaction
+mvn -q -B test        # package org.springframework.kafka.core does not exist
+```
