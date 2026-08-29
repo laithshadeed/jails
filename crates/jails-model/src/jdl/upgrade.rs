@@ -198,8 +198,9 @@ impl Cursor<'_> {
             Depth::Enum => {
                 if line == "}" {
                     self.depth = Depth::Root;
+                    return Ok(Some("}".to_string()));
                 }
-                Ok(Some(line.to_string()))
+                Ok(Some(enum_value(line)))
             }
             Depth::Operation => {
                 if line == "}" {
@@ -440,6 +441,25 @@ const UNIT_KINDS: [&str; 8] = [
 ];
 
 const OPERATION_KINDS: [&str; 4] = ["command", "query", "transition", "event"];
+
+/// One enum constant, with its wire value quoted.
+///
+/// Pre-v1 takes the wire value either way and strips the quotes it finds; v1
+/// requires a string, because `OPEN = open` is otherwise indistinguishable
+/// from a constant named `open`. So an upgraded constant is always quoted --
+/// which is also what `jails model import` needs, since the legacy converter
+/// it adopts spells wire values bare.
+fn enum_value(line: &str) -> String {
+    let line = line.trim_end_matches([',', ';']).trim();
+    match line.split_once('=') {
+        Some((constant, wire)) => format!(
+            "{} = \"{}\"",
+            constant.trim(),
+            wire.trim().trim_matches('"')
+        ),
+        None => line.to_string(),
+    }
+}
 
 /// The v1 `use` members a pre-v1 entity header implies.
 fn projections_of(header: &str) -> Vec<&'static str> {
@@ -889,6 +909,37 @@ class Clock @id(unit_class_clock)
         let placed = format!("{base}class Clock @id(unit_class_clock) @package(core)\n");
         let error = upgrade(&placed, AXES).unwrap_err();
         assert!(format!("{error:?}").contains("`@package` has no JDL v1 equivalent"));
+    }
+
+    /// Pre-v1 takes an enum wire value bare or quoted and v1 requires a
+    /// string, so an unquoted one is the difference between a wire name and a
+    /// second constant. `jails model import` writes them bare, which is how
+    /// this was found.
+    #[test]
+    fn an_enum_wire_value_is_quoted_on_the_way_across() {
+        let draft = "application Demo @id(project_demo)\npackage com.example.demo\njava 26\n\
+                     dialect postgresql\nenum Status {\n  OPEN = open\n  CLOSED = \"closed\"\n  DRAFT\n}\n";
+        let upgraded = upgrade(draft, AXES).unwrap().source;
+        assert!(upgraded.contains("OPEN = \"open\""), "{upgraded}");
+        assert!(upgraded.contains("CLOSED = \"closed\""), "{upgraded}");
+        assert!(upgraded.contains("\n  DRAFT\n"), "{upgraded}");
+        let after = crate::parse_jdl(&upgraded).unwrap();
+        let status = after
+            .entities
+            .values()
+            .find(|entity| entity.label == "status")
+            .unwrap();
+        assert_eq!(
+            status
+                .enum_constants
+                .iter()
+                .map(|constant| (
+                    constant.java_name.as_str(),
+                    constant.wire_name.as_deref().unwrap_or("")
+                ))
+                .collect::<Vec<_>>(),
+            [("OPEN", "open"), ("CLOSED", "closed"), ("DRAFT", "")]
+        );
     }
 
     #[test]

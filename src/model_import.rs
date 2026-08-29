@@ -53,7 +53,28 @@ pub(crate) fn run(invocation: Invocation) -> Result<()> {
     }
 
     let project = jails_project::model::Project::load(&root)?;
-    let (source, adoptions) = translate(&project, &legacy_state)?;
+    let (draft_source, adoptions) = translate(&project, &legacy_state)?;
+    // **Import renders the pre-v1 draft and upgrades it, rather than rendering
+    // v1 directly.** `jdl-sol.md` §22 already owns the translation between the
+    // two dialects, and it proves what a second renderer here could only
+    // assert: every stable id and physical name the legacy declarations carry
+    // is in the v1 model under the same id, with the same Java and SQL names.
+    // A project imported and then compiled has to agree with the one that was
+    // there, and that is the check.
+    let build = jails_workspace::observe_build_system(&root);
+    let axes = crate::model_upgrade::axes(
+        build,
+        jails_workspace::observe_spring_boot(&root, build).as_deref(),
+    )?;
+    let upgraded = jails_model::upgrade_jdl(&draft_source, axes)
+        .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
+    if invocation.output == Output::Human {
+        for note in &upgraded.notes {
+            println!("note: {note}");
+        }
+    }
+    let source = jails_model::format_jdl_v1(&upgraded.source)
+        .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
     let model = jails_model::parse_jdl(&source)
         .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
     let reader_paths = adoptions

@@ -10448,3 +10448,87 @@ fn generated_tree(root: &Path) -> std::collections::BTreeMap<String, String> {
     }
     tree
 }
+
+/// `jdl-sol.md` §22 has the importer "materialize `platform spring|plain` and
+/// `build maven|gradle`", which the pre-v1 draft cannot state at all.
+///
+/// Asserted through the exact plan rather than the applied tree, because the
+/// bundle carries the model file bytes and needs no three-way merge -- so this
+/// answers the question on a machine whose `git merge-file` is too old for the
+/// adoption half.
+#[test]
+fn legacy_import_writes_jdl_v1_with_both_new_axes_materialized() {
+    let root = temp_dir("model-import-emits-v1");
+    write_spring_fixture(&root);
+    let generated = jails_cmd(&root, None)
+        .args(["g", "record", "Task", "title:string!", "done:boolean?"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let bundle_path = root.join("import-plan.json");
+    let planned = jails_cmd(&root, None)
+        .args(["model", "import", "--plan-out"])
+        .arg(&bundle_path)
+        .output()
+        .unwrap();
+    assert!(
+        planned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
+
+    let bundle: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&bundle_path).unwrap()).unwrap();
+    let model_source = bundle["plan"]["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|operation| {
+            if operation["kind"].as_str()? != "replace-model-file"
+                || !operation["path"].as_str()?.ends_with("model.jdl")
+            {
+                return None;
+            }
+            operation["after"]["blob"].as_str().map(str::to_string)
+        })
+        .unwrap_or_else(|| panic!("the import plan writes no model file: {bundle:#}"));
+    let model_source = String::from_utf8(
+        bundle["blobs"][&model_source]
+            .as_array()
+            .unwrap_or_else(|| panic!("the plan has no blob for {model_source}"))
+            .iter()
+            .map(|byte| byte.as_u64().unwrap() as u8)
+            .collect::<Vec<u8>>(),
+    )
+    .unwrap();
+
+    assert!(model_source.starts_with("jdl 1\n"), "{model_source}");
+    assert!(model_source.contains("platform spring"), "{model_source}");
+    assert!(model_source.contains("build maven"), "{model_source}");
+    assert!(model_source.contains("storage postgres"), "{model_source}");
+    // The pre-v1 draft the importer renders internally is gone: no `dialect`
+    // line, no unbraced `application` header.
+    assert!(!model_source.contains("\ndialect "), "{model_source}");
+    assert!(!model_source.contains("\napplication "), "{model_source}");
+    // The identity the legacy record carried is written out rather than
+    // re-derived, which is the property the upgrade exists to hold.
+    assert!(model_source.contains("@id(ent_task)"), "{model_source}");
+    // The legacy identity, not a freshly derived one: pre-v1 keys a field id
+    // off the entity label, so `fld_task_title` is what the imported project
+    // must keep even though a v1 file written by hand would say
+    // `fld_ent_task_title`.
+    assert!(
+        model_source.contains("@id(fld_task_title)"),
+        "{model_source}"
+    );
+    // Declaration order and the physical column are both written out.
+    assert!(
+        model_source.find("title:").unwrap() < model_source.find("done:").unwrap(),
+        "{model_source}"
+    );
+    assert!(model_source.contains("@map(title)"), "{model_source}");
+}

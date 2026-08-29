@@ -108,7 +108,7 @@ pub(crate) fn run(to: u16, invocation: Invocation) -> Result<()> {
 /// "a module with conflicting build evidence, an unsupported build language, or
 /// ambiguous platform evidence aborts upgrade with a diagnostic; it is never
 /// guessed."
-fn axes(build: BuildSystem, spring_boot: Option<&str>) -> Result<JdlAxes> {
+pub(crate) fn axes(build: BuildSystem, spring_boot: Option<&str>) -> Result<JdlAxes> {
     let build = match build {
         BuildSystem::Maven => JdlBuild::Maven,
         BuildSystem::Gradle => JdlBuild::Gradle,

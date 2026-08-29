@@ -113,33 +113,20 @@ The coverage should come back against the syntax editor directly rather than
 through a command that must now fail. Until it does, the CST rendering for
 fourteen component kinds is untested.
 
-### A1.4 `jails new` and `model import` still do not produce JDL v1
+### A1.4 `jails new` still writes no model
 
-`jails model upgrade --to 1` exists now: it rewrites a pre-v1 draft line by
-line into v1, materializes `platform` and `build` from the facts
-`jails-workspace` observes, pins every effective legacy stable ID and physical
-name explicitly, and refuses rather than translating `@as` and `@package`. It
-proves the result before writing -- every entity, field, index, operation,
-capability, dependency, property and ejection the legacy model had is in the
-upgraded one under the same ID, with the same Java and SQL names -- and it
-reports the two changes that are not spelling: `storage postgres` materializes
-a `db` capability the draft did not declare, and v1 keeps a record's fields in
-declaration order where the draft sorted them by label.
+`jails model upgrade --to 1` exists, and `jails model import` now goes through
+it: import renders the pre-v1 draft it already knew how to render and upgrades
+that, so there is one translation between the dialects rather than two, and
+the upgrade's identity proof covers the import as well — every entity, field,
+index, operation, capability, dependency, property and ejection the legacy
+declarations carry lands in the v1 model under the same stable ID with the
+same Java and SQL names, or nothing is written.
 
-Two routes are still missing:
-
-- `jails new` / `new-cli` write no model at all. `jdl-sol.md` §17.3 says both
-  "materialize the selected `app` axes in JDL".
-- `jails model import` emits the **pre-v1 draft**, not `jdl 1`:
-  ```
-  application Boot @id(project_boot)
-  package com.example.boot
-  java 26
-  dialect postgresql
-  ```
-  No `jdl 1` header, no `platform`, no `build`. The upgrader is now the
-  obvious backend for it -- import, then upgrade in the same transition --
-  but nothing wires the two together yet.
+What is left is the other half of §17.3: `jails new` and `new-cli` write no
+model at all, where the spec says both "materialize the selected `app` axes in
+JDL". A project created by jails is therefore still on the legacy path until
+somebody hand-writes `.jails/model.jdl` or runs `model import`.
 
 ### A1.5 Five of eleven legacy ownership kinds have no canonical home
 
@@ -625,10 +612,9 @@ ordered by consequence.
    projection, and add the `derived` records and `model explain` so a
    convention is inspectable rather than implied. Do it *before* more emitters
    land: each one added now picks a placement §9.7 will later have to move.
-2. **A1.4** — point `model import` at the new upgrader and make `jails new`
-   write a model, then port `tests/differential.rs` and `tests/cli/model.rs`
-   onto `jdl 1` (**A5.3**). Until that lands the G1 gate protects the front end
-   §22 says to delete.
+2. **A1.4** — make `jails new` write a model, then port `tests/differential.rs`
+   and `tests/cli/model.rs` onto `jdl 1` (**A5.3**). Until that lands the G1
+   gate protects the front end §22 says to delete.
 3. **A5.1 / A5.2** — golden the canonical tree and the three canonical
    persisted formats, and add the v1-lock decode test. This session changed
    the serialized shape of `AppModel` twice; both times the lock failed closed
