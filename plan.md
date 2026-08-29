@@ -487,7 +487,17 @@ verbatim from `customer.js` and `admin.js`:
         *"its JDL syntax editor is not implemented yet -- edit
         `.jails/model.jdl` directly and run `jails sync`"*.
 
-        **That refusal reads like a frontend gap and is not one**, which took
+        **The refusal now says which of those it is**, per kind, because the
+        generic one told the reader to edit `.jails/model.jdl` and run `jails
+        sync` -- false advice for every one of the four, since the model would
+        accept the declaration and no emitter would render anything. Deleting
+        it left `require_toml_mutation` with no callers at all: that message
+        existed solely for these kinds. The kind dispatch in
+        `model_generate_jdl.rs` is exhaustive now with no `_` arm, so a kind
+        added without deciding what a canonical project does with it is a
+        compile error rather than a silent fall-through.
+
+        **That refusal read like a frontend gap and is not one**, which took
         a second pass to establish -- the first entry here said "the model can
         express them; the CLI sugar cannot" and was wrong for three of the
         four. The model carries the *vocabulary*

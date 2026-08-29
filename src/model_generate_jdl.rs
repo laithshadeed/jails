@@ -25,6 +25,12 @@ use std::path::PathBuf;
 
 const MODEL_PATH: &str = crate::model_command::JDL_PATH;
 
+/// Every generator kind, and there is deliberately no `_` arm.
+///
+/// The match became exhaustive when the last four kinds got an answer, and
+/// keeping it that way is worth more than the arm it replaces: a kind added
+/// without deciding what a canonical project does with it is now a compile
+/// error rather than a silent fall-through to the compatibility refusal.
 pub(crate) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     match args.kind {
         ArtifactKind::Field => crate::model_resource::add_generated_field(args, invocation),
@@ -62,8 +68,50 @@ pub(crate) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         | ArtifactKind::Sealed
         | ArtifactKind::Strategy
         | ArtifactKind::Controller => unit::run(args, invocation),
-        _ => crate::model_command::require_toml_mutation("generate"),
+        ArtifactKind::Migration
+        | ArtifactKind::Association
+        | ArtifactKind::Search
+        | ArtifactKind::Seed => Err(Failure::Told(unsupported_kind(args.kind))),
     }
+}
+
+/// What is actually missing for the four kinds a canonical project refuses.
+///
+/// The generic refusal told the reader to edit `.jails/model.jdl` and run
+/// `jails sync`. That is false advice for every one of these: the model
+/// carries the *vocabulary* -- `ProjectionKind::Search { fields }`,
+/// `ProjectionKind::Seed`, `AppModel.relations` -- and no emitter reads it, so
+/// hand-editing the JDL produces a valid model and no artifact. `plan.md`
+/// P13.8 has the measurement. A `fix:` line naming a repair that does not
+/// repair is worse than no fix line, which is why
+/// `every_command_a_message_tells_the_reader_to_run_is_one_that_exists`
+/// exists.
+fn unsupported_kind(kind: ArtifactKind) -> String {
+    let (what, detail): (&str, String) = match kind {
+        ArtifactKind::Migration => (
+            "a hand-written migration",
+            "a migration nobody derived is an irreproducible operation, and the canonical plan has no seam for one yet -- only the schema diff appends migrations.\n       fix: write the file yourself under `src/main/resources/db/migration`; canonical capture reads what is there".to_string(),
+        ),
+        ArtifactKind::Association => (
+            "an association",
+            "`AppModel` carries relations and no emitter reads them, so nothing renders the foreign key.\n       fix: write the constraint as a migration by hand for now".to_string(),
+        ),
+        ArtifactKind::Search => (
+            "full-text search",
+            "the compiler emits the search port and not the `tsvector` column, the GIN index or the JDBC adapter, so declaring it would leave three quarters missing.\n       fix: write the column, index and adapter by hand for now".to_string(),
+        ),
+        ArtifactKind::Seed => (
+            "seed data",
+            "`ProjectionKind::Seed` links and no emitter reads it, so the model would accept the declaration and write nothing.\n       fix: write the seed file and its runner by hand for now".to_string(),
+        ),
+        other => (
+            "this generator",
+            format!(
+                "`{other:?}` has no canonical backend.\n       fix: keep it outside the canonical model"
+            ),
+        ),
+    };
+    format!("canonical `generate` has no backend for {what}: {detail}")
 }
 
 fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {

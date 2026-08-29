@@ -18,15 +18,6 @@ pub(crate) fn owns_jdl() -> bool {
     Path::new(JDL_PATH).is_file()
 }
 
-pub(crate) fn require_toml_mutation(command: &str) -> Result<()> {
-    if owns_jdl() {
-        return Err(Failure::Told(format!(
-            "`{command}` recognizes this JDL project, but its JDL syntax editor is not implemented yet.\n       fix: edit `{JDL_PATH}` directly and run `jails sync`; the command will not enter the legacy mutation engine"
-        )));
-    }
-    Ok(())
-}
-
 pub(crate) fn sync(no_start: bool, invocation: Invocation) -> Result<()> {
     if no_start {
         return Err(Failure::Told(
