@@ -325,12 +325,29 @@ verbatim from `customer.js` and `admin.js`:
       as never compiled. A coverage gate that under-reports sends people to
       write tests that already exist.
 
-      **What is left is G4-G5**: a child-process death matrix over the
-      failpoint registry (G4 proper -- the gate above proves the registry is
-      honest, not that each fault is exercised), and the real-project corpus
-      (G5). `tests/differential.rs` is G1's harness with 30 journeys;
-      `scripts/verify-rewrite-g1-canary.sh` freezes a legacy revision and runs
-      them against both binaries.
+      **G4 is half-closed, and the other half is blocked on the cutover
+      itself.** `every_named_failpoint_converges` already arms every entry in
+      `fault::POINTS` and asserts convergence, and the registry is now honest
+      in both directions (above). What G4 asks for beyond that is a fault
+      firing *in a child process that dies without unwinding* -- and
+      `crates/jails-commit/tests/crash.rs` says why it cannot be written yet,
+      in its own header: that "needs a child process and `abort()`, which needs
+      the CLI to route through this executor". It is a cutover dependency, not
+      a missing test.
+
+      **G5's corpus exists and is enforced.** `examples/proof-policy.tsv` is
+      the machine-readable map -- six manifests, each with its build tool,
+      highest tier, cadence, gate name and prerequisites, checked by
+      `tests/cli/examples.rs`. Two run at tier 2 with real containers.
+
+      What G5 asks for beyond that is *adopted* projects: sanitized Spring and
+      plain trees jails did not generate, reader-edited, each run through both
+      implementations with a semantic comparison. That is the one gate whose
+      inputs do not exist yet -- every manifest in the policy is jails' own
+      output, so nothing in the suite proves the tool against a codebase it did
+      not write. `minicom-public/spring` is the obvious first candidate: it is
+      the project that reversed the no-Gradle rule, and `CLAUDE.md` records it
+      as one that has to be worked in daily.
 
 - [ ] **P13.7** **The suite is 108s of `tests/cli` because it compiles 36 Java
       projects, and the remaining lever is Maven's JVM startup.** Profiled with
