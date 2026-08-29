@@ -1,8 +1,76 @@
 //! Executable acceptance cases for generated ArchUnit allowance policy.
+//!
+//! **Four cases, four projects, one Maven run each -- concurrently.** They
+//! used to share one directory that each case rewrote `.jails/architecture.toml`
+//! in, which forced them into a sequence: the second case could not start until
+//! the first had finished reading the file it was about to overwrite. Four
+//! `mvn test` runs at roughly 2.8s each made this a 14s test binary, all of it
+//! on one thread, for four questions that have nothing to say to each other.
+//!
+//! Nothing about the cases required sharing. Each is a policy file and the
+//! verdict ArchUnit reaches on it, and the project around it is eight small
+//! files that cost microseconds to write. Giving each case its own project
+//! removes the only reason they were ordered, and they go through the same
+//! process-wide scheduler the rest of the suite uses -- so four Maven trees
+//! here still count against the same budget as everyone else's.
+
+#[path = "common/parallel.rs"]
+mod parallel;
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+
+/// One acceptance case: the policy to write, and what the run must say.
+///
+/// `expect` is deliberately the *evidence string* rather than a bare
+/// pass/fail: a policy that fails for the wrong reason is a passing test that
+/// proves nothing, which is the failure this table is shaped to make visible.
+struct Case {
+    label: &'static str,
+    from: &'static str,
+    packages: &'static str,
+    expires: &'static str,
+    expect: Expect,
+}
+
+enum Expect {
+    /// The build passes: the allowance is in bounds, current, and used.
+    Accepted,
+    /// The build fails, and its diagnostics contain this.
+    Rejected(&'static str),
+}
+
+const CASES: &[Case] = &[
+    Case {
+        label: "valid-used-allowance",
+        from: "billing",
+        packages: "com.example.demo.domain.shared.money..",
+        expires: "2099-01-31",
+        expect: Expect::Accepted,
+    },
+    Case {
+        label: "unused-allowance",
+        from: "orders",
+        packages: "com.example.demo.domain.shared.money..",
+        expires: "2099-01-31",
+        expect: Expect::Rejected("unused architecture allowance"),
+    },
+    Case {
+        label: "blanket-pattern",
+        from: "billing",
+        packages: "com.example.demo.domain..",
+        expires: "2099-01-31",
+        expect: Expect::Rejected("blanket or out-of-slice package pattern"),
+    },
+    Case {
+        label: "expired-allowance",
+        from: "billing",
+        packages: "com.example.demo.domain.shared.money..",
+        expires: "2000-01-01",
+        expect: Expect::Rejected("allowance expired on 2000-01-01"),
+    },
+];
 
 #[test]
 fn allowances_are_bounded_current_and_used() {
@@ -10,11 +78,71 @@ fn allowances_are_bounded_current_and_used() {
         eprintln!("skipping architecture allowance acceptance: Maven is unavailable");
         return;
     }
+
+    let findings: Vec<String> = parallel::map(CASES, run_case)
+        .into_iter()
+        .flatten()
+        .collect();
+
+    assert!(
+        findings.is_empty(),
+        "{} architecture allowance case(s) are wrong:\n\n{}",
+        findings.len(),
+        findings.join("\n\n")
+    );
+}
+
+/// One case in its own project. `None` when it behaved as declared.
+fn run_case(case: &Case) -> Option<String> {
     let scratch = tempfile::Builder::new()
-        .prefix("jails-architecture-allowances-")
+        .prefix(&format!("jails-architecture-allowances-{}-", case.label))
         .tempdir()
         .unwrap();
     let root = scratch.path();
+    project(root);
+    write(
+        root.join(".jails/architecture.toml"),
+        &format!(
+            "[[architecture.allow]]\n\
+             from = \"{}\"\n\
+             to = \"shared\"\n\
+             packages = [\"{}\"]\n\
+             reason = \"reviewed acceptance edge\"\n\
+             expires = \"{}\"\n",
+            case.from, case.packages, case.expires
+        ),
+    );
+
+    let output = architecture_test(root);
+    match case.expect {
+        Expect::Accepted if !output.status.success() => Some(format!(
+            "{}: a valid, current, used allowance was rejected:\n{}",
+            case.label,
+            diagnostics(root, &output)
+        )),
+        Expect::Accepted => None,
+        Expect::Rejected(evidence) if output.status.success() => Some(format!(
+            "{}: the policy was accepted, but it should have been refused for \
+             `{evidence}`",
+            case.label
+        )),
+        Expect::Rejected(evidence) => {
+            let diagnostics = diagnostics(root, &output);
+            if diagnostics.contains(evidence) {
+                None
+            } else {
+                Some(format!(
+                    "{}: refused, but not for `{evidence}`:\n{diagnostics}",
+                    case.label
+                ))
+            }
+        }
+    }
+}
+
+/// The generated scaffold's own architecture suite, over a domain with one
+/// cross-slice edge for a policy to have an opinion about.
+fn project(root: &Path) {
     copy("tests/golden/scaffold-spring/pom.xml", root.join("pom.xml"));
     copy(
         "tests/golden/scaffold-spring/src/test/java/com/example/demo/ArchitectureTest.java",
@@ -48,52 +176,6 @@ fn allowances_are_bounded_current_and_used() {
         root.join("src/main/java/com/example/demo/web/PingController.java"),
         "package com.example.demo.web;\npublic final class PingController {}\n",
     );
-
-    policy(
-        root,
-        "billing",
-        "com.example.demo.domain.shared.money..",
-        "2099-01-31",
-    );
-    let accepted = architecture_test(root);
-    assert!(
-        accepted.status.success(),
-        "valid used allowance failed:\n{}",
-        diagnostics(root, &accepted)
-    );
-
-    policy(
-        root,
-        "orders",
-        "com.example.demo.domain.shared.money..",
-        "2099-01-31",
-    );
-    assert_failure(root, "unused architecture allowance");
-
-    policy(root, "billing", "com.example.demo.domain..", "2099-01-31");
-    assert_failure(root, "blanket or out-of-slice package pattern");
-
-    policy(
-        root,
-        "billing",
-        "com.example.demo.domain.shared.money..",
-        "2000-01-01",
-    );
-    assert_failure(root, "allowance expired on 2000-01-01");
-}
-
-fn policy(root: &Path, from: &str, packages: &str, expires: &str) {
-    write(
-        root.join(".jails/architecture.toml"),
-        &format!(
-            "[[architecture.allow]]\n\
-             from = \"{from}\"\n\
-             to = \"shared\"\n\
-             packages = [\"{packages}\"]\n\
-             reason = \"reviewed acceptance edge\"\n\
-             expires = \"{expires}\"\n"
-        ),
-    );
 }
 
 fn architecture_test(root: &Path) -> Output {
@@ -103,19 +185,6 @@ fn architecture_test(root: &Path) -> Output {
         .current_dir(root)
         .output()
         .unwrap()
-}
-
-fn assert_failure(root: &Path, evidence: &str) {
-    let failed = architecture_test(root);
-    assert!(
-        !failed.status.success(),
-        "policy unexpectedly passed: {evidence}"
-    );
-    let diagnostics = diagnostics(root, &failed);
-    assert!(
-        diagnostics.contains(evidence),
-        "missing `{evidence}`:\n{diagnostics}"
-    );
 }
 
 fn diagnostics(root: &Path, output: &Output) -> String {

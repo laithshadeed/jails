@@ -909,7 +909,19 @@ fn verified_app_images(fixtures: &'static Vec<(&'static str, std::path::PathBuf)
                 // default `--pull=missing` can still wait for registry
                 // resolution before accepting its local copy; make this
                 // deliberately cached build local-only.
-                .args(["build", "--pull=never", "--tag", &image, "."])
+                //
+                // **`--pull=false`, not `--pull=never`.** `never` is podman's
+                // spelling of this policy and real Docker rejects it outright
+                // -- `invalid argument "never" for "--pull" flag`, before the
+                // build starts -- so on Docker this gate could only ever fail,
+                // and it failed with `web-crawler failed its generated OCI
+                // image build`, which reads like the generated Dockerfile is
+                // wrong. Podman accepts the boolean spelling as an alias for
+                // `never`, so `false` is the one word both engines understand.
+                // The same trap as the `docker info --format` one CLAUDE.md
+                // records, in the other direction: this machine's `docker` is
+                // podman's shim, so a podman-only flag looks portable here.
+                .args(["build", "--pull=false", "--tag", &image, "."])
                 .status()
                 .unwrap();
             assert!(

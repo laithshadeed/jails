@@ -118,6 +118,53 @@ def write_ledger(observed: dict[str, float]) -> None:
         pass
 
 
+def runtime_environment() -> dict[str, str]:
+    """The environment cargo would have run these binaries under.
+
+    Running a test binary directly is not quite the same as `cargo test`
+    running it, and one difference bites: a proc-macro crate's test harness
+    links `libstd` **dynamically** against the toolchain's sysroot, and cargo
+    puts that sysroot on the loader path for it. Without this,
+    `jails-codec-derive`'s tests die before `main` with `error while loading
+    shared libraries: libstd-*.so`, which this runner then reports as a failed
+    binary -- a runner that cannot run part of the suite, reporting it as a
+    test failure rather than as its own defect.
+
+    Also carries `target/debug/deps`, which is where a dylib built by the
+    workspace itself would live.
+    """
+    environment = dict(os.environ)
+    roots = []
+    try:
+        sysroot = Path(
+            subprocess.run(
+                ["rustc", "--print", "sysroot"],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+        )
+        host = subprocess.run(
+            ["rustc", "--print", "host-tuple"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        # Both, and the second is the one that matters: `libstd-*.so` lives
+        # under the per-target directory, not directly under `<sysroot>/lib`.
+        roots.append(str(sysroot / "lib"))
+        roots.append(str(sysroot / "lib" / "rustlib" / host / "lib"))
+    except (OSError, subprocess.CalledProcessError):
+        # Without a sysroot the proc-macro binaries will fail loudly, which is
+        # the right outcome: better a named failure than a silent skip.
+        pass
+    roots.append(str(REPO / "target" / "debug" / "deps"))
+    if existing := environment.get("LD_LIBRARY_PATH"):
+        roots.append(existing)
+    environment["LD_LIBRARY_PATH"] = os.pathsep.join(roots)
+    return environment
+
+
 def key_for(binary: Path) -> str:
     """A binary's name without cargo's content hash.
 
@@ -187,6 +234,7 @@ def main() -> int:
 
     started = time.monotonic()
     observed: dict[str, float] = {}
+    environment = runtime_environment()
 
     def run(binary: Path) -> tuple[Path, int, Path, float]:
         name = key_for(binary)
@@ -198,6 +246,7 @@ def main() -> int:
                 cwd=REPO,
                 stdout=sink,
                 stderr=subprocess.STDOUT,
+                env=environment,
             )
         return binary, code, log, time.monotonic() - began
 
