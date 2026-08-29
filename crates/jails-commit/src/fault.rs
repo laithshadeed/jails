@@ -29,13 +29,21 @@ pub struct Armed;
 
 #[cfg(any(test, feature = "fault-injection"))]
 mod armed {
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
 
     thread_local! {
         /// Thread-local, so two tests running in parallel cannot arm each
         /// other's failpoints — which would make the suite flaky in exactly
         /// the way a crash suite must not be.
         pub(super) static ARMED: RefCell<Option<String>> = const { RefCell::new(None) };
+
+        /// Whether the armed point kills the process instead of returning.
+        ///
+        /// An injected `Err` unwinds: destructors run, guards release, buffers
+        /// flush. A real crash does none of that, and the difference is
+        /// exactly what a durability claim rests on -- so the child-abort
+        /// suite arms this and the process dies inside `trip`.
+        pub(super) static ABORTS: Cell<bool> = const { Cell::new(false) };
     }
 }
 
@@ -45,6 +53,21 @@ impl Armed {
     /// panicking test cannot leak it into the next one.
     pub fn at(name: &str) -> Self {
         armed::ARMED.with(|slot| *slot.borrow_mut() = Some(name.to_string()));
+        armed::ABORTS.with(|slot| slot.set(false));
+        Self
+    }
+
+    /// Arm a failpoint that ends the process there, without unwinding.
+    ///
+    /// `at` injects an `Err`, which every caller between the trip and the test
+    /// gets to handle: locks release, `ScratchDir` guards clean up, the
+    /// journal's own `Drop` runs. None of that happens when a machine loses
+    /// power, and a recovery proof built only on the unwinding case is proving
+    /// the easier half. This aborts inside [`trip`], so the next process finds
+    /// exactly what a crash leaves.
+    pub fn aborting_at(name: &str) -> Self {
+        armed::ARMED.with(|slot| *slot.borrow_mut() = Some(name.to_string()));
+        armed::ABORTS.with(|slot| slot.set(true));
         Self
     }
 }
@@ -61,7 +84,13 @@ impl Drop for Armed {
 pub(crate) fn trip(name: &str) -> crate::Result<()> {
     let armed = armed::ARMED.with(|slot| slot.borrow().clone());
     match armed {
-        Some(armed) if armed == name => Err(format!("fault injected at `{name}`").into()),
+        Some(armed) if armed == name => {
+            if armed::ABORTS.with(|slot| slot.get()) {
+                // No unwinding, no flush, no destructor. The point.
+                std::process::abort();
+            }
+            Err(format!("fault injected at `{name}`").into())
+        }
         _ => Ok(()),
     }
 }

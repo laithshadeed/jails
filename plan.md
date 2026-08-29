@@ -325,29 +325,54 @@ verbatim from `customer.js` and `admin.js`:
       as never compiled. A coverage gate that under-reports sends people to
       write tests that already exist.
 
-      **G4 is half-closed, and the other half is blocked on the cutover
-      itself.** `every_named_failpoint_converges` already arms every entry in
-      `fault::POINTS` and asserts convergence, and the registry is now honest
-      in both directions (above). What G4 asks for beyond that is a fault
-      firing *in a child process that dies without unwinding* -- and
-      `crates/jails-commit/tests/crash.rs` says why it cannot be written yet,
-      in its own header: that "needs a child process and `abort()`, which needs
-      the CLI to route through this executor". It is a cutover dependency, not
-      a missing test.
+      **G4 is closed.** `every_failpoint_converges_after_a_child_dies_there`
+      runs every entry in `fault::POINTS` in a child process that `abort()`s
+      inside the trip, then opens what the crash left -- including a lock whose
+      owner is gone -- and asserts the same convergence, twice.
 
-      **G5's corpus exists and is enforced.** `examples/proof-policy.tsv` is
-      the machine-readable map -- six manifests, each with its build tool,
-      highest tier, cadence, gate name and prerequisites, checked by
-      `tests/cli/examples.rs`. Two run at tier 2 with real containers.
+      `Armed::aborting_at` is the new half. The existing suite arms an injected
+      `Err`, and that is the easier case: an `Err` unwinds, so every guard
+      between the trip and the test releases, the lock drops in order and
+      `Drop` runs on the journal. A machine losing power does none of that.
+      The child is asserted to die **by `SIGABRT`, not merely unsuccessfully**
+      -- a panicking child exits 101 after unwinding, which is the state the
+      in-process suite already covers, and accepting it would make this a
+      slower copy of that test.
 
-      What G5 asks for beyond that is *adopted* projects: sanitized Spring and
-      plain trees jails did not generate, reader-edited, each run through both
-      implementations with a semantic comparison. That is the one gate whose
-      inputs do not exist yet -- every manifest in the policy is jails' own
-      output, so nothing in the suite proves the tool against a codebase it did
-      not write. `minicom-public/spring` is the obvious first candidate: it is
-      the project that reversed the no-Gradle rule, and `CLAUDE.md` records it
-      as one that has to be worked in daily.
+      **It was written off as blocked, and was not.** `crash.rs`'s header said
+      the child suite "needs the CLI to route through this executor". The
+      executor is reachable as a library -- which is how every test in that
+      file already drives it -- so the child is just that binary with two
+      environment variables set. The header is corrected in the same change.
+
+      **G5's corpus exists, is enforced, and now includes a project jails did
+      not write.** `examples/proof-policy.tsv` is the machine-readable map --
+      six manifests with build tool, highest tier, cadence, gate name and
+      prerequisites, checked by `tests/cli/examples.rs`, two at tier 2 with
+      real containers.
+
+      Every one of those is jails' own output, which was the gap: nothing
+      proved the tool against a codebase it did not generate, and a generator
+      can be perfectly correct about its own layout while being wrong about
+      somebody else's. `an_adopted_reader_written_project_generates_compiles_
+      and_keeps_its_own_bytes` closes it with a hand-written Maven project --
+      foreign coordinates, foreign packages, classes with bodies -- and proves
+      four things in order: adoption reads the foreign layout, generation lands
+      beside the reader's code and a real compiler accepts both, the reader's
+      files come back byte-identical, and a rerun settles to "nothing to do"
+      without rewriting anything.
+
+      That last one corrected an assumption rather than the product. The test
+      first asserted a repeated `g record` would *refuse*; it reports "nothing
+      to do" and exits 0, which is right -- identity is the entity, so
+      re-declaring the same record is an update that changes nothing, and
+      second-run idempotency is what `simplify-sol.md`'s differential list asks
+      for anyway.
+
+      **What G5 still lacks is the differential half**: these run the current
+      binary only. Running the same adopted project through a frozen legacy
+      revision and comparing semantics is `scripts/verify-rewrite-g1-canary.sh`
+      applied to this fixture, and is the last piece before cutover.
 
 - [ ] **P13.7** **The suite is 108s of `tests/cli` because it compiles 36 Java
       projects, and the remaining lever is Maven's JVM startup.** Profiled with
