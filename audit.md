@@ -56,10 +56,9 @@ running the binary in a way that does not depend on either.
 correctly layered, and delivers the single hardest thing the design asked
 for — but it covers roughly two thirds of the product surface, its safety
 proof is written almost entirely against a JDL dialect `jdl-sol.md` §22
-supersedes, it has no byte-level regression net of its own, and it currently
-emits a `pom.xml` Maven refuses to read.
+supersedes, and it has no byte-level regression net of its own.
 
-Three things are genuinely done and should not be relitigated:
+Three things are done and should not be relitigated:
 
 - **Source is no longer a database.** `jails-java` is not a dependency of any
   canonical crate, and nothing on the canonical path reparses generated Java
@@ -68,10 +67,18 @@ Three things are genuinely done and should not be relitigated:
   `contains("…")` in `jails-compiler` is inside `#[cfg(test)]`; there is no
   canonical counterpart to `route/support.rs`'s scan of emitted Java.
 - **Preview and apply cannot plan twice.** `model_generate::finish_generation`
-  (`src/model_generate.rs:167`) does one capture, one compile, one
-  materialize, then either reports the bundle or executes *that* bundle.
+  does one capture, one compile, one materialize, then either reports the
+  bundle or executes *that* bundle.
 
----
+**Ten entries have since been closed and deleted from this file**, in the
+commits that closed them — the delete-don't-mark convention `plan.md` and its
+siblings share, so `git log -p -- audit.md` is the record. They were: the
+unbuildable `pom.xml`, lost field order, the dropped `desc`, the dropped and
+never-published `emit`, `select` read as the update list, the operation
+duplication behind those last three, the unguarded `app apply`, fifteen
+component kinds emitting nothing in silence, the unfrozen G1 oracle, and the
+unpinned compiler. Two new entries record what closing them cost or exposed:
+A1.2b and A2.1b.
 
 ## A1 — coverage
 
@@ -86,40 +93,6 @@ Still legacy: `migration`, `handler`, `command`, `cli`, `cases`, `client`,
 `idempotency`, `auth`, `webhook`, `search`, `durable-job`, `socket`,
 `presence`, `seed`; and `format`, `ci`, `docker`, `k8s`.
 
-### A1.2 Fifteen of twenty-three component kinds accept a declaration and emit nothing
-
-`ComponentKind::ALL` has 23 entries (`crates/jails-model/src/component.rs:71`).
-The compiler emits from `UnitKind`, which has 8
-(`crates/jails-model/src/unit.rs:83`): `Class`, `Interface`, `Service`,
-`Test`, `IntegrationTest`, `Sealed`, `Strategy`, `Controller`.
-
-The other fifteen link, plan, apply and report success while producing no
-file and no diagnostic:
-
-```
-jdl 1
-app Comp { pkg com.example.comp  java 26  platform plain  build maven  storage none }
-component class Widget
-component client Audit { route POST "/v1/audit" }
-component job Nightly
-component cli Admin
-component idempotency Payment
-```
-```
-$ jails model check
-model valid: .jails/model.jdl (7 nodes, 0 entities, 0 operations)
-$ jails sync
-synchronized sha256:09ee5ed…: 3 operations, 4 files written, 0 files deleted
-$ find .jails/generated -type f
-main/java/com/example/comp/Widget.java
-test/java/com/example/comp/WidgetTest.java
-```
-
-`jdl-sol.md` §18.2 requires "every generated output has exactly one owner" and
-§20.2 requires an exhaustiveness test that fails "when a registered role has
-no emitter". Neither exists. A silent no-op on a declaration the author wrote
-is worse than a refusal.
-
 ### A1.2b The CST editor for the unserved kinds has no test through the CLI
 
 Closing A1.2 made those fourteen kinds refuse at compile, and a canonical
@@ -133,29 +106,6 @@ for those kinds are gone.
 The coverage should come back against the syntax editor directly rather than
 through a command that must now fail. Until it does, the CST rendering for
 fourteen component kinds is untested.
-
-### A1.3 `jails app apply` still enters the legacy engine on a canonical project
-
-`src/main.rs:68` dispatches `Command::App` unconditionally; `src/app.rs`
-contains no `model_command::owns()` guard. Every other mutating command is
-gated. Reproduced on a project with `.jails/model.jdl` and a two-line
-`.jails/app.toml`:
-
-```
-$ jails app apply --pretend
-plan ea6026fe… apply
-  create  jails.toml
-  replace pom.xml
-  create  src/main/java/com/example/q2/adapters/Json.java
-  ledger  create
-```
-
-Two editable authorities writing one project, capability code outside the
-managed tree, and a legacy ledger created beside a compiler lock. `CLAUDE.md`
-("Never permit both editable sources"; "Unsupported canonical mutations must
-refuse rather than silently invoking the legacy engine") and
-`simplify-sol.md` ("direct CLI and declarative apply are no longer competing
-planners") both forbid this.
 
 ### A1.4 There is no supported route into JDL v1
 
@@ -211,27 +161,6 @@ defects.
 
 ## A2 — correctness defects, each reproduced against the binary
 
-### A2.1 The canonical path writes a `pom.xml` Maven cannot read
-
-`storage postgres` on a plain-Maven project splices four dependencies with no
-`<version>` and no Spring Boot parent to manage them:
-
-```
-$ jails sync && mvn -o validate
-[ERROR] 'dependencies.dependency.version' for org.flywaydb:flyway-core:jar is missing.
-[ERROR] 'dependencies.dependency.version' for org.flywaydb:flyway-database-postgresql:jar is missing.
-[ERROR] 'dependencies.dependency.version' for org.postgresql:postgresql:jar is missing.
-[ERROR] 'dependencies.dependency.version' for org.springframework.boot:spring-boot-starter-jdbc:jar is missing.
-[ERROR] The build could not read 1 project
-```
-
-This is the trap `CLAUDE.md` states verbatim: versionless is correct under
-`spring-boot-starter-parent` and **fatal** without one, `validate` included.
-The cause is A3.7: these are hand-rolled `BuildDependency { version: None }`
-values inside `Compiler::compile` (`crates/jails-compiler/src/lib.rs:391-410`)
-that bypass `DependencySpec`, which already carries `spring_managed_version`
-for exactly this.
-
 ### A2.1b Two marked blocks declare the same Maven plugin
 
 `ensure_maven_source_root` (`crates/jails-workspace/src/documents.rs:506`)
@@ -254,81 +183,6 @@ its own change with a migration path rather than a clause in A2.1.
 An earlier draft of this entry blamed a clash with the plugin `jails new-cli`
 writes. That was wrong and is corrected here: `new-cli` writes none, `sync`
 writes one per source set, and a second `sync` adds nothing.
-
-### A2.2 Field source order is discarded, and record component order is ABI
-
-`Entity.fields` is a `BTreeMap<FieldId, Field>`
-(`crates/jails-model/src/model.rs`). Source order `zulu, id, alpha` produces:
-
-```java
-public record Task(
-    String alpha,
-    UUID id,
-    String zulu
-) {
-```
-
-`jdl-sol.md` §7.3 lists entity fields first among the orders that "MUST be
-retained", "because Java record component order is ABI".
-
-### A2.3 `order by [createdAt desc, id]` emits `order by created_at, id`
-
-The direction is parsed and linked into `QuerySemantics.order: Vec<Ordering>`;
-the emitter reads the flat `Query.order_by: Vec<FieldId>`
-(`crates/jails-compiler/src/emit_operation.rs:34`). Generated adapter:
-
-```java
-sql.append(" order by created_at, id");
-```
-
-A query declared newest-first returns oldest-first. There is no test: `grep
-"order by \["` over `tests/` returns nothing.
-
-### A2.4 A command's `emit` publishes nothing, and only the first `emit` survives
-
-`crates/jails-model/src/jdl/v1/parser/operation.rs:145` keeps
-`transition.emits.first()` as the flat `yields: Option<OperationId>`, and the
-emitters read `yields` (`emit_operation/transition.rs:94`). §12.4 makes
-`emit Event` repeatable.
-
-For commands it is worse. A `command Create(title, status) { emit TaskCreated
-emit TaskAudited }` emits both payload records and a `JdbcCreateCommand` that
-references neither:
-
-```java
-public Task execute(CreateCommand.Input input) {
-    JdbcClient.StatementSpec statement = jdbc.sql("insert into task …");
-    …
-    return statement.query(Task.class).single();
-}
-```
-
-### A2.5 `select` is read as the update list, so `jdl-sol.md` §4 does not link
-
-`crates/jails-model/src/jdl/v1/parser/operation.rs:141` sets
-`sets = all parameters` when `update` is omitted, without subtracting the
-selector or the `@version` field. §12.4 says "all non-selector, non-version
-entity parameters".
-
-```
-$ jails sync   # transition Close(id) { select [id] }
-jails: canonical transition `close` attempts to rewrite primary key `id`
-```
-
-The same rule breaks the spec's own §4 complete example, which §21 designates
-an executable conformance fixture:
-
-```
-$ jails model check   # jdl-sol.md §4, verbatim
-[model-managed-field-target] $.operations.complete.semantics:
-    field `version` is compiler-managed and cannot be set or updated
-[model-ejection-target] $.ejections.task_repo_fake.target:
-    ejection target `Task.repo.fake` is neither a generated artifact nor a
-    semantic implementation boundary
-```
-
-Nothing extracts the documentation examples, which §21 requires ("MUST be
-extracted in CI rather than copied into disconnected test strings").
 
 ### A2.6 Tables are not pluralized
 
@@ -465,16 +319,6 @@ enum, in one place.
 
 `SourceUnit` has the same shape plus raw `Option<String>` references (`on`,
 `yields`) sitting unlinked inside the *linked* model.
-
-### A3.9 Two representations of every operation, inside the new crate
-
-`Query { filters, order_by, limit, route }` beside `QuerySemantics {
-parameters, joins, order, limit, route }`; `Transition { fields, sets, yields }`
-beside `TransitionSemantics { select, update, emits }`. The JDL v1 parser
-populates both; the emitters read the flat one. This single decision produced
-A2.3, A2.4 and A2.5 — and A2.5 is why the spec's own example does not link.
-It is "one intent copied through too many representations" re-created at
-smaller scale.
 
 ### A3.10 `RenderedTree` is both the in-memory type and the on-disk format
 
@@ -629,13 +473,6 @@ their models in TOML (`crates/jails-compiler/src/lib.rs:694`).
 The G1 gate is currently protecting the front end that `jdl-sol.md` §22 says
 to delete.
 
-### A5.4 The frozen oracle is not frozen
-
-`scripts/verify-rewrite-g1-canary.sh:5` defaults `JAILS_LEGACY_REVISION` to
-`git rev-parse HEAD`. The comparison is still meaningful — the legacy engine
-is live at HEAD — but it is not the frozen pre-cutover binary
-`simplify-sol.md` asks for, and it drifts with the branch.
-
 ### A5.5 G4 is closed for the kernel being deleted, and empty for the one replacing it
 
 `855e438` closed G4 properly: `every_failpoint_converges_after_a_child_dies_there`
@@ -653,21 +490,6 @@ the next identical generation repairs it deterministically" — is now
 rigorously proved for the code that is being deleted and asserted only in
 prose for the code that replaces it. G4's *method* transfers; its coverage
 does not.
-
-### A5.6 The one gate is green, and still not reproducible
-
-At `5cec56b` the clippy step of `mise run verify-rewrite` failed on rustc
-1.94 — `nonminimal_bool` at `crates/jails-java/src/java.rs:686`, since
-`is_none_or` stabilised and `-D clippy::all` is workspace policy. `588561b`
-fixed it, and `mise.toml` now splits a separately callable `lint` task so the
-pre-commit hook and the gate cannot drift on flags. Both good.
-
-The finding that survives is the one underneath: there is still no
-`rust-toolchain.toml`, `mise.toml`'s `[tools]` still pins Java, Maven, mvnd
-and Gradle but not rustc, and `.github/workflows/verify-rewrite.yml:45` still
-uses `dtolnay/rust-toolchain@stable`. The single gate the cutover plan rests
-on can go red tomorrow from a clippy release touching code nobody edited —
-which is exactly what it just did.
 
 ### A5.7 `git merge-file --diff-algorithm=` requires git ≥ 2.47
 
@@ -753,30 +575,34 @@ It is used only under `#[cfg(test)]` (`materialize.rs:673`), and
 
 ## A7 — suggested order
 
-1. **A1.3** — guard `app apply`. One line; it is an active data-integrity
-   hole.
-2. **A3.9** — collapse the flat/`*Semantics` duplication in `jails-model`.
-   This closes A2.3, A2.4 and A2.5 together, and makes §4 link.
-3. **A2.1b** — give the Maven source roots one plugin block with several
-   executions, and plan the migration for the accepted facet bytes.
-4. **A2.2** — preserve field source order.
-5. **A3.11 / A3.12** — build the convention registry, the `derived` records
+Items 1–4 and 9 of the original list are closed and deleted; what remains is
+ordered by consequence.
+
+1. **A2.1b** — give the Maven source roots one plugin block with several
+   executions, and plan the migration for the accepted facet bytes. Maven
+   warns on the duplicate today, and a warning about which plugin declaration
+   wins is not a thing to leave running.
+2. **A3.11 / A3.12** — build the convention registry, the `derived` records
    and `model explain` *before* more emitters land. Every emitter added now
-   hard-codes a placement §9.7 will later have to move.
-6. **A1.4** — write `model upgrade --to 1`, then port `tests/differential.rs`
+   hard-codes a placement §9.7 will later have to move, and there are more
+   coming.
+3. **A1.4** — write `model upgrade --to 1`, then port `tests/differential.rs`
    and `tests/cli/model.rs` onto `jdl 1` (**A5.3**). Until that lands the G1
-   gate protects the wrong front end.
-7. **A5.1 / A5.2** — golden the canonical tree and the three canonical
-   persisted formats, and add the v1-lock decode test.
-8. **A1.2b** — give the CST editor for the fourteen unserved component kinds
+   gate protects the front end §22 says to delete.
+4. **A5.1 / A5.2** — golden the canonical tree and the three canonical
+   persisted formats, and add the v1-lock decode test. This session changed
+   the serialized shape of `AppModel` twice; both times the lock failed closed
+   as it should, and both times nothing compared bytes.
+5. **A1.2b** — give the CST editor for the fourteen unserved component kinds
    a direct test, replacing the CLI coverage that closing A1.2 removed.
-9. **A5.4 / A5.6** — pin `JAILS_LEGACY_REVISION` to a real pre-cutover SHA
-   and pin the Rust toolchain.
-10. **A5.5** — port G4's child-process method to `jails-workspace::execute`.
-    The suite `855e438` wrote is the template; what it needs is failpoints on
-    the canonical publication sequence and the convergence assertion stated
-    against the compiler lock rather than the journal.
-11. **A6.1** — write the module docs while the reasons are still recoverable.
+6. **A5.5** — port G4's child-process method to `jails-workspace::execute`.
+   The suite `855e438` wrote is the template; what it needs is failpoints on
+   the canonical publication sequence and the convergence assertion stated
+   against the compiler lock rather than the journal.
+7. **A6.1** — write the module docs while the reasons are still recoverable.
+8. **A2.6** — pluralize table names, or record the divergence from §9.7 as a
+   decision. Right now importing a legacy project silently renames its tables.
 
 `A3.14` (typed artifact IR) is the largest remaining piece of the design and
-is not on this list because it is a phase, not a fix.
+is not on this list because it is a phase, not a fix. `A5.7` (git ≥ 2.47) is
+a one-line preflight in `doctor` whenever somebody wants it.
