@@ -72,25 +72,7 @@ pub(super) fn format_plan(slice: &Slice) -> Result<Change> {
     })
 }
 
-const EDITORCONFIG: &str = r#"root = true
-
-[*]
-charset = utf-8
-end_of_line = lf
-insert_final_newline = true
-trim_trailing_whitespace = true
-
-[*.{java,rs,xml}]
-indent_style = space
-indent_size = 4
-
-[*.{yml,yaml,json,toml}]
-indent_style = space
-indent_size = 2
-
-[Makefile]
-indent_style = tab
-"#;
+const EDITORCONFIG: &str = include_str!("../../../../templates/add/editorconfig");
 
 /// palantir-java-format over google-java-format: it keeps a 120-column line,
 /// which the generated code (records with several components, fluent AssertJ

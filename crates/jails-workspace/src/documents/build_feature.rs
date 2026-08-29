@@ -8,6 +8,7 @@ use std::collections::BTreeSet;
 
 const INTEGRATION_TESTS_MARKER: &str = "jails:integration-tests";
 const COVERAGE_MARKER: &str = "jails:coverage";
+const FORMATTING_MARKER: &str = "jails:formatting";
 
 pub(crate) fn reconcile_maven_build_features(
     text: &str,
@@ -19,7 +20,8 @@ pub(crate) fn reconcile_maven_build_features(
         features.contains(&BuildFeature::IntegrationTests),
         managed_versions,
     )?;
-    reconcile_maven_coverage(&text, features.contains(&BuildFeature::Coverage))
+    let text = reconcile_maven_coverage(&text, features.contains(&BuildFeature::Coverage))?;
+    reconcile_maven_formatting(&text, features.contains(&BuildFeature::Formatting))
 }
 
 pub(crate) fn reconcile_gradle_build_features(
@@ -32,7 +34,21 @@ pub(crate) fn reconcile_gradle_build_features(
         features.contains(&BuildFeature::IntegrationTests),
         kotlin,
     )?;
-    reconcile_gradle_coverage(&text, features.contains(&BuildFeature::Coverage), kotlin)
+    let text =
+        reconcile_gradle_coverage(&text, features.contains(&BuildFeature::Coverage), kotlin)?;
+    if features.contains(&BuildFeature::Formatting) {
+        // Not a silent skip. Spotless needs an `id ... version ...` entry in
+        // `plugins {}`, which is only legal as the *first* statement of the
+        // script -- and this backend's whole contract is that it appends a
+        // marked block and touches nothing else. Guessing where the top of
+        // somebody's build file is produces a script that no longer evaluates,
+        // which is worse than a capability that says it cannot.
+        return Err(
+            "the canonical Gradle backend cannot install formatting: Spotless needs `id 'com.diffplug.spotless'` inside `plugins { }`, which must be the first statement in the script.\n       fix: add the plugin entry yourself and configure `spotless { }`, or keep formatting outside the canonical model"
+                .to_string(),
+        );
+    }
+    Ok(text)
 }
 
 fn reconcile_maven_coverage(text: &str, enabled: bool) -> Result<String, String> {
@@ -56,6 +72,41 @@ fn reconcile_maven_coverage(text: &str, enabled: bool) -> Result<String, String>
         ));
     }
     insert_maven_feature_plugin(text, COVERAGE_MARKER, maven_coverage_plugin())
+}
+
+/// Spotless, keyed on the same `BuildFeature` the legacy engine uses.
+///
+/// The plugin is pinned and so is the formatter under it: a formatter that
+/// drifts version rewrites files nobody touched, and the diff blames whoever
+/// happened to run the build.
+fn reconcile_maven_formatting(text: &str, enabled: bool) -> Result<String, String> {
+    let open = format!("<!-- {FORMATTING_MARKER} -->");
+    let close = format!("<!-- /{FORMATTING_MARKER} -->");
+    let expected = maven_feature_blocks(FORMATTING_MARKER, maven_formatting_plugin());
+    if let Some(existing) = owned_block(text, &open, &close)? {
+        refuse_edited_feature_any(existing, &expected, "Maven formatting", FORMATTING_MARKER)?;
+        return if enabled {
+            Ok(text.to_string())
+        } else {
+            Ok(replace_owned_block(text, &open, &close, None)?.expect("the owned block was found"))
+        };
+    }
+    if !enabled {
+        return Ok(text.to_string());
+    }
+    if text.contains("<artifactId>spotless-maven-plugin</artifactId>") {
+        return Err(format!(
+            "Maven already configures `spotless-maven-plugin` outside `<!-- {FORMATTING_MARKER} -->`\n       fix: remove the reader-owned duplicate or keep formatting outside the canonical model"
+        ));
+    }
+    insert_maven_feature_plugin(text, FORMATTING_MARKER, maven_formatting_plugin())
+}
+
+/// palantir-java-format over google-java-format: it keeps a 120-column line,
+/// which the generated code -- records with several components, fluent AssertJ
+/// chains -- reads far better at than 100.
+fn maven_formatting_plugin() -> &'static str {
+    "<plugin>\n    <groupId>com.diffplug.spotless</groupId>\n    <artifactId>spotless-maven-plugin</artifactId>\n    <version>3.9.0</version>\n    <configuration>\n        <java>\n            <palantirJavaFormat>\n                <version>2.97.0</version>\n            </palantirJavaFormat>\n            <removeUnusedImports/>\n        </java>\n    </configuration>\n    <executions>\n        <execution>\n            <id>spotless-check</id>\n            <phase>verify</phase>\n            <goals>\n                <goal>check</goal>\n            </goals>\n        </execution>\n    </executions>\n</plugin>\n"
 }
 
 fn maven_coverage_plugin() -> &'static str {

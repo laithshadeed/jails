@@ -197,17 +197,36 @@ reconstruct indexes from generated SQL or add a second index ledger; index
 removal remains an explicit unsupported policy until its forward migration
 contract is implemented.
 
-**Canonical capability coverage is 21 of 25, measured 2026-08-29** by running
-every capability in `jails commands --json` against a fresh canonical project.
-`fake`, `db` and `api` were the first three -- in-memory repositories, JDBC
-repositories with schema migrations, Spring operation controllers -- and the
-rest followed by ordinary whole-model compilation. **Four refuse and name
-themselves:** `format`, `ci`, `docker` and `k8s`, with *"canonical capability
-backend is not implemented for `X`"*. Do not read the small list in an old
-note as the current one; re-measure, because this number moves.
+**Canonical capability coverage is 25 of 25.** `fake`, `db` and `api` were the
+first three -- in-memory repositories, JDBC repositories with schema
+migrations, Spring operation controllers -- and most of the rest followed by
+ordinary whole-model compilation. The last four, closed 2026-08-29, were the
+ones that write *project* files rather than Java: `ci`, `docker` and `k8s` go
+through the reader-facet file protocol `loadtest` already used, and `format` is
+a `BuildFeature` plus an `.editorconfig`.
 
-Every capability without a backend must keep refusing before legacy dispatch;
-never let a canonical project silently create a legacy ledger. Ejecting one of these
+`canonical_support::registry_classifies_every_advertised_word` holds that
+number, so a capability added without a backend fails there rather than at the
+cutover. Should another arrive without one, it must refuse before legacy
+dispatch; never let a canonical project silently create a legacy ledger.
+
+**Every one of those project files has exactly one owner.** The workflow,
+Dockerfile, chart and editor settings live under `templates/add/` and *both*
+engines `include_str!` them -- two copies drift on pinned action SHAs and base
+image tags, and neither drift is visible where anyone looks. They are
+substituted with `str::replace`, never `template!`: GitHub writes
+`${{ github.ref }}` and `docker image inspect` reads `{{.Config.User}}`, so a
+renderer treating `{{...}}` as a placeholder reads those files' own syntax as
+keys. **`format!` renders `{{` as `{`**, which is how an extraction of the
+PromQL in the alert rules silently changed them -- the golden suite caught it,
+a hand-written checker sharing the same wrong assumption did not.
+
+**Canonical `format` refuses on Gradle, by name.** Spotless needs an
+`id 'com.diffplug.spotless'` entry inside `plugins { }`, which is legal only as
+the first statement of the script, and the canonical Gradle backend's whole
+contract is that it appends a marked block and touches nothing else. Guessing
+where the top of somebody's build file is produces a script that no longer
+evaluates. Ejecting one of these
 implementation artifacts moves the captured live bytes, including hand edits,
 to reader source; it never ejects the managed ABI. `add dependency` / `remove dependency` are the exception because they
 are not capabilities: each is a stable model node, and the compiler reconciles

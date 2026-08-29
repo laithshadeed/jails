@@ -33,6 +33,13 @@ pub enum JavaSourceSet {
 pub enum BuildFeature {
     Coverage,
     IntegrationTests,
+    /// Spotless plus a pinned formatter.
+    ///
+    /// Keyed by what it does rather than by a plugin coordinate, for the
+    /// reason the other two are: `spotless-maven-plugin` is not a name Gradle
+    /// resolves, and keying by it files a Gradle project's claim under a
+    /// plugin it does not have.
+    Formatting,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

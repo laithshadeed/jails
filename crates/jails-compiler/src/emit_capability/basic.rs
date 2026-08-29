@@ -236,6 +236,26 @@ pub(super) const TESTKIT_PACK: Pack = Pack {
 
 const COVERAGE_FEATURES: &[BuildFeature] = &[BuildFeature::Coverage];
 
+/// `format` is a build feature plus one reader-facing file.
+///
+/// The `.editorconfig` comes through `project_file.rs`; this is the plugin.
+/// Keyed by [`BuildFeature::Formatting`] rather than by a plugin coordinate,
+/// because `spotless-maven-plugin` is not a name Gradle resolves.
+pub(super) const FORMAT_PACK: Pack = Pack {
+    files: &[],
+    files_when: BootCondition::Any,
+    resources: NO_RESOURCES,
+    dependencies: &[],
+    properties: NO_PROPERTIES,
+    compose_services: NO_COMPOSE_SERVICES,
+    build_features: FORMAT_FEATURES,
+    default_package: testkit_package,
+    package_overrides: NO_PACKAGE_OVERRIDES,
+    minimum_boot: None,
+};
+
+const FORMAT_FEATURES: &[BuildFeature] = &[BuildFeature::Formatting];
+
 pub(super) const COVERAGE_PACK: Pack = Pack {
     files: &[],
     files_when: BootCondition::Any,

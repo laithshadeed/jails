@@ -2710,3 +2710,51 @@ fn the_helm_chart_is_byte_identical_on_both_implementations() {
         fs::remove_dir_all(subject.root).ok();
     }
 }
+
+/// Formatting installs the same plugin and the same editor settings on both.
+///
+/// `plan.md` P13.8's fourth and last capability, which completes canonical
+/// coverage at 25 of 25. Spotless enforces Java; `.editorconfig` is what stops
+/// an editor fighting it in every other file, so both halves are asserted.
+///
+/// The plugin *and* the formatter under it are pinned, and that is the point
+/// of checking the version here: a formatter that drifts rewrites files nobody
+/// touched, and the diff blames whoever happened to run the build.
+#[test]
+fn formatting_installs_identically_on_both_implementations() {
+    let subjects = spring_subjects("format-spotless");
+    let mut rendered: Vec<(String, String)> = Vec::new();
+    for subject in &subjects {
+        subject.succeeds(&["add", "format"]);
+        let pom = fs::read_to_string(subject.root.join("pom.xml")).unwrap();
+        for expected in [
+            "<artifactId>spotless-maven-plugin</artifactId>",
+            "<version>3.9.0</version>",
+            "<version>2.97.0</version>",
+            "<goal>check</goal>",
+        ] {
+            assert!(
+                pom.contains(expected),
+                "{}: the POM is missing `{expected}`: {pom}",
+                subject.name
+            );
+        }
+        let editorconfig = fs::read_to_string(subject.root.join(".editorconfig"))
+            .unwrap_or_else(|error| panic!("{}: .editorconfig — {error}", subject.name));
+        // Spotless never sees these files; without them an editor reformats
+        // them on save and the next commit is noise.
+        assert!(
+            editorconfig.contains("[*.{yml,yaml,json,toml}]"),
+            "{}: {editorconfig}",
+            subject.name
+        );
+        rendered.push((pom, editorconfig));
+    }
+    assert_eq!(
+        rendered[0].1, rendered[1].1,
+        "the two implementations write different editor settings"
+    );
+    for subject in subjects {
+        fs::remove_dir_all(subject.root).ok();
+    }
+}

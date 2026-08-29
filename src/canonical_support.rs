@@ -88,8 +88,8 @@ pub(crate) fn capability(kind: Capability) -> Support {
         | Capability::Ci
         | Capability::Docker
         | Capability::K8s
+        | Capability::Format
         | Capability::Testkit => Support::Native,
-        Capability::Format => Support::Compatibility,
     }
 }
 
@@ -111,12 +111,16 @@ mod tests {
                 .count(),
             20
         );
+        // All 25. `format`, `ci`, `docker` and `k8s` were the last four --
+        // `plan.md` P13.8 measured them and this is where that number lives,
+        // so a capability added without a canonical backend fails here rather
+        // than discovering it at the cutover.
         assert_eq!(
             Capability::value_variants()
                 .iter()
                 .filter(|kind| capability(**kind).is_native())
                 .count(),
-            21
+            25
         );
     }
 }

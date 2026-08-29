@@ -21,8 +21,8 @@ mod reader_facet;
 mod spring;
 
 use basic::{
-    COVERAGE_PACK, CSV_PACK, FAKE_PACK, HTTP_PACK, JSON_PACK, SQLITE_PACK, TESTKIT_PACK,
-    TOXIPROXY_PACK, sqlite_database_class, sqlite_migrations_class,
+    COVERAGE_PACK, CSV_PACK, FAKE_PACK, FORMAT_PACK, HTTP_PACK, JSON_PACK, SQLITE_PACK,
+    TESTKIT_PACK, TOXIPROXY_PACK, sqlite_database_class, sqlite_migrations_class,
 };
 use messaging::{KAFKA_PACK, MAIL_PACK};
 use reader_facet::ComposeService;
@@ -268,6 +268,7 @@ fn pack(kind: &str) -> Option<&'static Pack> {
         "testkit" => Some(&TESTKIT_PACK),
         "toxiproxy" => Some(&TOXIPROXY_PACK),
         "coverage" => Some(&COVERAGE_PACK),
+        "format" => Some(&FORMAT_PACK),
         "sqlite" => Some(&SQLITE_PACK),
         "h2" => Some(&H2_PACK),
         "actuator" => Some(&ACTUATOR_PACK),

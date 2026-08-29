@@ -7,6 +7,8 @@ use jails_model::{AppModel, Capability, EndpointMethod, OperationKind, UnitKind}
 
 const CI_WORKFLOW_PATH: &str = ".github/workflows/ci.yml";
 
+const EDITORCONFIG_PATH: &str = ".editorconfig";
+
 const DOCKER_PATHS: [&str; 3] = ["Dockerfile", ".dockerignore", ".github/workflows/image.yml"];
 
 /// The Helm chart, as (suffix, path, template).
@@ -88,6 +90,10 @@ pub(super) fn paths(model: &AppModel) -> Vec<ProjectPath> {
     if has(model, "ci") {
         paths.push(ProjectPath::parse(CI_WORKFLOW_PATH).expect("registered project path is valid"));
     }
+    if has(model, "format") {
+        paths
+            .push(ProjectPath::parse(EDITORCONFIG_PATH).expect("registered project path is valid"));
+    }
     if has(model, "k8s") {
         paths.extend(K8S_FILES.iter().map(|(_, path, _)| {
             ProjectPath::parse(*path).expect("registered project path is valid")
@@ -127,6 +133,7 @@ pub(super) fn lower_and_emit(
         "ci" => lower_ci(model, capability, output, observed),
         "docker" => lower_docker(model, capability, output, observed),
         "k8s" => lower_k8s(model, capability, output),
+        "format" => lower_format(capability, output),
         _ => Ok(()),
     }
 }
@@ -219,6 +226,23 @@ fn lower_docker(
         )?;
     }
     Ok(())
+}
+
+/// `format`'s reader-facing half: the editor settings the formatter assumes.
+///
+/// Spotless enforces Java; `.editorconfig` is what stops an editor fighting it
+/// in every other file, and it is the same bytes the legacy engine writes.
+fn lower_format(capability: &Capability, output: &mut RenderedTree) -> Result<(), CompileError> {
+    reader_facet::emit_managed_file(
+        output,
+        capability,
+        "editorconfig",
+        ProjectPath::parse(EDITORCONFIG_PATH).map_err(CompileError::new)?,
+        include_str!("../../../../templates/add/editorconfig")
+            .as_bytes()
+            .to_vec(),
+        FileMode::Regular,
+    )
 }
 
 /// The Helm chart, and the three declarations it cannot deploy without.

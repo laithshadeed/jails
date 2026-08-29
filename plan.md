@@ -453,10 +453,36 @@ verbatim from `customer.js` and `admin.js`:
       backend parity"*; nothing said how much. Measured 2026-08-29 by running
       every entry of `jails commands --json` against a fresh canonical project:
 
-      - **Capabilities: 21 of 25 canonical.** `format`, `ci`, `docker` and
-        `k8s` refuse with *"canonical capability backend is not implemented"*.
-        The first three are build/CI/packaging files rather than Java, which is
-        probably why they were left: nothing about them is entity-shaped.
+      - **Capabilities: 25 of 25 canonical, as of this entry.** The four that
+        refused -- `format`, `ci`, `docker`, `k8s` -- were the ones writing
+        *project* files rather than Java, which is why they were left: nothing
+        about them is entity-shaped. `ci`, `docker` and `k8s` went through the
+        reader-facet file protocol `loadtest` already used; `format` is a
+        `BuildFeature` plus an `.editorconfig`. Each is proven byte-identical
+        to the legacy output by a differential test, and the count is pinned in
+        `registry_classifies_every_advertised_word`.
+
+        Three things that fell out and are worth keeping. **Every one of those
+        files now has one owner** under `templates/add/`, read by both engines
+        -- two copies of a CI workflow drift on pinned action SHAs, which is
+        the drift nobody sees until an advisory names a version still running.
+        **`k8s`'s preconditions moved from the build file to the model**: the
+        legacy engine greps the pom for the actuator and the registry, where
+        the canonical one asks whether the capability is declared, which is
+        stricter -- a hand-spliced starter satisfied the old check while
+        leaving `sync` nothing to reconcile. And **canonical `format` refuses
+        on Gradle by name**, because Spotless needs a `plugins { }` entry that
+        is only legal as the script's first statement, and this backend appends
+        marked blocks rather than guessing where the top of a reader's build
+        file is.
+
+        **The template extraction went wrong once and the checker agreed with
+        it.** `format!` renders `{{` as `{`, and the PromQL in the burn-rate
+        alerts is written `{{application="demo"}}`. The verifier applied the
+        same wrong un-escaping to both sides and reported IDENTICAL for a file
+        it had changed; the golden suite caught it. That is the argument for a
+        second oracle that does not share the first one's reasoning, in one
+        example.
       - **Kinds: `migration`, `association`, `search` and `seed` refuse** with
         *"its JDL syntax editor is not implemented yet -- edit
         `.jails/model.jdl` directly and run `jails sync`"*.
