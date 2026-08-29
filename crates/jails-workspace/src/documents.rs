@@ -5,10 +5,11 @@
 //! and refuse a damaged/edited owned block instead of guessing.
 
 mod build_feature;
+mod source_root;
 
 pub(crate) use build_feature::{reconcile_gradle_build_features, reconcile_maven_build_features};
+pub(crate) use source_root::{ensure_gradle_source_root, ensure_maven_source_roots};
 
-const MARKER: &str = "jails:generated-source-root";
 const DEPENDENCY_MARKER: &str = "jails:dependencies";
 
 pub(crate) fn reconcile_properties(
@@ -503,141 +504,6 @@ fn replace_owned_block(
     Ok(Some(output))
 }
 
-pub(crate) fn ensure_maven_source_root(
-    text: &str,
-    source: &str,
-    source_set: jails_contracts::JavaSourceSet,
-) -> Result<String, String> {
-    let label = source_set_label(source_set);
-    let marker = format!("{MARKER}:{label}");
-    let open = format!("<!-- {marker} -->");
-    let close = format!("<!-- /{marker} -->");
-    if let Some(block) = owned_block(text, &open, &close)? {
-        if block.contains(source) {
-            return Ok(text.to_string());
-        }
-        return Err(format!(
-            "the owned Maven generated-source block was edited\n       fix: restore `{source}` inside `{open}`, or remove the complete marked block and re-plan"
-        ));
-    }
-
-    let (phase, goal, configuration) = match source_set {
-        jails_contracts::JavaSourceSet::Main => (
-            "generate-sources",
-            "add-source",
-            format!("<sources><source>{source}</source></sources>"),
-        ),
-        jails_contracts::JavaSourceSet::Test => (
-            "generate-test-sources",
-            "add-test-source",
-            format!("<sources><source>{source}</source></sources>"),
-        ),
-        jails_contracts::JavaSourceSet::MainResources => (
-            "generate-resources",
-            "add-resource",
-            format!("<resources><resource><directory>{source}</directory></resource></resources>"),
-        ),
-        jails_contracts::JavaSourceSet::TestResources => (
-            "generate-test-resources",
-            "add-test-resource",
-            format!("<resources><resource><directory>{source}</directory></resource></resources>"),
-        ),
-    };
-    let plugin = format!(
-        "{open}\n\
-         <plugin>\n\
-             <groupId>org.codehaus.mojo</groupId>\n\
-             <artifactId>build-helper-maven-plugin</artifactId>\n\
-             <version>3.6.1</version>\n\
-             <executions>\n\
-                 <execution>\n\
-                     <id>jails-generated-{label}-source-root</id>\n\
-                     <phase>{phase}</phase>\n\
-                     <goals><goal>{goal}</goal></goals>\n\
-                     <configuration>\n\
-                         {configuration}\n\
-                     </configuration>\n\
-                 </execution>\n\
-             </executions>\n\
-         </plugin>\n\
-         {close}\n"
-    );
-
-    if let Some(at) = direct_child_close(text, &["project", "build", "plugins"]) {
-        return Ok(insert_indented_block(text, at, &plugin, 0));
-    }
-    if let Some(at) = direct_child_close(text, &["project", "build"]) {
-        let indent = line_indent(text, at).unwrap_or("    ");
-        let child = format!("{indent}    ");
-        let plugins = format!(
-            "{child}<plugins>\n{}{child}</plugins>\n",
-            indent_block(&plugin, &format!("{child}    "))
-        );
-        return Ok(insert_at_line(text, at, &plugins));
-    }
-    let Some(at) = direct_child_close(text, &["project"]) else {
-        return Err(
-            "pom.xml has no closing project element\n       fix: repair the Maven POM, then re-plan"
-                .to_string(),
-        );
-    };
-    let indent = line_indent(text, at).unwrap_or("");
-    let step = format!("{indent}    ");
-    let build = format!(
-        "{step}<build>\n{step}    <plugins>\n{}{step}    </plugins>\n{step}</build>\n",
-        indent_block(&plugin, &format!("{step}        "))
-    );
-    Ok(insert_at_line(text, at, &build))
-}
-
-pub(crate) fn ensure_gradle_source_root(
-    text: &str,
-    source: &str,
-    source_set: jails_contracts::JavaSourceSet,
-    kotlin: bool,
-) -> Result<String, String> {
-    let label = source_set_label(source_set);
-    let marker = format!("{MARKER}:{label}");
-    let open = format!("// {marker}");
-    let close = format!("// /{marker}");
-    if let Some(block) = owned_block(text, &open, &close)? {
-        if block.contains(source) {
-            return Ok(text.to_string());
-        }
-        return Err(format!(
-            "the owned Gradle generated-source block was edited\n       fix: restore `{source}` inside `{open}`, or remove the complete marked block and re-plan"
-        ));
-    }
-    let (set, collection) = match source_set {
-        jails_contracts::JavaSourceSet::Main => ("main", "java"),
-        jails_contracts::JavaSourceSet::Test => ("test", "java"),
-        jails_contracts::JavaSourceSet::MainResources => ("main", "resources"),
-        jails_contracts::JavaSourceSet::TestResources => ("test", "resources"),
-    };
-    let body = if kotlin {
-        format!(
-            "sourceSets {{\n    named(\"{set}\") {{\n        {collection}.srcDir(\"{source}\")\n    }}\n}}"
-        )
-    } else {
-        format!("sourceSets {{\n    {set} {{\n        {collection}.srcDir('{source}')\n    }}\n}}")
-    };
-    let separator = if text.is_empty() || text.ends_with('\n') {
-        ""
-    } else {
-        "\n"
-    };
-    Ok(format!("{text}{separator}\n{open}\n{body}\n{close}\n"))
-}
-
-fn source_set_label(source_set: jails_contracts::JavaSourceSet) -> &'static str {
-    match source_set {
-        jails_contracts::JavaSourceSet::Main => "main",
-        jails_contracts::JavaSourceSet::Test => "test",
-        jails_contracts::JavaSourceSet::MainResources => "main-resources",
-        jails_contracts::JavaSourceSet::TestResources => "test-resources",
-    }
-}
-
 fn owned_block<'a>(text: &'a str, open: &str, close: &str) -> Result<Option<&'a str>, String> {
     let Some(start) = text.find(open) else {
         if text.contains(close) {
@@ -767,7 +633,7 @@ fn line_indent(text: &str, at: usize) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jails_contracts::{JavaSourceSet, ProjectPath};
+    use jails_contracts::ProjectPath;
 
     fn dependency(
         group: &str,
@@ -788,102 +654,6 @@ mod tests {
             key: key.to_string(),
             value: value.to_string(),
         }
-    }
-
-    #[test]
-    fn maven_patch_is_lossless_idempotent_and_avoids_plugin_management() {
-        let pom = "<project>\n    <build>\n        <pluginManagement><plugins></plugins></pluginManagement>\n        <plugins>\n        </plugins>\n    </build>\n</project>\n";
-        let once = ensure_maven_source_root(pom, ".jails/generated/main/java", JavaSourceSet::Main)
-            .unwrap();
-        assert!(once.contains("build-helper-maven-plugin"));
-        assert!(once.find("build-helper").unwrap() > once.find("</pluginManagement>").unwrap());
-        assert_eq!(
-            ensure_maven_source_root(&once, ".jails/generated/main/java", JavaSourceSet::Main,)
-                .unwrap(),
-            once
-        );
-    }
-
-    #[test]
-    fn maven_patch_creates_the_missing_build_nest() {
-        let pom = "<project>\n    <modelVersion>4.0.0</modelVersion>\n</project>\n";
-        let patched =
-            ensure_maven_source_root(pom, ".jails/generated/main/java", JavaSourceSet::Main)
-                .unwrap();
-        assert!(patched.contains("<build>\n        <plugins>"), "{patched}");
-        assert!(patched.ends_with("</project>\n"));
-    }
-
-    #[test]
-    fn gradle_patch_uses_the_script_dialect_and_is_idempotent() {
-        let groovy =
-            ensure_gradle_source_root("plugins {}\n", "generated/java", JavaSourceSet::Main, false)
-                .unwrap();
-        assert!(groovy.contains("java.srcDir('generated/java')"));
-        assert_eq!(
-            ensure_gradle_source_root(&groovy, "generated/java", JavaSourceSet::Main, false,)
-                .unwrap(),
-            groovy
-        );
-        let kotlin =
-            ensure_gradle_source_root("plugins {}\n", "generated/java", JavaSourceSet::Main, true)
-                .unwrap();
-        assert!(kotlin.contains("named(\"main\")"));
-        assert!(kotlin.contains("java.srcDir(\"generated/java\")"));
-    }
-
-    #[test]
-    fn source_root_markers_are_independent_per_source_set() {
-        let pom = "<project>\n</project>\n";
-        let main = ensure_maven_source_root(pom, ".jails/generated/main/java", JavaSourceSet::Main)
-            .unwrap();
-        let both =
-            ensure_maven_source_root(&main, ".jails/generated/test/java", JavaSourceSet::Test)
-                .unwrap();
-        assert!(both.contains("<goal>add-source</goal>"));
-        assert!(both.contains("<goal>add-test-source</goal>"));
-        assert!(both.contains("jails:generated-source-root:main"));
-        assert!(both.contains("jails:generated-source-root:test"));
-    }
-
-    #[test]
-    fn generated_test_resources_use_the_build_tools_resource_set() {
-        let pom = ensure_maven_source_root(
-            "<project>\n</project>\n",
-            ".jails/generated/test/resources",
-            JavaSourceSet::TestResources,
-        )
-        .unwrap();
-        assert!(pom.contains("<goal>add-test-resource</goal>"), "{pom}");
-        assert!(
-            pom.contains("<directory>.jails/generated/test/resources</directory>"),
-            "{pom}"
-        );
-        assert!(pom.contains("jails:generated-source-root:test-resources"));
-
-        let gradle = ensure_gradle_source_root(
-            "plugins {}\n",
-            ".jails/generated/test/resources",
-            JavaSourceSet::TestResources,
-            false,
-        )
-        .unwrap();
-        assert!(
-            gradle.contains("resources.srcDir('.jails/generated/test/resources')"),
-            "{gradle}"
-        );
-
-        let main = ensure_maven_source_root(
-            "<project>\n</project>\n",
-            ".jails/generated/main/resources",
-            JavaSourceSet::MainResources,
-        )
-        .unwrap();
-        assert!(main.contains("<goal>add-resource</goal>"), "{main}");
-        assert!(
-            main.contains("<directory>.jails/generated/main/resources</directory>"),
-            "{main}"
-        );
     }
 
     #[test]

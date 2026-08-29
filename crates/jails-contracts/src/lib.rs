@@ -10,9 +10,9 @@ mod snapshot;
 
 pub use draft::{
     BuildDependency, BuildFeature, CompilerDiagnostic, DiagnosticSeverity, DocumentIntent,
-    EffectIntent, FileKind, FileMode, JavaSourceSet, PlanDraft, PropertyEntry, Provenance,
-    ReaderFacetKind, RenderedFile, RenderedMigration, RenderedReaderFacet, RenderedTree,
-    SemanticPlan,
+    EffectIntent, FileKind, FileMode, JavaSourceSet, MavenSourceRoot, PlanDraft, PropertyEntry,
+    Provenance, ReaderFacetKind, RenderedFile, RenderedMigration, RenderedReaderFacet,
+    RenderedTree, SemanticPlan,
 };
 pub use jails_model::{Layout, RENAMEABLE_LAYERS};
 pub use path::ProjectPath;

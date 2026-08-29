@@ -277,14 +277,12 @@ fn materialize_document_intents(
     let mut removals = BTreeMap::<ProjectPath, ProjectPath>::new();
     for intent in intents {
         match intent {
-            DocumentIntent::EnsureMavenSourceRoot { path, source_set } => {
+            DocumentIntent::EnsureMavenSourceRoots { roots } => {
                 update_document(
                     snapshot,
                     &mut desired,
                     ProjectPath::parse("pom.xml")?,
-                    |text| {
-                        crate::documents::ensure_maven_source_root(text, path.as_str(), *source_set)
-                    },
+                    |text| crate::documents::ensure_maven_source_roots(text, roots),
                 )?;
             }
             DocumentIntent::EnsureGradleSourceRoot { path, source_set } => {

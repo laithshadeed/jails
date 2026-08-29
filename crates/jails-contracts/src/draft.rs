@@ -19,13 +19,23 @@ pub enum FileMode {
     Executable,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+/// Declaration order is the order generated roots are rendered into a build
+/// file, so it is `Ord` and the variants are written in the order a reader
+/// expects to meet them.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum JavaSourceSet {
     Main,
     Test,
     MainResources,
     TestResources,
+}
+
+/// One generated root and the source set it joins.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct MavenSourceRoot {
+    pub source_set: JavaSourceSet,
+    pub path: ProjectPath,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -163,9 +173,18 @@ pub struct PropertyEntry {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum DocumentIntent {
-    EnsureMavenSourceRoot {
-        path: ProjectPath,
-        source_set: JavaSourceSet,
+    /// Every generated root Maven must compile, as one intent.
+    ///
+    /// One intent rather than one per source set, because they land in one
+    /// `<plugin>`. A block per source set meant a full
+    /// `org.codehaus.mojo:build-helper-maven-plugin` declaration per set, and
+    /// a project with a main and a test root declared that plugin twice in one
+    /// `<plugins>`: Maven merges the executions, so both roots do compile, but
+    /// it warns `must be unique but found duplicate declaration` on every
+    /// build. A warning that alarming on every build is how readers learn to
+    /// stop reading warnings.
+    EnsureMavenSourceRoots {
+        roots: Vec<MavenSourceRoot>,
     },
     EnsureGradleSourceRoot {
         path: ProjectPath,

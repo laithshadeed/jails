@@ -459,28 +459,30 @@ impl Compiler {
         dependencies.sort();
         let mut reader_document_intents = match snapshot.project.build_system {
             BuildSystem::Maven => {
-                let mut intents = vec![DocumentIntent::EnsureMavenSourceRoot {
-                    path: main_source_root,
+                let mut roots = vec![jails_contracts::MavenSourceRoot {
                     source_set: JavaSourceSet::Main,
+                    path: main_source_root,
                 }];
                 if has_test_sources {
-                    intents.push(DocumentIntent::EnsureMavenSourceRoot {
-                        path: test_source_root,
+                    roots.push(jails_contracts::MavenSourceRoot {
                         source_set: JavaSourceSet::Test,
+                        path: test_source_root,
                     });
                 }
                 if has_test_resources {
-                    intents.push(DocumentIntent::EnsureMavenSourceRoot {
-                        path: test_resource_root,
+                    roots.push(jails_contracts::MavenSourceRoot {
                         source_set: JavaSourceSet::TestResources,
+                        path: test_resource_root,
                     });
                 }
                 if has_main_resources {
-                    intents.push(DocumentIntent::EnsureMavenSourceRoot {
-                        path: main_resource_root,
+                    roots.push(jails_contracts::MavenSourceRoot {
                         source_set: JavaSourceSet::MainResources,
+                        path: main_resource_root,
                     });
                 }
+                roots.sort();
+                let mut intents = vec![DocumentIntent::EnsureMavenSourceRoots { roots }];
                 intents.push(DocumentIntent::ReconcileBuildFeatures {
                     features: build_features.clone(),
                 });
@@ -1034,13 +1036,10 @@ route = "PATCH /notes/{id}"
             1
         );
         assert!(draft.reader_document_intents.iter().any(|intent| {
-            matches!(
-                intent,
-                DocumentIntent::EnsureMavenSourceRoot {
-                    source_set: JavaSourceSet::TestResources,
-                    ..
-                }
-            )
+            matches!(intent, DocumentIntent::EnsureMavenSourceRoots { roots }
+                if roots
+                    .iter()
+                    .any(|root| root.source_set == JavaSourceSet::TestResources))
         }));
     }
 
@@ -1068,13 +1067,10 @@ route = "PATCH /notes/{id}"
             assert_eq!(file.provenance.ejection_id.as_deref(), Some("cap_sqlite"));
         }
         assert!(!draft.reader_document_intents.iter().any(|intent| {
-            matches!(
-                intent,
-                DocumentIntent::EnsureMavenSourceRoot {
-                    source_set: JavaSourceSet::MainResources,
-                    ..
-                }
-            )
+            matches!(intent, DocumentIntent::EnsureMavenSourceRoots { roots }
+                if roots
+                    .iter()
+                    .any(|root| root.source_set == JavaSourceSet::MainResources))
         }));
         assert_eq!(draft.migrations.len(), 1);
         assert_eq!(draft.migrations[0].logical_name, "sqlite_init");
