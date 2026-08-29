@@ -148,3 +148,56 @@ jails new demo && cd demo
 jails g event Transaction
 mvn -q -B test        # package org.springframework.kafka.core does not exist
 ```
+
+## B59 — the canonical compiler ignores an adopted project's layer renames
+
+`jails adopt` exists so a project jails did not write can keep its own
+directory names: the fixture in `tests/common/` keeps its adapters in
+`persistence`, and adoption records `adapters = "persistence"` in `jails.toml`.
+`CLAUDE.md` states the rule this establishes — *anything reporting or writing
+per layer must go through `Config::layers()`, which applies the project's
+renames.*
+
+**The canonical path does not.** `jails-compiler` names its facet packages
+itself (`emit_java.rs`: `Facet::Repository => "repository"`), and no canonical
+crate reads `jails.toml` at all. So on the same adopted project:
+
+```
+legacy     src/main/java/net/acme/legacy/persistence/JdbcInvoiceRepository.java
+canonical  .jails/generated/main/java/net/acme/legacy/repository/InvoiceRepository.java
+```
+
+Adoption is recorded identically by both — that half is asserted in
+`an_adopted_project_is_treated_the_same_by_both_implementations`. The
+divergence is downstream of it, in emission.
+
+**Why this matters for the cutover rather than as a cosmetic difference.** The
+whole point of `adopt` is that a reader told jails where things go. After
+cutover, running it would change nothing about where generated code lands, and
+nothing would say so — the command still prints its mapping and still writes
+`jails.toml`. A configuration command that reports success and has no effect is
+worse than one that refuses, and `maintenance.rs`'s own rule is that an
+unrecognised directory is *reported, not guessed*.
+
+**Not a defect in `.jails/generated` itself.** Managed output living in one
+merge-managed tree is deliberate. The question is only what the packages inside
+it are called, and there the reader has already answered.
+
+**Two honest options**, neither taken here because this is a finding rather
+than a fix:
+
+1. The compiler stays pure and takes the layer names as part of its input --
+   they are a projection of the model, which is what `AppModel` says names
+   are, so this is the shape the contracts already imply.
+2. `adopt` refuses on a canonical project, the way it already refuses *after*
+   a model exists. That is honest but loses the feature.
+
+**Reproduce:**
+
+```
+# a project with a `persistence` directory and no `.jails/`
+jails adopt                                  # records adapters = "persistence"
+printf 'application X @id(x)\npackage net.acme.legacy\njava 26\ndialect postgresql\n' > .jails/model.jdl
+jails g scaffold Invoice id:uuid@pk total:long
+find .jails/generated -name '*Repository.java'   # .../repository/, not .../persistence/
+```

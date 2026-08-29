@@ -8,8 +8,8 @@
 mod common;
 
 use common::{
-    adopted_base, adopted_reader_bytes, temp_dir, write_adopted_fixture, write_plain_fixture,
-    write_spring_fixture,
+    Adopted, adopted_base, adopted_reader_bytes, temp_dir, write_adopted_fixture,
+    write_plain_fixture, write_spring_fixture,
 };
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
@@ -2283,11 +2283,11 @@ fn executable(_path: &Path) -> bool {
 /// The canonical side gets a `.jails/model.jdl` naming the *reader's* base
 /// package, not `com.example.demo`: the whole point of an adopted project is
 /// that jails did not choose where anything lives.
-fn adopted_subjects(label: &str) -> [Subject; 2] {
+fn adopted_subjects(label: &str, flavour: Adopted) -> [Subject; 2] {
     let legacy_root = temp_dir(&format!("differential-{label}-legacy"));
     let canonical_root = temp_dir(&format!("differential-{label}-canonical"));
-    write_adopted_fixture(&legacy_root);
-    write_adopted_fixture(&canonical_root);
+    write_adopted_fixture(&legacy_root, flavour);
+    write_adopted_fixture(&canonical_root, flavour);
     // No `model.jdl` yet, deliberately. `adopt` refuses on a canonical project
     // -- "adopt only before creating the model" -- and it is right to: adoption
     // is how jails learns a layout it did not choose, which has to happen
@@ -2329,15 +2329,50 @@ fn adopted_subjects(label: &str) -> [Subject; 2] {
 /// what the *reader* can see -- their own bytes, and whether a rerun settles.
 #[test]
 fn an_adopted_project_is_treated_the_same_by_both_implementations() {
-    let subjects = adopted_subjects("adopted");
+    for flavour in [Adopted::Plain, Adopted::Spring] {
+        adopted_project_is_treated_the_same(flavour);
+    }
+}
+
+/// One flavour of [`adopted_subjects`], run through both implementations.
+///
+/// The Spring flavour is not a copy with a bigger pom. Every version fact
+/// jails renders against -- repository wiring, the MockMvc form, the
+/// webmvc-test module, whether `package-info.java` may be annotated -- is read
+/// off the *reader's* build file, so a Spring project jails did not create is
+/// where a wrong reading turns into Java that does not compile.
+fn adopted_project_is_treated_the_same(flavour: Adopted) {
+    let label = match flavour {
+        Adopted::Plain => "adopted-plain",
+        Adopted::Spring => "adopted-spring",
+    };
+    let subjects = adopted_subjects(label, flavour);
     for subject in &subjects {
-        let before = adopted_reader_bytes(&subject.root);
+        let before = adopted_reader_bytes(&subject.root, flavour);
 
         subject.succeeds(&["adopt"]);
         assert_eq!(
-            adopted_reader_bytes(&subject.root),
+            adopted_reader_bytes(&subject.root, flavour),
             before,
-            "{} rewrote the reader's source while adopting",
+            "{label}: {} rewrote the reader's source while adopting",
+            subject.name
+        );
+
+        // Both implementations *learn* the reader's layout identically: the
+        // fixture keeps its adapters in `persistence`, and adoption records
+        // that rename rather than reporting the directory as unrecognised.
+        //
+        // What the two then do with it differs, and `bugs.md` B59 is that
+        // finding rather than an assertion here -- the canonical compiler
+        // names its facet packages itself and never reads `jails.toml`, so a
+        // reader who adopted `persistence` gets `repository`. Pinning today's
+        // behaviour would freeze the defect; pinning the shared half is what
+        // says the divergence is downstream of adoption.
+        assert!(
+            fs::read_to_string(subject.root.join("jails.toml"))
+                .unwrap()
+                .contains(r#"adapters = "persistence""#),
+            "{label}: {} did not record the reader's adapters directory",
             subject.name
         );
 
@@ -2364,9 +2399,9 @@ fn an_adopted_project_is_treated_the_same_by_both_implementations() {
             subject.name
         );
         assert_eq!(
-            adopted_reader_bytes(&subject.root),
+            adopted_reader_bytes(&subject.root, flavour),
             before,
-            "{} rewrote a file it did not author",
+            "{label}: {} rewrote a file it did not author",
             subject.name
         );
 
@@ -2386,9 +2421,9 @@ fn an_adopted_project_is_treated_the_same_by_both_implementations() {
             subject.name
         );
         assert_eq!(
-            adopted_reader_bytes(&subject.root),
+            adopted_reader_bytes(&subject.root, flavour),
             before,
-            "{} rewrote the reader's source on a rerun",
+            "{label}: {} rewrote the reader's source on a rerun",
             subject.name
         );
 

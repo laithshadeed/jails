@@ -200,7 +200,7 @@ Ordinary new projects therefore stay on the compatibility engine; partial
 parity is not called a cutover.
 
 The first G1 canary is executable as `mise run verify-rewrite-g1-canary`. It
-builds `JAILS_LEGACY_REVISION` (the current checked-in revision by default) in
+builds `JAILS_LEGACY_REVISION` (the branch point against `main` by default) in
 an isolated temporary tree and runs the exact record generate/edit/generate
 loop through that frozen binary and the canonical JDL path. It compares the
 reader-visible safety contract: disjoint method and message edits survive,

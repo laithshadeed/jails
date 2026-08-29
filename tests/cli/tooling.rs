@@ -2260,8 +2260,8 @@ fn an_adopted_reader_written_project_generates_compiles_and_keeps_its_own_bytes(
     // the same project through both implementations. Two copies of a project
     // that is *defined* by being foreign would drift into two different
     // foreignnesses.
-    write_adopted_fixture(&root);
-    let before = adopted_reader_bytes(&root);
+    write_adopted_fixture(&root, Adopted::Plain);
+    let before = adopted_reader_bytes(&root, Adopted::Plain);
 
     // 1. Adoption reads a layout jails did not choose.
     let adopted = jails_cmd_with_path(&root, &path)
@@ -2303,7 +2303,7 @@ fn an_adopted_reader_written_project_generates_compiles_and_keeps_its_own_bytes(
 
     // 3. The reader's bytes are the reader's.
     assert_eq!(
-        adopted_reader_bytes(&root),
+        adopted_reader_bytes(&root, Adopted::Plain),
         before,
         "jails rewrote a file it did not author"
     );
@@ -2334,7 +2334,7 @@ fn an_adopted_reader_written_project_generates_compiles_and_keeps_its_own_bytes(
         "a repeated generate rewrote its own output"
     );
     assert_eq!(
-        adopted_reader_bytes(&root),
+        adopted_reader_bytes(&root, Adopted::Plain),
         before,
         "a repeated generate rewrote a file it did not author"
     );

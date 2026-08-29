@@ -1165,6 +1165,22 @@ pub fn write_plain_fixture(root: &Path) {
     .unwrap();
 }
 
+/// Which build the adopted fixture is, since `simplify-sol.md`'s G5 asks for
+/// both.
+///
+/// A flavour rather than two fixtures: the reader's classes, packages and
+/// directory names are the same foreignness in either case, and the thing that
+/// differs is what jails *reads off the build file* -- which Boot version, and
+/// therefore which repository wiring, which MockMvc form, which webmvc-test
+/// module. Two copies would drift on the half that is not the point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Adopted {
+    /// Plain Maven, JUnit only. Cheap to build.
+    Plain,
+    /// Spring Boot, with the reader's own `@SpringBootApplication`.
+    Spring,
+}
+
 /// The reader's own files in [`write_adopted_fixture`], as (path, body).
 ///
 /// Public so a caller can assert they come back byte-identical: that is the
@@ -1189,6 +1205,26 @@ pub const ADOPTED_READER_FILES: [(&str, &str); 4] = [
     ),
 ];
 
+/// The one reader file only the Spring flavour has.
+///
+/// It is the reader's, not jails': an adopted Spring project has an entry
+/// point somebody else wrote, and `base_package()` finds the package from it.
+/// Listing it here rather than beside the fixture is what puts it in
+/// [`adopted_reader_bytes`], so it is held byte-for-byte like the rest.
+pub const ADOPTED_SPRING_FILES: [(&str, &str); 1] = [(
+    "OrdersApplication.java",
+    "package net.acme.legacy;\n\nimport org.springframework.boot.SpringApplication;\nimport org.springframework.boot.autoconfigure.SpringBootApplication;\n\n@SpringBootApplication\npublic class OrdersApplication {\n    public static void main(String[] args) {\n        SpringApplication.run(OrdersApplication.class, args);\n    }\n}\n",
+)];
+
+/// Every reader file this flavour writes.
+pub fn adopted_files(flavour: Adopted) -> Vec<(&'static str, &'static str)> {
+    let mut files: Vec<_> = ADOPTED_READER_FILES.to_vec();
+    if flavour == Adopted::Spring {
+        files.extend(ADOPTED_SPRING_FILES);
+    }
+    files
+}
+
 /// Where [`ADOPTED_READER_FILES`] live, relative to the project root.
 pub fn adopted_base(root: &Path) -> PathBuf {
     root.join("src/main/java/net/acme/legacy")
@@ -1205,14 +1241,21 @@ pub fn adopted_base(root: &Path) -> PathBuf {
 /// Deliberately foreign in every respect a generator might assume: its own
 /// groupId and artifactId, a package root that is not `com.example.demo`, a
 /// `persistence` directory where jails would have written `adapters`, and
-/// classes with bodies rather than stubs. The only dependency is JUnit, so a
-/// real build of it is cheap.
-pub fn write_adopted_fixture(root: &Path) {
+/// classes with bodies rather than stubs.
+///
+/// [`Adopted::Plain`] depends on JUnit alone, so a real build of it is cheap.
+/// [`Adopted::Spring`] is the case where being foreign costs something: jails
+/// reads the *reader's* pom to decide repository wiring, the MockMvc form and
+/// the webmvc-test module, so a Spring project it did not create is where a
+/// wrong reading shows up as Java that does not compile.
+pub fn write_adopted_fixture(root: &Path, flavour: Adopted) {
     fs::create_dir_all(root).unwrap();
     fs::write(
         root.join("pom.xml"),
-        format!(
-            r#"<?xml version="1.0" encoding="UTF-8"?>
+        match flavour {
+            Adopted::Spring => ADOPTED_SPRING_POM.replace("{TARGET_RELEASE}", TARGET_RELEASE),
+            Adopted::Plain => format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0">
   <modelVersion>4.0.0</modelVersion>
   <groupId>net.acme.legacy</groupId>
@@ -1232,21 +1275,62 @@ pub fn write_adopted_fixture(root: &Path) {
   </dependencies>
 </project>
 "#
-        ),
+            ),
+        },
     )
     .unwrap();
     let base = adopted_base(root);
-    for (relative, body) in ADOPTED_READER_FILES {
+    for (relative, body) in adopted_files(flavour) {
         let at = base.join(relative);
         fs::create_dir_all(at.parent().unwrap()).unwrap();
         fs::write(&at, body).unwrap();
     }
 }
 
-/// Every reader file's current bytes, in [`ADOPTED_READER_FILES`] order.
-pub fn adopted_reader_bytes(root: &Path) -> Vec<String> {
+/// The Spring flavour's build file: the reader's own coordinates under the
+/// same pinned Boot parent every other Spring fixture here uses.
+///
+/// Pinned rather than fetched for the reason `write_spring_fixture` is, and it
+/// declares nothing jails is supposed to declare -- `webmvc-test` in
+/// particular is left out, because a fixture that supplies what the tool must
+/// supply hides exactly the defect these tests exist to find.
+const ADOPTED_SPRING_POM: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>4.1.0</version>
+    <relativePath/>
+  </parent>
+  <groupId>net.acme.legacy</groupId>
+  <artifactId>orders-service</artifactId>
+  <version>2.4.1</version>
+  <properties>
+    <java.version>{TARGET_RELEASE}</java.version>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-webmvc</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>
+"#;
+
+/// Every reader file's current bytes, in [`adopted_files`] order.
+///
+/// `unwrap` rather than a skip-if-missing: a reader file that has *vanished*
+/// is the loudest way this can fail, and reading it as "nothing to compare"
+/// would report the deletion as preservation.
+pub fn adopted_reader_bytes(root: &Path, flavour: Adopted) -> Vec<String> {
     let base = adopted_base(root);
-    ADOPTED_READER_FILES
+    adopted_files(flavour)
         .iter()
         .map(|(relative, _)| fs::read_to_string(base.join(relative)).unwrap())
         .collect()

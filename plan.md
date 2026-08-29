@@ -369,10 +369,54 @@ verbatim from `customer.js` and `admin.js`:
       second-run idempotency is what `simplify-sol.md`'s differential list asks
       for anyway.
 
-      **What G5 still lacks is the differential half**: these run the current
-      binary only. Running the same adopted project through a frozen legacy
-      revision and comparing semantics is `scripts/verify-rewrite-g1-canary.sh`
-      applied to this fixture, and is the last piece before cutover.
+      **G5's differential half is now there too.** The fixture moved into
+      `tests/common/` -- two copies of a project whose whole definition is
+      "foreign to jails" would drift into two different foreignnesses -- and
+      `an_adopted_project_is_treated_the_same_by_both_implementations` runs it
+      through both subjects: adopt, generate into the reader's own package,
+      rerun, and the reader's bytes unchanged at every step.
+
+      The order is not the obvious one and is worth keeping: `adopt` refuses on
+      a canonical project, and is right to, because adoption is how jails
+      learns a layout it did not choose and that must happen before a model
+      claims to know one. So the canonical subject adopts first and writes
+      `.jails/model.jdl` after.
+
+      **The canary's default made it compare the binary with itself.**
+      `JAILS_LEGACY_REVISION` defaulted to `HEAD`, so `mise run
+      verify-rewrite-g1-canary` built the binary under test a second time,
+      passed all 38 assertions and meant nothing -- a check that had silently
+      stopped checking, which is the exact shape this file keeps finding. The
+      default is the branch point against `main` now, and a revision resolving
+      to `HEAD` is refused rather than reported green. Against frozen
+      `61413d7f` all 38 differential tests pass, and the binary is
+      load-bearing: pointing `JAILS_LEGACY_BIN` at `/bin/true` fails the
+      adopted test immediately.
+
+      **The Spring flavour is there too, and it found `bugs.md` B59.** G5 asks
+      for adopted *Spring/plain* projects, so `Adopted` is a flavour on one
+      fixture rather than two fixtures -- the reader's classes, packages and
+      directory names are the same foreignness either way, and what differs is
+      what jails reads off the build file. That is the half that matters: every
+      version fact a template renders against comes from the *reader's* pom.
+
+      B59 is the divergence it surfaced. Adoption records
+      `adapters = "persistence"` identically on both sides, and then the
+      canonical compiler names its facet packages itself and never reads
+      `jails.toml` -- so the same project gets `persistence/` from one
+      implementation and `repository/` from the other. After cutover `jails
+      adopt` would print its mapping, write its file, and change nothing.
+      The test asserts the shared half deliberately and leaves the divergence
+      to `bugs.md`: pinning today's behaviour would freeze the defect.
+
+      **One thing G5's wording asks for that is still not there**: the
+      differential half compares CLI behaviour and reader bytes, not a real
+      build on both sides. The real build is proved on the current binary only,
+      by `an_adopted_reader_written_project_generates_compiles_and_keeps_its_
+      own_bytes`. Adding `mvn` to both differential subjects spends a 23s build
+      to watch one compiler agree with itself, which is the worst ratio on this
+      list -- it is worth doing when the legacy side is a frozen binary from
+      before the emitters changed, and not before.
 
 - [ ] **P13.7** **The suite is 108s of `tests/cli` because it compiles 36 Java
       projects, and the remaining lever is Maven's JVM startup.** Profiled with
