@@ -216,9 +216,30 @@ This is the trap `CLAUDE.md` states verbatim: versionless is correct under
 The cause is A3.7: these are hand-rolled `BuildDependency { version: None }`
 values inside `Compiler::compile` (`crates/jails-compiler/src/lib.rs:391-410`)
 that bypass `DependencySpec`, which already carries `spring_managed_version`
-for exactly this. The same run also emits a **second**
-`build-helper-maven-plugin` beside the one `new-cli` wrote, so the
-source-root adapter is not reconciling against reader-owned content.
+for exactly this.
+
+### A2.1b Two marked blocks declare the same Maven plugin
+
+`ensure_maven_source_root` (`crates/jails-workspace/src/documents.rs:506`)
+gives every source set its own `<!-- jails:generated-source-root:<set> -->`
+block, and each block contains a complete `<plugin>` declaration of
+`org.codehaus.mojo:build-helper-maven-plugin`. A project with a generated main
+*and* test root therefore declares that plugin twice inside one `<plugins>`,
+and Maven reports it:
+
+```
+[WARNING] 'build.plugins.plugin.(groupId:artifactId)' must be unique but found
+duplicate declaration of plugin org.codehaus.mojo:build-helper-maven-plugin
+```
+
+`jdl-sol.md` §9.7 asks for the opposite shape -- "Maven uses distinct
+`add-source` and `add-test-source` executions", one plugin, two executions.
+Restructuring it changes the bytes of an accepted reader facet, so it needs
+its own change with a migration path rather than a clause in A2.1.
+
+An earlier draft of this entry blamed a clash with the plugin `jails new-cli`
+writes. That was wrong and is corrected here: `new-cli` writes none, `sync`
+writes one per source set, and a second `sync` adds nothing.
 
 ### A2.2 Field source order is discarded, and record component order is ABI
 
@@ -722,9 +743,8 @@ It is used only under `#[cfg(test)]` (`materialize.rs:673`), and
    hole.
 2. **A3.9** — collapse the flat/`*Semantics` duplication in `jails-model`.
    This closes A2.3, A2.4 and A2.5 together, and makes §4 link.
-3. **A2.1** — route storage dependencies through `DependencySpec`, and fix
-   the duplicate plugin. The canonical path currently produces projects Maven
-   will not read.
+3. **A2.1b** — give the Maven source roots one plugin block with several
+   executions, and plan the migration for the accepted facet bytes.
 4. **A2.2** — preserve field source order.
 5. **A3.11 / A3.12** — build the convention registry, the `derived` records
    and `model explain` *before* more emitters land. Every emitter added now

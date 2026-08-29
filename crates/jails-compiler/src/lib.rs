@@ -160,6 +160,22 @@ impl Compiler {
                 "canonical DTO facets require a captured Spring Boot project\n       fix: add Spring Boot to the build or remove the `dto` facet",
             ));
         }
+        // The database backend renders `JdbcClient` adapters annotated
+        // `@Repository`, so it is Spring-only in the same way `api` and the
+        // Spring capability packs are. Without this it emitted that Java into
+        // a project that cannot compile it, *and* spliced four versionless
+        // dependencies into a pom with no parent to manage them -- which
+        // Maven refuses to read at all, `validate` included.
+        if next_model
+            .capabilities
+            .values()
+            .any(|capability| capability.kind == "db")
+            && snapshot.project.spring_boot.is_none()
+        {
+            return Err(CompileError::new(
+                "canonical `storage postgres` renders Spring JDBC adapters and requires a captured Spring Boot project\n       fix: add Spring Boot to the build, or choose `storage none` and write the persistence by hand",
+            ));
+        }
         if next_model
             .capabilities
             .values()
@@ -394,32 +410,7 @@ impl Compiler {
             .values()
             .any(|capability| capability.kind == "db")
         {
-            for required in [
-                BuildDependency {
-                    group: "org.springframework.boot".to_string(),
-                    artifact: "spring-boot-starter-jdbc".to_string(),
-                    version: None,
-                    scope: DependencyScope::Compile,
-                },
-                BuildDependency {
-                    group: "org.postgresql".to_string(),
-                    artifact: "postgresql".to_string(),
-                    version: None,
-                    scope: DependencyScope::Runtime,
-                },
-                BuildDependency {
-                    group: "org.flywaydb".to_string(),
-                    artifact: "flyway-core".to_string(),
-                    version: None,
-                    scope: DependencyScope::Compile,
-                },
-                BuildDependency {
-                    group: "org.flywaydb".to_string(),
-                    artifact: "flyway-database-postgresql".to_string(),
-                    version: None,
-                    scope: DependencyScope::Runtime,
-                },
-            ] {
+            for required in storage_dependencies(snapshot.project.spring_boot.as_deref()) {
                 if !dependencies.iter().any(|declared| {
                     declared.group == required.group && declared.artifact == required.artifact
                 }) {
@@ -635,6 +626,86 @@ fn emit(
     emit_http::lower_and_emit(model, output)
 }
 
+/// The build dependencies `storage postgres` needs, versioned for the Boot the
+/// project actually has.
+///
+/// `audit.md` A2.1. These were four `BuildDependency { version: None, .. }`
+/// values written inline in `compile`, which is correct under
+/// `spring-boot-starter-parent` and **fatal** without one: Maven refuses to
+/// read a pom whose dependency has no version and no parent managing it, so
+/// every goal fails, `validate` included, and the project is left worse than
+/// before the command ran. `CLAUDE.md` records that trap; the canonical path
+/// had reintroduced it.
+///
+/// Two boundaries, both taken from `add/database.rs` where they were verified
+/// against `deps/spring-boot` rather than recalled:
+///
+/// - Boot manages `flyway-database-postgresql` from **3.3**. Below that both
+///   Flyway artifacts are pinned, and they are pinned *together* because they
+///   must move together.
+/// - `spring-boot-flyway` -- Flyway's auto-configuration, split out when Boot
+///   4 broke `spring-boot-autoconfigure` into ~130 modules -- exists only from
+///   **4.0**. Naming it below 4 asks for a jar that does not exist; omitting it
+///   at 4 is worse than an error, because the migrations then never run and
+///   nothing says so: no log line, and then `relation "..." does not exist`
+///   from the first query, which reads like a broken migration rather than an
+///   absent one.
+fn storage_dependencies(spring_boot: Option<&str>) -> Vec<BuildDependency> {
+    /// Both Flyway artifacts, pinned to one version. Verified in
+    /// `add/database.rs`, which is the only other place this number lives.
+    const FLYWAY_PIN: &str = "12.8.1";
+    let version = boot_version(spring_boot);
+    let managed_flyway = version.is_some_and(|version| version >= (3, 3));
+    let flyway_version = (!managed_flyway).then(|| FLYWAY_PIN.to_string());
+    let mut dependencies = vec![
+        BuildDependency {
+            group: "org.springframework.boot".to_string(),
+            artifact: "spring-boot-starter-jdbc".to_string(),
+            version: None,
+            scope: DependencyScope::Compile,
+        },
+        BuildDependency {
+            group: "org.postgresql".to_string(),
+            artifact: "postgresql".to_string(),
+            version: None,
+            scope: DependencyScope::Runtime,
+        },
+        BuildDependency {
+            group: "org.flywaydb".to_string(),
+            artifact: "flyway-core".to_string(),
+            version: flyway_version.clone(),
+            scope: DependencyScope::Compile,
+        },
+        BuildDependency {
+            group: "org.flywaydb".to_string(),
+            artifact: "flyway-database-postgresql".to_string(),
+            version: flyway_version,
+            scope: DependencyScope::Runtime,
+        },
+    ];
+    if version.is_some_and(|version| version >= (4, 0)) {
+        dependencies.push(BuildDependency {
+            group: "org.springframework.boot".to_string(),
+            artifact: "spring-boot-flyway".to_string(),
+            version: None,
+            scope: DependencyScope::Compile,
+        });
+    }
+    dependencies
+}
+
+/// The captured Spring Boot version as `(major, minor)`.
+///
+/// `emit_capability::boot_major` is not enough here: both boundaries above
+/// are minor-version boundaries, and rounding 3.1 and 3.3 together would
+/// either pin what Boot already manages or leave unmanaged what it does not.
+fn boot_version(version: Option<&str>) -> Option<(u32, u32)> {
+    let mut parts = version?.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next().and_then(|minor| minor.parse().ok())?;
+    Some((major, minor))
+}
+
 fn compose_path(snapshot: &WorkspaceSnapshot) -> Result<ProjectPath, CompileError> {
     if let Some(path) = snapshot
         .accepted_projection
@@ -695,6 +766,58 @@ fn property_entries(
 
 #[cfg(test)]
 mod tests {
+    /// A versionless dependency is correct under a Boot parent and fatal
+    /// without one.
+    ///
+    /// `audit.md` A2.1. These four were written inline with `version: None`
+    /// whatever the project was, so `storage postgres` on a plain Maven
+    /// project produced a pom Maven refuses to *read* -- every goal fails,
+    /// `validate` included. The two version boundaries are Boot's own:
+    /// `flyway-database-postgresql` is managed from 3.3, and
+    /// `spring-boot-flyway` exists only from 4.0, where omitting it means the
+    /// migrations never run and nothing says so.
+    #[test]
+    fn storage_dependencies_follow_the_boot_the_project_actually_has() {
+        let boot_4 = super::storage_dependencies(Some("4.0.0"));
+        assert!(
+            boot_4
+                .iter()
+                .any(|dependency| dependency.artifact == "spring-boot-flyway"),
+            "Boot 4 needs Flyway's split-out auto-configuration: {boot_4:?}"
+        );
+        assert!(
+            boot_4.iter().all(|dependency| dependency.version.is_none()),
+            "the Boot parent manages every one of them: {boot_4:?}"
+        );
+
+        let boot_31 = super::storage_dependencies(Some("3.1.0"));
+        assert!(
+            !boot_31
+                .iter()
+                .any(|dependency| dependency.artifact == "spring-boot-flyway"),
+            "the module does not exist below Boot 4: {boot_31:?}"
+        );
+        let flyway = boot_31
+            .iter()
+            .filter(|dependency| dependency.group == "org.flywaydb")
+            .collect::<Vec<_>>();
+        assert_eq!(flyway.len(), 2);
+        assert!(
+            flyway
+                .iter()
+                .all(|dependency| dependency.version.as_deref() == Some("12.8.1")),
+            "below 3.3 Boot manages neither, and the pair moves together: {flyway:?}"
+        );
+
+        assert!(
+            super::storage_dependencies(Some("3.3.0"))
+                .iter()
+                .filter(|dependency| dependency.group == "org.flywaydb")
+                .all(|dependency| dependency.version.is_none()),
+            "3.3 is where Boot starts managing `flyway-database-postgresql`"
+        );
+    }
+
     use super::*;
     use jails_contracts::{BuildSystem, ContentDigest, MigrationRecord, WorkspaceSnapshot};
     use jails_model::{FieldAddPolicy, FieldId};
@@ -803,6 +926,7 @@ route = "PATCH /notes/{id}"
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.spring_boot = Some("4.0.0".to_string());
         snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
         let draft = Compiler::compile(&snapshot, None).unwrap();
         let packs = draft
             .generated
@@ -859,6 +983,9 @@ route = "PATCH /notes/{id}"
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
+        // Deliberately no Spring Boot: these packs are the plain-Maven ones,
+        // and the pinned AssertJ version below is what a project with no
+        // parent to manage it must receive.
         let draft = Compiler::compile(&snapshot, None).unwrap();
         let expected = [
             ".jails/generated/test/java/com/example/demo/testkit/Fake.java",
@@ -928,6 +1055,7 @@ route = "PATCH /notes/{id}"
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
         let draft = Compiler::compile(&snapshot, None).unwrap();
         let expected = [
             ".jails/generated/main/java/com/example/demo/storage/StoreDatabase.java",
@@ -1184,6 +1312,7 @@ route = "PATCH /notes/{id}"
         let compile = |version: &str| {
             let mut snapshot = WorkspaceSnapshot::detached(model.clone());
             snapshot.project.build_system = BuildSystem::Maven;
+            snapshot.project.spring_boot = Some("4.0.0".to_string());
             snapshot.project.spring_boot = Some(version.to_string());
             Compiler::compile(&snapshot, None).unwrap()
         };
@@ -1286,6 +1415,7 @@ route = "PATCH /notes/{id}"
         let compile = |version: &str| {
             let mut snapshot = WorkspaceSnapshot::detached(model.clone());
             snapshot.project.build_system = BuildSystem::Maven;
+            snapshot.project.spring_boot = Some("4.0.0".to_string());
             snapshot.project.spring_boot = Some(version.to_string());
             Compiler::compile(&snapshot, None).unwrap()
         };
@@ -1381,6 +1511,7 @@ route = "PATCH /notes/{id}"
         let compile = |version: &str| {
             let mut snapshot = WorkspaceSnapshot::detached(model.clone());
             snapshot.project.build_system = BuildSystem::Maven;
+            snapshot.project.spring_boot = Some("4.0.0".to_string());
             snapshot.project.spring_boot = Some(version.to_string());
             Compiler::compile(&snapshot, None)
         };
@@ -1813,6 +1944,7 @@ route = "PATCH /notes/{id}"
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
         let draft = Compiler::compile(&snapshot, None).unwrap();
 
         for path in [
@@ -1865,6 +1997,7 @@ route = "PATCH /notes/{id}"
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
         let draft = Compiler::compile(&snapshot, None).unwrap();
 
         assert!(draft.generated.files.is_empty());
@@ -1927,6 +2060,7 @@ route = "PATCH /notes/{id}"
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.spring_boot = Some("4.0.0".to_string());
         snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
         let draft = Compiler::compile(&snapshot, None).unwrap();
         let (path, file) = draft
             .generated
@@ -2043,6 +2177,7 @@ route = "PATCH /notes/{id}"
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.spring_boot = Some("4.0.0".to_string());
         snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
         let draft = Compiler::compile(&snapshot, None).unwrap();
         let dto = draft
             .generated
@@ -2189,6 +2324,11 @@ route = "PATCH /notes/{id}"
         let model = jails_model::parse_toml(&source).unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
+        // The adapters this asserts on are `JdbcClient` classes annotated
+        // `@Repository`, so the capability needs a Boot project to compile
+        // into. The fixture had none, which is how a versionless dependency
+        // set reached a pom with no parent to manage it.
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
         let draft = Compiler::compile(&snapshot, None).unwrap();
         assert_eq!(draft.migrations.len(), 1);
         assert_eq!(draft.migrations[0].logical_name, "create_note");
@@ -2223,6 +2363,7 @@ route = "PATCH /notes/{id}"
             .clone();
         let mut snapshot = WorkspaceSnapshot::detached(model.clone());
         snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
         snapshot.accepted_model = Some(model);
         snapshot.migration_history.records.push(MigrationRecord {
             version: "1".to_string(),
@@ -2260,6 +2401,7 @@ route = "PATCH /notes/{id}"
         let next = jails_model::parse_toml(&next_source).unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(next);
         snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
         snapshot.accepted_model = Some(accepted);
         let error = Compiler::compile(&snapshot, None).unwrap_err();
         assert!(error.to_string().contains("needs a backfill"), "{error}");
@@ -2298,6 +2440,7 @@ entity Metric {
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
         let draft = Compiler::compile(&snapshot, None).unwrap();
 
         let record = draft
@@ -2531,6 +2674,7 @@ entity Task {
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
         let draft = Compiler::compile(&snapshot, None).unwrap();
         let source = |suffix: &str| {
             draft
