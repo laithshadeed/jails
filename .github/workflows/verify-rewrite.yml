@@ -76,8 +76,27 @@ jobs:
       # `dtolnay/rust-toolchain@stable`, which pins nothing: a clippy release
       # could turn the one gate red over code nobody had touched, and did.
       - name: Install the Rust toolchain named by rust-toolchain.toml
-        run: rustup toolchain install
+        id: rust
+        run: |
+          rustup toolchain install
+          echo "version=$(rustc -V | tr ' /()' '-')" >> "$GITHUB_OUTPUT"
+          rustc -V
 
+      # **The compiler has to be in this key, and `rust-toolchain.toml` is why
+      # it now is.** A cargo artifact is only valid for the rustc that built
+      # it, so the moment the pin named a different compiler from the one that
+      # had filled this cache, every restored artifact became garbage that
+      # cargo discards on sight. The failure is silent and it is the worst
+      # shape available: the key still *hit*, so the step reported success and
+      # restored 381 MB, the whole dependency tree recompiled anyway, and
+      # `actions/cache` then skipped its save -- because a primary-key hit is
+      # exactly when it does -- so nothing could ever repair it. Measured on
+      # run `33267456288`: 74 third-party crates compiled where the run before
+      # the pin compiled none, clippy 14.7s -> 31.3s and test-harness
+      # compilation 179.4s -> 240.5s.
+      #
+      # With `rustc -V` in the key a compiler change misses honestly, pays for
+      # one cold build, and saves artifacts the next run can actually use.
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -85,8 +104,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-${{ runner.os }}-
+          key: cargo-${{ runner.os }}-${{ steps.rust.outputs.version }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ steps.rust.outputs.version }}-
 
       # **Nothing cached the JVM dependency repositories, and a full run fills
       # 296 MB of them.** The cargo cache above covers Rust and `mise-action`
