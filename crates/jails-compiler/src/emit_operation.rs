@@ -31,7 +31,7 @@ pub(crate) fn lower_and_emit(
             OperationKind::Query(spec) => {
                 let target = stored_entity(model, operation, &spec.on, "query")?;
                 let filters = resolve_fields(operation, target, &spec.filters, "filters")?;
-                let ordering = resolve_fields(operation, target, &spec.order_by, "ordering")?;
+                let ordering = ordering(operation, target, spec)?;
                 query::lower(
                     model,
                     capability.id.as_str(),
@@ -39,7 +39,7 @@ pub(crate) fn lower_and_emit(
                     target,
                     &filters,
                     &ordering,
-                    spec.limit.unwrap_or(query::DEFAULT_LIMIT),
+                    spec.semantics.limit.unwrap_or(query::DEFAULT_LIMIT),
                 )?
             }
             OperationKind::Transition(spec) => {
@@ -68,6 +68,46 @@ fn stored_entity<'a>(
         )));
     }
     Ok(target)
+}
+
+/// The ordering this query renders, with its direction.
+///
+/// The direction is why this is not `resolve_fields`. It read a flat
+/// `Vec<FieldId>` that had nowhere to hold one, so `order by [createdAt desc]`
+/// compiled to `order by created_at` and a newest-first query returned
+/// oldest-first with nothing to say so.
+///
+/// An ordering qualified by a join alias refuses: the `select` this emitter
+/// builds names one table, so ordering by another one's column would produce
+/// SQL that does not run.
+fn ordering<'a>(
+    operation: &Operation,
+    target: &'a Entity,
+    spec: &jails_model::Query,
+) -> Result<Vec<(&'a Field, jails_model::SortDirection)>, CompileError> {
+    spec.semantics
+        .order
+        .iter()
+        .map(|ordering| {
+            if ordering.field.qualifier.is_some() || ordering.field.entity != target.id {
+                return Err(CompileError::new(format!(
+                    "canonical query `{}` orders by a joined column
+       fix: order by a field of `{}`, or eject this adapter and write the statement by hand",
+                    operation.label, target.label
+                )));
+            }
+            target
+                .fields
+                .get(&ordering.field.field)
+                .map(|field| (field, ordering.direction))
+                .ok_or_else(|| {
+                    CompileError::new(format!(
+                        "linked operation `{}` references missing ordering field `{}`",
+                        operation.label, ordering.field.field
+                    ))
+                })
+        })
+        .collect()
 }
 
 fn resolve_fields<'a>(

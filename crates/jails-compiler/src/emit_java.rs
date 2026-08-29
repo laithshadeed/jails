@@ -240,7 +240,7 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
             let context = operation_context(model, entity, &mut imports);
             let type_name = with_suffix(&operation.names.java_type, "Query");
             let route = route_constant(query.route.as_deref());
-            let limit = query.limit.map_or_else(String::new, |limit| {
+            let limit = query.semantics.limit.map_or_else(String::new, |limit| {
                 format!("    int DEFAULT_LIMIT = {limit};\n\n")
             });
             let body = format!(

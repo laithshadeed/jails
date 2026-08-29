@@ -9958,3 +9958,61 @@ entity Task {
         "every emitted event is published, not just the first: {adapter}"
     );
 }
+
+/// A declared sort direction reaches the SQL.
+///
+/// `audit.md` A2.3. The linked `Query` carried `order_by: Vec<FieldId>` beside
+/// `semantics.order: Vec<Ordering>`; a `FieldId` has nowhere to hold a
+/// direction, and the emitter read the flat list -- so `order by [createdAt
+/// desc, id]` compiled to `order by created_at, id` and a query declared
+/// newest-first returned oldest-first, silently. There was no test: the whole
+/// suite never wrote `desc` in an `order by`.
+#[test]
+fn a_query_orders_by_the_direction_it_declares() {
+    let root = jdl_project(
+        "model-query-ordering",
+        r#"jdl 1
+
+app Ord {
+  pkg com.example.ord
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+entity Task {
+  use scaffold
+
+  id:        uuid    @pk
+  title:     string  @notBlank
+  createdAt: instant @default(now())
+
+  query Recent(title?) {
+    order by [createdAt desc, id]
+    limit 25
+  }
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    let synced = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+
+    let adapter = fs::read_to_string(
+        root.join(".jails/generated/main/java/com/example/ord/adapters/jdbc/JdbcRecentQuery.java"),
+    )
+    .unwrap();
+    assert!(
+        adapter.contains(r#"" order by created_at desc, id""#),
+        "`desc` survives and `asc` stays implicit: {adapter}"
+    );
+    assert!(
+        adapter.contains(r#"" limit 25""#),
+        "the declared ceiling survives: {adapter}"
+    );
+}

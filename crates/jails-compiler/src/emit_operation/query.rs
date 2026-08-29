@@ -2,7 +2,7 @@ use super::{context_parameter, context_value, java_string, operation_file, scope
 use crate::CompileError;
 use crate::emit_java::{domain_import, java_type, with_suffix};
 use jails_contracts::{ProjectPath, RenderedFile};
-use jails_model::{AppModel, Entity, Field, Operation};
+use jails_model::{AppModel, Entity, Field, Operation, SortDirection};
 use std::collections::BTreeSet;
 
 pub(super) const DEFAULT_LIMIT: u32 = 100;
@@ -13,7 +13,7 @@ pub(super) fn lower(
     operation: &Operation,
     target: &Entity,
     filters: &[&Field],
-    ordering: &[&Field],
+    ordering: &[(&Field, SortDirection)],
     limit: u32,
 ) -> Result<(ProjectPath, RenderedFile), CompileError> {
     if limit == 0 {
@@ -79,6 +79,9 @@ pub(super) fn lower(
             )
         })
         .collect::<String>();
+    // `asc` is the SQL default and the canonical formatter omits it, so only
+    // `desc` is rendered. Dropping it entirely is what made a newest-first
+    // query return oldest-first.
     let ordering = if ordering.is_empty() {
         String::new()
     } else {
@@ -86,7 +89,10 @@ pub(super) fn lower(
             "        sql.append(\" order by {}\");\n",
             ordering
                 .iter()
-                .map(|field| field.names.sql_column.as_str())
+                .map(|(field, direction)| match direction {
+                    SortDirection::Asc => field.names.sql_column.clone(),
+                    SortDirection::Desc => format!("{} desc", field.names.sql_column),
+                })
                 .collect::<Vec<_>>()
                 .join(", ")
         )

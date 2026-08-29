@@ -134,7 +134,7 @@ pub(super) fn link(
                         );
                     }
                     linker.route(route.as_deref(), &path, routes);
-                    let semantics = link_query_semantics(
+                    let mut semantics = link_query_semantics(
                         semantics,
                         &path,
                         &entity,
@@ -142,11 +142,29 @@ pub(super) fn link(
                         entity_fields,
                         linker,
                     );
+                    // `.jails/model.toml` spells only the flat `order_by`
+                    // list, which has nowhere to put a direction, so it folds
+                    // in as ascending. A source that spells the rich form
+                    // wins.
+                    if semantics.order.is_empty() {
+                        semantics.order = order_by
+                            .into_iter()
+                            .map(|field| linked::Ordering {
+                                field: linked::VisibleField {
+                                    entity: entity.clone(),
+                                    field,
+                                    qualifier: None,
+                                },
+                                direction: linked::SortDirection::Asc,
+                            })
+                            .collect();
+                    }
+                    if semantics.limit.is_none() {
+                        semantics.limit = limit;
+                    }
                     OperationKind::Query(Query {
                         on: entity,
                         filters,
-                        order_by,
-                        limit,
                         route,
                         semantics,
                     })

@@ -519,7 +519,7 @@ event TaskChanged(id: uuid, source: string @notBlank) {
         assert_eq!(query.semantics.order.len(), 2);
         assert_eq!(query.semantics.order[0].direction, SortDirection::Desc);
         assert_eq!(query.semantics.limit, Some(20));
-        assert_eq!(query.limit, Some(20));
+        assert_eq!(query.semantics.limit, Some(20));
 
         let rename = model
             .operations

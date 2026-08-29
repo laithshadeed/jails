@@ -32,12 +32,22 @@ pub struct Command {
     pub semantics: CommandSemantics,
 }
 
+/// A linked query. Its ordering and row ceiling live in [`QuerySemantics`]
+/// and nowhere else.
+///
+/// This carried `order_by: Vec<FieldId>` beside `semantics.order:
+/// Vec<Ordering>`. A `FieldId` cannot hold a direction, the emitters read the
+/// flat list, and so `order by [createdAt desc, id]` was parsed, linked, and
+/// rendered as `order by created_at, id` -- a query declared newest-first
+/// returning oldest-first, with nothing to say so.
+///
+/// `filters` stays: it is the entity fields a predicate is built from, which
+/// is a different projection from `semantics.parameters`, since a parameter
+/// may name a join alias that has no column on this table.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Query {
     pub on: EntityId,
     pub filters: Vec<FieldId>,
-    pub order_by: Vec<FieldId>,
-    pub limit: Option<u32>,
     pub route: Option<String>,
     #[serde(default, skip_serializing_if = "QuerySemantics::is_empty")]
     pub semantics: QuerySemantics,
@@ -324,7 +334,6 @@ pub(crate) fn fields(kind: &OperationKind) -> Vec<&FieldId> {
         OperationKind::Query(query) => query
             .filters
             .iter()
-            .chain(query.order_by.iter())
             .chain(parameter_fields(&query.semantics.parameters))
             .chain(query.semantics.joins.iter().flat_map(|join| {
                 join.mappings
