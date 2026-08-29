@@ -966,25 +966,19 @@ fn setup_writes_the_reuse_key_into_the_home_it_is_given() {
 /// P13.7 for where that time goes.
 #[test]
 fn no_new_generator_kind_escapes_the_real_toolchain() {
-    /// Kinds no real compiler currently builds. Shrink only.
+    /// Kinds no real compiler builds. Shrink only.
     ///
-    /// Most are Spring-only and the plain fixtures refuse them, so covering
-    /// one means generating it into a Spring toolbox and building that.
-    const NOT_COMPILED: [&str; 13] = [
-        "association",
-        "cli",
-        "durable-job",
-        "fetcher",
-        "handler",
-        "http-sink",
-        "http-workflow",
-        "interface",
-        "migration",
-        "presence",
-        "seed",
-        "socket",
-        "test",
-    ];
+    /// **Empty**, and it began at 13. `every_remaining_generator_kind_compiles_
+    /// in_one_spring_project` closed the rest in one project and one `mvn
+    /// test` -- twelve fixtures would have been twelve Maven invocations
+    /// against a suite already at 108s, and what needs proving is that each
+    /// kind's output compiles, not that it does so alone.
+    ///
+    /// Closing them found a real defect on the first run: `g event` emits
+    /// `org.springframework.kafka.*` and neither supplies the dependency nor
+    /// refuses without it (`bugs.md` B58), which is why that test asks for the
+    /// capability explicitly.
+    const NOT_COMPILED: [&str; 0] = [];
 
     let surface = jails_cmd(&temp_dir("kind-build-coverage"), None)
         .args(["commands", "--json"])
@@ -1060,8 +1054,15 @@ fn catalog_section(surface: &str, section: &str) -> Vec<String> {
 /// one index the other: braces are matched in the blank, content is read from
 /// the source.
 fn kinds_reaching_a_real_toolchain(kinds: &[String]) -> std::collections::BTreeSet<String> {
-    const REAL: [&str; 6] = [
+    // `real_maven_cmd` is the one that actually runs Maven, and leaving it out
+    // made the toolbox *builders* invisible -- they generate a dozen kinds and
+    // then run `mvn test` over the result, so every kind in them was being
+    // reported as never compiled. A coverage gate that under-reports sends
+    // people to write tests that already exist.
+    const REAL: [&str; 8] = [
         "real_mvn_available",
+        "real_maven_cmd",
+        "real_gradle_cmd",
         "real_java_supports_target_release",
         "verified_spring_toolbox",
         "verified_spring_services_toolbox",

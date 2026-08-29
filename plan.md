@@ -298,25 +298,32 @@ verbatim from `customer.js` and `admin.js`:
       its path *literally* rather than assemble it from a loop variable, since
       a journey the gate cannot see reads exactly like a missing one.
 
-      **G3 is measured and ratcheted, not closed.** 26 of 39 generator kinds
-      are compiled by a real toolchain; 13 are not, and
-      `no_new_generator_kind_escapes_the_real_toolchain` records exactly which
-      and fails in both directions. This matters because the golden suite
-      checks *bytes*, not compilability: jails can emit Java that does not
-      compile for any of those 13 and every existing test stays green.
+      **G3 is closed.** All 39 generator kinds are now compiled by a real
+      toolchain. 13 were not: `every_remaining_generator_kind_compiles_in_one_
+      spring_project` closes 12 of them in **one project and one `mvn test`**
+      (23s), because twelve fixtures would have been twelve Maven invocations
+      against a suite already at 108s (P13.7) -- and what needs proving is that
+      each kind's output compiles, not that it does so alone. The 13th,
+      `socket`, was already covered and the gate could not see it.
 
-      Closing one means generating that kind into a toolbox a real-toolchain
-      test builds. Most are Spring-only, so a plain fixture refuses them. Each
-      costs roughly one Maven invocation -- about 8.7s of work against a suite
-      already at 108s (P13.7) -- so they are a costed trade, not a sweep.
+      This matters because the golden suite checks *bytes*, not compilability:
+      jails could emit Java that does not compile for any of those kinds and
+      every existing test stayed green. **It was, for one of them.** The first
+      real build found `bugs.md` B58 -- `g event` emits
+      `org.springframework.kafka.*` and neither supplies the dependency nor
+      refuses without it, so a plain `jails new` + `g event` leaves a project
+      that does not compile. That is the defect this gate exists to find, found
+      by it.
 
-      **Getting that number right took three wrong answers**, and the reason is
-      worth keeping: the matcher counts braces to find function bodies, and
-      these files are full of Java fixtures, so a `{` inside a string literal
-      is not a block. Counting raw made one body span the rest of its file and
-      reported *every* kind as compiled. Blanking literals first --
-      `java::blanked()`'s trick, which `CLAUDE.md` already records for the
-      `generate.rs` test extraction -- is what made it trustworthy.
+      **Getting the number right took four wrong answers**, each worth
+      remembering. The matcher counts braces to find function bodies, and these
+      files are full of Java fixtures -- so a `{` in a string literal is not a
+      block, and counting raw made one body span its whole file and reported
+      *every* kind as compiled. Blanking literals first is `java::blanked()`'s
+      trick. Then the marker list omitted `real_maven_cmd`, which is what the
+      toolbox *builders* call -- so a dozen kinds generated there were reported
+      as never compiled. A coverage gate that under-reports sends people to
+      write tests that already exist.
 
       **What is left is G4-G5**: a child-process death matrix over the
       failpoint registry (G4 proper -- the gate above proves the registry is

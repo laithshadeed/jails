@@ -7325,3 +7325,169 @@ fn a_component_can_be_bound_from_a_parameter_of_another_name() {
         "{stderr}"
     );
 }
+
+/// The twelve kinds whose generated Java no real compiler had ever seen.
+///
+/// `simplify-sol.md`'s G3: *build the exact generated tree under test.* The
+/// golden suite checks **bytes**, not compilability, so before this any of
+/// these could have emitted Java that does not compile and every test stayed
+/// green. `no_new_generator_kind_escapes_the_real_toolchain` is the ratchet
+/// that names them; this is what removes them from it.
+///
+/// **One project, one `mvn test`.** Twelve separate fixtures would be twelve
+/// Maven invocations against a suite already at 108s (`plan.md` P13.7), and
+/// what needs proving is that each kind's output compiles -- not that it does
+/// so in isolation. Their prerequisites are taken from the scenario table,
+/// which already records the smallest invocation that exercises each.
+#[test]
+fn every_remaining_generator_kind_compiles_in_one_spring_project() {
+    if !real_mvn_available() {
+        skip("mvn not found on PATH");
+        return;
+    }
+    if !real_java_supports_target_release() {
+        skip(&format!(
+            "javac on PATH does not support --release {TARGET_RELEASE}"
+        ));
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("real-remaining-kinds");
+    write_spring_fixture(&root);
+
+    for step in [
+        &["add", "db", "--no-start"][..],
+        // The use case below yields an event, and a durable payload needs it.
+        &["add", "json"][..],
+        // `g event` emits `org.springframework.kafka.*` and neither supplies
+        // the dependency nor refuses without it -- bugs.md B58. Until that is
+        // fixed, the capability has to be asked for explicitly or this project
+        // does not compile.
+        &["add", "kafka", "--no-start"][..],
+        // Records first: the association, use case and durable job below all
+        // name them.
+        &[
+            "g",
+            "scaffold",
+            "Owner",
+            "id:uuid@pk",
+            "name:string!",
+            "createdAt:instant",
+        ][..],
+        &[
+            "g",
+            "scaffold",
+            "Item",
+            "id:uuid@pk",
+            "ownerId:uuid@index",
+            "name:string!",
+            "createdAt:instant",
+        ][..],
+        &[
+            "g",
+            "scaffold",
+            "Message",
+            "id:uuid@pk",
+            "body:string!",
+            "createdAt:instant",
+        ][..],
+        &[
+            "g",
+            "association",
+            "ItemOwner",
+            "ownerId=id",
+            "--on",
+            "Item",
+            "--yields",
+            "Owner",
+        ][..],
+        &[
+            "g",
+            "usecase",
+            "AddItem",
+            "id:uuid",
+            "ownerId:uuid",
+            "name:string!",
+            "--on",
+            "Item",
+        ][..],
+        &[
+            "g",
+            "durable-job",
+            "ItemDispatcher",
+            "id:uuid",
+            "ownerId:uuid",
+            "name:string!",
+            "--on",
+            "AddItem",
+            "--yields",
+            "Item",
+        ][..],
+        &[
+            "g",
+            "event",
+            "MessageReceived",
+            "id:uuid",
+            "messageId:uuid",
+            "occurredAt:instant",
+            "--on",
+            "Message",
+        ][..],
+        &[
+            "g",
+            "usecase",
+            "ReceiveMessage",
+            "id:uuid",
+            "body:string!",
+            "--on",
+            "Message",
+            "--yields",
+            "MessageReceived",
+        ][..],
+        &[
+            "g",
+            "http-sink",
+            "Provider",
+            "--on",
+            "ReceiveMessage",
+            "--yields",
+            "MessageReceived",
+        ][..],
+        &["g", "fetcher", "Page"][..],
+        &["g", "http-workflow", "SiteWalk", "--on", "Page"][..],
+        &["g", "cli", "Admin"][..],
+        &["g", "handler", "WorkItem"][..],
+        &["g", "interface", "Clock"][..],
+        &["g", "migration", "add_note_index"][..],
+        &["g", "presence", "Room"][..],
+        //  reads the record it seeds, so the record has to exist.
+        &["g", "scaffold", "Widget", "id:uuid@pk", "name:string!"][..],
+        &["g", "seed", "Widget"][..],
+        &["g", "test", "Parser"][..],
+    ] {
+        let output = jails_cmd_with_path(&root, &path)
+            .args(step)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "`jails {}` failed: {}",
+            step.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // Captured rather than inherited: "failed `mvn test`" with no compiler
+    // output tells the next reader nothing, and this test exists precisely to
+    // catch generated Java that does not compile.
+    let output = real_maven_cmd(&root, &path)
+        .args(["-B", "test"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "the project holding every remaining generator kind failed `mvn test`:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
