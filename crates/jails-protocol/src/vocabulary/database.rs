@@ -177,73 +177,36 @@ impl Codec for QualifiedSqlName {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub enum SchemaObjectKind {
+    #[codec(tag = 0)]
     Schema,
+    #[codec(tag = 1)]
     Table,
+    #[codec(tag = 2)]
     Column,
+    #[codec(tag = 3)]
     PrimaryKey,
+    #[codec(tag = 4)]
     ForeignKey,
+    #[codec(tag = 5)]
     Unique,
+    #[codec(tag = 6)]
     Index,
+    #[codec(tag = 7)]
     Check,
+    #[codec(tag = 8)]
     Enum,
+    #[codec(tag = 9)]
     Domain,
+    #[codec(tag = 10)]
     View,
+    #[codec(tag = 11)]
     Routine,
+    #[codec(tag = 12)]
     Policy,
+    #[codec(tag = 13)]
     Opaque,
-}
-
-impl SchemaObjectKind {
-    fn tag(self) -> u8 {
-        match self {
-            Self::Schema => 0,
-            Self::Table => 1,
-            Self::Column => 2,
-            Self::PrimaryKey => 3,
-            Self::ForeignKey => 4,
-            Self::Unique => 5,
-            Self::Index => 6,
-            Self::Check => 7,
-            Self::Enum => 8,
-            Self::Domain => 9,
-            Self::View => 10,
-            Self::Routine => 11,
-            Self::Policy => 12,
-            Self::Opaque => 13,
-        }
-    }
-}
-
-impl Codec for SchemaObjectKind {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        match decoder.tag()? {
-            0 => Ok(Self::Schema),
-            1 => Ok(Self::Table),
-            2 => Ok(Self::Column),
-            3 => Ok(Self::PrimaryKey),
-            4 => Ok(Self::ForeignKey),
-            5 => Ok(Self::Unique),
-            6 => Ok(Self::Index),
-            7 => Ok(Self::Check),
-            8 => Ok(Self::Enum),
-            9 => Ok(Self::Domain),
-            10 => Ok(Self::View),
-            11 => Ok(Self::Routine),
-            12 => Ok(Self::Policy),
-            13 => Ok(Self::Opaque),
-            other => Err(format!(
-                "unknown schema object kind tag {other}.\n       fix: upgrade jails or restore the record from a known-good contract."
-            )
-            .into()),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
@@ -363,23 +326,7 @@ pub struct DeclaredParameter {
     pub span: ByteSpan,
 }
 
-impl Codec for DeclaredParameter {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.name.encode(encoder)?;
-        self.sql_type.encode(encoder)?;
-        encoder.bool(self.nullable);
-        self.span.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            name: Name::decode(decoder)?,
-            sql_type: SqlTypeName::decode(decoder)?,
-            nullable: decoder.bool()?,
-            span: ByteSpan::decode(decoder)?,
-        })
-    }
-}
+jails_support::codec!(struct DeclaredParameter { name, sql_type, nullable, span });
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QuerySource {
@@ -450,46 +397,14 @@ impl Codec for QuerySource {
     }
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub enum EvidenceSubject {
+    #[codec(tag = 0)]
     Query(QueryId),
+    #[codec(tag = 1)]
     SchemaObject(SchemaObjectId),
+    #[codec(tag = 2)]
     Mapping { query: QueryId, name: Name },
-}
-
-impl Codec for EvidenceSubject {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Query(id) => {
-                encoder.tag(0);
-                id.encode(encoder)
-            }
-            Self::SchemaObject(id) => {
-                encoder.tag(1);
-                id.encode(encoder)
-            }
-            Self::Mapping { query, name } => {
-                encoder.tag(2);
-                query.encode(encoder)?;
-                name.encode(encoder)
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        match decoder.tag()? {
-            0 => Ok(Self::Query(QueryId::decode(decoder)?)),
-            1 => Ok(Self::SchemaObject(SchemaObjectId::decode(decoder)?)),
-            2 => Ok(Self::Mapping {
-                query: QueryId::decode(decoder)?,
-                name: Name::decode(decoder)?,
-            }),
-            other => Err(format!(
-                "unknown evidence subject tag {other}.\n       fix: upgrade jails or restore the contract from a known-good revision."
-            )
-            .into()),
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
@@ -601,7 +516,7 @@ macro_rules! contract_field_codec {
 contract_field_codec!(ParameterContract, name, sql_type, java_type);
 contract_field_codec!(ColumnContract, name, sql_type, java_name, java_type);
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct QueryContractV1 {
     pub id: QueryId,
     pub dialect: SqlDialect,
@@ -621,32 +536,6 @@ impl QueryContractV1 {
             "JAILS-SQL-CONTRACT-1",
             &encoder.finish()?,
         )))
-    }
-}
-
-impl Codec for QueryContractV1 {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.id.encode(encoder)?;
-        self.dialect.encode(encoder)?;
-        self.query_digest.encode(encoder)?;
-        self.catalog_digest.encode(encoder)?;
-        self.cardinality.encode(encoder)?;
-        encoder.seq(self.parameters.len(), &self.parameters)?;
-        encoder.seq(self.columns.len(), &self.columns)?;
-        self.evidence.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            id: QueryId::decode(decoder)?,
-            dialect: SqlDialect::decode(decoder)?,
-            query_digest: ObjectId::decode(decoder)?,
-            catalog_digest: ObjectId::decode(decoder)?,
-            cardinality: Cardinality::decode(decoder)?,
-            parameters: decoder.seq()?,
-            columns: decoder.seq()?,
-            evidence: EvidenceRecord::decode(decoder)?,
-        })
     }
 }
 

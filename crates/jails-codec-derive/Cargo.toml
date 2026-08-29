@@ -1,0 +1,18 @@
+[package]
+name = "jails-codec-derive"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+# The three standard proc-macro crates and nothing else. `plan.md` §R3.1 asks
+# for one canonical framing shared by every closed format; this derives that
+# framing from the declaration instead of asking 199 impls to restate it.
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
+
+[lints]
+workspace = true

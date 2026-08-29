@@ -15,46 +15,50 @@ use jails_support::codec::{Codec, Decoder, Encoder, MAX_PROTOCOL_RECORD, ordered
 use std::collections::{BTreeMap, BTreeSet};
 
 /// What the whole invocation is about.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(unknown_fix = "upgrade jails or restore compatible `.jails` state")]
 pub enum PlannedSubject {
+    #[codec(tag = 0)]
     Reconcile(DesiredState),
-    ApplyOneShot {
-        id: OneShotId,
-        spec: OneShotSpec,
-    },
-    DestroyCases {
-        id: OneShotId,
-        force: bool,
-    },
-    AppInit {
-        target: ProjectPath,
-    },
+    #[codec(tag = 1)]
+    ApplyOneShot { id: OneShotId, spec: OneShotSpec },
+    #[codec(tag = 2)]
+    DestroyCases { id: OneShotId, force: bool },
+    #[codec(tag = 3)]
+    AppInit { target: ProjectPath },
+    #[codec(tag = 4)]
     Rename {
         from: JavaType,
         to: JavaType,
         force: bool,
     },
+    #[codec(tag = 14)]
     RenameResource(Box<RenameResourceRequestV1>),
+    #[codec(tag = 15)]
     CompleteStorageRename(Box<CompleteStorageRenameRequestV1>),
+    #[codec(tag = 5)]
     AdoptLayout,
-    Format {
-        scopes: BTreeSet<ProjectPath>,
-    },
+    #[codec(tag = 7)]
+    Format { scopes: BTreeSet<ProjectPath> },
+    #[codec(tag = 8)]
     EvolveField(Box<EvolveFieldRequestV1>),
+    #[codec(tag = 9)]
     DestroyResourceV2(Box<DestroyResourceRequestV2>),
+    #[codec(tag = 10)]
     ReviveResource(Box<ReviveResourceRequestV1>),
+    #[codec(tag = 11)]
     RepairResource(Box<RepairResourceRequestV1>),
-    GenerateQueries {
-        queries: BTreeSet<QueryId>,
-    },
+    #[codec(tag = 12)]
+    GenerateQueries { queries: BTreeSet<QueryId> },
+    #[codec(tag = 13)]
     ContractProjection {
         target: ProjectPath,
         json_schema: bool,
     },
+    #[codec(tag = 16)]
     UndoFiles(Box<UndoFilesPlanV1>),
-    Modernize {
-        files: BTreeSet<ProjectPath>,
-    },
+    #[codec(tag = 17)]
+    Modernize { files: BTreeSet<ProjectPath> },
 }
 
 /// The authenticated state needed to restore a receipt without re-deriving it.
@@ -104,180 +108,69 @@ impl PlannedSubject {
             Self::GenerateQueries { .. } => return None,
         })
     }
-
-    fn tag(&self) -> u8 {
-        match self {
-            Self::Reconcile(_) => 0,
-            Self::ApplyOneShot { .. } => 1,
-            Self::DestroyCases { .. } => 2,
-            Self::AppInit { .. } => 3,
-            Self::Rename { .. } => 4,
-            Self::AdoptLayout => 5,
-            Self::Format { .. } => 7,
-            Self::EvolveField(_) => 8,
-            Self::DestroyResourceV2(_) => 9,
-            Self::ReviveResource(_) => 10,
-            Self::RepairResource(_) => 11,
-            Self::GenerateQueries { .. } => 12,
-            Self::ContractProjection { .. } => 13,
-            Self::RenameResource(_) => 14,
-            Self::CompleteStorageRename(_) => 15,
-            Self::UndoFiles(_) => 16,
-            Self::Modernize { .. } => 17,
-        }
-    }
 }
 
-impl Codec for PlannedSubject {
+/// The reconcile scope and the entities it declares.
+///
+/// This lived beside its one caller as a pair of free functions, which is
+/// why `PlannedSubject` had to be written by hand: a derive can only reach a
+/// field's encoding through [`Codec`]. Stating it on the type is what lets
+/// the enum above be derived, and the bytes are the ones those functions
+/// wrote -- `decode` still goes through [`DesiredState::new`], so a value a
+/// recovered journal carries is one the constructor accepted.
+impl Codec for DesiredState {
     fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::Reconcile(state) => encode_desired_state(encoder, state),
-            Self::ApplyOneShot { id, spec } => {
+        match &self.scope {
+            ReconcileScope::AppManifest => encoder.tag(0),
+            ReconcileScope::DirectConfig => encoder.tag(1),
+            ReconcileScope::DirectEntity(id) => {
+                encoder.tag(2);
                 id.encode(encoder)?;
-                spec.encode(encoder)
-            }
-            Self::DestroyCases { id, force } => {
-                id.encode(encoder)?;
-                encoder.bool(*force);
-                Ok(())
-            }
-            Self::AppInit { target } => target.encode(encoder),
-            Self::Rename { from, to, force } => {
-                from.encode(encoder)?;
-                to.encode(encoder)?;
-                encoder.bool(*force);
-                Ok(())
-            }
-            Self::RenameResource(request) => request.encode(encoder),
-            Self::CompleteStorageRename(request) => request.encode(encoder),
-            Self::UndoFiles(plan) => plan.encode(encoder),
-            Self::AdoptLayout => Ok(()),
-            Self::Format { scopes } => {
-                encoder.set(scopes)?;
-                Ok(())
-            }
-            Self::Modernize { files } => {
-                encoder.set(files)?;
-                Ok(())
-            }
-            Self::EvolveField(request) => request.encode(encoder),
-            Self::DestroyResourceV2(request) => request.encode(encoder),
-            Self::ReviveResource(request) => request.encode(encoder),
-            Self::RepairResource(request) => request.encode(encoder),
-            Self::GenerateQueries { queries } => encoder.set(queries),
-            Self::ContractProjection {
-                target,
-                json_schema,
-            } => {
-                target.encode(encoder)?;
-                encoder.bool(*json_schema);
-                Ok(())
             }
         }
+        encoder.count(self.entities.len())?;
+        let mut previous: Option<&EntityId> = None;
+        for (id, entity) in &self.entities {
+            ordered(previous, id)?;
+            previous = Some(id);
+            DesiredAppliedEntity {
+                id: entity.id.clone(),
+                owners: entity.owners.clone(),
+                spec: entity.spec.clone(),
+            }
+            .encode(encoder)?;
+        }
+        Ok(())
     }
 
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Reconcile(decode_desired_state(decoder)?),
-            1 => Self::ApplyOneShot {
-                id: OneShotId::decode(decoder)?,
-                spec: OneShotSpec::decode(decoder)?,
-            },
-            2 => Self::DestroyCases {
-                id: OneShotId::decode(decoder)?,
-                force: decoder.bool()?,
-            },
-            3 => Self::AppInit {
-                target: ProjectPath::decode(decoder)?,
-            },
-            4 => Self::Rename {
-                from: JavaType::decode(decoder)?,
-                to: JavaType::decode(decoder)?,
-                force: decoder.bool()?,
-            },
-            5 => Self::AdoptLayout,
-            7 => Self::Format {
-                scopes: decoder.set()?,
-            },
-            17 => Self::Modernize {
-                files: decoder.set()?,
-            },
-            8 => Self::EvolveField(Box::new(EvolveFieldRequestV1::decode(decoder)?)),
-            9 => Self::DestroyResourceV2(Box::new(DestroyResourceRequestV2::decode(decoder)?)),
-            10 => Self::ReviveResource(Box::new(ReviveResourceRequestV1::decode(decoder)?)),
-            11 => Self::RepairResource(Box::new(RepairResourceRequestV1::decode(decoder)?)),
-            12 => Self::GenerateQueries {
-                queries: decoder.set()?,
-            },
-            13 => Self::ContractProjection {
-                target: ProjectPath::decode(decoder)?,
-                json_schema: decoder.bool()?,
-            },
-            14 => Self::RenameResource(Box::new(RenameResourceRequestV1::decode(decoder)?)),
-            15 => Self::CompleteStorageRename(Box::new(CompleteStorageRenameRequestV1::decode(
-                decoder,
-            )?)),
-            16 => Self::UndoFiles(Box::new(UndoFilesPlanV1::decode(decoder)?)),
+        let scope = match decoder.tag()? {
+            0 => ReconcileScope::AppManifest,
+            1 => ReconcileScope::DirectConfig,
+            2 => ReconcileScope::DirectEntity(EntityId::decode(decoder)?),
             other => Err(format!(
-                "unknown planned subject tag {other}.\n       fix: upgrade jails or restore \
-                 compatible `.jails` state"
-            ))?,
-        })
-    }
-}
-
-fn encode_desired_state(encoder: &mut Encoder, state: &DesiredState) -> Result<()> {
-    match &state.scope {
-        ReconcileScope::AppManifest => encoder.tag(0),
-        ReconcileScope::DirectConfig => encoder.tag(1),
-        ReconcileScope::DirectEntity(id) => {
-            encoder.tag(2);
-            id.encode(encoder)?;
-        }
-    }
-    encoder.count(state.entities.len())?;
-    let mut previous: Option<&EntityId> = None;
-    for (id, entity) in &state.entities {
-        ordered(previous, id)?;
-        previous = Some(id);
-        DesiredAppliedEntity {
-            id: entity.id.clone(),
-            owners: entity.owners.clone(),
-            spec: entity.spec.clone(),
-        }
-        .encode(encoder)?;
-    }
-    Ok(())
-}
-
-fn decode_desired_state(decoder: &mut Decoder<'_>) -> Result<DesiredState> {
-    let scope = match decoder.tag()? {
-        0 => ReconcileScope::AppManifest,
-        1 => ReconcileScope::DirectConfig,
-        2 => ReconcileScope::DirectEntity(EntityId::decode(decoder)?),
-        other => Err(format!(
-            "unknown reconcile scope tag {other}.\n       fix: upgrade jails or restore \
+                "unknown reconcile scope tag {other}.\n       fix: upgrade jails or restore \
              compatible `.jails` state"
-        ))?,
-    };
-    let count = decoder.count()?;
-    let mut entities = BTreeMap::new();
-    let mut previous: Option<EntityId> = None;
-    for _ in 0..count {
-        let row = DesiredAppliedEntity::decode(decoder)?;
-        ordered(previous.as_ref(), &row.id)?;
-        previous = Some(row.id.clone());
-        entities.insert(
-            row.id.clone(),
-            DesiredEntity {
-                id: row.id,
-                spec: row.spec,
-                owners: row.owners,
-            },
-        );
+            ))?,
+        };
+        let count = decoder.count()?;
+        let mut entities = BTreeMap::new();
+        let mut previous: Option<EntityId> = None;
+        for _ in 0..count {
+            let row = DesiredAppliedEntity::decode(decoder)?;
+            ordered(previous.as_ref(), &row.id)?;
+            previous = Some(row.id.clone());
+            entities.insert(
+                row.id.clone(),
+                DesiredEntity {
+                    id: row.id,
+                    spec: row.spec,
+                    owners: row.owners,
+                },
+            );
+        }
+        DesiredState::new(scope, entities)
     }
-    DesiredState::new(scope, entities)
 }
 
 #[cfg(test)]

@@ -103,7 +103,8 @@ pub(crate) fn reconcile_compose_service(
     let current = range.map(|(start, end)| &text.as_bytes()[start..end]);
     if previous.is_none() && range.is_none() && compose_has_service(text, service) {
         return Err(format!(
-            "compose service `{service}` already exists outside `# jails:{marker}`\n       fix: rename the reader-owned service or remove the canonical capability"
+            "compose service `{service}` already exists outside `{}{marker}`\n       fix: rename the reader-owned service or remove the canonical capability",
+            jails_codemod::Marked::OPEN_PREFIX
         ));
     }
     let selected = reconcile_facet_bytes(path, previous, current, desired)?;
@@ -178,8 +179,12 @@ fn reconcile_facet_bytes(
 }
 
 fn compose_marked_range(text: &str, marker: &str) -> Result<Option<(usize, usize)>, String> {
-    let open = format!("# jails:{marker}");
-    let close = format!("# /jails:{marker}");
+    // The same two strings `codemod` writes, from `codemod`: this used to
+    // build them here, so the file that finds a block and the file that writes
+    // one were two statements of one format.
+    let marked = jails_codemod::Marked::new(marker);
+    let open = marked.open();
+    let close = marked.close();
     let opens = line_ranges(text)
         .filter(|(start, end)| text[*start..*end].trim() == open)
         .collect::<Vec<_>>();

@@ -271,26 +271,7 @@ pub enum BuiltinType {
 
 impl TypeRef {
     pub(crate) fn parse(value: &str) -> Result<Self, String> {
-        let builtin = match value {
-            "string" => Some(BuiltinType::String),
-            "int" => Some(BuiltinType::Integer),
-            "long" => Some(BuiltinType::Long),
-            "double" => Some(BuiltinType::Double),
-            "decimal" => Some(BuiltinType::Decimal),
-            "boolean" => Some(BuiltinType::Boolean),
-            "uuid" => Some(BuiltinType::Uuid),
-            "date" => Some(BuiltinType::Date),
-            "datetime" => Some(BuiltinType::DateTime),
-            "instant" => Some(BuiltinType::Instant),
-            "duration" => Some(BuiltinType::Duration),
-            "uri" => Some(BuiltinType::Uri),
-            "path" => Some(BuiltinType::Path),
-            "zone-id" => Some(BuiltinType::ZoneId),
-            "currency" => Some(BuiltinType::Currency),
-            "bytes" => Some(BuiltinType::Bytes),
-            _ => None,
-        };
-        if let Some(builtin) = builtin {
+        if let Some(builtin) = BuiltinType::from_token(value) {
             return Ok(Self::Builtin(builtin));
         }
         if value.rsplit('.').next().is_some_and(valid_java_type)
@@ -305,24 +286,7 @@ impl TypeRef {
 
     pub fn canonical_name(&self) -> &str {
         match self {
-            Self::Builtin(builtin) => match builtin {
-                BuiltinType::String => "string",
-                BuiltinType::Integer => "int",
-                BuiltinType::Long => "long",
-                BuiltinType::Double => "double",
-                BuiltinType::Decimal => "decimal",
-                BuiltinType::Boolean => "boolean",
-                BuiltinType::Uuid => "uuid",
-                BuiltinType::Date => "date",
-                BuiltinType::DateTime => "datetime",
-                BuiltinType::Instant => "instant",
-                BuiltinType::Duration => "duration",
-                BuiltinType::Uri => "uri",
-                BuiltinType::Path => "path",
-                BuiltinType::ZoneId => "zone-id",
-                BuiltinType::Currency => "currency",
-                BuiltinType::Bytes => "bytes",
-            },
+            Self::Builtin(builtin) => builtin.semantics().token,
             Self::External(name) => name,
         }
     }

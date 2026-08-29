@@ -59,20 +59,7 @@ pub struct ToolInput {
     pub sha256: ObjectId,
 }
 
-impl Codec for ToolInput {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.path.encode(encoder)?;
-        self.sha256.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            path: ProjectPath::decode(decoder)?,
-            sha256: ObjectId::decode(decoder)?,
-        })
-    }
-}
+jails_support::codec!(struct ToolInput { path, sha256 });
 
 /// Everything about a tool that can change its output.
 ///
@@ -166,20 +153,7 @@ pub struct ToolFingerprint {
     pub canonical_args_sha256: ObjectId,
 }
 
-impl Codec for ToolFingerprint {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.identity.encode(encoder)?;
-        self.canonical_args_sha256.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            identity: ToolIdentityFingerprint::decode(decoder)?,
-            canonical_args_sha256: ObjectId::decode(decoder)?,
-        })
-    }
-}
+jails_support::codec!(struct ToolFingerprint { identity, canonical_args_sha256 });
 
 /// One tool invocation as preparation will actually make it.
 ///

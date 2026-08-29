@@ -639,8 +639,22 @@ pub fn postgres_connect(text: &str) -> Option<PostgresConnect> {
     Some(c)
 }
 
+/// Whether a compose file carries the block jails writes for `marker`.
+///
+/// Public because `doctor` asks the same question about kafka and had been
+/// answering it with `yaml.contains("# jails:kafka")` -- a second place that
+/// knew both the marker format *and* this file's two-space indent. The indent
+/// is this module's fact, so the question belongs here.
+pub fn declares(text: &str, marker: &str) -> bool {
+    block(marker).present_in(text)
+}
+
 fn has_postgres_service(text: &str) -> bool {
-    text.contains("# jails:db")
+    // Through `declares`, not `contains`: a substring match reads `# jails:dbx`
+    // as this block, which is the prefix collision `exact_line` exists for --
+    // `durable-job-email` mistook `durable-job-email-sender` for its own and
+    // cut the longer marker in half during destroy.
+    declares(text, "db")
         || text.lines().any(|l| {
             let t = l.trim_end();
             t == "  postgres:" || t.starts_with("  postgres:")

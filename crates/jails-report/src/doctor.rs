@@ -652,8 +652,15 @@ pub fn setup(dry_run: bool) -> Result<()> {
     Ok(())
 }
 
+/// The note `jails setup` leaves above the key it writes.
+///
+/// `# jails --`, not `# jails:`: the second spells the opening of a marked
+/// block, and this is prose in a file that has none. Nothing scans this file
+/// for markers today, which is exactly when a confusable spelling is cheap to
+/// remove -- `codemod`'s own rule is that a marker is matched on a whole line,
+/// and a comment that starts like one is a line waiting to be misread.
 const REUSE_BLOCK: &str = "\
-# jails: permit containers to be reused between test runs -- the largest
+# jails -- permit containers to be reused between test runs -- the largest
 # saving available to a suite that starts PostgreSQL.
 #
 # This only permits it. A container is reused when its bean asks, with

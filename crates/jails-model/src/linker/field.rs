@@ -1,6 +1,7 @@
 //! Semantic checks for field constraints and compiler-managed behavior.
 
 use super::Linker;
+use crate::builtin::LiteralKind;
 use crate::model::{BuiltinType, FieldDefault, FieldScope, FieldSemantics, LengthRange, TypeRef};
 use crate::operation::Value;
 use crate::source;
@@ -72,12 +73,7 @@ pub(super) fn semantics(
                 "remove `?` from the scope field",
             );
         }
-        if !matches!(
-            ty,
-            Some(TypeRef::Builtin(
-                BuiltinType::String | BuiltinType::Uuid | BuiltinType::Integer | BuiltinType::Long
-            ))
-        ) {
+        if !matches!(ty, Some(TypeRef::Builtin(builtin)) if builtin.semantics().scopeable) {
             linker.problem(
                 "model-scope-type",
                 format!("{path}.type"),
@@ -208,12 +204,7 @@ pub(super) fn validate_scope_claims(
 }
 
 fn is_numeric(ty: Option<&TypeRef>) -> bool {
-    matches!(
-        ty,
-        Some(TypeRef::Builtin(
-            BuiltinType::Integer | BuiltinType::Long | BuiltinType::Double | BuiltinType::Decimal
-        ))
-    )
+    matches!(ty, Some(TypeRef::Builtin(builtin)) if builtin.semantics().numeric)
 }
 
 fn derive_default(primary_key: bool, version: bool, ty: Option<&TypeRef>) -> Option<FieldDefault> {
@@ -252,45 +243,37 @@ fn link_default(
     linker: &mut Linker,
 ) -> Value {
     let value = link_value(value);
+    // Every arm asks the builtin's own row. The linker used to answer these
+    // four questions with four matches of its own, and the string arm was a
+    // negation -- so a builtin added to the enum was accepted by default
+    // rather than refused until somebody said what it accepts.
     let compatible = match (&value, ty) {
-        (Value::String(_), Some(TypeRef::Builtin(builtin))) => !matches!(
-            builtin,
-            BuiltinType::Integer
-                | BuiltinType::Long
-                | BuiltinType::Double
-                | BuiltinType::Decimal
-                | BuiltinType::Boolean
-                | BuiltinType::Bytes
-        ),
-        (Value::Integer(raw), Some(TypeRef::Builtin(BuiltinType::Integer))) => {
-            raw.parse::<i32>().is_ok()
+        (Value::String(_), Some(TypeRef::Builtin(builtin))) => {
+            builtin.semantics().literal == LiteralKind::Text
         }
-        (Value::Integer(raw), Some(TypeRef::Builtin(BuiltinType::Long))) => {
-            raw.parse::<i64>().is_ok()
-        }
-        (
-            Value::Integer(_) | Value::Decimal(_),
-            Some(TypeRef::Builtin(BuiltinType::Double | BuiltinType::Decimal)),
-        ) => true,
-        (Value::Boolean(_), Some(TypeRef::Builtin(BuiltinType::Boolean))) => true,
-        (Value::EnumConstant(_), Some(TypeRef::External(_))) => true,
-        (Value::Function { name, arguments }, Some(ty)) if arguments.is_empty() => {
-            match name.as_str() {
-                "uuid7" => matches!(ty, TypeRef::Builtin(BuiltinType::Uuid)),
-                "identity" => {
-                    primary_key
-                        && matches!(
-                            ty,
-                            TypeRef::Builtin(BuiltinType::Integer | BuiltinType::Long)
-                        )
-                }
-                "now" => matches!(
-                    ty,
-                    TypeRef::Builtin(BuiltinType::Instant | BuiltinType::DateTime)
-                ),
-                "today" => matches!(ty, TypeRef::Builtin(BuiltinType::Date)),
+        (Value::Integer(raw), Some(TypeRef::Builtin(builtin))) => {
+            match builtin.semantics().literal {
+                LiteralKind::Int32 => raw.parse::<i32>().is_ok(),
+                LiteralKind::Int64 => raw.parse::<i64>().is_ok(),
+                LiteralKind::Fractional => true,
                 _ => false,
             }
+        }
+        (Value::Decimal(_), Some(TypeRef::Builtin(builtin))) => {
+            builtin.semantics().literal == LiteralKind::Fractional
+        }
+        (Value::Boolean(_), Some(TypeRef::Builtin(builtin))) => {
+            builtin.semantics().literal == LiteralKind::Boolean
+        }
+        (Value::EnumConstant(_), Some(TypeRef::External(_))) => true,
+        (Value::Function { name, arguments }, Some(TypeRef::Builtin(builtin)))
+            if arguments.is_empty() =>
+        {
+            builtin.semantics().defaults.contains(&name.as_str())
+                // `identity` is the one whose validity is about the field
+                // rather than the type: an auto-assigned value that is not
+                // the key is a number nothing assigns.
+                && (name != "identity" || primary_key)
         }
         _ => false,
     };

@@ -71,12 +71,47 @@ pub(super) fn emit_compose_service(
 }
 
 fn compose_block(service: &ComposeService) -> String {
-    let mut block = format!("  # jails:{}\n  {}:\n", service.marker, service.name);
-    for line in service.body.lines() {
-        block.push_str("    ");
-        block.push_str(line);
-        block.push('\n');
+    // Two spaces, because a marker at column zero inside a YAML mapping is a
+    // parse error rather than a comment in the wrong place -- which is the
+    // reason `Marked::indented` exists, and the reason rendering this by hand
+    // was a second chance to get it wrong.
+    let marked = jails_codemod::Marked::indented(service.marker, "  ");
+    // `render` indents every line it is given, so the body arrives one level
+    // short of where it lands: the service name at zero becomes two spaces,
+    // and its own lines at two become four.
+    let body: String = service
+        .body
+        .lines()
+        .map(|line| format!("  {line}\n"))
+        .collect();
+    marked.render(&format!("{}:\n{body}", service.name))
+}
+
+#[cfg(test)]
+mod compose_block_tests {
+    use super::*;
+
+    /// The bytes this used to write by hand, written by `Marked` instead.
+    ///
+    /// Pinned because the two disagree in a way that reads as correct: the
+    /// splice indents *every* line it is handed, so a body that already
+    /// carried the service's two spaces came out four in and the compose file
+    /// silently changed shape.
+    #[test]
+    fn the_block_is_indented_exactly_as_compose_needs() {
+        let service = ComposeService {
+            marker: "db",
+            name: "postgres",
+            body: "image: postgres:17\nports:\n  - \"5432:5432\"",
+        };
+        assert_eq!(
+            compose_block(&service),
+            "  # jails:db\n  \
+             postgres:\n    \
+             image: postgres:17\n    \
+             ports:\n      \
+             - \"5432:5432\"\n  \
+             # /jails:db\n"
+        );
     }
-    block.push_str(&format!("  # /jails:{}\n", service.marker));
-    block
 }

@@ -655,20 +655,7 @@ impl ObjectRef {
         Self { id, len }
     }
 }
-impl Codec for ObjectRef {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.id.encode(encoder)?;
-        encoder.u64(self.len);
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            id: ObjectId::decode(decoder)?,
-            len: decoder.u64()?,
-        })
-    }
-}
+jails_support::codec!(struct ObjectRef { id, len });
 
 impl std::fmt::Display for ObjectRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

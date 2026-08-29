@@ -111,26 +111,7 @@ pub struct OneShotReceipt {
     pub operation: OperationId,
 }
 
-impl Codec for OneShotReceipt {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.id.encode(encoder)?;
-        self.spec.encode(encoder)?;
-        self.state.encode(encoder)?;
-        self.lifecycle.encode(encoder)?;
-        self.operation.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            id: OneShotId::decode(decoder)?,
-            spec: OneShotSpec::decode(decoder)?,
-            state: OneShotState::decode(decoder)?,
-            lifecycle: OneShotLifecycle::decode(decoder)?,
-            operation: OperationId::decode(decoder)?,
-        })
-    }
-}
+jails_support::codec!(struct OneShotReceipt { id, spec, state, lifecycle, operation });
 
 /// One canonical row per path jails has written.
 ///
@@ -143,39 +124,11 @@ impl Codec for OneShotReceipt {
 ///
 /// `contributors` is what keeps a shared file alive: a path stays when its
 /// last owner leaves only if somebody else still claims it.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct OutputRecord {
     pub path: ProjectPath,
     pub contributors: BTreeSet<ResourceOwner>,
     pub current: LiveFileImage,
     pub base: StoredFileImage,
     pub renderer: RendererStamp,
-}
-
-impl Codec for OutputRecord {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.path.encode(encoder)?;
-        encoder.count(self.contributors.len())?;
-        let mut previous: Option<&ResourceOwner> = None;
-        for owner in &self.contributors {
-            ordered(previous, owner)?;
-            previous = Some(owner);
-            owner.encode(encoder)?;
-        }
-        self.current.encode(encoder)?;
-        self.base.encode(encoder)?;
-        self.renderer.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        let path = ProjectPath::decode(decoder)?;
-        let contributors: BTreeSet<ResourceOwner> = decoder.set()?;
-        Ok(Self {
-            path,
-            contributors,
-            current: LiveFileImage::decode(decoder)?,
-            base: StoredFileImage::decode(decoder)?,
-            renderer: RendererStamp::decode(decoder)?,
-        })
-    }
 }

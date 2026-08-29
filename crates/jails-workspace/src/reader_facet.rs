@@ -65,7 +65,8 @@ pub(crate) fn materialize(
                     && compose_service_without_marker(text, service, marker)
                 {
                     return Err(format!(
-                        "compose service `{service}` already exists outside `# jails:{marker}` in `{path}`\n       fix: rename or remove the reader-owned service before generating"
+                        "compose service `{service}` already exists outside `{}{marker}` in `{path}`\n       fix: rename or remove the reader-owned service before generating",
+                        jails_codemod::Marked::OPEN_PREFIX
                     ));
                 }
                 let updated = crate::documents::reconcile_compose_service(
@@ -200,7 +201,7 @@ fn captured_mode(file: &jails_contracts::CapturedFile) -> FileMode {
 }
 
 fn compose_service_without_marker(text: &str, service: &str, marker: &str) -> bool {
-    let marker = format!("# jails:{marker}");
+    let marker = jails_codemod::Marked::new(marker).open();
     if text.lines().any(|line| line.trim() == marker) {
         return false;
     }

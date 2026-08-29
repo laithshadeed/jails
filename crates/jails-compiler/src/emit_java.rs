@@ -2,13 +2,14 @@
 
 mod execution_context;
 mod record_validation;
+mod repository;
 mod time_ordered_uuid;
 
 use crate::CompileError;
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile, RenderedTree};
 use jails_model::{
     AppModel, BuiltinType, Entity, EntityId, Facet, Field, FieldId, Operation, OperationKind,
-    StableId, TypeRef,
+    OperationParameter, ParameterSource, StableId, TypeRef,
 };
 use std::collections::BTreeSet;
 
@@ -71,7 +72,7 @@ pub(crate) fn lower_and_emit(
             .values()
             .filter(|entity| entity.active && entity.facets.contains(&Facet::Repository))
         {
-            let unit = lower_fake_repository(model, capability.id.as_str(), entity)?;
+            let unit = repository::lower_fake_repository(model, capability.id.as_str(), entity)?;
             output
                 .insert(unit.path, unit.file)
                 .map_err(CompileError::new)?;
@@ -87,7 +88,7 @@ pub(crate) fn lower_and_emit(
             .values()
             .filter(|entity| entity.active && entity.facets.contains(&Facet::Repository))
         {
-            let unit = lower_db_repository(model, capability.id.as_str(), entity)?;
+            let unit = repository::lower_db_repository(model, capability.id.as_str(), entity)?;
             output
                 .insert(unit.path, unit.file)
                 .map_err(CompileError::new)?;
@@ -214,8 +215,13 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
         OperationKind::Command(command) => {
             let entity = entity(model, &command.on)?;
             let mut imports = BTreeSet::from([domain_import(model, entity)]);
-            let fields = fields(entity, &command.fields)?;
-            let input = indent(&record_shape("Input", &fields, &mut imports), 4);
+            let input = if command.semantics.parameters.is_empty() {
+                let fields = fields(entity, &command.fields)?;
+                record_shape("Input", &fields, &mut imports)
+            } else {
+                operation_record_shape(model, "Input", &command.semantics.parameters, &mut imports)?
+            };
+            let input = indent(&input, 4);
             let context = operation_context(model, entity, &mut imports);
             let type_name = with_suffix(&operation.names.java_type, "Command");
             let route = route_constant(command.route.as_deref());
@@ -316,153 +322,6 @@ fn operation_context(model: &AppModel, entity: &Entity, imports: &mut BTreeSet<S
     }
 }
 
-fn lower_fake_repository(
-    model: &AppModel,
-    capability_id: &str,
-    entity: &Entity,
-) -> Result<Unit, CompileError> {
-    let primary_key = primary_key(entity)?;
-    let package = format!("{}.adapters.memory", model.project.base_package);
-    let type_name = format!("InMemory{}Repository", entity.names.java_type);
-    let repository = format!(
-        "{}.repository.{}Repository",
-        model.project.base_package, entity.names.java_type
-    );
-    let mut imports = BTreeSet::from([
-        repository,
-        domain_import(model, entity),
-        "java.util.LinkedHashMap".to_string(),
-        "java.util.List".to_string(),
-        "java.util.Map".to_string(),
-        "java.util.Optional".to_string(),
-    ]);
-    let key_type = java_type(primary_key, &mut imports);
-    let record = &entity.names.java_type;
-    let key = &primary_key.names.java_member;
-    let body = format!(
-        "public final class {type_name} implements {record}Repository {{\n\n    private final Map<{key_type}, {record}> rows = new LinkedHashMap<>();\n\n    @Override\n    public Optional<{record}> findById({key_type} id) {{\n        return Optional.ofNullable(rows.get(id));\n    }}\n\n    @Override\n    public List<{record}> findAll() {{\n        return List.copyOf(rows.values());\n    }}\n\n    @Override\n    public {record} save({record} value) {{\n        rows.put(value.{key}(), value);\n        return value;\n    }}\n\n    @Override\n    public boolean deleteById({key_type} id) {{\n        return rows.remove(id) != null;\n    }}\n}}"
-    );
-    let artifact_id = format!("art_{capability_id}_{}_repository", entity.id.as_str());
-    let rendered = render(&package, &imports, &body, &artifact_id);
-    let package_path = package.replace('.', "/");
-    let path = ProjectPath::parse(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))
-        .map_err(CompileError::new)?;
-    Ok(Unit {
-        path,
-        file: RenderedFile {
-            kind: FileKind::JavaMain,
-            mode: FileMode::Regular,
-            bytes: rendered.into_bytes(),
-            provenance: Provenance {
-                artifact_id,
-                ejection_id: None,
-                ejectable: true,
-                semantic_ids: BTreeSet::from([
-                    capability_id.to_string(),
-                    entity.id.as_str().to_string(),
-                ]),
-                compiler_pass: "capability-fake".to_string(),
-            },
-        },
-    })
-}
-
-fn lower_db_repository(
-    model: &AppModel,
-    capability_id: &str,
-    entity: &Entity,
-) -> Result<Unit, CompileError> {
-    let primary_key = primary_key(entity)?;
-    let package = format!("{}.adapters.jdbc", model.project.base_package);
-    let type_name = format!("Jdbc{}Repository", entity.names.java_type);
-    let repository = format!(
-        "{}.repository.{}Repository",
-        model.project.base_package, entity.names.java_type
-    );
-    let mut imports = BTreeSet::from([
-        repository,
-        domain_import(model, entity),
-        "java.util.List".to_string(),
-        "java.util.Optional".to_string(),
-        "org.springframework.jdbc.core.simple.JdbcClient".to_string(),
-        "org.springframework.stereotype.Repository".to_string(),
-    ]);
-    let record = &entity.names.java_type;
-    let key_type = java_type(primary_key, &mut imports);
-    let table = &entity.names.sql_table;
-    let key_column = &primary_key.names.sql_column;
-    let columns = entity
-        .fields
-        .values()
-        .map(|field| field.names.sql_column.as_str())
-        .collect::<Vec<_>>();
-    let column_list = columns.join(", ");
-    let values = columns
-        .iter()
-        .map(|column| format!(":{column}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let updates = entity
-        .fields
-        .values()
-        .filter(|field| field.id != primary_key.id)
-        .map(|field| {
-            format!(
-                "{} = excluded.{}",
-                field.names.sql_column, field.names.sql_column
-            )
-        })
-        .collect::<Vec<_>>();
-    let updates = if updates.is_empty() {
-        format!("{key_column} = excluded.{key_column}")
-    } else {
-        updates.join(", ")
-    };
-    let params = entity
-        .fields
-        .values()
-        .map(|field| {
-            let member = &field.names.java_member;
-            let value = if field.required {
-                format!("value.{member}()")
-            } else {
-                format!("value.{member}().orElse(null)")
-            };
-            format!(
-                "\n                .param(\"{}\", {value})",
-                field.names.sql_column
-            )
-        })
-        .collect::<String>();
-    let body = format!(
-        "@Repository\npublic final class {type_name} implements {record}Repository {{\n\n    private final JdbcClient jdbc;\n\n    public {type_name}(JdbcClient jdbc) {{\n        this.jdbc = jdbc;\n    }}\n\n    @Override\n    public Optional<{record}> findById({key_type} id) {{\n        return jdbc.sql(\"select {column_list} from {table} where {key_column} = :id\")\n                .param(\"id\", id)\n                .query({record}.class)\n                .optional();\n    }}\n\n    @Override\n    public List<{record}> findAll() {{\n        return jdbc.sql(\"select {column_list} from {table} order by {key_column}\")\n                .query({record}.class)\n                .list();\n    }}\n\n    @Override\n    public {record} save({record} value) {{\n        return jdbc.sql(\"insert into {table} ({column_list}) values ({values}) on conflict ({key_column}) do update set {updates} returning {column_list}\"){params}\n                .query({record}.class)\n                .single();\n    }}\n\n    @Override\n    public boolean deleteById({key_type} id) {{\n        return jdbc.sql(\"delete from {table} where {key_column} = :id\")\n                .param(\"id\", id)\n                .update() > 0;\n    }}\n}}",
-        key_type = key_type,
-    );
-    let artifact_id = format!("art_{capability_id}_{}_repository", entity.id.as_str());
-    let rendered = render(&package, &imports, &body, &artifact_id);
-    let package_path = package.replace('.', "/");
-    let path = ProjectPath::parse(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))
-        .map_err(CompileError::new)?;
-    Ok(Unit {
-        path,
-        file: RenderedFile {
-            kind: FileKind::JavaMain,
-            mode: FileMode::Regular,
-            bytes: rendered.into_bytes(),
-            provenance: Provenance {
-                artifact_id,
-                ejection_id: None,
-                ejectable: true,
-                semantic_ids: BTreeSet::from([
-                    capability_id.to_string(),
-                    entity.id.as_str().to_string(),
-                ]),
-                compiler_pass: "capability-db".to_string(),
-            },
-        },
-    })
-}
-
 fn facet_name(facet: Facet) -> &'static str {
     match facet {
         Facet::Enum => "enum",
@@ -516,19 +375,99 @@ pub(crate) fn domain_import(model: &AppModel, entity: &Entity) -> String {
 fn record_shape(type_name: &str, fields: &[&Field], imports: &mut BTreeSet<String>) -> String {
     let components = fields
         .iter()
-        .map(|field| {
-            let mut java = java_type(field, imports);
-            if !field.required {
+        .map(|field| RecordComponent {
+            name: &field.names.java_member,
+            ty: &field.ty,
+            required: field.required,
+            non_blank: field.non_blank,
+            length: field.length.as_ref(),
+            positive: field.semantics.positive,
+            nonnegative: field.semantics.nonnegative,
+        })
+        .collect::<Vec<_>>();
+    record_shape_from_components(type_name, &components, imports)
+}
+
+fn operation_record_shape(
+    model: &AppModel,
+    type_name: &str,
+    parameters: &[OperationParameter],
+    imports: &mut BTreeSet<String>,
+) -> Result<String, CompileError> {
+    let components = parameters
+        .iter()
+        .map(|parameter| {
+            let inherited = match &parameter.source {
+                ParameterSource::Typed(_) => None,
+                ParameterSource::Field(visible) => {
+                    let owner = entity(model, &visible.entity)?;
+                    let field = owner.fields.get(&visible.field).ok_or_else(|| {
+                        CompileError::new(format!(
+                            "linked operation parameter `{}` references missing field `{}`",
+                            parameter.name, visible.field
+                        ))
+                    })?;
+                    Some(field)
+                }
+            };
+            let (ty, non_blank, length, positive, nonnegative) = if let Some(field) = inherited {
+                (
+                    &field.ty,
+                    field.non_blank,
+                    field.length.as_ref(),
+                    field.semantics.positive,
+                    field.semantics.nonnegative,
+                )
+            } else {
+                let ParameterSource::Typed(ty) = &parameter.source else {
+                    unreachable!()
+                };
+                (
+                    ty,
+                    parameter.constraints.non_blank,
+                    parameter.constraints.length.as_ref(),
+                    parameter.constraints.positive,
+                    parameter.constraints.nonnegative,
+                )
+            };
+            Ok(RecordComponent {
+                name: &parameter.name,
+                ty,
+                required: parameter.required && !parameter.optional_filter,
+                non_blank,
+                length,
+                positive,
+                nonnegative,
+            })
+        })
+        .collect::<Result<Vec<_>, CompileError>>()?;
+    Ok(record_shape_from_components(
+        type_name,
+        &components,
+        imports,
+    ))
+}
+
+fn record_shape_from_components(
+    type_name: &str,
+    components: &[RecordComponent<'_>],
+    imports: &mut BTreeSet<String>,
+) -> String {
+    let declarations = components
+        .iter()
+        .map(|component| {
+            let mut java = java_type_ref(component.ty, component.required, imports);
+            if !component.required {
                 imports.insert("java.util.Optional".to_string());
                 java = format!("Optional<{java}>");
             }
-            format!("    {java} {}", field.names.java_member)
+            format!("    {java} {}", component.name)
         })
         .collect::<Vec<_>>()
         .join(",\n");
-    let statements = fields
+    let statements = components
         .iter()
-        .flat_map(|field| record_validation::record_checks(field, imports))
+        .flat_map(|component| record_validation::record_checks(component, imports))
         .collect::<Vec<_>>();
     let constructor = if statements.is_empty() {
         String::new()
@@ -542,7 +481,7 @@ fn record_shape(type_name: &str, fields: &[&Field], imports: &mut BTreeSet<Strin
                 .join("\n")
         )
     };
-    format!("public record {type_name}(\n{components}\n) {{{constructor}\n}}")
+    format!("public record {type_name}(\n{declarations}\n) {{{constructor}\n}}")
 }
 
 fn route_constant(route: Option<&str>) -> String {
@@ -595,8 +534,16 @@ pub(crate) fn primary_key(entity: &Entity) -> Result<&Field, CompileError> {
 }
 
 pub(crate) fn java_type(field: &Field, imports: &mut BTreeSet<String>) -> String {
-    match &field.ty {
-        TypeRef::Builtin(builtin) => builtin_java(*builtin, field.required, imports),
+    java_type_ref(&field.ty, field.required, imports)
+}
+
+pub(crate) fn java_type_ref(
+    ty: &TypeRef,
+    required: bool,
+    imports: &mut BTreeSet<String>,
+) -> String {
+    match ty {
+        TypeRef::Builtin(builtin) => builtin_java(*builtin, required, imports),
         TypeRef::External(qualified) => {
             if let Some((_, simple)) = qualified.rsplit_once('.') {
                 imports.insert(qualified.clone());
@@ -608,42 +555,23 @@ pub(crate) fn java_type(field: &Field, imports: &mut BTreeSet<String>) -> String
     }
 }
 
-fn primitive(field: &Field) -> bool {
-    field.required
-        && matches!(
-            field.ty,
-            TypeRef::Builtin(
-                BuiltinType::Integer
-                    | BuiltinType::Long
-                    | BuiltinType::Double
-                    | BuiltinType::Boolean
-            )
-        )
+fn primitive(ty: &TypeRef, required: bool) -> bool {
+    required
+        && matches!(ty, TypeRef::Builtin(builtin) if builtin.semantics().java_primitive.is_some())
+}
+
+struct RecordComponent<'a> {
+    name: &'a str,
+    ty: &'a TypeRef,
+    required: bool,
+    non_blank: bool,
+    length: Option<&'a jails_model::LengthRange>,
+    positive: bool,
+    nonnegative: bool,
 }
 
 fn builtin_java(builtin: BuiltinType, required: bool, imports: &mut BTreeSet<String>) -> String {
-    let (name, import) = match builtin {
-        BuiltinType::String => ("String", None),
-        BuiltinType::Integer if required => ("int", None),
-        BuiltinType::Integer => ("Integer", None),
-        BuiltinType::Long if required => ("long", None),
-        BuiltinType::Long => ("Long", None),
-        BuiltinType::Double if required => ("double", None),
-        BuiltinType::Double => ("Double", None),
-        BuiltinType::Decimal => ("BigDecimal", Some("java.math.BigDecimal")),
-        BuiltinType::Boolean if required => ("boolean", None),
-        BuiltinType::Boolean => ("Boolean", None),
-        BuiltinType::Uuid => ("UUID", Some("java.util.UUID")),
-        BuiltinType::Date => ("LocalDate", Some("java.time.LocalDate")),
-        BuiltinType::DateTime => ("LocalDateTime", Some("java.time.LocalDateTime")),
-        BuiltinType::Instant => ("Instant", Some("java.time.Instant")),
-        BuiltinType::Duration => ("Duration", Some("java.time.Duration")),
-        BuiltinType::Uri => ("URI", Some("java.net.URI")),
-        BuiltinType::Path => ("Path", Some("java.nio.file.Path")),
-        BuiltinType::ZoneId => ("ZoneId", Some("java.time.ZoneId")),
-        BuiltinType::Currency => ("Currency", Some("java.util.Currency")),
-        BuiltinType::Bytes => ("byte[]", None),
-    };
+    let (name, import) = builtin.java_type(required);
     if let Some(import) = import {
         imports.insert(import.to_string());
     }

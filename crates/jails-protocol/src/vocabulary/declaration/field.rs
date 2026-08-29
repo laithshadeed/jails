@@ -14,53 +14,46 @@ use crate::identity::{FieldName, JavaType, Name, Package};
 use jails_support::codec::{Codec, Decoder, Encoder};
 
 /// A built-in scalar, or a type the project owns.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, jails_codec_derive::Codec)]
 pub enum ScalarFieldType {
+    #[codec(tag = 0)]
     Text,
+    #[codec(tag = 1)]
     Integer,
+    #[codec(tag = 2)]
     Long,
+    #[codec(tag = 3)]
     Boolean,
+    #[codec(tag = 4)]
     LocalDate,
+    #[codec(tag = 5)]
     LocalDateTime,
+    #[codec(tag = 6)]
     Instant,
+    #[codec(tag = 7)]
     Uuid,
+    #[codec(tag = 8)]
     Currency,
+    #[codec(tag = 9)]
     Decimal,
+    #[codec(tag = 10)]
     Bytes,
+    #[codec(tag = 11)]
     Duration,
+    #[codec(tag = 12)]
     ZoneId,
+    #[codec(tag = 13)]
     Uri,
+    #[codec(tag = 14)]
     Path,
+    #[codec(tag = 15)]
     Double,
+    #[codec(tag = 16)]
     /// A capitalised spelling: a type this project owns, fully qualified.
     Project(JavaType),
 }
 
 impl ScalarFieldType {
-    /// Fixed wire tags. Rust discriminants are never serialised, and these
-    /// numbers may never be reused for a different meaning.
-    fn tag(&self) -> u8 {
-        match self {
-            Self::Text => 0,
-            Self::Integer => 1,
-            Self::Long => 2,
-            Self::Boolean => 3,
-            Self::LocalDate => 4,
-            Self::LocalDateTime => 5,
-            Self::Instant => 6,
-            Self::Uuid => 7,
-            Self::Currency => 8,
-            Self::Decimal => 9,
-            Self::Bytes => 10,
-            Self::Duration => 11,
-            Self::ZoneId => 12,
-            Self::Uri => 13,
-            Self::Path => 14,
-            Self::Double => 15,
-            Self::Project(_) => 16,
-        }
-    }
-
     /// The canonical declaration spelling — one per scalar, whatever the user
     /// typed. This is what a report shows and what a ledger records.
     pub fn canonical(&self) -> String {
@@ -147,44 +140,14 @@ impl ScalarFieldType {
         Ok(Self::Project(qualified))
     }
 }
-impl Codec for ScalarFieldType {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::Project(ty) => ty.encode(encoder),
-            _ => Ok(()),
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Text,
-            1 => Self::Integer,
-            2 => Self::Long,
-            3 => Self::Boolean,
-            4 => Self::LocalDate,
-            5 => Self::LocalDateTime,
-            6 => Self::Instant,
-            7 => Self::Uuid,
-            8 => Self::Currency,
-            9 => Self::Decimal,
-            10 => Self::Bytes,
-            11 => Self::Duration,
-            12 => Self::ZoneId,
-            13 => Self::Uri,
-            14 => Self::Path,
-            15 => Self::Double,
-            16 => Self::Project(JavaType::decode(decoder)?),
-            other => return Err(format!("unknown scalar field type tag {other}").into()),
-        })
-    }
-}
-
 /// A field's shape. Nested collections are deliberately unrepresentable.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, jails_codec_derive::Codec)]
 pub enum FieldType {
+    #[codec(tag = 0)]
     Scalar(ScalarFieldType),
+    #[codec(tag = 1)]
     List(ScalarFieldType),
+    #[codec(tag = 2)]
     Map {
         key: ScalarFieldType,
         value: ScalarFieldType,
@@ -242,38 +205,6 @@ impl FieldType {
         }
     }
 }
-impl Codec for FieldType {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Scalar(scalar) => {
-                encoder.tag(0);
-                scalar.encode(encoder)
-            }
-            Self::List(scalar) => {
-                encoder.tag(1);
-                scalar.encode(encoder)
-            }
-            Self::Map { key, value } => {
-                encoder.tag(2);
-                key.encode(encoder)?;
-                value.encode(encoder)
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Scalar(ScalarFieldType::decode(decoder)?),
-            1 => Self::List(ScalarFieldType::decode(decoder)?),
-            2 => Self::Map {
-                key: ScalarFieldType::decode(decoder)?,
-                value: ScalarFieldType::decode(decoder)?,
-            },
-            other => return Err(format!("unknown field type tag {other}").into()),
-        })
-    }
-}
-
 /// `list<...>` / `map<...>` unwrapping, exact rather than by `contains`.
 fn wrapped<'a>(token: &'a str, name: &str) -> Option<&'a str> {
     token

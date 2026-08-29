@@ -66,6 +66,72 @@ pub trait Codec: Sized {
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self>;
 }
 
+/// The scalars and collections every record is built from, on the trait.
+///
+/// Split out because this file's secret is the *framing* -- what a length, a
+/// tag and a canonical order are -- while those impls are the separate fact
+/// that Rust's own types sit on that framing. They change for different
+/// reasons: one when the wire format does, the other when a new container
+/// needs to cross it.
+mod wire;
+
+// ---------------------------------------------------------------------------
+// Deriving the two shapes that are not decisions
+// ---------------------------------------------------------------------------
+
+/// One canonical codec for a record whose encoding *is* its field order.
+///
+/// `plan.md` §R1.1 asks for one constructor per type with the codec calling it.
+/// It does not ask for the field list to be written three times -- once in the
+/// struct, once in `encode`, once in `decode` -- which is what a hand-written
+/// impl costs and what makes a field added to the struct and forgotten in the
+/// codec a silent wire change rather than a compile error.
+///
+/// Declaration order is the wire order, so moving a field is a format change
+/// and looks like one.
+///
+/// ```ignore
+/// codec!(struct DependencySpec { coordinate, version, scope, optional });
+/// ```
+#[macro_export]
+macro_rules! codec {
+    (struct $name:ty { $($field:ident),+ $(,)? }) => {
+        impl $crate::codec::Codec for $name {
+            fn encode(&self, encoder: &mut $crate::codec::Encoder) -> $crate::Result<()> {
+                $( $crate::codec::Codec::encode(&self.$field, encoder)?; )+
+                Ok(())
+            }
+
+            fn decode(decoder: &mut $crate::codec::Decoder<'_>) -> $crate::Result<Self> {
+                Ok(Self {
+                    $( $field: $crate::codec::Codec::decode(decoder)?, )+
+                })
+            }
+        }
+    };
+
+    (enum $name:ty { $($tag:literal => $variant:ident),+ $(,)? }) => {
+        impl $crate::codec::Codec for $name {
+            fn encode(&self, encoder: &mut $crate::codec::Encoder) -> $crate::Result<()> {
+                encoder.tag(match self {
+                    $( Self::$variant => $tag, )+
+                });
+                Ok(())
+            }
+
+            fn decode(decoder: &mut $crate::codec::Decoder<'_>) -> $crate::Result<Self> {
+                match decoder.tag()? {
+                    $( $tag => Ok(Self::$variant), )+
+                    other => Err(::std::convert::Into::into(format!(
+                        "unknown {} tag {other}",
+                        ::std::stringify!($name)
+                    ))),
+                }
+            }
+        }
+    };
+}
+
 /// 4,096 bytes per project path.
 pub const MAX_PATH_BYTES: usize = 4 * 1024;
 /// 1 MiB per ordinary string or diagnostic.

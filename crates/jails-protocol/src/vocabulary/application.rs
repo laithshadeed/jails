@@ -105,47 +105,17 @@ impl Codec for AuditPolicy {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum DeclaredEntityLifecycle {
+    #[codec(tag = 0)]
     Active,
+    #[codec(tag = 1)]
     RetiredPreservingStorage,
+    #[codec(tag = 2)]
     RetiredDropPlanned { migration: ProjectPath },
 }
 
-impl Codec for DeclaredEntityLifecycle {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Active => {
-                encoder.tag(0);
-                Ok(())
-            }
-            Self::RetiredPreservingStorage => {
-                encoder.tag(1);
-                Ok(())
-            }
-            Self::RetiredDropPlanned { migration } => {
-                encoder.tag(2);
-                migration.encode(encoder)
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        match decoder.tag()? {
-            0 => Ok(Self::Active),
-            1 => Ok(Self::RetiredPreservingStorage),
-            2 => Ok(Self::RetiredDropPlanned {
-                migration: ProjectPath::decode(decoder)?,
-            }),
-            other => Err(format!(
-                "unknown declared lifecycle tag {other}.\n       fix: upgrade jails or restore the record from a known-good receipt."
-            )
-            .into()),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct EntitySpecV1 {
     pub id: EntityId,
     pub lifecycle: DeclaredEntityLifecycle,
@@ -155,44 +125,12 @@ pub struct EntitySpecV1 {
     pub audit: AuditPolicy,
 }
 
-impl Codec for EntitySpecV1 {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.id.encode(encoder)?;
-        self.lifecycle.encode(encoder)?;
-        self.table.encode(encoder)?;
-        encoder.seq(self.fields.len(), &self.fields)?;
-        encoder.seq(self.indexes.len(), &self.indexes)?;
-        self.audit.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            id: EntityId::decode(decoder)?,
-            lifecycle: DeclaredEntityLifecycle::decode(decoder)?,
-            table: TableBinding::decode(decoder)?,
-            fields: decoder.seq()?,
-            indexes: decoder.seq()?,
-            audit: AuditPolicy::decode(decoder)?,
-        })
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QuerySpecV1 {
     pub source: ProjectPath,
 }
 
-impl Codec for QuerySpecV1 {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.source.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            source: ProjectPath::decode(decoder)?,
-        })
-    }
-}
+jails_support::codec!(struct QuerySpecV1 { source });
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SliceSpecV1 {
@@ -228,7 +166,7 @@ impl Codec for SliceSpecV1 {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct ApplicationSpecV1 {
     pub name: Name,
     pub base_package: Package,
@@ -246,28 +184,6 @@ impl ApplicationSpecV1 {
             "JAILS-APPLICATION-SPEC-1",
             &encoder.finish()?,
         )))
-    }
-}
-
-impl Codec for ApplicationSpecV1 {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.name.encode(encoder)?;
-        self.base_package.encode(encoder)?;
-        self.java_release.encode(encoder)?;
-        self.dialect.encode(encoder)?;
-        encoder.map(&self.type_mappings)?;
-        encoder.map(&self.slices)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            name: Name::decode(decoder)?,
-            base_package: Package::decode(decoder)?,
-            java_release: JavaRelease::decode(decoder)?,
-            dialect: SqlDialect::decode(decoder)?,
-            type_mappings: decoder.map()?,
-            slices: decoder.map()?,
-        })
     }
 }
 

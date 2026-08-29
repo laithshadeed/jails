@@ -362,7 +362,7 @@ pub(super) fn kafka_check(project: &Project) -> Check {
             "spring-boot-starter-kafka",
         );
     let yaml = compose::read(root).unwrap_or_default();
-    let has_broker = yaml.contains("# jails:kafka") || yaml.contains("\n  kafka:");
+    let has_broker = compose::declares(&yaml, "kafka") || yaml.contains("\n  kafka:");
     match (has_client, has_broker) {
         (false, false) => Check::new(Status::Skip, "kafka", "not in use"),
         (true, true) => Check::new(

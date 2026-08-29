@@ -326,13 +326,17 @@ impl Codec for EntityId {
 
 /// Who declared an entity. An entity may have several owners at once, and
 /// removing one owner is not removing the entity.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
+#[codec(label = "owner")]
 pub enum OwnerId {
     /// The one selected app declaration source.
+    #[codec(tag = 0)]
     AppManifest,
     /// A capability declared in `jails.toml`.
+    #[codec(tag = 1)]
     DirectConfig,
     /// Direct `generate`/`destroy` ownership.
+    #[codec(tag = 2)]
     DirectCli,
 }
 
@@ -416,10 +420,15 @@ impl Codec for ToolFeatureSpec {
 // accumulating -- `via`, `order_by`, `limit`, `on_conflict`, `path` -- and the
 // answer when that becomes a real cost is to group them, not to box the enum.
 #[allow(clippy::large_enum_variant)]
+#[derive(jails_codec_derive::Codec)]
 pub enum EntitySpec {
+    #[codec(tag = 0)]
     Capability(CapabilitySpec),
+    #[codec(tag = 1)]
     Intent(IntentSpec),
+    #[codec(tag = 2)]
     ToolFeature(ToolFeatureSpec),
+    #[codec(tag = 3)]
     Declared(DeclaredSpec),
 }
 
@@ -451,74 +460,21 @@ impl EntitySpec {
         }
     }
 }
-impl Codec for EntitySpec {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Capability(spec) => {
-                encoder.tag(0);
-                spec.encode(encoder)
-            }
-            Self::Intent(spec) => {
-                encoder.tag(1);
-                spec.encode(encoder)
-            }
-            Self::ToolFeature(spec) => {
-                encoder.tag(2);
-                spec.encode(encoder)
-            }
-            Self::Declared(spec) => {
-                encoder.tag(3);
-                spec.encode(encoder)
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Capability(CapabilitySpec::decode(decoder)?),
-            1 => Self::Intent(IntentSpec::decode(decoder)?),
-            2 => Self::ToolFeature(ToolFeatureSpec::decode(decoder)?),
-            3 => Self::Declared(DeclaredSpec::decode(decoder)?),
-            other => return Err(format!("unknown entity spec tag {other}").into()),
-        })
-    }
-}
-
 // ---------------------------------------------------------------------------
 // One-shots
 // ---------------------------------------------------------------------------
 
 /// What a one-shot field evolution is applied to.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
+#[codec(label = "type target")]
 pub enum TypeTargetId {
+    #[codec(tag = 0)]
     Managed(IntentId),
+    #[codec(tag = 1)]
     /// A stable fully qualified name. The bytes live in the spec and read set,
     /// never here: a type jails did not generate can move file without
     /// becoming a different type.
     Existing(JavaType),
-}
-
-impl Codec for TypeTargetId {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Managed(id) => {
-                encoder.tag(0);
-                id.encode(encoder)
-            }
-            Self::Existing(ty) => {
-                encoder.tag(1);
-                ty.encode(encoder)
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Managed(IntentId::decode(decoder)?),
-            1 => Self::Existing(JavaType::decode(decoder)?),
-            other => return Err(format!("unknown type target tag {other}").into()),
-        })
-    }
 }
 
 /// The stable identity of a file supplied to a one-shot import.
@@ -535,7 +491,7 @@ pub enum SourceInputId {
 }
 
 /// `SHA256("JAILS-EXTERNAL-PATH-1" || encode(canonical_utf8_path))`.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub struct ExternalPathId(ObjectId);
 
 impl ExternalPathId {
@@ -562,17 +518,6 @@ impl ExternalPathId {
         self.0
     }
 }
-impl Codec for ExternalPathId {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.0.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self(ObjectId::decode(decoder)?))
-    }
-}
-
 impl Codec for SourceInputId {
     fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
@@ -600,50 +545,15 @@ impl Codec for SourceInputId {
 }
 
 /// A one-shot operation's identity: stable across a re-run of the same thing.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
+#[codec(label = "one-shot id")]
 pub enum OneShotId {
+    #[codec(tag = 0)]
     Field { target: TypeTargetId, field: Name },
+    #[codec(tag = 1)]
     Migration { path: ProjectPath },
+    #[codec(tag = 2)]
     Cases { source: SourceInputId },
-}
-
-impl OneShotId {
-    fn tag(&self) -> u8 {
-        match self {
-            Self::Field { .. } => 0,
-            Self::Migration { .. } => 1,
-            Self::Cases { .. } => 2,
-        }
-    }
-}
-impl Codec for OneShotId {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::Field { target, field } => {
-                target.encode(encoder)?;
-                field.encode(encoder)
-            }
-            Self::Migration { path } => path.encode(encoder),
-            Self::Cases { source } => source.encode(encoder),
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Field {
-                target: TypeTargetId::decode(decoder)?,
-                field: Name::decode(decoder)?,
-            },
-            1 => Self::Migration {
-                path: ProjectPath::decode(decoder)?,
-            },
-            2 => Self::Cases {
-                source: SourceInputId::decode(decoder)?,
-            },
-            other => return Err(format!("unknown one-shot id tag {other}").into()),
-        })
-    }
 }
 
 /// `SHA256("JAILS-CASES-RECEIPT-1" || encode(OneShotId::Cases { source }))`.
@@ -682,18 +592,22 @@ impl CasesReceiptId {
 }
 
 /// The content half of a one-shot.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(label = "one-shot spec")]
 pub enum OneShotSpec {
+    #[codec(tag = 0)]
     Field {
         target: TypeTargetId,
         field: FieldSpec,
     },
+    #[codec(tag = 1)]
     Migration {
         description: String,
         allocated_version: u64,
         path: ProjectPath,
         body: ObjectId,
     },
+    #[codec(tag = 2)]
     Cases {
         source: SourceInputId,
         source_sha256: ObjectId,
@@ -702,14 +616,6 @@ pub enum OneShotSpec {
 }
 
 impl OneShotSpec {
-    fn tag(&self) -> u8 {
-        match self {
-            Self::Field { .. } => 0,
-            Self::Migration { .. } => 1,
-            Self::Cases { .. } => 2,
-        }
-    }
-
     /// Whether this content belongs to that identity — discriminants equal
     /// **and** every repeated identity field agreeing.
     ///
@@ -731,60 +637,6 @@ impl OneShotSpec {
         }
     }
 }
-impl Codec for OneShotSpec {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::Field { target, field } => {
-                target.encode(encoder)?;
-                field.encode(encoder)
-            }
-            Self::Migration {
-                description,
-                allocated_version,
-                path,
-                body,
-            } => {
-                encoder.string(description)?;
-                encoder.u64(*allocated_version);
-                path.encode(encoder)?;
-                body.encode(encoder)?;
-                Ok(())
-            }
-            Self::Cases {
-                source,
-                source_sha256,
-                output,
-            } => {
-                source.encode(encoder)?;
-                source_sha256.encode(encoder)?;
-                output.encode(encoder)
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Field {
-                target: TypeTargetId::decode(decoder)?,
-                field: FieldSpec::decode(decoder)?,
-            },
-            1 => Self::Migration {
-                description: decoder.string()?,
-                allocated_version: decoder.u64()?,
-                path: ProjectPath::decode(decoder)?,
-                body: ObjectId::decode(decoder)?,
-            },
-            2 => Self::Cases {
-                source: SourceInputId::decode(decoder)?,
-                source_sha256: ObjectId::decode(decoder)?,
-                output: ProjectPath::decode(decoder)?,
-            },
-            other => return Err(format!("unknown one-shot spec tag {other}").into()),
-        })
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Label <-> value, through clap's own table
 // ---------------------------------------------------------------------------

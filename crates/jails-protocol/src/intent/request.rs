@@ -57,7 +57,7 @@ pub struct CanonicalRequestSyntaxV1 {
 }
 
 /// The hash of that projection.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub struct RequestSyntaxFingerprint(ObjectId);
 
 impl RequestSyntaxFingerprint {
@@ -72,17 +72,6 @@ impl RequestSyntaxFingerprint {
 
 mod lifecycle;
 pub use lifecycle::*;
-impl Codec for RequestSyntaxFingerprint {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.0.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        ObjectId::decode(decoder).map(Self)
-    }
-}
-
 impl CanonicalRequestSyntaxV1 {
     /// `SHA256("JAILS-REQUEST-SYNTAX-1" || encode(self))`, exactly.
     pub fn fingerprint(&self) -> Result<RequestSyntaxFingerprint> {
@@ -220,16 +209,20 @@ pub struct CanonicalCapability {
 }
 
 /// What `generate` was asked to produce.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum CanonicalGenerateRequest {
+    #[codec(tag = 0)]
     Entity { id: EntityId, spec: EntitySpec },
+    #[codec(tag = 1)]
     OneShot { id: OneShotId, spec: OneShotSpec },
 }
 
 /// What a `destroy` names.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum ChangeSubject {
+    #[codec(tag = 0)]
     Entity(EntityId),
+    #[codec(tag = 1)]
     OneShot(OneShotId),
 }
 
@@ -331,20 +324,7 @@ pub struct UndoFilesRequestV1 {
     pub merge: bool,
 }
 
-impl Codec for UndoFilesRequestV1 {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.transaction.encode(encoder)?;
-        encoder.bool(self.merge);
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            transaction: TransactionId::decode(decoder)?,
-            merge: decoder.bool()?,
-        })
-    }
-}
+jails_support::codec!(struct UndoFilesRequestV1 { transaction, merge });
 
 impl CanonicalMutationRequest {
     /// `add` / `remove`: a non-empty, sorted, duplicate-free capability list.
@@ -722,96 +702,18 @@ fn decode_capabilities(decoder: &mut Decoder<'_>) -> Result<Vec<CanonicalCapabil
     Ok(rows)
 }
 
-impl Codec for CanonicalGenerateRequest {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Entity { id, spec } => {
-                encoder.tag(0);
-                id.encode(encoder)?;
-                spec.encode(encoder)
-            }
-            Self::OneShot { id, spec } => {
-                encoder.tag(1);
-                id.encode(encoder)?;
-                spec.encode(encoder)
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Entity {
-                id: EntityId::decode(decoder)?,
-                spec: EntitySpec::decode(decoder)?,
-            },
-            1 => Self::OneShot {
-                id: OneShotId::decode(decoder)?,
-                spec: OneShotSpec::decode(decoder)?,
-            },
-            other => Err(format!("unknown generate request tag {other}"))?,
-        })
-    }
-}
-
-impl Codec for ChangeSubject {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Entity(id) => {
-                encoder.tag(0);
-                id.encode(encoder)
-            }
-            Self::OneShot(id) => {
-                encoder.tag(1);
-                id.encode(encoder)
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Entity(EntityId::decode(decoder)?),
-            1 => Self::OneShot(OneShotId::decode(decoder)?),
-            other => Err(format!("unknown change subject tag {other}"))?,
-        })
-    }
-}
-
 /// Where this invocation's app manifest came from.
 ///
 /// §R1.1: *"Neither becomes an `OwnerId`, and switching manifest paths cannot
 /// leave a hidden second app owner."* There is one app-manifest namespace; the
 /// source is an input fact, recorded in the fingerprint rather than in the
 /// ownership model.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, jails_codec_derive::Codec)]
 pub enum ManifestSourceId {
+    #[codec(tag = 0)]
     Project(ProjectPath),
+    #[codec(tag = 1)]
     External { path_id: ExternalPathId },
-}
-
-impl Codec for ManifestSourceId {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Project(path) => {
-                encoder.tag(0);
-                path.encode(encoder)
-            }
-            Self::External { path_id } => {
-                encoder.tag(1);
-                path_id.encode(encoder)?;
-                Ok(())
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Project(ProjectPath::decode(decoder)?),
-            1 => Self::External {
-                path_id: ExternalPathId::decode(decoder)?,
-            },
-            other => Err(format!("unknown manifest source tag {other}"))?,
-        })
-    }
 }
 
 /// Everything that decides whether two runs are *the same invocation*.

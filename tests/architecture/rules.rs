@@ -159,6 +159,39 @@ fn the_abstract_md_ladder_gates_are_ratchets_that_only_move_down() {
 /// Same-level edges are allowed, including mutual ones: `generate` and `spring`
 /// call each other and ship in the same crate, which is a design decision
 /// rather than an accident.
+/// Every gate that names a file must name one that is there.
+///
+/// A gate keyed by path has two failure modes, and only one of them is loud.
+/// Pointing at the *wrong* file drags rows red, which `SPRING_RS`'s comment
+/// records. Pointing at a file that no longer exists is silent: the exclusion
+/// excludes nothing, or the measurement measures nothing, and the row keeps
+/// printing a number nobody can tell from a real one.
+///
+/// `CODEMOD_RS` spent a whole change stale -- it still said
+/// `jails-project/src/codemod.rs` after the splice moved to its own crate --
+/// and nothing failed. It was harmless there by luck: the owner's own markers
+/// are all in comments, so excluding nothing excluded nothing that counted.
+#[test]
+fn every_path_a_gate_names_is_a_file_the_scanner_found() {
+    let files = sources();
+    for (constant, path) in [
+        ("BUILTIN_RS", BUILTIN_RS),
+        ("WIRE_RS", WIRE_RS),
+        ("SPRING_RS", SPRING_RS),
+        ("CODEMOD_RS", CODEMOD_RS),
+        ("DOCTOR_RS", DOCTOR_RS),
+        ("SCRATCH_RS", SCRATCH_RS),
+    ] {
+        assert!(
+            files.iter().any(|file| file.path.ends_with(path)),
+            "`{constant}` names `{path}`, which the workspace scanner did not find. \
+             Either the file moved and the constant did not, or it was deleted -- and \
+             until one of those is fixed, every gate keyed by it is measuring nothing \
+             while reporting a number."
+        );
+    }
+}
+
 #[test]
 fn no_module_depends_on_a_layer_above_its_own() {
     let mut offenders = Vec::new();
@@ -275,10 +308,17 @@ fn layers_lists_each_module_once() {
 /// deleting the legacy half cannot silently loosen a boundary.
 const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-model", "app", 2),
+    ("jails-model", "builtin", 2),
     ("jails-model", "capability", 2),
     ("jails-model", "component", 2),
     ("jails-model", "constraint", 2),
     // jails-support: no jails concepts at all -- writing, running, encoding.
+    // `jails-codemod` depends on nothing at all -- it knows one text format
+    // and no more -- so it sits beside the support primitives rather than in
+    // the project layer it came from. It moved out of `jails-project` because
+    // three more implementations of the marked block had appeared in crates
+    // that could not depend on it.
+    ("jails-codemod", "marked", 0),
     ("jails-support", "apply", 0),
     ("jails-support", "process", 0),
     ("jails-support", "hermetic", 0),
@@ -363,7 +403,6 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-project", "junit", 5),
     ("jails-project", "synonyms", 5),
     ("jails-project", "capture", 5),
-    ("jails-project", "codemod", 5),
     ("jails-project", "compose", 5),
     ("jails-project", "model", 5),
     ("jails-project", "modernize", 5),

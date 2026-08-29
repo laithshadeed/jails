@@ -25,6 +25,8 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 toml = "1.1.4"
 
+jails-codec-derive = { path = "crates/jails-codec-derive" }
+jails-codemod = { path = "crates/jails-codemod" }
 jails-commit = { path = "crates/jails-commit" }
 jails-compiler = { path = "crates/jails-compiler" }
 jails-contracts = { path = "crates/jails-contracts" }

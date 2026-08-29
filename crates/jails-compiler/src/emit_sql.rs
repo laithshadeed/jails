@@ -6,10 +6,11 @@ mod sqlite;
 
 use crate::CompileError;
 use jails_contracts::{RenderedMigration, WorkspaceSnapshot};
+use jails_model::LiteralKind;
 use jails_model::{
-    AppModel, BuiltinType, ColumnRenamePolicy, Entity, Facet, Field, FieldAddPolicy,
-    FieldEvolutionPolicy, Index, IndexDirection, ModelPatch, StableId, StorageRetirementPolicy,
-    TypeChangeStrategy, TypeRef,
+    AppModel, ColumnRenamePolicy, Entity, Facet, Field, FieldAddPolicy, FieldEvolutionPolicy,
+    Index, IndexDirection, ModelPatch, StableId, StorageRetirementPolicy, TypeChangeStrategy,
+    TypeRef,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -639,24 +640,7 @@ fn sql_type(model: &AppModel, field: &Field) -> Result<&'static str, CompileErro
         )));
     }
     match &field.ty {
-        TypeRef::Builtin(builtin) => Ok(match builtin {
-            BuiltinType::String
-            | BuiltinType::Uri
-            | BuiltinType::Path
-            | BuiltinType::ZoneId
-            | BuiltinType::Currency => "text",
-            BuiltinType::Integer => "integer",
-            BuiltinType::Long => "bigint",
-            BuiltinType::Double => "double precision",
-            BuiltinType::Decimal => "numeric",
-            BuiltinType::Boolean => "boolean",
-            BuiltinType::Uuid => "uuid",
-            BuiltinType::Date => "date",
-            BuiltinType::DateTime => "timestamp",
-            BuiltinType::Instant => "timestamptz",
-            BuiltinType::Duration => "interval",
-            BuiltinType::Bytes => "bytea",
-        }),
+        TypeRef::Builtin(builtin) => Ok(builtin.semantics().sql_postgres),
         TypeRef::External(name) => Err(CompileError::new(format!(
             "project type `{name}` has no declared SQL representation\n       fix: declare a codec before storing this field"
         ))),
@@ -671,12 +655,21 @@ fn sql_literal(field: &Field, value: &str) -> Result<String, CompileError> {
             field.names.sql_column
         ))
     };
-    match &field.ty {
-        TypeRef::Builtin(BuiltinType::Integer | BuiltinType::Long) => value
+    let builtin = match &field.ty {
+        TypeRef::Builtin(builtin) => *builtin,
+        TypeRef::External(_) => return Err(invalid()),
+    };
+    // Grouped by how the builtin's literal is written, which is the row's
+    // `literal` -- the same question `link_default` asks. Both parsed as
+    // `i64`: a backfill literal is checked for shape here and by the column's
+    // own type when the migration runs, so narrowing `int` to 32 bits twice
+    // would only change which of the two reports it.
+    match builtin.semantics().literal {
+        LiteralKind::Int32 | LiteralKind::Int64 => value
             .parse::<i64>()
             .map(|number| number.to_string())
             .map_err(|_| invalid()),
-        TypeRef::Builtin(BuiltinType::Double | BuiltinType::Decimal) => {
+        LiteralKind::Fractional => {
             let number = value.parse::<f64>().map_err(|_| invalid())?;
             if number.is_finite() {
                 Ok(value.to_string())
@@ -684,11 +677,11 @@ fn sql_literal(field: &Field, value: &str) -> Result<String, CompileError> {
                 Err(invalid())
             }
         }
-        TypeRef::Builtin(BuiltinType::Boolean) => match value {
+        LiteralKind::Boolean => match value {
             "true" | "false" => Ok(value.to_string()),
             _ => Err(invalid()),
         },
-        TypeRef::Builtin(BuiltinType::Bytes) | TypeRef::External(_) => Err(invalid()),
-        TypeRef::Builtin(_) => Ok(format!("'{}'", value.replace('\'', "''"))),
+        LiteralKind::Opaque => Err(invalid()),
+        LiteralKind::Text => Ok(format!("'{}'", value.replace('\'', "''"))),
     }
 }

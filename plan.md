@@ -245,6 +245,81 @@ verbatim from `customer.js` and `admin.js`:
       re-apply must not leave a transaction expecting an object it never wrote,
       and `doctor`'s `fix:` must not name a command that reproduces the fault.
 
+## P13 — the gates, and what they were not saying
+
+- [ ] **P13.2** **Five production files parse Maven XML; the document asks for
+      one.** `jails-project/src/pom.rs` is the path being replaced,
+      `jails-workspace/src/{capture,documents}.rs` and
+      `documents/build_feature.rs` are replacing it, and
+      `jails-protocol/src/vocabulary/coordinate.rs` reads a plugin block as a
+      protocol value. Four of the five are the strangler migration, so the
+      duplication is deliberate until the cutover -- and gate R3.8 exists so
+      that a *sixth* answer cannot appear while it is going on, which is the
+      failure a migration invites.
+
+      Closing this is the cutover decision, not a refactor: it means deleting
+      `pom.rs` once the new backend is trusted. `jails-project/src/junit.rs` is
+      deliberately below the bar -- it matches one element to read one
+      artifact's version, which is a lookup rather than an opinion about
+      structure.
+
+- [ ] **P13.4** **144 wire formats are still written by hand, and the seam is
+      *not* exhausted -- the first sweep was wrong about why.** It concluded
+      the remainder needed per-type work because it treated
+      `encoder.count(..)` as a hard blocker. It is not one.
+      `Encoder::seq` **is** a count followed by a loop of `encode`, `set` is
+      that plus the `ordered` check, and `map` the same for key/value pairs.
+      So a codec that frames its own collection is byte-identical to
+      `Vec<T>`, `BTreeSet<T>` or `BTreeMap<K, V>` doing it -- the canonical
+      ordering guarantee included, which is the part that looked like it had
+      to stay hand-written.
+
+      **29 codecs frame a collection by hand**, roughly half of them with the
+      `ordered` check. Every one whose field is already a `Vec`, `BTreeSet` or
+      `BTreeMap` converts with no wire change. `RendererStamp` is the worked
+      example: eight fields, one of them a hand-framed `Vec<ObjectId>`, and it
+      derived with all 62 golden ledgers byte-identical.
+
+      **A regex filter has now found its own ceiling**, and what it rejects is
+      worth keeping rather than repeating. Of the collection-framing codecs,
+      three refuse mechanically for a reason no attribute could express --
+      `RendererContextV1`, `PreparedChange` and `ToolIdentityFingerprint` call
+      `self.validate()?` inside `encode`, so the codec is enforcing an
+      invariant rather than describing a layout. `AppliedEntity` opens with a
+      refusal on an empty set. `PreparedIdentityV1` writes a format constant.
+      Those five are not candidates and should stay hand-written.
+
+      The rest were rejected by the *filter's* limits, not the code's: an
+      `Option<String>` written through a closure, an inner enum encoded by its
+      `tag()`, and a field parser that mis-reads multi-line generic types. Each
+      would need a real Rust parser to clear safely, and the cost of getting it
+      wrong is a silent four-byte wire change. **Convert these by reading
+      them, one at a time.**
+
+      What is left after those is decoders that re-parse through a constructor
+      so a recovered journal cannot carry what the CLI would reject, and
+      encodings whose payload is a *derived* value rather than a field. A
+      derive growing an attribute per case would be a worse restatement of the
+      same code, which is why R3.5's target is withdrawn rather than zero.
+
+      **The golden trees are not sufficient on their own.**
+      `PreparedIdentityV1` passed all 62 of them and still changed the wire:
+      its `encode` opens with a bare `encoder.u32(1)` that belongs to no
+      field, so the derive dropped four bytes and only
+      `prepared_bundle_matches_the_protocol_golden` in `jails-prepare` caught
+      it. A candidate filter that reasons about `self.<field>` writes cannot
+      see a literal one -- so a struct whose encode carries anything that is
+      not a field is not a candidate, however well its fields line up.
+
+      **Convert in small batches, and run `cargo test -p jails-prepare
+      -p jails-commit -p jails-protocol` alongside `--test golden` after
+      each.** A sweep over this file set destroyed six files earlier by mixing
+      an absolute string index with a relative one; the converter in use now
+      diffs top-level declarations before and after and refuses to write if
+      anything but the intended `impl Codec` disappeared. That check is about
+      *structure* and says nothing about bytes, which is what the two test
+      sets above are for.
+
 ---
 
 ## Verification

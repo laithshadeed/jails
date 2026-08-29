@@ -50,52 +50,25 @@ use jails_support::codec::{Codec, Decoder, Encoder, ordered};
 use std::collections::BTreeSet;
 
 /// Which human input a frozen candidate depended on.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, jails_codec_derive::Codec)]
+#[codec(label = "desired input")]
 pub enum DesiredInputId {
+    #[codec(tag = 0)]
     HumanConfig,
+    #[codec(tag = 1)]
     AppManifest(ManifestSourceId),
+    #[codec(tag = 2)]
     DirectRequest,
+    #[codec(tag = 3)]
     CasesBrief(SourceInputId),
 }
 
-impl DesiredInputId {
-    fn tag(&self) -> u8 {
-        match self {
-            Self::HumanConfig => 0,
-            Self::AppManifest(_) => 1,
-            Self::DirectRequest => 2,
-            Self::CasesBrief(_) => 3,
-        }
-    }
-}
-impl Codec for DesiredInputId {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::AppManifest(source) => source.encode(encoder),
-            Self::CasesBrief(source) => source.encode(encoder),
-            Self::HumanConfig | Self::DirectRequest => Ok(()),
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::HumanConfig,
-            1 => Self::AppManifest(ManifestSourceId::decode(decoder)?),
-            2 => Self::DirectRequest,
-            3 => Self::CasesBrief(SourceInputId::decode(decoder)?),
-            other => Err(format!("unknown desired input tag {other}"))?,
-        })
-    }
-}
-
 /// What that input has to still be for the candidate to remain applicable.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, jails_codec_derive::Codec)]
 pub enum DesiredInputGuard {
-    Exact {
-        sha256: ObjectId,
-        len: u64,
-    },
+    #[codec(tag = 0)]
+    Exact { sha256: ObjectId, len: u64 },
+    #[codec(tag = 1)]
     /// An input this same transaction would have produced. Guarded by its
     /// path as well, because the bytes alone would match a file somewhere
     /// else that happened to be identical.
@@ -104,52 +77,8 @@ pub enum DesiredInputGuard {
         sha256: ObjectId,
         len: u64,
     },
+    #[codec(tag = 2)]
     Absent,
-}
-
-impl DesiredInputGuard {
-    fn tag(&self) -> u8 {
-        match self {
-            Self::Exact { .. } => 0,
-            Self::ProjectedTransactionOutput { .. } => 1,
-            Self::Absent => 2,
-        }
-    }
-}
-impl Codec for DesiredInputGuard {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::Exact { sha256, len } => {
-                sha256.encode(encoder)?;
-                encoder.u64(*len);
-                Ok(())
-            }
-            Self::ProjectedTransactionOutput { path, sha256, len } => {
-                path.encode(encoder)?;
-                sha256.encode(encoder)?;
-                encoder.u64(*len);
-                Ok(())
-            }
-            Self::Absent => Ok(()),
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Exact {
-                sha256: ObjectId::decode(decoder)?,
-                len: decoder.u64()?,
-            },
-            1 => Self::ProjectedTransactionOutput {
-                path: ProjectPath::decode(decoder)?,
-                sha256: ObjectId::decode(decoder)?,
-                len: decoder.u64()?,
-            },
-            2 => Self::Absent,
-            other => Err(format!("unknown desired input guard tag {other}"))?,
-        })
-    }
 }
 
 /// One frozen input and its guard.

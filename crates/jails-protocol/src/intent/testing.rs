@@ -177,27 +177,11 @@ impl Codec for SelectionReason {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct TestPartition {
     pub engine: TestEngine,
     pub selectors: Vec<TestSelector>,
     pub reasons: Vec<SelectionReason>,
-}
-
-impl Codec for TestPartition {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.engine.encode(encoder)?;
-        encoder.seq(self.selectors.len(), &self.selectors)?;
-        encoder.seq(self.reasons.len(), &self.reasons)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            engine: TestEngine::decode(decoder)?,
-            selectors: decoder.seq()?,
-            reasons: decoder.seq()?,
-        })
-    }
 }
 
 /// The complete, engine-independent decision made before any test runs.

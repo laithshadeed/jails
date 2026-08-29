@@ -67,20 +67,7 @@ impl RootIdentity {
         })
     }
 }
-impl Codec for RootIdentity {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.u64(self.device);
-        encoder.u64(self.inode);
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            device: decoder.u64()?,
-            inode: decoder.u64()?,
-        })
-    }
-}
+jails_support::codec!(struct RootIdentity { device, inode });
 
 /// How far a transaction got.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -155,11 +142,15 @@ impl Codec for JournalState {
 }
 
 /// The phase a blocked transaction would resume from.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum ResumeState {
+    #[codec(tag = 0)]
     Prepared,
+    #[codec(tag = 1)]
     Active,
+    #[codec(tag = 2)]
     LedgerCommitted,
+    #[codec(tag = 3)]
     Complete,
 }
 
@@ -250,28 +241,23 @@ pub(crate) enum ObservedImage {
 }
 
 /// Why a transaction stopped.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum BlockReason {
+    #[codec(tag = 0)]
     UnknownLiveImage { actual: ActualImage },
+    #[codec(tag = 1)]
     Unreadable { error_kind: String },
+    #[codec(tag = 2)]
     RootChanged,
+    #[codec(tag = 3)]
     CorruptJournal,
+    #[codec(tag = 4)]
     CorruptObject(ObjectId),
+    #[codec(tag = 5)]
     MultipleTransactions,
 }
 
 impl BlockReason {
-    fn tag(&self) -> u8 {
-        match self {
-            Self::UnknownLiveImage { .. } => 0,
-            Self::Unreadable { .. } => 1,
-            Self::RootChanged => 2,
-            Self::CorruptJournal => 3,
-            Self::CorruptObject(_) => 4,
-            Self::MultipleTransactions => 5,
-        }
-    }
-
     /// What a person is told, and what they can do about it.
     pub fn explain(&self) -> String {
         match self {
@@ -301,40 +287,6 @@ impl BlockReason {
         }
     }
 }
-impl Codec for BlockReason {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::UnknownLiveImage { actual } => {
-                actual.encode(encoder)?;
-                Ok(())
-            }
-            Self::Unreadable { error_kind } => encoder.string(error_kind),
-            Self::CorruptObject(id) => {
-                id.encode(encoder)?;
-                Ok(())
-            }
-            Self::RootChanged | Self::CorruptJournal | Self::MultipleTransactions => Ok(()),
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::UnknownLiveImage {
-                actual: ActualImage::decode(decoder)?,
-            },
-            1 => Self::Unreadable {
-                error_kind: decoder.string()?,
-            },
-            2 => Self::RootChanged,
-            3 => Self::CorruptJournal,
-            4 => Self::CorruptObject(ObjectId::decode(decoder)?),
-            5 => Self::MultipleTransactions,
-            other => Err(format!("unknown block reason tag {other}"))?,
-        })
-    }
-}
-
 /// The durable record of one transaction.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JournalV1 {

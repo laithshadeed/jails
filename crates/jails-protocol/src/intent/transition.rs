@@ -26,59 +26,21 @@ use std::collections::BTreeSet;
 /// All three fields together: a transaction id alone would match a receipt
 /// that has since been rewritten, and a generation alone would match a
 /// different transaction at the same generation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct ReceiptGuard {
     pub transaction: TransactionId,
     pub generation: u64,
     pub record_checksum: ObjectId,
 }
 
-impl Codec for ReceiptGuard {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.transaction.encode(encoder)?;
-        encoder.u64(self.generation);
-        self.record_checksum.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            transaction: TransactionId::decode(decoder)?,
-            generation: decoder.u64()?,
-            record_checksum: ObjectId::decode(decoder)?,
-        })
-    }
-}
-
 /// The operation a frozen conflict came from.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct ConflictOrigin {
     pub operation: OperationId,
     pub transaction: TransactionId,
     pub generation: u64,
     pub receipt: ReceiptGuard,
     pub pending: PendingIdentity,
-}
-
-impl Codec for ConflictOrigin {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.operation.encode(encoder)?;
-        self.transaction.encode(encoder)?;
-        encoder.u64(self.generation);
-        self.receipt.encode(encoder)?;
-        self.pending.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            operation: OperationId::decode(decoder)?,
-            transaction: TransactionId::decode(decoder)?,
-            generation: decoder.u64()?,
-            receipt: ReceiptGuard::decode(decoder)?,
-            pending: PendingIdentity::decode(decoder)?,
-        })
-    }
 }
 
 /// Finish what the conflicted operation started, with the human's resolutions.

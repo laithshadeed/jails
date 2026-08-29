@@ -109,26 +109,7 @@ fn sample(field: &Field, imports: &mut BTreeSet<String>) -> Option<String> {
 }
 
 fn builtin_sample(builtin: BuiltinType) -> String {
-    match builtin {
-        BuiltinType::String => "\"sample\"".to_string(),
-        BuiltinType::Integer => "1".to_string(),
-        BuiltinType::Long => "1L".to_string(),
-        BuiltinType::Double => "1.0d".to_string(),
-        BuiltinType::Decimal => "BigDecimal.ONE".to_string(),
-        BuiltinType::Boolean => "false".to_string(),
-        BuiltinType::Uuid => {
-            "UUID.fromString(\"00000000-0000-0000-0000-000000000001\")".to_string()
-        }
-        BuiltinType::Date => "LocalDate.parse(\"2026-01-01\")".to_string(),
-        BuiltinType::DateTime => "LocalDateTime.parse(\"2026-01-01T00:00:00\")".to_string(),
-        BuiltinType::Instant => "Instant.parse(\"2026-01-01T00:00:00Z\")".to_string(),
-        BuiltinType::Duration => "Duration.ofMinutes(1)".to_string(),
-        BuiltinType::Uri => "URI.create(\"https://example.test\")".to_string(),
-        BuiltinType::Path => "Path.of(\"sample\")".to_string(),
-        BuiltinType::ZoneId => "ZoneId.of(\"UTC\")".to_string(),
-        BuiltinType::Currency => "Currency.getInstance(\"USD\")".to_string(),
-        BuiltinType::Bytes => "new byte[]{1}".to_string(),
-    }
+    builtin.semantics().sample.to_string()
 }
 
 fn upper_first(value: &str) -> String {

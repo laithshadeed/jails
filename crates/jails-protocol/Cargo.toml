@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+jails-codec-derive.workspace = true
+jails-codemod.workspace = true
 # Recipe and Capability are `ValueEnum`s, and their CLI spelling *is* their
 # recorded spelling -- routed through clap's own table rather than a second
 # match, so the two cannot disagree about what a ledger row names.

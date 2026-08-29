@@ -307,12 +307,12 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       when a tenth emitter picks a third name.",
             },
             src.iter()
-                .map(|file| file.production.matches("\\\"version\\\": ").count())
+                .map(|file| file.literals.matches("\\\"version\\\": ").count())
                 .sum(),
         ),
         (
             Ratchet {
-                name: "`# jails:` block literals outside `codemod.rs`",
+                name: "`# jails:` block literals outside `jails-codemod`",
                 rung: "16 — collect the splice primitives (plan.md §11)",
                 // `compose.rs`, `add.rs`, `add/database.rs`,
                 // `add/test_wiring.rs` and `doctor.rs` each built and parsed
@@ -321,7 +321,33 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // extracted, with the same consequence waiting: a change to
                 // the markers, or to the rule about the trailing newline, has
                 // to be made in five places and will be made in four.
-                ceiling: 0,
+                //
+                // **This row read zero for its whole life and could not have
+                // read anything else.** It counted `file.production`, which
+                // has every string literal blanked to spaces before a gate
+                // sees it -- and a `# jails:` marker only ever appears inside
+                // one. Ceiling and target were both zero, so a vacuous gate
+                // and a held line printed the same word. It counts
+                // `file.literals` now, and the true number is 13.
+                //
+                // Three of those are what the row was written to prevent, and
+                // all three are in the new tree:
+                // `jails-compiler/src/emit_capability/reader_facet.rs`,
+                // `jails-workspace/src/documents.rs` and
+                // `jails-workspace/src/reader_facet.rs` each build the block
+                // with their own `format!`. They are not careless: `codemod`
+                // is in `jails-project`, and neither new crate depends on it,
+                // so reuse was not available. Closing this row means giving
+                // the splice a home both trees can reach -- which is the same
+                // "one document backend" the Maven row above is about -- not
+                // deleting three `format!`s.
+                //
+                // The rest are reads and messages: `compose.rs` asking
+                // whether a marker is present, `resource.rs` refusing one
+                // inside canonical YAML, `doctor.rs` writing a `# jails:`
+                // note into `~/.testcontainers.properties`. They know the
+                // format too, and they are why the target is 0 rather than 3.
+                ceiling: MARKED_BLOCK_LITERALS,
                 target: 0,
                 why: "The marked block is how jails edits a file the reader owns, and it is \
                       what makes `remove` the exact inverse of `add`. A second implementation \
@@ -330,10 +356,134 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
             src.iter()
                 .filter(|file| !file.path.ends_with(CODEMOD_RS))
                 .map(|file| {
-                    file.production.matches("# jails:").count()
-                        + file.production.matches("# /jails:").count()
+                    file.literals.matches("# jails:").count()
+                        + file.literals.matches("# /jails:").count()
                 })
                 .sum(),
+        ),
+        (
+            Ratchet {
+                name: "production files parsing Maven XML with their own scanner",
+                rung: "R3.8 — one document backend",
+                // `simplify-sol.md`'s deletion map: *duplicate Maven XML
+                // scanners -> one document backend*, deleting "second
+                // scanners and field-name lies".
+                //
+                // Five today, and the target of one is the document's ask
+                // rather than a number reachable in one change: four of the
+                // five are the strangler migration -- `pom.rs` being replaced,
+                // `jails-workspace/src/documents.rs` replacing it -- so the
+                // duplication is deliberate until the cutover, and the row is
+                // what makes that cutover measurable rather than asserted.
+                //
+                // Until then what it buys is that a *seventh* answer cannot
+                // appear. `CLAUDE.md` already records what a second scanner
+                // costs: `java::types_annotated_with` was three walks, two
+                // matching a raw substring, which is how `doctor` came to
+                // name the wrong container config and then report every other
+                // test as missing an import of it.
+                ceiling: MAVEN_XML_PARSERS,
+                target: 1,
+                why: "A tool that half-understands a build file and reports a dependency the \
+                      build does not have is the worst outcome available -- and two scanners \
+                      are two half-understandings that disagree without saying so.",
+            },
+            maven_xml_parsers(&src),
+        ),
+        (
+            Ratchet {
+                name: "largest table of per-builtin knowledge outside its row",
+                rung: "R3.7 — one semantics row per builtin type",
+                // `simplify-sol.md`'s deletion map: *repeated `Layer`, route
+                // and name tables -> small typed registries with derived
+                // projections*, deleting "synchronized enum/label/package
+                // tables".
+                //
+                // 17 -> 4. Seven matches over `BuiltinType` became field
+                // reads on `BuiltinSemantics`, and `BuiltinType::semantics`
+                // is an exhaustive match -- so a builtin added to the enum
+                // does not compile until somebody writes what it means. The
+                // seven were each exhaustive too, which is exactly why this
+                // was invisible: the compiler forced seven edits and checked
+                // that none of them agreed.
+                //
+                // One of them, `link_default`, was phrased as a negation --
+                // a string default was allowed for anything not in a list of
+                // six numeric types -- so a new builtin silently accepted a
+                // default it cannot parse. `LiteralKind` states it
+                // positively, which turns that into a compile error.
+                ceiling: LARGEST_BUILTIN_TABLE,
+                target: LARGEST_BUILTIN_TABLE,
+                why: "A second table of what a builtin means is a second answer, and the one \
+                      that is wrong is whichever the reader did not edit -- which the compiler \
+                      cannot report, because both are exhaustive over the same enum.",
+            },
+            largest_builtin_table(&src),
+        ),
+        (
+            Ratchet {
+                name: "compiler passes reaching outside the captured snapshot",
+                rung: "R3.6 — planning is a function of the capture",
+                // `simplify-sol.md`'s first fitness rule. `jails-compiler`,
+                // `jails-model` and `jails-contracts` depend on nothing that
+                // can read a disk or start a process, and this says so as a
+                // number rather than as a dependency list somebody has to
+                // read -- a `use std::fs` inside a pass compiles fine today
+                // and only shows up later as a plan that depended on a file
+                // nobody recorded reading.
+                //
+                // Gated at zero *while it is zero*. A purity property is
+                // cheap to keep and expensive to recover: once three passes
+                // read files, the fix is no longer a lint, it is a redesign
+                // of what capture returns.
+                ceiling: 0,
+                target: 0,
+                why: "The reason to capture first is that planning becomes a function -- same \
+                      snapshot, same request, same plan -- which is what makes a plan safe to \
+                      show before it is applied. One read inside a pass ends that quietly.",
+            },
+            compiler_reaches_outside_the_snapshot(&src),
+        ),
+        (
+            Ratchet {
+                name: "types whose wire format is hand-written (target withdrawn)",
+                rung: "R3.5 — one owner per persisted format",
+                // `simplify-sol.md`'s deletion map, row 8: *hand
+                // codecs/tags/JSON serializers -> generated wire/report
+                // schemas*, and its fitness rule *every persisted union tag
+                // and field number is generated and golden-tested*.
+                //
+                // 210 -> 147 when `#[derive(Codec)]` landed. The derive is
+                // normative about the two things a hand codec kept getting a
+                // choice over: a struct encodes its fields in declaration
+                // order, and an enum's tag is explicit
+                // (`#[codec(tag = N)]`), never a Rust discriminant, so
+                // reordering variants cannot renumber the wire. Both were
+                // already true of every impl it replaced -- that is what let
+                // the 62 golden ledgers stay byte-identical across the
+                // change, and what makes them the test this row leans on.
+                //
+                // **The target is withdrawn, not reached.** What is left is
+                // not more of the same: a codec that enforces key ordering
+                // while it decodes, one that counts a recursion depth, one
+                // that re-parses a value through its constructor so a
+                // recovered journal cannot carry what the CLI would reject.
+                // Those are decisions about *this* format, and a derive that
+                // grew attributes for each would be a worse restatement of
+                // the same code. Demanding zero would read as "express
+                // validation as an attribute", which is the optional-field
+                // soup the same document argues against.
+                //
+                // What the row is for is that the number cannot *rise*: a new
+                // persisted type derives its format, or says in the commit why
+                // it is one of the bespoke ones.
+                ceiling: HAND_WRITTEN_CODECS,
+                target: HAND_WRITTEN_CODECS,
+                why: "A hand-written codec states the field list three times -- in the type, \
+                      in `encode`, in `decode` -- so a field added to the type and forgotten \
+                      in the codec is a silent change of format rather than a compile error.",
+            },
+            hand_written_codecs(&src),
         ),
         (
             Ratchet {

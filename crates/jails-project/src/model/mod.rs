@@ -269,8 +269,10 @@ impl Change {
             {
                 Some(current) if current.settings != block.settings => {
                     return Err(format!(
-                        "conflicting `# jails:{}` block plans for {}",
-                        block.marker, block.path
+                        "conflicting `{}{}` block plans for {}",
+                        jails_codemod::Marked::OPEN_PREFIX,
+                        block.marker,
+                        block.path
                     )
                     .into());
                 }

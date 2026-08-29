@@ -21,31 +21,42 @@ refuse, never guess -- because a tool that half-understands a build file
 reporting a dependency the build does not have is still the worst outcome
 available.
 
-**Every idea, roadmap item and open design question lives in `pending.md`.**
-This file describes what the code *is* and the traps in it; `pending.md`
-describes what is not done and why. Do not add proposals here.
+**Every idea, roadmap item and open design question lives in `plan.md`.**
+This file describes what the code *is* and the traps in it; `plan.md` is the
+working checklist of what is not done and why. Do not add proposals here.
 
-**`pending.md` holds only what is open.** A closed item is *deleted* from it
-rather than marked done, so `git log -p -- pending.md` is where a closed one and
-the measurement it closed on live. Section numbers are stable and never reused,
-and the file ends with a one-line index of the closed ones so a `pending.md §N`
-citation in the code still resolves to a subject.
+**Items are `P<phase>.<item>`, and the numbering is deliberate.** Roughly 262
+source comments cite an *older* `plan.md` by section (`plan.md §R6`,
+`plan.md §19.2`), and `P3.1` can never be confused with `§R6`, so both citation
+styles keep working against the same filename. `plan.md`'s own header says so.
 
-**Six design documents were deleted and folded into `pending.md`:** `plan.md`,
-`abstract.md`, `playground.md`, and -- on 2026-08-24 and 2026-08-25 --
-`missing.md` (what one real migration needed and did not get, all eight entries
-now closed), `refactor.md` (the 26-item structural audit) and `test.md` (the
-test-suite performance investigation). Roughly 208 comments across the code
-still cite them by section number -- `plan.md §R6`, `abstract.md §3.2`,
-`missing.md §3` -- and those citations are still the best record of *why* a
-decision was made. They resolve through git:
-`git log --diff-filter=D -- plan.md` finds the commit that removed the file,
-and `git show <commit>^:plan.md` prints it.
+**A closed item is *deleted*, never marked done** -- from `plan.md` and, in the
+same commit, from the file it closes an entry in: `bugs.md`, `missing.md`,
+`modern.md` or `research.md`. All five share that convention, so
+`git log -p -- plan.md` is where a closed item and the measurement that closed
+it live.
 
-**One exception:** the `refactor.md` on disk when it was folded in had been
-recreated untracked, so `git show` reaches an *older* tracked version rather
-than that one. `pending.md`'s header says so. `pending.md` carries forward only
-what is still outstanding, re-measured rather than transcribed.
+**`pending.md` is gone, and 116 comments still cite it.** It was the checklist
+until `2f8003ba` (2026-08-25) deleted it; `plan.md` and `missing.md`, which an
+earlier round had folded *into* it, are back on disk as the checklist and one
+of its sources. A `pending.md §N` citation resolves the way every deleted
+document here does, through git:
+
+```
+git log --diff-filter=D -- pending.md     # the commit that removed it
+git show <commit>^:pending.md             # its last content
+```
+
+**Four more design documents resolve the same way** and are not on disk:
+`abstract.md` (58 citations -- the §7 ladder `tests/architecture/` implements),
+`refactor.md` (1), `playground.md` and `test.md` (0 each). Those citations are
+still the best record of *why* a decision was made, which is why they were left
+in place rather than stripped when the files went.
+
+**One exception, recorded here because the file that used to record it is
+gone:** the `refactor.md` on disk when it was folded in had been recreated
+untracked, so `git show` reaches an *older* tracked version rather than the one
+that was folded. There is no way to recover the untracked one.
 
 ## Canonical compiler cutover
 
@@ -377,7 +388,7 @@ Four things to know before touching it:
   layer's package name *and* the heading `stats` prints, and the validation
   list is derived from it rather than written out again. `inspect.rs` used to
   keep its own copy, which is exactly the drift `refactor.md` §6 predicted --
-  see `pending.md`'s header for how that citation resolves. It
+  a deleted document, resolved through git as this file's header explains. It
   reported against jails' *default* package names, so a project with
   `adapters = "persistence"` had its adapters counted as "Other", and `cli`
   and `messaging` -- missing from the copy -- were never counted at all.

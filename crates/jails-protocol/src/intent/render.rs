@@ -297,19 +297,4 @@ pub struct ManagedPath {
     pub force: bool,
 }
 
-impl Codec for ManagedPath {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.path.encode(encoder)?;
-        self.resource.encode(encoder)?;
-        encoder.bool(self.force);
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            path: ProjectPath::decode(decoder)?,
-            resource: ResourceKey::decode(decoder)?,
-            force: decoder.bool()?,
-        })
-    }
-}
+jails_support::codec!(struct ManagedPath { path, resource, force });

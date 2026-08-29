@@ -167,12 +167,7 @@ fn primitive(field: &Field) -> bool {
     field.required
         && matches!(
             field.ty,
-            jails_model::TypeRef::Builtin(
-                jails_model::BuiltinType::Integer
-                    | jails_model::BuiltinType::Long
-                    | jails_model::BuiltinType::Double
-                    | jails_model::BuiltinType::Boolean
-            )
+            jails_model::TypeRef::Builtin(builtin) if builtin.semantics().java_primitive.is_some()
         )
 }
 

@@ -38,20 +38,15 @@ use jails_support::codec::{self, Codec, Decoder, Encoder, ordered};
 pub(crate) const CONTEXT_SCHEMA: u32 = 1;
 
 /// What a renderer was rendering.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum RenderedSubjectContext {
+    #[codec(tag = 0)]
     Entity { id: EntityId, spec: EntitySpec },
+    #[codec(tag = 1)]
     OneShot { id: OneShotId, spec: OneShotSpec },
 }
 
 impl RenderedSubjectContext {
-    fn tag(&self) -> u8 {
-        match self {
-            Self::Entity { .. } => 0,
-            Self::OneShot { .. } => 1,
-        }
-    }
-
     /// Identity and spec must describe the same thing.
     pub fn validate(&self) -> Result<()> {
         match self {
@@ -66,40 +61,13 @@ impl RenderedSubjectContext {
         }
     }
 }
-impl Codec for RenderedSubjectContext {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::Entity { id, spec } => {
-                id.encode(encoder)?;
-                spec.encode(encoder)
-            }
-            Self::OneShot { id, spec } => {
-                id.encode(encoder)?;
-                spec.encode(encoder)
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Entity {
-                id: EntityId::decode(decoder)?,
-                spec: EntitySpec::decode(decoder)?,
-            },
-            1 => Self::OneShot {
-                id: OneShotId::decode(decoder)?,
-                spec: OneShotSpec::decode(decoder)?,
-            },
-            other => Err(format!("unknown rendered subject tag {other}"))?,
-        })
-    }
-}
 
 /// Which side of a reference this is.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, jails_codec_derive::Codec)]
 pub enum ReferenceRole {
+    #[codec(tag = 0)]
     On,
+    #[codec(tag = 1)]
     Yields,
 }
 

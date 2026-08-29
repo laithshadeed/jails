@@ -10,41 +10,12 @@ pub use crate::identity::SqlName;
 
 /// The explicit storage decision attached to retirement of a table-backed
 /// resource. `force` is deliberately separate and cannot choose either arm.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum StorageRetirement {
+    #[codec(tag = 0)]
     Preserve { expected_table: SqlName },
+    #[codec(tag = 1)]
     Drop { confirmed_table: SqlName },
-}
-
-impl Codec for StorageRetirement {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Preserve { expected_table } => {
-                encoder.tag(0);
-                expected_table.encode(encoder)
-            }
-            Self::Drop { confirmed_table } => {
-                encoder.tag(1);
-                confirmed_table.encode(encoder)
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Preserve {
-                expected_table: SqlName::decode(decoder)?,
-            },
-            1 => Self::Drop {
-                confirmed_table: SqlName::decode(decoder)?,
-            },
-            other => Err(format!(
-                "unknown storage retirement tag {other}.\n       \
-                 fix: use the jails version that wrote this state, or restore its `.jails` data \
-                 from a compatible backup."
-            ))?,
-        })
-    }
 }
 
 /// The resolved source identity of an entity at a lifecycle boundary.
@@ -416,41 +387,14 @@ impl Codec for FieldEvolution {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum DataEvolution {
+    #[codec(tag = 0)]
     None,
+    #[codec(tag = 1)]
     TypedLiteral(TypedLiteral),
+    #[codec(tag = 2)]
     ReaderOwnedSql(ProjectPath),
-}
-
-impl Codec for DataEvolution {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::None => {
-                encoder.tag(0);
-                Ok(())
-            }
-            Self::TypedLiteral(value) => {
-                encoder.tag(1);
-                value.encode(encoder)
-            }
-            Self::ReaderOwnedSql(path) => {
-                encoder.tag(2);
-                path.encode(encoder)
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::None,
-            1 => Self::TypedLiteral(TypedLiteral::decode(decoder)?),
-            2 => Self::ReaderOwnedSql(ProjectPath::decode(decoder)?),
-            other => Err(format!(
-                "unknown data evolution tag {other}.\n       fix: upgrade jails or restore compatible `.jails` state"
-            ))?,
-        })
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -570,19 +514,7 @@ pub struct ReviveResourceRequestV1 {
     pub expected_table: SqlName,
 }
 
-impl Codec for ReviveResourceRequestV1 {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.entity.encode(encoder)?;
-        self.expected_table.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            entity: EntityId::decode(decoder)?,
-            expected_table: SqlName::decode(decoder)?,
-        })
-    }
-}
+jails_support::codec!(struct ReviveResourceRequestV1 { entity, expected_table });
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RepairStrategy {

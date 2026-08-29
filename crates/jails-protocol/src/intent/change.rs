@@ -66,14 +66,21 @@ impl Codec for ChangeAttribution {
 /// the reports name them, and because a maintenance change's resources are
 /// charged to nobody — which is only safe when the set of things that can do
 /// it is closed.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum MaintenanceAttribution {
+    #[codec(tag = 0)]
     AppInit,
+    #[codec(tag = 1)]
     Rename,
+    #[codec(tag = 2)]
     AdoptLayout,
+    #[codec(tag = 4)]
     Format,
+    #[codec(tag = 5)]
     ContractProjection,
+    #[codec(tag = 6)]
     Undo,
+    #[codec(tag = 7)]
     Modernize,
 }
 

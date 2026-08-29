@@ -38,45 +38,19 @@ use std::collections::BTreeMap;
 
 /// One parser input. A fact's authority is the source it was read from, and
 /// naming the source is what lets a deleted file invalidate its facts.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
+#[codec(label = "fact source")]
 pub enum FactKind {
+    #[codec(tag = 0)]
     Pom,
+    #[codec(tag = 1)]
     HumanConfig,
+    #[codec(tag = 2)]
     Compose,
+    #[codec(tag = 3)]
     Properties(ProjectPath),
+    #[codec(tag = 4)]
     JavaSource(ProjectPath),
-}
-
-impl FactKind {
-    fn tag(&self) -> u8 {
-        match self {
-            Self::Pom => 0,
-            Self::HumanConfig => 1,
-            Self::Compose => 2,
-            Self::Properties(_) => 3,
-            Self::JavaSource(_) => 4,
-        }
-    }
-}
-impl Codec for FactKind {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::Pom | Self::HumanConfig | Self::Compose => Ok(()),
-            Self::Properties(path) | Self::JavaSource(path) => path.encode(encoder),
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Pom,
-            1 => Self::HumanConfig,
-            2 => Self::Compose,
-            3 => Self::Properties(ProjectPath::decode(decoder)?),
-            4 => Self::JavaSource(ProjectPath::decode(decoder)?),
-            other => Err(format!("unknown fact source tag {other}"))?,
-        })
-    }
 }
 
 /// Whether a parser input existed, and what it hashed to.
@@ -208,19 +182,25 @@ impl Codec for ProjectFactKey {
 }
 
 /// What was observed for a key.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum ProjectFact {
+    #[codec(tag = 0)]
     MavenDependency(DependencySpec),
+    #[codec(tag = 1)]
     BuildPlugin(PluginSpec),
+    #[codec(tag = 2)]
     ComposeService(ComposeServiceSpec),
+    #[codec(tag = 3)]
     Property(String),
+    #[codec(tag = 4)]
     /// Only the body's digest: a marked block's content belongs to whoever
     /// wrote it, and a fact map is not the place to carry an arbitrary body.
-    MarkedBlock {
-        body_sha256: ObjectId,
-    },
+    MarkedBlock { body_sha256: ObjectId },
+    #[codec(tag = 5)]
     CommandRegistration,
+    #[codec(tag = 6)]
     HumanConfigCapability(CapabilitySpec),
+    #[codec(tag = 7)]
     JavaType(JavaTypeFact),
 }
 
@@ -284,41 +264,6 @@ impl ProjectFact {
         }
     }
 }
-impl Codec for ProjectFact {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::MavenDependency(spec) => spec.encode(encoder),
-            Self::BuildPlugin(spec) => spec.encode(encoder),
-            Self::ComposeService(spec) => spec.encode(encoder),
-            Self::Property(value) => encoder.string(value),
-            Self::MarkedBlock { body_sha256 } => {
-                body_sha256.encode(encoder)?;
-                Ok(())
-            }
-            Self::CommandRegistration => Ok(()),
-            Self::HumanConfigCapability(spec) => spec.encode(encoder),
-            Self::JavaType(fact) => fact.encode(encoder),
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::MavenDependency(DependencySpec::decode(decoder)?),
-            1 => Self::BuildPlugin(PluginSpec::decode(decoder)?),
-            2 => Self::ComposeService(ComposeServiceSpec::decode(decoder)?),
-            3 => Self::Property(decoder.string()?),
-            4 => Self::MarkedBlock {
-                body_sha256: ObjectId::decode(decoder)?,
-            },
-            5 => Self::CommandRegistration,
-            6 => Self::HumanConfigCapability(CapabilitySpec::decode(decoder)?),
-            7 => Self::JavaType(JavaTypeFact::decode(decoder)?),
-            other => Err(format!("unknown project fact tag {other}"))?,
-        })
-    }
-}
-
 /// Every fact a planner may consult, with its sources' presence.
 ///
 /// A value is stored **with the input it was parsed from**. That is what lets

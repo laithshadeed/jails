@@ -68,28 +68,20 @@ pub struct TableBinding {
     pub table: SqlName,
 }
 
-impl Codec for TableBinding {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.table.encode(encoder)
-    }
+jails_support::codec!(struct TableBinding { table });
 
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            table: SqlName::decode(decoder)?,
-        })
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum ResourceState {
+    #[codec(tag = 0)]
     Active,
-    RetiredPreservingStorage {
-        retired_by: ReceiptId,
-    },
+    #[codec(tag = 1)]
+    RetiredPreservingStorage { retired_by: ReceiptId },
+    #[codec(tag = 2)]
     RetiredDropPlanned {
         migration: ProjectPath,
         retired_by: ReceiptId,
     },
+    #[codec(tag = 3)]
     RenamePending {
         campaign: RenameCampaignId,
         from_logical: JavaType,
@@ -100,97 +92,13 @@ pub enum ResourceState {
     },
 }
 
-impl Codec for ResourceState {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Active => {
-                encoder.tag(0);
-                Ok(())
-            }
-            Self::RetiredPreservingStorage { retired_by } => {
-                encoder.tag(1);
-                retired_by.encode(encoder)
-            }
-            Self::RetiredDropPlanned {
-                migration,
-                retired_by,
-            } => {
-                encoder.tag(2);
-                migration.encode(encoder)?;
-                retired_by.encode(encoder)
-            }
-            Self::RenamePending {
-                campaign,
-                from_logical,
-                to_logical,
-                current_table,
-                target_table,
-                code_stage_receipt,
-            } => {
-                encoder.tag(3);
-                campaign.encode(encoder)?;
-                from_logical.encode(encoder)?;
-                to_logical.encode(encoder)?;
-                current_table.encode(encoder)?;
-                target_table.encode(encoder)?;
-                code_stage_receipt.encode(encoder)
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Active,
-            1 => Self::RetiredPreservingStorage {
-                retired_by: OperationId::decode(decoder)?,
-            },
-            2 => Self::RetiredDropPlanned {
-                migration: ProjectPath::decode(decoder)?,
-                retired_by: OperationId::decode(decoder)?,
-            },
-            3 => Self::RenamePending {
-                campaign: RenameCampaignId::decode(decoder)?,
-                from_logical: JavaType::decode(decoder)?,
-                to_logical: JavaType::decode(decoder)?,
-                current_table: SqlName::decode(decoder)?,
-                target_table: SqlName::decode(decoder)?,
-                code_stage_receipt: OperationId::decode(decoder)?,
-            },
-            other => Err(format!(
-                "unknown resource state tag {other}.\n       fix: upgrade jails or restore \
-                 compatible `.jails` state"
-            ))?,
-        })
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct MigrationSealV1 {
     pub version: MigrationVersion,
     pub path: ProjectPath,
     pub content_digest: ObjectId,
     pub contributors: BTreeSet<EntityId>,
     pub receipt: ReceiptId,
-}
-
-impl Codec for MigrationSealV1 {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.version.encode(encoder)?;
-        self.path.encode(encoder)?;
-        self.content_digest.encode(encoder)?;
-        encoder.set(&self.contributors)?;
-        self.receipt.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            version: MigrationVersion::decode(decoder)?,
-            path: ProjectPath::decode(decoder)?,
-            content_digest: ObjectId::decode(decoder)?,
-            contributors: decoder.set()?,
-            receipt: OperationId::decode(decoder)?,
-        })
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -72,19 +72,7 @@ impl FieldMapping {
         format!("{}={}", self.child, self.parent)
     }
 }
-impl Codec for FieldMapping {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.child.encode(encoder)?;
-        self.parent.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            child: Name::decode(decoder)?,
-            parent: Name::decode(decoder)?,
-        })
-    }
-}
+jails_support::codec!(struct FieldMapping { child, parent });
 
 /// One component pinned to a constant instead of taken from the request.
 ///

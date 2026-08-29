@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+jails-codec-derive.workspace = true
 jails-java.workspace = true
 jails-project.workspace = true
 jails-protocol.workspace = true

@@ -6,6 +6,7 @@
 //! migration version or know how a plan is persisted.
 
 mod app;
+mod builtin;
 mod capability;
 mod component;
 mod constraint;
@@ -30,6 +31,7 @@ mod syntax_edit;
 mod unit;
 
 pub use app::ProjectIntent;
+pub use builtin::{BuiltinSemantics, LiteralKind};
 pub use component::{
     Component, ComponentKind, ComponentParameter, ComponentReference, ComponentVariant,
 };

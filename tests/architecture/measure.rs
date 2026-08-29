@@ -30,6 +30,10 @@ pub(crate) struct Source {
     /// is not the primitive being propagated. Counting them makes the ladder
     /// punish the tests that prove a rung did not change behaviour.
     pub(crate) production: String,
+    /// The same file with comments and `#[cfg(test)]` bodies removed, but
+    /// **string literals intact** -- for the gates whose subject only ever
+    /// appears inside one. See [`keeping_literals`].
+    pub(crate) literals: String,
 }
 
 /// Every production Rust file in the workspace, not only the binary's own.
@@ -78,7 +82,15 @@ pub(crate) fn collect(dir: &Path, out: &mut Vec<Source>) {
             let source = fs::read_to_string(&path)
                 .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
             let production = without_test_modules(&blank(&source));
-            out.push(Source { path, production });
+            let literals = without_test_modules_at(
+                &keeping_literals(&source),
+                &test_module_spans(&blank(&source)),
+            );
+            out.push(Source {
+                path,
+                production,
+                literals,
+            });
         }
     }
 }
@@ -97,9 +109,48 @@ pub(crate) fn collect(dir: &Path, out: &mut Vec<Source>) {
 /// no raw string held a character outside ASCII. Every delimiter here is
 /// ASCII, so a byte comparison is exactly equivalent and cannot panic.
 pub(crate) fn blank(source: &str) -> String {
+    blank_with(source, false)
+}
+
+/// The same walk, keeping string and character literals as they are.
+///
+/// Three gates count text that only ever appears *inside* a literal -- the
+/// `# jails:` markers, the `"version"` JSON key, `spring.rs`'s inline
+/// `r#"package ` bodies -- and [`blank`] replaces every literal with spaces
+/// before they run. All three therefore counted zero whatever the code said,
+/// and all three record a ceiling of zero, so nothing distinguished a gate
+/// holding the line from one that had lost the text it was about. That is the
+/// failure `sources()` already guards against at the file level and the same
+/// one `CLAUDE.md` records for skipped tier-3 tests: a scanner that read
+/// nothing reports exactly what a clean one does.
+///
+/// Comments and `#[cfg(test)]` bodies are still removed, because a marker in
+/// a doc comment is prose and one in a test is a fixture.
+pub(crate) fn keeping_literals(source: &str) -> String {
+    blank_with(source, true)
+}
+
+/// Replace comments -- and, unless `keep_literals`, string and character
+/// literals -- with spaces of the same length.
+fn blank_with(source: &str, keep_literals: bool) -> String {
     let bytes = source.as_bytes();
     let mut out = String::with_capacity(source.len());
     let mut i = 0;
+    // A literal span is emitted verbatim or blanked, never half of each, so
+    // offsets line up with the file on disk under both modes.
+    let emit = |out: &mut String, span: &str| {
+        if keep_literals {
+            out.push_str(span);
+        } else {
+            // One space per *byte*, not per char: these gates assert that
+            // blanking preserves length, and a `§` inside a raw string is two
+            // bytes and one char. Getting that wrong is what
+            // `blanked to a different length` exists to catch.
+            for byte in span.bytes() {
+                out.push(if byte == b'\n' { '\n' } else { ' ' });
+            }
+        }
+    };
     while i < bytes.len() {
         let rest = &source[i..];
         if rest.starts_with("//") {
@@ -132,42 +183,35 @@ pub(crate) fn blank(source: &str) -> String {
             if rest[1 + hashes..].starts_with('"') {
                 let close = format!("\"{}", "#".repeat(hashes));
                 let open = 1 + hashes + 1;
-                out.push_str(&" ".repeat(open));
-                i += open;
-                while i < bytes.len() && !bytes[i..].starts_with(close.as_bytes()) {
-                    out.push(if bytes[i] == b'\n' { '\n' } else { ' ' });
-                    i += 1;
+                let mut end = i + open;
+                while end < bytes.len() && !bytes[end..].starts_with(close.as_bytes()) {
+                    end += 1;
                 }
-                let closing = close.len().min(bytes.len().saturating_sub(i));
-                out.push_str(&" ".repeat(closing));
-                i += closing;
+                let end = (end + close.len()).min(bytes.len());
+                emit(&mut out, &source[i..end]);
+                i = end;
             } else {
                 out.push('r');
                 i += 1;
             }
         } else if bytes[i] == b'"' {
-            out.push(' ');
-            i += 1;
-            while i < bytes.len() && bytes[i] != b'"' {
-                if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                    // A trailing backslash is Rust's line continuation, and
-                    // eating its newline would make every line count here read
-                    // low -- which is the whole measurement for two gates.
-                    out.push(' ');
-                    out.push(if bytes[i + 1] == b'\n' { '\n' } else { ' ' });
-                    i += 2;
-                    continue;
-                }
-                out.push(if bytes[i] == b'\n' { '\n' } else { ' ' });
-                i += 1;
+            let mut end = i + 1;
+            while end < bytes.len() && bytes[end] != b'"' {
+                // A trailing backslash is Rust's line continuation, and eating
+                // its newline would make every line count here read low --
+                // which is the whole measurement for two gates.
+                end += if bytes[end] == b'\\' && end + 1 < bytes.len() {
+                    2
+                } else {
+                    1
+                };
             }
-            if i < bytes.len() {
-                out.push(' ');
-                i += 1;
-            }
+            let end = (end + 1).min(bytes.len());
+            emit(&mut out, &source[i..end]);
+            i = end;
         } else if bytes[i] == b'\'' && char_literal_len(&source[i..]).is_some() {
             let len = char_literal_len(&source[i..]).expect("checked above");
-            out.push_str(&" ".repeat(len));
+            emit(&mut out, &source[i..i + len]);
             i += len;
         } else {
             let ch = source[i..].chars().next().expect("in bounds");
@@ -180,8 +224,32 @@ pub(crate) fn blank(source: &str) -> String {
 
 /// Blank the body of every `#[cfg(test)]` module, preserving offsets.
 pub(crate) fn without_test_modules(blanked: &str) -> String {
+    without_test_modules_at(blanked, &test_module_spans(blanked))
+}
+
+/// Blank the given spans, preserving offsets.
+///
+/// Split from the span search so the literal-preserving view can blank
+/// *exactly* the regions the fully blanked one did. Finding them again in text
+/// that still has its literals would not work: a `{` inside one of these test
+/// fixtures' Java bodies is not a block, and the brace walk would stop in the
+/// wrong place.
+pub(crate) fn without_test_modules_at(text: &str, spans: &[(usize, usize)]) -> String {
+    let mut out = text.to_string();
+    for (at, close) in spans.iter().rev() {
+        let blanked_body: String = text[*at..=*close]
+            .chars()
+            .map(|c| if c == '\n' { '\n' } else { ' ' })
+            .collect();
+        out.replace_range(at..=close, &blanked_body);
+    }
+    out
+}
+
+/// Where each `#[cfg(test)]` item's body starts and ends.
+pub(crate) fn test_module_spans(blanked: &str) -> Vec<(usize, usize)> {
     let bytes = blanked.as_bytes();
-    let mut out = blanked.to_string();
+    let mut spans = Vec::new();
     let mut search = 0;
     while let Some(offset) = blanked[search..].find("#[cfg(test)]") {
         let at = search + offset;
@@ -209,14 +277,10 @@ pub(crate) fn without_test_modules(blanked: &str) -> String {
         if close <= open {
             break;
         }
-        let blanked_body: String = blanked[at..=close]
-            .chars()
-            .map(|c| if c == '\n' { '\n' } else { ' ' })
-            .collect();
-        out.replace_range(at..=close, &blanked_body);
+        spans.push((at, close));
         search = close;
     }
-    out
+    spans
 }
 
 /// The length of a `'a'`-style character literal, or `None` for a lifetime.
@@ -636,6 +700,304 @@ pub(crate) fn inherent_codec_halves(src: &[Source]) -> usize {
     count
 }
 
+/// Production files that parse Maven's XML with a scanner of their own.
+///
+/// `simplify-sol.md`'s deletion map: *duplicate Maven XML scanners -> one
+/// document backend*, deleting "second scanners and field-name lies".
+///
+/// **Parsers, not emitters.** Five more files mention `<dependency>` while
+/// only ever *building* one, and rendering a block jails owns is not a claim
+/// to understand a build file -- `CLAUDE.md`'s bar is "answer exactly or
+/// refuse, never guess", and that is a bar on reading. Counting the emitters
+/// would put five files in a row about parsing and make the number stop
+/// meaning what its name says.
+///
+/// The count is deliberately **not** at one yet. Two of these are the
+/// strangler migration itself -- `jails-project/src/pom.rs` is the path being
+/// replaced, `jails-workspace/src/documents.rs` the backend replacing it --
+/// so both exist on purpose until the cutover. What this row is for is that a
+/// *third* answer cannot appear while that is happening, which is the failure
+/// a migration invites: during one, every file has a reason to be special.
+pub(crate) fn maven_xml_parsers(src: &[Source]) -> usize {
+    const ELEMENTS: [&str; 7] = [
+        "<dependency>",
+        "<artifactId>",
+        "<groupId>",
+        "<plugin>",
+        "<dependencyManagement>",
+        "<build>",
+        "<plugins>",
+    ];
+    const READS: [&str; 9] = [
+        ".contains(",
+        ".find(",
+        ".rfind(",
+        ".match_indices(",
+        ".splitn(",
+        ".starts_with(",
+        ".ends_with(",
+        ".strip_prefix(",
+        ".strip_suffix(",
+    ];
+    src.iter()
+        .filter(|file| {
+            let text = &file.literals;
+            ELEMENTS
+                .iter()
+                .filter(|element| text.contains(*element))
+                .count()
+                >= 2
+                && READS.iter().any(|read| {
+                    text.match_indices(read).any(|(at, _)| {
+                        // The argument is a string literal naming an element.
+                        // `<` need not be its first byte: the scanners match
+                        // on indented fragments (`"    <dependency>"`) and on
+                        // closing tags, and requiring it at position zero
+                        // found none of them.
+                        let rest = &text[at + read.len()..];
+                        let argument = rest.trim_start();
+                        argument.starts_with('"')
+                            && argument[1..]
+                                .split('"')
+                                .next()
+                                .is_some_and(|literal| literal.contains('<'))
+                    })
+                })
+        })
+        .count()
+}
+
+/// The biggest table of per-builtin knowledge written anywhere but the row.
+///
+/// `simplify-sol.md`'s fitness rule: *every builtin type has one semantics
+/// row*. Sixteen builtins were described by seven separate matches -- the
+/// token, its aliases, the Java type, the import, the sample, the Postgres
+/// column, which literals may default it -- and `primitive` was written out
+/// twice, identically, in two emitters. Each match was exhaustive over the
+/// enum and silent about the others, so adding a builtin compiled in every
+/// one of them and was wrong in most.
+///
+/// Counted as the largest number of *distinct* variants named inside one
+/// function, because that is what a table is. A handful of scattered
+/// references to two or three builtins is ordinary code -- `derive_default`
+/// asking whether a key is a `Uuid` is not a second registry -- so the number
+/// is a ceiling on table-shaped knowledge rather than on mentioning the enum.
+pub(crate) fn largest_builtin_table(src: &[Source]) -> usize {
+    src.iter()
+        .filter(|file| !file.path.ends_with(BUILTIN_RS))
+        .map(|file| {
+            let text = &file.production;
+            let mut worst = 0;
+            for (start, _) in text.match_indices("fn ") {
+                let Some(open) = text[start..].find('{').map(|at| start + at) else {
+                    continue;
+                };
+                let mut depth = 0usize;
+                let mut end = open;
+                for (offset, byte) in text[open..].bytes().enumerate() {
+                    match byte {
+                        b'{' => depth += 1,
+                        b'}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                end = open + offset;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                let mut variants = std::collections::BTreeSet::new();
+                for (at, _) in text[open..end].match_indices("BuiltinType::") {
+                    let rest = &text[open + at + "BuiltinType::".len()..];
+                    let name: String = rest
+                        .chars()
+                        .take_while(|character| character.is_alphanumeric() || *character == '_')
+                        .collect();
+                    if name.starts_with(|character: char| character.is_ascii_uppercase()) {
+                        variants.insert(name);
+                    }
+                }
+                worst = worst.max(variants.len());
+            }
+            worst
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+/// The row itself, excluded from the count above for the reason `codemod.rs`
+/// is excluded from the marked-block row: the one legitimate owner of a format
+/// is not a violation of having one owner.
+pub(crate) const BUILTIN_RS: &str = "jails-model/src/builtin.rs";
+
+/// Where the count stands today: `jails-project/src/pom.rs`,
+/// `jails-protocol/src/vocabulary/coordinate.rs`, and the three of the new
+/// tree -- `jails-workspace/src/{capture,documents}.rs` and
+/// `documents/build_feature.rs`.
+///
+/// `jails-project/src/junit.rs` is deliberately *below* the bar: it matches on
+/// one element to read one artifact's version, which is a lookup rather than a
+/// scanner. Two distinct elements is what separates "asks the pom a question"
+/// from "has an opinion about its structure", and it is the second that
+/// duplicates.
+pub(crate) const MAVEN_XML_PARSERS: usize = 5;
+
+/// `# jails:` marker literals outside the crate that owns the format.
+///
+/// Recorded for the first time on 2026-08-29, and closed the same day. The row
+/// had claimed zero since it was written -- not because it held, but because it
+/// counted `Source::production`, where every string literal is blanked to
+/// spaces before a gate sees it. Ceiling and target were both `0`, so a vacuous
+/// gate and a held line printed the same word. It reads `Source::literals` now.
+///
+/// The true count was **13**, and the three that mattered were second
+/// implementations of the block itself -- all in the new tree, none careless:
+/// `codemod` lived in `jails-project`, which neither `jails-compiler` nor
+/// `jails-workspace` depends on, so there was nothing to reuse. It is
+/// `crates/jails-codemod` now, with no dependencies at all, so there is
+/// nowhere left that cannot reach it.
+///
+/// 13 -> 8 -> 0. The remaining ten were knowledge of the format rather than
+/// copies of it, and each went a different way: two substring probes became
+/// `Marked::present_in`, which also fixed the prefix collision `exact_line`
+/// exists for -- `contains("# jails:db")` reads `# jails:dbx` as this block.
+/// `doctor` asked `compose::declares` instead of spelling this file's
+/// two-space indent itself. Three refusal messages quote
+/// `Marked::OPEN_PREFIX` rather than retyping it, so a message about the
+/// format cannot outlive the format. And `jails setup`'s note in
+/// `~/.testcontainers.properties` says `# jails --`, because `# jails:` is how
+/// a block opens and that file has none.
+///
+/// **The gate can fail now**, which is the part worth keeping: adding a
+/// `# jails:` literal to any production file outside `jails-codemod` moves it
+/// off zero. That was verified by doing it.
+pub(crate) const MARKED_BLOCK_LITERALS: usize = 0;
+
+/// Where the count stands today. The remaining four are `context_value`'s
+/// four-arm lowering, which is a rendering rather than a registry.
+pub(crate) const LARGEST_BUILTIN_TABLE: usize = 4;
+
+/// The crates that must stay pure once the workspace has been captured.
+///
+/// `simplify-sol.md`'s first fitness rule: *after capture, no compiler module
+/// can access `std::fs`, a project root or a process runner*. The whole
+/// argument for a capture pass is that planning becomes a function -- the same
+/// snapshot and the same request yield the same plan, which is what makes a
+/// plan diffable, cacheable and safe to show before it is applied. One
+/// `fs::read` inside a pass is enough to break that, and nothing about the
+/// resulting bug says so: it just means the plan depended on a file nobody
+/// recorded reading.
+pub(crate) const PURE_COMPILER_CRATES: [&str; 3] =
+    ["jails-compiler", "jails-model", "jails-contracts"];
+
+/// A pure crate reaching for the world outside the snapshot it was handed.
+///
+/// Counted at **zero**, and it is zero today -- which is the point. This is a
+/// property that is cheap to keep and expensive to recover, so it is gated
+/// while it still holds rather than after the first pass reads a file.
+///
+/// The `root: &Path` half is counted here too, through the same function the
+/// workspace-wide row uses: a path a pass could resolve against is a project
+/// root whether or not it reads one yet, and the workspace row's ceiling of
+/// 145 would absorb a rise inside these three crates without noticing.
+pub(crate) fn compiler_reaches_outside_the_snapshot(src: &[Source]) -> usize {
+    let pure: Vec<Source> = src
+        .iter()
+        .filter(|file| {
+            PURE_COMPILER_CRATES.iter().any(|name| {
+                file.path
+                    .to_string_lossy()
+                    .contains(&format!("{name}/src/"))
+            })
+        })
+        .map(|file| Source {
+            path: file.path.clone(),
+            production: file.production.clone(),
+            literals: file.literals.clone(),
+        })
+        .collect();
+    let reaches: usize = pure
+        .iter()
+        .map(|file| {
+            [
+                "std::fs",
+                "fs::read",
+                "fs::write",
+                "Command::new",
+                "std::process",
+                "current_dir",
+            ]
+            .iter()
+            .map(|needle| file.production.matches(needle).count())
+            .sum::<usize>()
+        })
+        .sum();
+    reaches + root_path_parameters(&pure)
+}
+
+/// Types whose wire format is written out by hand rather than derived.
+///
+/// One `impl Codec for X` is three statements of the same format -- the field
+/// list in the struct, again in `encode`, again in `decode` -- so a field
+/// added to the type and forgotten in the codec is a silent change of format
+/// rather than a compile error. `#[derive(Codec)]` makes the declaration the
+/// only owner of the encoding, which is what `simplify-sol.md`'s fitness rule
+/// asks for: *every persisted union tag and field number is generated and
+/// golden-tested*.
+///
+/// `trim_start` for the same reason [`inherent_codec_halves`] needs it:
+/// `digest_newtype!` and `logical_id!` expand to `impl Codec for $name`
+/// indented inside a `macro_rules!` body. Those are counted, and should be --
+/// a macro is a hand-written codec shared by six types, not a derived one --
+/// but they count once each, where they are written.
+pub(crate) fn hand_written_codecs(src: &[Source]) -> usize {
+    src.iter()
+        .filter(|file| !file.path.ends_with(WIRE_RS))
+        .map(|file| {
+            file.production
+                .lines()
+                .filter(|line| {
+                    let head = line.trim_start();
+                    head.starts_with("impl ") && head.contains(" Codec for ")
+                })
+                .count()
+        })
+        .sum()
+}
+
+/// The primitives the derive is built out of, excluded from the row above.
+///
+/// `bool`, `u32`, `u64`, `String`, `Option<T>`, `Vec<T>`, `BTreeSet<T>`,
+/// `BTreeMap<K, V>` and `Box<T>` are where the recursion stops: a derive can
+/// only delegate to [`Codec`], so something has to state what a `bool` is on
+/// the wire. Counting them would put a floor in the row that no work could
+/// ever remove, which is the same reason `codemod.rs` is excluded from the
+/// `# jails:` row -- the one legitimate owner is not a violation.
+pub(crate) const WIRE_RS: &str = "jails-support/src/codec/wire.rs";
+
+/// Where the count stands today. See the row in [`crate::board`] for why the
+/// target is withdrawn rather than zero.
+///
+/// 210 -> 147: `#[derive(Codec)]`, `codec/wire.rs` and `jails-codec-derive`.
+///
+/// 147 -> 146 for `RendererStamp`, and the one matters more than the number:
+/// it disproves "the mechanical seam is exhausted", which is what the first
+/// sweep concluded because it treated `encoder.count(..)` as a hard blocker.
+/// It is not one. `Encoder::seq` *is* a count followed by a loop of `encode`,
+/// `set` is that plus the `ordered` check, and `map` the same for pairs -- so
+/// a codec framing its own collection is byte-identical to `Vec<T>`,
+/// `BTreeSet<T>` or `BTreeMap<K, V>` doing it, ordering guarantee included.
+/// 29 codecs frame a collection by hand; the ones whose field is already one
+/// of those three convert with no wire change. `plan.md` P13.4.
+///
+/// 146 -> 144 for `DesiredAppliedEntity` and `OutputRecord`, both framing a
+/// `BTreeSet<OwnerId>` -- which needed `OwnerId` to have a codec at all. It
+/// had a public `tag()`/`from_tag()` pair and no impl, because its containers
+/// wrote the tag inline; the derive reproduces that byte and `label = "owner"`
+/// keeps the refusal the test pins.
+pub(crate) const HAND_WRITTEN_CODECS: usize = 144;
+
 /// The `spring.rs` these two rows are about.
 ///
 /// The **path**, not the basename. `src/new/spring.rs` is a different file --
@@ -650,7 +1012,7 @@ pub(crate) const SPRING_RS: &str = "jails-generate/src/spring.rs";
 /// second `doctor.rs` or `codemod.rs` anywhere in the workspace would silently
 /// join or leave the set its gate measures, and the gate would report a number
 /// about a different file without saying so.
-pub(crate) const CODEMOD_RS: &str = "jails-project/src/codemod.rs";
+pub(crate) const CODEMOD_RS: &str = "jails-codemod/src/marked.rs";
 pub(crate) const DOCTOR_RS: &str = "jails-report/src/doctor.rs";
 pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 
@@ -691,7 +1053,15 @@ pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 // refusals in one sentence and named no next step. Optional filters are
 // generated now (plan.md P10.5), and what is left refuses a collection with
 // the two things a reader can do about it.
-pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 418;
+// 418 -> 396: 22 hand-written codecs became `#[derive(Codec)]`, and each had
+// carried its own `Err(format!("unknown <thing> tag {other}"))`. They were the
+// same refusal 22 times, so collapsing them is not 22 messages improved -- it
+// is 21 copies deleted. What the derive added is that the wording can no
+// longer drift per type, and that a refusal needing a next step says so on the
+// type (`#[codec(unknown_fix = "...")]`) rather than in the one place the
+// message is built. `PlannedSubject` is the first to use it; the other ten
+// `fix:`-carrying decoders are still hand-written.
+pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 396;
 
 /// A refusal that builds a message and does not say what to do next.
 ///

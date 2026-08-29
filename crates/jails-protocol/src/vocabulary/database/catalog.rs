@@ -190,23 +190,7 @@ pub struct OpaqueMigrationStatement {
     pub reason: String,
 }
 
-impl Codec for OpaqueMigrationStatement {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.path.encode(encoder)?;
-        self.span.encode(encoder)?;
-        self.digest.encode(encoder)?;
-        encoder.string(&self.reason)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            path: ProjectPath::decode(decoder)?,
-            span: ByteSpan::decode(decoder)?,
-            digest: ObjectId::decode(decoder)?,
-            reason: decoder.string()?,
-        })
-    }
-}
+jails_support::codec!(struct OpaqueMigrationStatement { path, span, digest, reason });
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CatalogSnapshot {

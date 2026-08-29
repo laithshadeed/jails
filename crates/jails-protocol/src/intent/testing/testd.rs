@@ -117,23 +117,7 @@ pub struct OutputEntryV1 {
     pub digest: ObjectId,
 }
 
-impl Codec for OutputEntryV1 {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.path.encode(encoder)?;
-        encoder.u64(self.size);
-        encoder.u64(self.modified_ns);
-        self.digest.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            path: OutputPath::decode(decoder)?,
-            size: decoder.u64()?,
-            modified_ns: decoder.u64()?,
-            digest: ObjectId::decode(decoder)?,
-        })
-    }
-}
+jails_support::codec!(struct OutputEntryV1 { path, size, modified_ns, digest });
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutputSnapshotV1 {

@@ -664,24 +664,7 @@ fn label(value: &str) -> String {
 }
 
 fn normalize_type(value: &str) -> &str {
-    match value {
-        "text" | "String" => "string",
-        "integer" | "Integer" => "int",
-        "Long" => "long",
-        "Double" => "double",
-        "bigdecimal" | "BigDecimal" => "decimal",
-        "bool" | "Boolean" => "boolean",
-        "UUID" => "uuid",
-        "LocalDate" => "date",
-        "LocalDateTime" => "datetime",
-        "Instant" => "instant",
-        "Duration" => "duration",
-        "URI" => "uri",
-        "Path" => "path",
-        "ZoneId" | "zoneid" => "zone-id",
-        "Currency" => "currency",
-        other => other,
-    }
+    crate::model::BuiltinType::canonicalize(value)
 }
 
 fn strip_comment(line: &str) -> &str {

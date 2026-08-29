@@ -65,42 +65,14 @@ impl SnapshotFile {
 }
 
 /// A source outside the project that a plan may depend on.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub enum ExternalInputId {
+    #[codec(tag = 0)]
     AppManifest,
+    #[codec(tag = 1)]
     UserTemplate(TemplateId),
+    #[codec(tag = 2)]
     CasesBrief { path_id: ExternalPathId },
-}
-
-impl Codec for ExternalInputId {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::AppManifest => {
-                encoder.tag(0);
-                Ok(())
-            }
-            Self::UserTemplate(id) => {
-                encoder.tag(1);
-                id.encode(encoder)
-            }
-            Self::CasesBrief { path_id } => {
-                encoder.tag(2);
-                path_id.encode(encoder)?;
-                Ok(())
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::AppManifest,
-            1 => Self::UserTemplate(TemplateId::decode(decoder)?),
-            2 => Self::CasesBrief {
-                path_id: ExternalPathId::decode(decoder)?,
-            },
-            other => Err(format!("unknown external input tag {other}"))?,
-        })
-    }
 }
 
 impl Codec for MachineRootPresence {

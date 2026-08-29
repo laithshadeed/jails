@@ -22,31 +22,21 @@
 //!   one this feature means, or the two halves of the claim describe different
 //!   things.
 
-use crate::Result;
-use jails_support::codec::{Codec, Decoder, Encoder};
-
 /// A thing the build has to do, named by what it is for.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub enum BuildFeature {
     /// Run `*IT` classes, and fail the build when they fail.
+    #[codec(tag = 0)]
     IntegrationTests,
     /// Enforce line coverage during `check`.
+    #[codec(tag = 1)]
     Coverage,
     /// Format on `check`, and offer a task that fixes.
+    #[codec(tag = 2)]
     Formatting,
 }
 
 impl BuildFeature {
-    /// Fixed wire tags. These numbers may never be reused for a different
-    /// meaning.
-    fn tag(self) -> u8 {
-        match self {
-            Self::IntegrationTests => 0,
-            Self::Coverage => 1,
-            Self::Formatting => 2,
-        }
-    }
-
     /// The feature a Maven plugin coordinate stands for.
     ///
     /// Closed on purpose, and a *check* rather than a derivation now: the
@@ -102,25 +92,10 @@ impl std::fmt::Display for BuildFeature {
     }
 }
 
-impl Codec for BuildFeature {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::IntegrationTests,
-            1 => Self::Coverage,
-            2 => Self::Formatting,
-            other => return Err(format!("unknown build feature tag {other}").into()),
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jails_support::codec::{Codec, Decoder, Encoder};
 
     #[test]
     fn every_feature_round_trips_and_has_a_distinct_tag() {
@@ -131,10 +106,14 @@ mod tests {
         ];
         let mut tags = std::collections::BTreeSet::new();
         for feature in all {
-            assert!(tags.insert(feature.tag()), "{feature} duplicates a tag");
             let mut encoder = Encoder::new();
             feature.encode(&mut encoder).unwrap();
             let bytes = encoder.finish().unwrap();
+            // The wire byte itself, rather than a second `tag()` method that
+            // could disagree with it. `#[derive(Codec)]` refuses a duplicate
+            // tag at compile time; this proves the byte that actually ships is
+            // the distinct one.
+            assert!(tags.insert(bytes.clone()), "{feature} duplicates a tag");
             let mut decoder = Decoder::new(&bytes).unwrap();
             assert_eq!(BuildFeature::decode(&mut decoder).unwrap(), feature);
         }

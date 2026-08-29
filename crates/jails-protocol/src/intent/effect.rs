@@ -49,12 +49,17 @@ pub enum EffectState {
 }
 
 /// Why an effect attempt failed, closed so a resume can reason about it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum EffectFailureCode {
+    #[codec(tag = 0)]
     Spawn,
+    #[codec(tag = 1)]
     Timeout,
+    #[codec(tag = 2)]
     ExitNonzero,
+    #[codec(tag = 3)]
     InterruptedTwice,
+    #[codec(tag = 4)]
     Protocol,
 }
 
@@ -167,7 +172,7 @@ fn nonzero(value: u32, what: &str) -> Result<()> {
 ///
 /// Distinct from the operation that scheduled it: a retry after a crash must
 /// address *this* effect, and an operation may carry several.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub struct EffectId(ObjectId);
 
 impl EffectId {
@@ -183,17 +188,6 @@ impl EffectId {
         self.0.to_hex()
     }
 }
-impl Codec for EffectId {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.0.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self(ObjectId::decode(decoder)?))
-    }
-}
-
 impl std::fmt::Display for EffectId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)

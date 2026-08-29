@@ -13,73 +13,35 @@
 //! invisible to `remove`, to `sync`, and to the collision check that stops two
 //! owners claiming one key.
 
-use crate::Result;
-use jails_support::codec::{Codec, Decoder, Encoder};
-
 /// Which resource was asked for.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub enum DeclaredId {
     /// One artifact, keyed by coordinate. Version and scope are content, not
     /// identity: `jails add dependency` again with a different scope is an
     /// edit to a known entity, not a second claim on the same `<dependency>`.
+    #[codec(tag = 0)]
     Dependency(crate::coordinate::MavenCoordinate),
     /// One setting in one file. The path is identity because the same key in
     /// `src/main/resources` and in `src/test/resources/config` are two
     /// independent settings -- which is exactly how a test-only override is
     /// expressed, and it must not collide with the value it overrides.
+    #[codec(tag = 1)]
     Property {
         path: crate::identity::ProjectPath,
         key: crate::identity::PropertyKey,
     },
 }
 
-impl DeclaredId {
-    fn tag(&self) -> u8 {
-        match self {
-            Self::Dependency(_) => 0,
-            Self::Property { .. } => 1,
-        }
-    }
-}
-impl Codec for DeclaredId {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::Dependency(coordinate) => coordinate.encode(encoder),
-            Self::Property { path, key } => {
-                path.encode(encoder)?;
-                key.encode(encoder)
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        match decoder.tag()? {
-            0 => crate::coordinate::MavenCoordinate::decode(decoder).map(Self::Dependency),
-            1 => Ok(Self::Property {
-                path: crate::identity::ProjectPath::decode(decoder)?,
-                key: crate::identity::PropertyKey::decode(decoder)?,
-            }),
-            other => Err(format!("unknown declared resource tag {other}").into()),
-        }
-    }
-}
-
 /// What a declared resource was asked to be.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum DeclaredSpec {
+    #[codec(tag = 0)]
     Dependency(crate::coordinate::DependencySpec),
+    #[codec(tag = 1)]
     Property(crate::resource::PropertySetting),
 }
 
 impl DeclaredSpec {
-    fn tag(&self) -> u8 {
-        match self {
-            Self::Dependency(_) => 0,
-            Self::Property(_) => 1,
-        }
-    }
-
     /// Whether this content belongs to that identity.
     ///
     /// The one place the discriminant check has to go a level deeper than
@@ -95,23 +57,6 @@ impl DeclaredSpec {
             }
             (DeclaredId::Property { .. }, Self::Property(_)) => true,
             _ => false,
-        }
-    }
-}
-impl Codec for DeclaredSpec {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::Dependency(spec) => spec.encode(encoder),
-            Self::Property(setting) => setting.encode(encoder),
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        match decoder.tag()? {
-            0 => crate::coordinate::DependencySpec::decode(decoder).map(Self::Dependency),
-            1 => crate::resource::PropertySetting::decode(decoder).map(Self::Property),
-            other => Err(format!("unknown declared spec tag {other}").into()),
         }
     }
 }

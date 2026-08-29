@@ -107,7 +107,7 @@ impl Codec for FileImage {
 /// A newtype rather than a bare [`ObjectId`] because it is compared against
 /// stored values on every resume, and comparing it to the wrong digest is a
 /// mistake the type system can prevent for free.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub struct PendingIdentity(ObjectId);
 
 impl PendingIdentity {
@@ -119,17 +119,6 @@ impl PendingIdentity {
         self.0
     }
 }
-impl Codec for PendingIdentity {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.0.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self(ObjectId::decode(decoder)?))
-    }
-}
-
 impl std::fmt::Display for PendingIdentity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
@@ -143,20 +132,7 @@ pub struct ResolutionIdentity {
     pub resolved: FileImage,
 }
 
-impl Codec for ResolutionIdentity {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.path.encode(encoder)?;
-        self.resolved.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            path: ProjectPath::decode(decoder)?,
-            resolved: FileImage::decode(decoder)?,
-        })
-    }
-}
+jails_support::codec!(struct ResolutionIdentity { path, resolved });
 
 /// One path an abort puts back, with **both** images.
 ///
@@ -170,22 +146,7 @@ pub struct RestoreIdentity {
     pub restore_to: FileImage,
 }
 
-impl Codec for RestoreIdentity {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.path.encode(encoder)?;
-        self.guarded_from.encode(encoder)?;
-        self.restore_to.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            path: ProjectPath::decode(decoder)?,
-            guarded_from: FileImage::decode(decoder)?,
-            restore_to: FileImage::decode(decoder)?,
-        })
-    }
-}
+jails_support::codec!(struct RestoreIdentity { path, guarded_from, restore_to });
 
 /// A POSIX mode, restricted to the permission bits.
 ///
@@ -226,70 +187,21 @@ impl Codec for FileMode {
     }
 }
 
-impl Codec for LiveFileImage {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.sha256.encode(encoder)?;
-        encoder.u64(self.len);
-        self.mode.encode(encoder)?;
-        Ok(())
-    }
+jails_support::codec!(struct LiveFileImage { sha256, len, mode });
 
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            sha256: ObjectId::decode(decoder)?,
-            len: decoder.u64()?,
-            mode: FileMode::decode(decoder)?,
-        })
-    }
-}
-
-impl Codec for StoredFileImage {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.object.encode(encoder)?;
-        self.mode.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            object: ObjectRef::decode(decoder)?,
-            mode: FileMode::decode(decoder)?,
-        })
-    }
-}
+jails_support::codec!(struct StoredFileImage { object, mode });
 
 /// What a pending output's final content will be.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum PendingCurrent {
     /// A clean or unaffected path: its postimage is known now and frozen.
+    #[codec(tag = 0)]
     Exact(LiveFileImage),
     /// A conflicted path: not knowable until the user resolves it. Recorded as
     /// an explicit "learned later" rather than a placeholder that would look
     /// like a real image.
+    #[codec(tag = 1)]
     ResolveFromLive,
-}
-
-impl Codec for PendingCurrent {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Exact(image) => {
-                encoder.tag(0);
-                image.encode(encoder)
-            }
-            Self::ResolveFromLive => {
-                encoder.tag(1);
-                Ok(())
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Exact(LiveFileImage::decode(decoder)?),
-            1 => Self::ResolveFromLive,
-            other => return Err(format!("unknown pending current tag {other}").into()),
-        })
-    }
 }
 
 /// The three tokens that delimit a conflict hunk.

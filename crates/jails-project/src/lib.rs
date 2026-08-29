@@ -20,7 +20,15 @@
 pub mod application_manifest;
 pub mod capability;
 pub mod capture;
-pub mod codemod;
+/// The marked-block splice, from its own crate.
+///
+/// It moved out on 2026-08-29 because three more implementations of the same
+/// format had appeared in `jails-compiler` and `jails-workspace` -- not
+/// carelessly, but because neither depends on this crate and reuse was not
+/// available. A format with four owners is four answers to what `remove db`
+/// deletes, so it now lives where every tree can reach it. Module code keeps
+/// saying `crate::codemod`.
+pub use jails_codemod as codemod;
 pub mod compose;
 pub mod config;
 pub mod generated_files;

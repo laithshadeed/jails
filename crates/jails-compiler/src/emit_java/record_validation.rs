@@ -1,22 +1,30 @@
 //! Canonical-constructor validation for generated Java records.
 
-use jails_model::{BuiltinType, Field, TypeRef};
+use super::RecordComponent;
+use jails_model::TypeRef;
 use std::collections::BTreeSet;
 
-pub(super) fn record_checks(field: &Field, imports: &mut BTreeSet<String>) -> Vec<String> {
-    let name = &field.names.java_member;
-    if !field.required {
+pub(super) fn record_checks(
+    component: &RecordComponent<'_>,
+    imports: &mut BTreeSet<String>,
+) -> Vec<String> {
+    let name = component.name;
+    if !component.required {
         imports.insert("java.util.Objects".to_string());
         let mut statements = vec![format!(
             "{name} = Objects.requireNonNullElse({name}, Optional.empty());"
         )];
-        if let Some((condition, message)) = length_check(field, &format!("{name}.orElseThrow()")) {
+        if let Some((condition, message)) =
+            length_check(component, &format!("{name}.orElseThrow()"))
+        {
             statements.push(illegal_argument(
                 &format!("{name}.isPresent() && ({condition})"),
                 &message,
             ));
         }
-        if let Some((condition, message)) = numeric_check(field, &format!("{name}.orElseThrow()")) {
+        if let Some((condition, message)) =
+            numeric_check(component, &format!("{name}.orElseThrow()"))
+        {
             statements.push(illegal_argument(
                 &format!("{name}.isPresent() && ({condition})"),
                 &message,
@@ -25,10 +33,10 @@ pub(super) fn record_checks(field: &Field, imports: &mut BTreeSet<String>) -> Ve
         return statements;
     }
     let mut statements = Vec::new();
-    if !super::primitive(field) {
+    if !super::primitive(component.ty, component.required) {
         imports.insert("java.util.Objects".to_string());
         statements.push(format!("Objects.requireNonNull({name}, \"{name}\");"));
-        if field.non_blank {
+        if component.non_blank {
             statements.extend([
                 format!("{name} = {name}.trim();"),
                 illegal_argument(
@@ -38,18 +46,18 @@ pub(super) fn record_checks(field: &Field, imports: &mut BTreeSet<String>) -> Ve
             ]);
         }
     }
-    if let Some((condition, message)) = length_check(field, name) {
+    if let Some((condition, message)) = length_check(component, name) {
         statements.push(illegal_argument(&condition, &message));
     }
-    if let Some((condition, message)) = numeric_check(field, name) {
+    if let Some((condition, message)) = numeric_check(component, name) {
         statements.push(illegal_argument(&condition, &message));
     }
     statements
 }
 
-fn length_check(field: &Field, value: &str) -> Option<(String, String)> {
-    let length = field.length.as_ref()?;
-    let name = &field.names.java_member;
+fn length_check(component: &RecordComponent<'_>, value: &str) -> Option<(String, String)> {
+    let length = component.length?;
+    let name = component.name;
     Some(match (length.min, length.max) {
         (Some(min), Some(max)) => (
             format!("{value}.length() < {min} || {value}.length() > {max}"),
@@ -67,30 +75,35 @@ fn length_check(field: &Field, value: &str) -> Option<(String, String)> {
     })
 }
 
-fn numeric_check(field: &Field, value: &str) -> Option<(String, String)> {
-    let (comparison, description) = if field.semantics.positive {
+fn numeric_check(component: &RecordComponent<'_>, value: &str) -> Option<(String, String)> {
+    let (comparison, description) = if component.positive {
         ("<= 0", "positive")
-    } else if field.semantics.nonnegative {
+    } else if component.nonnegative {
         ("< 0", "nonnegative")
     } else {
         return None;
     };
-    let condition = match field.ty {
-        TypeRef::Builtin(BuiltinType::Decimal) => {
-            if field.semantics.positive {
+    let condition = match component.ty {
+        // A boxed number is compared through `signum()`, a primitive one with
+        // an operator -- so the question is whether the builtin has a
+        // primitive spelling, which is on its row.
+        TypeRef::Builtin(builtin)
+            if builtin.semantics().numeric && builtin.semantics().java_primitive.is_none() =>
+        {
+            if component.positive {
                 format!("{value}.signum() <= 0")
             } else {
                 format!("{value}.signum() < 0")
             }
         }
-        TypeRef::Builtin(BuiltinType::Integer | BuiltinType::Long | BuiltinType::Double) => {
+        TypeRef::Builtin(builtin) if builtin.semantics().numeric => {
             format!("{value} {comparison}")
         }
         _ => unreachable!("the linker accepts numeric constraints only on numeric fields"),
     };
     Some((
         condition,
-        format!("{} must be {description}", field.names.java_member),
+        format!("{} must be {description}", component.name),
     ))
 }
 

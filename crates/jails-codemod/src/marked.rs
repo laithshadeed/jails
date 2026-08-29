@@ -17,7 +17,7 @@
 //! *name the lines it did not*, before deleting them. A real project had about
 //! twenty hand-tuned Kafka properties inside jails' own markers.
 //!
-//! ## Why this is a module
+//! ## Why this is its own crate
 //!
 //! That format had **five owners** — `compose.rs`, `add.rs`,
 //! `add/database.rs`, `add/test_wiring.rs` and `doctor.rs` each built and
@@ -53,6 +53,21 @@ pub struct Marked<'a> {
     /// `schema.sql` is a syntax error, so the block jails writes would stop
     /// the application starting.
     pub comment: &'a str,
+}
+
+impl Marked<'_> {
+    /// What an opening marker begins with, in a `#`-commented file.
+    ///
+    /// For the callers that ask whether *any* marker is present rather than
+    /// looking one up -- `CanonicalYamlMapping::parse` refuses a compose
+    /// mapping that carries one, because "markers belong to the format
+    /// owner". Without this it spelled the prefix itself, which is a second
+    /// place that has to be edited if the format ever changes and a
+    /// validation that silently stops refusing if it is not.
+    pub const OPEN_PREFIX: &'static str = "# jails:";
+
+    /// The closing counterpart of [`Self::OPEN_PREFIX`].
+    pub const CLOSE_PREFIX: &'static str = "# /jails:";
 }
 
 impl<'a> Marked<'a> {
@@ -274,5 +289,21 @@ mod tests {
         assert!(!block.present_in("a=1\n"));
         assert_eq!(block.strip_from("a=1\n"), None);
         assert_eq!(block.body_in("a=1\n"), None);
+    }
+}
+
+#[cfg(test)]
+mod prefix_tests {
+    use super::*;
+
+    /// The constants and the renderer must not be able to disagree.
+    ///
+    /// They are written out rather than derived, because a `const` cannot call
+    /// `format!` -- so the only thing keeping them true is this.
+    #[test]
+    fn the_prefixes_are_what_a_block_is_actually_rendered_with() {
+        let marked = Marked::new("example");
+        assert_eq!(marked.open(), format!("{}example", Marked::OPEN_PREFIX));
+        assert_eq!(marked.close(), format!("{}example", Marked::CLOSE_PREFIX));
     }
 }
