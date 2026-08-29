@@ -74,6 +74,14 @@ impl Compiler {
         if let Some(patch) = patch {
             next_model.apply(patch).map_err(CompileError::new)?;
         }
+        // The layout is declared in `jails.toml` and reaches the model through
+        // capture, the way `.jails/model.toml` does -- a compatibility input
+        // until JDL declares it. Copied rather than read from the snapshot at
+        // each emit site because every emitter already holds the model and
+        // nothing else, and threading a second value through 48 signatures to
+        // answer "what does this project call its adapters" is the parameter
+        // sprawl `spring::Slice` was built to remove on the legacy side.
+        next_model.project.layout = snapshot.project.layout.clone();
         if snapshot.project.java_release != next_model.project.java_release {
             return Err(CompileError::new(format!(
                 "captured Java release {} disagrees with model release {}; recapture or update the model",

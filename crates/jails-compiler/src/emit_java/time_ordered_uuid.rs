@@ -19,7 +19,7 @@ pub(super) fn lower(model: &AppModel) -> Result<Option<Unit>, CompileError> {
         return Ok(None);
     }
 
-    let package = format!("{}.domain", model.project.base_package);
+    let package = model.project.package_for("domain");
     let type_name = "TimeOrderedUuid";
     let artifact_id = "art_app_time_ordered_uuid";
     let imports = BTreeSet::from([

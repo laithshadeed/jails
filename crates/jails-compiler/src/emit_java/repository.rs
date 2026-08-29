@@ -20,11 +20,12 @@ pub(super) fn lower_fake_repository(
     entity: &Entity,
 ) -> Result<Unit, CompileError> {
     let primary_key = primary_key(entity)?;
-    let package = format!("{}.adapters.memory", model.project.base_package);
+    let package = model.project.package_for("adapters.memory");
     let type_name = format!("InMemory{}Repository", entity.names.java_type);
     let repository = format!(
-        "{}.repository.{}Repository",
-        model.project.base_package, entity.names.java_type
+        "{}.{}Repository",
+        model.project.package_for("repository"),
+        entity.names.java_type
     );
     let mut imports = BTreeSet::from([
         repository,
@@ -71,11 +72,12 @@ pub(super) fn lower_db_repository(
     entity: &Entity,
 ) -> Result<Unit, CompileError> {
     let primary_key = primary_key(entity)?;
-    let package = format!("{}.adapters.jdbc", model.project.base_package);
+    let package = model.project.package_for("adapters.jdbc");
     let type_name = format!("Jdbc{}Repository", entity.names.java_type);
     let repository = format!(
-        "{}.repository.{}Repository",
-        model.project.base_package, entity.names.java_type
+        "{}.{}Repository",
+        model.project.package_for("repository"),
+        entity.names.java_type
     );
     let mut imports = BTreeSet::from([
         repository,

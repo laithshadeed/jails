@@ -77,8 +77,8 @@ pub(super) fn lower(
     let type_name = format!("Jdbc{port_type}");
     let mut imports = BTreeSet::from([
         format!(
-            "{}.application.transitions.{port_type}",
-            model.project.base_package
+            "{}.{port_type}",
+            model.project.package_for("application.transitions")
         ),
         domain_import(model, target),
         "java.util.ArrayList".to_string(),
@@ -113,7 +113,10 @@ pub(super) fn lower(
         }
         let event_type = with_suffix(&yielded.names.java_type, "Event");
         imports.extend([
-            format!("{}.domain.events.{event_type}", model.project.base_package),
+            format!(
+                "{}.{event_type}",
+                model.project.package_for("domain.events")
+            ),
             "org.springframework.context.ApplicationEventPublisher".to_string(),
         ]);
         let arguments = event

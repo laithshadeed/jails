@@ -104,13 +104,10 @@ fn lower(
             OperationKind::Event(_) => return Ok(None),
         };
     let (method, path) = split_route(route)?;
-    let package = format!("{}.adapters.http", model.project.base_package);
+    let package = model.project.package_for("adapters.http");
     let type_name = with_suffix(&operation.names.java_type, "Controller");
     imports.extend([
-        format!(
-            "{}.{}.{}",
-            model.project.base_package, port_package, port_type
-        ),
+        format!("{}.{port_type}", model.project.package_for(port_package)),
         "org.springframework.web.bind.annotation.RequestMapping".to_string(),
         "org.springframework.web.bind.annotation.RequestMethod".to_string(),
         "org.springframework.web.bind.annotation.RestController".to_string(),
@@ -134,8 +131,8 @@ fn lower(
             imports.extend([
                 format!("{}.ScopeAuthorizer", model.project.base_package),
                 format!(
-                    "{}.application.ExecutionContext",
-                    model.project.base_package
+                    "{}.ExecutionContext",
+                    model.project.package_for("application")
                 ),
                 "java.util.Map".to_string(),
                 "org.springframework.security.core.Authentication".to_string(),

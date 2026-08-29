@@ -11,7 +11,7 @@ pub(crate) fn lower(
     model: &AppModel,
     entity: &Entity,
 ) -> Result<super::emit_java::Unit, CompileError> {
-    let package = format!("{}.testkit", model.project.base_package);
+    let package = model.project.package_for("testkit");
     let type_name = format!("{}Factory", entity.names.java_type);
     let artifact_id = format!("art_{}_factory", entity.id.as_str());
     let mut imports = BTreeSet::from([emit_java::domain_import(model, entity)]);

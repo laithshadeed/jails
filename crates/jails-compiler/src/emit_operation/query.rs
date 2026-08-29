@@ -26,8 +26,8 @@ pub(super) fn lower(
     let port_type = with_suffix(&operation.names.java_type, "Query");
     let mut imports = BTreeSet::from([
         format!(
-            "{}.application.queries.{port_type}",
-            model.project.base_package
+            "{}.{port_type}",
+            model.project.package_for("application.queries")
         ),
         domain_import(model, target),
         "java.util.ArrayList".to_string(),

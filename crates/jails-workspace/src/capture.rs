@@ -1,5 +1,5 @@
 use jails_contracts::{
-    BuildSystem, CapturedFile, ContentDigest, DirectoryPrecondition, FilePrecondition,
+    BuildSystem, CapturedFile, ContentDigest, DirectoryPrecondition, FilePrecondition, Layout,
     MigrationHistory, MigrationRecord, ProjectFacts, ProjectPath, RenderedTree,
     SnapshotPreconditions, WorkspaceSnapshot,
 };
@@ -114,6 +114,7 @@ fn capture_model_state(
         capture_tree(root, &managed, &mut files, &mut preconditions)?;
     }
     for reader_file in [
+        "jails.toml",
         "pom.xml",
         "build.gradle",
         "build.gradle.kts",
@@ -138,12 +139,20 @@ fn capture_model_state(
         (false, true) => BuildSystem::Gradle,
         _ => BuildSystem::Unknown,
     };
+    // Read from the capture, not from disk a second time: the whole point of
+    // the snapshot is that an external fact is observed once, and a layout read
+    // separately could disagree with the precondition recorded above.
+    let layout = match files.get(&ProjectPath::parse("jails.toml")?) {
+        Some(captured) => Layout::parse(&String::from_utf8_lossy(&captured.bytes))?,
+        None => Layout::default(),
+    };
     let project = ProjectFacts {
         build_system,
         java_release: model.project.java_release,
         spring_boot: spring_boot_version(root, build_system),
         base_package: model.project.base_package.clone(),
         dependencies: BTreeSet::new(),
+        layout,
     };
     let accepted = accepted_compiler_state(&files)?;
     let accepted_reader_paths = accepted

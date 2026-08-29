@@ -400,14 +400,42 @@ verbatim from `customer.js` and `admin.js`:
       what jails reads off the build file. That is the half that matters: every
       version fact a template renders against comes from the *reader's* pom.
 
-      B59 is the divergence it surfaced. Adoption records
-      `adapters = "persistence"` identically on both sides, and then the
-      canonical compiler names its facet packages itself and never reads
-      `jails.toml` -- so the same project gets `persistence/` from one
-      implementation and `repository/` from the other. After cutover `jails
-      adopt` would print its mapping, write its file, and change nothing.
-      The test asserts the shared half deliberately and leaves the divergence
-      to `bugs.md`: pinning today's behaviour would freeze the defect.
+      B59 was the divergence it surfaced, and it is fixed in the same change.
+      Adoption recorded `adapters = "persistence"` identically on both sides,
+      and then the canonical compiler named its packages with **28 hardcoded
+      `format!("{}.adapters.jdbc", base_package)` sites**, none of which could
+      apply a rename because none of them knew there was one. `jails adopt`
+      would have printed its mapping, written its file, and changed nothing
+      about where a canonical project's code went -- a configuration command
+      that reports success and has no effect.
+
+      The fix is one function. `ProjectIntent::package_for(suffix)` is the only
+      place the compiler turns a layer into a package, and **only the head
+      segment renames**: a reader who called their adapters `persistence` means
+      `persistence.jdbc`, not that the JDBC adapter moved. A head with no
+      rename key -- `repository`, `ports`, `application` are the compiler's own
+      facet packages -- passes through unchanged, which is the honest answer
+      rather than a guessed mapping onto a legacy layer.
+
+      **The layout is a declaration, not an observation**, and that decided
+      where it lives. `jails.toml` is jails' own manifest rather than a file
+      the reader maintains, so `Layout` sits on `ProjectIntent` and reaches it
+      from that manifest through capture -- the same compatibility-input shape
+      `.jails/model.toml` has, until JDL declares a layout itself. Copying it
+      onto the model in `compile` rather than threading it beside the model is
+      deliberate: 48 signatures already carry `&AppModel`, and a second
+      parameter through all of them is the sprawl `spring::Slice` exists to
+      remove on the legacy side.
+
+      Two gates hold it. `the_compilers_renameable_layers_are_the_engines_
+      layers` pins `RENAMEABLE_LAYERS` against `Layer::ALL` -- they are one
+      list in two crates that cannot see each other, since `jails-model` sits
+      below `jails-spec` -- and
+      `both_implementations_write_adapters_into_the_reader_s_own_package`
+      proves the two reach the same package by different routes, the legacy
+      scaffold emitting its own in-memory adapter and the canonical one
+      arriving as the `fake` capability. Verified by falsification: making
+      `Layout::segment` ignore its renames fails it immediately.
 
       **One thing G5's wording asks for that is still not there**: the
       differential half compares CLI behaviour and reader bytes, not a real

@@ -2358,16 +2358,11 @@ fn adopted_project_is_treated_the_same(flavour: Adopted) {
             subject.name
         );
 
-        // Both implementations *learn* the reader's layout identically: the
+        // Both implementations learn the reader's layout identically: the
         // fixture keeps its adapters in `persistence`, and adoption records
         // that rename rather than reporting the directory as unrecognised.
-        //
-        // What the two then do with it differs, and `bugs.md` B59 is that
-        // finding rather than an assertion here -- the canonical compiler
-        // names its facet packages itself and never reads `jails.toml`, so a
-        // reader who adopted `persistence` gets `repository`. Pinning today's
-        // behaviour would freeze the defect; pinning the shared half is what
-        // says the divergence is downstream of adoption.
+        // What each then *does* with it is
+        // `both_implementations_write_adapters_into_the_reader_s_own_package`.
         assert!(
             fs::read_to_string(subject.root.join("jails.toml"))
                 .unwrap()
@@ -2435,4 +2430,93 @@ fn adopted_project_is_treated_the_same(flavour: Adopted) {
             subject.name
         );
     }
+}
+
+/// A rename `adopt` recorded reaches the generated code, on both sides.
+///
+/// This was `bugs.md` B59, found by the differential fixture above and fixed
+/// in the same change: the canonical compiler named its packages with 28
+/// hardcoded `format!("{}.adapters.jdbc", base_package)` sites, none of which
+/// could apply a rename because none of them knew there was one. So `jails
+/// adopt` printed its mapping, wrote `jails.toml`, and changed nothing about
+/// where a canonical project's code went.
+///
+/// The two reach the same place by different routes, which is what makes this
+/// a differential test rather than two assertions: the legacy scaffold emits
+/// its own in-memory adapter, and the canonical one is the `fake` capability.
+/// What has to agree is the package the reader ends up importing.
+#[test]
+fn both_implementations_write_adapters_into_the_reader_s_own_package() {
+    let subjects = adopted_subjects("adopted-layout", Adopted::Spring);
+    for subject in &subjects {
+        subject.succeeds(&["adopt"]);
+        if subject.name == "canonical" {
+            fs::write(
+                subject.root.join(".jails/model.jdl"),
+                "application Orders @id(project_orders)\n\
+                 package net.acme.legacy\njava 26\ndialect postgresql\n",
+            )
+            .unwrap();
+        }
+        subject.succeeds(&[
+            "g",
+            "scaffold",
+            "Invoice",
+            "id:uuid@pk",
+            "number:string!",
+            "total:long",
+        ]);
+        if subject.name == "canonical" {
+            subject.succeeds(&["add", "fake"]);
+        }
+
+        let adapters: Vec<String> = walk_java(&subject.root)
+            .into_iter()
+            .filter(|path| path.contains("InMemoryInvoiceRepository"))
+            .collect();
+        assert_eq!(
+            adapters.len(),
+            1,
+            "{}: expected exactly one in-memory adapter, got {adapters:?}",
+            subject.name
+        );
+        assert!(
+            adapters[0].contains("/persistence/"),
+            "{}: adapter ignored the reader's `persistence` directory: {}",
+            subject.name,
+            adapters[0]
+        );
+        assert!(
+            !adapters[0].contains("/adapters/"),
+            "{}: adapter used jails' own layer name: {}",
+            subject.name,
+            adapters[0]
+        );
+    }
+}
+
+/// Every `.java` file under a project root, as slash-separated relative paths.
+fn walk_java(root: &Path) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(directory) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|e| e == "java") {
+                found.push(
+                    path.strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                );
+            }
+        }
+    }
+    found.sort();
+    found
 }

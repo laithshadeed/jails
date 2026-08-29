@@ -312,6 +312,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-model", "capability", 2),
     ("jails-model", "component", 2),
     ("jails-model", "constraint", 2),
+    ("jails-model", "layout", 2),
     // jails-support: no jails concepts at all -- writing, running, encoding.
     // `jails-codemod` depends on nothing at all -- it knows one text format
     // and no more -- so it sits beside the support primitives rather than in
@@ -917,4 +918,27 @@ fn harness_text() -> String {
         out.len()
     );
     out
+}
+
+/// The two layer lists are one list, in two crates that cannot see each other.
+///
+/// `jails-model`'s `RENAMEABLE_LAYERS` is what the compiler will rename;
+/// `jails-spec`'s `Layer::ALL` is what the legacy engine renames and what
+/// `jails.toml`'s parser accepts. A layer in one and not the other is a rename
+/// that half of jails honours -- which is `bugs.md` B59 in the other
+/// direction, and the reason that entry exists at all.
+///
+/// They are written out separately because `jails-model` sits below
+/// `jails-spec` and may not depend on it. This test is where they meet.
+#[test]
+fn the_compilers_renameable_layers_are_the_engines_layers() {
+    let engine: Vec<&str> = jails_spec::spec::layout::Layer::ALL
+        .iter()
+        .map(|layer| layer.package())
+        .collect();
+    assert_eq!(
+        jails_model::RENAMEABLE_LAYERS.to_vec(),
+        engine,
+        "the compiler and the engine disagree about which layers a project may rename"
+    );
 }

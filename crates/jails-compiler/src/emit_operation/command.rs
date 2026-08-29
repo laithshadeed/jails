@@ -22,8 +22,8 @@ pub(super) fn lower(
     primary_key(target)?;
     let mut imports = BTreeSet::from([
         format!(
-            "{}.application.commands.{}",
-            model.project.base_package,
+            "{}.{}",
+            model.project.package_for("application.commands"),
             with_suffix(&operation.names.java_type, "Command")
         ),
         domain_import(model, target),
@@ -86,8 +86,8 @@ pub(super) fn lower(
             Some(Value::Function { name, arguments }) if name == "uuid7" && arguments.is_empty()
         ) {
             imports.insert(format!(
-                "{}.domain.TimeOrderedUuid",
-                model.project.base_package
+                "{}.TimeOrderedUuid",
+                model.project.package_for("domain")
             ));
             InsertValue::Parameter("TimeOrderedUuid.next()".to_string())
         } else if field.semantics.default.is_some() {

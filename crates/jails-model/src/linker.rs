@@ -363,6 +363,9 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
             dialect: document.project.dialect,
             platform: document.project.platform,
             build: document.project.build,
+            // JDL does not declare a layout yet, so a linked model carries the
+            // defaults and capture supplies the reader's renames.
+            layout: crate::Layout::default(),
         },
         capabilities,
         dependencies,

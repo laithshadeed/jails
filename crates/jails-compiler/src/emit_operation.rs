@@ -100,7 +100,7 @@ fn operation_file(
     imports: BTreeSet<String>,
     body: String,
 ) -> Result<(ProjectPath, RenderedFile), CompileError> {
-    let package = format!("{}.adapters.jdbc", model.project.base_package);
+    let package = model.project.package_for("adapters.jdbc");
     let artifact_id = format!(
         "art_{capability_id}_{}_{artifact_suffix}",
         operation.id.as_str()
@@ -150,8 +150,8 @@ fn context_parameter(model: &AppModel, entity: &Entity, imports: &mut BTreeSet<S
         String::new()
     } else {
         imports.insert(format!(
-            "{}.application.ExecutionContext",
-            model.project.base_package
+            "{}.ExecutionContext",
+            model.project.package_for("application")
         ));
         "ExecutionContext context, ".to_string()
     }

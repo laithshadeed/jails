@@ -284,7 +284,7 @@ const fn property(key: &'static str, value: &'static str) -> PropertySpec {
 }
 
 fn messaging_package(model: &AppModel) -> String {
-    format!("{}.messaging", model.project.base_package)
+    model.project.package_for("messaging")
 }
 
 fn application_package(model: &AppModel) -> String {

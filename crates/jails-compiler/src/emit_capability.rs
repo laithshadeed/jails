@@ -213,10 +213,7 @@ pub(crate) fn lower_and_emit(
                     .package_overrides
                     .iter()
                     .find(|placement| placement.suffix == file.suffix)
-                    .map(|placement| match placement.project_subpackage {
-                        "" => model.project.base_package.clone(),
-                        subpackage => format!("{}.{}", model.project.base_package, subpackage),
-                    })
+                    .map(|placement| model.project.package_for(placement.project_subpackage))
                     .unwrap_or_else(|| default_package.clone());
                 let class = (file.class_name)(capability);
                 let template_class = (file.template_class)(capability);
@@ -431,15 +428,15 @@ fn webmvc_test_import(boot_major: Option<u32>) -> &'static str {
 }
 
 fn adapters_package(model: &AppModel) -> String {
-    format!("{}.adapters", model.project.base_package)
+    model.project.package_for("adapters")
 }
 
 fn api_package(model: &AppModel) -> String {
-    format!("{}.api", model.project.base_package)
+    model.project.package_for("api")
 }
 
 fn testkit_package(model: &AppModel) -> String {
-    format!("{}.testkit", model.project.base_package)
+    model.project.package_for("testkit")
 }
 
 pub(crate) fn boot_major(version: Option<&str>) -> Option<u32> {

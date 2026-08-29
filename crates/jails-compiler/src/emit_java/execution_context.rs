@@ -16,7 +16,7 @@ pub(super) fn lower(model: &AppModel) -> Result<Option<Unit>, CompileError> {
         return Ok(None);
     }
 
-    let package = format!("{}.application", model.project.base_package);
+    let package = model.project.package_for("application");
     let type_name = "ExecutionContext";
     let artifact_id = "art_app_execution_context";
     let imports = BTreeSet::from(["java.util.Map".to_string(), "java.util.Objects".to_string()]);

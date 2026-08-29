@@ -103,7 +103,7 @@ pub(crate) struct Unit {
 }
 
 fn lower_facet(model: &AppModel, entity: &Entity, facet: Facet) -> Result<Unit, CompileError> {
-    let domain_package = format!("{}.domain", model.project.base_package);
+    let domain_package = model.project.package_for("domain");
     let (package, type_name, body, mut imports) = match facet {
         Facet::Enum => (
             domain_package.clone(),
@@ -124,7 +124,7 @@ fn lower_facet(model: &AppModel, entity: &Entity, facet: Facet) -> Result<Unit, 
         Facet::Factory => unreachable!("factory has a test-source backend"),
         Facet::Dto => unreachable!("dto has a multi-file backend"),
         Facet::Repository => {
-            let package = format!("{}.repository", model.project.base_package);
+            let package = model.project.package_for("repository");
             let primary_key = primary_key(entity)?;
             let mut imports = BTreeSet::from([
                 "java.util.List".to_string(),
@@ -144,7 +144,7 @@ fn lower_facet(model: &AppModel, entity: &Entity, facet: Facet) -> Result<Unit, 
             (package, type_name, body, imports)
         }
         Facet::Service => {
-            let package = format!("{}.service", model.project.base_package);
+            let package = model.project.package_for("service");
             let type_name = format!("{}Service", entity.names.java_type);
             let imports = BTreeSet::from([format!("{domain_package}.{}", entity.names.java_type)]);
             let body = format!(
@@ -154,7 +154,7 @@ fn lower_facet(model: &AppModel, entity: &Entity, facet: Facet) -> Result<Unit, 
             (package, type_name, body, imports)
         }
         Facet::Http => {
-            let package = format!("{}.ports.http", model.project.base_package);
+            let package = model.project.package_for("ports.http");
             let type_name = format!("{}HttpPort", entity.names.java_type);
             let imports = BTreeSet::from([format!("{domain_package}.{}", entity.names.java_type)]);
             let body = format!(
@@ -164,7 +164,7 @@ fn lower_facet(model: &AppModel, entity: &Entity, facet: Facet) -> Result<Unit, 
             (package, type_name, body, imports)
         }
         Facet::Events => {
-            let package = format!("{}.ports.events", model.project.base_package);
+            let package = model.project.package_for("ports.events");
             let type_name = format!("{}Events", entity.names.java_type);
             let imports = BTreeSet::from([format!("{domain_package}.{}", entity.names.java_type)]);
             let body = format!(
@@ -174,7 +174,7 @@ fn lower_facet(model: &AppModel, entity: &Entity, facet: Facet) -> Result<Unit, 
             (package, type_name, body, imports)
         }
         Facet::Search => {
-            let package = format!("{}.ports.search", model.project.base_package);
+            let package = model.project.package_for("ports.search");
             let type_name = format!("{}Search", entity.names.java_type);
             let imports = BTreeSet::from([
                 "java.util.List".to_string(),
@@ -279,7 +279,7 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
             ("domain.events", type_name, body, imports)
         }
     };
-    let package = format!("{}.{}", model.project.base_package, package_suffix);
+    let package = model.project.package_for(package_suffix);
     let artifact_id = format!(
         "art_{}_{}",
         operation.id.as_str(),
@@ -313,8 +313,8 @@ fn operation_context(model: &AppModel, entity: &Entity, imports: &mut BTreeSet<S
         .any(|field| field.semantics.scope.is_some())
     {
         imports.insert(format!(
-            "{}.application.ExecutionContext",
-            model.project.base_package
+            "{}.ExecutionContext",
+            model.project.package_for("application")
         ));
         "ExecutionContext context, ".to_string()
     } else {
@@ -367,8 +367,9 @@ fn fields<'a>(entity: &'a Entity, ids: &[FieldId]) -> Result<Vec<&'a Field>, Com
 
 pub(crate) fn domain_import(model: &AppModel, entity: &Entity) -> String {
     format!(
-        "{}.domain.{}",
-        model.project.base_package, entity.names.java_type
+        "{}.{}",
+        model.project.package_for("domain"),
+        entity.names.java_type
     )
 }
 

@@ -1,4 +1,4 @@
-use crate::{ProjectPath, RenderedTree};
+use crate::{Layout, ProjectPath, RenderedTree};
 use jails_model::AppModel;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -47,6 +47,13 @@ pub struct ProjectFacts {
     pub spring_boot: Option<String>,
     pub base_package: String,
     pub dependencies: BTreeSet<String>,
+    /// The reader's layer renames, from `jails.toml`.
+    ///
+    /// `#[serde(default)]` so a snapshot written before this field existed
+    /// still decodes, and so a project that renamed nothing serializes exactly
+    /// as it did -- the defaults are the names the compiler already used.
+    #[serde(default)]
+    pub layout: Layout,
 }
 
 impl ProjectFacts {
@@ -57,6 +64,7 @@ impl ProjectFacts {
             spring_boot: None,
             base_package: model.project.base_package.clone(),
             dependencies: BTreeSet::new(),
+            layout: Layout::default(),
         }
     }
 }
