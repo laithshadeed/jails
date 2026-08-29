@@ -314,7 +314,7 @@ pub(super) fn in_memory_adapter_check(project: &Project) -> Option<Check> {
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or_default();
-            if !stem.starts_with("InMemory") || !path.extension().is_some_and(|e| e == "java") {
+            if path.extension().is_none_or(|e| e != "java") {
                 continue;
             }
             let Ok(text) = std::fs::read_to_string(&path) else {

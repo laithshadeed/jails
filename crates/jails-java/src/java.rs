@@ -683,10 +683,7 @@ pub fn types_annotated_with(dir: &std::path::Path, annotation: &str) -> Vec<Java
                 stack.push(path);
                 continue;
             }
-            if !path
-                .extension()
-                .is_some_and(|extension| extension == "java")
-            {
+            if path.extension().is_none_or(|extension| extension != "java") {
                 continue;
             }
             let Ok(source) = std::fs::read_to_string(&path) else {

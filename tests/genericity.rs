@@ -1,6 +1,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// The suite-wide scheduler. See its own docs: the sweep below is the second
+/// place in this repository that reads and strips the whole workspace, and it
+/// draws its workers from the same process-wide budget the architecture gates
+/// do rather than opening a second, unaware one.
+#[path = "common/parallel.rs"]
+mod parallel;
+
 const FORBIDDEN: &[&str] = &[
     "crawl",
     "spider",
@@ -18,6 +25,19 @@ const FORBIDDEN: &[&str] = &[
     "debit",
     "posting",
 ];
+
+/// One forbidden word found in one file: what the report would say, and
+/// which `(allowance, file)` entry permits it if any.
+///
+/// A named type rather than the tuple this started as, because the sweep is
+/// parallel now and the verdict has to survive the trip back from a worker:
+/// the allowance bookkeeping is shared mutable state and stays on the folding
+/// thread, so what crosses the boundary is a decision about one occurrence
+/// rather than a write to two vectors.
+struct Occurrence {
+    found: String,
+    allowance: Option<(usize, usize)>,
+}
 
 struct AllowedConcept {
     word: &'static str,
@@ -174,13 +194,26 @@ fn core_generation_stays_free_of_showcase_vocabulary() {
         members.sort();
         scopes.extend(members.into_iter().map(|member| member.join("src")));
     }
-    let mut scanned = 0;
-    for scope in scopes {
-        for path in source_files(&scope) {
-            scanned += 1;
+    let paths: Vec<PathBuf> = scopes
+        .iter()
+        .flat_map(|scope| source_files(scope))
+        .collect();
+    let scanned = paths.len();
+    // Read and stripped in parallel, largest file first. Comment stripping is
+    // a byte-at-a-time state machine and this sweep covers the same 5.9 MB
+    // the architecture gates do; the sizes across it differ by two orders of
+    // magnitude, so the biggest file has to start first or every worker waits
+    // on it at the end. What each file *says* is independent of every other,
+    // so only the verdict below is folded together, and it is folded in path
+    // order -- the report stays the same whatever order the reads finished in.
+    let per_file: Vec<Vec<Occurrence>> = parallel::map_by_cost(
+        &paths,
+        |path| fs::metadata(path).map_or(0, |data| data.len()),
+        |path| {
             let relative = path.strip_prefix(root).unwrap();
-            let source = fs::read_to_string(&path).unwrap();
+            let source = fs::read_to_string(path).unwrap();
             let visible = without_comments(&source);
+            let mut hits = Vec::new();
             for word in FORBIDDEN {
                 for offset in word_offsets(&visible, word) {
                     let allowance = ALLOWED.iter().enumerate().find_map(|(index, allowed)| {
@@ -193,18 +226,28 @@ fn core_generation_stays_free_of_showcase_vocabulary() {
                             .position(|file| relative == Path::new(file))
                             .map(|file| (index, file))
                     });
-                    if let Some((index, file)) = allowance {
-                        used_allowances[index] = true;
-                        used_files[index][file] = true;
-                    } else {
-                        let line = visible[..offset]
-                            .bytes()
-                            .filter(|byte| *byte == b'\n')
-                            .count()
-                            + 1;
-                        failures.push(format!("{}:{line}: {word}", relative.display()));
-                    }
+                    let line = visible[..offset]
+                        .bytes()
+                        .filter(|byte| *byte == b'\n')
+                        .count()
+                        + 1;
+                    hits.push(Occurrence {
+                        found: format!("{}:{line}: {word}", relative.display()),
+                        allowance,
+                    });
                 }
+            }
+            hits
+        },
+    );
+    for hits in per_file {
+        for Occurrence { found, allowance } in hits {
+            match allowance {
+                Some((index, file)) => {
+                    used_allowances[index] = true;
+                    used_files[index][file] = true;
+                }
+                None => failures.push(found),
             }
         }
     }

@@ -128,15 +128,28 @@ fn collect(root: &Path, dir: &Path, out: &mut BTreeMap<String, String>) {
 /// snapshot so the goldens hold only what jails itself produced -- otherwise
 /// every scenario carries a copy of the fixture pom and the diff on a
 /// template change is buried.
-fn fixture_files(fixture: Fixture) -> BTreeMap<String, String> {
-    let dir = temp_dir("golden-baseline");
-    match fixture {
-        Fixture::Plain => write_plain_fixture(&dir),
-        Fixture::Spring => write_spring_fixture(&dir),
+///
+/// **Computed once per fixture, not once per scenario.** There are sixty-one
+/// scenarios and exactly two fixtures, so this wrote, snapshotted and deleted
+/// the same two trees sixty-one times -- work whose answer cannot differ,
+/// since the fixture writers take no argument but the directory.
+fn fixture_files(fixture: Fixture) -> &'static BTreeMap<String, String> {
+    fn compute(fixture: Fixture) -> BTreeMap<String, String> {
+        let dir = temp_dir("golden-baseline");
+        match fixture {
+            Fixture::Plain => write_plain_fixture(&dir),
+            Fixture::Spring => write_spring_fixture(&dir),
+        }
+        let files = snapshot(&dir);
+        fs::remove_dir_all(&dir).ok();
+        files
     }
-    let files = snapshot(&dir);
-    fs::remove_dir_all(&dir).ok();
-    files
+    static PLAIN: std::sync::OnceLock<BTreeMap<String, String>> = std::sync::OnceLock::new();
+    static SPRING: std::sync::OnceLock<BTreeMap<String, String>> = std::sync::OnceLock::new();
+    match fixture {
+        Fixture::Plain => PLAIN.get_or_init(|| compute(Fixture::Plain)),
+        Fixture::Spring => SPRING.get_or_init(|| compute(Fixture::Spring)),
+    }
 }
 
 fn run_scenario(scenario: &Scenario) -> BTreeMap<String, String> {
@@ -157,48 +170,64 @@ fn run_scenario(scenario: &Scenario) -> BTreeMap<String, String> {
     files
 }
 
-#[test]
-fn generated_output_matches_the_golden_snapshots() {
-    let root = golden_root();
+/// One scenario, generated and compared against its golden directory.
+///
+/// A cell of the table below, and independent of every other one: its own
+/// temporary tree, its own `jails` processes and its own golden directory
+/// under `tests/golden/`. That is what lets the table be scheduled rather
+/// than walked.
+fn golden_mismatches_for(scenario: &Scenario) -> Vec<String> {
     let mut mismatches: Vec<String> = Vec::new();
+    let root = golden_root();
+    let produced = run_scenario(scenario);
+    let dir = root.join(scenario.name);
 
-    for scenario in SCENARIOS {
-        let produced = run_scenario(scenario);
-        let dir = root.join(scenario.name);
+    if updating() {
+        fs::remove_dir_all(&dir).ok();
+        for (rel, contents) in &produced {
+            let path = dir.join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, contents).unwrap();
+        }
+        return mismatches;
+    }
 
-        if updating() {
-            fs::remove_dir_all(&dir).ok();
-            for (rel, contents) in &produced {
-                let path = dir.join(rel);
-                fs::create_dir_all(path.parent().unwrap()).unwrap();
-                fs::write(&path, contents).unwrap();
+    let expected = snapshot(&dir);
+    if expected.is_empty() {
+        mismatches.push(format!(
+            "scenario `{}` has no golden files -- run `UPDATE_GOLDEN=1 cargo test --test golden`",
+            scenario.name
+        ));
+        return mismatches;
+    }
+    for (rel, want) in &expected {
+        match produced.get(rel) {
+            None => mismatches.push(format!("{}/{rel}: no longer generated", scenario.name)),
+            Some(got) if got != want => {
+                mismatches.push(format!("{}/{rel}: contents changed", scenario.name))
             }
-            continue;
-        }
-
-        let expected = snapshot(&dir);
-        if expected.is_empty() {
-            mismatches.push(format!(
-                "scenario `{}` has no golden files -- run `UPDATE_GOLDEN=1 cargo test --test golden`",
-                scenario.name
-            ));
-            continue;
-        }
-        for (rel, want) in &expected {
-            match produced.get(rel) {
-                None => mismatches.push(format!("{}/{rel}: no longer generated", scenario.name)),
-                Some(got) if got != want => {
-                    mismatches.push(format!("{}/{rel}: contents changed", scenario.name))
-                }
-                Some(_) => {}
-            }
-        }
-        for rel in produced.keys() {
-            if !expected.contains_key(rel) {
-                mismatches.push(format!("{}/{rel}: newly generated", scenario.name));
-            }
+            Some(_) => {}
         }
     }
+    for rel in produced.keys() {
+        if !expected.contains_key(rel) {
+            mismatches.push(format!("{}/{rel}: newly generated", scenario.name));
+        }
+    }
+    mismatches
+}
+
+#[test]
+fn generated_output_matches_the_golden_snapshots() {
+    let mismatches: Vec<String> = common::parallel::map_recording(
+        "golden-snapshots",
+        SCENARIOS,
+        |scenario| scenario.name.to_string(),
+        golden_mismatches_for,
+    )
+    .into_iter()
+    .flatten()
+    .collect();
 
     assert!(
         mismatches.is_empty(),

@@ -178,7 +178,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       the resolved `Project`. This is the count abstract.md §8.1 watched \
                       rise from 161 to 195 with nothing to say so.",
             },
-            root_path_parameters(&src),
+            root_path_parameters(src),
         ),
         (
             Ratchet {
@@ -205,7 +205,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       caller already resolved, which is how two answers to one question \
                       appear in one run.",
             },
-            rederivers(&src)
+            rederivers(src)
                 .into_iter()
                 .filter(|(_, name)| {
                     !A_FRESH_READ_IS_CORRECT
@@ -224,7 +224,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       value: a Data Clump producing connascence of position at degree 12, \
                       which is the highest-cost coupling in Page-Jones's ranking.",
             },
-            over_five_params(&src, SPRING_RS),
+            over_five_params(src, SPRING_RS),
         ),
         (
             Ratchet {
@@ -236,7 +236,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       in the same file. Exactly one struct may carry a body, and it is \
                       `model::Artifact`.",
             },
-            body_carrying_structs(&src),
+            body_carrying_structs(src),
         ),
         (
             Ratchet {
@@ -249,7 +249,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       tuple where `model::Artifact` says the same thing by name. Swap two \
                       fields and it compiles and emits wrong Java.",
             },
-            file_tuple_types(&src),
+            file_tuple_types(src),
         ),
         (
             Ratchet {
@@ -261,7 +261,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       migration working. They are scaffolding, not a destination: two names \
                       for one type is how the four shapes got there in the first place.",
             },
-            type_aliases(&src),
+            type_aliases(src),
         ),
         (
             Ratchet {
@@ -273,7 +273,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       and the per-command flag reach two different implementations. \
                       Connascence of meaning crossing a module boundary.",
             },
-            count_matches(&src, "dry_run || pretend") + count_matches(&src, "pretend || dry_run"),
+            count_matches(src, "dry_run || pretend") + count_matches(src, "pretend || dry_run"),
         ),
         (
             Ratchet {
@@ -285,7 +285,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       already computes. `tests/agreement.rs` polices it; abstract.md §9 says \
                       a test that polices duplication is a receipt for a decision not made.",
             },
-            count_matches(&src, "KIND_FILES") + count_matches(&src, "NO_FILE_TABLE"),
+            count_matches(src, "KIND_FILES") + count_matches(src, "NO_FILE_TABLE"),
         ),
         (
             Ratchet {
@@ -388,7 +388,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       build does not have is the worst outcome available -- and two scanners \
                       are two half-understandings that disagree without saying so.",
             },
-            maven_xml_parsers(&src),
+            maven_xml_parsers(src),
         ),
         (
             Ratchet {
@@ -418,7 +418,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       that is wrong is whichever the reader did not edit -- which the compiler \
                       cannot report, because both are exhaustive over the same enum.",
             },
-            largest_builtin_table(&src),
+            largest_builtin_table(src),
         ),
         (
             Ratchet {
@@ -442,7 +442,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       snapshot, same request, same plan -- which is what makes a plan safe to \
                       show before it is applied. One read inside a pass ends that quietly.",
             },
-            compiler_reaches_outside_the_snapshot(&src),
+            compiler_reaches_outside_the_snapshot(src),
         ),
         (
             Ratchet {
@@ -483,7 +483,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       in `encode`, in `decode` -- so a field added to the type and forgotten \
                       in the codec is a silent change of format rather than a compile error.",
             },
-            hand_written_codecs(&src),
+            hand_written_codecs(src),
         ),
         (
             Ratchet {
@@ -520,7 +520,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       whole argument for refusing rather than guessing is that it can say what \
                       would work instead.",
             },
-            refusals_without_a_fix(&src),
+            refusals_without_a_fix(src),
         ),
         (
             Ratchet {
@@ -545,7 +545,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       hand-written copies of one collection loop came to exist, and how a set \
                       whose author forgot the sortedness check got no check at all.",
             },
-            inherent_codec_halves(&src),
+            inherent_codec_halves(src),
         ),
         (
             Ratchet {
@@ -557,7 +557,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       cannot be trusted and a ledger hung off `write_new_file` has a hole \
                       exactly where a capability updates a file it previously wrote.",
             },
-            write_sites_outside_apply(&src),
+            write_sites_outside_apply(src),
         ),
         (
             Ratchet {
@@ -656,7 +656,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       outside any transaction, so `--pretend` cannot see it and the journal \
                       cannot undo it.",
             },
-            mutation_sites(&src, MUTATION_APIS) + executor_bypasses(&src),
+            mutation_sites(src, MUTATION_APIS) + executor_bypasses(src),
         ),
         (
             Ratchet {
@@ -1124,7 +1124,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 why: "Every brace doubled, and no editor or compiler can check it. This is \
                       the exact tax `src/template.rs` exists to remove.",
             },
-            inline_java_bodies(&src),
+            inline_java_bodies(src),
         ),
         (
             Ratchet {

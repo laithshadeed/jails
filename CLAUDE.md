@@ -829,6 +829,114 @@ hook runs this automatically (see `.claude/settings.json`) — don't skip it
 manually even though the hook exists, since the hook only fires on turn end,
 not mid-turn.
 
+## How the suite stays fast, and the four rules that keep it that way
+
+The full workspace run was 171.6s wall against 363s of CPU on four cores --
+53% utilisation, and most of the rest of the CPU spent on work that did not
+need doing at all. It is 80.2s now on the same machine, and the four things
+that got it there are each a rule rather than a one-off tidy-up.
+
+**1. A table-driven test is parallel over its table.** Libtest parallelises
+per `#[test]`, which is the wrong grain here: `agreement.rs` is two test
+functions driving sixty-one independent scenarios and `golden.rs` is one. Each
+cell is its own temporary directory and its own `jails` processes, so the
+table goes through `tests/common/parallel.rs` -- a work-stealing scheduler over
+one **process-wide** permit gate, so several concurrent tables cannot between
+them oversubscribe the machine. `agreement` went 18.1s -> 2.3s, `golden`
+9.2s -> 1.0s, `desired` 8.1s -> 3.1s. **Write the cell as a function returning
+its findings**, not as a loop body that pushes into a captured `Vec`: the
+report then stays in table order however the cells ran, and
+`parallel::catching` keeps a failing cell's own assertion message instead of
+`a scoped thread panicked`.
+
+**2. Scheduling is measured, not guessed.** Cells differ by orders of
+magnitude and a work-stealing run's makespan is set by whatever starts last,
+so the schedule is longest-processing-time first. Nothing declares a weight:
+each run writes what it observed to `target/jails-test-costs/` and the next
+run orders by it, with an unmeasured cell scheduled *first* because a new row
+is more likely to be expensive than not. It is a hint and only a hint -- a
+missing, stale or corrupt ledger changes the order and no result, which is why
+it lives under `target/` and every read and write failure is ignored.
+`scripts/run-tests.py` keeps the same kind of ledger for whole binaries.
+
+**3. A scan of the workspace happens once.** `tests/architecture/` has
+nineteen gates over the same 414 files and 5.9 MB, and it re-walked, re-read
+and re-blanked all of it for each -- eleven full passes, 9.4s, no I/O worth
+the name and no subprocess at all. `measure::sources()` is memoised behind a
+`OnceLock` and its per-file blanking runs on the scheduler above: **0.35s**.
+`genericity.rs` is the second scanner of the same tree and got the same
+treatment: 3.6s -> 0.17s. If a third appears, it goes through
+`parallel::map_by_cost` keyed on file size, largest first.
+
+**4. `[profile.dev] opt-level = 1`, and it is about the *product* binary.**
+The integration tests spawn `target/debug/jails` some thousands of times, and
+an unoptimised build pays for that on every one; the byte-at-a-time blanking
+parsers pay for it too. Level 1 with `debug = "line-tables-only"` keeps panic
+locations, cost `jails-workspace`'s unit tests 6.3s -> 0.1s and the `cli`
+binary 89.6s -> 48s. It buys that with about a hundred seconds on a **cold**
+full build; an incremental rebuild after an ordinary edit is unchanged at
+around four seconds, which is the number the inner loop actually pays.
+
+Two further things worth knowing before touching any of it:
+
+- **The libtest default of one thread per core is wrong for this suite.**
+  These tests are process-spawn bound -- `fork`, `exec`, the child's dynamic
+  linking -- not compute bound, so a core sits idle waiting on the kernel.
+  Measured on `cli`: 89.6s at four threads, 55.8s at sixteen, with total CPU
+  unchanged; it plateaus around sixteen. `parallel::budget()` is four units
+  per core for that reason, and `JAILS_TEST_MAX_TOOLCHAIN_PROCESSES`'s
+  companion `default_max_toolchain_processes()` is one and a half *Maven*
+  trees per core -- a much lower ratio, because a Maven tree is a real JVM.
+  Both were constants and are now derived; the constant they replaced was a
+  four-core machine's number, which left a sixteen-core machine running six
+  Maven trees while ten cores did nothing.
+
+- **`cargo test` runs the test binaries one after another.** The sum of the
+  per-target times was within four seconds of the whole run's wall clock, so
+  essentially nothing overlapped -- and `engine` spends six of its seven
+  seconds inside one real Maven spotless run during which no other binary
+  starts. `scripts/run-tests.py` (`mise run test`) runs all thirty-two at once
+  and takes 61.5s where `cargo test --workspace` takes 80.2s. It is
+  **deliberately not** what `verify-rewrite` invokes: `simplify-sol.md`'s G0
+  wants one answer to "is this green", and that answer stays plain
+  `cargo test --workspace`.
+
+### The remaining cost is Maven, and it is measured
+
+Of the `cli` binary's 48s, **41s is the real-toolchain tier**: the same binary
+with Maven off PATH runs in 6.6s. So the pure-Rust suite is now small and the
+tier that answers the question the tool exists for is essentially all of what
+is left. Two measurements bound what can be done about it:
+
+- **A no-op `mvn validate` costs 1.2s wall and 2.4s CPU** on a warm local
+  repository. `-o` does not help (nothing is being fetched), and an AppCDS
+  archive over the Maven JVM only takes it to 1.05s -- 13%, against a
+  corruption risk from several concurrent JVMs sharing one archive file. Not
+  worth taking.
+- So **the lever is the number of `mvn` invocations, not the cost of one**,
+  and the shape that would move it is batching the generated projects of many
+  tests into one reactor: one JVM start and one plugin resolution instead of
+  fifty. That is a real change to how those tests are written and it is not
+  done. Do not start it without a machine whose JDK matches `TARGET_RELEASE`
+  -- this tier cannot be exercised at all on an older one, and it fails in a
+  way (`release version N not supported`) that looks nothing like the failure
+  a wrong batching would produce.
+
+**A test that waits is worse than a test that works.** The single most
+expensive test in the suite was `run_starts_compose_services_only_when_
+explicitly_requested`, at **30.0s** -- the entire wall clock of the `tooling`
+module and the floor for the whole `cli` binary. It asked a narrow question
+(does compose go up before Spring?) with a fake `docker` that starts no
+container, so `jails run`'s readiness probe spent its whole 120 x 250ms budget
+failing to reach a PostgreSQL that was never going to exist. Shortening the
+production budget would have been the wrong fix; the fixture stops lying
+instead. `common::listening_loopback_port()` holds a real socket open and the
+compose file declares its port, so the probe finds what the fake `docker`
+claims it started: **0.02s**, and a better model of the case, not a weaker
+one. It was also *flaky* before, failing under full-suite load and passing
+alone. When a test is slow, ask what it is waiting for before asking how to
+make the waiting faster.
+
 ## Package layout
 
 Generated code does **not** all land in the base package. `generate::layout`

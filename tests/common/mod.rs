@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+pub mod parallel;
 pub mod scenarios;
 
 use std::ffi::OsStr;
@@ -646,6 +647,35 @@ impl Drop for ContainerGuard {
     }
 }
 
+/// A loopback port with something listening on it, held open by the returned
+/// listener.
+///
+/// **What this replaces is thirty seconds of real waiting per test.** A
+/// command that starts compose services then waits for PostgreSQL to accept
+/// connections -- `jails run --services start` -- polls for 120 quarter
+/// seconds before giving up. Against a fake `docker` that starts no container
+/// the poll can only ever time out, so a test asking the narrow question *did
+/// compose go up before Spring* paid the entire budget for an answer it was
+/// not asking about. It was the single most expensive test in the suite and
+/// set the floor for the whole `cli` binary.
+///
+/// Shortening the production budget would be the wrong fix: how long to wait
+/// for a database is a real decision and thirty seconds is a defensible one.
+/// So the fixture stops lying instead. A fake `docker` that reports success
+/// is claiming a server is up, and this makes that claim true enough for the
+/// probe that checks it -- which is a *better* model of the case under test,
+/// not a weaker one, and leaves the readiness wait itself covered by the
+/// tests that are about it.
+///
+/// A listening socket completes the handshake from its backlog with no
+/// `accept()` call, so nothing here has to serve anything. Hold the listener
+/// for as long as the port must answer: dropping it closes the socket.
+pub fn listening_loopback_port() -> (TcpListener, u16) {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("could not bind a loopback port");
+    let port = listener.local_addr().unwrap().port();
+    (listener, port)
+}
+
 fn reserve_loopback_port() -> u16 {
     TcpListener::bind(("127.0.0.1", 0))
         .unwrap()
@@ -806,7 +836,30 @@ fn test_profile_epoch() -> &'static Instant {
     EPOCH.get_or_init(Instant::now)
 }
 
-const DEFAULT_MAX_TOOLCHAIN_PROCESSES: usize = 6;
+/// How many Maven/javac/Testcontainers process trees may run at once.
+///
+/// **Derived from the machine, not written down as a constant.** This was a
+/// bare `6`, measured on a four-core machine: sixteen concurrent trees there
+/// turned a seven-second build into forty to seventy-five seconds and
+/// eventually killed a Kafka container during start-up, and six did not. But
+/// six is not a fact about Maven, it is that machine's core count and a half
+/// -- and a constant keeps a sixteen-core machine running six trees while ten
+/// cores sit idle through the most expensive tier in the suite.
+///
+/// So the *ratio* is what was measured and what is kept. One and a half trees
+/// per core: each one is a JVM that runs at roughly two cores' worth of CPU
+/// in short bursts separated by I/O, so a little over one per core covers the
+/// waiting without returning to the four-times oversubscription that broke.
+/// On the machine the original number came from this still evaluates to
+/// exactly 6.
+///
+/// `JAILS_TEST_MAX_TOOLCHAIN_PROCESSES` still overrides it, which is what a
+/// machine where the ratio is wrong -- a shared CI box, a laptop on battery
+/// -- should reach for.
+fn default_max_toolchain_processes() -> usize {
+    let cores = std::thread::available_parallelism().map_or(4, |value| value.get());
+    (cores * 3 / 2).max(2)
+}
 const MAX_INFRASTRUCTURE_START_PROCESSES: usize = 2;
 static TOOLCHAIN_PROCESSES: PermitPool = PermitPool::new();
 static INFRASTRUCTURE_START_PROCESSES: PermitPool = PermitPool::new();
@@ -818,7 +871,7 @@ fn max_toolchain_processes() -> usize {
             .ok()
             .and_then(|value| value.parse().ok())
             .filter(|value| *value > 0)
-            .unwrap_or(DEFAULT_MAX_TOOLCHAIN_PROCESSES)
+            .unwrap_or_else(default_max_toolchain_processes)
     })
 }
 

@@ -562,9 +562,22 @@ fn run_starts_compose_services_only_when_explicitly_requested() {
         "<project>org.springframework.boot</project>",
     )
     .unwrap();
+    // A real port with a real listener on it, declared in the compose file
+    // jails reads. `run --services start` will not launch Spring until the
+    // declared PostgreSQL accepts TCP connections, and a fake `docker` that
+    // exits 0 starts no container -- so without this the command spends its
+    // whole thirty-second readiness budget failing to reach a server that was
+    // never going to exist, for a test whose question is only whether compose
+    // went up before Spring. See `common::listening_loopback_port`.
+    let (_postgres, postgres_port) = listening_loopback_port();
     fs::write(
         root.join("compose.yaml"),
-        "services:\n  postgres:\n    image: postgres:17-alpine\n",
+        // The block-sequence spelling `add db` itself writes: the host port
+        // is read off a `- "host:container"` item, and an inline flow
+        // sequence is not that shape.
+        format!(
+            "services:\n  postgres:\n    image: postgres:17-alpine\n    ports:\n      - \"{postgres_port}:5432\"\n"
+        ),
     )
     .unwrap();
     let fake_dir = temp_dir("mock-run-compose-bin");

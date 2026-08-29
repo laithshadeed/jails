@@ -110,3 +110,7 @@ tempfile.workspace = true
 
 [lints]
 workspace = true
+
+[profile.dev]
+opt-level = 1
+debug = "line-tables-only"

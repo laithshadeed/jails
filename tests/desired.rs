@@ -161,16 +161,21 @@ fn every_capability_states_where_it_is_in_the_v2_migration() {
 /// what value each property has in force. A capability's properties are keyed
 /// resources, so the lines around them belong to whoever wrote them and are
 /// not this capability's to reproduce.
-#[test]
-fn what_a_capability_desires_is_what_installing_it_leaves() {
-    let mut compared = 0;
-    for &capability in Capability::value_variants() {
+/// One capability's parity check: `Some(label)` when it was actually
+/// compared, `None` when the board already explains why it could not be.
+///
+/// A cell of the table below. Each one installs into its own pair of
+/// temporary projects and shares nothing with its neighbours, which is what
+/// lets them be scheduled rather than walked -- the loop that used to hold
+/// them ran one `jails add` at a time on an otherwise idle machine.
+fn capability_parity(capability: Capability) -> Option<&'static str> {
+    {
         let label = capability.label();
         if !matches!(
             BOARD.iter().find(|(name, _)| *name == label),
             Some((_, Verdict::Translates))
         ) {
-            continue;
+            return None;
         }
 
         let v1 = common::temp_dir(&format!("parity-v1-{label}"));
@@ -183,7 +188,7 @@ fn what_a_capability_desires_is_what_installing_it_leaves() {
         if !installed.status.success() {
             // A capability that cannot install against the bare fixture has
             // nothing to compare; the board already records why.
-            continue;
+            return None;
         }
 
         let v2 = common::temp_dir(&format!("parity-v2-{label}"));
@@ -281,13 +286,42 @@ fn what_a_capability_desires_is_what_installing_it_leaves() {
                 relative.display()
             );
         }
-        compared += 1;
+        Some(label)
     }
-    assert!(
-        compared >= 10,
-        "only {compared} capabilities were actually compared; the check is not covering the surface"
+}
+
+#[test]
+fn what_a_capability_desires_is_what_installing_it_leaves() {
+    let capabilities: Vec<Capability> = Capability::value_variants().to_vec();
+    let outcomes = common::parallel::map_recording(
+        "desired-capability-parity",
+        &capabilities,
+        |capability| capability.label().to_string(),
+        |capability| common::parallel::catching(|| capability_parity(*capability)),
     );
-    println!("capabilities compared: {compared}");
+
+    let failures: Vec<String> = outcomes
+        .iter()
+        .filter_map(|outcome| outcome.as_ref().err().cloned())
+        .collect();
+    assert!(
+        failures.is_empty(),
+        "{} capability parity check(s) failed:\n\n{}",
+        failures.len(),
+        failures.join("\n\n")
+    );
+
+    let compared: Vec<&str> = outcomes
+        .into_iter()
+        .flat_map(Result::ok)
+        .flatten()
+        .collect();
+    assert!(
+        compared.len() >= 10,
+        "only {} capabilities were actually compared; the check is not covering the surface",
+        compared.len()
+    );
+    println!("capabilities compared: {}", compared.len());
 }
 
 /// The same question for persistent generators: what the command writes to
@@ -304,29 +338,39 @@ fn what_a_capability_desires_is_what_installing_it_leaves() {
 /// projection that quietly disagreed with the executor would make `--pretend`
 /// describe work that does not happen, which is the split the one report value
 /// exists to close.
-#[test]
-fn what_a_plan_desires_is_what_the_command_writes() {
-    let mut compared: Vec<&str> = Vec::new();
+/// One scenario's plan-against-command comparison.
+///
+/// `Ok(Some(name))` compared it, `Ok(None)` with a note skipped it for a
+/// reason the caller prints. A cell of the table below, independent of every
+/// other: two temporary projects of its own, and no shared state but the
+/// binary under test.
+fn plan_parity(scenario: &scenarios::Scenario) -> (Option<&'static str>, Option<String>) {
     let mut skipped: Vec<String> = Vec::new();
-    for scenario in scenarios::SCENARIOS {
+    let compared = plan_parity_inner(scenario, &mut skipped);
+    (compared, skipped.into_iter().next())
+}
+
+fn plan_parity_inner(
+    scenario: &scenarios::Scenario,
+    skipped: &mut Vec<String>,
+) -> Option<&'static str> {
+    {
         // The last step is the one under comparison; everything before it is
         // set-up and is run identically in both projects, through the same
         // binary. That keeps the question narrow -- do the two engines produce
         // the same bytes for *this* generate -- rather than turning every
         // scenario into a test of two engines interacting.
-        let Some((step, prerequisites)) = scenario.steps.split_last() else {
-            continue;
-        };
+        let (step, prerequisites) = scenario.steps.split_last()?;
         if !matches!(step.first(), Some(&"g") | Some(&"generate")) {
-            continue;
+            return None;
         }
         let Ok(kind) = jails_spec::spec::kind::ArtifactKind::from_str(step[1], true) else {
             skipped.push(format!("{}: `{}` is an alias", scenario.name, step[1]));
-            continue;
+            return None;
         };
         let Some(invocation) = invocation(step) else {
             skipped.push(format!("{}: unrecognised flag", scenario.name));
-            continue;
+            return None;
         };
 
         let v1 = common::temp_dir(&format!("gen-parity-v1-{}", scenario.name));
@@ -375,7 +419,7 @@ fn what_a_plan_desires_is_what_the_command_writes() {
             Ok(change) => change,
             Err(why) => {
                 skipped.push(format!("{}: {why}", scenario.name));
-                continue;
+                return None;
             }
         };
         let owner = ResourceOwner::Entity(EntityId::Intent(jails_protocol::entity::IntentId {
@@ -460,11 +504,35 @@ fn what_a_plan_desires_is_what_the_command_writes() {
                 relative.display()
             );
         }
-        compared.push(scenario.name);
+        Some(scenario.name)
     }
+}
 
+#[test]
+fn what_a_plan_desires_is_what_the_command_writes() {
+    let outcomes = common::parallel::map_recording(
+        "desired-plan-parity",
+        scenarios::SCENARIOS,
+        |scenario| scenario.name.to_string(),
+        |scenario| common::parallel::catching(|| plan_parity(scenario)),
+    );
+
+    let failures: Vec<String> = outcomes
+        .iter()
+        .filter_map(|outcome| outcome.as_ref().err().cloned())
+        .collect();
+    assert!(
+        failures.is_empty(),
+        "{} generator scenario(s) disagreed:\n\n{}",
+        failures.len(),
+        failures.join("\n\n")
+    );
+
+    let succeeded: Vec<(Option<&str>, Option<String>)> =
+        outcomes.into_iter().flat_map(Result::ok).collect();
+    let compared: Vec<&str> = succeeded.iter().filter_map(|(name, _)| *name).collect();
     println!("generator scenarios compared: {}", compared.len());
-    for note in &skipped {
+    for note in succeeded.iter().filter_map(|(_, note)| note.as_ref()) {
         println!("  skipped {note}");
     }
     assert!(

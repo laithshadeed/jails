@@ -17,6 +17,17 @@ run = [
   "mise x java@21 gradle@8.5 -- env JAILS_REQUIRE_TOOLCHAIN=1 cargo test --test cli unheld_gradle_example_manifest_builds_on_its_pinned_toolchain",
 ]
 
+[tasks.test]
+description = "Run every test binary concurrently, longest first (the fast inner-loop run)"
+# Deliberately *not* what `verify-rewrite` invokes. `simplify-sol.md`'s G0 asks
+# for one answer to "is this green", so the mandatory gate stays on plain
+# `cargo test --workspace` -- the thing CI, the pre-push hook and every other
+# Rust project agree on the meaning of. This is the same binaries, the same
+# filters and the same exit status, overlapped rather than run end to end,
+# for the loop a developer is actually sitting in front of. It needs python3,
+# which the gate must not.
+run = "./scripts/run-tests.py"
+
 [tasks.verify-rewrite-g1-canary]
 description = "Build the frozen legacy revision and compare iterative, rerun, and destroy semantics"
 run = "./scripts/verify-rewrite-g1-canary.sh"
