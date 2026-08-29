@@ -1340,8 +1340,14 @@ jails knows nothing about.
   mismatch, which is why this file said to skip it; that is no longer true, and
   running it before staging saves a rejected commit. `cargo clippy --fix
   --allow-dirty --allow-staged --all-targets` handles the mechanical ones.
-  Note `.githooks/` is untracked, so it is a property of this checkout rather
-  than of the project.
+  `.githooks/` is tracked, so both hooks are the project's rather than this
+  checkout's -- `core.hooksPath` has to point at it, which `git config
+  core.hooksPath .githooks` does. **`pre-push` runs `mise run verify-rewrite`
+  and nothing else**, per `simplify-sol.md`'s G0: one answer to "is this
+  green", so the hook and CI cannot drift. It used to run its own `cargo build
+  && cargo test` -- no `--workspace`, so the root package alone, and no
+  `JAILS_REQUIRE_TOOLCHAIN`, so a test that could not find its toolchain
+  skipped and counted as a pass.
 - **The crate is on edition `"2024"`, deliberately** — edition 2026 doesn't
   exist yet, whatever the version number suggests. Leave it alone.
 - Install target is `~/.cargo/bin/jails` via `cargo install --path .`

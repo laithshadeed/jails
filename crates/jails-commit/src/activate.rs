@@ -51,6 +51,12 @@ pub(crate) fn apply_operations(
                 });
             }
             Err(_) => {
+                crate::fault::trip("before-directory").map_err(|error| Blocked {
+                    path: Some(path.clone()),
+                    reason: BlockReason::Unreadable {
+                        error_kind: error.to_string(),
+                    },
+                })?;
                 std::fs::create_dir(&at).map_err(|error| Blocked {
                     path: Some(path.clone()),
                     reason: BlockReason::Unreadable {
@@ -232,12 +238,17 @@ pub(crate) fn apply_one(
             // the immutable object share an inode.
             std::fs::hard_link(&staged, at)
                 .map_err(|error| format!("could not publish {}: {error}", at.display()))?;
+            // The entry is visible and its directory is not yet durable --
+            // the state a crash here leaves behind, whichever of the three
+            // ways the entry was published.
+            crate::fault::trip("after-file-rename")?;
             sync_parent(at)
         }
         FileOp::Replace { after, mode, .. } => {
             let staged = stage(publish, objects, after, *mode, index)?;
             std::fs::rename(&staged, at)
                 .map_err(|error| format!("could not replace {}: {error}", at.display()))?;
+            crate::fault::trip("after-file-rename")?;
             sync_parent(at)
         }
         FileOp::Delete { .. } => {
@@ -247,6 +258,7 @@ pub(crate) fn apply_one(
             std::fs::rename(at, &kept)
                 .map_err(|error| format!("could not remove {}: {error}", at.display()))?;
             let _ = store::sync_dir(publish);
+            crate::fault::trip("after-file-rename")?;
             sync_parent(at)
         }
     }

@@ -1,0 +1,83 @@
+# The one gate. `simplify-sol.md` G0: *pre-push and CI invoke only that
+# command.*
+#
+# There is deliberately nothing here but `mise run verify-rewrite`. A workflow
+# that spells out its own `cargo test` line is a second answer to "is this
+# green", and the second answer is the one that drifts -- which is exactly what
+# happened locally: the pre-push hook ran `cargo build && cargo test` with no
+# `--workspace`, so it tested the root package alone and said nothing about the
+# other twelve crates, and no `JAILS_REQUIRE_TOOLCHAIN`, so every test that
+# could not find its toolchain skipped itself and was counted as passing.
+#
+# The tool list below is not decoration. `JAILS_REQUIRE_TOOLCHAIN=1` turns a
+# skip into a failure, so every one of these has to be present or the run is
+# red: a JDK that accepts `--release 26`, `jshell`, Maven, mvnd, Gradle 8.5 on
+# JDK 21 for the pinned example, git, and a container runtime for the
+# Testcontainers suites.
+name: verify-rewrite
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: verify-rewrite-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    # Docker is preinstalled on the GitHub-hosted Ubuntu image, which is what
+    # the container-gated tests need. They skip locally on a machine without
+    # one; here a skip is a failure.
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # `verify-rewrite-g1-canary` builds a frozen legacy revision with
+          # `git archive`, so a shallow clone would have nothing to freeze.
+          fetch-depth: 0
+
+      - name: Install the Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      # Reads `mise.toml`, so the Java, Maven, mvnd and Gradle versions CI runs
+      # are the ones the repository pins -- not whatever the image ships.
+      - name: Install the pinned toolchain
+        uses: jdx/mise-action@v2
+        with:
+          cache: true
+
+      # `unheld_gradle_example_manifest_builds_on_its_pinned_toolchain` needs
+      # Gradle 8.5 on JDK 21 specifically; the default JDK is 26 because that
+      # is the release generated projects declare. The task runs that one test
+      # under `mise x java@21`, which needs 21 present.
+      - name: Install JDK 21 for the pinned Gradle example
+        run: mise install java@21
+
+      - name: Show the toolchain the gate will use
+        run: |
+          rustc --version
+          cargo --version
+          mise exec -- java -version
+          mise exec -- mvn --version | head -1
+          mise exec -- gradle --version | grep -E '^Gradle'
+          docker --version
+
+      - name: verify-rewrite
+        run: mise run verify-rewrite

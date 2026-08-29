@@ -80,6 +80,7 @@ pub const POINTS: &[&str] = &[
     "after-lock",
     "after-recheck",
     "after-objects-sync",
+    "after-root-sync",
     "after-journal-prepared",
     "after-journal-active",
     "before-directory",
@@ -99,3 +100,96 @@ pub const POINTS: &[&str] = &[
     "after-transactions-parent-sync",
     "after-receipts-parent-sync",
 ];
+
+#[cfg(test)]
+mod registry_tests {
+    use super::POINTS;
+
+    /// The advertised set and the tripped set are the same set.
+    ///
+    /// They were not. `before-directory` and `after-file-rename` were listed
+    /// here and tripped nowhere, so a crash test enumerating [`POINTS`] armed
+    /// a fault that could never fire and reported a pass. `after-root-sync`
+    /// was the mirror image: tripped in `execute.rs` and named by nothing, so
+    /// no enumeration reached it at all. Both directions are silent failures
+    /// -- one proves a recovery path that was never exercised, the other
+    /// leaves a real one unexercised.
+    ///
+    /// `simplify-sol.md`'s G4 asks for the registry and the trip sites to come
+    /// from one declaration. Until they do, this is the check that they agree.
+    #[test]
+    fn every_advertised_failpoint_is_tripped_somewhere_and_the_reverse() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = Vec::new();
+        collect(&src, &mut files);
+        assert!(
+            files.len() >= 5,
+            "the scan found only {} source files -- it has lost the crate, and \
+             this gate would pass over any disagreement",
+            files.len()
+        );
+
+        // A point counts as tripped when its name is a string literal
+        // *somewhere other than this registry*. Matching `fault::trip("...")`
+        // alone was too narrow: `execute.rs` trips three points through a
+        // table of `(directory, point)` pairs, so the call site holds a
+        // variable and the name is a literal several lines above.
+        let mut tripped = std::collections::BTreeSet::new();
+        for source in &files {
+            for literal in string_literals(&without_comments(source)) {
+                tripped.insert(literal);
+            }
+        }
+        let advertised: std::collections::BTreeSet<String> =
+            POINTS.iter().map(|point| point.to_string()).collect();
+
+        let never_fires: Vec<&String> = advertised.difference(&tripped).collect();
+        assert!(
+            never_fires.is_empty(),
+            "these failpoints are advertised in `POINTS` and named nowhere \
+             else: {never_fires:?}\n       fix: add the `fault::trip` call, or \
+             take the name out -- a fault that cannot fire is a recovery path \
+             nothing proves"
+        );
+    }
+
+    /// String literals, so a name in prose cannot stand in for a trip site.
+    fn string_literals(source: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut rest = source;
+        while let Some(open) = rest.find('"') {
+            rest = &rest[open + 1..];
+            let Some(close) = rest.find('"') else { break };
+            out.push(rest[..close].to_string());
+            rest = &rest[close + 1..];
+        }
+        out
+    }
+
+    fn without_comments(source: &str) -> String {
+        source
+            .lines()
+            .map(|line| match line.find("//") {
+                Some(at) => &line[..at],
+                None => line,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn collect(dir: &std::path::Path, out: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries {
+            let path = entry.expect("failed to read a directory entry").path();
+            if path.is_dir() {
+                collect(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs")
+                && path.file_name().is_some_and(|name| name != "fault.rs")
+            {
+                out.push(std::fs::read_to_string(&path).unwrap_or_default());
+            }
+        }
+    }
+}

@@ -408,3 +408,135 @@ fn every_kind_and_capability_has_a_golden_scenario() {
         );
     }
 }
+
+/// Every golden directory belongs to a scenario, and every scenario has one.
+///
+/// `tests/golden/scaffold-plain` held a `.jails/ledger.toml` that no scenario
+/// produced: a snapshot nothing compared against, which is worse than a
+/// missing one. A missing golden fails loudly the first time its scenario
+/// runs; an orphan sits there looking like coverage, and `git diff
+/// tests/golden` -- the review this suite is built on -- shows a clean tree
+/// whether or not anything still generates those bytes.
+///
+/// `simplify-sol.md`'s G0 asks for exactly this: *scenario names and golden
+/// directories match exactly*.
+#[test]
+fn every_golden_directory_is_a_registered_scenario_and_the_reverse() {
+    let registered: std::collections::BTreeSet<&str> =
+        SCENARIOS.iter().map(|scenario| scenario.name).collect();
+    let root = golden_root();
+    let mut on_disk = std::collections::BTreeSet::new();
+    for entry in fs::read_dir(&root).expect("tests/golden is missing") {
+        let entry = entry.expect("failed to read a tests/golden entry");
+        if entry.path().is_dir() {
+            on_disk.insert(
+                entry
+                    .file_name()
+                    .to_str()
+                    .expect("a golden directory with a non-UTF-8 name")
+                    .to_string(),
+            );
+        }
+    }
+    let orphans: Vec<&String> = on_disk
+        .iter()
+        .filter(|name| !registered.contains(name.as_str()))
+        .collect();
+    assert!(
+        orphans.is_empty(),
+        "these golden directories belong to no scenario: {orphans:?}\n       \
+         fix: register the scenario in tests/common/scenarios.rs, or delete the \
+         directory -- a snapshot nothing compares against is not coverage"
+    );
+    let unsnapshotted: Vec<&&str> = registered
+        .iter()
+        .filter(|name| !on_disk.contains(**name))
+        .collect();
+    assert!(
+        unsnapshotted.is_empty(),
+        "these scenarios have no golden directory: {unsnapshotted:?}\n       \
+         fix: UPDATE_GOLDEN=1 cargo test --test golden, then read the diff"
+    );
+}
+
+/// Every protocol fixture is read by something.
+///
+/// `testd-request.hex` and `testd-reply.hex` sat in `tests/protocol-golden/`
+/// with no reference anywhere in the workspace. A fixture nothing decodes
+/// proves nothing about compatibility -- it is a file that looks like a
+/// contract and is not one, and it would have survived the wire format
+/// changing underneath it without a word.
+///
+/// `simplify-sol.md`'s G0: *every protocol fixture has a source reference*.
+#[test]
+fn every_protocol_fixture_is_read_by_something() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/protocol-golden");
+    let mut sources = String::new();
+    for area in ["crates", "src", "tests"] {
+        read_rust_into(
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(area),
+            &mut sources,
+        );
+    }
+    assert!(
+        sources.len() > 100_000,
+        "the source scan found only {} bytes -- it has lost the code, and this \
+         gate would pass over an unreferenced fixture",
+        sources.len()
+    );
+    let mut unreferenced = Vec::new();
+    for entry in fs::read_dir(&root).expect("tests/protocol-golden is missing") {
+        let name = entry
+            .expect("failed to read a protocol-golden entry")
+            .file_name()
+            .to_str()
+            .expect("a fixture with a non-UTF-8 name")
+            .to_string();
+        if !sources.contains(&name) {
+            unreferenced.push(name);
+        }
+    }
+    unreferenced.sort();
+    assert!(
+        unreferenced.is_empty(),
+        "these protocol fixtures are read by nothing: {unreferenced:?}\n       \
+         fix: assert against the fixture from a test, or delete it -- an \
+         unread fixture is a contract nobody checks"
+    );
+}
+
+/// Every `.rs` file under `dir`, concatenated. For the reference scan above.
+fn read_rust_into(dir: &Path, out: &mut String) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries {
+        let path = entry.expect("failed to read a directory entry").path();
+        if path.is_dir() {
+            read_rust_into(&path, out);
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            out.push_str(&without_comments(
+                &fs::read_to_string(&path).unwrap_or_default(),
+            ));
+        }
+    }
+}
+
+/// Drop `//` comments, so prose cannot satisfy a reference check.
+///
+/// The first version of the gate above read whole files and passed -- because
+/// this file's own doc comment names the two fixtures it was written to catch.
+/// A scanner that reads its own explanation is the same failure as one that
+/// has lost the code: both report exactly what a clean tree reports. A real
+/// reference is `include_str!("...")`, which is a string literal; a mention in
+/// prose is not a contract.
+fn without_comments(source: &str) -> String {
+    source
+        .lines()
+        .map(|line| match line.find("//") {
+            Some(at) => &line[..at],
+            None => line,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}

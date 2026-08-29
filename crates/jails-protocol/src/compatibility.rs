@@ -110,4 +110,80 @@ mod tests {
             "the unimplemented SQL contract must be explicitly reserved"
         );
     }
+
+    /// The daemon's v1 line protocol, against captured bytes of each side.
+    ///
+    /// These two fixtures sat in `tests/protocol-golden/` referenced by
+    /// nothing, which `simplify-sol.md`'s audit called out: their presence
+    /// proved nothing, and the wire could have moved underneath them without
+    /// a word. They are read here because this module is where the protocol
+    /// identifier lives, so changing [`TESTD_PROTOCOL`] now fails against a
+    /// real request and a real reply rather than against another constant.
+    ///
+    /// The shape asserted is the framing, not the payload: a handshake line,
+    /// then a verb and its arguments terminated by a blank line, and on the
+    /// way back a message ending in `EOT` plus the exit status. A daemon that
+    /// changes any of those is not speaking v1, whatever it calls itself.
+    #[test]
+    fn the_v1_daemon_fixtures_are_the_protocol_this_crate_names() {
+        let request = decode_hex(include_str!(
+            "../../../tests/protocol-golden/testd-request.hex"
+        ));
+        let reply = decode_hex(include_str!(
+            "../../../tests/protocol-golden/testd-reply.hex"
+        ));
+
+        for (side, bytes) in [("request", &request), ("reply", &reply)] {
+            let text = String::from_utf8(bytes.to_vec())
+                .unwrap_or_else(|_| panic!("the {side} fixture is not UTF-8"));
+            assert_eq!(
+                text.lines().next(),
+                Some(TESTD_PROTOCOL),
+                "the {side} fixture opens with a different handshake than \
+                 `TESTD_PROTOCOL`"
+            );
+        }
+
+        let request = String::from_utf8(request).expect("checked above");
+        let mut lines = request.lines();
+        lines.next();
+        assert_eq!(lines.next(), Some("RUN"), "a v1 request names its verb");
+        assert!(
+            request.ends_with("\n\n"),
+            "a v1 request's argument list is terminated by a blank line"
+        );
+
+        let reply = String::from_utf8(reply).expect("checked above");
+        let (message, status) = reply
+            .split_once('\u{4}')
+            .expect("a v1 reply ends its message with EOT before the exit status");
+        assert!(
+            message.ends_with('\n'),
+            "a v1 reply's message is line-terminated before EOT"
+        );
+        assert!(
+            status.trim_end().parse::<i32>().is_ok(),
+            "a v1 reply's trailer is the exit status, found {status:?}"
+        );
+    }
+
+    /// The fixtures are stored as hex so a diff shows the bytes, including the
+    /// control characters the framing depends on.
+    fn decode_hex(text: &str) -> Vec<u8> {
+        let digits: Vec<u8> = text
+            .bytes()
+            .filter(|byte| !byte.is_ascii_whitespace())
+            .collect();
+        assert!(
+            digits.len().is_multiple_of(2),
+            "a hex fixture has an odd digit count"
+        );
+        digits
+            .chunks(2)
+            .map(|pair| {
+                u8::from_str_radix(std::str::from_utf8(pair).expect("hex digits are ASCII"), 16)
+                    .expect("a hex fixture holds only hex digits")
+            })
+            .collect()
+    }
 }

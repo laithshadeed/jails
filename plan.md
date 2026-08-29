@@ -247,6 +247,52 @@ verbatim from `customer.js` and `admin.js`:
 
 ## P13 — the gates, and what they were not saying
 
+- [ ] **P13.6** **G0 is closed; G1 has a harness and G2-G5 do not.**
+      `simplify-sol.md`'s cutover gates. `mise run verify-rewrite` already
+      existed as G0's single command; what was missing around it is now in
+      place, and each hole it names was confirmed against the tree rather than
+      taken from the audit:
+
+      - **CI existed nowhere.** `.github/workflows/verify-rewrite.yml` runs
+        that one command and nothing else, on a runner given every tool a
+        skip would otherwise hide -- JDK 26 and `jshell`, Maven, mvnd, Gradle
+        8.5 on JDK 21, git, and a container runtime. Unverified against a real
+        runner; it has only been checked for structure.
+      - **`.githooks/pre-push` ran its own `cargo build && cargo test`** -- no
+        `--workspace`, so the root package alone, and no
+        `JAILS_REQUIRE_TOOLCHAIN`, so a test that could not find its toolchain
+        passed by skipping. It execs the one command now. (`.githooks/` is
+        tracked, contrary to what `CLAUDE.md` said; that note is corrected in
+        the same change.)
+      - **`tests/golden/scaffold-plain` belonged to no scenario.** A snapshot
+        nothing compares against is worse than a missing one: a missing golden
+        fails the first time its scenario runs, an orphan looks like coverage
+        and `git diff tests/golden` stays clean whatever happens to the bytes.
+      - **`testd-request.hex` and `testd-reply.hex` were read by nothing.**
+        They are v1 line-protocol captures, and `compatibility.rs` now decodes
+        both and asserts the framing against `TESTD_PROTOCOL`, so changing that
+        constant fails against real bytes rather than against another constant.
+      - **`before-directory` and `after-file-rename` were advertised in
+        `fault::POINTS` and tripped nowhere.** A crash test enumerating
+        `POINTS` armed faults that could never fire and reported a pass. Both
+        are placed now -- before the `create_dir`, and after each of the three
+        ways a file is published, before its parent is synced.
+
+      Three gates hold those: golden directories and scenarios match exactly,
+      every protocol fixture is read by something, and every advertised
+      failpoint is named outside the registry. Each was verified by injecting
+      a violation.
+
+      **What is left is G2-G5**, and none is a sweep: every live command path
+      mapped to a checked-in journey (G2), a machine-readable kind/capability
+      to build-fixture map that builds the exact tree under test rather than a
+      neighbouring toolbox (G3), a child-process death matrix over the
+      failpoint registry (G4 proper -- the gate above proves the registry is
+      honest, not that each fault is exercised), and the real-project corpus
+      (G5). `tests/differential.rs` is G1's harness with 30 journeys;
+      `scripts/verify-rewrite-g1-canary.sh` freezes a legacy revision and runs
+      them against both binaries.
+
 - [ ] **P13.2** **Five production files parse Maven XML; the document asks for
       one.** `jails-project/src/pom.rs` is the path being replaced,
       `jails-workspace/src/{capture,documents}.rs` and
