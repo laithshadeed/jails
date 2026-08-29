@@ -71,10 +71,12 @@ jobs:
           # `git archive`, so a shallow clone would have nothing to freeze.
           fetch-depth: 0
 
-      - name: Install the Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      # Reads `rust-toolchain.toml`, so the compiler CI runs is the compiler
+      # the pre-push hook runs and neither can drift from the other. This was
+      # `dtolnay/rust-toolchain@stable`, which pins nothing: a clippy release
+      # could turn the one gate red over code nobody had touched, and did.
+      - name: Install the Rust toolchain named by rust-toolchain.toml
+        run: rustup toolchain install
 
       - name: Cache cargo
         uses: actions/cache@v4
