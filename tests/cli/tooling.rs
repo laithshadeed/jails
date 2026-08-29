@@ -2211,3 +2211,177 @@ fn bench_states_the_profile_it_is_about_to_run() {
     assert!(argv.contains("run"), "{argv}");
     assert!(argv.contains("load-tests/load-test.js"), "{argv}");
 }
+
+/// A project jails did not write: adopted, edited, generated into, and built.
+///
+/// `simplify-sol.md`'s G5 asks for *sanitized adopted and reader-edited
+/// Spring/plain projects*, and this is the gap the proof corpus had: every
+/// manifest in `examples/proof-policy.tsv` is jails' own output, so nothing in
+/// the suite proved the tool against a codebase it did not generate. A
+/// generator can be perfectly correct about its own layout and still be wrong
+/// about somebody else's.
+///
+/// The pom here is hand-written rather than `write_plain_fixture`'s: a
+/// different groupId, a different artifactId, a source layout jails would not
+/// have chosen, and classes with bodies. Nothing in it came from jails.
+///
+/// Three things are proved, in order. Adoption reads the foreign layout;
+/// generation into it produces Java that a real compiler accepts *beside* the
+/// reader's; and the reader's files come back byte-identical. The last is the
+/// one that would be easiest to break and hardest to notice.
+#[test]
+fn an_adopted_reader_written_project_generates_compiles_and_keeps_its_own_bytes() {
+    if !real_mvn_available() {
+        skip("mvn not found on PATH");
+        return;
+    }
+    if !real_java_supports_target_release() {
+        skip(&format!(
+            "javac on PATH does not support --release {TARGET_RELEASE}"
+        ));
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("adopted-foreign-project");
+
+    // A pom jails would never emit: its own coordinates, no jails plugins, and
+    // only the dependency the reader's own test needs.
+    fs::write(
+        root.join("pom.xml"),
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>net.acme.legacy</groupId>
+  <artifactId>orders-service</artifactId>
+  <version>2.4.1</version>
+  <properties>
+    <maven.compiler.release>{TARGET_RELEASE}</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>6.1.1</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>
+"#
+        ),
+    )
+    .unwrap();
+
+    // The reader's own code, in the reader's own packages.
+    let base = root.join("src/main/java/net/acme/legacy");
+    let reader_files = [
+        // A class at the base package, so `base_package()` has an unambiguous
+        // answer -- this project has no `*Application.java` for it to find.
+        (
+            "OrdersService.java",
+            "package net.acme.legacy;\n\npublic final class OrdersService {\n    public String name() {\n        return \"orders\";\n    }\n}\n",
+        ),
+        (
+            "domain/Money.java",
+            "package net.acme.legacy.domain;\n\npublic record Money(long minor, String currency) {\n    public Money {\n        if (minor < 0) {\n            throw new IllegalArgumentException(\"minor must not be negative\");\n        }\n    }\n}\n",
+        ),
+        (
+            "persistence/OrderStore.java",
+            "package net.acme.legacy.persistence;\n\nimport java.util.List;\n\npublic interface OrderStore {\n    List<String> ids();\n}\n",
+        ),
+        (
+            "web/OrderEndpoint.java",
+            "package net.acme.legacy.web;\n\npublic final class OrderEndpoint {\n    public String route() {\n        return \"/orders\";\n    }\n}\n",
+        ),
+    ];
+    for (relative, body) in reader_files {
+        let at = base.join(relative);
+        fs::create_dir_all(at.parent().unwrap()).unwrap();
+        fs::write(&at, body).unwrap();
+    }
+    let before: Vec<String> = reader_files
+        .iter()
+        .map(|(relative, _)| fs::read_to_string(base.join(relative)).unwrap())
+        .collect();
+
+    // 1. Adoption reads a layout jails did not choose.
+    let adopted = jails_cmd_with_path(&root, &path)
+        .arg("adopt")
+        .output()
+        .unwrap();
+    assert!(
+        adopted.status.success(),
+        "adopt failed on a reader-written project: {}",
+        String::from_utf8_lossy(&adopted.stderr)
+    );
+    let report = String::from_utf8_lossy(&adopted.stdout);
+    assert!(
+        report.contains("web") && report.contains("persistence"),
+        "adopt did not recognise the reader's directories: {report}"
+    );
+
+    // 2. Generation lands beside the reader's code and compiles with it.
+    let generated = jails_cmd_with_path(&root, &path)
+        .args(["g", "record", "Receipt", "id:uuid", "total:long"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "generate failed in an adopted project: {}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+
+    let built = real_maven_cmd(&root, &path)
+        .args(["-B", "test"])
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "an adopted project did not build after `g record`:\n{}\n{}",
+        String::from_utf8_lossy(&built.stdout),
+        String::from_utf8_lossy(&built.stderr)
+    );
+
+    // 3. The reader's bytes are the reader's.
+    for ((relative, _), original) in reader_files.iter().zip(&before) {
+        assert_eq!(
+            &fs::read_to_string(base.join(relative)).unwrap(),
+            original,
+            "jails rewrote `{relative}`, which it did not author"
+        );
+    }
+
+    // 4. Rerun is idempotent, which is what `simplify-sol.md`'s differential
+    // list asks for. Re-declaring the same record is not a collision to refuse
+    // -- identity is the entity, so this is an update that changes nothing --
+    // and the check that matters is that it *says* so and writes nothing.
+    let generated_at = root.join("src/main/java/net/acme/legacy/domain/Receipt.java");
+    let generated_before = fs::read_to_string(&generated_at).unwrap();
+    let again = jails_cmd_with_path(&root, &path)
+        .args(["g", "record", "Receipt", "id:uuid", "total:long"])
+        .output()
+        .unwrap();
+    assert!(
+        again.status.success(),
+        "a repeated generate failed instead of settling: {}",
+        String::from_utf8_lossy(&again.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&again.stdout).contains("nothing to do"),
+        "a repeated generate did not report itself a no-op: {}",
+        String::from_utf8_lossy(&again.stdout)
+    );
+    assert_eq!(
+        fs::read_to_string(&generated_at).unwrap(),
+        generated_before,
+        "a repeated generate rewrote its own output"
+    );
+    for ((relative, _), original) in reader_files.iter().zip(&before) {
+        assert_eq!(
+            &fs::read_to_string(base.join(relative)).unwrap(),
+            original,
+            "a repeated generate rewrote `{relative}`"
+        );
+    }
+}
