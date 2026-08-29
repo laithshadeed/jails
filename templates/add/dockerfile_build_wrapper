@@ -1,0 +1,8 @@
+FROM eclipse-temurin:{{RELEASE}}-jdk-noble AS build
+WORKDIR /build
+COPY .mvn/ .mvn/
+COPY mvnw pom.xml ./
+COPY src/ src/
+RUN --mount=type=cache,id=jails-maven-repository,target=/root/.m2 \
+    ./mvnw -B -ntp -DskipTests package \
+    && cp "$(find target -maxdepth 1 -type f -name '*.jar' ! -name '*.original' -print -quit)" /build/application.jar

@@ -2570,3 +2570,61 @@ fn the_ci_workflow_is_byte_identical_on_both_implementations() {
         }
     }
 }
+
+/// The container build is the same three files on both implementations.
+///
+/// `plan.md` P13.8's second capability. The assertions are the two properties
+/// the image is *for*: it runs as a numeric non-root user, and the workflow
+/// checks that rather than trusting it. A container that quietly starts
+/// running as root is the failure this capability exists to prevent, and it is
+/// invisible until something else goes wrong.
+#[test]
+fn the_container_build_is_byte_identical_on_both_implementations() {
+    for wrapper in [false, true] {
+        let subjects = spring_subjects(if wrapper {
+            "docker-mvnw"
+        } else {
+            "docker-plain"
+        });
+        let mut rendered: Vec<Vec<String>> = Vec::new();
+        for subject in &subjects {
+            if wrapper {
+                fs::write(subject.root.join("mvnw"), "#!/bin/sh\n").unwrap();
+            }
+            subject.succeeds(&["add", "docker"]);
+            let files = ["Dockerfile", ".dockerignore", ".github/workflows/image.yml"]
+                .map(|path| {
+                    fs::read_to_string(subject.root.join(path))
+                        .unwrap_or_else(|error| panic!("{}: {path} — {error}", subject.name))
+                })
+                .to_vec();
+            assert!(
+                files[0].contains("USER 10001:10001"),
+                "{}: the image does not drop to a numeric non-root user: {}",
+                subject.name,
+                files[0]
+            );
+            assert!(
+                files[2].contains("{{.Config.User}}"),
+                "{}: the workflow does not check the runtime user, so nothing would notice: {}",
+                subject.name,
+                files[2]
+            );
+            let builder = if wrapper { "./mvnw -B" } else { "mvn -B" };
+            assert!(
+                files[0].contains(builder),
+                "{}: wrapper={wrapper} but the build stage runs something else: {}",
+                subject.name,
+                files[0]
+            );
+            rendered.push(files);
+        }
+        assert_eq!(
+            rendered[0], rendered[1],
+            "the two implementations render different container builds (wrapper={wrapper})"
+        );
+        for subject in subjects {
+            fs::remove_dir_all(subject.root).ok();
+        }
+    }
+}

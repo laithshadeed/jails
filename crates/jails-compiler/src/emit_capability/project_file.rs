@@ -7,6 +7,8 @@ use jails_model::{AppModel, Capability, EndpointMethod, OperationKind, UnitKind}
 
 const CI_WORKFLOW_PATH: &str = ".github/workflows/ci.yml";
 
+const DOCKER_PATHS: [&str; 3] = ["Dockerfile", ".dockerignore", ".github/workflows/image.yml"];
+
 /// Pinned by commit, not by tag: a tag is mutable and a moved tag is a supply
 /// chain compromise nobody sees in the diff. Kept in step with
 /// `add/tooling.rs`, which pins the same two.
@@ -52,6 +54,13 @@ pub(super) fn paths(model: &AppModel) -> Vec<ProjectPath> {
     if has(model, "ci") {
         paths.push(ProjectPath::parse(CI_WORKFLOW_PATH).expect("registered project path is valid"));
     }
+    if has(model, "docker") {
+        paths.extend(
+            DOCKER_PATHS
+                .iter()
+                .map(|path| ProjectPath::parse(*path).expect("registered project path is valid")),
+        );
+    }
     paths.extend(loadtest_paths(model));
     paths
 }
@@ -77,6 +86,7 @@ pub(super) fn lower_and_emit(
     match capability.kind.as_str() {
         "loadtest" => lower_loadtest(model, capability, output),
         "ci" => lower_ci(model, capability, output, observed),
+        "docker" => lower_docker(model, capability, output, observed),
         _ => Ok(()),
     }
 }
@@ -117,6 +127,58 @@ fn lower_ci(
         workflow.into_bytes(),
         FileMode::Regular,
     )
+}
+
+/// The production image: a Dockerfile, its ignore file, and the workflow that
+/// proves the image runs as a numeric non-root user.
+///
+/// Same three templates the legacy engine reads. The build stage is chosen
+/// here rather than in a template, because which one applies depends on
+/// whether the project ships a wrapper -- structural, not substitution.
+fn lower_docker(
+    model: &AppModel,
+    capability: &Capability,
+    output: &mut RenderedTree,
+    observed: &crate::emit::Observed<'_>,
+) -> Result<(), CompileError> {
+    let release = model.project.java_release.to_string();
+    let build = if observed.maven_wrapper {
+        include_str!("../../../../templates/add/dockerfile_build_wrapper")
+    } else {
+        include_str!("../../../../templates/add/dockerfile_build_maven")
+    }
+    .replace("{{RELEASE}}", &release);
+    let files = [
+        (
+            "dockerfile",
+            DOCKER_PATHS[0],
+            include_str!("../../../../templates/add/dockerfile")
+                .replace("{{BUILD_STAGE}}", &build)
+                .replace("{{RELEASE}}", &release),
+        ),
+        (
+            "dockerignore",
+            DOCKER_PATHS[1],
+            include_str!("../../../../templates/add/dockerignore").to_string(),
+        ),
+        (
+            "image-workflow",
+            DOCKER_PATHS[2],
+            include_str!("../../../../templates/add/image_workflow.yml")
+                .replace("{{CHECKOUT_SHA}}", CHECKOUT_SHA),
+        ),
+    ];
+    for (suffix, path, body) in files {
+        reader_facet::emit_managed_file(
+            output,
+            capability,
+            suffix,
+            ProjectPath::parse(path).map_err(CompileError::new)?,
+            body.into_bytes(),
+            FileMode::Regular,
+        )?;
+    }
+    Ok(())
 }
 
 fn lower_loadtest(

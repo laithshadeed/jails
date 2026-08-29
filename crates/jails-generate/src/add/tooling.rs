@@ -606,88 +606,39 @@ fn render_ci_workflow(release: u32, maven: &str) -> String {
         .replace("{{MAVEN}}", maven)
 }
 
-fn dockerfile(release: u32, wrapper: bool) -> String {
+/// The production image, rendered from the templates both engines read.
+///
+/// Shared with the canonical compiler for the reason `ci_workflow` is: two
+/// copies of a container build drift on base image tags and on the pinned
+/// action SHA, and neither drift is visible where anyone looks.
+///
+/// The build stage is chosen in Rust rather than by a template condition,
+/// because which of the two it is depends on whether the project ships a
+/// wrapper -- a structural choice, not a substitution, which is the line
+/// `template.rs` draws.
+pub(super) fn dockerfile(release: u32, wrapper: bool) -> String {
     let build = if wrapper {
-        format!(
-            r#"FROM eclipse-temurin:{release}-jdk-noble AS build
-WORKDIR /build
-COPY .mvn/ .mvn/
-COPY mvnw pom.xml ./
-COPY src/ src/
-RUN --mount=type=cache,id=jails-maven-repository,target=/root/.m2 \
-    ./mvnw -B -ntp -DskipTests package \
-    && cp "$(find target -maxdepth 1 -type f -name '*.jar' ! -name '*.original' -print -quit)" /build/application.jar
-"#
-        )
+        include_str!("../../../../templates/add/dockerfile_build_wrapper")
     } else {
-        format!(
-            r#"FROM maven:3.9.16-eclipse-temurin-{release} AS build
-WORKDIR /build
-COPY pom.xml ./
-COPY src/ src/
-RUN --mount=type=cache,id=jails-maven-repository,target=/root/.m2 \
-    mvn -B -ntp -DskipTests package \
-    && cp "$(find target -maxdepth 1 -type f -name '*.jar' ! -name '*.original' -print -quit)" /build/application.jar
-"#
-        )
-    };
-    format!(
-        r#"# syntax=docker/dockerfile:1
-{build}
-
-FROM eclipse-temurin:{release}-jre-noble
-WORKDIR /app
-COPY --from=build --chown=10001:10001 /build/application.jar /app/application.jar
-USER 10001:10001
-EXPOSE 8080
-ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75.0", "-Djava.io.tmpdir=/tmp", "-jar", "/app/application.jar"]
-"#
-    )
+        include_str!("../../../../templates/add/dockerfile_build_maven")
+    }
+    .replace("{{RELEASE}}", &release.to_string());
+    include_str!("../../../../templates/add/dockerfile")
+        .replace("{{BUILD_STAGE}}", &build)
+        .replace("{{RELEASE}}", &release.to_string())
 }
 
-fn dockerignore() -> &'static str {
-    r#".git
-.github
-.idea
-.jails/app-state-v1
-.vscode
-target
-*.iml
-compose.yaml
-"#
+pub(super) fn dockerignore() -> &'static str {
+    include_str!("../../../../templates/add/dockerignore")
 }
 
-fn image_workflow() -> String {
-    format!(
-        r#"name: image
-
-on:
-  pull_request:
-  push:
-    branches: [main]
-
-permissions:
-  contents: read
-
-concurrency:
-  group: image-${{{{ github.workflow }}}}-${{{{ github.ref }}}}
-  cancel-in-progress: true
-
-jobs:
-  image:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - name: Check out source
-        uses: actions/checkout@{CHECKOUT_SHA} # v6.0.2
-        with:
-          persist-credentials: false
-      - name: Build production image
-        run: docker build --pull --tag application:test .
-      - name: Assert non-root runtime
-        run: test "$(docker image inspect application:test --format '{{{{.Config.User}}}}')" = "10001:10001"
-"#
-    )
+/// The image workflow. Note the Go template inside it -- `{{.Config.User}}`,
+/// which `docker image inspect` reads -- is why this is `str::replace` and not
+/// a template engine: only the tokens named here are substituted, and every
+/// other pair of braces in the file belongs to whoever will run it.
+pub(super) fn image_workflow() -> String {
+    include_str!("../../../../templates/add/image_workflow.yml")
+        .replace("{{CHECKOUT_SHA}}", CHECKOUT_SHA)
 }
 
 #[cfg(test)]

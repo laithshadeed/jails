@@ -86,8 +86,9 @@ pub(crate) fn capability(kind: Capability) -> Support {
         | Capability::Toxiproxy
         | Capability::Loadtest
         | Capability::Ci
+        | Capability::Docker
         | Capability::Testkit => Support::Native,
-        Capability::Format | Capability::Docker | Capability::K8s => Support::Compatibility,
+        Capability::Format | Capability::K8s => Support::Compatibility,
     }
 }
 
