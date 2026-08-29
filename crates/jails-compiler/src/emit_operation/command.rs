@@ -134,9 +134,42 @@ pub(super) fn lower(
     };
     let port_type = with_suffix(&operation.names.java_type, "Command");
     let type_name = format!("Jdbc{port_type}");
+    // A command publishes what it declares, the same way a transition does.
+    // `CommandSemantics::emits` was linked and read by nobody, so `command
+    // Create(...) { emit TaskCreated }` generated the payload record and an
+    // adapter that never mentioned it.
+    let publications = super::publications(
+        model,
+        operation,
+        target,
+        &command.semantics.emits,
+        &mut imports,
+    )?;
+    let (event_member, event_parameter, event_assignment, result) = if publications.is_empty() {
+        (
+            "",
+            "",
+            "",
+            format!(
+                "        return statement.query({}.class).single();",
+                target.names.java_type
+            ),
+        )
+    } else {
+        (
+            "\n    private final ApplicationEventPublisher events;",
+            ", ApplicationEventPublisher events",
+            "\n        this.events = events;",
+            format!(
+                "        var result = statement.query({}.class).single();{}\n        return result;",
+                target.names.java_type,
+                publications.concat()
+            ),
+        )
+    };
     let body = format!(
-        "@Repository\npublic final class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;\n\n    public {type_name}(JdbcClient jdbc) {{\n        this.jdbc = jdbc;\n    }}\n\n    @Override\n    public {} execute({context}{port_type}.Input input) {{\n{resolutions}        JdbcClient.StatementSpec statement = jdbc.sql(\"{insert} returning {returning}\");\n{params}        return statement.query({}.class).single();\n    }}\n}}",
-        target.names.java_type, target.names.java_type
+        "@Repository\npublic final class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;{event_member}\n\n    public {type_name}(JdbcClient jdbc{event_parameter}) {{\n        this.jdbc = jdbc;{event_assignment}\n    }}\n\n    @Override\n    public {} execute({context}{port_type}.Input input) {{\n{resolutions}        JdbcClient.StatementSpec statement = jdbc.sql(\"{insert} returning {returning}\");\n{params}{result}\n    }}\n}}",
+        target.names.java_type
     );
     operation_file(
         model,

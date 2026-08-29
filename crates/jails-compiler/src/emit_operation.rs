@@ -70,6 +70,76 @@ fn stored_entity<'a>(
     Ok(target)
 }
 
+/// The `publishEvent` calls for one operation's `emit` list.
+///
+/// Shared because commands and transitions publish identically and the rule
+/// -- every emitted event, an event of another entity refuses -- must not get
+/// two implementations that can disagree. `emit` is repeatable in
+/// `jdl-sol.md` §12.2 and §12.4; transitions kept only the first and commands
+/// published none at all.
+///
+/// The arguments are read off `result`, the row the statement returned, so an
+/// event payload always reports what the database actually stored rather than
+/// what the caller asked for.
+pub(super) fn publications(
+    model: &AppModel,
+    operation: &Operation,
+    target: &Entity,
+    emits: &[jails_model::OperationId],
+    imports: &mut BTreeSet<String>,
+) -> Result<Vec<String>, CompileError> {
+    let mut publications = Vec::new();
+    for event_id in emits {
+        let yielded = model.operations.get(event_id).ok_or_else(|| {
+            CompileError::new(format!(
+                "linked operation `{}` references missing event `{event_id}`",
+                operation.label
+            ))
+        })?;
+        let OperationKind::Event(event) = &yielded.kind else {
+            return Err(CompileError::new(format!(
+                "linked operation `{}` emits non-event operation `{}`",
+                operation.label, yielded.label
+            )));
+        };
+        if event.on.as_ref().is_some_and(|entity| entity != &target.id) {
+            return Err(CompileError::new(format!(
+                "canonical operation `{}` emits event `{}` from another entity\n       fix: emit an event projected from `{}`",
+                operation.label, yielded.label, target.label
+            )));
+        }
+        let event_type = crate::emit_java::with_suffix(&yielded.names.java_type, "Event");
+        imports.extend([
+            format!(
+                "{}.{event_type}",
+                model.project.package_for("domain.events")
+            ),
+            "org.springframework.context.ApplicationEventPublisher".to_string(),
+        ]);
+        let arguments = event
+            .fields
+            .iter()
+            .map(|field_id| {
+                target
+                    .fields
+                    .get(field_id)
+                    .map(|field| format!("result.{}()", field.names.java_member))
+                    .ok_or_else(|| {
+                        CompileError::new(format!(
+                            "linked event `{}` references missing field `{field_id}`",
+                            yielded.label
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .join(", ");
+        publications.push(format!(
+            "\n        events.publishEvent(new {event_type}({arguments}));"
+        ));
+    }
+    Ok(publications)
+}
+
 /// The ordering this query renders, with its direction.
 ///
 /// The direction is why this is not `resolve_fields`. It read a flat

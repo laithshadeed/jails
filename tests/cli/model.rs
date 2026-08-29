@@ -9959,6 +9959,70 @@ entity Task {
     );
 }
 
+/// A command publishes the events it declares.
+///
+/// `audit.md` A2.4's other half. `CommandSemantics::emits` was linked and read
+/// by nobody, so `command Create(...) { emit TaskCreated }` generated the
+/// payload record, generated an adapter, and never connected them -- a
+/// project whose model says an event is published where nothing publishes it.
+/// Unlike the transition's, this was not a duplication: it was simply never
+/// implemented, and both now go through one `publications` helper so the rule
+/// cannot get two answers.
+#[test]
+fn a_command_publishes_every_event_it_declares() {
+    let root = jdl_project(
+        "model-command-emits",
+        r#"jdl 1
+
+app Cmd {
+  pkg com.example.cmd
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+entity Task {
+  use scaffold
+
+  id:     uuid   @pk
+  title:  string @notBlank
+  status: string
+
+  command Create(title, status) {
+    emit TaskCreated
+    emit TaskAudited
+  }
+
+  event TaskCreated(id, status) {}
+  event TaskAudited(id, status) {}
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    let synced = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+
+    let adapter =
+        fs::read_to_string(root.join(
+            ".jails/generated/main/java/com/example/cmd/adapters/jdbc/JdbcCreateCommand.java",
+        ))
+        .unwrap();
+    assert!(
+        adapter.contains("new TaskCreatedEvent(result.id(), result.status())")
+            && adapter.contains("new TaskAuditedEvent(result.id(), result.status())"),
+        "both declared events publish, from the row the database returned: {adapter}"
+    );
+    assert!(
+        adapter.contains("ApplicationEventPublisher events"),
+        "the publisher is injected only where it is used: {adapter}"
+    );
+}
+
 /// A declared sort direction reaches the SQL.
 ///
 /// `audit.md` A2.3. The linked `Query` carried `order_by: Vec<FieldId>` beside

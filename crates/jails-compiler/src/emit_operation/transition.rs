@@ -5,7 +5,7 @@ use super::{
 use crate::CompileError;
 use crate::emit_java::{domain_import, java_type, primary_key, with_suffix};
 use jails_contracts::{ProjectPath, RenderedFile};
-use jails_model::{AppModel, Operation, OperationKind, Transition};
+use jails_model::{AppModel, Operation, Transition};
 use std::collections::BTreeSet;
 
 pub(super) fn lower(
@@ -98,59 +98,13 @@ pub(super) fn lower(
     let key_type = java_type(primary_key, &mut imports);
     let context = context_parameter(model, target, &mut imports);
     let scope_fields = scopes(target);
-    // Every emitted event, not just the first. `emit` is repeatable in
-    // `jdl-sol.md` §12.4, and the flat `yields` this replaced was one
-    // `Option`, so a transition declaring two events published one and
-    // dropped the other in silence.
-    let mut publications = Vec::new();
-    for event_id in &transition.semantics.emits {
-        let yielded = model.operations.get(event_id).ok_or_else(|| {
-            CompileError::new(format!(
-                "linked transition `{}` references missing event `{event_id}`",
-                operation.label
-            ))
-        })?;
-        let OperationKind::Event(event) = &yielded.kind else {
-            return Err(CompileError::new(format!(
-                "linked transition `{}` emits non-event operation `{}`",
-                operation.label, yielded.label
-            )));
-        };
-        if event.on.as_ref().is_some_and(|entity| entity != &target.id) {
-            return Err(CompileError::new(format!(
-                "canonical transition `{}` emits event `{}` from another entity\n       fix: emit an event projected from `{}`",
-                operation.label, yielded.label, target.label
-            )));
-        }
-        let event_type = with_suffix(&yielded.names.java_type, "Event");
-        imports.extend([
-            format!(
-                "{}.{event_type}",
-                model.project.package_for("domain.events")
-            ),
-            "org.springframework.context.ApplicationEventPublisher".to_string(),
-        ]);
-        let arguments = event
-            .fields
-            .iter()
-            .map(|field_id| {
-                target
-                    .fields
-                    .get(field_id)
-                    .map(|field| format!("result.{}()", field.names.java_member))
-                    .ok_or_else(|| {
-                        CompileError::new(format!(
-                            "linked event `{}` references missing field `{field_id}`",
-                            yielded.label
-                        ))
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?
-            .join(", ");
-        publications.push(format!(
-            "\n        events.publishEvent(new {event_type}({arguments}));"
-        ));
-    }
+    let publications = super::publications(
+        model,
+        operation,
+        target,
+        &transition.semantics.emits,
+        &mut imports,
+    )?;
     let (event_member, event_parameter, event_assignment, result) = if publications.is_empty() {
         (
             "",
