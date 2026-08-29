@@ -832,8 +832,19 @@ not mid-turn.
 ## How the suite stays fast, and the four rules that keep it that way
 
 The full workspace run was 171.6s wall against 363s of CPU on four cores --
-53% utilisation, and most of the rest of the CPU spent on work that did not
-need doing at all. It is 80.2s now on the same machine, and the four things
+53% utilisation, and much of that CPU spent on work whose answer could not
+differ. Measured on that machine, over the same 1776 tests:
+
+| | before | after |
+|---|---|---|
+| `cargo test --workspace` | 171.6s | 80.6s |
+| `mise run test` (concurrent binaries) | -- | 61.5s |
+| every binary, Maven off PATH, serially | 110.5s | 24.8s |
+| every binary, Maven off PATH, concurrently | 65.2s | **14.5s** |
+
+**7.6x on the tests that do not shell out to Maven**, and 2.8x overall --
+because the real-toolchain tier is now roughly 85% of what is left, and its
+floor is a measurement rather than an oversight (see below). The four things
 that got it there are each a rule rather than a one-off tidy-up.
 
 **1. A table-driven test is parallel over its table.** Libtest parallelises
