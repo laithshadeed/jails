@@ -78,7 +78,13 @@ never-published `emit`, `select` read as the update list, the operation
 duplication behind those last three, the unguarded `app apply`, fifteen
 component kinds emitting nothing in silence, the unfrozen G1 oracle, and the
 unpinned compiler. Two new entries record what closing them cost or exposed:
-A1.2b and A2.1b.
+A1.2b and A2.2b.
+
+A2.1b is closed too, and the measurement that closed it is worth keeping:
+Maven **merges** the executions of a duplicate plugin declaration, so both
+source roots always compiled. The entry implied a possible dropped root; it
+was a permanent warning on a green build, which is a smaller thing than it
+looked and still worth removing.
 
 ## A1 — coverage
 
@@ -160,29 +166,6 @@ defects.
 ---
 
 ## A2 — correctness defects, each reproduced against the binary
-
-### A2.1b Two marked blocks declare the same Maven plugin
-
-`ensure_maven_source_root` (`crates/jails-workspace/src/documents.rs:506`)
-gives every source set its own `<!-- jails:generated-source-root:<set> -->`
-block, and each block contains a complete `<plugin>` declaration of
-`org.codehaus.mojo:build-helper-maven-plugin`. A project with a generated main
-*and* test root therefore declares that plugin twice inside one `<plugins>`,
-and Maven reports it:
-
-```
-[WARNING] 'build.plugins.plugin.(groupId:artifactId)' must be unique but found
-duplicate declaration of plugin org.codehaus.mojo:build-helper-maven-plugin
-```
-
-`jdl-sol.md` §9.7 asks for the opposite shape -- "Maven uses distinct
-`add-source` and `add-test-source` executions", one plugin, two executions.
-Restructuring it changes the bytes of an accepted reader facet, so it needs
-its own change with a migration path rather than a clause in A2.1.
-
-An earlier draft of this entry blamed a clash with the plugin `jails new-cli`
-writes. That was wrong and is corrected here: `new-cli` writes none, `sync`
-writes one per source set, and a second `sync` adds nothing.
 
 ### A2.2b Pre-v1 JDL loses declaration order on the way in
 
@@ -596,31 +579,27 @@ It is used only under `#[cfg(test)]` (`materialize.rs:673`), and
 Items 1–4 and 9 of the original list are closed and deleted; what remains is
 ordered by consequence.
 
-1. **A2.1b** — give the Maven source roots one plugin block with several
-   executions, and plan the migration for the accepted facet bytes. Maven
-   warns on the duplicate today, and a warning about which plugin declaration
-   wins is not a thing to leave running.
-2. **A3.11 / A3.12** — build the convention registry, the `derived` records
+1. **A3.11 / A3.12** — build the convention registry, the `derived` records
    and `model explain` *before* more emitters land. Every emitter added now
    hard-codes a placement §9.7 will later have to move, and there are more
    coming.
-3. **A1.4** — write `model upgrade --to 1`, then port `tests/differential.rs`
+2. **A1.4** — write `model upgrade --to 1`, then port `tests/differential.rs`
    and `tests/cli/model.rs` onto `jdl 1` (**A5.3**). Until that lands the G1
    gate protects the front end §22 says to delete.
-4. **A5.1 / A5.2** — golden the canonical tree and the three canonical
+3. **A5.1 / A5.2** — golden the canonical tree and the three canonical
    persisted formats, and add the v1-lock decode test. This session changed
    the serialized shape of `AppModel` twice; both times the lock failed closed
    as it should, and both times nothing compared bytes.
-5. **A1.2b** — give the CST editor for the fourteen unserved component kinds
+4. **A1.2b** — give the CST editor for the fourteen unserved component kinds
    a direct test, replacing the CLI coverage that closing A1.2 removed.
-6. **A5.5** — port G4's child-process method to `jails-workspace::execute`.
+5. **A5.5** — port G4's child-process method to `jails-workspace::execute`.
    The suite `855e438` wrote is the template; what it needs is failpoints on
    the canonical publication sequence and the convergence assertion stated
    against the compiler lock rather than the journal.
-7. **A6.1** — write the module docs while the reasons are still recoverable.
-8. **A2.6** — pluralize table names, or record the divergence from §9.7 as a
+6. **A6.1** — write the module docs while the reasons are still recoverable.
+7. **A2.6** — pluralize table names, or record the divergence from §9.7 as a
    decision. Right now importing a legacy project silently renames its tables.
-9. **A2.2b** — decide whether pre-v1 JDL should carry declaration order, given
+8. **A2.2b** — decide whether pre-v1 JDL should carry declaration order, given
    that the mechanism would also give `.jails/model.toml` an ordering it is
    documented as lacking.
 
