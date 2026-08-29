@@ -1396,10 +1396,28 @@ mod permit_pool_tests {
         TOOLCHAIN_PROCESSES,
     };
 
+    /// A pool whose budget belongs to *this process and this test alone*.
+    ///
+    /// `tests/common/mod.rs` is compiled into every integration-test binary,
+    /// so this module runs thirty-two times over -- and since the budget is
+    /// now a `flock` on named files, a fixed name would make those thirty-two
+    /// copies contend with each other for the very slots they are asserting
+    /// about. They did: CI went red on two of them while the same run passed
+    /// locally, because the collision needs the binaries to reach these tests
+    /// at the same moment.
+    ///
+    /// That is the change working, aimed at itself. A production pool wants
+    /// exactly this sharing; a test *about* the sharing has to own its own
+    /// budget, so the name carries the pid.
+    fn pool(label: &str) -> PermitPool {
+        let name = format!("test-{label}-{}", std::process::id());
+        PermitPool::new(Box::leak(name.into_boxed_str()))
+    }
+
     #[test]
     fn infrastructure_start_pool_has_two_reusable_permits() {
         assert_eq!(MAX_INFRASTRUCTURE_START_PROCESSES, 2);
-        let pool = PermitPool::new("test-reusable");
+        let pool = pool("reusable");
         let first = pool
             .try_acquire(MAX_INFRASTRUCTURE_START_PROCESSES)
             .unwrap();
@@ -1431,8 +1449,8 @@ mod permit_pool_tests {
             &INFRASTRUCTURE_START_PROCESSES
         ));
 
-        let toolchain = PermitPool::new("test-separate-toolchain");
-        let infrastructure = PermitPool::new("test-separate-infrastructure");
+        let toolchain = pool("separate-toolchain");
+        let infrastructure = pool("separate-infrastructure");
         let _toolchain_permit = toolchain.acquire(1);
 
         assert!(toolchain.try_acquire(1).is_none());
@@ -1449,8 +1467,8 @@ mod permit_pool_tests {
     /// thirty-three, which is what `scripts/run-tests.py` launches.
     #[test]
     fn a_budget_is_shared_by_every_pool_of_the_same_name() {
-        let one = PermitPool::new("test-shared-budget");
-        let two = PermitPool::new("test-shared-budget");
+        let one = pool("shared-budget");
+        let two = pool("shared-budget");
 
         let held = one.try_acquire(1).expect("the only permit");
         assert!(
