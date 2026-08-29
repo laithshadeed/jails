@@ -10,10 +10,16 @@
 //! pass and changes something on the second is not idempotent, and that
 //! difference only shows up under a second crash.
 //!
-//! What this does not model is losing stack cleanup — that needs a child
-//! process and `abort()`, which needs the CLI to route through this executor.
-//! §R4.5's child-abort suite lands with R6's migration; the failpoint set is
-//! the same one.
+//! Losing stack cleanup is modelled too, by
+//! `every_failpoint_converges_after_a_child_dies_there`: the same failpoint
+//! set, armed with `Armed::aborting_at`, in a child process that `abort()`s
+//! inside the trip.
+//!
+//! This header used to say that suite "needs the CLI to route through this
+//! executor". It does not, and saying so kept it unwritten: the executor is
+//! reachable as a library -- which is how every test in this file already
+//! drives it -- so the child is just this binary with two environment
+//! variables set. `simplify-sol.md`'s G4 asks for exactly it.
 
 use jails_commit::execute::{LockedProject, ProjectHandle, commit};
 use jails_commit::fault::{Armed, POINTS};
@@ -387,4 +393,130 @@ fn a_file_that_changed_since_the_plan_read_it_refuses() {
         "{error:?}"
     );
     scratch.close().unwrap();
+}
+
+/// The environment variable that turns this binary into the crashing child.
+const CHILD_POINT: &str = "JAILS_CRASH_CHILD_POINT";
+/// Where the child should open the project the parent prepared.
+const CHILD_ROOT: &str = "JAILS_CRASH_CHILD_ROOT";
+
+/// The child half of the abort matrix. Not a test on its own.
+///
+/// It is a `#[test]` because that is how a test binary exposes an entry point
+/// the parent can name with `--exact`. Without the environment variable it
+/// returns immediately, so an ordinary run costs nothing.
+#[test]
+fn crash_child_commits_and_dies() {
+    let Ok(point) = std::env::var(CHILD_POINT) else {
+        return;
+    };
+    let root = std::env::var(CHILD_ROOT).expect("the parent passes both or neither");
+    let handle = ProjectHandle::at(std::path::Path::new(&root)).unwrap();
+    let locked = LockedProject::acquire(handle, "crash child").unwrap();
+    let change = one_create();
+    let _armed = Armed::aborting_at(&point);
+    // Reached only if the point never tripped, which is a failure of the
+    // matrix rather than of the executor -- the parent reports it as one.
+    let _ = commit(&locked, &bundle(&locked, change));
+    std::process::exit(97);
+}
+
+/// Every failpoint, in a process that dies there without unwinding.
+///
+/// `simplify-sol.md`'s G4: *each advertised fault is asserted to fire in a
+/// child process that dies without unwinding; restart reaches exactly pre-plan
+/// or post-plan state, a second restart is idempotent.*
+///
+/// `every_named_failpoint_converges` proves the same convergence against an
+/// injected `Err`, and that is the easier half: an `Err` unwinds, so every
+/// guard between the trip and the test releases, the lock is dropped in order
+/// and `Drop` runs on the journal. A machine that loses power does none of
+/// that. This kills the child with `abort()` inside the trip, so the parent
+/// opens exactly what a crash leaves -- including a lock whose owner is gone.
+///
+/// This file's header used to say the child suite "needs the CLI to route
+/// through this executor". It does not: the executor is reachable as a
+/// library, which is how the tests above already drive it, so the child only
+/// has to be this binary with an environment variable set.
+#[test]
+fn every_failpoint_converges_after_a_child_dies_there() {
+    let binary = std::env::current_exe().expect("a test binary knows its own path");
+    for point in POINTS {
+        let scratch = ScratchDir::in_temp("jails-crash-abort").unwrap();
+        let root = scratch.path().to_path_buf();
+
+        let status = std::process::Command::new(&binary)
+            .args(["--exact", "crash_child_commits_and_dies", "--nocapture"])
+            .env(CHILD_POINT, point)
+            .env(CHILD_ROOT, &root)
+            .output()
+            .expect("failed to spawn the crashing child");
+        assert_ne!(
+            status.status.code(),
+            Some(97),
+            "`{point}` never tripped in the child -- the commit ran to \
+             completion, so this point proves nothing"
+        );
+        // Killed by a signal, not merely unsuccessful. A panicking child exits
+        // 101 *after* unwinding -- guards released, `Drop` run -- which is the
+        // state the in-process suite already covers. Accepting it here would
+        // make this test a slower copy of that one.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            assert_eq!(
+                status.status.signal(),
+                Some(libc_sigabrt()),
+                "`{point}` did not abort the child: exit {:?}, signal {:?}\n{}",
+                status.status.code(),
+                status.status.signal(),
+                String::from_utf8_lossy(&status.stderr)
+            );
+        }
+        #[cfg(not(unix))]
+        assert!(!status.status.success(), "`{point}` did not stop the child");
+
+        // A fresh handle, because the child's lock died with it.
+        let handle = ProjectHandle::at(&root).unwrap();
+        let locked = LockedProject::acquire(handle, "crash recovery").unwrap();
+        if let Err(error) = recover_twice(&locked) {
+            panic!("`{point}` left a project recovery could not settle after an abort: {error}");
+        }
+
+        let transaction = one_create().transaction_id;
+        let settled = settle(&scratch, &locked, &transaction);
+        let applied = Settled {
+            file_present: true,
+            receipt_published: true,
+        };
+        let absent = Settled {
+            file_present: false,
+            receipt_published: false,
+        };
+        assert!(
+            settled == applied || settled == absent,
+            "`{point}` settled at {settled:?} after an abort -- neither \
+             pre-plan nor post-plan"
+        );
+
+        let staging: Vec<_> = std::fs::read_dir(locked.handle().store().transactions())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(
+            staging.is_empty(),
+            "`{point}` left staging after an abort: {staging:?}"
+        );
+
+        scratch.close().unwrap();
+    }
+}
+
+/// `SIGABRT`. Named here rather than taken from a dependency: this workspace's
+/// only third-party crates are clap and tempfile, and one integer is not a
+/// reason for a third.
+#[cfg(unix)]
+fn libc_sigabrt() -> i32 {
+    6
 }

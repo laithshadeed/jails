@@ -325,15 +325,25 @@ verbatim from `customer.js` and `admin.js`:
       as never compiled. A coverage gate that under-reports sends people to
       write tests that already exist.
 
-      **G4 is half-closed, and the other half is blocked on the cutover
-      itself.** `every_named_failpoint_converges` already arms every entry in
-      `fault::POINTS` and asserts convergence, and the registry is now honest
-      in both directions (above). What G4 asks for beyond that is a fault
-      firing *in a child process that dies without unwinding* -- and
-      `crates/jails-commit/tests/crash.rs` says why it cannot be written yet,
-      in its own header: that "needs a child process and `abort()`, which needs
-      the CLI to route through this executor". It is a cutover dependency, not
-      a missing test.
+      **G4 is closed.** `every_failpoint_converges_after_a_child_dies_there`
+      runs every entry in `fault::POINTS` in a child process that `abort()`s
+      inside the trip, then opens what the crash left -- including a lock whose
+      owner is gone -- and asserts the same convergence, twice.
+
+      `Armed::aborting_at` is the new half. The existing suite arms an injected
+      `Err`, and that is the easier case: an `Err` unwinds, so every guard
+      between the trip and the test releases, the lock drops in order and
+      `Drop` runs on the journal. A machine losing power does none of that.
+      The child is asserted to die **by `SIGABRT`, not merely unsuccessfully**
+      -- a panicking child exits 101 after unwinding, which is the state the
+      in-process suite already covers, and accepting it would make this a
+      slower copy of that test.
+
+      **It was written off as blocked, and was not.** `crash.rs`'s header said
+      the child suite "needs the CLI to route through this executor". The
+      executor is reachable as a library -- which is how every test in that
+      file already drives it -- so the child is just that binary with two
+      environment variables set. The header is corrected in the same change.
 
       **G5's corpus exists and is enforced.** `examples/proof-policy.tsv` is
       the machine-readable map -- six manifests, each with its build tool,
