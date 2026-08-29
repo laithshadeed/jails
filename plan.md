@@ -446,6 +446,40 @@ verbatim from `customer.js` and `admin.js`:
       list -- it is worth doing when the legacy side is a frozen binary from
       before the emitters changed, and not before.
 
+- [ ] **P13.8** **The canonical parity gap is 4 capabilities and 4 kinds, and
+      it is much smaller than this file assumed.** `simplify-sol.md` says the
+      remaining work before the gates is *"primarily generator and capability
+      backend parity"*; nothing said how much. Measured 2026-08-29 by running
+      every entry of `jails commands --json` against a fresh canonical project:
+
+      - **Capabilities: 21 of 25 canonical.** `format`, `ci`, `docker` and
+        `k8s` refuse with *"canonical capability backend is not implemented"*.
+        The first three are build/CI/packaging files rather than Java, which is
+        probably why they were left: nothing about them is entity-shaped.
+      - **Kinds: `migration`, `association`, `search` and `seed` refuse**, and
+        the refusal is not about a backend. It is *"its JDL syntax editor is
+        not implemented yet -- edit `.jails/model.jdl` directly and run `jails
+        sync`"*. The model can express them; the CLI sugar cannot write the
+        declaration. That is a frontend gap, and a cheaper one.
+
+      **`CLAUDE.md` was three capabilities behind and said so as an
+      instruction** -- *"Canonical capability profiles currently include
+      `fake`, `db`, and `api` ... every other `add` capability must currently
+      refuse"* -- which would have had the next reader add a refusal to code
+      that already works. Corrected in the same change, with the date and the
+      method, because this number moves.
+
+      **Getting the measurement right took three wrong answers**, all of them
+      the probe rather than the product, and all of them the same mistake:
+      reading a refusal as a parity gap without reading *which* refusal. `g
+      controller Sample id:uuid@pk` is rejected for its flags, not its route;
+      the 14 kinds reporting *"requires `jdl 1`"* wanted the v1 document form
+      (`jdl 1` / `app X { pkg ... }`), not the older `application X @id(...)`
+      one the differential fixtures still write; and `h2` conflicts with a
+      model declaring `storage postgres`. A probe that scores "did it fail"
+      instead of "what did it say" reports a tool as far less finished than it
+      is.
+
 - [ ] **P13.7** **The suite is 108s of `tests/cli` because it compiles 36 Java
       projects, and the remaining lever is Maven's JVM startup.** Profiled with
       the harness's own `JAILS_TEST_PROFILE=1` (it needs `-- --nocapture`;

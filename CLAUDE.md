@@ -197,11 +197,17 @@ reconstruct indexes from generated SQL or add a second index ledger; index
 removal remains an explicit unsupported policy until its forward migration
 contract is implemented.
 
-Canonical capability profiles currently include `fake`, `db`, and `api`. They
-emit in-memory repositories, JDBC repositories/schema migrations, and Spring
-operation controllers respectively by ordinary whole-model compilation. Every
-other `add` capability must currently refuse before legacy dispatch; never let
-a canonical project silently create a legacy ledger. Ejecting one of these
+**Canonical capability coverage is 21 of 25, measured 2026-08-29** by running
+every capability in `jails commands --json` against a fresh canonical project.
+`fake`, `db` and `api` were the first three -- in-memory repositories, JDBC
+repositories with schema migrations, Spring operation controllers -- and the
+rest followed by ordinary whole-model compilation. **Four refuse and name
+themselves:** `format`, `ci`, `docker` and `k8s`, with *"canonical capability
+backend is not implemented for `X`"*. Do not read the small list in an old
+note as the current one; re-measure, because this number moves.
+
+Every capability without a backend must keep refusing before legacy dispatch;
+never let a canonical project silently create a legacy ledger. Ejecting one of these
 implementation artifacts moves the captured live bytes, including hand edits,
 to reader source; it never ejects the managed ABI. `add dependency` / `remove dependency` are the exception because they
 are not capabilities: each is a stable model node, and the compiler reconciles
