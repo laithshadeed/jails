@@ -7,6 +7,7 @@
 
 use super::*;
 use std::collections::BTreeSet;
+use std::process::Command;
 
 const POLICY: &str = include_str!("../../examples/proof-policy.tsv");
 const MINICOM_MANIFEST: &str = concat!(
@@ -359,33 +360,79 @@ fn unheld_maven_example_manifest_passes_real_verification() {
     );
 }
 
-fn pinned_gradle_toolchain_available() -> bool {
-    std::process::Command::new("gradle")
-        .arg("--version")
-        .output()
-        .is_ok_and(|output| {
-            let version = String::from_utf8_lossy(&output.stdout);
-            output.status.success()
-                && version.contains("Gradle 8.5")
-                && version.lines().any(|line| {
-                    line.strip_prefix("JVM:")
-                        .is_some_and(|value| value.trim_start().starts_with("21"))
-                })
-        })
+/// The pinned Gradle 8.5 / JDK 21 pair, **located rather than inherited**.
+///
+/// This test used to require the whole gate to be re-entered under
+/// `mise x java@21 gradle@8.5`, because it read `gradle` and `JAVA_HOME`
+/// straight off the ambient environment. That cost a second `cargo test`
+/// invocation running exactly one test, serialised after everything else --
+/// 29.15s measured, against a cargo overhead of 0.1s, so essentially all of
+/// it was the Gradle build waiting its turn. Located here instead, the test
+/// runs inside the ordinary suite and those 29s overlap a 299s test phase
+/// rather than following it.
+///
+/// The ambient pair is still honoured first, so running this test by hand
+/// under `mise x` behaves exactly as it did. `mise where` is the fallback,
+/// and mise is not an extra dependency: it is what invokes the gate.
+fn pinned_gradle_toolchain() -> Option<(PathBuf, Option<PathBuf>)> {
+    if pinned_gradle_reports_eight_five(Command::new("gradle")) {
+        return Some((PathBuf::from("gradle"), None));
+    }
+    // `mise which --tool=` resolves the executable itself. `mise where` was
+    // the obvious call and is the wrong one: it answers with the *install
+    // root*, and the layout under it is not uniform -- Gradle 8.5 unpacks to
+    // `<root>/gradle-8.5/bin/gradle`, so a joined `bin/gradle` does not exist
+    // and the probe silently reported the toolchain missing.
+    let located = |tool: &str, exe: &str| {
+        let output = Command::new("mise")
+            .args(["which", exe, &format!("--tool={tool}")])
+            .output()
+            .ok()?;
+        output
+            .status
+            .success()
+            .then(|| PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_owned()))
+            .filter(|path| path.is_file())
+    };
+    // Gradle wants a JDK *home*, and what is resolvable is the `java` binary
+    // inside `<home>/bin`, so the home is two levels up from it.
+    let java_home = located("java@21", "java")?
+        .parent()?
+        .parent()?
+        .to_path_buf();
+    let gradle = located("gradle@8.5", "gradle")?;
+    let mut probe = Command::new(&gradle);
+    probe.env("JAVA_HOME", &java_home);
+    pinned_gradle_reports_eight_five(probe).then_some((gradle, Some(java_home)))
+}
+
+/// Whether this command is Gradle 8.5 running on JDK 21, both of which the
+/// example proof policy pins and neither of which is the repository default.
+fn pinned_gradle_reports_eight_five(mut command: Command) -> bool {
+    command.arg("--version").output().is_ok_and(|output| {
+        let version = String::from_utf8_lossy(&output.stdout);
+        output.status.success()
+            && version.contains("Gradle 8.5")
+            && version.lines().any(|line| {
+                line.strip_prefix("JVM:")
+                    .is_some_and(|value| value.trim_start().starts_with("21"))
+            })
+    })
 }
 
 #[test]
 fn unheld_gradle_example_manifest_builds_on_its_pinned_toolchain() {
-    if !pinned_gradle_toolchain_available() {
+    let Some((gradle, java_home)) = pinned_gradle_toolchain() else {
         skip("Gradle 8.5 running on JDK 21 is required by the example proof policy");
         return;
-    }
+    };
     let root = generated_unheld_gradle_example();
-    let status = std::process::Command::new("gradle")
-        .current_dir(root)
-        .args(["--no-daemon", "build"])
-        .status()
-        .unwrap();
+    let mut build = Command::new(&gradle);
+    build.current_dir(root).args(["--no-daemon", "build"]);
+    if let Some(java_home) = &java_home {
+        build.env("JAVA_HOME", java_home);
+    }
+    let status = build.status().unwrap();
     assert!(
         status.success(),
         "the exact minicom-spring manifest failed Gradle build"

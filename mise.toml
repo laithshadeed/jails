@@ -61,9 +61,21 @@ depends = ["lint"]
 # It is still one answer to "is this green": same binaries from `cargo test
 # --no-run`, same filters, same exit status. What it adds is a python3
 # dependency for the gate, which is the cost this trade accepts.
+#
+# **One command, and the Gradle example no longer needs a second.** It used to
+# be skipped here and then run by a `cargo test` of its own under
+# `mise x java@21 gradle@8.5`, because it read `gradle` and `JAVA_HOME` off the
+# ambient environment and the repository default is JDK 26. That second
+# invocation ran exactly one test, after everything else had finished: 29.15s
+# measured, of which cargo's own freshness check was 0.1s -- so essentially all
+# of it was one Gradle build waiting its turn.
+#
+# `pinned_gradle_toolchain()` locates the pinned pair instead of inheriting it,
+# so the test runs inside the ordinary suite where its ~16s overlaps a ~300s
+# test phase rather than following it. Running it by hand under `mise x` still
+# works: the ambient pair is honoured first.
 run = [
-  "JAILS_REQUIRE_TOOLCHAIN=1 ./scripts/run-tests.py -- --skip unheld_gradle_example_manifest_builds_on_its_pinned_toolchain",
-  "mise x java@21 gradle@8.5 -- env JAILS_REQUIRE_TOOLCHAIN=1 cargo test --test cli unheld_gradle_example_manifest_builds_on_its_pinned_toolchain",
+  "JAILS_REQUIRE_TOOLCHAIN=1 ./scripts/run-tests.py",
 ]
 
 [tasks.test]
