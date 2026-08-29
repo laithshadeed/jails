@@ -115,7 +115,7 @@ fn lower(
     let mut parameters = parameters.replace("PORT", &port_type);
     let scope_fields = target
         .fields
-        .values()
+        .iter()
         .filter(|field| field.semantics.scope.is_some())
         .collect::<Vec<_>>();
     let (scope_member, scope_parameter, scope_assignment, context_setup, context_argument) =

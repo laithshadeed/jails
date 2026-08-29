@@ -53,7 +53,7 @@ pub(super) fn lower(
     let mut params = String::new();
     let mut columns = Vec::new();
     let mut values = Vec::new();
-    for field in target.fields.values() {
+    for field in target.fields.iter() {
         let value = if let Some(parameter) = rich_inputs.get(&field.id) {
             let member = &parameter.name;
             if parameter.required && !parameter.optional_filter {
@@ -118,7 +118,7 @@ pub(super) fn lower(
     }
     let returning = target
         .fields
-        .values()
+        .iter()
         .map(|field| field.names.sql_column.as_str())
         .collect::<Vec<_>>()
         .join(", ");
@@ -223,7 +223,7 @@ fn lower_resolutions(
     let mut values = BTreeMap::new();
     let mut statements = String::new();
     for (position, resolution) in command.semantics.resolutions.iter().enumerate() {
-        let target_field = target.fields.get(&resolution.target).ok_or_else(|| {
+        let target_field = target.field(&resolution.target).ok_or_else(|| {
             CompileError::new(format!(
                 "linked command `{}` references missing resolve target `{}`",
                 operation.label, resolution.target
@@ -250,21 +250,18 @@ fn lower_resolutions(
                     operation.label, resolution.remote_entity
                 ))
             })?;
-        let remote_value = remote.fields.get(&resolution.remote_value).ok_or_else(|| {
+        let remote_value = remote.field(&resolution.remote_value).ok_or_else(|| {
             CompileError::new(format!(
                 "linked command `{}` references missing resolve value `{}`",
                 operation.label, resolution.remote_value
             ))
         })?;
-        let remote_lookup = remote
-            .fields
-            .get(&resolution.remote_lookup)
-            .ok_or_else(|| {
-                CompileError::new(format!(
-                    "linked command `{}` references missing resolve lookup `{}`",
-                    operation.label, resolution.remote_lookup
-                ))
-            })?;
+        let remote_lookup = remote.field(&resolution.remote_lookup).ok_or_else(|| {
+            CompileError::new(format!(
+                "linked command `{}` references missing resolve lookup `{}`",
+                operation.label, resolution.remote_lookup
+            ))
+        })?;
         if target_field.ty != remote_value.ty {
             return Err(CompileError::new(format!(
                 "canonical command `{}` resolves `{}` from incompatible field `{}.{}`\n       fix: resolve from a field with the same logical type",
@@ -330,7 +327,7 @@ fn parameter_type<'a>(
         ParameterSource::Field(field) => model
             .entities
             .get(&field.entity)
-            .and_then(|entity| entity.fields.get(&field.field))
+            .and_then(|entity| entity.field(&field.field))
             .map(|field| &field.ty)
             .ok_or_else(|| {
                 CompileError::new(format!(

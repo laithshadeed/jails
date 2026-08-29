@@ -42,7 +42,7 @@ pub(super) fn lower(
     let scope_fields = scopes(target);
     let columns = target
         .fields
-        .values()
+        .iter()
         .map(|field| field.names.sql_column.as_str())
         .collect::<Vec<_>>()
         .join(", ");

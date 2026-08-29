@@ -59,13 +59,13 @@ pub(crate) fn link(
     entity_path: &str,
     entity_label: &str,
     sql_table: &str,
-    fields: &BTreeMap<FieldId, Field>,
+    fields: &[Field],
     field_labels: &BTreeMap<String, FieldId>,
     declarations: BTreeMap<String, source::Index>,
 ) -> BTreeMap<IndexId, Index> {
     let mut indexes = BTreeMap::new();
     let mut index_names = fields
-        .values()
+        .iter()
         .filter(|field| field.indexed && !field.primary_key && !field.unique)
         .map(|field| {
             (

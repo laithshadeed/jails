@@ -142,7 +142,7 @@ entity Task @id(ent_task) {
         assert!(task.facets.contains(&Facet::Dto));
         let title = task
             .fields
-            .values()
+            .iter()
             .find(|field| field.label == "title")
             .unwrap();
         assert_eq!(title.length.as_ref().unwrap().min, Some(1));
@@ -201,7 +201,7 @@ entity Task {
             .unwrap();
         let field = |label: &str| {
             task.fields
-                .values()
+                .iter()
                 .find(|field| field.label == label)
                 .unwrap()
         };
@@ -799,7 +799,7 @@ entity RetiredEntity @retired {
             panic!("search must retain its typed field list");
         };
         assert_eq!(fields.len(), 1);
-        assert_eq!(invoice.fields[&fields[0]].label, "title");
+        assert_eq!(invoice.field(&fields[0]).unwrap().label, "title");
     }
 
     #[test]

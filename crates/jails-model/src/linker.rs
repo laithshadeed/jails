@@ -124,13 +124,25 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
             "SQL table",
         );
 
-        let mut fields = BTreeMap::new();
+        let mut fields = Vec::new();
         let mut field_labels = BTreeMap::new();
         let mut java_members = BTreeMap::<String, String>::new();
         let mut sql_columns = BTreeMap::<String, String>::new();
         let mut primary_keys = 0_usize;
 
-        for (field_label, field) in entity.fields {
+        // Declaration order when the frontend stated one, label order when it
+        // could not. A Java record's component order is ABI, so re-sorting
+        // here is not a presentation choice: a caller compiled against the
+        // positional constructor keeps compiling against a re-sorted one and
+        // silently passes the wrong arguments.
+        let mut declared = entity.fields;
+        let ordered = entity
+            .field_order
+            .iter()
+            .filter_map(|label| declared.remove_entry(label))
+            .collect::<Vec<_>>();
+        let ordered = ordered.into_iter().chain(declared).collect::<Vec<_>>();
+        for (field_label, field) in ordered {
             let field_path = format!("{path}.fields.{field_label}");
             linker.label(&field_label, &field_path);
             linker.register_id(&field.id, &format!("{field_path}.id"));
@@ -202,25 +214,22 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
 
             if let (Some(field_id), Some(ty)) = (field_id, ty) {
                 field_labels.insert(field_label.clone(), field_id.clone());
-                fields.insert(
-                    field_id.clone(),
-                    Field {
-                        id: field_id,
-                        label: field_label,
-                        names: FieldNames {
-                            java_member,
-                            sql_column,
-                        },
-                        ty,
-                        required: field.required,
-                        non_blank: field.non_blank,
-                        primary_key: field.primary_key,
-                        unique: field.unique,
-                        indexed: field.indexed,
-                        length,
-                        semantics,
+                fields.push(Field {
+                    id: field_id,
+                    label: field_label,
+                    names: FieldNames {
+                        java_member,
+                        sql_column,
                     },
-                );
+                    ty,
+                    required: field.required,
+                    non_blank: field.non_blank,
+                    primary_key: field.primary_key,
+                    unique: field.unique,
+                    indexed: field.indexed,
+                    length,
+                    semantics,
+                });
             }
         }
 

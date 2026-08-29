@@ -170,12 +170,12 @@ pub(super) fn semantics(
 
 pub(super) fn validate_scope_claims(
     entity_path: &str,
-    fields: &BTreeMap<crate::FieldId, crate::Field>,
+    fields: &[crate::Field],
     linker: &mut Linker,
 ) {
     let mut claims = BTreeMap::<&str, &str>::new();
     let mut version = None::<&str>;
-    for field in fields.values() {
+    for field in fields.iter() {
         if field.semantics.version
             && let Some(first) = version.replace(&field.label)
         {

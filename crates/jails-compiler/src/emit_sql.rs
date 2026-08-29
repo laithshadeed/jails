@@ -146,8 +146,8 @@ pub(crate) fn derive(
                 old.names.sql_table, current.names.sql_table
             )));
         }
-        for old_field in old.fields.values() {
-            let Some(current_field) = current.fields.get(&old_field.id) else {
+        for old_field in old.fields.iter() {
+            let Some(current_field) = current.field(&old_field.id) else {
                 let Some(confirmed) = policies.removals.get(old_field.id.as_str()) else {
                     return Err(CompileError::new(format!(
                         "accepted column `{}.{}` was removed without a drop policy\n       fix: use canonical field drop with exact column confirmation",
@@ -179,8 +179,8 @@ pub(crate) fn derive(
         }
         for field in current
             .fields
-            .values()
-            .filter(|field| !old.fields.contains_key(&field.id))
+            .iter()
+            .filter(|field| !old.has_field(&field.id))
         {
             statements.extend(add_column(
                 next,
@@ -226,7 +226,12 @@ pub(crate) fn derive(
     }) {
         statements.extend(create_table(next, entity)?);
         semantic_ids.insert(entity.id.as_str().to_string());
-        semantic_ids.extend(entity.fields.keys().map(|field| field.as_str().to_string()));
+        semantic_ids.extend(
+            entity
+                .fields
+                .iter()
+                .map(|field| field.id.as_str().to_string()),
+        );
         descriptions.push(format!("create_{}", entity.names.sql_table));
     }
 
@@ -495,7 +500,7 @@ fn reader_sql(bytes: &[u8]) -> Result<&str, CompileError> {
 fn create_table(model: &AppModel, entity: &Entity) -> Result<Vec<String>, CompileError> {
     let mut columns = Vec::new();
     let mut indexes = Vec::new();
-    for field in entity.fields.values() {
+    for field in entity.fields.iter() {
         columns.push(initial_column(field, sql_type(model, field)?)?);
         if field.indexed && !field.primary_key && !field.unique {
             indexes.push(format!(
@@ -530,7 +535,7 @@ fn create_index(entity: &Entity, index: &Index) -> Result<String, CompileError> 
         .columns
         .iter()
         .map(|column| {
-            let field = entity.fields.get(&column.field).ok_or_else(|| {
+            let field = entity.field(&column.field).ok_or_else(|| {
                 CompileError::new(format!(
                     "index `{}` references missing field `{}`\n       fix: repair the linked model before compiling",
                     index.sql_name, column.field

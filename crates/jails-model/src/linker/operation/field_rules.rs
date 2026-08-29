@@ -25,12 +25,12 @@ pub(super) fn validate(
         let path = format!("$.operations.{}", operation.label);
         let fields = entity
             .fields
-            .values()
+            .iter()
             .map(|field| (&field.id, field))
             .collect::<BTreeMap<_, _>>();
         let scoped = entity
             .fields
-            .values()
+            .iter()
             .any(|field| field.semantics.scope.is_some());
         if scoped && routed(&operation.kind) && !has_security {
             linker.problem(
@@ -197,7 +197,7 @@ fn validate_precondition(
 ) {
     let versions = entity
         .fields
-        .values()
+        .iter()
         .filter(|field| field.semantics.version)
         .collect::<Vec<_>>();
     match transition.semantics.precondition {

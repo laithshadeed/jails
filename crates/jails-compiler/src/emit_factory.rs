@@ -39,7 +39,7 @@ pub(crate) fn lower(
 
 fn body(entity: &Entity, type_name: &str, imports: &mut BTreeSet<String>) -> String {
     let record = &entity.names.java_type;
-    let fields = entity.fields.values().collect::<Vec<_>>();
+    let fields = entity.fields.iter().collect::<Vec<_>>();
     let declarations = fields
         .iter()
         .map(|field| {

@@ -275,6 +275,7 @@ impl Parser<'_> {
                 facets: BTreeSet::from([Facet::Enum]),
                 values,
                 fields: BTreeMap::new(),
+                field_order: Vec::new(),
                 indexes: BTreeMap::new(),
                 constraints: Vec::new(),
                 relations: BTreeMap::new(),
@@ -300,6 +301,7 @@ impl Parser<'_> {
             table: None,
             facets: BTreeSet::from([Facet::Record]),
             fields: BTreeMap::new(),
+            field_order: Vec::new(),
             indexes: BTreeMap::new(),
             constraints: Vec::new(),
             relations: BTreeMap::new(),
@@ -353,6 +355,7 @@ impl Parser<'_> {
                 facets: entity.facets,
                 values: Vec::new(),
                 fields: entity.fields,
+                field_order: entity.field_order,
                 indexes: entity.indexes,
                 constraints: entity.constraints,
                 relations: entity.relations,
@@ -405,6 +408,7 @@ impl Parser<'_> {
             updated: flag_attribute(&attributes, "updated")?,
         };
         self.end_line()?;
+        entity.field_order.push(field_label.clone());
         entity.fields.insert(
             field_label,
             source::Field {

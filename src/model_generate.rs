@@ -514,11 +514,7 @@ pub(crate) fn operation_field_label(model: &AppModel, entity: &str, token: &str)
         })?;
     if !token.contains(':') {
         let label = java_to_label(token);
-        if declaration
-            .fields
-            .values()
-            .any(|field| field.label == label)
-        {
+        if declaration.fields.iter().any(|field| field.label == label) {
             return Ok(label);
         }
         return Err(Failure::Told(format!(
@@ -528,7 +524,7 @@ pub(crate) fn operation_field_label(model: &AppModel, entity: &str, token: &str)
     let parsed = parse_field(token)?;
     let field = declaration
         .fields
-        .values()
+        .iter()
         .find(|field| field.label == parsed.label)
         .ok_or_else(|| {
             Failure::Told(format!(

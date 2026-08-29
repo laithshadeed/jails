@@ -333,7 +333,7 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
     let field = next_model
         .entities
         .get(&entity_id)
-        .and_then(|entity| entity.fields.get(&field_id))
+        .and_then(|entity| entity.field(&field_id))
         .cloned()
         .ok_or_else(|| Failure::Told(format!("new field `{field_id}` did not link")))?;
     let patch_bytes = serde_json::to_vec(&json!({

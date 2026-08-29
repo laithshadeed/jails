@@ -278,10 +278,36 @@ impl AppModel {
                     .ok_or_else(|| format!("entity id `{entity}` does not exist"))?;
                 refuse_retired_entity(target)?;
                 let id = field.id.clone();
-                if target.fields.contains_key(&id) {
+                if target.has_field(&id) {
                     return Err(format!("field id `{id}` already exists on `{entity}`"));
                 }
-                target.fields.insert(id, field);
+                // Placed where re-parsing the edited source will put it.
+                //
+                // The linked order is a projection of the source, and the two
+                // spellings differ: a JDL block states declaration order, so a
+                // CLI edit that appends text appends the field; a
+                // `.jails/model.toml` table states none, so it re-parses in
+                // label order whatever order it was written in. Appending
+                // blindly made `model check --frozen` fail on TOML projects --
+                // the patched model and the file it had just written compiled
+                // to different records.
+                //
+                // "Already in label order" is exactly "has no stated order",
+                // because a source that states one is the only way to be out
+                // of it. An entity that happens to be declared alphabetically
+                // gets the same answer from both branches.
+                let label_ordered = target
+                    .fields
+                    .windows(2)
+                    .all(|pair| pair[0].label <= pair[1].label);
+                match label_ordered.then(|| {
+                    target
+                        .fields
+                        .partition_point(|existing| existing.label < field.label)
+                }) {
+                    Some(position) => target.fields.insert(position, field),
+                    None => target.fields.push(field),
+                }
             }
             ModelPatch::AddIndex { entity, index } => crate::index::add(self, entity, index)?,
             ModelPatch::RemoveIndex {
@@ -300,7 +326,7 @@ impl AppModel {
                     .get_mut(&entity)
                     .ok_or_else(|| format!("entity id `{entity}` does not exist"))?;
                 refuse_retired_entity(target)?;
-                if !target.fields.contains_key(&field) {
+                if !target.has_field(&field) {
                     return Err(format!("field id `{field}` does not exist on `{entity}`"));
                 }
                 if replacement.id != field {
@@ -308,7 +334,15 @@ impl AppModel {
                         "field replacement must preserve stable id `{field}`"
                     ));
                 }
-                target.fields.insert(field, replacement);
+                // Replaced in place. Preserving the stable id is exactly the
+                // promise that the component keeps its position, so a rename
+                // or a type change is not an ABI reordering.
+                let slot = target
+                    .fields
+                    .iter_mut()
+                    .find(|existing| existing.id == field)
+                    .expect("the field was just confirmed to exist");
+                *slot = replacement;
             }
             ModelPatch::RemoveField {
                 entity,
@@ -346,7 +380,9 @@ impl AppModel {
                     .get_mut(&entity)
                     .ok_or_else(|| format!("entity id `{entity}` does not exist"))?;
                 refuse_retired_entity(target)?;
-                if target.fields.remove(&field).is_none() {
+                let before = target.fields.len();
+                target.fields.retain(|existing| existing.id != field);
+                if target.fields.len() == before {
                     return Err(format!("field id `{field}` does not exist on `{entity}`"));
                 }
             }

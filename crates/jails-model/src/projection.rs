@@ -278,7 +278,7 @@ fn resolve_fields(
         .filter_map(|label| {
             let field = entity
                 .fields
-                .values()
+                .iter()
                 .find(|field| &field.label == label)
                 .map(|field| field.id.clone())
                 .or_else(|| {
@@ -362,8 +362,7 @@ fn validate_prerequisites(
                 if dialect != "postgresql"
                     || fields.iter().any(|id| {
                         entity
-                            .fields
-                            .get(id)
+                            .field(id)
                             .is_none_or(|field| field.ty != TypeRef::Builtin(BuiltinType::String))
                     }) =>
             {
@@ -380,7 +379,7 @@ fn validate_prerequisites(
 }
 
 fn has_primary_key(entity: &Entity) -> bool {
-    entity.fields.values().any(|field| field.primary_key)
+    entity.fields.iter().any(|field| field.primary_key)
         || entity
             .constraints
             .values()

@@ -113,7 +113,7 @@ fn lower_facet(model: &AppModel, entity: &Entity, facet: Facet) -> Result<Unit, 
         ),
         Facet::Record => {
             let mut imports = BTreeSet::new();
-            let fields = entity.fields.values().collect::<Vec<_>>();
+            let fields = entity.fields.iter().collect::<Vec<_>>();
             (
                 domain_package.clone(),
                 entity.names.java_type.clone(),
@@ -309,7 +309,7 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
 fn operation_context(model: &AppModel, entity: &Entity, imports: &mut BTreeSet<String>) -> String {
     if entity
         .fields
-        .values()
+        .iter()
         .any(|field| field.semantics.scope.is_some())
     {
         imports.insert(format!(
@@ -355,7 +355,7 @@ pub(crate) fn entity<'a>(model: &'a AppModel, id: &EntityId) -> Result<&'a Entit
 fn fields<'a>(entity: &'a Entity, ids: &[FieldId]) -> Result<Vec<&'a Field>, CompileError> {
     ids.iter()
         .map(|id| {
-            entity.fields.get(id).ok_or_else(|| {
+            entity.field(id).ok_or_else(|| {
                 CompileError::new(format!(
                     "linked operation references missing field `{id}` on `{}`",
                     entity.id
@@ -402,7 +402,7 @@ fn operation_record_shape(
                 ParameterSource::Typed(_) => None,
                 ParameterSource::Field(visible) => {
                     let owner = entity(model, &visible.entity)?;
-                    let field = owner.fields.get(&visible.field).ok_or_else(|| {
+                    let field = owner.field(&visible.field).ok_or_else(|| {
                         CompileError::new(format!(
                             "linked operation parameter `{}` references missing field `{}`",
                             parameter.name, visible.field
@@ -527,7 +527,7 @@ fn indent(value: &str, spaces: usize) -> String {
 pub(crate) fn primary_key(entity: &Entity) -> Result<&Field, CompileError> {
     entity
         .fields
-        .values()
+        .iter()
         .find(|field| field.primary_key)
         .ok_or_else(|| {
             CompileError::new(format!("linked entity `{}` has no primary key", entity.id))

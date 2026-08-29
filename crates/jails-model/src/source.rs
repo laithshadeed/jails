@@ -163,6 +163,16 @@ pub(crate) struct Entity {
     pub(crate) values: Vec<String>,
     #[serde(default)]
     pub(crate) fields: BTreeMap<String, Field>,
+    /// Declaration order, when the frontend has one to give.
+    ///
+    /// A Java record's component order is ABI, so `jdl-sol.md` §7.3 makes this
+    /// semantic -- but a TOML table is unordered by spec and `toml` 1.1 has no
+    /// `preserve_order`, so a `BTreeMap` is the only shape the compatibility
+    /// input can deserialize into. JDL walks a CST and does know, so it fills
+    /// this and the linker follows it; an empty list means "no order was
+    /// stated", and label order is then the only answer available.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) field_order: Vec<String>,
     #[serde(default)]
     pub(crate) indexes: BTreeMap<String, Index>,
     #[serde(default)]

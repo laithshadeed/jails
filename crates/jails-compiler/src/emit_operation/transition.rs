@@ -25,8 +25,7 @@ pub(super) fn lower(
         .iter()
         .map(|assignment| {
             target
-                .fields
-                .get(&assignment.field)
+                .field(&assignment.field)
                 .map(|field| (field, &assignment.value))
                 .ok_or_else(|| {
                     CompileError::new(format!(
@@ -140,7 +139,7 @@ pub(super) fn lower(
             })
             .collect::<Result<Vec<_>, _>>()?,
     );
-    assignments.extend(target.fields.values().filter_map(|field| {
+    assignments.extend(target.fields.iter().filter_map(|field| {
         if field.semantics.version {
             Some(format!(
                 "{} = {} + 1",
@@ -222,7 +221,7 @@ pub(super) fn lower(
         .collect::<String>();
     let columns = target
         .fields
-        .values()
+        .iter()
         .map(|field| field.names.sql_column.as_str())
         .collect::<Vec<_>>()
         .join(", ");

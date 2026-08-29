@@ -38,6 +38,16 @@ pub struct AppModel {
     pub operations: BTreeMap<OperationId, Operation>,
 }
 
+impl Entity {
+    pub fn field(&self, id: &FieldId) -> Option<&Field> {
+        self.fields.iter().find(|field| &field.id == id)
+    }
+
+    pub fn has_field(&self, id: &FieldId) -> bool {
+        self.field(id).is_some()
+    }
+}
+
 impl AppModel {
     pub fn entity(&self, id: &EntityId) -> Option<&Entity> {
         self.entities.get(id)
@@ -136,7 +146,19 @@ pub struct Entity {
     pub active: bool,
     pub facets: BTreeSet<Facet>,
     pub enum_constants: Vec<EnumConstant>,
-    pub fields: BTreeMap<FieldId, Field>,
+    /// Declaration order, because a Java record's component order is ABI.
+    ///
+    /// This was a `BTreeMap<FieldId, Field>`, so a source declaring
+    /// `zulu, id, alpha` emitted `record Task(String alpha, UUID id, String
+    /// zulu)`. `jdl-sol.md` §7.3 lists entity fields first among the orders
+    /// that MUST be retained, and for the reason that a caller compiled
+    /// against the old positional constructor keeps compiling against a
+    /// re-sorted one and does the wrong thing.
+    ///
+    /// Lookup is [`Entity::field`]. A linear scan over a handful of fields
+    /// costs nothing measurable, and it buys one container rather than an
+    /// ordered list beside a keyed one.
+    pub fields: Vec<Field>,
     pub indexes: BTreeMap<IndexId, Index>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub constraints: BTreeMap<ConstraintId, EntityConstraint>,

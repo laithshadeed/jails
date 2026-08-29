@@ -361,7 +361,7 @@ fn same_entity_contribution(
         && requested
             .fields
             .iter()
-            .all(|(id, field)| existing.fields.get(id) == Some(field))
+            .all(|field| existing.field(&field.id) == Some(field))
         && requested
             .indexes
             .iter()

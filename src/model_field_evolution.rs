@@ -281,7 +281,7 @@ fn resolve(entity_name: &str, field_name: &str) -> Result<ResolvedField> {
     let requested_field = java_to_label(field_name);
     let field = entity
         .fields
-        .values()
+        .iter()
         .find(|field| field.label == requested_field || field.names.java_member == field_name)
         .ok_or_else(|| {
             Failure::Told(format!(
@@ -322,7 +322,7 @@ fn finish_replace(
     let replacement: Field = next_model
         .entities
         .get(&resolved.entity_id)
-        .and_then(|entity| entity.fields.get(&resolved.field_id))
+        .and_then(|entity| entity.field(&resolved.field_id))
         .cloned()
         .ok_or_else(|| {
             Failure::Told(format!(

@@ -730,7 +730,7 @@ enum Status {
         assert_eq!(task.fields.len(), 3);
         let title = task
             .fields
-            .values()
+            .iter()
             .find(|field| field.label == "title")
             .unwrap();
         assert_eq!(title.length.as_ref().unwrap().min, Some(1));

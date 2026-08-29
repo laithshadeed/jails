@@ -93,7 +93,7 @@ pub(super) fn lower_db_repository(
     let key_column = &primary_key.names.sql_column;
     let columns = entity
         .fields
-        .values()
+        .iter()
         .map(|field| field.names.sql_column.as_str())
         .collect::<Vec<_>>();
     let column_list = columns.join(", ");
@@ -104,7 +104,7 @@ pub(super) fn lower_db_repository(
         .join(", ");
     let updates = entity
         .fields
-        .values()
+        .iter()
         .filter(|field| field.id != primary_key.id)
         .map(|field| {
             format!(
@@ -120,7 +120,7 @@ pub(super) fn lower_db_repository(
     };
     let params = entity
         .fields
-        .values()
+        .iter()
         .map(|field| {
             let member = &field.names.java_member;
             let value = if field.required {

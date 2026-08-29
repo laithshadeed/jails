@@ -226,8 +226,7 @@ pub(crate) fn remove(
                 .iter()
                 .map(|column| {
                     let field = entity
-                        .fields
-                        .get(&column.field)
+                        .field(&column.field)
                         .expect("linked indexes reference existing fields");
                     if column.direction == jails_model::IndexDirection::Desc {
                         format!("{} desc", field.label)
@@ -317,7 +316,7 @@ fn canonical_columns(entity: &jails_model::Entity, columns: &str) -> Result<Vec<
         };
         let field = entity
             .fields
-            .values()
+            .iter()
             .find(|field| {
                 field.label == name
                     || field.names.java_member == name

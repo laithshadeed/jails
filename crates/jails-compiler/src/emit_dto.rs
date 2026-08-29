@@ -29,12 +29,12 @@ fn request(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, Compile
     let artifact_id = format!("art_{}_dto_request", entity.id.as_str());
     let mut imports = BTreeSet::from([emit_java::domain_import(model, entity)]);
     let components = components(entity, &mut imports, true);
-    if entity.fields.values().any(|field| !field.required) {
+    if entity.fields.iter().any(|field| !field.required) {
         imports.insert("java.util.Optional".to_string());
     }
     let arguments = entity
         .fields
-        .values()
+        .iter()
         .map(|field| {
             let name = &field.names.java_member;
             if field.required {
@@ -70,7 +70,7 @@ fn response(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, Compil
     let variable = lower_first(&entity.names.java_type);
     let arguments = entity
         .fields
-        .values()
+        .iter()
         .map(|field| {
             let accessor = format!("{variable}.{}()", field.names.java_member);
             if field.required {
@@ -110,7 +110,7 @@ fn contract_test(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, C
     ]);
     let names = entity
         .fields
-        .values()
+        .iter()
         .map(|field| format!("\"{}\"", field.names.java_member))
         .collect::<Vec<_>>()
         .join(", ");
@@ -132,7 +132,7 @@ fn contract_test(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, C
 fn components(entity: &Entity, imports: &mut BTreeSet<String>, validation: bool) -> String {
     entity
         .fields
-        .values()
+        .iter()
         .map(|field| {
             let annotation = if validation {
                 validation_annotation(field, imports)

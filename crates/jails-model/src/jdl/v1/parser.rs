@@ -32,6 +32,8 @@ struct EntityDraft {
     table: Option<String>,
     facets: BTreeSet<Facet>,
     fields: BTreeMap<String, source::Field>,
+    /// Field labels in the order the block declared them.
+    field_order: Vec<String>,
     indexes: BTreeMap<String, source::Index>,
     constraints: Vec<source::EntityConstraint>,
     relations: BTreeMap<String, source::Relation>,

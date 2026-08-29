@@ -27,7 +27,7 @@ pub(crate) fn link(
     linker: &mut Linker,
     entity_path: &str,
     sql_table: &str,
-    fields: &BTreeMap<FieldId, Field>,
+    fields: &[Field],
     field_labels: &BTreeMap<String, FieldId>,
     declarations: Vec<source::EntityConstraint>,
 ) -> BTreeMap<ConstraintId, EntityConstraint> {
@@ -66,7 +66,10 @@ pub(crate) fn link(
                 continue;
             }
             if kind == ConstraintKind::PrimaryKey
-                && fields.get(&field).is_some_and(|field| !field.required)
+                && fields
+                    .iter()
+                    .find(|candidate| candidate.id == field)
+                    .is_some_and(|candidate| !candidate.required)
             {
                 linker.problem(
                     "model-primary-key-required",
@@ -95,7 +98,7 @@ pub(crate) fn link(
         }
         let columns = resolved
             .iter()
-            .filter_map(|id| fields.get(id))
+            .filter_map(|id| fields.iter().find(|field| field.id == *id))
             .map(|field| field.names.sql_column.as_str())
             .collect::<Vec<_>>()
             .join("_");

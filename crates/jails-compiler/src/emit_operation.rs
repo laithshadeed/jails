@@ -121,8 +121,7 @@ pub(super) fn publications(
             .iter()
             .map(|field_id| {
                 target
-                    .fields
-                    .get(field_id)
+                    .field(field_id)
                     .map(|field| format!("result.{}()", field.names.java_member))
                     .ok_or_else(|| {
                         CompileError::new(format!(
@@ -167,8 +166,7 @@ fn ordering<'a>(
                 )));
             }
             target
-                .fields
-                .get(&ordering.field.field)
+                .field(&ordering.field.field)
                 .map(|field| (field, ordering.direction))
                 .ok_or_else(|| {
                     CompileError::new(format!(
@@ -188,7 +186,7 @@ fn resolve_fields<'a>(
 ) -> Result<Vec<&'a Field>, CompileError> {
     ids.iter()
         .map(|id| {
-            target.fields.get(id).ok_or_else(|| {
+            target.field(id).ok_or_else(|| {
                 CompileError::new(format!(
                     "linked operation `{}` references missing {role} field `{id}`",
                     operation.label
@@ -250,7 +248,7 @@ fn java_string(value: &str) -> String {
 fn scopes(entity: &Entity) -> Vec<&Field> {
     entity
         .fields
-        .values()
+        .iter()
         .filter(|field| field.semantics.scope.is_some())
         .collect()
 }

@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 
 pub(super) fn lower(model: &AppModel) -> Result<Option<Unit>, CompileError> {
     if !model.entities.values().any(|entity| {
-        entity.fields.values().any(|field| {
+        entity.fields.iter().any(|field| {
             matches!(
                 field.semantics.default.as_ref().map(|default| &default.value),
                 Some(Value::Function { name, arguments })

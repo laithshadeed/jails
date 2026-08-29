@@ -210,8 +210,12 @@ fn validate_mapping(
         return;
     }
     for (position, mapping) in mappings.iter().enumerate() {
-        let local = &child.fields[&mapping.local];
-        let remote = &parent.fields[&mapping.remote];
+        let Some(local) = child.field(&mapping.local) else {
+            continue;
+        };
+        let Some(remote) = parent.field(&mapping.remote) else {
+            continue;
+        };
         if local.ty != remote.ty {
             linker.problem(
                 "model-relation-type-mismatch",
@@ -234,7 +238,11 @@ fn validate_mapping(
     }
     let required = mappings
         .iter()
-        .filter(|mapping| child.fields[&mapping.local].required)
+        .filter(|mapping| {
+            child
+                .field(&mapping.local)
+                .is_some_and(|field| field.required)
+        })
         .count();
     if required != 0 && required != mappings.len() {
         linker.problem(
@@ -272,8 +280,7 @@ fn validate_mapping(
 fn tuple_is_unique(entity: &Entity, tuple: &[FieldId]) -> bool {
     (tuple.len() == 1
         && entity
-            .fields
-            .get(&tuple[0])
+            .field(&tuple[0])
             .is_some_and(|field| field.primary_key || field.unique))
         || entity.constraints.values().any(|constraint| {
             matches!(
@@ -286,7 +293,7 @@ fn tuple_is_unique(entity: &Entity, tuple: &[FieldId]) -> bool {
 fn field(entity: &Entity, label: &str) -> Option<FieldId> {
     entity
         .fields
-        .values()
+        .iter()
         .find(|field| field.label == label)
         .map(|field| field.id.clone())
 }
@@ -339,10 +346,11 @@ fn validate_cascade_cycles(
     for kind in ["delete", "update"] {
         let mut graph = BTreeMap::<EntityId, Vec<EntityId>>::new();
         for relation in relations.values() {
-            let required = relation
-                .mappings
-                .iter()
-                .all(|mapping| entities[&relation.child].fields[&mapping.local].required);
+            let required = relation.mappings.iter().all(|mapping| {
+                entities[&relation.child]
+                    .field(&mapping.local)
+                    .is_some_and(|field| field.required)
+            });
             let action = if kind == "delete" {
                 relation.on_delete
             } else {

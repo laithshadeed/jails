@@ -2358,7 +2358,7 @@ route = "PATCH /notes/{id}"
         let field = next
             .entities
             .values()
-            .find_map(|entity| entity.fields.get(&field_id))
+            .find_map(|entity| entity.field(&field_id))
             .unwrap()
             .clone();
         let mut snapshot = WorkspaceSnapshot::detached(model.clone());
@@ -2492,7 +2492,7 @@ entity Metric {
             .expect("default-aware command adapter");
         assert!(
             command.contains(
-                "insert into metric (balance, score, updated_at) values (:balance, :score, current_timestamp) returning balance, created_at, id, score, updated_at, version"
+                "insert into metric (score, balance, updated_at) values (:score, :balance, current_timestamp) returning id, score, balance, version, created_at, updated_at"
             ),
             "{command}"
         );
@@ -2512,7 +2512,7 @@ entity Metric {
             .expect("versioned transition adapter");
         assert!(
             transition
-                .contains("score = :score, updated_at = current_timestamp, version = version + 1"),
+                .contains("score = :score, version = version + 1, updated_at = current_timestamp"),
             "{transition}"
         );
         assert!(
@@ -2689,7 +2689,7 @@ entity Task {
         let command = source("/adapters/jdbc/JdbcOpenCommand.java");
         assert!(
             command.contains(
-                "insert into task (id, status, title, updated_at) values (:id, 'OPEN', :title, current_timestamp)"
+                "insert into task (id, title, status, updated_at) values (:id, :title, 'OPEN', current_timestamp)"
             ),
             "{command}"
         );

@@ -10,7 +10,7 @@ pub(super) fn lower(model: &AppModel) -> Result<Option<Unit>, CompileError> {
     if !model.entities.values().any(|entity| {
         entity
             .fields
-            .values()
+            .iter()
             .any(|field| field.semantics.scope.is_some())
     }) {
         return Ok(None);

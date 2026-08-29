@@ -197,14 +197,14 @@ entity Task {
         .unwrap();
     let version = task
         .fields
-        .values()
+        .iter()
         .find(|field| field.label == "version")
         .unwrap();
     assert!(version.semantics.version);
     assert!(version.semantics.default.as_ref().unwrap().derived);
     let tenant = task
         .fields
-        .values()
+        .iter()
         .find(|field| field.label == "tenant_id")
         .unwrap();
     let scope = tenant.semantics.scope.as_ref().unwrap();
@@ -290,7 +290,7 @@ app Notes {
         .unwrap();
     let field = |label: &str| {
         task.fields
-            .values()
+            .iter()
             .find(|field| field.label == label)
             .unwrap()
     };
@@ -432,7 +432,7 @@ entity Task {
     assert!(
         fs::read_to_string(&query)
             .unwrap()
-            .contains("select id, tenant_id, title, updated_at, version, priority from task"),
+            .contains("select id, tenant_id, title, version, updated_at, priority from task"),
         "model evolution did not reach the scoped query"
     );
 
@@ -615,7 +615,7 @@ entity Job {
     assert!(adapter.contains("TimeOrderedUuid.next()"), "{adapter}");
     assert!(
         adapter.contains(
-            "insert into job (id, status, title, updated_at) values (:id, 'QUEUED', :title, current_timestamp) returning created_at, id, status, title, updated_at, version"
+            "insert into job (id, title, status, updated_at) values (:id, :title, 'QUEUED', current_timestamp) returning id, title, status, version, created_at, updated_at"
         ),
         "{adapter}"
     );
@@ -626,7 +626,7 @@ entity Job {
         fs::read_to_string(generated.join("adapters/jdbc/JdbcArchiveTransition.java")).unwrap();
     assert!(
         transition.contains(
-            "update job set status = 'ARCHIVED', updated_at = current_timestamp, version = version + 1 where"
+            "update job set status = 'ARCHIVED', version = version + 1, updated_at = current_timestamp where"
         ),
         "{transition}"
     );
@@ -1136,7 +1136,7 @@ entity Task {
         .next()
         .unwrap()
         .fields
-        .values()
+        .iter()
         .find(|field| field.label == "summary")
         .unwrap();
     assert_eq!(field.names.sql_column, "title");
@@ -9305,7 +9305,7 @@ fn jdl_field_evolution_keeps_ids_edits_and_forward_schema_history() {
         .next()
         .unwrap()
         .fields
-        .values()
+        .iter()
         .find(|field| field.id.to_string() == "fld_note_title")
         .unwrap();
     assert_eq!(title.label, "title");
@@ -10079,4 +10079,69 @@ entity Task {
         adapter.contains(r#"" limit 25""#),
         "the declared ceiling survives: {adapter}"
     );
+}
+
+/// A record's components come out in the order the entity declared them.
+///
+/// `audit.md` A2.2. `Entity::fields` was a `BTreeMap<FieldId, Field>`, so the
+/// compiler re-sorted every entity by stable id: a source declaring
+/// `zulu, id, alpha` emitted `record Task(String alpha, UUID id, String
+/// zulu)`. `jdl-sol.md` §7.3 lists entity fields first among the orders that
+/// MUST be retained, and the reason is not aesthetic -- a caller compiled
+/// against the positional constructor keeps compiling against a re-sorted one
+/// and silently passes the wrong arguments.
+///
+/// The labels here sort differently from the way they are written on purpose;
+/// alphabetical and declaration order have to disagree or this proves nothing.
+#[test]
+fn a_record_keeps_the_field_order_its_entity_declares() {
+    let root = jdl_project(
+        "model-field-order",
+        r#"jdl 1
+
+app Ord {
+  pkg com.example.ord
+  java 26
+  platform plain
+  build maven
+  storage none
+}
+
+entity Task {
+  zulu:  string
+  id:    uuid   @pk
+  alpha: string
+}
+"#,
+    );
+    write_plain_fixture(&root);
+    let synced = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+
+    let record = fs::read_to_string(
+        root.join(".jails/generated/main/java/com/example/ord/domain/Task.java"),
+    )
+    .unwrap();
+    let components = record
+        .split_once("public record Task(")
+        .expect("a record declaration")
+        .1
+        .split_once(')')
+        .expect("a closed parameter list")
+        .0;
+    let order = components
+        .split(',')
+        .map(|component| {
+            component
+                .split_whitespace()
+                .next_back()
+                .expect("a component name")
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(order, ["zulu", "id", "alpha"], "{record}");
 }
