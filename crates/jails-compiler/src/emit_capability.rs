@@ -194,10 +194,9 @@ pub(crate) fn build_features(model: &AppModel) -> BTreeSet<BuildFeature> {
 pub(crate) fn lower_and_emit(
     model: &AppModel,
     output: &mut RenderedTree,
-    spring_boot: Option<&str>,
-    compose_path: &ProjectPath,
+    observed: &crate::emit::Observed<'_>,
 ) -> Result<(), CompileError> {
-    let boot_major = boot_major(spring_boot);
+    let boot_major = boot_major(observed.spring_boot);
     for capability in model.capabilities.values() {
         if let Some(pack) = pack(&capability.kind) {
             let default_package = capability
@@ -243,10 +242,15 @@ pub(crate) fn lower_and_emit(
                 emit_resource(output, capability, resource)?;
             }
             for service in pack.compose_services {
-                reader_facet::emit_compose_service(output, capability, compose_path, service)?;
+                reader_facet::emit_compose_service(
+                    output,
+                    capability,
+                    observed.compose_path,
+                    service,
+                )?;
             }
         }
-        project_file::lower_and_emit(model, capability, output)?;
+        project_file::lower_and_emit(model, capability, output, observed)?;
     }
     Ok(())
 }

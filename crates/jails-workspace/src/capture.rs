@@ -152,6 +152,7 @@ fn capture_model_state(
         spring_boot: spring_boot_version(root, build_system),
         base_package: model.project.base_package.clone(),
         dependencies: BTreeSet::new(),
+        maven_wrapper: root.join("mvnw").is_file(),
         layout,
     };
     let accepted = accepted_compiler_state(&files)?;

@@ -2520,3 +2520,53 @@ fn walk_java(root: &Path) -> Vec<String> {
     found.sort();
     found
 }
+
+/// The CI workflow is one file, produced by one template, on both sides.
+///
+/// `plan.md` P13.8: `ci` was one of the four capabilities with no canonical
+/// backend. Proving it byte-for-byte matters more here than for a Java
+/// artifact, because the workflow pins its actions *by commit* -- a tag is
+/// mutable and a moved tag is a supply chain compromise nobody sees in a diff
+/// -- so two engines rendering "a CI file" from two copies of the bytes is
+/// exactly how one of them ends up running an action nobody re-reviewed.
+///
+/// The wrapper is why this capability needed an observed workspace fact at
+/// all, and both halves are asserted: `./mvnw` on a project without one fails
+/// at the first step, and `mvn` on a project with one silently uses whatever
+/// Maven the runner happens to have.
+#[test]
+fn the_ci_workflow_is_byte_identical_on_both_implementations() {
+    for wrapper in [false, true] {
+        let subjects = spring_subjects(if wrapper { "ci-mvnw" } else { "ci-plain" });
+        let mut rendered = Vec::new();
+        for subject in &subjects {
+            if wrapper {
+                fs::write(subject.root.join("mvnw"), "#!/bin/sh\n").unwrap();
+            }
+            subject.succeeds(&["add", "ci"]);
+            let workflow = subject.root.join(".github/workflows/ci.yml");
+            let text = fs::read_to_string(&workflow).unwrap_or_else(|error| {
+                panic!("{}: {} — {error}", subject.name, workflow.display())
+            });
+            assert!(
+                text.contains("uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"),
+                "{}: the checkout action is not pinned by commit: {text}",
+                subject.name
+            );
+            let expected = if wrapper { "./mvnw" } else { "mvn" };
+            assert!(
+                text.contains(&format!("run: {expected} -B -ntp clean verify")),
+                "{}: wrapper={wrapper} but the workflow runs something else: {text}",
+                subject.name
+            );
+            rendered.push(text);
+        }
+        assert_eq!(
+            rendered[0], rendered[1],
+            "the two implementations render different CI workflows (wrapper={wrapper})"
+        );
+        for subject in subjects {
+            fs::remove_dir_all(subject.root).ok();
+        }
+    }
+}

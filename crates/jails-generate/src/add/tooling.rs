@@ -582,42 +582,28 @@ fn project_release(project: &crate::model::Project) -> Result<u32> {
     })?)
 }
 
-fn ci_workflow(release: u32, wrapper: bool) -> String {
-    let maven = if wrapper { "./mvnw" } else { "mvn" };
-    format!(
-        r#"name: verify
+/// The verify workflow, rendered from the one template both engines read.
+///
+/// `templates/add/ci_workflow.yml` is shared with the canonical compiler
+/// (`emit_capability/project_file.rs`). Two copies of a CI file would drift on
+/// the pinned action SHAs, which is the drift nobody notices until a supply
+/// chain advisory names a version this project still runs.
+///
+/// Substituted with `str::replace` rather than `template!`, deliberately:
+/// GitHub spells its own expressions `${{ github.ref }}`, so a renderer that
+/// treats `{{...}}` as a placeholder would read the workflow's own syntax as
+/// keys. The tokens here are uppercase for the same reason -- they cannot
+/// collide with anything GitHub writes.
+pub(super) fn ci_workflow(release: u32, wrapper: bool) -> String {
+    render_ci_workflow(release, if wrapper { "./mvnw" } else { "mvn" })
+}
 
-on:
-  pull_request:
-  push:
-    branches: [main]
-
-permissions:
-  contents: read
-
-concurrency:
-  group: verify-${{{{ github.workflow }}}}-${{{{ github.ref }}}}
-  cancel-in-progress: true
-
-jobs:
-  verify:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - name: Check out source
-        uses: actions/checkout@{CHECKOUT_SHA} # v6.0.2
-        with:
-          persist-credentials: false
-      - name: Set up Java
-        uses: actions/setup-java@{SETUP_JAVA_SHA} # v5.6.0
-        with:
-          distribution: temurin
-          java-version: '{release}'
-          cache: maven
-      - name: Verify
-        run: {maven} -B -ntp clean verify
-"#
-    )
+fn render_ci_workflow(release: u32, maven: &str) -> String {
+    include_str!("../../../../templates/add/ci_workflow.yml")
+        .replace("{{CHECKOUT_SHA}}", CHECKOUT_SHA)
+        .replace("{{SETUP_JAVA_SHA}}", SETUP_JAVA_SHA)
+        .replace("{{RELEASE}}", &release.to_string())
+        .replace("{{MAVEN}}", maven)
 }
 
 fn dockerfile(release: u32, wrapper: bool) -> String {

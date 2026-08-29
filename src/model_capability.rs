@@ -524,7 +524,7 @@ fn validate_supported(capabilities: &[CliCapability]) -> Result<()> {
             .collect::<Vec<_>>()
             .join(", ");
         return Err(Failure::Told(format!(
-            "canonical capability backend is not implemented for `{asked}`.\n       fix: use compiler-owned `jails add fake`, `jails add db`, `jails add api`, `jails add csv`, `jails add json`, `jails add http`, `jails add sqlite`, `jails add h2`, `jails add actuator`, `jails add cache`, `jails add coverage`, `jails add cors`, `jails add observability`, `jails add security`, `jails add sse`, `jails add redis`, `jails add kafka`, `jails add mail`, `jails add testkit`, or `jails add toxiproxy`; other capabilities refuse instead of entering the legacy planner"
+            "canonical capability backend is not implemented for `{asked}`.\n       fix: use compiler-owned `jails add fake`, `jails add db`, `jails add api`, `jails add csv`, `jails add json`, `jails add http`, `jails add sqlite`, `jails add h2`, `jails add actuator`, `jails add cache`, `jails add coverage`, `jails add cors`, `jails add observability`, `jails add security`, `jails add sse`, `jails add redis`, `jails add kafka`, `jails add mail`, `jails add testkit`, `jails add toxiproxy`, `jails add loadtest`, or `jails add ci`; other capabilities refuse instead of entering the legacy planner"
         )));
     }
     Ok(())

@@ -5,6 +5,14 @@ use crate::CompileError;
 use jails_contracts::{FileMode, ProjectPath, RenderedTree};
 use jails_model::{AppModel, Capability, EndpointMethod, OperationKind, UnitKind};
 
+const CI_WORKFLOW_PATH: &str = ".github/workflows/ci.yml";
+
+/// Pinned by commit, not by tag: a tag is mutable and a moved tag is a supply
+/// chain compromise nobody sees in the diff. Kept in step with
+/// `add/tooling.rs`, which pins the same two.
+const CHECKOUT_SHA: &str = "de0fac2e4500dabe0009e67214ff5f5447ce83dd"; // v6.0.2
+const SETUP_JAVA_SHA: &str = "03ad4de0992f5dab5e18fcb136590ce7c4a0ac95"; // v5.6.0
+
 const LOADTEST_PATHS: &[(&str, &str, &str)] = &[
     (
         "runner",
@@ -40,7 +48,16 @@ struct Route {
 }
 
 pub(super) fn paths(model: &AppModel) -> Vec<ProjectPath> {
-    if !has_loadtest(model) {
+    let mut paths = Vec::new();
+    if has(model, "ci") {
+        paths.push(ProjectPath::parse(CI_WORKFLOW_PATH).expect("registered project path is valid"));
+    }
+    paths.extend(loadtest_paths(model));
+    paths
+}
+
+fn loadtest_paths(model: &AppModel) -> Vec<ProjectPath> {
+    if !has(model, "loadtest") {
         return Vec::new();
     }
     LOADTEST_PATHS
@@ -55,10 +72,58 @@ pub(super) fn lower_and_emit(
     model: &AppModel,
     capability: &Capability,
     output: &mut RenderedTree,
+    observed: &crate::emit::Observed<'_>,
 ) -> Result<(), CompileError> {
-    if capability.kind != "loadtest" {
-        return Ok(());
+    match capability.kind.as_str() {
+        "loadtest" => lower_loadtest(model, capability, output),
+        "ci" => lower_ci(model, capability, output, observed),
+        _ => Ok(()),
     }
+}
+
+/// The verify workflow, from the template `add/tooling.rs` also reads.
+///
+/// One template, because two copies of a CI file drift on the pinned action
+/// SHAs -- and that is the drift nobody notices until an advisory names a
+/// version this project still runs.
+///
+/// `maven_wrapper` is the reason this capability needs an observed fact at
+/// all: `./mvnw` on a project without a wrapper fails at the first step, and
+/// `mvn` on a project with one silently uses whatever Maven the runner has,
+/// which is the version drift the wrapper exists to prevent.
+fn lower_ci(
+    model: &AppModel,
+    capability: &Capability,
+    output: &mut RenderedTree,
+    observed: &crate::emit::Observed<'_>,
+) -> Result<(), CompileError> {
+    let workflow = include_str!("../../../../templates/add/ci_workflow.yml")
+        .replace("{{CHECKOUT_SHA}}", CHECKOUT_SHA)
+        .replace("{{SETUP_JAVA_SHA}}", SETUP_JAVA_SHA)
+        .replace("{{RELEASE}}", &model.project.java_release.to_string())
+        .replace(
+            "{{MAVEN}}",
+            if observed.maven_wrapper {
+                "./mvnw"
+            } else {
+                "mvn"
+            },
+        );
+    reader_facet::emit_managed_file(
+        output,
+        capability,
+        "workflow",
+        ProjectPath::parse(CI_WORKFLOW_PATH).map_err(CompileError::new)?,
+        workflow.into_bytes(),
+        FileMode::Regular,
+    )
+}
+
+fn lower_loadtest(
+    model: &AppModel,
+    capability: &Capability,
+    output: &mut RenderedTree,
+) -> Result<(), CompileError> {
     let routes = routes(model);
     if routes.is_empty() {
         return Err(CompileError::new(
@@ -99,11 +164,11 @@ pub(super) fn lower_and_emit(
     )
 }
 
-fn has_loadtest(model: &AppModel) -> bool {
+fn has(model: &AppModel, kind: &str) -> bool {
     model
         .capabilities
         .values()
-        .any(|capability| capability.kind == "loadtest")
+        .any(|capability| capability.kind == kind)
 }
 
 fn routes(model: &AppModel) -> Vec<Route> {

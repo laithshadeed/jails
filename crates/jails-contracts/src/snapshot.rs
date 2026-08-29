@@ -47,6 +47,16 @@ pub struct ProjectFacts {
     pub spring_boot: Option<String>,
     pub base_package: String,
     pub dependencies: BTreeSet<String>,
+    /// Whether the project ships a Maven wrapper.
+    ///
+    /// Observed the way `build_system` is -- by asking the filesystem once at
+    /// the capture boundary -- because the generated CI workflow and Dockerfile
+    /// have to invoke the build the way the project actually offers it.
+    /// `./mvnw` on a project without one fails at the first step; `mvn` on a
+    /// project with one silently uses whatever Maven the runner happens to
+    /// have, which is the version drift the wrapper exists to prevent.
+    #[serde(default)]
+    pub maven_wrapper: bool,
     /// The reader's layer renames, from `jails.toml`.
     ///
     /// `#[serde(default)]` so a snapshot written before this field existed
@@ -64,6 +74,7 @@ impl ProjectFacts {
             spring_boot: None,
             base_package: model.project.base_package.clone(),
             dependencies: BTreeSet::new(),
+            maven_wrapper: false,
             layout: Layout::default(),
         }
     }

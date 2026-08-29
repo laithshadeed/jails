@@ -62,6 +62,7 @@ impl Display for CompileError {
 
 impl std::error::Error for CompileError {}
 
+mod emit;
 mod storage;
 
 pub struct Compiler;
@@ -200,7 +201,12 @@ impl Compiler {
         // action the reader must take.
         let migrations = emit_sql::derive(snapshot, &next_model, schema_patch.as_ref())?;
         let root = ProjectPath::parse(MANAGED_ROOT).map_err(CompileError::new)?;
-        let compose_path = compose_path(snapshot)?;
+        let compose_path = emit::compose_path(snapshot)?;
+        let observed = emit::Observed {
+            spring_boot: snapshot.project.spring_boot.as_deref(),
+            compose_path: &compose_path,
+            maven_wrapper: snapshot.project.maven_wrapper,
+        };
         let baseline_model = snapshot.accepted_model.as_ref().or_else(|| {
             snapshot
                 .files
@@ -221,12 +227,7 @@ impl Compiler {
         if snapshot.accepted_projection.is_none()
             && let Some(model) = baseline_model
         {
-            emit(
-                model,
-                &mut baseline,
-                snapshot.project.spring_boot.as_deref(),
-                &compose_path,
-            )?;
+            emit::emit(model, &mut baseline, &observed)?;
             let ejected = model
                 .ejections
                 .values()
@@ -237,12 +238,7 @@ impl Compiler {
                 .retain(|_, file| !ejected.contains(file.provenance.ejection_target()));
         }
         let mut generated = RenderedTree::new(root);
-        emit(
-            &next_model,
-            &mut generated,
-            snapshot.project.spring_boot.as_deref(),
-            &compose_path,
-        )?;
+        emit::emit(&next_model, &mut generated, &observed)?;
         let previous_ejections = snapshot
             .model
             .model
@@ -589,7 +585,15 @@ pub fn implementation_paths(
     let root = ProjectPath::parse(MANAGED_ROOT).map_err(CompileError::new)?;
     let mut generated = RenderedTree::new(root);
     let compose_path = ProjectPath::parse("compose.yaml").map_err(CompileError::new)?;
-    emit(model, &mut generated, None, &compose_path)?;
+    emit::emit(
+        model,
+        &mut generated,
+        &emit::Observed {
+            spring_boot: None,
+            compose_path: &compose_path,
+            maven_wrapper: false,
+        },
+    )?;
     Ok(generated
         .files
         .into_iter()
@@ -620,18 +624,6 @@ pub fn implementation_paths(
             ProjectPath::parse(destination).ok()
         })
         .collect())
-}
-
-fn emit(
-    model: &jails_model::AppModel,
-    output: &mut RenderedTree,
-    spring_boot: Option<&str>,
-    compose_path: &ProjectPath,
-) -> Result<(), CompileError> {
-    emit_capability::lower_and_emit(model, output, spring_boot, compose_path)?;
-    emit_java::lower_and_emit(model, output, spring_boot.is_some())?;
-    emit_operation::lower_and_emit(model, output)?;
-    emit_http::lower_and_emit(model, output)
 }
 
 /// Whether this component kind has an emitter behind it.
@@ -677,36 +669,6 @@ const fn component_kind_is_emitted(kind: jails_model::ComponentKind) -> bool {
         | Kind::Socket
         | Kind::Presence => false,
     }
-}
-
-fn compose_path(snapshot: &WorkspaceSnapshot) -> Result<ProjectPath, CompileError> {
-    if let Some(path) = snapshot
-        .accepted_projection
-        .as_ref()
-        .and_then(|projection| {
-            projection.reader_facets.values().find(|facet| {
-                matches!(
-                    facet.kind,
-                    jails_contracts::ReaderFacetKind::ComposeService { .. }
-                )
-            })
-        })
-        .map(|facet| facet.path.clone())
-    {
-        return Ok(path);
-    }
-    for candidate in [
-        "compose.yaml",
-        "compose.yml",
-        "docker-compose.yml",
-        "docker-compose.yaml",
-    ] {
-        let path = ProjectPath::parse(candidate).map_err(CompileError::new)?;
-        if snapshot.files.contains_key(&path) {
-            return Ok(path);
-        }
-    }
-    ProjectPath::parse("compose.yaml").map_err(CompileError::new)
 }
 
 fn property_entries(
