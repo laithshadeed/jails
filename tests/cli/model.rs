@@ -10172,3 +10172,99 @@ entity Task {
         .collect::<Vec<_>>();
     assert_eq!(order, ["zulu", "id", "alpha"], "{record}");
 }
+
+/// Adding a field leaves the model and the source it just wrote agreeing.
+///
+/// `audit.md` A2.2, second attempt. Keeping declaration order made `AddField`
+/// positional, and the first version guessed the position by reading the
+/// existing order: "already sorted by label" was taken to mean "the source
+/// states no order". That is true for `.jails/model.toml` and for the pre-v1
+/// JDL draft, which reaches the linker by rendering that same TOML -- and
+/// false for a JDL v1 entity that happens to be declared alphabetically.
+/// Appending `delta` to `alpha, beta, gamma` then put it third in the model
+/// and fourth in the file.
+///
+/// The entities below are chosen so the two answers differ: each is in label
+/// order, and each added field sorts into the middle. `model check --frozen`
+/// is the assertion, because it is the one that recompiles from the file and
+/// compares bytes -- exactly the check a divergence here breaks.
+#[test]
+fn adding_a_field_leaves_the_model_and_its_source_agreeing() {
+    let jdl = jdl_project(
+        "model-field-placement-jdl",
+        r#"jdl 1
+
+app Ord {
+  pkg com.example.ord
+  java 26
+  platform plain
+  build maven
+  storage none
+}
+
+entity Task {
+  alpha: uuid   @pk
+  beta:  string
+  gamma: string
+}
+"#,
+    );
+    write_plain_fixture(&jdl);
+    let synced = jails_cmd(&jdl, None).args(["sync"]).output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    let added = jails_cmd(&jdl, None)
+        .args(["g", "field", "Task", "delta:string?"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let frozen = jails_cmd(&jdl, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "JDL v1 appends, so the record must too:\n{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+    let record =
+        fs::read_to_string(jdl.join(".jails/generated/main/java/com/example/ord/domain/Task.java"))
+            .unwrap();
+    let delta = record.find("delta").expect("the added component");
+    let gamma = record.find("gamma").expect("the existing component");
+    assert!(
+        gamma < delta,
+        "an appended declaration stays appended:\n{record}"
+    );
+
+    // The other side of the same rule: a TOML table states no order, so
+    // re-parsing sorts by label and the patch has to place it there.
+    let toml = model_project("model-field-placement-toml", MODEL);
+    write_spring_fixture(&toml);
+    apply_canonical_model(&toml, "initial-field-placement");
+    let added = jails_cmd(&toml, None)
+        .args(["g", "field", "Note", "body:string?"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let frozen = jails_cmd(&toml, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "a TOML table re-parses by label, so the record must too:\n{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+}

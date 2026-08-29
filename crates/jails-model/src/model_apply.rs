@@ -2,7 +2,7 @@
 
 use super::{AppModel, refuse_retired_entity};
 use crate::id::StableId;
-use crate::patch::{ModelPatch, StorageRetirementPolicy};
+use crate::patch::{FieldPlacement, ModelPatch, StorageRetirementPolicy};
 
 impl AppModel {
     /// Apply a semantic patch without involving syntax or the filesystem.
@@ -271,6 +271,7 @@ impl AppModel {
                 entity,
                 field,
                 policy: _,
+                placement,
             } => {
                 let target = self
                     .entities
@@ -281,32 +282,17 @@ impl AppModel {
                 if target.has_field(&id) {
                     return Err(format!("field id `{id}` already exists on `{entity}`"));
                 }
-                // Placed where re-parsing the edited source will put it.
-                //
-                // The linked order is a projection of the source, and the two
-                // spellings differ: a JDL block states declaration order, so a
-                // CLI edit that appends text appends the field; a
-                // `.jails/model.toml` table states none, so it re-parses in
-                // label order whatever order it was written in. Appending
-                // blindly made `model check --frozen` fail on TOML projects --
-                // the patched model and the file it had just written compiled
-                // to different records.
-                //
-                // "Already in label order" is exactly "has no stated order",
-                // because a source that states one is the only way to be out
-                // of it. An entity that happens to be declared alphabetically
-                // gets the same answer from both branches.
-                let label_ordered = target
-                    .fields
-                    .windows(2)
-                    .all(|pair| pair[0].label <= pair[1].label);
-                match label_ordered.then(|| {
-                    target
-                        .fields
-                        .partition_point(|existing| existing.label < field.label)
-                }) {
-                    Some(position) => target.fields.insert(position, field),
-                    None => target.fields.push(field),
+                // Placed where the frontend that wrote the source put it,
+                // because a record's component order is ABI and the patched
+                // model has to equal what re-parsing those bytes yields.
+                match placement {
+                    FieldPlacement::Last => target.fields.push(field),
+                    FieldPlacement::ByLabel => {
+                        let position = target
+                            .fields
+                            .partition_point(|existing| existing.label < field.label);
+                        target.fields.insert(position, field);
+                    }
                 }
             }
             ModelPatch::AddIndex { entity, index } => crate::index::add(self, entity, index)?,

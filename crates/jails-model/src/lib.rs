@@ -65,8 +65,8 @@ pub use operation::{
     Resolution, SortDirection, Transition, TransitionSemantics, Value, VisibleField,
 };
 pub use patch::{
-    ColumnRenamePolicy, FieldAddPolicy, FieldEvolutionPolicy, ModelPatch, StorageRetirementPolicy,
-    TypeChangeStrategy,
+    ColumnRenamePolicy, FieldAddPolicy, FieldEvolutionPolicy, FieldPlacement, ModelPatch,
+    StorageRetirementPolicy, TypeChangeStrategy,
 };
 pub use projection::{Projection, ProjectionKind};
 pub use relation::{ReferentialAction, Relation, RelationCardinality, RelationMapping};

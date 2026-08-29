@@ -2413,6 +2413,7 @@ route = "PATCH /notes/{id}"
                 entity,
                 field,
                 policy: FieldAddPolicy::Nullable,
+                placement: jails_model::FieldPlacement::Last,
             }),
         )
         .unwrap();

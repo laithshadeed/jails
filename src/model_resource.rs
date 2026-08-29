@@ -311,6 +311,18 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
                 .to_string(),
         )),
     };
+    // Where re-parsing the source we are about to write will put this field.
+    //
+    // Only JDL v1 states field order: its parser records the order its CST
+    // walked, so an appended declaration stays appended. A `.jails/model.toml`
+    // table states none, and the pre-v1 JDL draft reaches the linker by
+    // rendering that same TOML, so both re-parse sorted by label whatever
+    // order they were written in.
+    let placement = if jdl && crate::model_generate_jdl::is_v1_source(&current_source) {
+        jails_model::FieldPlacement::Last
+    } else {
+        jails_model::FieldPlacement::ByLabel
+    };
     let next_source = if jdl {
         let line = if crate::model_generate_jdl::is_v1_source(&current_source) {
             crate::model_generate_jdl::render_v1_field_line(&entity_label, &parsed)
@@ -363,6 +375,7 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
                 entity: entity_id,
                 field,
                 policy,
+                placement,
             },
             patch_bytes,
         },
