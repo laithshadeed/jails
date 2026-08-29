@@ -1025,6 +1025,63 @@ attempted: do it on a machine whose JDK matches `TARGET_RELEASE`, since this
 tier cannot be exercised at all on an older one and fails there with `release
 version N not supported` -- nothing like the failure a wrong batching produces.
 
+### The CI job is the same suite on a smaller machine, and it paid twice
+
+`.github/workflows/verify-rewrite.yml` runs `mise run verify-rewrite` on a
+four-core GitHub runner. **Measurements taken here transfer to it**, which is
+what makes it worth tuning from this machine at all: cold compilation is 214.0s
+here against 207.6s there for the same two phases, and `cli` runs 257.9s there.
+Confirm that before believing a CI experiment done locally, because the runner
+is the same size only by coincidence.
+
+One job, read off the log of run `33261806301` (9m50s wall, 589.8s):
+
+| phase | s |
+|---|---|
+| checkout, toolchains, cache restores | 18.3 |
+| `cargo fmt --all --check` | 4.4 |
+| `cargo clippy --workspace --all-targets` | 18.4 |
+| `cargo build --workspace` | 82.9 |
+| test-harness compilation | 124.7 |
+| test execution (`cli` 257.9s; the other 32 binaries 79.8s, in sequence) | 314.4 |
+| the pinned Gradle example, on its own JDK | 26.6 |
+
+**Compilation was 38% of it, with the dependency cache hitting.** That is not
+the cache failing: `cargo-Linux-<Cargo.lock hash>` restores 381 MB and the
+third-party crates are all in it. Every one of the twenty *workspace* crates is
+genuinely cold, because the commit changed them.
+
+Two of those rows were paying rather than measuring, and both are fixed:
+
+- **`cargo build --workspace` built nothing the suite did not build anyway.**
+  `mise.toml` has the reasoning and the numbers; it is a barrier between two
+  halves of one compile graph, worth 214.0s -> 177.7s cold.
+- **Nothing cached `~/.m2`.** The cargo cache covers Rust and `mise-action`
+  covers the tool binaries; the Maven local repository is on neither, and is
+  not on the runner image. So every run re-resolved the whole Spring Boot,
+  Testcontainers, Flyway, ArchUnit and spotless tree from Central. A cold local
+  repository costs **21.8s for the 44 MB the suite's smallest Spring fixture
+  needs**, measured on that fixture; the repository a full run fills is 296 MB.
+
+Two levers were measured and declined. They are recorded because both are
+obvious enough to be proposed again:
+
+- **lld is already the linker.** Rust 1.90 made `rust-lld` the default for
+  `x86_64-unknown-linux-gnu`, and `rustc --print link-args` shows
+  `-fuse-ld=lld` in the default arguments. Adding it to `RUSTFLAGS` passes the
+  flag twice and changes nothing. Anything further here means mold, and mold
+  has to be installed on both the runner and the developer's machine to keep
+  one answer to "is this green".
+- **Caching workspace `target/` artifacts between commits.** `target/debug/deps`
+  is 5.9 GB, so the entry is one to two gigabytes compressed and -- unlike the
+  dependency cache, which is written once and read for nothing -- it would have
+  to be *written* on every run to be worth anything, putting 30-60s of
+  compression and upload on the critical path. Against that, the saving is only
+  the crates a commit did not touch, and this workspace is a deep chain where a
+  mid-stack edit rebuilds most of what sits above it. The half that is stable
+  is the dependency half, and that is already cached.
+
+
 **A test that waits is worse than a test that works.** The single most
 expensive test in the suite was `run_starts_compose_services_only_when_
 explicitly_requested`, at **30.0s** -- the entire wall clock of the `tooling`

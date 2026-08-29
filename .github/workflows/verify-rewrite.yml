@@ -79,6 +79,39 @@ jobs:
           key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
 
+      # **Nothing cached the JVM dependency repositories, and a full run fills
+      # 296 MB of them.** The cargo cache above covers Rust and `mise-action`
+      # covers the tool binaries; neither covers `~/.m2`, which is not on the
+      # runner image at all. So every run re-resolved the whole Spring Boot,
+      # Testcontainers, Flyway, ArchUnit, JaCoCo and spotless tree from Central
+      # before the first generated project could be built. Measured on the
+      # suite's own Spring fixture: a cold local repository costs 21.8s for the
+      # 44 MB *that one pom* pulls, and it is the smallest of the ~39 Maven
+      # invocations this job makes.
+      #
+      # **The key is static on purpose, and the save is split out so that only
+      # a green run can write it.** A static key is written once and read for
+      # nothing ever after -- no few-hundred-megabyte upload on the critical
+      # path of every run, and no churn evicting the cargo cache beside it.
+      # What that costs is a dependency introduced after the cache was written:
+      # Maven fetches the delta each run, which is the cheap half and is
+      # self-limiting. Bump `v1` when the delta is worth paying once to remove.
+      #
+      # `actions/cache` would save in its post step whatever the run left
+      # behind, pass or fail -- and with a key that never changes, a run that
+      # died in clippy would freeze an almost-empty repository in place
+      # permanently, turning a cache into a permanent cache miss that looks
+      # like a hit. `restore` plus a guarded `save` is what makes the frozen
+      # copy a complete one.
+      - name: Restore the Maven and Gradle repositories
+        id: jvm-deps
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gradle/caches/modules-2
+          key: jvm-deps-${{ runner.os }}-v1
+
       # Reads `mise.toml`, so the Java, Maven, mvnd and Gradle versions CI runs
       # are the ones the repository pins -- not whatever the image ships.
       - name: Install the pinned toolchain
@@ -104,3 +137,14 @@ jobs:
 
       - name: verify-rewrite
         run: mise run verify-rewrite
+
+      # Only after the gate has passed, and only when there was nothing to
+      # restore -- see the restore step for why both conditions are load-bearing.
+      - name: Save the Maven and Gradle repositories
+        if: success() && steps.jvm-deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gradle/caches/modules-2
+          key: jvm-deps-${{ runner.os }}-v1

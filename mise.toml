@@ -23,8 +23,28 @@ run = [
 [tasks.verify-rewrite]
 description = "Run the single mandatory rewrite verification gate"
 depends = ["lint"]
+# **`cargo build --workspace` used to run here, and it was a barrier, not a
+# build.** Everything it produced, the line below produces too: `cargo test
+# --workspace` builds every library, every binary -- `target/debug/jails`
+# included, which the integration tests spawn some thousands of times -- and
+# then the test harnesses on top of them. What running it separately added was
+# an ordering constraint. No test harness could start compiling until the last
+# library had finished linking, and this workspace is a deep chain (support ->
+# java/spec -> protocol -> state -> project -> generate -> ... -> engine ->
+# jails), so on four cores both halves spend much of their time with cores idle
+# waiting on one crate. Handed to cargo as a single graph it fills those gaps
+# with test-harness work for crates already built.
+#
+# Measured cold with `CARGO_INCREMENTAL=0`, deps cached, every workspace crate
+# cleaned -- which is exactly the state each CI run starts in: 87.9s + 126.1s =
+# 214.0s split, against 177.7s merged. The same shape as CI's own log, where
+# the two phases were 82.9s and 124.7s.
+#
+# `simplify-sol.md`'s G0 names `cargo build --workspace` in the gate. What G0
+# asks for is that one command compiles the whole workspace and runs every
+# test; this one does both, and a compile error still stops the run at the
+# first error, in the same place it did before.
 run = [
-  "cargo build --workspace",
   "JAILS_REQUIRE_TOOLCHAIN=1 cargo test --workspace -- --skip unheld_gradle_example_manifest_builds_on_its_pinned_toolchain",
   "mise x java@21 gradle@8.5 -- env JAILS_REQUIRE_TOOLCHAIN=1 cargo test --test cli unheld_gradle_example_manifest_builds_on_its_pinned_toolchain",
 ]
