@@ -138,12 +138,16 @@ impl Parser<'_> {
             }
             Kind::Transition => {
                 let fields = compatibility_fields(&transition.parameters);
-                let sets = if transition.update.is_empty() {
-                    fields.clone()
-                } else {
-                    transition.update.clone()
-                };
-                let yields = transition.emits.first().cloned();
+                // No compatibility projection. This synthesised `sets` as
+                // *every* parameter whenever `update` was omitted -- without
+                // subtracting the row selector or the version -- and kept only
+                // the first `emit`, and the emitters read exactly those two
+                // values. `.jails/model.toml` still spells the flat pair and
+                // the linker folds it in; a JDL v1 source carries the rich
+                // form, so it leaves the compatibility fields empty and the
+                // one representation is the linked semantics.
+                let sets = Vec::new();
+                let yields = None;
                 let route = transition.route.as_ref().map(compatibility_route);
                 source::Operation::Transition {
                     id,

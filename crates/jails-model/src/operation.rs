@@ -43,12 +43,26 @@ pub struct Query {
     pub semantics: QuerySemantics,
 }
 
+/// A linked transition. Its changed fields and emitted events live in
+/// [`TransitionSemantics`] and nowhere else.
+///
+/// This carried `sets: Vec<FieldId>` and `yields: Option<OperationId>` beside
+/// `semantics.update` and `semantics.emits`, and the two disagreed. The flat
+/// pair was a compatibility projection the JDL v1 frontend synthesised --
+/// `sets` was *every* parameter whenever `update` was omitted, without
+/// subtracting the row selector or the version -- while the rich pair was
+/// linked correctly and read by nobody. Emitters read the flat pair, so
+/// `select [id]` was applied as an update and `jdl-sol.md` §4 could not link;
+/// `yields` held one event, so the second `emit` on a transition vanished.
+///
+/// The source shape still accepts both because `.jails/model.toml` spells
+/// only the flat one. Folding that in belongs at the linker boundary, which
+/// is where every other wire-to-semantic conversion happens, so the linked
+/// model has one home per fact.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Transition {
     pub on: EntityId,
     pub fields: Vec<FieldId>,
-    pub sets: Vec<FieldId>,
-    pub yields: Option<OperationId>,
     pub route: Option<String>,
     #[serde(default, skip_serializing_if = "TransitionSemantics::is_empty")]
     pub semantics: TransitionSemantics,
@@ -328,7 +342,6 @@ pub(crate) fn fields(kind: &OperationKind) -> Vec<&FieldId> {
         OperationKind::Transition(transition) => transition
             .fields
             .iter()
-            .chain(transition.sets.iter())
             .chain(parameter_fields(&transition.semantics.parameters))
             .chain(transition.semantics.select.iter())
             .chain(transition.semantics.update.iter())
@@ -361,10 +374,6 @@ pub(crate) fn emits(kind: &OperationKind) -> Vec<&OperationId> {
     match kind {
         OperationKind::Command(command) => command.semantics.emits.iter().collect(),
         OperationKind::Query(_) | OperationKind::Event(_) => Vec::new(),
-        OperationKind::Transition(transition) => transition
-            .yields
-            .iter()
-            .chain(transition.semantics.emits.iter())
-            .collect(),
+        OperationKind::Transition(transition) => transition.semantics.emits.iter().collect(),
     }
 }

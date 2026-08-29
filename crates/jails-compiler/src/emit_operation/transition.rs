@@ -16,7 +16,9 @@ pub(super) fn lower(
 ) -> Result<(ProjectPath, RenderedFile), CompileError> {
     let target = stored_entity(model, operation, &transition.on, "transition")?;
     let inputs = resolve_fields(operation, target, &transition.fields, "input")?;
-    let sets = resolve_fields(operation, target, &transition.sets, "set")?;
+    let primary_key = primary_key(target)?;
+    let selector = selector(operation, target, transition, primary_key)?;
+    let sets = updates(operation, target, transition, &inputs, &selector)?;
     let constant_sets = transition
         .semantics
         .assignments
@@ -57,7 +59,6 @@ pub(super) fn lower(
             )));
         }
     }
-    let primary_key = primary_key(target)?;
     if sets.iter().any(|field| field.id == primary_key.id)
         || constant_sets
             .iter()
@@ -68,10 +69,17 @@ pub(super) fn lower(
             operation.label, primary_key.label
         )));
     }
+    // `jdl-sol.md` §12.4: parameters in `select` identify the row, parameters
+    // in `update` provide new values, and every remaining entity parameter is
+    // an equality guard. The selector was missing from this subtraction, so a
+    // declared `select [id]` was rendered as a guard *and* as an update.
     let guards = inputs
         .iter()
         .copied()
-        .filter(|input| !sets.iter().any(|field| field.id == input.id))
+        .filter(|input| {
+            !sets.iter().any(|field| field.id == input.id)
+                && !selector.iter().any(|field| field.id == input.id)
+        })
         .collect::<Vec<_>>();
     let port_type = with_suffix(&operation.names.java_type, "Transition");
     let type_name = format!("Jdbc{port_type}");
@@ -90,9 +98,12 @@ pub(super) fn lower(
     let key_type = java_type(primary_key, &mut imports);
     let context = context_parameter(model, target, &mut imports);
     let scope_fields = scopes(target);
-    let (event_member, event_parameter, event_assignment, result) = if let Some(event_id) =
-        &transition.yields
-    {
+    // Every emitted event, not just the first. `emit` is repeatable in
+    // `jdl-sol.md` §12.4, and the flat `yields` this replaced was one
+    // `Option`, so a transition declaring two events published one and
+    // dropped the other in silence.
+    let mut publications = Vec::new();
+    for event_id in &transition.semantics.emits {
         let yielded = model.operations.get(event_id).ok_or_else(|| {
             CompileError::new(format!(
                 "linked transition `{}` references missing event `{event_id}`",
@@ -101,13 +112,13 @@ pub(super) fn lower(
         })?;
         let OperationKind::Event(event) = &yielded.kind else {
             return Err(CompileError::new(format!(
-                "linked transition `{}` yields non-event operation `{}`",
+                "linked transition `{}` emits non-event operation `{}`",
                 operation.label, yielded.label
             )));
         };
         if event.on.as_ref().is_some_and(|entity| entity != &target.id) {
             return Err(CompileError::new(format!(
-                "canonical transition `{}` yields event `{}` from another entity\n       fix: yield an event projected from `{}`",
+                "canonical transition `{}` emits event `{}` from another entity\n       fix: emit an event projected from `{}`",
                 operation.label, yielded.label, target.label
             )));
         }
@@ -136,16 +147,11 @@ pub(super) fn lower(
             })
             .collect::<Result<Vec<_>, _>>()?
             .join(", ");
-        (
-            "\n    private final ApplicationEventPublisher events;",
-            ", ApplicationEventPublisher events",
-            "\n        this.events = events;",
-            format!(
-                "        var result = statement.query({}.class).single();\n        events.publishEvent(new {event_type}({arguments}));\n        return result;",
-                target.names.java_type
-            ),
-        )
-    } else {
+        publications.push(format!(
+            "\n        events.publishEvent(new {event_type}({arguments}));"
+        ));
+    }
+    let (event_member, event_parameter, event_assignment, result) = if publications.is_empty() {
         (
             "",
             "",
@@ -153,6 +159,17 @@ pub(super) fn lower(
             format!(
                 "        return statement.query({}.class).single();",
                 target.names.java_type
+            ),
+        )
+    } else {
+        (
+            "\n    private final ApplicationEventPublisher events;",
+            ", ApplicationEventPublisher events",
+            "\n        this.events = events;",
+            format!(
+                "        var result = statement.query({}.class).single();{}\n        return result;",
+                target.names.java_type,
+                publications.concat()
             ),
         )
     };
@@ -270,4 +287,59 @@ pub(super) fn lower(
         imports,
         body,
     )
+}
+
+/// The fields that identify the row, defaulting to the primary key.
+///
+/// `jdl-sol.md` §12.4 allows any field list here, but the update statement
+/// below binds the key as `:id` and nothing else, so a selector this emitter
+/// cannot render refuses rather than silently widening the `where` clause to
+/// every matching row. Answer exactly or refuse.
+fn selector<'a>(
+    operation: &Operation,
+    target: &'a jails_model::Entity,
+    transition: &jails_model::Transition,
+    primary_key: &'a jails_model::Field,
+) -> Result<Vec<&'a jails_model::Field>, CompileError> {
+    if transition.semantics.select.is_empty() {
+        return Ok(vec![primary_key]);
+    }
+    let selected = resolve_fields(operation, target, &transition.semantics.select, "select")?;
+    if selected.len() != 1 || selected[0].id != primary_key.id {
+        return Err(CompileError::new(format!(
+            "canonical transition `{}` selects rows by a field other than primary key `{}`\n       fix: select the primary key, or eject this adapter and write the statement by hand",
+            operation.label, primary_key.label
+        )));
+    }
+    Ok(selected)
+}
+
+/// The fields this transition writes from its own input.
+///
+/// An explicit `update` list wins. When it is omitted, `jdl-sol.md` §12.4
+/// keeps the familiar CLI shape: every remaining entity parameter is updated,
+/// *minus the row selector and minus the compiler-managed fields*. Those two
+/// subtractions are the whole of this function, and leaving them out is what
+/// made `transition Close(id) { select [id] }` report that it rewrites the
+/// primary key.
+fn updates<'a>(
+    operation: &Operation,
+    target: &'a jails_model::Entity,
+    transition: &jails_model::Transition,
+    inputs: &[&'a jails_model::Field],
+    selector: &[&jails_model::Field],
+) -> Result<Vec<&'a jails_model::Field>, CompileError> {
+    if !transition.semantics.update.is_empty() {
+        return resolve_fields(operation, target, &transition.semantics.update, "update");
+    }
+    Ok(inputs
+        .iter()
+        .copied()
+        .filter(|field| {
+            !selector.iter().any(|selected| selected.id == field.id)
+                && !field.semantics.version
+                && !field.semantics.updated
+                && field.semantics.scope.is_none()
+        })
+        .collect())
 }

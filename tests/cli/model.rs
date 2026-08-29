@@ -9876,3 +9876,85 @@ fn canonical_storage_drop_needs_exact_confirmation_and_appends_one_drop_table() 
         .unwrap();
     assert!(frozen.status.success());
 }
+
+/// A transition's field roles come from `select`/`update`/`emit` and nowhere
+/// else, and every emitted event is published.
+///
+/// `audit.md` A2.4 and A2.5. The linked transition carried a flat
+/// `sets`/`yields` pair beside `semantics.update`/`semantics.emits`, the
+/// emitters read the flat pair, and the JDL frontend synthesised it as *every*
+/// parameter whenever `update` was omitted -- so the row selector and the
+/// `@version` guard were both reported as writes and `jdl-sol.md` §4 could not
+/// link, while a second `emit` was silently dropped on the floor.
+///
+/// The four assertions are the four roles §12.4 separates: `id` selects,
+/// `version` guards and is incremented by the compiler, `status` updates, and
+/// both events publish. It reads the emitted SQL rather than the model,
+/// because the model was already right -- what was wrong is what reached Java.
+#[test]
+fn a_transition_separates_selector_guard_and_update_and_emits_every_event() {
+    let root = jdl_project(
+        "model-transition-roles",
+        r#"jdl 1
+
+app Roles {
+  pkg com.example.roles
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+entity Task {
+  use scaffold
+
+  id:      uuid   @pk
+  title:   string @notBlank
+  status:  string
+  version: long   @version @nonnegative
+
+  transition Close(id, version, status) {
+    select [id]
+    if-match required
+    emit TaskClosed
+    emit TaskAudited
+  }
+
+  event TaskClosed(id, status) {}
+  event TaskAudited(id, status) {}
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    let synced = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+
+    let adapter = fs::read_to_string(root.join(
+        ".jails/generated/main/java/com/example/roles/adapters/jdbc/JdbcCloseTransition.java",
+    ))
+    .unwrap();
+    assert!(
+        adapter.contains(r#""id = :id""#),
+        "the primary key selects the row: {adapter}"
+    );
+    assert!(
+        adapter.contains(r#""version = :guard_version""#),
+        "a version parameter guards rather than updates: {adapter}"
+    );
+    assert!(
+        adapter.contains("set status = :status, version = version + 1"),
+        "only `status` is written from input, and the compiler owns the version: {adapter}"
+    );
+    assert!(
+        !adapter.contains("id = :id, ") && !adapter.contains("set id ="),
+        "the selector is never an update target: {adapter}"
+    );
+    assert!(
+        adapter.contains("new TaskClosedEvent(") && adapter.contains("new TaskAuditedEvent("),
+        "every emitted event is published, not just the first: {adapter}"
+    );
+}

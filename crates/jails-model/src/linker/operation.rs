@@ -183,7 +183,7 @@ pub(super) fn link(
                         operation_ids.get(&target).cloned()
                     });
                     linker.route(route.as_deref(), &path, routes);
-                    let semantics = link_transition_semantics(
+                    let mut semantics = link_transition_semantics(
                         semantics,
                         &path,
                         &entity,
@@ -192,11 +192,20 @@ pub(super) fn link(
                         &events,
                         linker,
                     );
+                    // `.jails/model.toml` spells only the flat `sets`/`yields`
+                    // pair, so it is folded into the rich fields here and the
+                    // linked transition keeps one home per fact. A source that
+                    // spells the rich form wins: JDL v1 fills both, and its
+                    // `sets` projection is the one that was wrong.
+                    if semantics.update.is_empty() {
+                        semantics.update = sets;
+                    }
+                    if semantics.emits.is_empty() {
+                        semantics.emits.extend(yields);
+                    }
                     OperationKind::Transition(Transition {
                         on: entity,
                         fields,
-                        sets,
-                        yields,
                         route,
                         semantics,
                     })
