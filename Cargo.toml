@@ -107,6 +107,10 @@ jails-project.workspace = true
 # nanosecond and got the same directory -- and reimplementing OS randomness
 # and Windows deletion semantics is not this project's work.
 tempfile.workspace = true
+# The toolchain permit gate is shared across *processes*, not just threads,
+# because the suite is launched as thirty-three concurrent binaries. `flock`
+# is the only budget the kernel releases when a holder dies however it dies.
+fs2.workspace = true
 
 [lints]
 workspace = true

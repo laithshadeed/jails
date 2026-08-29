@@ -208,6 +208,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "clap_complete",
+ "fs2",
  "jails-commit",
  "jails-compiler",
  "jails-contracts",

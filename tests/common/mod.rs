@@ -5,11 +5,11 @@ pub mod scenarios;
 
 use std::ffi::OsStr;
 use std::fs;
+use std::fs::File;
 use std::io;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Output, Stdio};
-use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 pub fn bin() -> &'static str {
@@ -876,8 +876,8 @@ fn default_max_toolchain_processes() -> usize {
         .unwrap_or(6)
 }
 const MAX_INFRASTRUCTURE_START_PROCESSES: usize = 2;
-static TOOLCHAIN_PROCESSES: PermitPool = PermitPool::new();
-static INFRASTRUCTURE_START_PROCESSES: PermitPool = PermitPool::new();
+static TOOLCHAIN_PROCESSES: PermitPool = PermitPool::new("toolchain");
+static INFRASTRUCTURE_START_PROCESSES: PermitPool = PermitPool::new("infrastructure");
 
 fn max_toolchain_processes() -> usize {
     static MAXIMUM: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
@@ -890,62 +890,115 @@ fn max_toolchain_processes() -> usize {
     })
 }
 
+/// A budget of concurrent toolchain processes, shared across **processes**.
+///
+/// It was a `Mutex` and a `Condvar`, which is exactly right for one test
+/// binary and worth nothing for thirty-three. `cargo test` runs the binaries
+/// one after another, so an in-process budget *was* the whole machine's
+/// budget; `scripts/run-tests.py` runs them at once, and each one then
+/// believed it could have all six permits to itself. Five of these binaries
+/// shell out to Maven, so the machine was being asked for thirty concurrent
+/// JVMs on four cores -- which is why running them concurrently had only ever
+/// been worth 295.4s -> 281.7s. The overlap was real and the oversubscription
+/// ate it.
+///
+/// `flock` is the budget, one lock file per permit under `target/`. Three
+/// properties are why it is a file lock rather than anything cleverer:
+///
+/// - **The kernel releases it however the holder dies.** A test that panics,
+///   a binary killed by `--test-threads` teardown, a `^C` -- none of them can
+///   leak a permit. A counter in a file would need a crash-safe decrement,
+///   which is the PID-file problem `jails-support`'s `lock.rs` rejects for the
+///   same reason.
+/// - **It is per workspace.** The slots live under `target/`, so two
+///   checkouts do not share a budget and a `cargo clean` cannot corrupt one --
+///   it just makes the next acquirer create the files again.
+/// - **`O_CLOEXEC` is std's default.** `lock.rs` records the trap: a lock
+///   lives on the open file description, `fork` duplicates it, and a child
+///   spawned while the parent holds one keeps it alive until `exec`. Every
+///   `File` std opens is close-on-exec, so the Maven process this permit
+///   exists to throttle cannot inherit the permit that admitted it.
+///
+/// Acquisition polls rather than blocking in the kernel. `flock` has no
+/// "wait for any of these six", and a permit is held for the length of a
+/// Maven run, so a 25 ms poll is far below the noise of what it is gating.
 struct PermitPool {
-    active: Mutex<usize>,
-    available: Condvar,
+    slots: std::sync::OnceLock<PathBuf>,
+    name: &'static str,
 }
 
+/// How long to wait before rescanning the slots. Two orders of magnitude
+/// below the ~7s Maven run this gates, and far above a `fork`/`exec` window.
+const PERMIT_POLL: std::time::Duration = std::time::Duration::from_millis(25);
+
 impl PermitPool {
-    const fn new() -> Self {
+    const fn new(name: &'static str) -> Self {
         Self {
-            active: Mutex::new(0),
-            available: Condvar::new(),
+            slots: std::sync::OnceLock::new(),
+            name,
         }
     }
 
-    fn acquire(&self, maximum: usize) -> ProcessPermit<'_> {
-        let mut count = self
-            .active
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        while *count >= maximum {
-            count = self
-                .available
-                .wait(count)
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+    /// The directory holding this pool's slot files, created once.
+    ///
+    /// `target/` and not `env::temp_dir()`: the budget is a property of this
+    /// workspace, and a stale directory here is harmless -- the files carry no
+    /// state, only locks, so anything left behind is reused rather than
+    /// repaired.
+    fn directory(&self) -> &Path {
+        self.slots.get_or_init(|| {
+            let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("target/jails-test-permits")
+                .join(self.name);
+            let _ = fs::create_dir_all(&root);
+            root
+        })
+    }
+
+    fn acquire(&self, maximum: usize) -> ProcessPermit {
+        let directory = self.directory();
+        loop {
+            for slot in 0..maximum {
+                let path = directory.join(format!("{slot}.lock"));
+                let Ok(file) = fs::OpenOptions::new()
+                    .create(true)
+                    .truncate(false)
+                    .write(true)
+                    .open(&path)
+                else {
+                    // A pool that cannot create its slots must not deadlock the
+                    // suite: an unthrottled run is slow, a hung one is broken.
+                    return ProcessPermit { _file: None };
+                };
+                if fs2::FileExt::try_lock_exclusive(&file).is_ok() {
+                    return ProcessPermit { _file: Some(file) };
+                }
+            }
+            std::thread::sleep(PERMIT_POLL);
         }
-        *count += 1;
-        ProcessPermit { pool: self }
     }
 
     #[cfg(test)]
-    fn try_acquire(&self, maximum: usize) -> Option<ProcessPermit<'_>> {
-        let mut count = self
-            .active
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if *count >= maximum {
-            return None;
-        }
-        *count += 1;
-        Some(ProcessPermit { pool: self })
+    fn try_acquire(&self, maximum: usize) -> Option<ProcessPermit> {
+        let directory = self.directory();
+        (0..maximum).find_map(|slot| {
+            let file = fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(directory.join(format!("{slot}.lock")))
+                .ok()?;
+            fs2::FileExt::try_lock_exclusive(&file)
+                .ok()
+                .map(|()| ProcessPermit { _file: Some(file) })
+        })
     }
 }
 
-struct ProcessPermit<'a> {
-    pool: &'a PermitPool,
-}
-
-impl Drop for ProcessPermit<'_> {
-    fn drop(&mut self) {
-        let mut count = self
-            .pool
-            .active
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *count -= 1;
-        self.pool.available.notify_one();
-    }
+/// One permit. The lock is released when the `File` closes, which the kernel
+/// also does if this process dies holding it.
+struct ProcessPermit {
+    _file: Option<File>,
 }
 
 /// A super-simple, hand-written Spring Boot project (pinned versions, JDK
@@ -1346,7 +1399,7 @@ mod permit_pool_tests {
     #[test]
     fn infrastructure_start_pool_has_two_reusable_permits() {
         assert_eq!(MAX_INFRASTRUCTURE_START_PROCESSES, 2);
-        let pool = PermitPool::new();
+        let pool = PermitPool::new("test-reusable");
         let first = pool
             .try_acquire(MAX_INFRASTRUCTURE_START_PROCESSES)
             .unwrap();
@@ -1378,11 +1431,37 @@ mod permit_pool_tests {
             &INFRASTRUCTURE_START_PROCESSES
         ));
 
-        let toolchain = PermitPool::new();
-        let infrastructure = PermitPool::new();
+        let toolchain = PermitPool::new("test-separate-toolchain");
+        let infrastructure = PermitPool::new("test-separate-infrastructure");
         let _toolchain_permit = toolchain.acquire(1);
 
         assert!(toolchain.try_acquire(1).is_none());
         assert!(infrastructure.try_acquire(1).is_some());
+    }
+
+    /// The property the whole change exists for, and the one the `Mutex`
+    /// version could not have.
+    ///
+    /// Two pools built independently under one name are what two *processes*
+    /// are: each opens the slot files for itself, so each has its own open
+    /// file description, and `flock` contends between them exactly as it does
+    /// across a `fork`. If this passes in one process it holds across
+    /// thirty-three, which is what `scripts/run-tests.py` launches.
+    #[test]
+    fn a_budget_is_shared_by_every_pool_of_the_same_name() {
+        let one = PermitPool::new("test-shared-budget");
+        let two = PermitPool::new("test-shared-budget");
+
+        let held = one.try_acquire(1).expect("the only permit");
+        assert!(
+            two.try_acquire(1).is_none(),
+            "a second holder of the same named budget took a permit that was already out"
+        );
+
+        drop(held);
+        assert!(
+            two.try_acquire(1).is_some(),
+            "the permit was not released back to the shared budget"
+        );
     }
 }

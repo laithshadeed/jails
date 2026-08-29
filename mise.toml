@@ -44,8 +44,25 @@ depends = ["lint"]
 # asks for is that one command compiles the whole workspace and runs every
 # test; this one does both, and a compile error still stops the run at the
 # first error, in the same place it did before.
+#
+# **The suite's thirty-three binaries run concurrently now**, through
+# `scripts/run-tests.py`. `cargo test` runs them one after another -- the sum
+# of the per-target times was within four seconds of the whole run's wall
+# clock -- and on CI `cli` is 202s while the other thirty-two are 74s that
+# could have finished inside it.
+#
+# This was deliberately *not* the gate until now, and the reason it could not
+# be is fixed rather than waived: the Maven permit budget was a `Mutex` and a
+# `Condvar`, so each binary believed it owned all six permits and thirty-three
+# of them oversubscribed the machine. It is a `flock` budget shared across
+# processes now (`tests/common/mod.rs`), so the whole run has one budget
+# however it is launched.
+#
+# It is still one answer to "is this green": same binaries from `cargo test
+# --no-run`, same filters, same exit status. What it adds is a python3
+# dependency for the gate, which is the cost this trade accepts.
 run = [
-  "JAILS_REQUIRE_TOOLCHAIN=1 cargo test --workspace -- --skip unheld_gradle_example_manifest_builds_on_its_pinned_toolchain",
+  "JAILS_REQUIRE_TOOLCHAIN=1 ./scripts/run-tests.py -- --skip unheld_gradle_example_manifest_builds_on_its_pinned_toolchain",
   "mise x java@21 gradle@8.5 -- env JAILS_REQUIRE_TOOLCHAIN=1 cargo test --test cli unheld_gradle_example_manifest_builds_on_its_pinned_toolchain",
 ]
 
