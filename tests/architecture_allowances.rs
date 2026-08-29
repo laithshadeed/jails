@@ -75,6 +75,22 @@ const CASES: &[Case] = &[
 #[test]
 fn allowances_are_bounded_current_and_used() {
     if Command::new("mvn").arg("--version").output().is_err() {
+        // The same contract as `common::skip`, spelled out because this
+        // binary does not take the shared harness for one function.
+        //
+        // It was a bare `eprintln!` and a `return`, which is the one thing
+        // CLAUDE.md says a skip must never be: `JAILS_REQUIRE_TOOLCHAIN=1`
+        // exists to turn "I could not run" into a failure, and this test --
+        // the only executable check of the generated ArchUnit policy, and one
+        // that shells out to real Maven -- was the single place in the suite
+        // that evaded it. On a machine without Maven it reported green, in a
+        // run whose whole point was that nothing may report green without
+        // running.
+        assert!(
+            std::env::var_os("JAILS_REQUIRE_TOOLCHAIN").is_none_or(|value| value == "0"),
+            "JAILS_REQUIRE_TOOLCHAIN is set, but this test cannot run: \
+             Maven is unavailable"
+        );
         eprintln!("skipping architecture allowance acceptance: Maven is unavailable");
         return;
     }
