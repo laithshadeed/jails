@@ -868,8 +868,51 @@ app Notes {
         ],
         vec!["g", "presence", "Online"],
     ];
+    // Kinds the compiler has no backend for refuse instead of succeeding, and
+    // the refusal leaves the source untouched. This loop used to assert only
+    // that the CLI exited zero, which is exactly how `audit.md` A1.2 stayed
+    // invisible: fourteen of these wrote a declaration, reported success, and
+    // emitted nothing at all.
+    const UNSERVED: &[&str] = &[
+        "handler",
+        "command",
+        "cli",
+        "client",
+        "fetcher",
+        "job",
+        "http-workflow",
+        "http-sink",
+        "idempotency",
+        "auth",
+        "webhook",
+        "durable-job",
+        "socket",
+        "presence",
+    ];
     for command in commands {
         let output = jails_cmd(&root, None).args(&command).output().unwrap();
+        if UNSERVED.contains(&command[1]) {
+            let before = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+            assert!(
+                !output.status.success(),
+                "`jails {}` has no compiler backend and must refuse",
+                command.join(" ")
+            );
+            // The exact wording is pinned by
+            // `every_component_kind_is_emitted_or_refused` in `jails-compiler`,
+            // which reaches every unserved kind directly. Here the refusal can
+            // also arrive second-hand -- `g command --on AdminCli` cannot
+            // resolve a component `g cli Admin` was refused permission to
+            // declare -- and what this test owns is the property that survives
+            // either route: the command fails and the source is untouched.
+            assert_eq!(
+                before,
+                fs::read_to_string(root.join(".jails/model.jdl")).unwrap(),
+                "`jails {}` refused and still edited the source",
+                command.join(" ")
+            );
+            continue;
+        }
         assert!(
             output.status.success(),
             "`jails {}` failed:\n{}",
@@ -915,25 +958,14 @@ app Notes {
         "limit 50",
         "emit task_created",
         "route PATCH \"/tasks/{id}\"",
-        "component handler Health @id(cmp_handler_health)",
-        "component cli Admin @id(cmp_cli_admin)",
-        "component command Refresh @id(cmp_command_refresh)",
-        "on admin",
         "component cases Acceptance @id(cmp_cases_acceptance)",
         "source \"acceptance.md\"",
-        "component client Audit(requestId: uuid) @id(cmp_client_audit)",
-        "component fetcher Remote @id(cmp_fetcher_remote)",
-        "component job Sweep @id(cmp_job_sweep)",
-        "component http-workflow Crawl @id(cmp_http_workflow_crawl)",
-        "on remote",
-        "component http-sink Delivery @id(cmp_http_sink_delivery)",
-        "component idempotency Request @id(cmp_idempotency_request)",
-        "component auth Api @id(cmp_auth_api)",
-        "component webhook Stripe(signature: string @notBlank) @id(cmp_webhook_stripe)",
-        "bind signature from form \"stripe_signature\"",
-        "component durable-job Dispatch(id: uuid) @id(cmp_durable_job_dispatch)",
-        "component socket Chat @id(cmp_socket_chat)",
-        "component presence Online @id(cmp_presence_online)",
+        // The fourteen kinds with no compiler backend are gone from this list
+        // because they no longer reach the source: a canonical mutation
+        // compiles before it writes, so refusing to emit is refusing to
+        // record. Their CST rendering is still real code and now has no
+        // coverage through the CLI -- `audit.md` A1.2b tracks giving it a
+        // direct test against the syntax editor.
     ] {
         assert!(
             source.contains(declaration),
@@ -945,10 +977,7 @@ app Notes {
         vec!["destroy", "factory", "Task"],
         vec!["destroy", "class", "Clock"],
         vec!["destroy", "sealed", "Outcome"],
-        vec!["destroy", "handler", "Health"],
         vec!["destroy", "cases", "acceptance.md"],
-        vec!["destroy", "http-workflow", "Crawl"],
-        vec!["destroy", "durable-job", "Dispatch"],
         vec!["remove", "fake"],
         vec!["remove", "dependency", "org.jsoup:jsoup"],
         vec!["unset", "server.port"],
@@ -966,16 +995,7 @@ app Notes {
     assert!(!source.contains("use factory"), "{source}");
     assert!(!source.contains("component class Clock"), "{source}");
     assert!(!source.contains("component sealed Outcome"), "{source}");
-    assert!(!source.contains("component handler Health"), "{source}");
     assert!(!source.contains("component cases Acceptance"), "{source}");
-    assert!(
-        !source.contains("component http-workflow Crawl"),
-        "{source}"
-    );
-    assert!(
-        !source.contains("component durable-job Dispatch"),
-        "{source}"
-    );
     assert!(!source.contains("cap fake"), "{source}");
     assert!(!source.contains("dep org.jsoup:jsoup"), "{source}");
     assert!(!source.contains("prop server.port"), "{source}");

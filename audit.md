@@ -120,6 +120,20 @@ test/java/com/example/comp/WidgetTest.java
 no emitter". Neither exists. A silent no-op on a declaration the author wrote
 is worse than a refusal.
 
+### A1.2b The CST editor for the unserved kinds has no test through the CLI
+
+Closing A1.2 made those fourteen kinds refuse at compile, and a canonical
+mutation compiles before it writes -- so refusing to emit is refusing to
+record, and `jails g handler Health` can no longer reach
+`model_generate_jdl/component.rs` at all. That renderer is ~400 lines of real
+code whose only coverage was
+`familiar_mutations_write_valid_jdl_v1_through_one_cst_pipeline`, and its rows
+for those kinds are gone.
+
+The coverage should come back against the syntax editor directly rather than
+through a command that must now fail. Until it does, the CST rendering for
+fourteen component kinds is untested.
+
 ### A1.3 `jails app apply` still enters the legacy engine on a canonical project
 
 `src/main.rs:68` dispatches `Command::App` unconditionally; `src/app.rs`
@@ -754,9 +768,8 @@ It is used only under `#[cfg(test)]` (`materialize.rs:673`), and
    gate protects the wrong front end.
 7. **A5.1 / A5.2** — golden the canonical tree and the three canonical
    persisted formats, and add the v1-lock decode test.
-8. **A1.2** — emitters or refusals for the fifteen silent component kinds,
-   plus the §20.2 role↔emitter exhaustiveness test that would have caught
-   them.
+8. **A1.2b** — give the CST editor for the fourteen unserved component kinds
+   a direct test, replacing the CLI coverage that closing A1.2 removed.
 9. **A5.4 / A5.6** — pin `JAILS_LEGACY_REVISION` to a real pre-cutover SHA
    and pin the Rust toolchain.
 10. **A5.5** — port G4's child-process method to `jails-workspace::execute`.

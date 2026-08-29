@@ -160,6 +160,17 @@ impl Compiler {
                 "canonical DTO facets require a captured Spring Boot project\n       fix: add Spring Boot to the build or remove the `dto` facet",
             ));
         }
+        if let Some(component) = next_model
+            .components
+            .values()
+            .find(|component| !component_kind_is_emitted(component.kind))
+        {
+            return Err(CompileError::new(format!(
+                "canonical `component {}` has no compiler backend yet\n       fix: remove the declaration, or generate `{}` on a legacy project until its emitter lands",
+                component.kind.label(),
+                component.kind.label()
+            )));
+        }
         // The database backend renders `JdbcClient` adapters annotated
         // `@Repository`, so it is Spring-only in the same way `api` and the
         // Spring capability packs are. Without this it emitted that Java into
@@ -706,6 +717,51 @@ fn boot_version(version: Option<&str>) -> Option<(u32, u32)> {
     Some((major, minor))
 }
 
+/// Whether this component kind has an emitter behind it.
+///
+/// `audit.md` A1.2. Fifteen of the twenty-three closed kinds linked, planned,
+/// applied and reported success while producing no file and no diagnostic.
+/// `component client Audit` was accepted, `model check` said "model valid",
+/// `sync` said "3 operations, 4 files written", and nothing in the tree
+/// mentioned it. A silent no-op on a declaration the author wrote is worse
+/// than a refusal, because there is nothing to notice.
+///
+/// The match is exhaustive on purpose: `jdl-sol.md` §20.2 asks for a test that
+/// fails "when a registered role has no emitter", and the strongest version of
+/// that test is a compile error. Adding a kind stops the build here until
+/// somebody decides which arm it belongs in.
+const fn component_kind_is_emitted(kind: jails_model::ComponentKind) -> bool {
+    use jails_model::ComponentKind as Kind;
+    match kind {
+        Kind::Class
+        | Kind::Interface
+        | Kind::Service
+        | Kind::Controller
+        | Kind::Sealed
+        | Kind::Strategy
+        | Kind::Test
+        | Kind::IntegrationTest => true,
+        // `cases` emits no Java, but it is not silent: its reader-owned
+        // brief is captured as an exact plan input, so changing the file
+        // after review refuses the apply. A backend need not write a file.
+        Kind::Cases => true,
+        Kind::Handler
+        | Kind::Command
+        | Kind::Cli
+        | Kind::Client
+        | Kind::Fetcher
+        | Kind::Job
+        | Kind::HttpWorkflow
+        | Kind::HttpSink
+        | Kind::Idempotency
+        | Kind::Auth
+        | Kind::Webhook
+        | Kind::DurableJob
+        | Kind::Socket
+        | Kind::Presence => false,
+    }
+}
+
 fn compose_path(snapshot: &WorkspaceSnapshot) -> Result<ProjectPath, CompileError> {
     if let Some(path) = snapshot
         .accepted_projection
@@ -766,6 +822,68 @@ fn property_entries(
 
 #[cfg(test)]
 mod tests {
+    /// Every closed component kind is either emitted or refused, and never
+    /// silently dropped.
+    ///
+    /// `audit.md` A1.2 and `jdl-sol.md` §20.2. Fifteen of the twenty-three
+    /// kinds linked, planned and applied while emitting nothing at all: the
+    /// linker's compatibility bridge ended in `_ => return None`, so an
+    /// unmapped kind produced no unit, no file and no diagnostic. The count
+    /// here is deliberate -- it fails when a kind is added and quietly filed
+    /// as unserved, which is the same silence arriving a different way.
+    #[test]
+    fn every_component_kind_is_emitted_or_refused() {
+        use jails_model::ComponentKind;
+        let emitted = ComponentKind::ALL
+            .iter()
+            .filter(|kind| super::component_kind_is_emitted(**kind))
+            .count();
+        assert_eq!(ComponentKind::ALL.len(), 23);
+        assert_eq!(emitted, 9, "nine kinds have a compiler backend today");
+
+        // The refusal is reachable, not merely written down.
+        let model = jails_model::parse_jdl(
+            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\n",
+        )
+        .unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.build_system = BuildSystem::Maven;
+        for kind in ComponentKind::ALL
+            .iter()
+            .filter(|kind| !super::component_kind_is_emitted(**kind))
+        {
+            let mut next = snapshot.clone();
+            next.model.model.components.insert(
+                jails_model::ComponentId::parse(format!("cmp_{}", kind.label().replace('-', "_")))
+                    .unwrap(),
+                component(*kind),
+            );
+            let error =
+                Compiler::compile(&next, None).expect_err("an unserved component kind must refuse");
+            assert!(
+                error.to_string().contains("has no compiler backend yet"),
+                "{kind:?}: {error}"
+            );
+        }
+    }
+
+    fn component(kind: jails_model::ComponentKind) -> jails_model::Component {
+        jails_model::Component {
+            id: jails_model::ComponentId::parse(format!("cmp_{}", kind.label().replace('-', "_")))
+                .unwrap(),
+            label: "probe".to_string(),
+            name: "Probe".to_string(),
+            kind,
+            parameters: Vec::new(),
+            on: None,
+            yields: None,
+            route: None,
+            bindings: Vec::new(),
+            variants: Vec::new(),
+            source: None,
+        }
+    }
+
     /// A versionless dependency is correct under a Boot parent and fatal
     /// without one.
     ///
