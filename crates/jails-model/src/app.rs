@@ -25,6 +25,12 @@ pub struct ProjectIntent {
     /// `#[serde(default)]` because the defaults are the names the compiler
     /// already used, so a project that renamed nothing encodes exactly as it
     /// did before this field existed.
+    ///
+    /// `Compiler::compile` copies it off the snapshot onto the model rather
+    /// than passing it beside one: every emitter already holds an `AppModel`
+    /// and nothing else, and threading a second value through 48 signatures to
+    /// answer "what does this project call its adapters" is the parameter
+    /// sprawl `spring::Slice` exists to remove on the legacy side.
     #[serde(default)]
     pub layout: crate::Layout,
 }

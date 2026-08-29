@@ -374,6 +374,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-compiler", "emit_java", 4),
     ("jails-compiler", "emit_operation", 4),
     ("jails-compiler", "emit_sql", 4),
+    ("jails-compiler", "storage", 4),
     ("jails-compiler", "emit_unit", 4),
     // The only canonical filesystem capture/materialization/execution owner.
     ("jails-workspace", "capture", 5),
