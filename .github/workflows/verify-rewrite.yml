@@ -22,8 +22,31 @@ on:
   pull_request:
   workflow_dispatch:
 
+# **One run per commit, not two.** `github.ref` is a different string for the
+# two events that both fire on a pull request branch -- `refs/heads/<branch>`
+# for the push and `refs/pull/<n>/merge` for the pull_request -- so this keyed
+# two groups, `cancel-in-progress` never had anything to cancel, and every
+# push to a PR branch ran the whole ten-minute gate twice against the same
+# SHA. Both runs on `85597f9` are the evidence: 9m22s under `push` and 9m52s
+# under `pull_request`, same commit, same result.
+#
+# `head_ref || ref_name` is the same string for both: `head_ref` is the source
+# branch and is set only on a pull_request, `ref_name` is the bare branch name
+# on a push. So the two collapse into one group and one cancels the other.
+#
+# **The pull_request run is the one that survives, and that is the one worth
+# keeping.** The push event fires two to three seconds first every time, so
+# the later pull_request run is the canceller. It builds the merge of the
+# branch into its base rather than the branch head -- identical trees while
+# the base is an ancestor, and strictly more informative once the base has
+# moved on.
+#
+# `push: branches: ["**"]` stays. Branches here are worked on directly and
+# merged without a pull request of their own -- `new-world-compiler-jdl-v1`
+# is one -- so narrowing the push trigger to `main` would leave them with no
+# gate at all, which is a larger hole than a duplicated run was a cost.
 concurrency:
-  group: verify-rewrite-${{ github.ref }}
+  group: verify-rewrite-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
