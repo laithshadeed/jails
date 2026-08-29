@@ -1481,14 +1481,29 @@ jails knows nothing about.
   nothing in the logs. `spring::exposure_include` reads the current value and
   unions, which makes the order stop mattering. A new capability touching that
   key must go through it too.
-- **A property cannot tag meters registered directly on the registry.**
+- **`add observability` generates a `MeterRegistryCustomizer` calling
+  `config().commonTags(...)`, and Boot 4 moved that interface out of
+  `actuate.autoconfigure` with no shim** — so the import is version-sniffed
+  like `@AutoConfigureMockMvc` is. That is the part worth remembering.
+
+  **This entry used to justify the customizer with a claim that is false on
+  Boot 4**, and it is corrected rather than deleted because a wrong reason
+  sends the next reader to remove something that works. It said *"a property
+  cannot tag meters registered directly on the registry —
   `management.metrics.tags.*` was removed in Boot 3, and its replacement
-  `management.observations.key-values.*` tags *observations* — a plain
-  `Counter` is not one, so half the meters go untagged and nothing complains.
-  `add observability` generates a `MeterRegistryCustomizer` calling
-  `config().commonTags(...)`, which covers both. Boot 4 also moved that
-  interface out of `actuate.autoconfigure` with no shim, so the import is
-  version-sniffed like `@AutoConfigureMockMvc` is.
+  `management.observations.key-values.*` tags observations, which a plain
+  `Counter` is not."* Checked against `deps/spring-boot`, which is what this
+  file says to do: `MetricsProperties.tags` is alive in
+  `spring-boot-micrometer-metrics` ("Common tags that are applied to every
+  meter"), and `PropertiesMeterFilter` turns it into
+  `MeterFilter.commonTags(...)` on the registry — which applies to every
+  meter, hand-registered `Counter`s included. `management.observations.
+  key-values.*` is a *different* knob for observations, not a replacement.
+
+  The customizer is still the right thing to generate: it is code the project
+  owns, it survives a property file being rewritten, and it does not depend on
+  which actuator modules happen to be present. It just is not the only thing
+  that works.
 - **Exactly one repository adapter may carry `@Repository`.** Two make two
   beans qualify for one injection point and the scaffold compiles but cannot
   start — the ambiguity `jails beans` exists to report.

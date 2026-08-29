@@ -2628,3 +2628,85 @@ fn the_container_build_is_byte_identical_on_both_implementations() {
         }
     }
 }
+
+/// The Helm chart is the same six files on both implementations.
+///
+/// `plan.md` P13.8's third capability, and the one with real preconditions:
+/// probes need the actuator, burn-rate alerts need a Prometheus registry, and
+/// a deployment needs the image it deploys. Both engines refuse without them.
+///
+/// The canonical side asks the *model* whether each capability is declared,
+/// where the legacy side reads the pom for two of them and the filesystem for
+/// the third. That is stricter, not merely different: a project with
+/// `spring-boot-starter-actuator` spliced in by hand satisfied the old check
+/// while having no actuator capability for `sync` to reconcile.
+#[test]
+fn the_helm_chart_is_byte_identical_on_both_implementations() {
+    let subjects = spring_subjects("k8s-chart");
+    let chart = [
+        "deploy/chart/Chart.yaml",
+        "deploy/chart/values.yaml",
+        "deploy/chart/templates/deployment.yaml",
+        "deploy/chart/templates/service.yaml",
+        "deploy/chart/templates/configmap.yaml",
+        "deploy/chart/templates/prometheus-rule.yaml",
+    ];
+    let mut rendered: Vec<Vec<String>> = Vec::new();
+    for subject in &subjects {
+        // Refuses before its prerequisites, on both sides and by name.
+        let bare = subject.run(&["add", "k8s"]);
+        assert!(
+            !bare.status.success(),
+            "{}: k8s was accepted with no actuator, no metrics and no image",
+            subject.name
+        );
+        let refusal = String::from_utf8_lossy(&bare.stderr);
+        assert!(
+            refusal.contains("actuator"),
+            "{}: the refusal does not name what is missing: {refusal}",
+            subject.name
+        );
+
+        for capability in ["actuator", "observability", "docker"] {
+            subject.succeeds(&["add", capability]);
+        }
+        subject.succeeds(&["add", "k8s"]);
+        rendered.push(
+            chart
+                .iter()
+                .map(|path| {
+                    fs::read_to_string(subject.root.join(path))
+                        .unwrap_or_else(|error| panic!("{}: {path} — {error}", subject.name))
+                })
+                .collect(),
+        );
+    }
+    assert!(
+        rendered[0][2].contains("readinessProbe") && rendered[0][2].contains("livenessProbe"),
+        "the deployment declares no probes, which is most of what the actuator is for: {}",
+        rendered[0][2]
+    );
+    // The one setting that belongs in the application rather than the chart:
+    // Kubernetes supplies POD_NAME from `metadata.name`, and without the tag a
+    // burn-rate alert cannot say which replica is failing.
+    for subject in &subjects {
+        let properties = fs::read_to_string(
+            subject
+                .root
+                .join("src/main/resources/application.properties"),
+        )
+        .unwrap_or_default();
+        assert!(
+            properties.contains("management.metrics.tags.pod.name=${POD_NAME:unknown}"),
+            "{}: no per-pod metric tag, so every replica reports as one: {properties}",
+            subject.name
+        );
+    }
+    assert_eq!(
+        rendered[0], rendered[1],
+        "the two implementations render different Helm charts"
+    );
+    for subject in subjects {
+        fs::remove_dir_all(subject.root).ok();
+    }
+}

@@ -609,6 +609,33 @@ pub(super) const CACHE_PACK: Pack = Pack {
     minimum_boot: None,
 };
 
+/// `k8s` emits its chart through `project_file.rs`; this is the one setting
+/// that belongs in the application rather than in the chart.
+///
+/// Kubernetes supplies `POD_NAME` from `metadata.name` -- the configmap in the
+/// chart is what puts it in the environment -- so this tags every replica
+/// separately. Without it a burn-rate alert cannot tell which pod is failing,
+/// which is the question an alert exists to answer.
+pub(super) const K8S_PACK: Pack = Pack {
+    files: &[],
+    files_when: BootCondition::Any,
+    resources: NO_RESOURCES,
+    dependencies: &[],
+    properties: K8S_PROPERTIES,
+    compose_services: NO_COMPOSE_SERVICES,
+    build_features: NO_BUILD_FEATURES,
+    default_package: root_package,
+    package_overrides: NO_PACKAGE_OVERRIDES,
+    minimum_boot: None,
+};
+
+const K8S_PROPERTIES: &[PropertySpec] = &[PropertySpec {
+    key: "management.metrics.tags.pod.name",
+    value: "${POD_NAME:unknown}",
+    target: SettingTarget::Main,
+    boot: BootCondition::Spring,
+}];
+
 pub(super) const CORS_PACK: Pack = Pack {
     files: CORS_FILES,
     files_when: BootCondition::Any,

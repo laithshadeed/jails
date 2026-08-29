@@ -28,8 +28,8 @@ use messaging::{KAFKA_PACK, MAIL_PACK};
 use reader_facet::ComposeService;
 
 use spring::{
-    ACTUATOR_PACK, CACHE_PACK, CORS_PACK, H2_PACK, OBSERVABILITY_PACK, REDIS_PACK, SECURITY_PACK,
-    SSE_PACK,
+    ACTUATOR_PACK, CACHE_PACK, CORS_PACK, H2_PACK, K8S_PACK, OBSERVABILITY_PACK, REDIS_PACK,
+    SECURITY_PACK, SSE_PACK,
 };
 
 const MAIN_ROOT: &str = ".jails/generated/main/java";
@@ -279,6 +279,7 @@ fn pack(kind: &str) -> Option<&'static Pack> {
         "redis" => Some(&REDIS_PACK),
         "kafka" => Some(&KAFKA_PACK),
         "mail" => Some(&MAIL_PACK),
+        "k8s" => Some(&K8S_PACK),
         _ => None,
     }
 }

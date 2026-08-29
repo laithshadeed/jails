@@ -458,116 +458,33 @@ fn helm_name(name: &str) -> String {
     }
 }
 
+/// The Helm chart, from the six templates the canonical compiler also reads.
+///
+/// One owner each, for the reason the CI workflow has one: a chart that
+/// disagrees with itself between engines is a deployment that works from one
+/// and not the other, and nothing about the difference is visible in a diff.
 fn chart_yaml(name: &str) -> String {
-    format!(
-        "apiVersion: v2\nname: {name}\ndescription: Production deployment for {name}\ntype: application\nversion: 0.1.0\nappVersion: \"0.1.0\"\n"
-    )
+    include_str!("../../../../templates/add/k8s_chart.yaml").replace("{{NAME}}", name)
 }
 
 fn values_yaml(name: &str) -> String {
-    format!(
-        "image:\n  repository: {name}\n  tag: latest\n  pullPolicy: IfNotPresent\nreplicaCount: 2\nresources:\n  requests:\n    cpu: 100m\n    memory: 256Mi\n  limits:\n    memory: 512Mi\n"
-    )
+    include_str!("../../../../templates/add/k8s_values.yaml").replace("{{NAME}}", name)
 }
 
 fn deployment_yaml(name: &str) -> String {
-    format!(
-        r#"apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: {name}
-  labels:
-    app.kubernetes.io/name: {name}
-spec:
-  replicas: {{{{ .Values.replicaCount }}}}
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: {name}
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: {name}
-    spec:
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 10001
-      containers:
-        - name: {name}
-          image: "{{{{ .Values.image.repository }}}}:{{{{ .Values.image.tag }}}}"
-          imagePullPolicy: {{{{ .Values.image.pullPolicy }}}}
-          ports:
-            - name: http
-              containerPort: 8080
-            - name: o11y
-              containerPort: 8081
-          env:
-            - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
-          envFrom:
-            - configMapRef:
-                name: {name}
-          readinessProbe:
-            httpGet:
-              path: /management/health/readiness
-              port: o11y
-            failureThreshold: 3
-            periodSeconds: 10
-            timeoutSeconds: 3
-          livenessProbe:
-            httpGet:
-              path: /management/health/liveness
-              port: o11y
-            failureThreshold: 5
-            periodSeconds: 10
-            timeoutSeconds: 3
-          resources: {{{{ toYaml .Values.resources | nindent 12 }}}}
-"#
-    )
+    include_str!("../../../../templates/add/k8s_deployment.yaml").replace("{{NAME}}", name)
 }
 
 fn service_yaml(name: &str) -> String {
-    format!(
-        "apiVersion: v1\nkind: Service\nmetadata:\n  name: {name}\nspec:\n  selector:\n    app.kubernetes.io/name: {name}\n  ports:\n    - name: http\n      port: 80\n      targetPort: http\n    - name: o11y\n      port: 8081\n      targetPort: o11y\n"
-    )
+    include_str!("../../../../templates/add/k8s_service.yaml").replace("{{NAME}}", name)
 }
 
 fn configmap_yaml(name: &str) -> String {
-    format!(
-        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {name}\ndata:\n  SPRING_PROFILES_ACTIVE: production\n"
-    )
+    include_str!("../../../../templates/add/k8s_configmap.yaml").replace("{{NAME}}", name)
 }
 
 fn prometheus_rule_yaml(name: &str) -> String {
-    format!(
-        r#"apiVersion: monitoring.coreos.com/v1
-kind: PrometheusRule
-metadata:
-  name: {name}
-spec:
-  groups:
-    - name: {name}.slo
-      rules:
-        - alert: HttpErrorBudgetFastBurn
-          expr: |
-            sum(rate(http_server_requests_seconds_count{{application="{name}",status=~"5.."}}[5m]))
-              / sum(rate(http_server_requests_seconds_count{{application="{name}"}}[5m])) > 0.05
-          for: 5m
-          labels:
-            severity: page
-          annotations:
-            summary: HTTP error budget is burning quickly
-        - alert: HttpLatencyBudgetBurn
-          expr: |
-            histogram_quantile(0.99, sum by (le) (rate(http_server_requests_seconds_bucket{{application="{name}"}}[10m]))) > 1
-          for: 10m
-          labels:
-            severity: warning
-          annotations:
-            summary: HTTP p99 latency exceeds one second
-"#
-    )
+    include_str!("../../../../templates/add/k8s_prometheus_rule.yaml").replace("{{NAME}}", name)
 }
 
 /// The Java release, from the `Project` the caller already resolved.

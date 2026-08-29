@@ -9,6 +9,40 @@ const CI_WORKFLOW_PATH: &str = ".github/workflows/ci.yml";
 
 const DOCKER_PATHS: [&str; 3] = ["Dockerfile", ".dockerignore", ".github/workflows/image.yml"];
 
+/// The Helm chart, as (suffix, path, template).
+const K8S_FILES: [(&str, &str, &str); 6] = [
+    (
+        "chart",
+        "deploy/chart/Chart.yaml",
+        include_str!("../../../../templates/add/k8s_chart.yaml"),
+    ),
+    (
+        "values",
+        "deploy/chart/values.yaml",
+        include_str!("../../../../templates/add/k8s_values.yaml"),
+    ),
+    (
+        "deployment",
+        "deploy/chart/templates/deployment.yaml",
+        include_str!("../../../../templates/add/k8s_deployment.yaml"),
+    ),
+    (
+        "service",
+        "deploy/chart/templates/service.yaml",
+        include_str!("../../../../templates/add/k8s_service.yaml"),
+    ),
+    (
+        "configmap",
+        "deploy/chart/templates/configmap.yaml",
+        include_str!("../../../../templates/add/k8s_configmap.yaml"),
+    ),
+    (
+        "prometheus-rule",
+        "deploy/chart/templates/prometheus-rule.yaml",
+        include_str!("../../../../templates/add/k8s_prometheus_rule.yaml"),
+    ),
+];
+
 /// Pinned by commit, not by tag: a tag is mutable and a moved tag is a supply
 /// chain compromise nobody sees in the diff. Kept in step with
 /// `add/tooling.rs`, which pins the same two.
@@ -54,6 +88,11 @@ pub(super) fn paths(model: &AppModel) -> Vec<ProjectPath> {
     if has(model, "ci") {
         paths.push(ProjectPath::parse(CI_WORKFLOW_PATH).expect("registered project path is valid"));
     }
+    if has(model, "k8s") {
+        paths.extend(K8S_FILES.iter().map(|(_, path, _)| {
+            ProjectPath::parse(*path).expect("registered project path is valid")
+        }));
+    }
     if has(model, "docker") {
         paths.extend(
             DOCKER_PATHS
@@ -87,6 +126,7 @@ pub(super) fn lower_and_emit(
         "loadtest" => lower_loadtest(model, capability, output),
         "ci" => lower_ci(model, capability, output, observed),
         "docker" => lower_docker(model, capability, output, observed),
+        "k8s" => lower_k8s(model, capability, output),
         _ => Ok(()),
     }
 }
@@ -179,6 +219,70 @@ fn lower_docker(
         )?;
     }
     Ok(())
+}
+
+/// The Helm chart, and the three declarations it cannot deploy without.
+///
+/// The legacy engine reads the pom for two of these and the filesystem for the
+/// third. Canonically all three are model questions -- the capability is
+/// declared or it is not -- which is both simpler and stricter: a project that
+/// had `spring-boot-starter-actuator` spliced in by hand satisfied the old
+/// check while having no actuator capability for `sync` to reconcile.
+///
+/// The chart is named from the model's project name rather than the pom's
+/// artifactId. That is the canonical answer -- `AppModel` is where names come
+/// from -- and it is a real difference from the legacy chain of artifactId,
+/// then directory name, then `"application"`, for a project whose declared
+/// name and coordinate disagree.
+fn lower_k8s(
+    model: &AppModel,
+    capability: &Capability,
+    output: &mut RenderedTree,
+) -> Result<(), CompileError> {
+    for (kind, fix) in [
+        ("actuator", "jails add actuator"),
+        ("observability", "jails add observability"),
+        ("docker", "jails add docker"),
+    ] {
+        if !has(model, kind) {
+            return Err(CompileError::new(format!(
+                "k8s probes, burn-rate alerts and the image it deploys need the `{kind}` capability.\n       fix: run `{fix}` first."
+            )));
+        }
+    }
+    let name = helm_name(&model.project.name);
+    for (suffix, path, template) in K8S_FILES {
+        reader_facet::emit_managed_file(
+            output,
+            capability,
+            suffix,
+            ProjectPath::parse(path).map_err(CompileError::new)?,
+            template.replace("{{NAME}}", &name).into_bytes(),
+            FileMode::Regular,
+        )?;
+    }
+    Ok(())
+}
+
+/// A DNS-1123 label: lowercase alphanumerics and single hyphens, 63 bytes.
+///
+/// Kubernetes rejects anything else, and it rejects it at apply time -- long
+/// after the chart was generated and committed.
+fn helm_name(name: &str) -> String {
+    let mut out = String::new();
+    for character in name.chars() {
+        if character.is_ascii_alphanumeric() {
+            out.push(character.to_ascii_lowercase());
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let out = out.trim_matches('-');
+    if out.is_empty() {
+        "application".to_string()
+    } else {
+        out.chars().take(63).collect()
+    }
 }
 
 fn lower_loadtest(

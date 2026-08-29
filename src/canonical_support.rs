@@ -87,8 +87,9 @@ pub(crate) fn capability(kind: Capability) -> Support {
         | Capability::Loadtest
         | Capability::Ci
         | Capability::Docker
+        | Capability::K8s
         | Capability::Testkit => Support::Native,
-        Capability::Format | Capability::K8s => Support::Compatibility,
+        Capability::Format => Support::Compatibility,
     }
 }
 
