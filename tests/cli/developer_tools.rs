@@ -944,3 +944,247 @@ fn setup_writes_the_reuse_key_into_the_home_it_is_given() {
         "setup wrote a file without the key it exists to set: {text}"
     );
 }
+
+/// Which generator kinds a real compiler never sees.
+///
+/// `simplify-sol.md`'s G3: *maintain a machine-readable map from every
+/// generator kind and capability to a build fixture. Build the exact generated
+/// tree under test -- not a neighbouring toolbox.* This is the first half: the
+/// map, **derived rather than declared**, because `CLAUDE.md`'s rule for the
+/// scenario table applies here too -- which kinds a test covers is a fact
+/// about its steps, not a fourth list to keep in step by hand.
+///
+/// A kind counts as compiled when some test both generates it and gates on a
+/// real toolchain. The number matters because the golden suite checks *bytes*,
+/// not compilability: jails can emit Java that does not compile for any of the
+/// kinds below and every existing test stays green. That is the hole G3 is
+/// about, and it is `NOT_COMPILED.len()` wide.
+///
+/// **Ratchet, not a threshold.** The list may shrink and may not grow. Closing
+/// it means adding real builds to a suite that is already 108s of `tests/cli`,
+/// so each one is a deliberate trade rather than a sweep -- see `plan.md`
+/// P13.7 for where that time goes.
+#[test]
+fn no_new_generator_kind_escapes_the_real_toolchain() {
+    /// Kinds no real compiler currently builds. Shrink only.
+    ///
+    /// Most are Spring-only and the plain fixtures refuse them, so covering
+    /// one means generating it into a Spring toolbox and building that.
+    const NOT_COMPILED: [&str; 13] = [
+        "association",
+        "cli",
+        "durable-job",
+        "fetcher",
+        "handler",
+        "http-sink",
+        "http-workflow",
+        "interface",
+        "migration",
+        "presence",
+        "seed",
+        "socket",
+        "test",
+    ];
+
+    let surface = jails_cmd(&temp_dir("kind-build-coverage"), None)
+        .args(["commands", "--json"])
+        .output()
+        .unwrap();
+    assert!(surface.status.success());
+    let surface = String::from_utf8_lossy(&surface.stdout);
+    let kinds = catalog_section(&surface, "kinds");
+    assert!(
+        kinds.len() > 30,
+        "the catalog reported only {} kinds -- it has stopped describing the \
+         surface",
+        kinds.len()
+    );
+
+    let compiled = kinds_reaching_a_real_toolchain(&kinds);
+    let escaping: Vec<&String> = kinds.iter().filter(|k| !compiled.contains(*k)).collect();
+    let recorded: std::collections::BTreeSet<&str> = NOT_COMPILED.into_iter().collect();
+
+    let unrecorded: Vec<&&String> = escaping
+        .iter()
+        .filter(|k| !recorded.contains(k.as_str()))
+        .collect();
+    assert!(
+        unrecorded.is_empty(),
+        "these kinds generate Java that no real compiler ever sees, and are \
+         not in `NOT_COMPILED`: {unrecorded:?}\n       fix: generate the kind \
+         inside a toolbox a real-toolchain test builds, so a change that stops \
+         it compiling fails here rather than shipping"
+    );
+    let fixed: Vec<&&str> = recorded
+        .iter()
+        .filter(|k| compiled.iter().any(|done| done == *k))
+        .collect();
+    assert!(
+        fixed.is_empty(),
+        "these kinds are compiled now and still listed in `NOT_COMPILED`: \
+         {fixed:?}\n       fix: take them out -- an improvement nobody records \
+         is one the next change silently undoes"
+    );
+}
+
+/// Names in one `jails commands --json` section.
+fn catalog_section(surface: &str, section: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let Some(start) = surface.find(&format!("\"{section}\": [")) else {
+        return names;
+    };
+    let body = &surface[start..];
+    let end = body.find("\n  ]").unwrap_or(body.len());
+    for line in body[..end].lines() {
+        let Some(at) = line.find("\"name\": \"") else {
+            continue;
+        };
+        let rest = &line[at + "\"name\": \"".len()..];
+        if let Some(stop) = rest.find('"') {
+            names.push(rest[..stop].to_string());
+        }
+    }
+    names
+}
+
+/// Kinds generated inside a function that gates on a real toolchain.
+///
+/// Per file and per function, with **string literals blanked before the braces
+/// are counted**. That is `java::blanked()`'s trick, and it is not optional
+/// here: these files are full of Java fixtures, so a `{` inside a string
+/// literal is not a block. Counting them raw made one function's body span the
+/// rest of the file, which reported every kind as compiled -- the same shape
+/// of wrong answer as reporting none.
+///
+/// The blanked copy is the same length as the original, so offsets found in
+/// one index the other: braces are matched in the blank, content is read from
+/// the source.
+fn kinds_reaching_a_real_toolchain(kinds: &[String]) -> std::collections::BTreeSet<String> {
+    const REAL: [&str; 6] = [
+        "real_mvn_available",
+        "real_java_supports_target_release",
+        "verified_spring_toolbox",
+        "verified_spring_services_toolbox",
+        "verified_plain_toolbox",
+        "maven_report_summary",
+    ];
+    let mut compiled = std::collections::BTreeSet::new();
+    for source in test_source_files() {
+        let blanked = blank_literals(&source);
+        let bytes = blanked.as_bytes();
+        for (at, _) in blanked.match_indices("fn ") {
+            let Some(open) = blanked[at..].find('{').map(|i| at + i) else {
+                continue;
+            };
+            let mut depth = 0usize;
+            let mut close = open;
+            for (index, byte) in bytes.iter().enumerate().skip(open) {
+                match byte {
+                    b'{' => depth += 1,
+                    b'}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close = index;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if close <= open {
+                continue;
+            }
+            let body = &source[open..close];
+            if !REAL.iter().any(|marker| body.contains(marker)) {
+                continue;
+            }
+            let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
+            for kind in kinds {
+                if flat.contains(&format!("\"generate\", \"{kind}\""))
+                    || flat.contains(&format!("\"g\", \"{kind}\""))
+                {
+                    compiled.insert(kind.clone());
+                }
+            }
+        }
+    }
+    compiled
+}
+
+/// Each `tests/**/*.rs` separately, with `//` comments blanked in place.
+///
+/// Separately, because concatenating them lets one file's unbalanced-looking
+/// braces run into the next.
+fn test_source_files() -> Vec<String> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries {
+            let path = entry.expect("failed to read a directory entry").path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                let mut kept = String::with_capacity(text.len());
+                for line in text.lines() {
+                    let code = line.split("//").next().unwrap_or("");
+                    kept.push_str(code);
+                    kept.push_str(&" ".repeat(line.len() - code.len()));
+                    kept.push('\n');
+                }
+                out.push(kept);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(
+        &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests"),
+        &mut out,
+    );
+    out
+}
+
+/// String and char literals replaced by spaces of the same length.
+fn blank_literals(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut out = String::with_capacity(source.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if source[i..].starts_with('r') && source[i + 1..].starts_with(['#', '"']) {
+            let hashes = source[i + 1..].bytes().take_while(|b| *b == b'#').count();
+            if source[i + 1 + hashes..].starts_with('"') {
+                let close = format!("\"{}", "#".repeat(hashes));
+                let mut end = i + 1 + hashes + 1;
+                while end < bytes.len() && !bytes[end..].starts_with(close.as_bytes()) {
+                    end += 1;
+                }
+                let end = (end + close.len()).min(bytes.len());
+                blank_span(&source[i..end], &mut out);
+                i = end;
+                continue;
+            }
+        }
+        if bytes[i] == b'"' {
+            let mut end = i + 1;
+            while end < bytes.len() && bytes[end] != b'"' {
+                end += if bytes[end] == b'\\' { 2 } else { 1 };
+            }
+            let end = (end + 1).min(bytes.len());
+            blank_span(&source[i..end], &mut out);
+            i = end;
+            continue;
+        }
+        let ch = source[i..].chars().next().expect("in bounds");
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+/// One space per byte, newlines kept, so offsets and line numbers survive.
+fn blank_span(span: &str, out: &mut String) {
+    for byte in span.bytes() {
+        out.push(if byte == b'\n' { '\n' } else { ' ' });
+    }
+}

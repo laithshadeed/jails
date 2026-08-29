@@ -298,9 +298,27 @@ verbatim from `customer.js` and `admin.js`:
       its path *literally* rather than assemble it from a loop variable, since
       a journey the gate cannot see reads exactly like a missing one.
 
-      **What is left is G3-G5**, and none is a sweep: a machine-readable kind/capability
-      to build-fixture map that builds the exact tree under test rather than a
-      neighbouring toolbox (G3), a child-process death matrix over the
+      **G3 is measured and ratcheted, not closed.** 26 of 39 generator kinds
+      are compiled by a real toolchain; 13 are not, and
+      `no_new_generator_kind_escapes_the_real_toolchain` records exactly which
+      and fails in both directions. This matters because the golden suite
+      checks *bytes*, not compilability: jails can emit Java that does not
+      compile for any of those 13 and every existing test stays green.
+
+      Closing one means generating that kind into a toolbox a real-toolchain
+      test builds. Most are Spring-only, so a plain fixture refuses them. Each
+      costs roughly one Maven invocation -- about 8.7s of work against a suite
+      already at 108s (P13.7) -- so they are a costed trade, not a sweep.
+
+      **Getting that number right took three wrong answers**, and the reason is
+      worth keeping: the matcher counts braces to find function bodies, and
+      these files are full of Java fixtures, so a `{` inside a string literal
+      is not a block. Counting raw made one body span the rest of its file and
+      reported *every* kind as compiled. Blanking literals first --
+      `java::blanked()`'s trick, which `CLAUDE.md` already records for the
+      `generate.rs` test extraction -- is what made it trustworthy.
+
+      **What is left is G4-G5**: a child-process death matrix over the
       failpoint registry (G4 proper -- the gate above proves the registry is
       honest, not that each fault is exercised), and the real-project corpus
       (G5). `tests/differential.rs` is G1's harness with 30 journeys;
