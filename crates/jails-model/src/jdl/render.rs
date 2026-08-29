@@ -40,7 +40,7 @@ pub(super) fn render(document: DocumentDraft) -> Result<String, Diagnostics> {
     for capability in capabilities {
         output.push_str(&format!(
             "\n[capabilities.{}]\nid = {}\nkind = {}\n",
-            capability.label,
+            quote(&capability.label),
             quote(&capability.id),
             quote(&capability.kind)
         ));
@@ -54,7 +54,7 @@ pub(super) fn render(document: DocumentDraft) -> Result<String, Diagnostics> {
     for dependency in dependencies {
         output.push_str(&format!(
             "\n[dependencies.{}]\nid = {}\ngroup = {}\nartifact = {}\n",
-            dependency.label,
+            quote(&dependency.label),
             quote(&dependency.id),
             quote(&dependency.group),
             quote(&dependency.artifact),
@@ -67,7 +67,7 @@ pub(super) fn render(document: DocumentDraft) -> Result<String, Diagnostics> {
     for setting in settings {
         output.push_str(&format!(
             "\n[settings.{}]\nid = {}\nkey = {}\nvalue = {}\ntarget = {}\n",
-            setting.label,
+            quote(&setting.label),
             quote(&setting.id),
             quote(&setting.key),
             quote(&setting.value),
@@ -77,7 +77,7 @@ pub(super) fn render(document: DocumentDraft) -> Result<String, Diagnostics> {
     for ejection in ejections {
         output.push_str(&format!(
             "\n[ejections.{}]\nid = {}\ntarget = {}\n",
-            ejection.label,
+            quote(&ejection.label),
             quote(&ejection.id),
             quote(&ejection.target),
         ));
@@ -85,7 +85,7 @@ pub(super) fn render(document: DocumentDraft) -> Result<String, Diagnostics> {
     for unit in units {
         output.push_str(&format!(
             "\n[units.{}]\nid = {}\nkind = {}\njava_name = {}\n",
-            unit.label,
+            quote(&unit.label),
             quote(&unit.id),
             quote(unit.kind),
             quote(&unit.name),
@@ -128,7 +128,7 @@ pub(super) fn render(document: DocumentDraft) -> Result<String, Diagnostics> {
     for entity in entities {
         output.push_str(&format!(
             "\n[entities.{}]\nid = {}\njava_name = {}\nfacets = [{}]\n",
-            entity.label,
+            quote(&entity.label),
             quote(&entity.id),
             quote(&entity.name),
             entity
@@ -147,8 +147,8 @@ pub(super) fn render(document: DocumentDraft) -> Result<String, Diagnostics> {
         for field in entity.fields {
             output.push_str(&format!(
                 "\n[entities.{}.fields.{}]\nid = {}\njava_name = {}\ntype = {}\nrequired = {}\nnon_blank = {}\nprimary_key = {}\nunique = {}\nindexed = {}\n",
-                entity.label,
-                field.label,
+                quote(&entity.label),
+                quote(&field.label),
                 quote(&field.id),
                 quote(&field.name),
                 quote(&field.type_name),
@@ -171,8 +171,8 @@ pub(super) fn render(document: DocumentDraft) -> Result<String, Diagnostics> {
         for index in entity.indexes {
             output.push_str(&format!(
                 "\n[entities.{}.indexes.{}]\nid = {}\ncolumns = [{}]\n",
-                entity.label,
-                index.label,
+                quote(&entity.label),
+                quote(&index.label),
                 quote(&index.id),
                 index
                     .columns
@@ -192,7 +192,7 @@ pub(super) fn render(document: DocumentDraft) -> Result<String, Diagnostics> {
     for enumeration in enums {
         output.push_str(&format!(
             "\n[entities.{}]\nid = {}\njava_name = {}\nfacets = [\"enum\"]\nvalues = [{}]\n",
-            enumeration.label,
+            quote(&enumeration.label),
             quote(&enumeration.id),
             quote(&enumeration.name),
             enumeration

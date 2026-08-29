@@ -146,7 +146,7 @@ impl OperationDraft {
     pub(super) fn render_toml(self, output: &mut String) -> Result<(), Diagnostics> {
         output.push_str(&format!(
             "\n[operations.{}]\nkind = {}\nid = {}\non = {}\n",
-            self.label,
+            quote(&self.label),
             quote(self.kind.name()),
             quote(&self.id),
             quote(&self.on)

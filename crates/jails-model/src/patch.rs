@@ -9,6 +9,23 @@ use crate::{Component, SourceUnit};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ModelPatch {
     Batch(Vec<ModelPatch>),
+    /// Replace the whole model, for a source-language upgrade.
+    ///
+    /// **The one patch that is not an edit**, and it exists for exactly one
+    /// caller: `jails model upgrade --to 1` rewrites `.jails/model.jdl` from
+    /// the pre-v1 draft into JDL v1, and the two dialects do not link to the
+    /// same model -- v1 materializes projections, links operation parameters
+    /// and reads `storage` as a capability, none of which any sequence of
+    /// field- and entity-level patches describes.
+    ///
+    /// It is deliberately not general. Every other mutation carries evolution
+    /// *intent* the new model cannot state -- retire versus drop, a backfill
+    /// policy, which column a rename preserves -- so routing an ordinary edit
+    /// through here would lose the one thing the patch is for. The upgrade has
+    /// no such intent: the model is the same application, re-read by a
+    /// stricter parser, and `jails_model::upgrade` proves every stable ID and
+    /// physical name survived before this variant is ever built.
+    ReplaceModel(Box<crate::AppModel>),
     AddCapability(Capability),
     RemoveCapability(CapabilityId),
     AddDependency(Dependency),

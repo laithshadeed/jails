@@ -8,6 +8,7 @@ use crate::{AppModel, Diagnostics, EndpointMethod, RequestFormat};
 mod declaration;
 mod operation;
 mod render;
+pub mod upgrade;
 pub mod v1;
 use declaration::{DependencyDraft, EjectionDraft, SettingDraft};
 use operation::OperationDraft;
@@ -646,21 +647,22 @@ fn first_word(input: &str) -> &str {
     input.split_whitespace().next().unwrap_or_default()
 }
 
+/// The stable label a pre-v1 name gets.
+///
+/// **It is `naming::stable_fragment`, and it used to be a second copy.** The
+/// copy differed in one way that looks cosmetic and is not: it left every
+/// character that is neither a letter nor `-` alone, so a dot survived into
+/// the label. A label is the key of the intermediate TOML table *and* a model
+/// label, so `dependency org.apache.commons:commons-csv` -- any real Maven
+/// group -- and `setting server.port` -- the most ordinary setting there is --
+/// each produced a label the linker then refused. Neither parsed at all.
+///
+/// `stable_fragment` agrees with the old function on every name that was
+/// already accepted: both lowercase, both split camelCase on an underscore,
+/// both map `-` to `_`. It differs only where the old one produced something
+/// invalid.
 fn label(value: &str) -> String {
-    let mut output = String::new();
-    for (offset, character) in value.chars().enumerate() {
-        if character.is_ascii_uppercase() {
-            if offset > 0 {
-                output.push('_');
-            }
-            output.push(character.to_ascii_lowercase());
-        } else if character == '-' {
-            output.push('_');
-        } else {
-            output.push(character);
-        }
-    }
-    output
+    crate::naming::stable_fragment(value)
 }
 
 fn normalize_type(value: &str) -> &str {

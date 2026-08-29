@@ -62,6 +62,7 @@ pub(crate) fn run(command: ModelCommand, invocation: Invocation) -> Result<()> {
             let manifest = resolve_manifest(manifest.as_deref())?;
             check(&manifest, frozen, invocation.output)
         }
+        ModelCommand::Upgrade { to } => crate::model_upgrade::run(to, invocation),
         ModelCommand::Fmt { check } => format(check, invocation),
         ModelCommand::Plan { manifest, bundle } => {
             let manifest = resolve_manifest(manifest.as_deref())?;

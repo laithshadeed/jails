@@ -10268,3 +10268,183 @@ entity Task {
         String::from_utf8_lossy(&frozen.stderr)
     );
 }
+
+/// `jdl-sol.md` §22's bridge, end to end on a real project.
+///
+/// The property that matters is not that the file changed shape -- it is that
+/// **nothing was re-identified**. The two dialects derive a field's stable ID
+/// from different things (`fld_<entity label>_<field>` against
+/// `fld_<entity id>_<field>`), so a translation that only fixed the syntax
+/// would hand the next `sync` a model where every field is new: a dropped
+/// column and an added one, against a table that is already there. So this
+/// asserts the generated tree is byte-identical across the upgrade, which is
+/// the observable form of "the identities held".
+#[test]
+fn jdl_upgrade_moves_a_pre_v1_draft_onto_v1_without_re_identifying_anything() {
+    let root = temp_dir("jdl-upgrade-to-v1");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    let draft = "// the demo application\n\
+                 application Demo @id(project_demo)\n\
+                 package com.example.demo\n\
+                 java 26\n\
+                 dialect postgresql\n\
+                 \n\
+                 capability api @id(cap_api)\n\
+                 dependency org.apache.commons:commons-csv = \"1.13.0\"\n\
+                 setting server.port = \"8080\"\n\
+                 \n\
+                 entity Task @id(ent_task) @scaffold {\n\
+                 \x20 id: uuid @pk\n\
+                 \x20 title: string!\n\
+                 \x20 done: boolean?\n\
+                 }\n";
+    fs::write(root.join(".jails/model.jdl"), draft).unwrap();
+
+    let sync = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        sync.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sync.stderr)
+    );
+    let before = generated_tree(&root);
+    assert!(
+        before.keys().any(|path| path.ends_with("domain/Task.java")),
+        "{before:?}"
+    );
+
+    let upgrade = jails_cmd(&root, None)
+        .args(["model", "upgrade", "--to", "1"])
+        .output()
+        .unwrap();
+    assert!(
+        upgrade.status.success(),
+        "{}",
+        String::from_utf8_lossy(&upgrade.stderr)
+    );
+
+    let upgraded = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(upgraded.starts_with("jdl 1\n"), "{upgraded}");
+    assert!(upgraded.contains("platform spring"), "{upgraded}");
+    assert!(upgraded.contains("build maven"), "{upgraded}");
+    assert!(upgraded.contains("storage postgres"), "{upgraded}");
+    assert!(upgraded.contains("// the demo application"), "{upgraded}");
+    assert!(upgraded.contains("@id(ent_task)"), "{upgraded}");
+
+    // **Every artifact that existed still exists, byte for byte, except the
+    // record.** That is the identity property stated observably: a re-keyed
+    // field would change a JDBC column, an artifact id, or a file path, and
+    // all three are in this comparison.
+    let after = generated_tree(&root);
+    for (path, bytes) in &before {
+        let Some(upgraded) = after.get(path) else {
+            panic!("`{path}` disappeared across the upgrade");
+        };
+        if path.ends_with("domain/Task.java") {
+            continue;
+        }
+        assert_eq!(upgraded, bytes, "`{path}` changed across the upgrade");
+    }
+
+    // Two changes are intended, and the command says both out loud rather
+    // than leaving them for a reviewer to spot in the diff.
+    let told = String::from_utf8_lossy(&upgrade.stdout);
+    assert!(told.contains("note: the `db` capability"), "{told}");
+    assert!(told.contains("declaration order"), "{told}");
+
+    // v1 keeps a record's fields in declaration order; the pre-v1 draft sorted
+    // them by label, so `Task(done, id, title)` becomes `Task(id, title,
+    // done)`. That moves the positional constructor, which is exactly why the
+    // upgrade is reviewed rather than applied silently.
+    let record = after
+        .get("main/java/com/example/demo/domain/Task.java")
+        .unwrap();
+    let components = record
+        .split_once("public record Task(")
+        .unwrap()
+        .1
+        .split_once(')')
+        .unwrap()
+        .0;
+    assert!(
+        components.find("UUID id").unwrap() < components.find("String title").unwrap(),
+        "{components}"
+    );
+    assert!(
+        components.find("String title").unwrap()
+            < components.find("Optional<Boolean> done").unwrap(),
+        "{components}"
+    );
+
+    // The storage axis is the other one: `dialect postgresql` has no v1
+    // spelling that leaves the `db` capability out, so the JDBC adapter it
+    // implies arrives with it.
+    assert!(
+        after
+            .keys()
+            .any(|path| path.ends_with("adapters/jdbc/JdbcTaskRepository.java")),
+        "{:?}",
+        after.keys().collect::<Vec<_>>()
+    );
+
+    // The upgraded source is the one file nobody hand-wrote, so it must
+    // already satisfy the formatter and must be idempotent under `sync`.
+    let formatted = jails_cmd(&root, None)
+        .args(["model", "fmt", "--check"])
+        .output()
+        .unwrap();
+    assert!(
+        formatted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&formatted.stderr)
+    );
+    let resync = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        resync.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resync.stderr)
+    );
+    assert_eq!(
+        generated_tree(&root),
+        after,
+        "`sync` after the upgrade is not a no-op"
+    );
+
+    // Upgrading twice is a refusal, not a second rewrite.
+    let again = jails_cmd(&root, None)
+        .args(["model", "upgrade", "--to", "1"])
+        .output()
+        .unwrap();
+    assert!(!again.status.success());
+    assert!(
+        String::from_utf8_lossy(&again.stderr).contains("already JDL v1"),
+        "{}",
+        String::from_utf8_lossy(&again.stderr)
+    );
+}
+
+/// Every file under the managed root, so two trees can be compared as one
+/// value.
+fn generated_tree(root: &Path) -> std::collections::BTreeMap<String, String> {
+    let mut tree = std::collections::BTreeMap::new();
+    let generated = root.join(".jails/generated");
+    if !generated.exists() {
+        return tree;
+    }
+    let mut stack = vec![generated.clone()];
+    while let Some(directory) = stack.pop() {
+        for entry in fs::read_dir(&directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                let relative = path.strip_prefix(&generated).unwrap();
+                tree.insert(
+                    relative.to_string_lossy().replace('\\', "/"),
+                    fs::read_to_string(&path).unwrap_or_default(),
+                );
+            }
+        }
+    }
+    tree
+}

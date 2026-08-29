@@ -45,6 +45,9 @@ pub use id::{
     StableId, UnitId,
 };
 pub use jdl::parse as parse_jdl;
+pub use jdl::upgrade::{
+    Axes as JdlAxes, Build as JdlBuild, Platform as JdlPlatform, upgrade as upgrade_jdl,
+};
 pub use jdl::v1::{
     DeclarationCst, DocumentCst, MemberCst, Span as JdlSpan, Token as JdlToken,
     TokenKind as JdlTokenKind, append_jdl_declaration, format as format_jdl_v1,

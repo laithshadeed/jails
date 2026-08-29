@@ -131,14 +131,7 @@ fn capture_model_state(
     for reader_path in reader_paths {
         capture_optional_file(root, reader_path.as_str(), &mut files, &mut preconditions)?;
     }
-    let build_system = match (
-        root.join("pom.xml").is_file(),
-        root.join("build.gradle").is_file() || root.join("build.gradle.kts").is_file(),
-    ) {
-        (true, false) => BuildSystem::Maven,
-        (false, true) => BuildSystem::Gradle,
-        _ => BuildSystem::Unknown,
-    };
+    let build_system = observe_build_system(root);
     // Read from the capture, not from disk a second time: the whole point of
     // the snapshot is that an external fact is observed once, and a layout read
     // separately could disagree with the precondition recorded above.
@@ -178,6 +171,33 @@ fn capture_model_state(
     snapshot.preconditions = preconditions;
     snapshot.files = files;
     Ok(snapshot)
+}
+
+/// Which build language this module uses, observed from its build files.
+///
+/// **Public because a second reader of the same two filenames is a second
+/// answer.** `jails model upgrade` needs the `build` axis before any plan
+/// exists, and `jdl-sol.md` §22 says an unsupported build language aborts the
+/// upgrade rather than being guessed -- so it needs exactly this function's
+/// `Unknown`, not a fresh pair of `is_file` calls that could disagree with the
+/// snapshot the very next command captures.
+pub fn observe_build_system(root: &Path) -> BuildSystem {
+    match (
+        root.join("pom.xml").is_file(),
+        root.join("build.gradle").is_file() || root.join("build.gradle.kts").is_file(),
+    ) {
+        (true, false) => BuildSystem::Maven,
+        (false, true) => BuildSystem::Gradle,
+        _ => BuildSystem::Unknown,
+    }
+}
+
+/// This module's Spring Boot version, or `None` for a plain project.
+///
+/// Public for the same reason [`observe_build_system`] is: the `platform` axis
+/// an upgrade materializes has to be the axis the next capture will observe.
+pub fn observe_spring_boot(root: &Path, build_system: BuildSystem) -> Option<String> {
+    spring_boot_version(root, build_system)
 }
 
 fn spring_boot_version(root: &Path, build_system: BuildSystem) -> Option<String> {

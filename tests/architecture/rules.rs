@@ -37,6 +37,12 @@ fn owns_terminal_output(path: &Path) -> bool {
         || relative == "src/model_command.rs"
         || relative == "src/model_generate.rs"
         || relative == "src/model_import.rs"
+        // Sibling of `model_import.rs` and classified for the same reason: a
+        // CLI command module whose contract includes telling the reader what
+        // the upgrade changes about the model before the plan is shown. §22
+        // requires that review step, and two of the translations mean
+        // something a reviewer should not have to spot in the diff.
+        || relative == "src/model_upgrade.rs"
         || relative == "src/parse_error.rs"
         || relative.starts_with("src/new/")
         || relative == "crates/jails-support/src/lib.rs"
@@ -503,6 +509,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails", "model_rename", 9),
     ("jails", "model_resource", 9),
     ("jails", "model_setting", 9),
+    ("jails", "model_upgrade", 9),
     ("jails", "canonical_support", 9),
     ("jails", "parse_error", 9),
     ("jails", "facade", 9),

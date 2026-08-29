@@ -19,6 +19,7 @@ mod model_index;
 mod model_rename;
 mod model_resource;
 mod model_setting;
+mod model_upgrade;
 mod new;
 mod parse_error;
 mod plan_command;

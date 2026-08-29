@@ -8,6 +8,7 @@ impl AppModel {
     /// Apply a semantic patch without involving syntax or the filesystem.
     pub fn apply(&mut self, patch: ModelPatch) -> Result<(), String> {
         match patch {
+            ModelPatch::ReplaceModel(model) => *self = *model,
             ModelPatch::AddEntity(entity) => {
                 let id = entity.id.clone();
                 if self.entities.contains_key(&id) {
