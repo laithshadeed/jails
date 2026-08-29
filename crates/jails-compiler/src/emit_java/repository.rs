@@ -163,3 +163,68 @@ pub(super) fn lower_db_repository(
         },
     })
 }
+
+/// The search port's JDBC implementation.
+///
+/// Two details decide whether this works at all, and both are easy to undo.
+///
+/// **`websearch_to_tsquery`, not `to_tsquery`.** The latter demands operator
+/// syntax and throws a syntax error on anything a person would actually type,
+/// a bare two-word phrase included. The former accepts what a search box
+/// produces -- quotes, `OR`, `-` -- and never throws on malformed input. A
+/// search endpoint that 500s on an apostrophe is what that avoids.
+///
+/// **The query is a bind parameter.** It is text PostgreSQL parses, not SQL it
+/// executes, so there is no injection surface and no escaping to get right.
+pub(super) fn lower_search_adapter(
+    model: &AppModel,
+    capability_id: &str,
+    entity: &Entity,
+) -> Result<Unit, CompileError> {
+    let package = model.project.package_for(Package::AdaptersJdbc);
+    let record = &entity.names.java_type;
+    let type_name = format!("Jdbc{record}Search");
+    let port = format!(
+        "{}.{record}Search",
+        model.project.package_for(Package::PortsSearch)
+    );
+    let imports = BTreeSet::from([
+        port,
+        domain_import(model, entity),
+        "java.util.List".to_string(),
+        "org.springframework.jdbc.core.simple.JdbcClient".to_string(),
+        "org.springframework.stereotype.Repository".to_string(),
+    ]);
+    let table = &entity.names.sql_table;
+    let column_list = entity
+        .fields
+        .iter()
+        .map(|field| field.names.sql_column.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let column = crate::emit_sql::SEARCH_COLUMN;
+    let configuration = crate::emit_sql::SEARCH_CONFIGURATION;
+    let body = format!(
+        "@Repository\npublic final class {type_name} implements {record}Search {{\n\n    private static final String SQL =\n            \"\"\"\n            select {column_list}\n              from {table}\n             where {column} @@ websearch_to_tsquery('{configuration}', :query)\n             order by ts_rank({column}, websearch_to_tsquery('{configuration}', :query)) desc\n             limit :limit\n            \"\"\";\n\n    private final JdbcClient jdbc;\n\n    public {type_name}(JdbcClient jdbc) {{\n        this.jdbc = jdbc;\n    }}\n\n    @Override\n    public List<{record}> matching(String query, int limit) {{\n        return jdbc.sql(SQL)\n                .param(\"query\", query)\n                .param(\"limit\", limit)\n                .query({record}.class)\n                .list();\n    }}\n}}"
+    );
+    let artifact_id = format!("art_{capability_id}_{}_search", entity.id.as_str());
+    let rendered = render(&package, &imports, &body, &artifact_id);
+    let package_path = package.replace('.', "/");
+    let path = ProjectPath::parse(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))
+        .map_err(CompileError::new)?;
+    Ok(Unit {
+        path,
+        file: RenderedFile {
+            kind: FileKind::JavaMain,
+            mode: FileMode::Regular,
+            bytes: rendered.into_bytes(),
+            provenance: Provenance {
+                artifact_id,
+                ejection_id: Some(capability_id.to_string()),
+                ejectable: true,
+                semantic_ids: BTreeSet::from([entity.id.as_str().to_string()]),
+                compiler_pass: "java-search-adapter".to_string(),
+            },
+        },
+    })
+}

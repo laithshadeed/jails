@@ -93,6 +93,20 @@ pub(crate) fn lower_and_emit(
                 .insert(unit.path, unit.file)
                 .map_err(CompileError::new)?;
         }
+        // The search port's only implementation, and it belongs here rather
+        // than beside the port: searching is a JDBC concern and the port
+        // exists so a project that later moves search elsewhere replaces this
+        // and nothing else.
+        for entity in model
+            .entities
+            .values()
+            .filter(|entity| entity.active && entity.facets.contains(&Facet::Search))
+        {
+            let unit = repository::lower_search_adapter(model, capability.id.as_str(), entity)?;
+            output
+                .insert(unit.path, unit.file)
+                .map_err(CompileError::new)?;
+        }
     }
     Ok(())
 }
@@ -185,13 +199,17 @@ fn lower_facet(model: &AppModel, entity: &Entity, facet: Facet) -> Result<Unit, 
         Facet::Search => {
             let package = model.project.package_for(Package::PortsSearch);
             let type_name = format!("{}Search", entity.names.java_type);
+            let record = &entity.names.java_type;
             let imports = BTreeSet::from([
                 "java.util.List".to_string(),
-                format!("{domain_package}.{}", entity.names.java_type),
+                format!("{domain_package}.{record}"),
             ]);
+            // `matching(query, limit)`, not `search(query)`. There is no
+            // unbounded overload on purpose: a search with no limit is a full
+            // scan waiting for the table to grow, and the caller who wants
+            // everything can say so.
             let body = format!(
-                "public interface {type_name} {{\n\n    List<{}> search(String query);\n}}",
-                entity.names.java_type
+                "public interface {type_name} {{\n\n    /**\n     * @param query what the reader typed. It is parsed by PostgreSQL, not\n     *     concatenated into SQL -- see the adapter.\n     * @param limit how many rows at most.\n     */\n    List<{record}> matching(String query, int limit);\n}}"
             );
             (package, type_name, body, imports)
         }

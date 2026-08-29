@@ -600,12 +600,31 @@ fn insert_indented_block(text: &str, at: usize, block: &str, extra: usize) -> St
     insert_at_line(text, at, &indent_block(block, &indent))
 }
 
+/// Insert `block` immediately before the element that closes at `at`.
+///
+/// Normally that means the start of `at`'s line, so the inserted block lands
+/// on its own lines with the closing tag's indentation intact. **Only when
+/// that line holds nothing but whitespace before `at`** -- which is the case
+/// for every pom anyone formats, and is what makes the indentation correct.
+///
+/// When it does not, the block goes at `at` exactly. A reader whose
+/// `<dependencies><dependency>...</dependency></dependencies>` is one line got
+/// the block inserted before the *whole element*, outside `<dependencies>`,
+/// and Maven then refuses to read the pom at all: every goal fails, `validate`
+/// included, and the project is worse off than before the command ran. That is
+/// the failure `CLAUDE.md` records for a versionless dependency, reached by a
+/// different route.
 fn insert_at_line(text: &str, at: usize, block: &str) -> String {
     let line = text[..at].rfind('\n').map_or(0, |newline| newline + 1);
+    let at = if text[line..at].trim().is_empty() {
+        line
+    } else {
+        at
+    };
     let mut output = String::with_capacity(text.len() + block.len());
-    output.push_str(&text[..line]);
+    output.push_str(&text[..at]);
     output.push_str(block);
-    output.push_str(&text[line..]);
+    output.push_str(&text[at..]);
     output
 }
 
@@ -794,5 +813,50 @@ mod tests {
             reconcile_facet_bytes(&path, Some(base), Some(reader), Some(desired)).unwrap_err();
         assert!(error.contains("overlapping compose edit"), "{error}");
         assert!(error.contains("nothing was written"), "{error}");
+    }
+}
+
+#[cfg(test)]
+mod single_line_parent_tests {
+    use super::*;
+
+    /// A reader whose `<dependencies>` is one line still gets a readable pom.
+    ///
+    /// `insert_at_line` put the block at the start of the closing tag's *line*,
+    /// which is right when the tag begins its own line and wrong when it does
+    /// not: the dependencies landed outside `<dependencies>`, Maven refused to
+    /// read the pom at all, and every goal failed including `validate`. That is
+    /// the same worst outcome `CLAUDE.md` records for a versionless dependency,
+    /// reached from a different direction -- and it needs no unusual pom, only
+    /// one nobody reformatted.
+    #[test]
+    fn a_one_line_dependencies_element_still_receives_its_block_inside() {
+        let pom = concat!(
+            "<project>\n",
+            "<dependencies><dependency><groupId>a</groupId></dependency></dependencies>\n",
+            "</project>\n"
+        );
+        let at = direct_child_close(pom, &["project", "dependencies"]).expect("the closing tag");
+        let patched = insert_at_line(pom, at, "<dependency><groupId>b</groupId></dependency>");
+        let opened = patched.find("<dependencies>").expect("the opening tag");
+        let inserted = patched.find("<groupId>b</groupId>").expect("the new block");
+        let closed = patched.find("</dependencies>").expect("the closing tag");
+        assert!(
+            opened < inserted && inserted < closed,
+            "the block landed outside its parent, which Maven refuses to parse:\n{patched}"
+        );
+    }
+
+    /// The ordinary case is unchanged: a closing tag on its own line keeps the
+    /// block on its own lines, with the indentation that makes a pom readable.
+    #[test]
+    fn a_formatted_element_still_gets_the_block_on_its_own_lines() {
+        let pom = "<project>\n    <dependencies>\n    </dependencies>\n</project>\n";
+        let at = direct_child_close(pom, &["project", "dependencies"]).expect("the closing tag");
+        let patched = insert_at_line(pom, at, "        <dependency/>\n");
+        assert!(
+            patched.contains("        <dependency/>\n    </dependencies>"),
+            "{patched}"
+        );
     }
 }

@@ -538,7 +538,27 @@ verbatim from `customer.js` and `admin.js`:
         for `g association` is only the syntax editor, and the refusal says so
         now instead of claiming the emitter is missing.
 
-        **One thing to decide there:** `ReferentialAction` has no `NoAction`,
+        **`search` is closed on the emitter side too, and compiles.** The
+        compiler emitted a port interface -- with the wrong signature,
+        `search(query)` where the legacy contract is
+        `matching(query, limit)`, and the legacy port's own docs say why there
+        is no unbounded overload -- and nothing else. It now emits the
+        `tsvector` generated column, the GIN index and the JDBC adapter, and a
+        real `mvn compile` builds `JdbcNoteSearch.class`. Generated rather than
+        a trigger, because a trigger has one silent failure: an UPDATE path
+        that forgets it leaves the vector stale and the row stops matching a
+        search it used to match, with nothing erroring.
+
+        **That real compile found `bugs.md` B60**, which had nothing to do with
+        search: the canonical Maven adapter inserted its block at the start of
+        the closing tag's *line*, so a pom whose `<dependencies>` is one line
+        got the dependencies placed outside the element and Maven refused to
+        read the file at all -- every goal, `validate` included. Every unit
+        test used `write_spring_fixture`, whose `<dependencies>` is multi-line,
+        so the suite was green over a pom shape it had never tried. Fixed, with
+        both shapes pinned.
+
+        **One thing to decide on relations:** `ReferentialAction` has no `NoAction`,
         so an omitted `on update` compiles to `restrict`, where the legacy
         generator writes `no action`. They differ -- `restrict` is never
         deferred -- and the reader who omitted the clause chose neither.
@@ -570,6 +590,27 @@ verbatim from `customer.js` and `admin.js`:
       model declaring `storage postgres`. A probe that scores "did it fail"
       instead of "what did it say" reports a tool as far less finished than it
       is.
+
+- [ ] **P13.9** **A full tmpfs reports itself as a product bug, and the
+      one-hour fixture sweep does not bound a burst.** Two `new-cli` unit tests
+      failed with `PoisonError` and *"failed to create a scratch directory ...
+      No space left on device"*, which reads like a locking defect and is not
+      one: `/tmp` is a 16 GB tmpfs and the suite had left **12,255 fixture
+      directories, 3.2 GB**, in it.
+
+      `sweep_stale_fixtures` already exists and already sweeps every `jails-*`
+      prefix, so this is not the hole it closed. Its window is
+      `FIXTURE_LIFETIME`, one hour, and it runs once per test process -- which
+      bounds the *steady state* and not a burst. Several full runs inside an
+      hour each create on the order of a thousand directories that are, by
+      that rule, still evidence rather than rubbish.
+
+      Nothing here is obviously wrong, which is why this is a note rather than
+      a fix: shortening the window risks deleting a concurrent run's fixtures,
+      and having each test remove its own directory on success gives up the
+      property the `keep()` is *for*. What is worth having either way is the
+      diagnosis, because the symptom names neither the cause nor the file:
+      `df -h /tmp` and `ls -d /tmp/jails-* | wc -l` answer it in two commands.
 
 - [ ] **P13.7** **The suite is 108s of `tests/cli` because it compiles 36 Java
       projects, and the remaining lever is Maven's JVM startup.** Profiled with

@@ -3,6 +3,9 @@
 mod field_semantics;
 mod index;
 mod relation;
+mod search;
+
+pub(crate) use search::{COLUMN as SEARCH_COLUMN, CONFIGURATION as SEARCH_CONFIGURATION};
 mod sqlite;
 
 use crate::CompileError;
@@ -236,6 +239,13 @@ pub(crate) fn derive(
         descriptions.push(format!("create_{}", entity.names.sql_table));
     }
 
+    search::derive_into(
+        next,
+        previous,
+        &mut statements,
+        &mut semantic_ids,
+        &mut descriptions,
+    )?;
     relation::derive_into(
         next,
         previous,

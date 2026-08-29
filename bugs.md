@@ -204,3 +204,32 @@ jails sync
 # was: "synchronized ... 8 files written" plus testkit/NoteFactory.java
 # now: "the canonical compiler has no seed emitter yet: ... fix: ..."
 ```
+
+## B60 — a one-line `<dependencies>` made every Maven goal fail (fixed)
+
+The canonical Maven adapter inserted its owned block at the start of the
+*line* containing `</dependencies>`. That is right when the closing tag begins
+its own line, and wrong when it does not: a pom written as
+
+```xml
+<dependencies><dependency><groupId>a</groupId></dependency></dependencies>
+```
+
+got the block placed before the whole element, outside `<dependencies>`.
+Maven then refuses to read the pom at all — `Unrecognised tag: 'dependency'` —
+so **every goal fails, `validate` included**, and the project is left worse off
+than before the command ran. That is the exact failure `CLAUDE.md` records for
+a versionless dependency, reached from a different direction.
+
+It needs no unusual pom. It needs one nobody reformatted.
+
+**Fixed** in `insert_at_line`: the line start is used only when the text before
+the closing tag on that line is whitespace, which is every formatted pom and is
+what keeps the indentation right. Otherwise the block goes exactly where the
+closing tag is. `a_one_line_dependencies_element_still_receives_its_block_inside`
+and its formatted counterpart hold both halves.
+
+**Found by** compiling generated search code with a real toolchain, not by a
+test looking for it — the same way `B58` was found. The unit tests all used
+`write_spring_fixture`, whose `<dependencies>` is multi-line, so the whole
+suite was green over a pom shape it never tried.

@@ -98,7 +98,7 @@ fn unsupported_kind(kind: ArtifactKind) -> String {
         ),
         ArtifactKind::Search => (
             "full-text search",
-            "the compiler emits the search port and not the `tsvector` column, the GIN index or the JDBC adapter, so declaring it would leave three quarters missing.\n       fix: write the column, index and adapter by hand for now".to_string(),
+            "the compiler emits the port, the `tsvector` column, the GIN index and the JDBC adapter; what is missing is only the JDL syntax editor that would write the declaration for you.\n       fix: add `use search(fields: [title, body]) for <Entity>` to `.jails/model.jdl`, then run `jails sync`".to_string(),
         ),
         ArtifactKind::Seed => (
             "seed data",
