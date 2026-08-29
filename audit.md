@@ -184,6 +184,24 @@ An earlier draft of this entry blamed a clash with the plugin `jails new-cli`
 writes. That was wrong and is corrected here: `new-cli` writes none, `sync`
 writes one per source set, and a second `sync` adds nothing.
 
+### A2.2b Pre-v1 JDL loses declaration order on the way in
+
+`jdl-sol.md` §20 asks the v1 frontend to replace "the current line parser and
+JDL-to-intermediate-TOML rendering", and v1 does: it walks a CST straight into
+the typed linker and records the order it walked. The pre-v1 draft still
+renders TOML text (`crates/jails-model/src/jdl/render.rs`) and hands it to
+`parse_toml`, and a TOML table has no order — so a pre-v1 entity declaring
+`zulu, id, alpha` links as `alpha, id, zulu` and emits a record in that order.
+
+Preserving order for v1 (A2.2) did not reach it. That matters more than the
+dialect's deprecation suggests: `jails model import` emits pre-v1, so every
+imported project has it, and ~47 of the canonical E2E blocks are written in
+it. The fix is small — `render.rs` emitting the `field_order` array
+`source::Entity` already accepts — but it puts order into the intermediate
+TOML, which then makes `.jails/model.toml` able to state an order it is
+documented as unable to state. That interaction is why this is its own entry
+rather than a line in A2.2: it wants deciding, not patching.
+
 ### A2.6 Tables are not pluralized
 
 `crates/jails-model/src/naming.rs` has no pluralizer. Canonical emits
@@ -602,6 +620,9 @@ ordered by consequence.
 7. **A6.1** — write the module docs while the reasons are still recoverable.
 8. **A2.6** — pluralize table names, or record the divergence from §9.7 as a
    decision. Right now importing a legacy project silently renames its tables.
+9. **A2.2b** — decide whether pre-v1 JDL should carry declaration order, given
+   that the mechanism would also give `.jails/model.toml` an ordering it is
+   documented as lacking.
 
 `A3.14` (typed artifact IR) is the largest remaining piece of the design and
 is not on this list because it is a phase, not a fix. `A5.7` (git ≥ 2.47) is
