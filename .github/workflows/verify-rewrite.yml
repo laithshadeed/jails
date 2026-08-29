@@ -75,6 +75,19 @@ jobs:
       # the pre-push hook runs and neither can drift from the other. This was
       # `dtolnay/rust-toolchain@stable`, which pins nothing: a clippy release
       # could turn the one gate red over code nobody had touched, and did.
+      # `rustup toolchain install` re-downloads five components of 1.94.1 on
+      # every run -- the pin in `rust-toolchain.toml` names one exact compiler,
+      # so what it fetches is byte-identical each time. Keyed on that file, the
+      # entry is written once and read for nothing after; when the pin moves,
+      # the key moves with it and the next run pays for one download.
+      - name: Cache the pinned Rust toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.rustup/toolchains
+            ~/.rustup/update-hashes
+          key: rustup-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}
+
       - name: Install the Rust toolchain named by rust-toolchain.toml
         id: rust
         run: |
