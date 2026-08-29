@@ -865,6 +865,180 @@ exists, since the hook only fires on turn end, not mid-turn. It ran its own
 is shorter than `tests/cli` alone: it was being killed mid-suite every time, so
 its verdict meant nothing. It runs the gate now, with a timeout that fits.
 
+## How the suite stays fast, and the rules that keep it that way
+
+**Read the environment note first, because it is the whole reason the numbers
+below are split in two.** The tier-3 tests need a JDK that can compile
+`TARGET_RELEASE`, a Docker daemon, and a `git` new enough for
+`merge-file --diff-algorithm` (2.44+). On a machine missing any of those they
+skip or fail fast, the suite still says something, and **every measurement
+taken there is a measurement of the other two tiers**. Measure with
+`JAILS_REQUIRE_TOOLCHAIN=1` or measure nothing.
+
+Measured on a four-core machine with the full toolchain present, so every
+tier actually ran (`JAILS_REQUIRE_TOOLCHAIN=1`). **The baseline is this
+branch's own parent**, not some older revision -- the numbers below are what
+*this* change is worth on top of everything already in the tree:
+
+| | before | after |
+|---|---|---|
+| `cargo test --workspace` | 472.4s | **295.4s** |
+| `mise run test` (concurrent binaries) | -- | **281.7s** |
+| total CPU | 921.0s | 703.3s |
+| every binary with Maven off PATH, concurrently | 64.0s | **22.4s** |
+| CPU for that same set | 178.6s | **30.2s** |
+
+**2.9x on everything that does not shell out to Maven -- and nearly 6x less
+CPU for it -- against 1.6x overall.** The gap between those two is the whole
+story of what is left, and
+[the section below](#the-remaining-cost-is-maven-and-it-is-at-the-machines-floor)
+is the measurement of why.
+
+**Re-measure against the current parent, never against a remembered number.**
+An earlier draft of this section quoted 289.1s -> 207.8s, taken before the
+real-toolchain generator sweep landed. Both figures were true of the tree they
+were measured on and neither described this one: the suite grew by roughly
+180 seconds of Maven in between, so the honest ratio moved even though nothing
+about the change did.
+
+The rules that got it there, each one a rule rather than a one-off tidy-up:
+
+**1. A table-driven test is parallel over its table.** Libtest parallelises
+per `#[test]`, which is the wrong grain here: `agreement.rs` is two test
+functions driving sixty-one independent scenarios and `golden.rs` is one. Each
+cell is its own temporary directory and its own `jails` processes, so the
+table goes through `tests/common/parallel.rs` -- a work-stealing scheduler over
+one **process-wide** permit gate, so several concurrent tables cannot between
+them oversubscribe the machine. `agreement` went 18.1s -> 2.3s, `golden`
+9.2s -> 1.0s, `desired` 8.1s -> 3.1s, and `architecture_allowances` -- four
+independent ArchUnit policies that shared one directory each rewrote, and so
+had to run in sequence -- 14.1s -> 12.1s here and by the ratio of its four
+Maven runs on a machine with cores to spare. **Write the cell as a function
+returning its findings**, not as a loop body that pushes into a captured
+`Vec`: the report then stays in table order however the cells ran, and
+`parallel::catching` keeps a failing cell's own assertion message instead of
+`a scoped thread panicked`.
+
+**2. Scheduling is measured, not guessed.** Cells differ by orders of
+magnitude and a work-stealing run's makespan is set by whatever starts last,
+so the schedule is longest-processing-time first. Nothing declares a weight:
+each run writes what it observed to `target/jails-test-costs/` and the next
+run orders by it, with an unmeasured cell scheduled *first* because a new row
+is more likely to be expensive than not. It is a hint and only a hint -- a
+missing, stale or corrupt ledger changes the order and no result, which is why
+it lives under `target/` and every read and write failure is ignored.
+`scripts/run-tests.py` keeps the same kind of ledger for whole binaries.
+
+**3. A scan of the workspace happens once.** `tests/architecture/` has
+nineteen gates over the same 414 files and 5.9 MB, and it re-walked, re-read
+and re-blanked all of it for each -- eleven full passes, 9.4s, no I/O worth
+the name and no subprocess at all. `measure::sources()` is memoised behind a
+`OnceLock` and its per-file blanking runs on the scheduler above: **0.35s**.
+`genericity.rs` is the second scanner of the same tree and got the same
+treatment: 3.6s -> 0.17s. If a third appears, it goes through
+`parallel::map_by_cost` keyed on file size, largest first.
+
+**4. `[profile.dev] opt-level = 1`, and it is about the *product* binary.**
+The integration tests spawn `target/debug/jails` some thousands of times, and
+an unoptimised build pays for that on every one; the byte-at-a-time blanking
+parsers pay for it too. Level 1 with `debug = "line-tables-only"` keeps panic
+locations, cost `jails-workspace`'s unit tests 6.3s -> 0.1s and the `cli`
+binary 89.6s -> 48s with Maven absent. It buys that with about a hundred
+seconds on a **cold** full build; an incremental rebuild after an ordinary
+edit is unchanged at around four seconds, which is the number the inner loop
+actually pays.
+
+**5. Libtest's one thread per core is wrong for a process-spawn-bound
+suite.** `cli` is 89.6s at four threads and 55.8s at sixteen with total CPU
+unchanged, because these units spend their time in `fork`/`exec` and page
+faults rather than on a core. `parallel::budget()` is four units per core for
+that reason.
+
+That is a *different* budget from `default_max_toolchain_processes`, and the
+two must not be confused: this one governs cheap `jails` spawns, that one
+governs whole JVMs and is far smaller -- Surefire forks again underneath each
+Maven, so its limit is memory and disk rather than cores, and it is measured
+and clamped separately. Anything here that starts a build tool belongs under
+*that* budget, not this one.
+
+**6. `cargo test` runs the test binaries one after another.** The sum of the
+per-target times was within four seconds of the whole run's wall clock, so
+essentially nothing overlapped. `scripts/run-tests.py` (`mise run test`) runs
+all thirty-two at once, longest first. It is **deliberately not** what
+`verify-rewrite` invokes: `simplify-sol.md`'s G0 wants one answer to "is this
+green", and that answer stays plain `cargo test --workspace`. One thing it has
+to do that `cargo test` does for free: a proc-macro crate's test harness links
+`libstd` dynamically, so the runner puts the toolchain sysroot on
+`LD_LIBRARY_PATH` itself. Without that `jails-codec-derive` dies before `main`
+and the runner reports it as a failing test rather than as its own defect.
+
+### The remaining cost is Maven, and it is at the machine's floor
+
+`cli` is the critical path and the real-toolchain tier is nearly all of its
+cost: with Maven off PATH the whole suite's binaries finish concurrently in
+22.4s against 295.4s with it. Five measurements bound what is left, and each
+one closes off a plausible idea. **All five were taken on four cores** -- read
+the concurrency one with that in mind, because it is the one that does not
+generalise:
+
+- **One `mvn test` on a cold generated Spring project is 7.1s wall and 9.3s
+  CPU**, split 1.9s Maven start, 1.7s javac, **5.7s surefire fork and Spring
+  context**. Sixty-one percent of it is a JVM booting a Spring context, which
+  is the thing the tier exists to check.
+- **The JVM flags are already right.** Dropping the harness's
+  `-XX:+UseSerialGC -XX:TieredStopAtLevel=1` takes that run from 9.3s of CPU
+  to **21.8s**. Adding `-XX:-UsePerfData`, pinned heap sizes, or
+  `-XX:CICompilerCount=2` on top moves nothing. Do not go looking again
+  without a measurement.
+- **Concurrency is not the constraint *on four cores*.** Raising the Maven
+  permit cap from six to ten changed 163.5s to 162.3s; removing it entirely
+  (64) reached 158.0s while *raising* total CPU. That box is saturated rather
+  than queued, even though the profile shows 848s of toolchain wall time and
+  856s of it spent waiting for a permit.
+
+  **This does not generalise, and the same repository has the counter-example
+  written down.** `default_max_toolchain_processes` records `tests/cli` at
+  113.2s with six permits and 106.3s with twelve, measured on sixteen cores.
+  Four cores cannot distinguish "the cap is right" from "the machine is full",
+  because at four cores every cap above six is the same cap. A permit
+  experiment run here says nothing about a machine with cores to spare, which
+  is exactly why that number is derived from the machine and not written down
+  as a constant.
+- **It is not I/O either.** Moving every scratch tree to a tmpfs took `sys`
+  from 56.6s to 50.6s and wall from 155.2s to 160.9s. The page cache was
+  already absorbing it.
+- **An AppCDS archive over the Maven JVM** takes a no-op `mvn validate` from
+  1.21s to 1.05s -- 13%, against several concurrent JVMs sharing one archive
+  file. Not worth the corruption risk, and it cannot help the surefire fork at
+  all, whose classpath contains a per-test temporary path and so can never
+  match a shared archive.
+
+So the tier is ~700s of JVM CPU and the floor on four cores is ~175s. **The
+one lever left is the number of Maven runs**, which means generating several
+tests' artifacts into one project and verifying them with one Maven run --
+sharing one JVM start, one dependency resolution, and, because Spring caches a
+context per configuration within a JVM, one context boot across many test
+classes. It is worth roughly 3x on that subset and it is **not done**, because
+it trades the tier's per-test isolation for speed and that is a call for
+whoever owns the suite, not a performance change to slip in. If it is
+attempted: do it on a machine whose JDK matches `TARGET_RELEASE`, since this
+tier cannot be exercised at all on an older one and fails there with `release
+version N not supported` -- nothing like the failure a wrong batching produces.
+
+**A test that waits is worse than a test that works.** The single most
+expensive test in the suite was `run_starts_compose_services_only_when_
+explicitly_requested`, at **30.0s** -- the entire wall clock of the `tooling`
+module. It asked a narrow question (does compose go up before Spring?) with a
+fake `docker` that starts no container, so `jails run`'s readiness probe spent
+its whole 120 x 250ms budget failing to reach a PostgreSQL that was never
+going to exist. Shortening the production budget would have been the wrong
+fix; the fixture stops lying instead. `common::listening_loopback_port()`
+holds a real socket open and the compose file declares its port, so the probe
+finds what the fake `docker` claims it started: **0.02s**, and a better model
+of the case, not a weaker one. It was also *flaky* before, failing under
+full-suite load and passing alone. When a test is slow, ask what it is waiting
+for before asking how to make the waiting faster.
+
 ## Package layout
 
 Generated code does **not** all land in the base package. `generate::layout`
@@ -1547,6 +1721,20 @@ Three tiers, don't blur them:
    the question the whole tool exists for — "does it produce a project that
    actually compiles and passes tests?" Don't let tier 2 masquerade as
    tier 3.
+
+**Tier 3 needs three things on the machine, and two of them are not in
+`mise.toml`.** A JDK that can compile `TARGET_RELEASE` is pinned there; the
+other two are not, and each fails in a way that looks like a product bug:
+
+| missing | what it looks like |
+|---|---|
+| JDK matching `TARGET_RELEASE` | `release version 26 not supported`, ~50 tests red |
+| a running Docker daemon | Testcontainers and the OCI image gate skip |
+| `git` 2.44+ | `git merge-file ended as Exited { code: 129 }` on ~40 merge tests -- `--diff-algorithm` reached `merge-file` in 2.44, and 129 is a usage error, not a merge outcome |
+
+None of them is optional for a measurement. A run without them exercises the
+first two tiers only, and any timing taken from it describes those two tiers
+however confidently it is written down.
 
 **A skipped tier-3 test is reported as passing.** When `TARGET_RELEASE` was
 27 — an unreleased JDK — `javac` on a bare PATH rejected it and **11 of the

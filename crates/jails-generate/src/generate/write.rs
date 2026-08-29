@@ -184,7 +184,7 @@ pub(crate) fn planned_package_infos(
     let mut planned = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for artifact in artifacts {
-        if !artifact.path.extension().is_some_and(|e| e == "java") {
+        if artifact.path.extension().is_none_or(|e| e != "java") {
             continue;
         }
         let Some(dir) = artifact.path.parent() else {

@@ -522,10 +522,7 @@ fn canonical_compiler_is_pure_after_capture() {
         "Command::new",
     ];
     let mut offenders = Vec::new();
-    for file in sources()
-        .into_iter()
-        .filter(|file| file.path.starts_with(&root))
-    {
+    for file in sources().iter().filter(|file| file.path.starts_with(&root)) {
         for name in banned {
             if file.production.contains(name) {
                 offenders.push(format!("  {}: {name}", file.path.display()));
@@ -543,14 +540,14 @@ fn canonical_compiler_is_pure_after_capture() {
 fn canonical_workspace_has_one_mutation_owner() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/jails-workspace/src");
     let mut offenders = Vec::new();
-    for file in sources().into_iter().filter(|file| {
+    for file in sources().iter().filter(|file| {
         file.path.starts_with(&root)
             && file
                 .path
                 .file_name()
                 .is_none_or(|name| name != "execute.rs")
     }) {
-        let count = mutation_sites(std::slice::from_ref(&file), MUTATION_APIS);
+        let count = mutation_sites(std::slice::from_ref(file), MUTATION_APIS);
         if count != 0 {
             offenders.push(format!("  {}: {count} mutation calls", file.path.display()));
         }
@@ -663,7 +660,7 @@ fn module_of(path: &Path) -> Option<(String, String)> {
 fn every_module_that_starts_a_process_is_classified() {
     let src = sources();
     let mut starts: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    for file in &src {
+    for file in src {
         // Both spellings: a direct `Command::new`, and the shared
         // `CommandSpec` executor that most callers rightly use instead.
         // Counting only one would classify half the surface.
@@ -706,7 +703,7 @@ fn every_module_that_starts_a_process_is_classified() {
 fn every_fresh_read_of_the_pom_is_a_decision_somebody_wrote_down() {
     let src = sources();
     let found: std::collections::BTreeSet<String> =
-        rederivers(&src).into_iter().map(|(_, name)| name).collect();
+        rederivers(src).into_iter().map(|(_, name)| name).collect();
     let declared: std::collections::BTreeSet<String> = A_FRESH_READ_IS_CORRECT
         .iter()
         .map(|(name, _)| (*name).to_string())

@@ -341,6 +341,6 @@ mod tests {
         let name = FieldName::parse("createdAt").expect("createdAt");
         assert!(name == Name::parse("created_at").expect("created_at"));
         assert!(name == Name::parse("createdAt").expect("createdAt"));
-        assert!(!(name == Name::parse("updatedAt").expect("updatedAt")));
+        assert!(name != Name::parse("updatedAt").expect("updatedAt"));
     }
 }

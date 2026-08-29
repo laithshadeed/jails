@@ -1,5 +1,4 @@
 use super::*;
-use std::net::TcpListener;
 
 fn drop_with_migration(command: &mut std::process::Command) -> &mut std::process::Command {
     command.args([
@@ -131,11 +130,10 @@ fn postgres_17_observes_the_explicit_drop_effect_as_applied() {
         return;
     };
 
-    let port = TcpListener::bind(("127.0.0.1", 0))
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
+    // Through the shared reservation helper rather than a third copy of
+    // `bind(0)`, `read`, `close`: the copies are how the two-ports-one-number
+    // bug in `AppSuiteServices` went unnoticed. See its docs.
+    let port = common::reserve_loopback_ports(1)[0];
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()

@@ -429,7 +429,7 @@ const RULES: &[Rule] = &[
                 fixes: vec![
                     format!("lsof -i :{port}     # find it"),
                     format!("kill $(lsof -t -i :{port})"),
-                    format!("Or set server.port to something free in application.properties"),
+                    "Or set server.port to something free in application.properties".to_string(),
                 ],
             }
         },

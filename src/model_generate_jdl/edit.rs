@@ -162,7 +162,7 @@ pub(crate) fn set_entity_active(
                 let inactive = declaration
                     .split_whitespace()
                     .any(|word| word == "@inactive");
-                if inactive == !active {
+                if inactive != active {
                     return Ok(source.to_string());
                 }
                 let mut rewritten = line.to_string();

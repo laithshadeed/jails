@@ -259,7 +259,7 @@ pub(super) fn maven_report(
         if !unit.is_empty() {
             passed &= run_maven_selection(context, "test", "-Dtest", &unit).is_ok();
         }
-        if !integration.is_empty() && !(context.options.fail_fast && !passed) {
+        if !integration.is_empty() && (!context.options.fail_fast || passed) {
             passed &= run_maven_selection(context, "verify", "-Dit.test", &integration).is_ok();
         }
     }

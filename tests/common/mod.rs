@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+pub mod parallel;
 pub mod scenarios;
 
 use std::ffi::OsStr;
@@ -484,8 +485,9 @@ impl AppSuiteServices {
                 .unwrap()
                 .as_nanos()
         );
-        let postgres_port = reserve_loopback_port();
-        let kafka_port = reserve_loopback_port();
+        let [postgres_port, kafka_port] = reserve_loopback_ports(2)[..] else {
+            unreachable!("two ports were requested")
+        };
         let endpoints = AppSuiteEndpoints {
             postgres_port,
             kafka_port,
@@ -646,12 +648,63 @@ impl Drop for ContainerGuard {
     }
 }
 
-fn reserve_loopback_port() -> u16 {
-    TcpListener::bind(("127.0.0.1", 0))
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+/// A loopback port with something listening on it, held open by the returned
+/// listener.
+///
+/// **What this replaces is thirty seconds of real waiting per test.** A
+/// command that starts compose services then waits for PostgreSQL to accept
+/// connections -- `jails run --services start` -- polls for 120 quarter
+/// seconds before giving up. Against a fake `docker` that starts no container
+/// the poll can only ever time out, so a test asking the narrow question *did
+/// compose go up before Spring* paid the entire budget for an answer it was
+/// not asking about. It was the single most expensive test in the suite and
+/// set the floor for the whole `cli` binary.
+///
+/// Shortening the production budget would be the wrong fix: how long to wait
+/// for a database is a real decision and thirty seconds is a defensible one.
+/// So the fixture stops lying instead. A fake `docker` that reports success
+/// is claiming a server is up, and this makes that claim true enough for the
+/// probe that checks it -- which is a *better* model of the case under test,
+/// not a weaker one, and leaves the readiness wait itself covered by the
+/// tests that are about it.
+///
+/// A listening socket completes the handshake from its backlog with no
+/// `accept()` call, so nothing here has to serve anything. Hold the listener
+/// for as long as the port must answer: dropping it closes the socket.
+pub fn listening_loopback_port() -> (TcpListener, u16) {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("could not bind a loopback port");
+    let port = listener.local_addr().unwrap().port();
+    (listener, port)
+}
+
+/// `count` distinct free loopback ports, for handing to containers.
+///
+/// **All of them are held at once, then released together**, and that is the
+/// whole reason this takes a count instead of being called in a loop. Asking
+/// the kernel for an ephemeral port means binding port 0, reading what you
+/// got, and closing -- so a second call made *after* the first has closed can
+/// be handed the very same port back. `AppSuiteServices` did exactly that,
+/// reserving PostgreSQL's port and then Kafka's, and the failure it buys is
+/// the confusing kind: two containers are told to publish on one port, the
+/// second `docker run` fails to bind, and the suite reports it as a broker
+/// that would not start.
+///
+/// Holding every listener until all of them are chosen makes that impossible,
+/// because the kernel will not hand out a port it currently has bound.
+///
+/// What it cannot close is the window between this returning and the
+/// container binding: another process on the machine can still take the port
+/// in between. Nothing short of letting the container choose its own port
+/// fixes that, and it is a far smaller window than the one above -- this is
+/// the standard reservation trick, with its one real footgun removed.
+pub fn reserve_loopback_ports(count: usize) -> Vec<u16> {
+    let held: Vec<TcpListener> = (0..count)
+        .map(|_| TcpListener::bind(("127.0.0.1", 0)).expect("could not reserve a loopback port"))
+        .collect();
+    held.iter()
+        .map(|listener| listener.local_addr().unwrap().port())
+        .collect()
+    // `held` drops here: every port is chosen before any is released.
 }
 
 fn database_name(app_name: &str) -> String {

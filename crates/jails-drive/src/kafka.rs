@@ -314,7 +314,7 @@ fn declared_topics(root: &Path) -> Vec<String> {
                 stack.push(path);
                 continue;
             }
-            if !path.extension().is_some_and(|e| e == "java") {
+            if path.extension().is_none_or(|e| e != "java") {
                 continue;
             }
             let Ok(text) = std::fs::read_to_string(&path) else {

@@ -38,4 +38,11 @@
 
 mod board;
 mod measure;
+/// The suite-wide scheduler, shared with the table-driven binaries through
+/// `#[path]` rather than copied: the blanking scan below is parallel over the
+/// same gate every other test binary draws from, so a full-workspace run
+/// cannot oversubscribe the machine by running two schedulers that have never
+/// heard of each other.
+#[path = "../common/parallel.rs"]
+mod parallel;
 mod rules;

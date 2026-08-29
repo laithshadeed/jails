@@ -42,55 +42,94 @@ pub(crate) struct Source {
 /// keep reporting green while the code it gates moved into `crates/*/src` --
 /// the same failure as a skipped tier-3 test, which the suite also reports as
 /// passing unless something insists otherwise.
-pub(crate) fn sources() -> Vec<Source> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut files = Vec::new();
-    collect(root.join("src").as_path(), &mut files);
-    let crates = root.join("crates");
-    if crates.is_dir() {
-        let mut members: Vec<PathBuf> = fs::read_dir(&crates)
-            .expect("failed to read crates/")
-            .map(|entry| entry.expect("failed to read a crates/ entry").path())
-            .collect();
-        members.sort();
-        for member in members {
-            let src = member.join("src");
-            if src.is_dir() {
-                collect(&src, &mut files);
+/// Read and blanked **once per process**, and blanked in parallel.
+///
+/// Nineteen gates share this scan and each used to run it again: the walk,
+/// the read and two blanking passes over 414 files and 5.9 MB, eleven times
+/// over. That is what made this binary the third most expensive target in the
+/// suite at 9.4 seconds while doing no I/O worth the name and starting no
+/// process at all.
+///
+/// The memo is the whole fix and it is sound for one reason worth stating: a
+/// [`Source`] is immutable, the files are not written while the binary runs,
+/// and every gate already treats the scan as a snapshot -- two gates
+/// disagreeing about the contents of the tree would be a bug whichever way
+/// the scan was cached.
+///
+/// The blanking itself is a byte-at-a-time state machine per file with no
+/// shared state, so it is spread across the same scheduler the table-driven
+/// binaries use. The `assert` stays exactly where it was: a scanner that has
+/// lost the code reports precisely what a clean one does, and caching a wrong
+/// answer once is worse than recomputing it.
+pub(crate) fn sources() -> &'static [Source] {
+    static SOURCES: std::sync::OnceLock<Vec<Source>> = std::sync::OnceLock::new();
+    SOURCES.get_or_init(|| {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut paths = Vec::new();
+        collect_paths(root.join("src").as_path(), &mut paths);
+        let crates = root.join("crates");
+        if crates.is_dir() {
+            let mut members: Vec<PathBuf> = fs::read_dir(&crates)
+                .expect("failed to read crates/")
+                .map(|entry| entry.expect("failed to read a crates/ entry").path())
+                .collect();
+            members.sort();
+            for member in members {
+                let src = member.join("src");
+                if src.is_dir() {
+                    collect_paths(&src, &mut paths);
+                }
             }
         }
-    }
-    assert!(
-        files.len() > 30,
-        "the workspace scanner found only {} files -- it has lost track of where \
-         the code lives, and every gate below would report green over code it \
-         never read",
-        files.len()
-    );
-    files.sort_by(|a, b| a.path.cmp(&b.path));
-    files
+        assert!(
+            paths.len() > 30,
+            "the workspace scanner found only {} files -- it has lost track of where \
+             the code lives, and every gate below would report green over code it \
+             never read",
+            paths.len()
+        );
+        paths.sort();
+        // Largest first: blanking is linear in file size and these differ by
+        // two orders of magnitude, so starting the biggest file last would
+        // leave every other worker waiting on it.
+        crate::parallel::map_by_cost(
+            &paths,
+            |path| fs::metadata(path).map_or(0, |data| data.len()),
+            |path| read_source(path),
+        )
+    })
 }
 
-pub(crate) fn collect(dir: &Path, out: &mut Vec<Source>) {
+/// One file, read and blanked. The unit the scan above is parallel over.
+pub(crate) fn read_source(path: &Path) -> Source {
+    let source = fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+    let production = without_test_modules(&blank(&source));
+    let literals = without_test_modules_at(
+        &keeping_literals(&source),
+        &test_module_spans(&blank(&source)),
+    );
+    Source {
+        path: path.to_path_buf(),
+        production,
+        literals,
+    }
+}
+
+/// Every `.rs` file under `dir`, without reading any of them.
+///
+/// Separated from the read so the walk -- which is serial by nature, one
+/// directory at a time -- stays off the parallel path and the reads, which
+/// are not, go on it.
+pub(crate) fn collect_paths(dir: &Path, out: &mut Vec<PathBuf>) {
     let entries =
         fs::read_dir(dir).unwrap_or_else(|e| panic!("failed to read {}: {e}", dir.display()));
     for entry in entries {
         let path = entry.expect("failed to read a directory entry").path();
         if path.is_dir() {
-            collect(&path, out);
+            collect_paths(&path, out);
         } else if path.extension().is_some_and(|ext| ext == "rs") {
-            let source = fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
-            let production = without_test_modules(&blank(&source));
-            let literals = without_test_modules_at(
-                &keeping_literals(&source),
-                &test_module_spans(&blank(&source)),
-            );
-            out.push(Source {
-                path,
-                production,
-                literals,
-            });
+            out.push(path);
         }
     }
 }
@@ -651,7 +690,7 @@ pub(crate) fn type_aliases(src: &[Source]) -> usize {
 #[test]
 pub(crate) fn no_bare_apply_verb_imports() {
     let offenders: Vec<_> = sources()
-        .into_iter()
+        .iter()
         .filter(|file| {
             file.production.lines().any(|line| {
                 let line = line.trim();
