@@ -989,10 +989,26 @@ and clamped separately. Anything here that starts a build tool belongs under
 **6. `cargo test` runs the test binaries one after another.** The sum of the
 per-target times was within four seconds of the whole run's wall clock, so
 essentially nothing overlapped. `scripts/run-tests.py` (`mise run test`) runs
-all thirty-two at once, longest first. It is **deliberately not** what
-`verify-rewrite` invokes: `simplify-sol.md`'s G0 wants one answer to "is this
-green", and that answer stays plain `cargo test --workspace`. One thing it has
-to do that `cargo test` does for free: a proc-macro crate's test harness links
+all thirty-two at once, longest first, and **is what `verify-rewrite`
+invokes.**
+
+It deliberately was not, and the entry that said so named G0's one answer to
+"is this green" as the reason. The real blocker was smaller and is fixed:
+`PermitPool` was a `Mutex` and a `Condvar`, which is the whole machine's Maven
+budget only while one binary runs at a time. Launch thirty-three and each
+believes it owns all six permits; five of them shell out to Maven, so four
+cores were being asked for thirty concurrent JVMs. That is why concurrency had
+only ever been worth 295.4s -> 281.7s -- the overlap was real and the
+oversubscription ate it. The budget is `flock` now, one lock file per permit
+under `target/`, shared however the suite is launched, and the run becomes as
+long as its slowest binary rather than the sum of all of them: 415.7s of
+per-binary time, 212.4s longest, 212.8s wall.
+
+It is still one answer to "is this green" -- the same binaries out of `cargo
+test --no-run`, the same filters, the same exit status. What it costs is a
+python3 dependency for the gate.
+
+One thing it has to do that `cargo test` does for free: a proc-macro crate's test harness links
 `libstd` dynamically, so the runner puts the toolchain sysroot on
 `LD_LIBRARY_PATH` itself. Without that `jails-codec-derive` dies before `main`
 and the runner reports it as a failing test rather than as its own defect.
@@ -1050,6 +1066,59 @@ attempted: do it on a machine whose JDK matches `TARGET_RELEASE`, since this
 tier cannot be exercised at all on an older one and fails there with `release
 version N not supported` -- nothing like the failure a wrong batching produces.
 
+### What one Maven run costs, and why the marginal test in it is free
+
+Profiled with the suite's own `JAILS_TEST_PROFILE` over `tests/cli`: **179
+subprocesses, 781s of run time in a 216s wall** -- 41 Maven runs at 542s, 132
+`jails` invocations at 223s, 6 docker at 16s.
+
+**The box is saturated and the schedule is nearly optimal, which is what makes
+the rest of this section the only lever.** Mean concurrency 4.4 on four cores,
+*zero* seconds with nothing running, and 4.2s total ever spent waiting for a
+Maven permit. Perfect four-core parallelism would be 195s against the measured
+216s, so **every scheduling idea put together is worth at most 21s**: ordering,
+more threads, a larger permit budget, a cleverer stealer. Do not spend time
+there. The only thing that makes this faster is less work.
+
+One `mvn test` on a generated Spring project, timed by goal against a warm
+local repository:
+
+| | s | share |
+|---|---|---|
+| Maven start (`validate`) | 1.54 | 24% |
+| javac, main and test | 1.45 | 22% |
+| surefire fork | ~1.1 | 17% |
+| Spring context boot | 2.54 | 38% |
+| **total** | **6.52** | |
+
+41 runs x 6.52s is **267s, half of all Maven time, spent before any test does
+anything**. Sixteen of those runs finish under 8s and are almost nothing but
+that floor; nine runs of 20-45s carry 212s of genuine work.
+
+**And the second test class in a run is free.** The same project built with
+one, two, four and eight `@SpringBootTest` classes, one Maven invocation each:
+6.56s, 6.48s, 6.44s, 6.49s. Spring caches a context per configuration inside
+the JVM, so once the 6.52s is paid the rest cost nothing measurable. That is
+the entire case for batching, and it is why the estimate is ~215s of Maven work
+-- 41 runs collapsed toward 8 -- rather than a proportional saving.
+
+`cached_toolchain_dir_with_salt` is that pattern already: `spring-core-toolbox`,
+`spring-services-toolbox`, `spring-db-toolbox` and `proof-apps` *are* the
+expensive runs, and they are expensive because they are doing real work rather
+than paying the floor over and over.
+
+Three smaller levers, measured on the same fixture, recorded so they are not
+re-proposed as though they were big:
+
+- **`-o` once the repository is warm: 0.47s a run.** Roughly 19s of work, but
+  it fails hard rather than falling back if anything is genuinely missing.
+- **`-DforkCount=0`: 0.55s a run.** It runs the tests inside the Maven JVM,
+  which trades the isolation surefire exists to provide for about 23s of work.
+- **`mvnd`** removes the 1.54s start, ~63s of work, and would warm javac's JIT
+  across runs on top. Unmeasured here -- `mvnd` is not installed in this
+  container -- and CLAUDE.md's own note about it being flaky under JDK 26 is
+  the thing to settle first.
+
 ### The CI job is the same suite on a smaller machine, and it paid twice
 
 `.github/workflows/verify-rewrite.yml` runs `mise run verify-rewrite` on a
@@ -1106,8 +1175,51 @@ baseline's 1855 -- close enough that the phases compare directly:
   Testcontainers, Flyway, ArchUnit and spotless tree from Central. A cold local
   repository costs **21.8s for the 44 MB the suite's smallest Spring fixture
   needs**, measured on that fixture; the repository a full run fills is 296 MB.
-  `33265322341` wrote 275 MB under `jvm-deps-Linux-v1`, so the first run to
-  restore it is the one after that; its saving is not in the table above.
+  `33265322341` wrote 275 MB under `jvm-deps-Linux-v1`. Measured against the
+  run that restored it, on `cli` -- the 431-test binary that is the critical
+  path, reporting the same 431 passed both times: **294.4s into the test phase
+  cold against 248.2s warm**. Read that against the noise: the same pair moved
+  harness compilation 179.4s -> 160.0s on *identical* Rust, so a single run's
+  difference below about 11% says nothing.
+
+**Two more things the cache was doing wrong, both silent, both worth the shape
+rather than the number.**
+
+`rust-toolchain.toml` pinned rustc while the cargo key named only the OS and
+`Cargo.lock`. A cargo artifact is valid only for the rustc that built it, so
+every artifact in that entry became garbage the moment the pin named a
+different compiler -- and the failure hid perfectly: the key still **hit**, so
+the step reported success and restored 381 MB, cargo discarded all of it, and
+`actions/cache` then skipped its save *because* a primary-key hit is exactly
+when it does. Nothing could repair it. Measured on `33267456288`: 74
+third-party crates compiled where the run before the pin compiled none, clippy
+14.7s -> 31.3s, harness compilation 179.4s -> 240.5s. `rustc -V` is in the key
+now.
+
+And the entry was **written once and then frozen**, for the same
+skip-on-hit reason: the key changed only with `Cargo.lock`, so whichever run
+first saw that lockfile filled it and no later run could update it.
+Dependencies were fine -- they move when the lock does -- but all twenty
+workspace crates recompiled every run against sources that had moved on. The
+key carries `github.sha` now so every run saves, and the restore-keys walk back
+to the newest entry for this compiler and lockfile.
+
+A **cancelled** run still skips the cargo save, and that is correct rather than
+a gap: with a sha-keyed entry, a run that died two minutes in would write a
+nearly empty cache that then becomes the *newest* match for the next run's
+restore-keys. Better to keep the newest entry a complete one.
+
+Measured end to end, two consecutive green runs after all of it -- 398s and
+402s against a 571.4s baseline, on a job whose run-to-run spread had been
+571.4s to 654.2s:
+
+| phase | before | after |
+|---|---|---|
+| fmt + clippy | 22.8 | 17.0 |
+| compilation | 207.6 | ~60 |
+| test execution | 314.4 | 293.1 |
+| the pinned Gradle example | 26.6 | ~28 |
+| **the gate step** | **571.4** | **~400** |
 
   The save is a guarded `actions/cache/save` rather than the automatic post
   step, and `33265079310` is why: it was cancelled mid-gate, and the automatic
