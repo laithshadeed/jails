@@ -1114,10 +1114,25 @@ re-proposed as though they were big:
   it fails hard rather than falling back if anything is genuinely missing.
 - **`-DforkCount=0`: 0.55s a run.** It runs the tests inside the Maven JVM,
   which trades the isolation surefire exists to provide for about 23s of work.
-- **`mvnd`** removes the 1.54s start, ~63s of work, and would warm javac's JIT
-  across runs on top. Unmeasured here -- `mvnd` is not installed in this
-  container -- and CLAUDE.md's own note about it being flaky under JDK 26 is
-  the thing to settle first.
+- **`mvnd` is measured and refused, and the reason is sharper than the old
+  note.** Per run it is exactly the win it promises: a full `test` on the
+  Spring fixture goes 6.33s -> 3.88s, and the 2.45s saved beats the 1.54s
+  Maven start alone because the daemon's javac is JIT-warm too -- about 96s of
+  work across the suite's 39 runs. Run *sequentially* it is also stable: 24
+  green out of 24 on JDK 26 here, including three forced cold daemon starts.
+
+  It fails the moment it is used the way this suite uses Maven. Four builds
+  started concurrently from four directories: plain `mvn` 16.2s and four
+  successes; `mvnd` 5.0s and **three failures out of four**, with
+
+      DaemonException$StaleAddressException: Could not receive a message from
+      the daemon. No message received within 3000ms, daemon may have crashed.
+
+  The whole suite with `mvnd` came in at 338.7s against 264.3s with `mvn`.
+  So the old note -- "this machine's mvnd daemon is flaky under JDK 26" -- was
+  right and was understating it: the trigger is concurrent invocation, not the
+  machine, and concurrency is the one thing this suite will not give up. A
+  per-run saving that costs the run's parallelism is not a saving.
 
 ### The CI job is the same suite on a smaller machine, and it paid twice
 
