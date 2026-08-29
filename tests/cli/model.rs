@@ -8854,10 +8854,17 @@ fn canonical_field_evolution_preserves_hand_edits_and_lowers_explicit_sql_polici
     assert!(source.contains("handWritten()"), "{source}");
     let lock: serde_json::Value =
         serde_json::from_slice(&fs::read(root.join(".jails/compiler.lock.json")).unwrap()).unwrap();
-    assert_eq!(
-        lock["model"]["entities"]["ent_note"]["fields"]["fld_note_title"]["names"]["sql_column"],
-        "title"
-    );
+    // `fields` is an ordered array, not a map: the lock keeps a record's
+    // components in the order its entity declares them, so the field is found
+    // by its stable id rather than by a key.
+    let title = lock["model"]["entities"]["ent_note"]["fields"]
+        .as_array()
+        .expect("the lock keeps fields in declaration order")
+        .iter()
+        .find(|field| field["id"] == "fld_note_title")
+        .expect("the preserved rename keeps the field's stable id");
+    assert_eq!(title["names"]["sql_column"], "title");
+    assert_eq!(title["names"]["java_member"], "headline");
 
     let cutover = jails_cmd(&root, None)
         .args([
