@@ -710,6 +710,7 @@ fn facet_name(facet: Facet) -> &'static str {
         Facet::Http => "http",
         Facet::Events => "events",
         Facet::Search => "search",
+        Facet::Seed => "seed",
     }
 }
 

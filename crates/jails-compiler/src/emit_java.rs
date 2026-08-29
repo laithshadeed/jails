@@ -173,6 +173,15 @@ fn lower_facet(model: &AppModel, entity: &Entity, facet: Facet) -> Result<Unit, 
             );
             (package, type_name, body, imports)
         }
+        // Not silently the factory's arm, which is what it was: `use seed`
+        // linked, validated, and emitted `<Name>Factory.java` while reporting
+        // success (`bugs.md` B59). A wrong artifact reported as written is a
+        // worse failure than a missing one, because nothing looks wrong.
+        Facet::Seed => {
+            return Err(CompileError::new(
+                "the canonical compiler has no seed emitter yet: `use seed` would need the JSON row file, the `@Profile(\"seed\")` runner and its test, and the runner reads rows through the `json` capability.\n       fix: remove `use seed` and write the seed file and runner by hand, or keep seeding outside the canonical model",
+            ));
+        }
         Facet::Search => {
             let package = model.project.package_for("ports.search");
             let type_name = format!("{}Search", entity.names.java_type);
@@ -333,6 +342,7 @@ fn facet_name(facet: Facet) -> &'static str {
         Facet::Http => "http",
         Facet::Events => "events",
         Facet::Search => "search",
+        Facet::Seed => "seed",
     }
 }
 

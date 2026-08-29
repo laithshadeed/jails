@@ -311,7 +311,8 @@ fn compatibility_facet(kind: &ProjectionKind) -> Facet {
         ProjectionKind::Service => Facet::Service,
         ProjectionKind::Http { .. } => Facet::Http,
         ProjectionKind::Dto => Facet::Dto,
-        ProjectionKind::Factory | ProjectionKind::Seed => Facet::Factory,
+        ProjectionKind::Factory => Facet::Factory,
+        ProjectionKind::Seed => Facet::Seed,
         ProjectionKind::Search { .. } => Facet::Search,
     }
 }

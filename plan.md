@@ -516,6 +516,17 @@ verbatim from `customer.js` and `admin.js`:
         carries no fields, so a search projection cannot be expressed as a
         patch even once the emitter exists.
 
+        **One of the four turned out to be worse than a refusal.** `use seed`
+        parses, links and passes its prerequisite check, and then reached the
+        emitter as `Facet::Factory` -- because `compatibility_facet` mapped
+        `Factory | Seed` onto one facet and `Facet` is the dispatch key. So a
+        model asking for seed data got `<Name>Factory.java` and a report of
+        success. `bugs.md` B59 has it; the silent half is fixed with a distinct
+        `Facet::Seed` whose missing arm is a compile error, and what remains is
+        the emitter, which needs a JSON sample column on the builtin table, a
+        fourth prerequisite (`json`, whose reader the runner uses), and three
+        artifacts rather than one.
+
         `migration` is the fourth and is deliberate rather than missing:
         `CLAUDE.md` records migrations as irreproducible operations that stay
         visible in the plan instead of being rendered.

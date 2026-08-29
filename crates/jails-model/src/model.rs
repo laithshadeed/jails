@@ -262,6 +262,13 @@ pub enum Facet {
     Http,
     Events,
     Search,
+    /// Development seed data and the runner that loads it.
+    ///
+    /// Its own facet rather than sharing the factory's, because `Facet` is the
+    /// emitter's dispatch key: sharing one made `use seed` render a test
+    /// fixture and report success (`bugs.md` B59). The emitter's match is
+    /// exhaustive, so a facet with no arm is a compile error.
+    Seed,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

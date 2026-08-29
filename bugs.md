@@ -148,3 +148,59 @@ jails new demo && cd demo
 jails g event Transaction
 mvn -q -B test        # package org.springframework.kafka.core does not exist
 ```
+
+## B59 — `use seed` has no emitter (the silent-factory half is fixed)
+
+`ProjectionKind::Seed` parses, links, and passes validation. It then reaches
+the emitter as `Facet::Factory`, because `compatibility_facet` maps
+`Factory | Seed => Facet::Factory` and `Facet` is what `emit_java` dispatches
+on. So a canonical model declaring
+
+```
+use repo for Note
+use seed for Note
+```
+
+compiles, reports `synchronized ... 8 files written`, and produces
+`testkit/NoteFactory.java` — a test fixture. The `db/seeds/note.json` and the
+`@Profile("seed")` runner that `jails g seed` writes on the legacy path are
+nowhere, and nothing says so.
+
+**This is worse than the refusal beside it.** `jails g seed` on a canonical
+project refuses and names what is missing; editing the JDL by hand — which is
+what the old refusal told the reader to do — reaches this instead, and a wrong
+artifact reported as success is the failure mode a missing one does not have.
+
+**The prerequisite check is not the guard it looks like.** `seed` requires
+`repo`, `storage postgres` and `platform spring`, and all three pass here.
+Validation is checking that the projection is *allowed*, not that anything
+renders it.
+
+**Half fixed.** `Facet::Seed` exists now and the emitter refuses by name
+instead of falling into the factory's arm, so the wrong artifact is gone and
+`a_seed_projection_refuses_by_name_rather_than_emitting_a_factory` holds it.
+`Facet` is the emitter's dispatch key and its match is exhaustive, which is
+what makes the gap a compile error rather than a silent reuse --
+`ProjectionKind::Search` already had its own facet for the same reason.
+
+**What is left is the emitter**, and it is more than a rendering pass:
+
+- The row file needs a **JSON** sample per builtin. `BuiltinSemantics.sample`
+  is a *Java* expression; the legacy JSON table lives in `scaffold.rs`, keyed
+  by Java type name. The canonical answer is another column on the one builtin
+  row, which is what that table is for.
+- The runner reads rows through the `json` capability's reader, so `seed` gains
+  a fourth prerequisite the validator does not check today (it checks `repo`,
+  `storage postgres` and `platform spring`).
+- Three artifacts, not one: the row file, the `@Profile("seed")` runner, and
+  the test that proves the shipped rows still bind to the record.
+
+**Reproduce:**
+
+```
+# a canonical Spring project with `storage postgres`
+printf 'use repo for Note\nuse seed for Note\n' >> .jails/model.jdl
+jails sync
+# was: "synchronized ... 8 files written" plus testkit/NoteFactory.java
+# now: "the canonical compiler has no seed emitter yet: ... fix: ..."
+```

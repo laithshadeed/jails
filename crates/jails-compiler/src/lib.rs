@@ -748,6 +748,38 @@ mod tests {
         }
     }
 
+    /// A projection that links must render something or say why.
+    ///
+    /// `bugs.md` B59: `use seed` linked, validated against its prerequisites
+    /// and emitted `<Name>Factory.java`, because `ProjectionKind::Seed` was
+    /// mapped onto `Facet::Factory` and `Facet` is the emitter's dispatch key.
+    /// The model reported success over a test fixture nobody asked for, which
+    /// is a worse failure than a missing file: there is nothing to notice.
+    ///
+    /// The emitter is still not written. What this pins is that the gap is
+    /// *named* rather than filled with the nearest arm.
+    #[test]
+    fn a_seed_projection_refuses_by_name_rather_than_emitting_a_factory() {
+        let model = jails_model::parse_jdl(
+            "jdl 1\napp Demo {\n pkg com.example.demo\n java 26\n platform spring\n build maven\n storage postgres\n}\nentity Note {\n id: uuid @pk\n title: string\n}\nuse repo for Note\nuse seed for Note\n",
+        )
+        .expect("the grammar accepts `use seed`, which is how this defect arrived");
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.build_system = BuildSystem::Maven;
+        // `storage postgres` is one of `use seed`'s own prerequisites, and it
+        // in turn wants Spring on the build -- the capture says so, not the
+        // model.
+        snapshot.project.spring_boot = Some("4.1.0".to_string());
+        let error = Compiler::compile(&snapshot, None)
+            .expect_err("a projection with no emitter must refuse");
+        let message = error.to_string();
+        assert!(
+            message.contains("no seed emitter yet"),
+            "the refusal does not name the gap: {message}"
+        );
+        assert!(message.contains("fix:"), "{message}");
+    }
+
     fn component(kind: jails_model::ComponentKind) -> jails_model::Component {
         jails_model::Component {
             id: jails_model::ComponentId::parse(format!("cmp_{}", kind.label().replace('-', "_")))
