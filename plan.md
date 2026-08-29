@@ -446,8 +446,9 @@ verbatim from `customer.js` and `admin.js`:
       list -- it is worth doing when the legacy side is a frozen binary from
       before the emitters changed, and not before.
 
-- [ ] **P13.8** **The canonical parity gap is 4 capabilities and 4 kinds, and
-      it is much smaller than this file assumed.** `simplify-sol.md` says the
+- [ ] **P13.8** **The canonical parity gap is 4 capabilities and 4 kinds --
+      far smaller on the capability side than this file assumed, and deeper on
+      the kind side than its own refusal message says.** `simplify-sol.md` says the
       remaining work before the gates is *"primarily generator and capability
       backend parity"*; nothing said how much. Measured 2026-08-29 by running
       every entry of `jails commands --json` against a fresh canonical project:
@@ -456,11 +457,32 @@ verbatim from `customer.js` and `admin.js`:
         `k8s` refuse with *"canonical capability backend is not implemented"*.
         The first three are build/CI/packaging files rather than Java, which is
         probably why they were left: nothing about them is entity-shaped.
-      - **Kinds: `migration`, `association`, `search` and `seed` refuse**, and
-        the refusal is not about a backend. It is *"its JDL syntax editor is
-        not implemented yet -- edit `.jails/model.jdl` directly and run `jails
-        sync`"*. The model can express them; the CLI sugar cannot write the
-        declaration. That is a frontend gap, and a cheaper one.
+      - **Kinds: `migration`, `association`, `search` and `seed` refuse** with
+        *"its JDL syntax editor is not implemented yet -- edit
+        `.jails/model.jdl` directly and run `jails sync`"*.
+
+        **That refusal reads like a frontend gap and is not one**, which took
+        a second pass to establish -- the first entry here said "the model can
+        express them; the CLI sugar cannot" and was wrong for three of the
+        four. The model carries the *vocabulary*
+        (`ProjectionKind::Search { fields }`, `ProjectionKind::Seed`,
+        `AppModel.relations`) and the compiler does not read it.
+        `Facet::Search` emits a port interface and nothing else -- no
+        `tsvector` column, no GIN index, no JDBC adapter, which is three
+        quarters of what legacy `g search` produces -- while `seed` and
+        `relations` are read by no emitter at all: there is no `references`
+        or `foreign key` anywhere in `jails-compiler`. So editing the JDL by
+        hand and running `sync`, which is what the refusal tells the reader to
+        do, would not produce the artifact either.
+
+        There is also no `ModelPatch` variant that adds a projection.
+        `factory`, `dto` and `repo` reach the model through `AddFacet`, which
+        carries no fields, so a search projection cannot be expressed as a
+        patch even once the emitter exists.
+
+        `migration` is the fourth and is deliberate rather than missing:
+        `CLAUDE.md` records migrations as irreproducible operations that stay
+        visible in the plan instead of being rendered.
 
       **`CLAUDE.md` was three capabilities behind and said so as an
       instruction** -- *"Canonical capability profiles currently include
@@ -469,8 +491,14 @@ verbatim from `customer.js` and `admin.js`:
       that already works. Corrected in the same change, with the date and the
       method, because this number moves.
 
-      **Getting the measurement right took three wrong answers**, all of them
-      the probe rather than the product, and all of them the same mistake:
+      **Getting the measurement right took four wrong answers.** Three were
+      the probe and one was mine -- calling the kind gap a frontend gap on the
+      strength of a refusal message, without checking whether anything
+      downstream consumed the declaration. The refusal was accurate about
+      itself and misleading about the cause, which is the failure mode a
+      `fix:` line invites: it named a repair that does not repair.
+
+      The three probe mistakes were all the same one:
       reading a refusal as a parity gap without reading *which* refusal. `g
       controller Sample id:uuid@pk` is rejected for its flags, not its route;
       the 14 kinds reporting *"requires `jdl 1`"* wanted the v1 document form
