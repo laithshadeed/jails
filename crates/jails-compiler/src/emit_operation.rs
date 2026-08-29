@@ -8,7 +8,8 @@ use crate::CompileError;
 use crate::emit_java::{JAVA_ROOT, entity, render};
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile, RenderedTree};
 use jails_model::{
-    AppModel, BuiltinType, Entity, Facet, Field, Operation, OperationKind, StableId, TypeRef, Value,
+    AppModel, BuiltinType, Entity, Facet, Field, Operation, OperationKind, Package, StableId,
+    TypeRef, Value,
 };
 use std::collections::BTreeSet;
 
@@ -112,7 +113,7 @@ pub(super) fn publications(
         imports.extend([
             format!(
                 "{}.{event_type}",
-                model.project.package_for("domain.events")
+                model.project.package_for(Package::DomainEvents)
             ),
             "org.springframework.context.ApplicationEventPublisher".to_string(),
         ]);
@@ -208,7 +209,7 @@ fn operation_file(
     imports: BTreeSet<String>,
     body: String,
 ) -> Result<(ProjectPath, RenderedFile), CompileError> {
-    let package = model.project.package_for("adapters.jdbc");
+    let package = model.project.package_for(Package::AdaptersJdbc);
     let artifact_id = format!(
         "art_{capability_id}_{}_{artifact_suffix}",
         operation.id.as_str()
@@ -259,7 +260,7 @@ fn context_parameter(model: &AppModel, entity: &Entity, imports: &mut BTreeSet<S
     } else {
         imports.insert(format!(
             "{}.ExecutionContext",
-            model.project.package_for("application")
+            model.project.package_for(Package::Application)
         ));
         "ExecutionContext context, ".to_string()
     }

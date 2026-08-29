@@ -13,6 +13,7 @@
 //! `jails beans` reports and a scaffold that compiles and cannot run.
 
 use super::*;
+use jails_model::Package;
 
 pub(super) fn lower_fake_repository(
     model: &AppModel,
@@ -20,11 +21,11 @@ pub(super) fn lower_fake_repository(
     entity: &Entity,
 ) -> Result<Unit, CompileError> {
     let primary_key = primary_key(entity)?;
-    let package = model.project.package_for("adapters.memory");
+    let package = model.project.package_for(Package::AdaptersMemory);
     let type_name = format!("InMemory{}Repository", entity.names.java_type);
     let repository = format!(
         "{}.{}Repository",
-        model.project.package_for("repository"),
+        model.project.package_for(Package::Repository),
         entity.names.java_type
     );
     let mut imports = BTreeSet::from([
@@ -72,11 +73,11 @@ pub(super) fn lower_db_repository(
     entity: &Entity,
 ) -> Result<Unit, CompileError> {
     let primary_key = primary_key(entity)?;
-    let package = model.project.package_for("adapters.jdbc");
+    let package = model.project.package_for(Package::AdaptersJdbc);
     let type_name = format!("Jdbc{}Repository", entity.names.java_type);
     let repository = format!(
         "{}.{}Repository",
-        model.project.package_for("repository"),
+        model.project.package_for(Package::Repository),
         entity.names.java_type
     );
     let mut imports = BTreeSet::from([

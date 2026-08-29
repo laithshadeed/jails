@@ -6,7 +6,7 @@ use crate::CompileError;
 use crate::emit_java::{domain_import, java_type, primary_key, with_suffix};
 use jails_contracts::{ProjectPath, RenderedFile};
 use jails_model::{
-    AppModel, Command, ConstraintKind, Entity, Field, Operation, OperationParameter,
+    AppModel, Command, ConstraintKind, Entity, Field, Operation, OperationParameter, Package,
     ParameterSource, TypeRef, Value,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -23,7 +23,7 @@ pub(super) fn lower(
     let mut imports = BTreeSet::from([
         format!(
             "{}.{}",
-            model.project.package_for("application.commands"),
+            model.project.package_for(Package::ApplicationCommands),
             with_suffix(&operation.names.java_type, "Command")
         ),
         domain_import(model, target),
@@ -87,7 +87,7 @@ pub(super) fn lower(
         ) {
             imports.insert(format!(
                 "{}.TimeOrderedUuid",
-                model.project.package_for("domain")
+                model.project.package_for(Package::Domain)
             ));
             InsertValue::Parameter("TimeOrderedUuid.next()".to_string())
         } else if field.semantics.default.is_some() {

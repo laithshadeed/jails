@@ -2,7 +2,7 @@ use super::{context_parameter, context_value, java_string, operation_file, scope
 use crate::CompileError;
 use crate::emit_java::{domain_import, java_type, with_suffix};
 use jails_contracts::{ProjectPath, RenderedFile};
-use jails_model::{AppModel, Entity, Field, Operation, SortDirection};
+use jails_model::{AppModel, Entity, Field, Operation, Package, SortDirection};
 use std::collections::BTreeSet;
 
 pub(super) const DEFAULT_LIMIT: u32 = 100;
@@ -27,7 +27,7 @@ pub(super) fn lower(
     let mut imports = BTreeSet::from([
         format!(
             "{}.{port_type}",
-            model.project.package_for("application.queries")
+            model.project.package_for(Package::ApplicationQueries)
         ),
         domain_import(model, target),
         "java.util.ArrayList".to_string(),

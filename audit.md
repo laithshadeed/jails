@@ -329,16 +329,16 @@ array of integers. 6.2 KB of generated Java produces a 99,892-byte
 mutation. The legacy store separated these deliberately —
 `jails-protocol`'s `envelope.rs` owns the format and hex-encodes the payload.
 
-### A3.11 There is no `OutputConvention` registry, and the layout contradicts §9.7
+### A3.11 The emitted layout contradicts §9.7
 
-Emitters concatenate packages inline in 15+ places
-(`format!("{}.adapters.jdbc", model.project.base_package)` and friends across
-`emit_java.rs`, `emit_dto.rs`, `emit_factory.rs`, `emit_operation.rs`,
-`emit_capability.rs`). §20.2 requires one registry and says emitters "MUST
-NOT concatenate a package, prefix, suffix, filename, or test marker
-themselves".
+The registry half is closed: `jails_model::Package` is the twenty packages the
+compiler emits Java into, one `placement()` row each, and `package_for` is the
+only thing that turns one into a name. §20.2's rule that an emitter "MUST NOT
+concatenate a package, prefix, suffix, filename, or test marker itself" now
+holds everywhere except `emit_unit.rs`, which is A3.11b below.
 
-Observed against §9.7's closed layer table:
+What the registry made visible is the part that is still open. `Head::Facet`
+marks every row §9.7 does not close:
 
 | §9.7 | emitted |
 |---|---|
@@ -349,11 +349,33 @@ Observed against §9.7's closed layer table:
 | HTTP in `web` | `ports.http` |
 | — | `application` (`ExecutionContext`) |
 
-`application`, `ports` and `repository` are not §9.7 layers. §3.1 rule 4
+`application`, `ports` and `repository` are not §9.7 layers, and a `Facet`
+head is renamed by nothing -- so a project whose `jails.toml` renames a layer
+gets the rename for `domain` and `adapters` and not for these. §3.1 rule 4
 makes conventions part of `jdl 1` and forbids a compiler changing one
 silently, so every row above is a future breaking move for any project
-generated on this branch. The `ETest.java` row of §9.7 is also unmet: no
-companion test is emitted for an entity record.
+generated on this branch: reconciling them moves files in every such project,
+which is why the table is named rather than quietly corrected.
+
+The `ETest.java` row of §9.7 is also unmet: no companion test is emitted for
+an entity record.
+
+### A3.11b A source unit's package is decided by the linker, without the layout
+
+`linker::unit` builds a unit's `java_package` as `{base}.domain` /
+`{base}.service` / `{base}.web` and has no layout to apply -- the layout is a
+captured fact that reaches the model on the snapshot, one pass later.
+`emit_unit.rs` therefore has to compare against that same spelling, which is
+why it is the one emitter still concatenating: routing it through
+`package_for` would make it expect `core` where the linker wrote `domain` on
+any project that renamed the layer, and refuse every strategy through a check
+that used to pass. Its module comment records this, because the change looks
+like tidying.
+
+So `g sealed`, `g strategy`, `g service` and `g controller` ignore layer
+renames on the canonical path. Closing it means making a unit's package a
+projection computed with the layout rather than a linker-time string. Nothing
+in the suite covers a renamed layout, in either direction.
 
 ### A3.12 `AppModel` is missing three fields the spec puts in the digest
 
@@ -579,10 +601,12 @@ It is used only under `#[cfg(test)]` (`materialize.rs:673`), and
 Items 1–4 and 9 of the original list are closed and deleted; what remains is
 ordered by consequence.
 
-1. **A3.11 / A3.12** — build the convention registry, the `derived` records
-   and `model explain` *before* more emitters land. Every emitter added now
-   hard-codes a placement §9.7 will later have to move, and there are more
-   coming.
+1. **A3.11 / A3.11b / A3.12** — the registry is built; what is left is the
+   decision it made legible. Reconcile the six `Head::Facet` rows with §9.7 or
+   record the divergence, make a source unit's package a layout-aware
+   projection, and add the `derived` records and `model explain` so a
+   convention is inspectable rather than implied. Do it *before* more emitters
+   land: each one added now picks a placement §9.7 will later have to move.
 2. **A1.4** — write `model upgrade --to 1`, then port `tests/differential.rs`
    and `tests/cli/model.rs` onto `jdl 1` (**A5.3**). Until that lands the G1
    gate protects the front end §22 says to delete.

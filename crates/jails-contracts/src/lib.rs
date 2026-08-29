@@ -14,7 +14,7 @@ pub use draft::{
     Provenance, ReaderFacetKind, RenderedFile, RenderedMigration, RenderedReaderFacet,
     RenderedTree, SemanticPlan,
 };
-pub use jails_model::{Layout, RENAMEABLE_LAYERS};
+pub use jails_model::{Head, Layer, Layout, Package};
 pub use path::ProjectPath;
 pub use plan::{
     CanonicalModelPatch, FileImageRef, ModelFileUpdate, Plan, PlanBundle, PlannedOperation,

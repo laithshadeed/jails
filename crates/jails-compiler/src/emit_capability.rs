@@ -11,7 +11,7 @@ use jails_contracts::{
     BuildDependency, BuildFeature, FileKind, FileMode, ProjectPath, PropertyEntry, Provenance,
     RenderedFile, RenderedTree,
 };
-use jails_model::{AppModel, Capability, DependencyScope, SettingTarget, StableId};
+use jails_model::{AppModel, Capability, DependencyScope, Package, SettingTarget, StableId};
 use std::collections::BTreeSet;
 
 mod basic;
@@ -79,7 +79,7 @@ struct PropertySpec {
 
 struct PackageOverride {
     suffix: &'static str,
-    project_subpackage: &'static str,
+    project_subpackage: Package,
 }
 
 #[derive(Clone, Copy)]
@@ -434,15 +434,15 @@ fn webmvc_test_import(boot_major: Option<u32>) -> &'static str {
 }
 
 fn adapters_package(model: &AppModel) -> String {
-    model.project.package_for("adapters")
+    model.project.package_for(Package::Adapters)
 }
 
 fn api_package(model: &AppModel) -> String {
-    model.project.package_for("api")
+    model.project.package_for(Package::Api)
 }
 
 fn testkit_package(model: &AppModel) -> String {
-    model.project.package_for("testkit")
+    model.project.package_for(Package::Testkit)
 }
 
 pub(crate) fn boot_major(version: Option<&str>) -> Option<u32> {

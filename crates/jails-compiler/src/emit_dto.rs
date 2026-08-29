@@ -7,7 +7,7 @@
 
 use crate::{CompileError, emit_java};
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
-use jails_model::{AppModel, Entity, Field, StableId};
+use jails_model::{AppModel, Entity, Field, Package, StableId};
 use std::collections::BTreeSet;
 
 const JAVA_TEST_ROOT: &str = ".jails/generated/test/java";
@@ -24,7 +24,7 @@ pub(crate) fn lower(
 }
 
 fn request(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, CompileError> {
-    let package = model.project.package_for("web");
+    let package = model.project.package_for(Package::Web);
     let type_name = format!("{}Request", entity.names.java_type);
     let artifact_id = format!("art_{}_dto_request", entity.id.as_str());
     let mut imports = BTreeSet::from([emit_java::domain_import(model, entity)]);
@@ -62,7 +62,7 @@ fn request(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, Compile
 }
 
 fn response(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, CompileError> {
-    let package = model.project.package_for("web");
+    let package = model.project.package_for(Package::Web);
     let type_name = format!("{}Response", entity.names.java_type);
     let artifact_id = format!("art_{}_dto_response", entity.id.as_str());
     let mut imports = BTreeSet::from([emit_java::domain_import(model, entity)]);
@@ -98,7 +98,7 @@ fn response(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, Compil
 }
 
 fn contract_test(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, CompileError> {
-    let package = model.project.package_for("web");
+    let package = model.project.package_for(Package::Web);
     let record = &entity.names.java_type;
     let type_name = format!("{record}DtoTest");
     let artifact_id = format!("art_{}_dto_test", entity.id.as_str());

@@ -5,7 +5,7 @@ use crate::emit_java::{
     JAVA_ROOT, domain_import, entity, java_type, primary_key, render, with_suffix,
 };
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile, RenderedTree};
-use jails_model::{AppModel, Operation, OperationKind, StableId};
+use jails_model::{AppModel, Operation, OperationKind, Package, StableId};
 use std::collections::BTreeSet;
 
 pub(crate) fn lower_and_emit(
@@ -43,7 +43,7 @@ fn lower(
                 (
                     entity,
                     route,
-                    "application.commands",
+                    Package::ApplicationCommands,
                     with_suffix(&operation.names.java_type, "Command"),
                     entity.names.java_type.clone(),
                     "@RequestBody PORT.Input input".to_string(),
@@ -61,7 +61,7 @@ fn lower(
                 (
                     entity,
                     route,
-                    "application.queries",
+                    Package::ApplicationQueries,
                     with_suffix(&operation.names.java_type, "Query"),
                     format!("List<{}>", entity.names.java_type),
                     "@ModelAttribute PORT.Input input".to_string(),
@@ -94,7 +94,7 @@ fn lower(
                 (
                     entity,
                     route,
-                    "application.transitions",
+                    Package::ApplicationTransitions,
                     with_suffix(&operation.names.java_type, "Transition"),
                     entity.names.java_type.clone(),
                     format!("@PathVariable(\"id\") {key_type} id, @RequestBody PORT.Input input"),
@@ -104,7 +104,7 @@ fn lower(
             OperationKind::Event(_) => return Ok(None),
         };
     let (method, path) = split_route(route)?;
-    let package = model.project.package_for("adapters.http");
+    let package = model.project.package_for(Package::AdaptersHttp);
     let type_name = with_suffix(&operation.names.java_type, "Controller");
     imports.extend([
         format!("{}.{port_type}", model.project.package_for(port_package)),
@@ -129,10 +129,13 @@ fn lower(
             )
         } else {
             imports.extend([
-                format!("{}.ScopeAuthorizer", model.project.base_package),
+                format!(
+                    "{}.ScopeAuthorizer",
+                    model.project.package_for(Package::Base)
+                ),
                 format!(
                     "{}.ExecutionContext",
-                    model.project.package_for("application")
+                    model.project.package_for(Package::Application)
                 ),
                 "java.util.Map".to_string(),
                 "org.springframework.security.core.Authentication".to_string(),

@@ -9,7 +9,7 @@ use crate::CompileError;
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile, RenderedTree};
 use jails_model::{
     AppModel, BuiltinType, Entity, EntityId, Facet, Field, FieldId, Operation, OperationKind,
-    OperationParameter, ParameterSource, StableId, TypeRef,
+    OperationParameter, Package, ParameterSource, StableId, TypeRef,
 };
 use std::collections::BTreeSet;
 
@@ -103,7 +103,7 @@ pub(crate) struct Unit {
 }
 
 fn lower_facet(model: &AppModel, entity: &Entity, facet: Facet) -> Result<Unit, CompileError> {
-    let domain_package = model.project.package_for("domain");
+    let domain_package = model.project.package_for(Package::Domain);
     let (package, type_name, body, mut imports) = match facet {
         Facet::Enum => (
             domain_package.clone(),
@@ -124,7 +124,7 @@ fn lower_facet(model: &AppModel, entity: &Entity, facet: Facet) -> Result<Unit, 
         Facet::Factory => unreachable!("factory has a test-source backend"),
         Facet::Dto => unreachable!("dto has a multi-file backend"),
         Facet::Repository => {
-            let package = model.project.package_for("repository");
+            let package = model.project.package_for(Package::Repository);
             let primary_key = primary_key(entity)?;
             let mut imports = BTreeSet::from([
                 "java.util.List".to_string(),
@@ -144,7 +144,7 @@ fn lower_facet(model: &AppModel, entity: &Entity, facet: Facet) -> Result<Unit, 
             (package, type_name, body, imports)
         }
         Facet::Service => {
-            let package = model.project.package_for("service");
+            let package = model.project.package_for(Package::Service);
             let type_name = format!("{}Service", entity.names.java_type);
             let imports = BTreeSet::from([format!("{domain_package}.{}", entity.names.java_type)]);
             let body = format!(
@@ -154,7 +154,7 @@ fn lower_facet(model: &AppModel, entity: &Entity, facet: Facet) -> Result<Unit, 
             (package, type_name, body, imports)
         }
         Facet::Http => {
-            let package = model.project.package_for("ports.http");
+            let package = model.project.package_for(Package::PortsHttp);
             let type_name = format!("{}HttpPort", entity.names.java_type);
             let imports = BTreeSet::from([format!("{domain_package}.{}", entity.names.java_type)]);
             let body = format!(
@@ -164,7 +164,7 @@ fn lower_facet(model: &AppModel, entity: &Entity, facet: Facet) -> Result<Unit, 
             (package, type_name, body, imports)
         }
         Facet::Events => {
-            let package = model.project.package_for("ports.events");
+            let package = model.project.package_for(Package::PortsEvents);
             let type_name = format!("{}Events", entity.names.java_type);
             let imports = BTreeSet::from([format!("{domain_package}.{}", entity.names.java_type)]);
             let body = format!(
@@ -183,7 +183,7 @@ fn lower_facet(model: &AppModel, entity: &Entity, facet: Facet) -> Result<Unit, 
             ));
         }
         Facet::Search => {
-            let package = model.project.package_for("ports.search");
+            let package = model.project.package_for(Package::PortsSearch);
             let type_name = format!("{}Search", entity.names.java_type);
             let imports = BTreeSet::from([
                 "java.util.List".to_string(),
@@ -220,7 +220,7 @@ fn lower_facet(model: &AppModel, entity: &Entity, facet: Facet) -> Result<Unit, 
 }
 
 fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, CompileError> {
-    let (package_suffix, type_name, body, imports) = match &operation.kind {
+    let (package, type_name, body, imports) = match &operation.kind {
         OperationKind::Command(command) => {
             let entity = entity(model, &command.on)?;
             let mut imports = BTreeSet::from([domain_import(model, entity)]);
@@ -238,7 +238,7 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
                 "public interface {type_name} {{\n{route}\n    {} execute({context}Input input);\n\n{input}\n}}",
                 entity.names.java_type
             );
-            ("application.commands", type_name, body, imports)
+            (Package::ApplicationCommands, type_name, body, imports)
         }
         OperationKind::Query(query) => {
             let entity = entity(model, &query.on)?;
@@ -256,7 +256,7 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
                 "public interface {type_name} {{\n{route}{limit}    List<{}> execute({context}Input input);\n\n{input}\n}}",
                 entity.names.java_type
             );
-            ("application.queries", type_name, body, imports)
+            (Package::ApplicationQueries, type_name, body, imports)
         }
         OperationKind::Transition(transition) => {
             let entity = entity(model, &transition.on)?;
@@ -272,7 +272,7 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
                 "public interface {type_name} {{\n{route}\n    {} execute({context}{key_type} id, Input input);\n\n{input}\n}}",
                 entity.names.java_type
             );
-            ("application.transitions", type_name, body, imports)
+            (Package::ApplicationTransitions, type_name, body, imports)
         }
         OperationKind::Event(event) => {
             let mut imports = BTreeSet::new();
@@ -285,10 +285,10 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
             )?;
             let type_name = with_suffix(&operation.names.java_type, "Event");
             let body = record_shape(&type_name, &fields, &mut imports);
-            ("domain.events", type_name, body, imports)
+            (Package::DomainEvents, type_name, body, imports)
         }
     };
-    let package = model.project.package_for(package_suffix);
+    let package = model.project.package_for(package);
     let artifact_id = format!(
         "art_{}_{}",
         operation.id.as_str(),
@@ -323,7 +323,7 @@ fn operation_context(model: &AppModel, entity: &Entity, imports: &mut BTreeSet<S
     {
         imports.insert(format!(
             "{}.ExecutionContext",
-            model.project.package_for("application")
+            model.project.package_for(Package::Application)
         ));
         "ExecutionContext context, ".to_string()
     } else {
@@ -378,7 +378,7 @@ fn fields<'a>(entity: &'a Entity, ids: &[FieldId]) -> Result<Vec<&'a Field>, Com
 pub(crate) fn domain_import(model: &AppModel, entity: &Entity) -> String {
     format!(
         "{}.{}",
-        model.project.package_for("domain"),
+        model.project.package_for(Package::Domain),
         entity.names.java_type
     )
 }

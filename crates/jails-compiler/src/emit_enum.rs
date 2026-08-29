@@ -3,7 +3,7 @@
 use crate::CompileError;
 use crate::emit_java::{JAVA_ROOT, render};
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
-use jails_model::{AppModel, Entity, StableId};
+use jails_model::{AppModel, Entity, Package, StableId};
 use std::collections::BTreeSet;
 
 pub(crate) fn has_wire_values(entity: &Entity) -> bool {
@@ -56,11 +56,11 @@ pub(crate) fn lower_converter(
     model: &AppModel,
     entity: &Entity,
 ) -> Result<(ProjectPath, RenderedFile), CompileError> {
-    let package = model.project.package_for("web");
+    let package = model.project.package_for(Package::Web);
     let type_name = format!("{}Converter", entity.names.java_type);
     let enum_type = &entity.names.java_type;
     let imports = BTreeSet::from([
-        format!("{}.{enum_type}", model.project.package_for("domain")),
+        format!("{}.{enum_type}", model.project.package_for(Package::Domain)),
         "org.springframework.core.convert.converter.Converter".to_string(),
         "org.springframework.stereotype.Component".to_string(),
     ]);

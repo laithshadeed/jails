@@ -27,6 +27,21 @@ struct Unit {
     file: RenderedFile,
 }
 
+/// **Takes the base package rather than a `Package`, deliberately.**
+///
+/// A source unit's `java_package` is decided by the *linker*
+/// (`linker::unit`), which concatenates `"domain"` / `"service"` / `"web"`
+/// onto the base package and has no layout to apply -- the layout is a
+/// captured fact that reaches the model on the snapshot, one pass later. So
+/// these comparisons have to spell the package the way the linker spelled it.
+/// Routing them through `package_for` looks like tidying and is not: on a
+/// project whose `jails.toml` renames `domain`, the emitter would then expect
+/// `core` where the linker wrote `domain`, and every strategy would be refused
+/// by a check that used to pass.
+///
+/// The divergence is real and recorded as `audit.md` A3.11b. Closing it means
+/// making the unit package a projection computed with the layout, not a
+/// substitution here.
 fn lower(source: &SourceUnit, base_package: &str) -> Result<Vec<Unit>, CompileError> {
     let id = source.id.as_str();
     let package = &source.java_package;

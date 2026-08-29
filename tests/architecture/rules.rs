@@ -924,7 +924,7 @@ fn harness_text() -> String {
 
 /// The two layer lists are one list, in two crates that cannot see each other.
 ///
-/// `jails-model`'s `RENAMEABLE_LAYERS` is what the compiler will rename;
+/// `jails-model`'s `Layer::ALL` is what the compiler will rename;
 /// `jails-spec`'s `Layer::ALL` is what the legacy engine renames and what
 /// `jails.toml`'s parser accepts. A layer in one and not the other is a rename
 /// that half of jails honours -- which is `bugs.md` B59 in the other
@@ -938,9 +938,12 @@ fn the_compilers_renameable_layers_are_the_engines_layers() {
         .iter()
         .map(|layer| layer.package())
         .collect();
+    let compiler: Vec<&str> = jails_model::Layer::ALL
+        .iter()
+        .map(|layer| layer.package())
+        .collect();
     assert_eq!(
-        jails_model::RENAMEABLE_LAYERS.to_vec(),
-        engine,
+        compiler, engine,
         "the compiler and the engine disagree about which layers a project may rename"
     );
 }

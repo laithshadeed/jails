@@ -1,6 +1,7 @@
 //! Declarative messaging capability packs.
 
 use super::*;
+use jails_model::Package;
 
 const KAFKA_FILES: &[JavaFile] = &[
     JavaFile {
@@ -226,7 +227,7 @@ const MAIL_COMPOSE: &[ComposeService] = &[ComposeService {
 
 const KAFKA_PACKAGE_OVERRIDES: &[PackageOverride] = &[PackageOverride {
     suffix: "testcontainers_config",
-    project_subpackage: "",
+    project_subpackage: Package::Base,
 }];
 
 pub(super) const KAFKA_PACK: Pack = Pack {
@@ -284,7 +285,7 @@ const fn property(key: &'static str, value: &'static str) -> PropertySpec {
 }
 
 fn messaging_package(model: &AppModel) -> String {
-    model.project.package_for("messaging")
+    model.project.package_for(Package::Messaging)
 }
 
 fn application_package(model: &AppModel) -> String {

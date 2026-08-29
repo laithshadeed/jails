@@ -5,6 +5,7 @@
 //! Spring projections, including their version predicates.
 
 use super::*;
+use jails_model::Package;
 
 mod names;
 use names::*;
@@ -558,7 +559,7 @@ const REDIS_COMPOSE: &[ComposeService] = &[ComposeService {
 
 const SSE_PACKAGE_OVERRIDES: &[PackageOverride] = &[PackageOverride {
     suffix: "controller",
-    project_subpackage: "web",
+    project_subpackage: Package::Web,
 }];
 
 const fn property(key: &'static str, value: &'static str) -> PropertySpec {

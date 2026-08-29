@@ -2,7 +2,7 @@
 
 use crate::{CompileError, emit_java};
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
-use jails_model::{AppModel, BuiltinType, Entity, Field, StableId, TypeRef};
+use jails_model::{AppModel, BuiltinType, Entity, Field, Package, StableId, TypeRef};
 use std::collections::BTreeSet;
 
 const JAVA_TEST_ROOT: &str = ".jails/generated/test/java";
@@ -11,7 +11,7 @@ pub(crate) fn lower(
     model: &AppModel,
     entity: &Entity,
 ) -> Result<super::emit_java::Unit, CompileError> {
-    let package = model.project.package_for("testkit");
+    let package = model.project.package_for(Package::Testkit);
     let type_name = format!("{}Factory", entity.names.java_type);
     let artifact_id = format!("art_{}_factory", entity.id.as_str());
     let mut imports = BTreeSet::from([emit_java::domain_import(model, entity)]);

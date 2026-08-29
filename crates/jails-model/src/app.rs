@@ -1,6 +1,7 @@
 //! Typed application-level compiler intent.
 
 use crate::ProjectId;
+use crate::layout::Package;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -44,32 +45,28 @@ fn default_build() -> String {
 }
 
 impl ProjectIntent {
-    /// This project's Java package for a dotted layer suffix.
+    /// This project's Java package for one entry in the [`Package`] registry.
     ///
-    /// **The one place the compiler turns a layer into a package name.** It
-    /// was 28 `format!("{}.adapters.jdbc", base_package)` sites, none of which
-    /// could apply a rename because none of them knew there was one.
+    /// **The one place the compiler turns a package into a name.** It was 28
+    /// `format!("{}.adapters.jdbc", base_package)` sites, none of which could
+    /// apply a rename because none of them knew there was one; then 22 string
+    /// literals through here, which could rename but could not say whether a
+    /// head *was* a layer. `Package` closes both -- see `jdl-sol.md` §20.2,
+    /// which forbids an emitter concatenating a package itself.
     ///
-    /// Only the *head* segment renames: a reader who called their adapters
-    /// `persistence` means `persistence.jdbc`, not that the JDBC adapter has
-    /// moved somewhere else. A head with no rename key -- `repository`,
-    /// `ports`, `application` are the compiler's own facet packages and have no
-    /// `jails.toml` entry -- passes through unchanged, which is the honest
-    /// answer rather than an invented mapping onto a legacy layer.
-    ///
-    /// An empty suffix is the base package itself.
-    pub fn package_for(&self, suffix: &str) -> String {
-        if suffix.is_empty() {
+    /// Only the head renames: a reader who called their adapters `persistence`
+    /// means `persistence.jdbc`, not that the JDBC adapter has moved somewhere
+    /// else. A [`Head::Facet`] head is the compiler's own and renames to
+    /// nothing.
+    pub fn package_for(&self, package: Package) -> String {
+        let (Some(head), tail) = package.placement() else {
             return self.base_package.clone();
-        }
-        let (head, tail) = match suffix.split_once('.') {
-            Some((head, tail)) => (head, Some(tail)),
-            None => (suffix, None),
         };
-        let head = self.layout.segment(head);
-        match tail {
-            Some(tail) => format!("{}.{head}.{tail}", self.base_package),
-            None => format!("{}.{head}", self.base_package),
+        let head = self.layout.head(head);
+        if tail.is_empty() {
+            format!("{}.{head}", self.base_package)
+        } else {
+            format!("{}.{head}.{tail}", self.base_package)
         }
     }
 }
@@ -95,12 +92,15 @@ mod package_tests {
     #[test]
     fn a_project_with_no_renames_gets_the_names_the_compiler_always_used() {
         let project = project(Layout::default());
-        assert_eq!(project.package_for("domain"), "net.acme.legacy.domain");
         assert_eq!(
-            project.package_for("adapters.jdbc"),
+            project.package_for(Package::Domain),
+            "net.acme.legacy.domain"
+        );
+        assert_eq!(
+            project.package_for(Package::AdaptersJdbc),
             "net.acme.legacy.adapters.jdbc"
         );
-        assert_eq!(project.package_for(""), "net.acme.legacy");
+        assert_eq!(project.package_for(Package::Base), "net.acme.legacy");
     }
 
     /// `bugs.md` B59: the rename applies to the head and leaves the tail alone.
@@ -108,14 +108,17 @@ mod package_tests {
     fn a_renamed_layer_renames_its_head_and_keeps_its_tail() {
         let project = project(Layout::parse("[layout]\nadapters = \"persistence\"\n").unwrap());
         assert_eq!(
-            project.package_for("adapters.jdbc"),
+            project.package_for(Package::AdaptersJdbc),
             "net.acme.legacy.persistence.jdbc"
         );
         assert_eq!(
-            project.package_for("adapters"),
+            project.package_for(Package::Adapters),
             "net.acme.legacy.persistence"
         );
-        assert_eq!(project.package_for("domain"), "net.acme.legacy.domain");
+        assert_eq!(
+            project.package_for(Package::Domain),
+            "net.acme.legacy.domain"
+        );
     }
 
     /// The compiler's own facet packages have no `jails.toml` key, so they
@@ -124,11 +127,11 @@ mod package_tests {
     fn a_facet_package_with_no_rename_key_is_left_alone() {
         let project = project(Layout::parse("[layout]\nadapters = \"persistence\"\n").unwrap());
         assert_eq!(
-            project.package_for("repository"),
+            project.package_for(Package::Repository),
             "net.acme.legacy.repository"
         );
         assert_eq!(
-            project.package_for("ports.http"),
+            project.package_for(Package::PortsHttp),
             "net.acme.legacy.ports.http"
         );
     }

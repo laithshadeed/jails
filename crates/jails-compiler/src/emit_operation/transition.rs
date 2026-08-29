@@ -5,7 +5,7 @@ use super::{
 use crate::CompileError;
 use crate::emit_java::{domain_import, java_type, primary_key, with_suffix};
 use jails_contracts::{ProjectPath, RenderedFile};
-use jails_model::{AppModel, Operation, Transition};
+use jails_model::{AppModel, Operation, Package, Transition};
 use std::collections::BTreeSet;
 
 pub(super) fn lower(
@@ -85,7 +85,7 @@ pub(super) fn lower(
     let mut imports = BTreeSet::from([
         format!(
             "{}.{port_type}",
-            model.project.package_for("application.transitions")
+            model.project.package_for(Package::ApplicationTransitions)
         ),
         domain_import(model, target),
         "java.util.ArrayList".to_string(),

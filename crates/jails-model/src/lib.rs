@@ -52,7 +52,7 @@ pub use jdl::v1::{
     remove_jdl_entity_member, rename_jdl_declaration, replace_jdl_entity_member,
     set_jdl_entity_attribute,
 };
-pub use layout::{Layout, RENAMEABLE_LAYERS};
+pub use layout::{Head, Layer, Layout, Package};
 pub use model::{
     AppModel, BuiltinType, Capability, Dependency, DependencyScope, Ejection, Entity, EntityNames,
     Facet, Field, FieldDefault, FieldNames, FieldScope, FieldSemantics, Index, IndexColumn,
