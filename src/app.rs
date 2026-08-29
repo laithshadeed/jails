@@ -197,7 +197,36 @@ fn fingerprint(intent: &Intent) -> String {
 /// against a typed comparison precisely because two implementations of one
 /// question disagree. Here `plan` *is* `apply` stopped one step before the
 /// lock, so what it names is exactly what the apply then writes.
+/// The manifest is a second desired-state authority, so a canonical project
+/// refuses it.
+///
+/// Every other mutating command was gated at the `main.rs` match and this one
+/// was not, which made it the one way to reach the legacy engine from a
+/// project that owns `.jails/model.jdl`: `app apply` planned `jails.toml`, a
+/// legacy ledger and capability Java into `src/main/java`, outside the managed
+/// tree, against a model it had never read. Two editable authorities writing
+/// one project is the disease this compiler exists to cure, and a *planner*
+/// that can still be invoked is not a cured one.
+///
+/// All three subcommands refuse, not only `apply`. `init` writes the second
+/// authority, and `plan` renders a legacy transition the canonical executor
+/// would never perform -- a preview of work that cannot happen is worse than
+/// a refusal, because the reader believes it.
+fn refuse_manifest(command: &str) -> Result<()> {
+    crate::model_command::refuse_legacy_mutation(
+        command,
+        "declare capabilities and generators in the canonical model and run `jails sync`; `.jails/app.toml` is the legacy manifest and is not a second source",
+    )
+}
+
 pub(crate) fn run(command: AppCommand, invocation: crate::Invocation) -> Result<()> {
+    if crate::model_command::owns() {
+        return refuse_manifest(match command {
+            AppCommand::Init { .. } => "app init",
+            AppCommand::Plan { .. } => "app plan",
+            AppCommand::Apply { .. } => "app apply",
+        });
+    }
     match command {
         AppCommand::Init { manifest } => crate::dispatch::mutate(invocation, false, |run| {
             jails_engine::route::app_init(run, manifest.as_deref().and_then(Path::to_str))

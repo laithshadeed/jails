@@ -3793,6 +3793,15 @@ fn canonical_projects_fail_closed_before_legacy_mutation_routes() {
         vec!["adopt"],
         vec!["modernize"],
         vec!["fmt"],
+        // The declarative manifest is a second desired-state authority, and
+        // it was the one route into the legacy engine this table did not
+        // cover: `app apply` planned `jails.toml`, a ledger and capability
+        // Java outside `.jails/generated` against a model it never read.
+        // `init` writes that second authority and `plan` renders a transition
+        // the canonical executor cannot perform, so all three refuse.
+        vec!["app", "init"],
+        vec!["app", "plan"],
+        vec!["app", "apply"],
     ] {
         let before = snapshot_tree(&root);
         let output = jails_cmd(&root, None).args(&arguments).output().unwrap();
