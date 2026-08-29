@@ -17,34 +17,41 @@
 name: verify-rewrite
 
 on:
+  # **One event per commit, so there is never a second run to throw away.**
+  # A branch with an open pull request fires both `push` and `pull_request`,
+  # which is how this job came to run twice against one SHA -- 9m22s and 9m52s
+  # on `85597f9`, same commit, same result.
+  #
+  # Keying `concurrency` on the branch made the later run cancel the earlier
+  # one. That stopped the double *billing* and left the double *start*: a run
+  # queued, a runner allocated and torn down seconds later, and a cancelled
+  # check sitting in the pull request's status list looking to any reader like
+  # something failed. Racing a duplicate is not the same as not creating one.
+  #
+  # Restricting `push` to the default branch removes it at the source. Every
+  # branch worked on in this repository has a pull request open --
+  # `new-world-compiler-jdl-v1` is PR #1 -- so `pull_request` gates the
+  # branches, `push` gates what lands on `main`, and no commit is covered
+  # twice. The `pull_request` run is also the better of the two: it builds the
+  # branch merged into its base rather than the branch head.
+  #
+  # What this gives up is CI on a branch with no pull request open, and that is
+  # deliberate rather than overlooked. `.githooks/pre-push` runs this exact
+  # gate before the push; opening the pull request, draft included, turns the
+  # remote one on; `workflow_dispatch` covers a one-off.
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
-# **One run per commit, not two.** `github.ref` is a different string for the
-# two events that both fire on a pull request branch -- `refs/heads/<branch>`
-# for the push and `refs/pull/<n>/merge` for the pull_request -- so this keyed
-# two groups, `cancel-in-progress` never had anything to cancel, and every
-# push to a PR branch ran the whole ten-minute gate twice against the same
-# SHA. Both runs on `85597f9` are the evidence: 9m22s under `push` and 9m52s
-# under `pull_request`, same commit, same result.
+# Supersede an **older commit's** run when a branch is pushed again while one
+# is still going. That run is genuinely obsolete, which is what cancellation is
+# for -- as opposed to cancelling a run of the same commit, which is what the
+# trigger above now prevents rather than races.
 #
-# `head_ref || ref_name` is the same string for both: `head_ref` is the source
-# branch and is set only on a pull_request, `ref_name` is the bare branch name
-# on a push. So the two collapse into one group and one cancels the other.
-#
-# **The pull_request run is the one that survives, and that is the one worth
-# keeping.** The push event fires two to three seconds first every time, so
-# the later pull_request run is the canceller. It builds the merge of the
-# branch into its base rather than the branch head -- identical trees while
-# the base is an ancestor, and strictly more informative once the base has
-# moved on.
-#
-# `push: branches: ["**"]` stays. Branches here are worked on directly and
-# merged without a pull request of their own -- `new-world-compiler-jdl-v1`
-# is one -- so narrowing the push trigger to `main` would leave them with no
-# gate at all, which is a larger hole than a duplicated run was a cost.
+# `head_ref || ref_name` rather than `github.ref`: those are different strings
+# for the two events (`refs/heads/<branch>` against `refs/pull/<n>/merge`), so
+# a group keyed on `github.ref` cannot collapse a branch's runs into one queue.
 concurrency:
   group: verify-rewrite-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
