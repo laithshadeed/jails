@@ -264,10 +264,27 @@ def main() -> int:
     cores = os.cpu_count() or 4
     # Concurrency is over *binaries*; each one parallelises internally, and
     # `--test-threads` is left to the harness so `RUST_TEST_THREADS` and an
-    # explicit `-- --test-threads` both still mean what they say. The default
-    # is generous because most of these targets exit in milliseconds and the
-    # few that do not are process-spawn bound rather than compute bound.
-    jobs = known.jobs or max(4, cores * 2)
+    # explicit `-- --test-threads` both still mean what they say.
+    #
+    # **One binary per core, and the generous `cores * 2` it replaces was
+    # measured doing harm.** `cli` saturates the machine by itself -- profiled
+    # over `tests/cli`, mean concurrency 4.4 on four cores with *zero* idle
+    # seconds -- so the other thirty-one binaries have no gaps to fill and can
+    # only add contention. On the four-core CI runner that showed up exactly
+    # as the arithmetic predicts: `cli` slowed 257.9s -> 281.1s while the other
+    # binaries' 79.8s disappeared into its shadow, a net 21s bought with a much
+    # busier box.
+    #
+    # That busier box then broke something. A generated `http-sink` test whose
+    # request timeout is 5000ms against a *localhost* stub timed out under the
+    # load -- a threshold that is comfortable on an idle machine and marginal
+    # on a starved one. Overlap is worth having; oversubscription is what turns
+    # a timing-sensitive test into a flaky one, and no scheduling gain is worth
+    # that.
+    #
+    # A machine with cores to spare is a different case, and this scales with
+    # it rather than assuming four.
+    jobs = known.jobs or max(2, cores)
 
     logs = REPO / "target" / "jails-test-logs"
     logs.mkdir(parents=True, exist_ok=True)
