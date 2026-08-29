@@ -212,7 +212,10 @@ never route a canonical project through the legacy property ledger.
 
 ## Legacy workspace during cutover
 
-Thirteen legacy crates coexist with the four canonical crates above. A crate
+Thirteen legacy crates coexist with the four canonical crates above, plus two
+leaf crates that belong to neither ladder: `jails-codec-derive` (the
+`#[derive(Codec)]` proc macro) and `jails-codemod` (the marked block, with no
+dependencies at all). Nineteen in total. A crate
 may only depend on one below it, and Cargo enforces that;
 `no_module_depends_on_a_layer_above_its_own` in
 `tests/architecture/` enforces the same rule for module-level edges the
@@ -228,7 +231,7 @@ module belongs to** — this one is the prose, and prose is what goes stale.
 | `jails-spec` | where a project is and how it is laid out (`build`, `spec::paths`, `spec::layout`), what a field spec means (`spec::field`), and the closed CLI vocabularies (`spec::kind`). |
 | `jails-state` | **jails' own machine state, read and classified**: `compat` (absent / current / unreadable, never a fourth answer that quietly repairs something) and `listing` (what a directory holds). Below the Java project on purpose — `jails-commit` needs both and neither is about Java. |
 | `jails-protocol` | **the validated values every closed jails format is built from** — `Recipe`, `Name`, `Package`, `FieldSpec`, `EntityId`, `ResourceKey`, and the plan/transition/effect vocabulary above them. One constructor per type, and every wire decoder calls it, so a value rejected at the CLI cannot arrive through a recovered journal instead. 23 flat modules; §7.4 of `pending.md` groups them. |
-| `jails-project` | one resolved `model::Project`, plus every file jails writes *about* a project — the reader's (`config`, `compose`, `pom`, `gradle`) and the read-only view of jails' own (`compat`, `projection`, `ledger`). |
+| `jails-project` | one resolved `model::Project`, plus every file jails writes *about* a project — the reader's (`config`, `compose`, `pom`, `gradle`) and the read-only `projection` of jails' own. `compat` is `jails-state`'s, one row up; this said both. |
 | `jails-generate` | everything that decides what Java to write: `generate`, `spring`, `add`, `sql`. Its planning half (`plan_for`, `artifacts_for`) is what the engine calls and is pure. |
 | `jails-prepare` | **turning semantic desire into an exact executable transition**: `desire`, `reconcile`, `pipeline`, `merge`, `sandbox`, `report`. Plan-only — nothing here creates `.jails/` or commits anything. Everything a commit needs to *decide* is decided here, so the executor applies a value rather than re-deriving one. |
 | `jails-commit` | **making a prepared transition durable, and recovering one**: `store`, `journal`, `execute`, `activate`, `recover`, `gc`. Crash recovery rolls a fully persisted, validated journal *forward*; preimages exist for a guarded explicit abort and for audit, not as the crash policy. That is what keeps this crate small — there is one direction to finish in. |
@@ -335,9 +338,15 @@ Four things to know before touching it:
   because `format!` owns that syntax and Java is made of braces. The
   templates are real `.java` files now, pulled in with `include_str!` so they
   are still compile-time constants with no runtime file access and no new
-  dependency. Placeholders are `{{name}}`, chosen by **checking**: no `{{`
-  appears anywhere in the 162 golden files, so it cannot collide, while
-  `${name}` would (spring.rs generates `@Value("${...}")`). A missing or
+  dependency. Placeholders are `{{name}}`, chosen by **checking**: no `{{` appears in
+  any `.java` jails writes, so it cannot collide, while `${name}` would
+  (spring.rs generates `@Value("${...}")`). It *does* appear in generated
+  `.http` files, where `{{baseUrl}}` is the HTTP Client format's own variable
+  syntax -- but those are built with a Rust `format!` (escaped `{{{{`) rather
+  than rendered through `template!`, so the two syntaxes never meet. Re-check
+  against `.java` specifically if this is ever revisited; the original claim
+  was "no `{{` in the golden corpus", and that stopped being true when the
+  `.http` files were added. A missing or
   unused key is a panic, not silent text in a generated class. It is
   substitution only — **not** a template engine: anything structural (Spring's
   `@Component` versus its absence, a body repeated per field) stays in Rust
@@ -461,13 +470,20 @@ Four things to know before touching it:
   other. `gradle.rs`'s four matches are exhaustive over the enum, so **adding a
   feature is a compile error until the Gradle side exists** — which is what
   replaced the run-time refusal for an unrecognised plugin.
-- `crates/jails-support/src/codemod.rs` — **the marked block, and only that**: `# jails:<marker>`
-  … `# /jails:<marker>`, which is how jails edits a file the reader owns and
-  what makes `remove` the exact inverse of `add`. It had five owners
-  (`compose.rs`, `add.rs`, `add/database.rs`, `add/test_wiring.rs`,
-  `doctor.rs`) each with its own `format!`; `tests/architecture/` now fails
-  on a `# jails:` literal outside this module, so a sixth cannot appear
-  quietly. It no longer wraps a capability's `application.properties` settings
+- `crates/jails-codemod/src/marked.rs` — **the marked block, and only that**:
+  `# jails:<marker>` … `# /jails:<marker>`, which is how jails edits a file the
+  reader owns and what makes `remove` the exact inverse of `add`. It had five
+  owners (`compose.rs`, `add.rs`, `add/database.rs`, the test wiring,
+  `doctor.rs`) each with its own `format!`; `tests/architecture/` fails on a
+  `# jails:` literal outside this crate, so a sixth cannot appear quietly.
+
+  **It is its own crate, with no dependencies at all**, and that is the
+  point. It lived in `jails-project` until 2026-08-29, and neither
+  `jails-compiler` nor `jails-workspace` depends on that crate -- so three
+  more implementations had appeared there, structurally forced rather than
+  careless. The gate that was supposed to stop exactly this had never been
+  able to: it counted blanked source, where a `# jails:` literal has already
+  been replaced by spaces, so it read zero whatever the code said. It no longer wraps a capability's `application.properties` settings
   — see the per-key rule in the gotchas below. `Marked::indented` exists because a marker at column zero inside a
   YAML mapping is a parse error rather than a misplaced comment. There is no
   `replace` — nothing needs one, and `remove` then `add` is the path `sync`
@@ -561,7 +577,7 @@ Four things to know before touching it:
   carries a `fix:` line (an integration test asserts this), and a failure
   exits non-zero via an *empty* `Err` so `main` prints no redundant
   `jails: ` line.
-- `crates/jails-drive/src/why.rs` — `why`. A table of (signature, explanation, fix) rules
+- `crates/jails-report/src/why.rs` — `why`. A table of (signature, explanation, fix) rules
   matched against a log. Rules sharing a `group` describe one failure
   through different messages and only the most specific is reported. Add
   rules only from failures that actually happened; a guessed cause costs
@@ -687,7 +703,7 @@ Four things to know before touching it:
   and it is the transaction store's, not a module's. `jails-protocol`'s
   `envelope.rs` owns the file format (magic, schema number, checksum, and a
   hex-encoded canonical payload); `jails-commit`'s `store.rs` reads and writes
-  it; `crates/jails-project/src/compat.rs` is the **read-only** classifier
+  it; `crates/jails-state/src/compat.rs` is the **read-only** classifier
   every command goes through — absent, current, or unreadable, and never a
   fourth answer that quietly repairs something.
 
@@ -711,7 +727,7 @@ Four things to know before touching it:
   twenty-one-defect ledger, and the friction ledger. **Never hand-edit a
   generated proof app to make it pass** — a manual edit is evidence for the
   next generic improvement and belongs in the friction ledger.
-- `crates/jails-drive/src/source.rs` — `jails src <Type>`: where a type's source is. The one
+- `crates/jails-report/src/source.rs` — `jails src <Type>`: where a type's source is. The one
   command that deliberately does **not** require a build file — "where is this
   type" is a question about a directory, and the case it exists for (jumping
   into a library checkout) is often asked from a repo that is not a Maven
@@ -724,7 +740,7 @@ Four things to know before touching it:
   p95/p99 and its own thresholds decide pass/fail, and k6 is not installed on
   this machine, so a parser would be written against a format nobody has seen.
   `plan.md` §19.6's p99 is still unmeasured and says so.
-- `crates/jails-drive/src/rename.rs` — `rename`. Textual by design (see its module docs for
+- `crates/jails-engine/src/route/maintenance/rename.rs` — `rename`. Textual by design (see its module docs for
   when to prefer jdt.ls `grn`): whole identifiers only, string literals left
   alone and the skipped count reported.
 - `tests/common/mod.rs` + `tests/cli/` — integration tests against the
@@ -765,7 +781,7 @@ Four things to know before touching it:
   because select-then-insert reopens the race. Domain-blind by construction:
   scope is a string the caller picks, the request is bytes the caller
   canonicalises, and the stored result is opaque.
-- `crates/jails-drive/src/explain.rs` — `jails explain <kind>`: why each artifact is shaped the
+- `crates/jails-report/src/explain.rs` — `jails explain <kind>`: why each artifact is shaped the
   way it is, and the trap it invites. **A hand-written table, deliberately** —
   a rationale is prose with nowhere to derive it from — so it is held to
   `why.rs`'s shape: a value in a table, one edit per kind, with
@@ -820,14 +836,34 @@ jails'. `deps.tsv` and `deps-update.sh` at the repo root *are* tracked.
 ## Workflow (every change, no exceptions)
 
 ```
-cargo build --workspace && cargo test --workspace && cargo install --path .
+mise run verify-rewrite && cargo install --path .
 ```
-**`--workspace` is not optional.** `cargo test` at a workspace root tests the
-root package only: it reported 390 passing where the tree has 418, and nothing
-said the other 28 had not run. Tests must stay green before installing. A Stop
-hook runs this automatically (see `.claude/settings.json`) — don't skip it
-manually even though the hook exists, since the hook only fires on turn end,
-not mid-turn.
+
+**There is one answer to "is this green", and this is it.** `verify-rewrite`
+is `simplify-sol.md`'s G0 gate, and `.githooks/pre-push` and
+`.github/workflows/verify-rewrite.yml` invoke it and nothing else, so the hook,
+CI and this file cannot drift apart about what passing means. `mise run lint`
+is its fast half -- `fmt --check` plus `clippy --workspace --all-targets -D
+warnings` -- and is what `.githooks/pre-commit` runs, for the same reason.
+
+Two properties it has that a hand-typed `cargo test` does not, both of which
+this project has been bitten by:
+
+- **`--workspace` is not optional.** `cargo test` at a workspace root tests the
+  root package only: it reported 390 passing where the tree had 418, and
+  nothing said the other 28 had not run.
+- **`JAILS_REQUIRE_TOOLCHAIN=1` turns a skip into a failure.** Without it a
+  tier-3 test that cannot find `mvn`, a new enough `javac`, Gradle or a
+  container runtime skips itself and is counted as passing. Turning it on found
+  `unheld_gradle_example_manifest_builds_on_its_pinned_toolchain`, which needs
+  Gradle 8.5 on JDK 21 against a default of 26 and had never run here.
+
+Tests must stay green before installing. A Stop hook runs this automatically
+(see `.claude/settings.json`) — don't skip it manually even though the hook
+exists, since the hook only fires on turn end, not mid-turn. It ran its own
+`cargo build && cargo test && cargo install` on a **120-second timeout**, which
+is shorter than `tests/cli` alone: it was being killed mid-suite every time, so
+its verdict meant nothing. It runs the gate now, with a timeout that fits.
 
 ## Package layout
 
@@ -1046,7 +1082,8 @@ jails knows nothing about.
   declaration. That is how `doctor` came to name the wrong container config and
   then report every other test as missing an import of it.
 - **The `@Import` splice lives in `jails-java`, not in `add`.** Two engines
-  perform it now -- `add/test_wiring.rs` and the V2 projection -- and a second
+  perform it now -- `jails-engine/src/route/support.rs` and the V2 projection
+  -- and a second
   copy of a surgical edit to a file the reader owns is a copy that drifts.
   `jails_java::annotate` is text in and text out: `splice_import`,
   `unsplice_import`, and `is_spring_boot_test`, which reads through

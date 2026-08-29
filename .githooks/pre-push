@@ -9,4 +9,13 @@
 #
 # Bypass with: git push --no-verify
 set -e
+
+if ! command -v mise >/dev/null 2>&1; then
+    echo "pre-push: mise is not on PATH, so the verification gate cannot run."
+    echo "  Pushing unverified is worse than not pushing: the gate is what"
+    echo "  turns a self-skipping test into a failure."
+    echo "  fix: install mise (https://mise.jdx.dev), or push with --no-verify"
+    exit 1
+fi
+
 exec mise run verify-rewrite

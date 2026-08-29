@@ -293,6 +293,42 @@ verbatim from `customer.js` and `admin.js`:
       `scripts/verify-rewrite-g1-canary.sh` freezes a legacy revision and runs
       them against both binaries.
 
+- [ ] **P13.7** **The suite is 108s of `tests/cli` because it compiles 36 Java
+      projects, and the remaining lever is Maven's JVM startup.** Profiled with
+      the harness's own `JAILS_TEST_PROFILE=1` (it needs `-- --nocapture`;
+      cargo captures stderr otherwise):
+
+      - **153 subprocesses, 547s of run time, 449s queued** behind the permit
+        pool, against ~108s wall.
+      - **`mvn`: 339s over 39 invocations.** The `jails` binary itself is 199s
+        over 106. Docker is 9s.
+      - **36 distinct project directories**, so there is almost nothing
+        redundant to remove: three are built twice, everything else once. The
+        cost *is* the coverage.
+
+      Done: `DEFAULT_MAX_TOOLCHAIN_PROCESSES` was the constant 6 and is derived
+      from the machine now, clamped to `[6, 12]`. Worth 113.2s -> 108.4s here.
+      Past about eight concurrent builds this machine stops getting faster --
+      these are JVMs that fork Surefire again underneath, so the limit is
+      memory and disk, not cores.
+
+      **The one large lever left is `mvnd`, and it needs an experiment rather
+      than a patch.** Warm `mvnd` is 0.6s against `mvn`'s 2.2s on a trivial
+      project -- the whole difference is JVM startup, which is a fixed ~1.6s on
+      every one of those 39 invocations, so roughly 62s of the 339s. The
+      real-toolchain tests deliberately avoid it: `real_path_without_mvnd()`
+      strips it from PATH, because `CLAUDE.md` records the daemon as flaky
+      under JDK 26 with a native-library extraction bug.
+
+      That claim now needs re-testing rather than trusting: mvnd 1.0.6 ran
+      **20/20 green** here under JDK 26. But 20 runs of a plain project is not
+      evidence about the case the note describes -- concurrent daemons across a
+      parallel suite, Spring projects, Testcontainers. The experiment is to run
+      the real-toolchain tier on the mvnd path repeatedly and count failures;
+      if it holds, `real_path_without_mvnd` and the `CLAUDE.md` note both go,
+      and the suite loses about a fifth of its Maven time. **Do not flip it on
+      a handful of green runs** -- that is what the note is there to prevent.
+
 - [ ] **P13.2** **Five production files parse Maven XML; the document asks for
       one.** `jails-project/src/pom.rs` is the path being replaced,
       `jails-workspace/src/{capture,documents}.rs` and

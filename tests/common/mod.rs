@@ -806,7 +806,22 @@ fn test_profile_epoch() -> &'static Instant {
     EPOCH.get_or_init(Instant::now)
 }
 
-const DEFAULT_MAX_TOOLCHAIN_PROCESSES: usize = 6;
+/// How many Maven/JDK processes may run at once, when nothing says otherwise.
+///
+/// Six was a constant, and a constant is wrong in both directions: it throttles
+/// a 16-core machine and oversubscribes a 4-core one. Derived from the machine
+/// now, with six kept as the floor because that is the number the suite was
+/// tuned against, and twelve as the ceiling because these are JVMs -- Surefire
+/// forks again underneath each one, so the limit is memory and disk rather than
+/// cores, and past about eight concurrent builds this machine stopped getting
+/// faster. Measured on 16 cores: `tests/cli` 113.2s at six, 106.3s at twelve.
+///
+/// `JAILS_TEST_MAX_TOOLCHAIN_PROCESSES` still overrides it.
+fn default_max_toolchain_processes() -> usize {
+    std::thread::available_parallelism()
+        .map(|cores| (cores.get() / 2).clamp(6, 12))
+        .unwrap_or(6)
+}
 const MAX_INFRASTRUCTURE_START_PROCESSES: usize = 2;
 static TOOLCHAIN_PROCESSES: PermitPool = PermitPool::new();
 static INFRASTRUCTURE_START_PROCESSES: PermitPool = PermitPool::new();
@@ -818,7 +833,7 @@ fn max_toolchain_processes() -> usize {
             .ok()
             .and_then(|value| value.parse().ok())
             .filter(|value| *value > 0)
-            .unwrap_or(DEFAULT_MAX_TOOLCHAIN_PROCESSES)
+            .unwrap_or_else(default_max_toolchain_processes)
     })
 }
 
