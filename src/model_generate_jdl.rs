@@ -94,7 +94,7 @@ fn unsupported_kind(kind: ArtifactKind) -> String {
         ),
         ArtifactKind::Association => (
             "an association",
-            "`AppModel` carries relations and no emitter reads them, so nothing renders the foreign key.\n       fix: write the constraint as a migration by hand for now".to_string(),
+            "the compiler emits the foreign key from a declared relation; what is missing is only the JDL syntax editor that would write the declaration for you.\n       fix: add a `relation <name> to <Parent> { map <child> -> <parent> }` block to the child entity in `.jails/model.jdl`, then run `jails sync`".to_string(),
         ),
         ArtifactKind::Search => (
             "full-text search",

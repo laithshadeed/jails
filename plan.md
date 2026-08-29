@@ -527,6 +527,22 @@ verbatim from `customer.js` and `admin.js`:
         fourth prerequisite (`json`, whose reader the runner uses), and three
         artifacts rather than one.
 
+        **`association` is closed on the emitter side.** A declared `relation`
+        block linked, `sync` reported success, and no foreign key was written
+        -- `book.author_id` referenced nothing. `emit_sql` now renders one
+        `alter table ... add constraint` per relation, **after every `create
+        table`**: the entity pass walks a `BTreeMap` by stable id and nothing
+        about that is a dependency order, so an inline table constraint would
+        be a migration that fails on its first run whenever the child sorted
+        first. Removal refuses, the policy indexes already have. What is left
+        for `g association` is only the syntax editor, and the refusal says so
+        now instead of claiming the emitter is missing.
+
+        **One thing to decide there:** `ReferentialAction` has no `NoAction`,
+        so an omitted `on update` compiles to `restrict`, where the legacy
+        generator writes `no action`. They differ -- `restrict` is never
+        deferred -- and the reader who omitted the clause chose neither.
+
         `migration` is the fourth and is deliberate rather than missing:
         `CLAUDE.md` records migrations as irreproducible operations that stay
         visible in the plan instead of being rendered.

@@ -2,6 +2,7 @@
 
 mod field_semantics;
 mod index;
+mod relation;
 mod sqlite;
 
 use crate::CompileError;
@@ -235,6 +236,13 @@ pub(crate) fn derive(
         descriptions.push(format!("create_{}", entity.names.sql_table));
     }
 
+    relation::derive_into(
+        next,
+        previous,
+        &mut statements,
+        &mut semantic_ids,
+        &mut descriptions,
+    )?;
     if statements.is_empty() {
         return Ok(rendered);
     }
