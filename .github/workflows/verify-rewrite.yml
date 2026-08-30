@@ -256,31 +256,17 @@ jobs:
         run: mise run verify-rewrite
 
       # `target/` is cached, and the suite writes things under it that are not
-      # build output: the logs, cost ledger and permit slots have no meaning on
-      # another machine. Dropping them before the post step keeps the cache to
-      # what is worth carrying.
-      #
-      # **`jails-e2e-cache` is now kept, and that is the point of keeping it.**
-      # It holds the generated projects behind `proof-apps` and the Spring
-      # toolboxes -- ~276s of the suite's 730s of Maven work -- and each is
-      # valid for as long as the `jails` binary that generated it is unchanged.
-      # Deleting it here guaranteed that never happened across runs. It was a
-      # reasonable thing to delete while the stamp keyed on the executable's
-      # *mtime*, because CI rebuilds `jails` every run and the entry could
-      # never have been reused anyway; now that the stamp is a hash of the
-      # binary's contents, a commit touching only tests, documentation or this
-      # workflow reuses those trees instead of rebuilding them with Maven.
-      #
-      # It is a cache, not a result: a miss costs exactly the Maven run it
-      # would have skipped, and the stamp is checked before any tree is
-      # trusted.
+      # build output: `jails-e2e-cache` alone is ~39 MB of generated projects
+      # kept between runs, and the logs, cost ledger and permit slots have no
+      # meaning on another machine. Dropping them before the post step keeps
+      # the cache to artifacts, which is the only part worth carrying.
       #
       # This runs unconditionally: a failed run's artifacts are still valid
       # for the next one, and cargo revalidates everything it restores anyway.
       - name: Trim the cargo cache to build artifacts
         if: always()
         run: |
-          rm -rf target/jails-test-logs target/jails-test-permits
+          rm -rf target/jails-e2e-cache target/jails-test-logs target/jails-test-permits
           # `CARGO_INCREMENTAL=0` above means this run created none. It is
           # still removed, because the entry this run restored was written by a
           # run that predates that setting and the restore-keys walk back to

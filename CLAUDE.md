@@ -1328,6 +1328,31 @@ obvious enough to be proposed again:
   is the dependency half, and that is already cached.
 
 
+**The generated-project cache cannot be made to survive a CI run, and the
+reason is worth recording so nobody spends the afternoon on it twice.**
+`cached_toolchain_dir` reuses a persistent generated tree for as long as the
+`jails` binary that produced it is unchanged, stamped with that binary's length
+and mtime. On CI the mtime is always new -- every run rebuilds -- so the stamp
+never matches, and the ~276s of Maven work behind `proof-apps` and the Spring
+toolboxes is paid again every run. Keying the stamp on a *hash of the
+executable's contents* looks like the obvious fix, and it was tried: with the
+tree deleted a proof-app test costs 112s, and run again against an unchanged
+binary it costs 24s, so the mechanism does work.
+
+It buys nothing on CI, because **the binary is not reproducible**. Touch one
+source, relink, and the bytes differ -- measured at `18b980f6cf76e061` against
+`49f6bd7ac5cf75e3` for identical sources -- since the dev profile splits
+codegen across many units and their output is not deterministically ordered. A
+fresh CI compile therefore yields a different binary every run, so a content
+hash misses exactly as often as an mtime does. Making it deterministic means
+`codegen-units = 1`, which costs far more compile time than the cache could
+return.
+
+So the stamp stays on the mtime, and the workflow keeps deleting
+`target/jails-e2e-cache` before saving: an entry that can never be hit is
+upload, download and storage for nothing. The cache is worth having *within* a
+machine's working session, which is what it was written for.
+
 **A test that waits is worse than a test that works.** The single most
 expensive test in the suite was `run_starts_compose_services_only_when_
 explicitly_requested`, at **30.0s** -- the entire wall clock of the `tooling`
