@@ -1,6 +1,6 @@
 # bugs.md — open defects found by dogfooding jails
 
-**One report is open: B57.** B46-B51 are closed and deleted; each was
+**Two reports are open: B57 and B61.** B46-B51 are closed and deleted; each was
 re-reproduced from an empty directory against the binary built from HEAD rather
 than assumed from the diff.
 
@@ -233,3 +233,57 @@ and its formatted counterpart hold both halves.
 test looking for it — the same way `B58` was found. The unit tests all used
 `write_spring_fixture`, whose `<dependencies>` is multi-line, so the whole
 suite was green over a pom shape it never tried.
+
+## B61
+
+**The suite reports a lock as held by its own last command, and the message is
+stale by design.** Unresolved: the cause is not found, and this records the
+evidence so the next reproduction starts ahead of where this one did.
+
+One run in six of `mise run verify-rewrite` fails with five simultaneous
+failures, all in `tests/engine.rs`, all reading:
+
+```
+another jails mutation holds the lock (pid 2122524
+jails adopt)
+another jails mutation holds the lock (pid 2122524
+jails app apply)
+another jails mutation holds the lock (pid 2122524
+jails generate record Reward title:string!)
+another jails mutation holds the lock (pid 2122524
+jails add actuator)
+another jails mutation holds the lock (pid 2122524
+jails generate scaffold Note id:uuid@pk title:string!)
+```
+
+Five *different* descriptions and one pid, which is the test binary's own. Each
+test is failing to re-acquire a lock on its own project, and the description it
+reads back is the one it wrote itself on the previous acquisition -- so the
+message reads as if a process were blocking itself. It is not evidence of the
+current holder: `read_best_effort` reads a file that is deliberately never
+deleted, so its content names the *last* writer, not whoever holds the flock
+now. That cost most of an investigation.
+
+`lock.rs`'s `SETTLE` names the obvious suspect -- a `fork` copies the whole
+descriptor table, so a child spawned while a lock is held keeps it until
+`exec`, and `jails-prepare/src/merge.rs` forks `git merge-file` on every
+three-way merge. Five locks going at once fits one unlucky fork capturing every
+lock open in the process. **Measured, and it does not hold up:**
+
+- `contend` instrumented to keep polling 1500 ms past its 50 ms deadline, over
+  two full suite runs: **zero** locks freed in the extension. Every give-up was
+  still held after 1.55 s, which is nothing like a `fork`/`exec` window. The
+  ten give-ups in those runs were `lock.rs`'s own contention tests.
+- In a green run, successful waits were n=12, p50 5.8 ms, p90 12.4 ms, max
+  23.8 ms against the 50 ms budget.
+- A direct reproduction -- five flocks held, twelve `fork`/`exec` children
+  spawned, then release and immediately re-acquire -- measured 0.0 ms of delay
+  over twenty trials idle and twenty more with all sixteen CPUs saturated.
+
+So raising `SETTLE` would not have fixed it and the number is not the problem.
+Whatever holds those five locks holds them for over 1.5 s.
+
+**What would make the next attempt cheaper:** report the *actual* holder rather
+than stale file content. Linux lists `FLOCK` holders and their pids in
+`/proc/locks`, keyed by device and inode, which the acquirer already has from
+`same_entry`. A message naming a live pid would have answered this in one run.

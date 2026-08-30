@@ -124,12 +124,72 @@ pub fn mark_toolchain_dir_generated(root: &Path) {
 /// using.
 const FIXTURE_LIFETIME: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
+/// How many fixtures may sit in the temporary directory before the oldest are
+/// collected regardless of age.
+///
+/// **Age alone is the wrong bound, and a full disk is how that showed up.**
+/// One suite run leaves roughly 1.4 GB across ~1,900 directories -- every
+/// fixture is `keep()`d so a failure can be inspected -- so six back-to-back
+/// runs inside `FIXTURE_LIFETIME` filled a 16 GB `/tmp` and the seventh
+/// collapsed: 580 `No space left on device` panics, every one of them in a
+/// test that was working. Nothing was stale by the age rule, because nothing
+/// was an hour old yet.
+///
+/// A count rather than a byte budget: the sweep already stats each entry, and
+/// a recursive size walk of ten thousand trees on every test binary's start
+/// would cost more than the space it reclaims. At the measured ~0.7 MB per
+/// fixture this budget is about 2 GB, which leaves the last run whole on a
+/// 16 GB `/tmp` with room for the next two.
+const FIXTURE_BUDGET: usize = 3000;
+
+/// The age below which a fixture is never collected, whatever the budget says.
+///
+/// The budget must not become a way to delete a *concurrent* run's fixtures,
+/// which is the one thing `FIXTURE_LIFETIME`'s comment promises. Ten minutes
+/// is longer than any single test here and far shorter than the hour the age
+/// rule waits, so an over-budget sweep still only reaches finished work.
+const FIXTURE_FLOOR: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
 /// Remove `jails-*` fixtures older than `FIXTURE_LIFETIME`, once per process.
 ///
 /// Opportunistic on purpose: it never fails a test. A directory that cannot
 /// be read or removed -- one another user owns, one a running process holds
 /// -- is skipped, because a cleaner that can break a test run is worse than
 /// a full disk you can `rm`.
+/// What a sweep collects, given every `jails-*` entry and its age.
+///
+/// Pure so the policy can be tested: the rules are an age cutoff, a floor
+/// that protects a concurrent run, and a budget that counts *every* survivor
+/// while only ever deleting from those above the floor.
+fn fixtures_to_collect<P: Clone>(entries: &[(std::time::Duration, P)], budget: usize) -> Vec<P> {
+    let mut collected = Vec::new();
+    let mut eligible = Vec::new();
+    let mut kept = 0usize;
+    for (age, path) in entries {
+        if *age > FIXTURE_LIFETIME {
+            collected.push(path.clone());
+            continue;
+        }
+        // Everything still here counts against the budget, including the
+        // fixtures too young to be collected -- otherwise a run whose own
+        // output is most of the corpus would read as under budget and the
+        // disk would fill anyway.
+        kept += 1;
+        if *age > FIXTURE_FLOOR {
+            eligible.push((*age, path.clone()));
+        }
+    }
+    // Oldest first, and only down to the budget. Nothing below the floor was
+    // ever a candidate, so a concurrent run's fixtures cannot be reached
+    // however far over budget this is.
+    let over = kept.saturating_sub(budget).min(eligible.len());
+    if over > 0 {
+        eligible.sort_unstable_by_key(|(age, _)| std::cmp::Reverse(*age));
+        collected.extend(eligible.into_iter().take(over).map(|(_, path)| path));
+    }
+    collected
+}
+
 fn sweep_stale_fixtures() {
     use std::sync::Once;
     static SWEPT: Once = Once::new();
@@ -137,6 +197,7 @@ fn sweep_stale_fixtures() {
         let Ok(entries) = fs::read_dir(std::env::temp_dir()) else {
             return;
         };
+        let mut found = Vec::new();
         for entry in entries.flatten() {
             let path = entry.path();
             let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
@@ -151,15 +212,76 @@ fn sweep_stale_fixtures() {
             if !name.starts_with("jails-") {
                 continue;
             }
-            let stale = fs::metadata(&path)
+            let Ok(age) = fs::metadata(&path)
                 .and_then(|m| m.modified())
-                .map(|when| when.elapsed().is_ok_and(|age| age > FIXTURE_LIFETIME))
-                .unwrap_or(false);
-            if stale {
-                fs::remove_dir_all(&path).ok();
-            }
+                .map(|when| when.elapsed().unwrap_or_default())
+            else {
+                continue;
+            };
+            found.push((age, path));
+        }
+        for path in fixtures_to_collect(&found, FIXTURE_BUDGET) {
+            fs::remove_dir_all(&path).ok();
         }
     });
+}
+
+#[cfg(test)]
+mod sweep_tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// Ages in seconds, oldest last, labelled by position.
+    fn aged(seconds: &[u64]) -> Vec<(Duration, usize)> {
+        seconds
+            .iter()
+            .enumerate()
+            .map(|(index, secs)| (Duration::from_secs(*secs), index))
+            .collect()
+    }
+
+    const YOUNG: u64 = 30;
+    const MIDDLE: u64 = 20 * 60;
+
+    #[test]
+    fn anything_past_its_lifetime_goes_whatever_the_budget_says() {
+        let entries = aged(&[FIXTURE_LIFETIME.as_secs() + 1, YOUNG, MIDDLE]);
+        assert_eq!(fixtures_to_collect(&entries, 99), vec![0]);
+    }
+
+    #[test]
+    fn a_corpus_inside_the_budget_is_left_alone() {
+        let entries = aged(&[MIDDLE, MIDDLE, YOUNG]);
+        assert!(fixtures_to_collect(&entries, 3).is_empty());
+    }
+
+    /// The case a full `/tmp` proved the age rule alone could not answer: six
+    /// suite runs inside `FIXTURE_LIFETIME` left nothing stale and no space.
+    #[test]
+    fn over_budget_collects_the_oldest_first_and_only_the_excess() {
+        let entries = aged(&[MIDDLE + 3, MIDDLE + 1, MIDDLE + 4, MIDDLE + 2]);
+        // Four survivors against a budget of two: the two oldest go, and they
+        // are chosen by age rather than by the order the directory listed them.
+        assert_eq!(fixtures_to_collect(&entries, 2), vec![2, 0]);
+    }
+
+    /// Young fixtures count against the budget even though they can never be
+    /// the ones collected -- otherwise a run whose own output is most of the
+    /// corpus reads as under budget and the disk fills anyway.
+    #[test]
+    fn fixtures_below_the_floor_still_count_against_the_budget() {
+        let entries = aged(&[MIDDLE, YOUNG, YOUNG, YOUNG]);
+        assert_eq!(fixtures_to_collect(&entries, 3), vec![0]);
+    }
+
+    /// The budget must never reach a concurrent run's fixtures, which is what
+    /// `FIXTURE_LIFETIME`'s comment promises and what makes the sweep safe to
+    /// run from thirty-three binaries at once.
+    #[test]
+    fn nothing_below_the_floor_is_collected_however_far_over_budget() {
+        let entries = aged(&[YOUNG; 40]);
+        assert!(fixtures_to_collect(&entries, 1).is_empty());
+    }
 }
 
 /// Build a `jails` invocation rooted at `cwd`. When `fake_maven_dir` is
