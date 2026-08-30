@@ -262,12 +262,7 @@ fn resolve(entity_name: &str, field_name: &str) -> Result<ResolvedField> {
     } else {
         crate::model_command::TOML_PATH
     });
-    let current_source = std::fs::read_to_string(&model_path).map_err(|error| {
-        Failure::Told(format!(
-            "could not read canonical model `{}`: {error}",
-            model_path.display()
-        ))
-    })?;
+    let current_source = crate::model_command::read_source(&model_path)?;
     let current_model = parse_model(&current_source, jdl)?;
     let entity_label = java_to_label(entity_name);
     let entity = current_model

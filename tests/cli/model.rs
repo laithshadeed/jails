@@ -11444,6 +11444,172 @@ fn canonical_storage_postgres_writes_the_container_compose_and_datasource() {
     );
 }
 
+/// The command that declares a capability is the command that wires it.
+///
+/// **Capture reads the pre-patch model; the compiler emits from the patched
+/// one.** Which reader trees `capture` reads was decided from the model on
+/// disk, so on the command that *introduces* `storage postgres` the test tree
+/// was not read -- the shipped `contextLoads` test was invisible, the
+/// `@Import` splice had nothing to splice into, and `jails add db` reported
+/// success over a project whose `mvn verify` now fails with "Failed to
+/// determine a suitable driver class". A second, unrelated command repaired
+/// it, which is why running two of them hid this.
+#[test]
+fn canonical_add_db_wires_the_shipped_test_on_the_command_that_declares_it() {
+    let root = temp_dir("canonical-db-declaring-command");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+         platform spring\n  build maven\n  storage none\n}\n",
+    )
+    .unwrap();
+
+    let added = jails_cmd(&root, None).args(["add", "db"]).output().unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+
+    let shipped =
+        fs::read_to_string(root.join("src/test/java/com/example/demo/DemoApplicationTests.java"))
+            .unwrap();
+    assert!(
+        shipped.contains("@Import(TestcontainersConfig.class)"),
+        "the shipped test was not wired by the command that declared storage:\n{shipped}"
+    );
+}
+
+/// A canonical command run from a subdirectory is still canonical.
+///
+/// **The dispatch switch and the legacy engine disagreed about which
+/// directory a command was about.** `owns` tested `.jails/model.jdl` against
+/// the process directory while the legacy engine walked up to the build file,
+/// so `jails g record` typed in `src/main/java` of a canonical project
+/// dispatched to the legacy engine: Java went into the reader's own tree
+/// instead of `.jails/generated`, and a `.jails/ledger.toml` appeared in a
+/// project that must never have one. Both walks are the same walk now.
+#[test]
+fn a_canonical_command_run_from_a_subdirectory_is_still_canonical() {
+    let root = temp_dir("canonical-subdirectory");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+         platform spring\n  build maven\n  storage none\n}\n",
+    )
+    .unwrap();
+    let inside = root.join("src/main/java/com/example/demo");
+
+    let generated = jails_cmd(&inside, None)
+        .args(["g", "record", "Sub", "name:String"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    assert!(
+        root.join(".jails/generated/main/java/com/example/demo/domain/Sub.java")
+            .exists(),
+        "the record was not written to the managed tree"
+    );
+    assert!(
+        !root.join(".jails/ledger.toml").exists(),
+        "a canonical project was given a legacy ledger"
+    );
+    assert!(
+        !inside.join("Sub.java").exists(),
+        "the record was written into the reader's own tree"
+    );
+
+    // The read-only commands answer about the same project, and name the
+    // model project-relative rather than by whatever absolute path this
+    // directory happens to have.
+    let checked = jails_cmd(&inside, None)
+        .args(["model", "check"])
+        .output()
+        .unwrap();
+    assert!(
+        checked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    assert!(
+        String::from_utf8(checked.stdout)
+            .unwrap()
+            .contains("model valid: .jails/model.jdl"),
+        "`model check` did not report the project's own model"
+    );
+    let synced = jails_cmd(&inside, None).arg("sync").output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+}
+
+/// `model eject` resolves the boundary against the project it is in.
+///
+/// **It re-emits the tree to find which files an ejection owns, and it did so
+/// with a hardcoded `spring_boot: None`.** Every `BootCondition::Spring`
+/// capability pack therefore emitted nothing *there* while emitting normally
+/// everywhere else, so ejecting one refused "emits no ejectable Java
+/// implementation" with the files plainly on disk. A pack that is
+/// `BootCondition::Any` ejected fine, which made it look like a property of
+/// the capability rather than of the resolver.
+#[test]
+fn canonical_eject_transfers_a_spring_only_capability_pack() {
+    let root = temp_dir("canonical-eject-spring-pack");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+         platform spring\n  build maven\n  storage none\n}\n",
+    )
+    .unwrap();
+
+    let added = jails_cmd(&root, None)
+        .args(["add", "kafka"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let managed =
+        root.join(".jails/generated/main/java/com/example/demo/messaging/KafkaConfig.java");
+    assert!(
+        managed.exists(),
+        "the pack emitted no managed configuration"
+    );
+
+    let ejected = jails_cmd(&root, None)
+        .args(["model", "eject", "cap_kafka"])
+        .output()
+        .unwrap();
+    assert!(
+        ejected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ejected.stderr)
+    );
+    assert!(
+        root.join("src/main/java/com/example/demo/messaging/KafkaConfig.java")
+            .exists(),
+        "the implementation was not transferred to reader source"
+    );
+    assert!(
+        !managed.exists(),
+        "an ejected artifact is still in the managed tree"
+    );
+}
+
 /// `g presence` on a canonical project.
 ///
 /// Presence held in one process's memory is correct on one node and wrong on
@@ -11578,18 +11744,41 @@ fn canonical_cli_registers_its_commands_and_claims_the_entry_point() {
     )
     .unwrap();
 
-    for command in [
-        ["g", "cli", "Admin"].as_slice(),
-        ["g", "command", "Greet"].as_slice(),
-    ] {
-        let output = jails_cmd(&root, None).args(command).output().unwrap();
-        assert!(
-            output.status.success(),
-            "`jails {}`: {}",
-            command.join(" "),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
+    // **Each command is checked on its own, and that is the whole point.**
+    // Running both and then reading the tree passes over a compiler that
+    // ignores the patch entirely: `g command` would repair `g cli`'s omission
+    // from the model it left behind, and the second-to-last command would
+    // always look like it worked. Each edit has to land on the command that
+    // declares it.
+    let generated_cli = jails_cmd(&root, None)
+        .args(["g", "cli", "Admin"])
+        .output()
+        .unwrap();
+    assert!(
+        generated_cli.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated_cli.stderr)
+    );
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(
+        pom.contains("<mainClass>com.example.demo.cli.AdminCli</mainClass>"),
+        "the jar still starts the stub the CLI replaced:\n{pom}"
+    );
+
+    let generated_command = jails_cmd(&root, None)
+        .args(["g", "command", "Greet"])
+        .output()
+        .unwrap();
+    assert!(
+        generated_command.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated_command.stderr)
+    );
+    let app = fs::read_to_string(root.join("src/main/java/com/example/demo/App.java")).unwrap();
+    assert!(
+        app.contains("commands.put(GreetCommand.NAME, GreetCommand::run);"),
+        "the command did not register itself on the command that declared it:\n{app}"
+    );
 
     for relative in [
         ".jails/generated/main/java/com/example/demo/cli/AdminCli.java",
@@ -11600,23 +11789,11 @@ fn canonical_cli_registers_its_commands_and_claims_the_entry_point() {
         assert!(root.join(relative).exists(), "`{relative}` was not written");
     }
 
-    // The command registered itself into the dispatcher the project already
-    // had, with the import its different package needs.
-    let app = fs::read_to_string(root.join("src/main/java/com/example/demo/App.java")).unwrap();
-    assert!(
-        app.contains("commands.put(GreetCommand.NAME, GreetCommand::run);"),
-        "{app}"
-    );
+    // The dispatcher is in another package, so the registration needs an
+    // import statement as well as the line.
     assert!(
         app.contains("import com.example.demo.cli.GreetCommand;"),
         "{app}"
-    );
-
-    // The stub registered nothing when `g cli` ran, so the jar moved.
-    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
-    assert!(
-        pom.contains("<mainClass>com.example.demo.cli.AdminCli</mainClass>"),
-        "{pom}"
     );
 
     // Splicing twice must not stack.

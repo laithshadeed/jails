@@ -66,12 +66,7 @@ pub(crate) fn add(
     } else {
         crate::model_command::TOML_PATH
     });
-    let current_source = std::fs::read_to_string(&model_path).map_err(|error| {
-        Failure::Told(format!(
-            "could not read canonical model `{}`: {error}",
-            model_path.display()
-        ))
-    })?;
+    let current_source = crate::model_command::read_source(&model_path)?;
     let current_model = parse_model(&current_source, jdl)?;
     if !current_model
         .capabilities
@@ -177,12 +172,7 @@ pub(crate) fn remove(
     } else {
         crate::model_command::TOML_PATH
     });
-    let current_source = std::fs::read_to_string(&model_path).map_err(|error| {
-        Failure::Told(format!(
-            "could not read canonical model `{}`: {error}",
-            model_path.display()
-        ))
-    })?;
+    let current_source = crate::model_command::read_source(&model_path)?;
     let current_model = parse_model(&current_source, jdl)?;
     if !current_model
         .capabilities

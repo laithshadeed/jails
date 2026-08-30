@@ -56,8 +56,10 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
 /// its own is the project's real CLI, so moving the jar out from under it
 /// would break what the reader built; and two `cli` declarations are two
 /// candidates, which is a question rather than an answer.
-pub(super) fn entry_point(snapshot: &jails_contracts::WorkspaceSnapshot) -> Option<String> {
-    let model = &snapshot.model.model;
+pub(super) fn entry_point(
+    snapshot: &jails_contracts::WorkspaceSnapshot,
+    model: &jails_model::AppModel,
+) -> Option<String> {
     let mut declared = model
         .components
         .values()

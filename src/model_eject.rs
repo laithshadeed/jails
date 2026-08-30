@@ -9,18 +9,20 @@ use serde_json::json;
 use std::path::PathBuf;
 
 pub(crate) fn run(semantic_id: String, invocation: Invocation) -> Result<()> {
+    // Observed rather than assumed, and observed exactly the way `capture`
+    // does it -- the emitters branch on the Boot version, so resolving the
+    // ejection boundary against `spring_boot: None` finds none of a Spring
+    // project's files. See `implementation_paths`.
+    let root = crate::model_command::root()?;
     let jdl = crate::model_command::owns_jdl();
+    // Relative, because it becomes a `ProjectPath` in the plan; the read is
+    // anchored to `root`. See `model_command::project_root`.
     let model_path = PathBuf::from(if jdl {
         crate::model_command::JDL_PATH
     } else {
         crate::model_command::TOML_PATH
     });
-    let current_source = std::fs::read_to_string(&model_path).map_err(|error| {
-        Failure::Told(format!(
-            "could not read canonical model `{}`: {error}",
-            model_path.display()
-        ))
-    })?;
+    let current_source = crate::model_command::read_source(&model_path)?;
     let current_model = parse_model(&current_source, jdl)?;
     if current_model
         .ejections
@@ -31,8 +33,15 @@ pub(crate) fn run(semantic_id: String, invocation: Invocation) -> Result<()> {
             "semantic target `{semantic_id}` is already reader-owned.\n       fix: edit its source under `src/main/java`; Jails will not reclaim it"
         )));
     }
-    let reader_paths = jails_compiler::implementation_paths(&current_model, &semantic_id)
-        .map_err(|error| Failure::Told(format!("could not resolve ejection boundary: {error}")))?;
+    let build_system = jails_workspace::observe_build_system(&root);
+    let spring_boot = jails_workspace::observe_spring_boot(&root, build_system);
+    let reader_paths = jails_compiler::implementation_paths(
+        &current_model,
+        &semantic_id,
+        spring_boot.as_deref(),
+        root.join("mvnw").is_file(),
+    )
+    .map_err(|error| Failure::Told(format!("could not resolve ejection boundary: {error}")))?;
     if reader_paths.is_empty() {
         return Err(Failure::Told(format!(
             "artifact `{semantic_id}` emits no ejectable Java implementation.\n       fix: eject an `art_...` adapter implementation id; records and ports remain managed ABI"

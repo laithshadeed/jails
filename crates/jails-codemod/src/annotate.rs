@@ -56,7 +56,14 @@ fn render_import_annotation(line: &str, members: &[String]) -> String {
 /// package). `None` when the anchor is missing.
 pub fn splice_import(source: &str, class: &str, extra: &str) -> Option<String> {
     let annotation = import_annotation(class);
-    let anchor = source.find("@SpringBootTest")?;
+    // **Located through `blanked`, and the offset then used against `source`.**
+    // A raw `source.find` matches the `@SpringBootTest` inside a Javadoc
+    // example -- which `TestcontainersConfig`'s own docs contain -- and would
+    // splice the `@Import` into the middle of a comment. `is_spring_boot_test`
+    // below already reads through `blanked` for exactly this reason; the two
+    // have to agree about where an annotation is, or one of them decides a
+    // file qualifies and the other decides where to edit it.
+    let anchor = crate::text::blanked(source).find("@SpringBootTest")?;
     let line_start = source[..anchor].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let target = format!("{class}.class");
 
@@ -196,6 +203,44 @@ class DemoApplicationTests {
         assert!(other_pkg.contains("import com.example.demo.testkit.PostgresContainerConfig;"));
         let round_trip = unsplice_import(&other_pkg, "PostgresContainerConfig", extra).unwrap();
         assert!(!round_trip.contains("testkit.PostgresContainerConfig"));
+    }
+
+    /// A `@SpringBootTest` written in a Javadoc example is prose, and the
+    /// splice used to anchor on it -- putting `@Import(...)` inside the
+    /// comment, where it annotates nothing and the class it was meant for
+    /// still has no container.
+    #[test]
+    fn splice_import_ignores_a_spring_boot_test_named_in_a_comment() {
+        let source = r#"package com.example.demo;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.SpringBootTest;
+
+/**
+ * Boots the whole context.
+ *
+ * <p>Written as {@code @SpringBootTest} rather than a slice, because the
+ * point is that every bean wires.
+ */
+@SpringBootTest
+class DemoApplicationTests {
+
+    @Test
+    void contextLoads() {}
+}
+"#;
+        let spliced = splice_import(source, "TestcontainersConfig", "").unwrap();
+        let import_at = spliced.find("@Import(TestcontainersConfig.class)").unwrap();
+        let comment_end = spliced.find(" */").unwrap();
+        assert!(import_at > comment_end, "{spliced}");
+        assert!(
+            spliced.contains("@Import(TestcontainersConfig.class)\n@SpringBootTest\nclass"),
+            "{spliced}"
+        );
+        assert_eq!(
+            unsplice_import(&spliced, "TestcontainersConfig", "").unwrap(),
+            source
+        );
     }
 
     #[test]

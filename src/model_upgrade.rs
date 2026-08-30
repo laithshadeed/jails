@@ -28,7 +28,7 @@ use crate::model_generate::{PreparedMutation, finish_generation};
 use jails_contracts::BuildSystem;
 use jails_model::{JdlAxes, JdlBuild, JdlPlatform, ModelPatch};
 use jails_support::{Failure, Result};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub(crate) fn run(to: u16, invocation: Invocation) -> Result<()> {
     if to != 1 {
@@ -36,14 +36,15 @@ pub(crate) fn run(to: u16, invocation: Invocation) -> Result<()> {
             "there is no JDL version {to}.\n       fix: run `jails model upgrade --to 1`"
         )));
     }
-    let root = std::env::current_dir()
-        .map_err(|error| Failure::Told(format!("could not read current directory: {error}")))?;
+    let root = crate::model_command::root()?;
+    // Relative, because it becomes a `ProjectPath` in the plan; every read of
+    // it is anchored to `root`. See `model_command::project_root`.
     let model_path = PathBuf::from(JDL_PATH);
-    if !model_path.is_file() {
+    if !root.join(&model_path).is_file() {
         // A project on the TOML compatibility input has its own one-shot route.
         // §22: "Legacy TOML model state is imported into the same v1 AST
         // through a separate one-shot command."
-        let fix = if Path::new(TOML_PATH).is_file() {
+        let fix = if root.join(TOML_PATH).is_file() {
             format!(
                 "`{TOML_PATH}` is the temporary compatibility input, not a JDL source; there is no in-place upgrade for it"
             )
@@ -54,11 +55,7 @@ pub(crate) fn run(to: u16, invocation: Invocation) -> Result<()> {
             "`jails model upgrade` requires the JDL authoring source `{JDL_PATH}`.\n       fix: {fix}"
         )));
     }
-    let current_source = std::fs::read_to_string(&model_path).map_err(|error| {
-        Failure::Told(format!(
-            "could not read canonical model `{JDL_PATH}`: {error}"
-        ))
-    })?;
+    let current_source = crate::model_command::read_source(&model_path)?;
     let current_model = jails_model::parse_jdl(&current_source)
         .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
 

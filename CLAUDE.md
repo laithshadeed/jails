@@ -1569,6 +1569,35 @@ jails knows nothing about.
 
 ## Gotchas hit so far
 
+- **Which directory a canonical command is about is one walk, and both halves
+  have to use it.** `model_command::owns` -- the canonical/legacy switch --
+  tested `.jails/model.jdl` against the *process* directory while the legacy
+  engine walked up to the nearest build file. They agreed only at the project
+  root, so `jails g record` typed in `src/main/java` dispatched to the legacy
+  engine: Java landed in the reader's own tree instead of `.jails/generated`,
+  and a `.jails/ledger.toml` appeared in a project that must never have one.
+  `model_command::project_root` is now the same walk plus the two model
+  markers, nearest wins. Its other half is `model_command::read_source`: every
+  model path stays project-relative, because the same value becomes a
+  `ProjectPath` in the exact plan and `ProjectPath` refuses an absolute one, so
+  only the *read* is anchored. `--manifest` is the exception and is resolved
+  absolute, since the reader typed it in their own directory. Anchoring the
+  default instead put an absolute path into every report -- `model check` said
+  `model valid: /tmp/.../.jails/model.toml`.
+- **Capture reads the pre-patch model; the compiler emits from the patched
+  one, and three defects came out of that one gap.** `capture` decided which
+  reader trees to read from the model on disk, so the command that *declares*
+  a thing never saw what it needed: `add db` did not read `src/test/java`, so
+  the `@Import(TestcontainersConfig.class)` splice had nothing to splice into
+  and `mvn verify` failed on the `contextLoads` test nobody wrote; `g command`
+  did not read `src/main/java`, so nothing registered in `App.java`; and
+  `emit_component::entry_point` read `snapshot.model.model`, so `g cli` did not
+  retarget `<mainClass>`. `capture_planned` takes the *intended* model for the
+  tree decision, and `entry_point` takes `next_model`. **A test that runs two
+  commands and then reads the tree does not catch any of this** -- the second
+  command repairs the first one's omission from the model it left behind, so
+  assert after each command.
+
 - **The scenario table is the one place a new kind gets registered, and a
   test enforces it.** `tests/common/scenarios.rs` holds `SCENARIOS` — every
   artifact kind and every capability in the smallest invocation that

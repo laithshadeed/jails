@@ -8,8 +8,6 @@ use jails_support::{Failure, Result};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
-const MODEL_PATH: &str = ".jails/model.toml";
-
 pub(crate) fn owns() -> bool {
     crate::model_command::owns()
 }
@@ -194,11 +192,7 @@ fn target(tests: bool) -> SettingTarget {
 }
 
 fn read_source(path: &Path) -> Result<String> {
-    std::fs::read_to_string(path).map_err(|error| {
-        Failure::Told(format!(
-            "could not read canonical model `{MODEL_PATH}`: {error}"
-        ))
-    })
+    crate::model_command::read_source(path)
 }
 
 fn model_path(jdl: bool) -> PathBuf {

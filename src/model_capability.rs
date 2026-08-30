@@ -584,12 +584,7 @@ fn validate_supported(capabilities: &[CliCapability]) -> Result<()> {
 }
 
 fn read_source(path: &Path) -> Result<String> {
-    std::fs::read_to_string(path).map_err(|error| {
-        Failure::Told(format!(
-            "could not read canonical model `{}`: {error}",
-            path.display()
-        ))
-    })
+    crate::model_command::read_source(path)
 }
 
 fn model_path(jdl: bool) -> PathBuf {

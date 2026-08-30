@@ -103,8 +103,18 @@ pub(crate) fn migrations(
 }
 
 /// The entry point a `cli` component may claim, if jails may claim one.
-pub(crate) fn entry_point(snapshot: &jails_contracts::WorkspaceSnapshot) -> Option<String> {
-    cli::entry_point(snapshot)
+///
+/// `model` is the *intended* model, not `snapshot.model.model`: the command
+/// that declares a `cli` is the one whose pre-patch model has none, so reading
+/// the snapshot's meant `jails g cli Admin` never retargeted `<mainClass>` and
+/// some later, unrelated command did it instead. The snapshot is still what
+/// says whether jails *may* claim the entry point -- that answer is about the
+/// pom on disk.
+pub(crate) fn entry_point(
+    snapshot: &jails_contracts::WorkspaceSnapshot,
+    model: &AppModel,
+) -> Option<String> {
+    cli::entry_point(snapshot, model)
 }
 
 /// Whether this model has SQL storage, which several components require.

@@ -33,12 +33,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
     }
 
     let model_path = model_path(jdl);
-    let current_source = std::fs::read_to_string(&model_path).map_err(|error| {
-        Failure::Told(format!(
-            "could not read canonical model `{}`: {error}",
-            model_path.display()
-        ))
-    })?;
+    let current_source = crate::model_command::read_source(&model_path)?;
     let current_model = parse_model(&current_source, jdl)?;
     let label = java_to_label(&request.name);
     let (patch, next_source, patch_bytes) = if matches!(
@@ -425,12 +420,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
 pub(crate) fn revive(selector: String, table: String, invocation: Invocation) -> Result<()> {
     let jdl = crate::model_command::owns_jdl();
     let model_path = model_path(jdl);
-    let current_source = std::fs::read_to_string(&model_path).map_err(|error| {
-        Failure::Told(format!(
-            "could not read canonical model `{}`: {error}",
-            model_path.display()
-        ))
-    })?;
+    let current_source = crate::model_command::read_source(&model_path)?;
     let current_model = parse_model(&current_source, jdl)?;
     let label = java_to_label(&selector);
     let entity = current_model

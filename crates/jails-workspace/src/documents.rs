@@ -392,7 +392,7 @@ pub(crate) fn reconcile_gradle_dependencies(
     };
     for dependency in dependencies {
         let coordinate = format!("{}:{}", dependency.group, dependency.artifact);
-        if text.contains(&coordinate) {
+        if declares_coordinate(text, &coordinate) {
             return Err(format!(
                 "Gradle already declares `{coordinate}` outside `{open}`\n       fix: remove the reader-owned duplicate or declare it only in the canonical model"
             ));
@@ -429,6 +429,27 @@ fn maven_dependency_block(dependencies: &[jails_contracts::BuildDependency]) -> 
     }
     block.push_str(&format!("<!-- /{DEPENDENCY_MARKER} -->\n"));
     Some(block)
+}
+
+/// Whether the build already declares this exact `group:artifact`.
+///
+/// **The whole coordinate, bounded by what may follow it.** A bare
+/// `text.contains("group:artifact")` matches every coordinate that *starts*
+/// with one, and Spring ships a family that does: a build declaring
+/// `org.springframework.boot:spring-boot-starter-websocket` refused the
+/// required `...:spring-boot-starter-web`, naming a coordinate the build does
+/// not have. `-webflux` and `-webmvc` are the same trap.
+///
+/// A Gradle coordinate is followed by a version separator or by the quote that
+/// closes the string, so those are the only characters that end one. Anything
+/// else means the match landed inside a longer artifact name.
+fn declares_coordinate(text: &str, coordinate: &str) -> bool {
+    text.match_indices(coordinate).any(|(at, _)| {
+        text[at + coordinate.len()..]
+            .chars()
+            .next()
+            .is_none_or(|next| matches!(next, ':' | '\'' | '"'))
+    })
 }
 
 fn gradle_dependency_block(
@@ -730,6 +751,44 @@ mod tests {
         assert!(removed.contains("plugins { id 'java' }"));
         assert!(!removed.contains("jails:dependencies"));
         assert!(!removed.contains("org.jsoup:jsoup"));
+    }
+
+    /// A reader-owned duplicate is refused by whole coordinate, not by
+    /// prefix. Spring ships a family of them -- `-web`, `-webmvc`, `-webflux`,
+    /// `-websocket` -- so a substring match refuses a build for a coordinate
+    /// it does not have, and names one that is nowhere in the file.
+    #[test]
+    fn a_longer_gradle_coordinate_is_not_read_as_the_one_it_starts_with() {
+        let build = "plugins { id 'java' }\n\ndependencies {\n    implementation 'org.springframework.boot:spring-boot-starter-websocket'\n}\n";
+        let required = dependency(
+            "org.springframework.boot",
+            "spring-boot-starter-web",
+            None,
+            jails_model::DependencyScope::Compile,
+        );
+        let next =
+            reconcile_gradle_dependencies(build, std::slice::from_ref(&required), false).unwrap();
+        assert!(
+            next.contains("implementation 'org.springframework.boot:spring-boot-starter-web'"),
+            "{next}"
+        );
+        assert!(next.contains("spring-boot-starter-websocket"), "{next}");
+
+        // The real duplicate still refuses, in both dialects.
+        let declared = "plugins { id 'java' }\n\ndependencies {\n    implementation 'org.springframework.boot:spring-boot-starter-web'\n}\n";
+        assert!(
+            reconcile_gradle_dependencies(declared, std::slice::from_ref(&required), false)
+                .is_err()
+        );
+        let kotlin = "plugins { java }\n\ndependencies {\n    implementation(\"org.springframework.boot:spring-boot-starter-web\")\n}\n";
+        assert!(
+            reconcile_gradle_dependencies(kotlin, std::slice::from_ref(&required), true).is_err()
+        );
+        let versioned = "plugins { id 'java' }\n\ndependencies {\n    implementation 'org.springframework.boot:spring-boot-starter-web:4.1.0'\n}\n";
+        assert!(
+            reconcile_gradle_dependencies(versioned, std::slice::from_ref(&required), false)
+                .is_err()
+        );
     }
 
     #[test]

@@ -22,7 +22,7 @@ use jails_model::{EntityId, ModelPatch, OperationId, StableId};
 use jails_support::{Failure, Result};
 use serde_json::json;
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const MODEL_PATH: &str = crate::model_command::JDL_PATH;
 
@@ -404,11 +404,7 @@ fn same_entity_contribution(
 }
 
 pub(crate) fn read_model() -> Result<String> {
-    std::fs::read_to_string(MODEL_PATH).map_err(|error| {
-        Failure::Told(format!(
-            "could not read canonical model `{MODEL_PATH}`: {error}"
-        ))
-    })
+    crate::model_command::read_source(Path::new(MODEL_PATH))
 }
 
 pub(crate) fn parse(source: &str) -> Result<jails_model::AppModel> {

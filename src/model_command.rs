@@ -10,12 +10,73 @@ const CHECK_SCHEMA: &str = "jails.model-check.v1";
 pub(crate) const JDL_PATH: &str = ".jails/model.jdl";
 pub(crate) const TOML_PATH: &str = ".jails/model.toml";
 
+/// The project a command is about: the nearest ancestor that is one.
+///
+/// **The same walk `jails_spec::spec::paths::find_project_root` does**, plus
+/// the two model markers, and that agreement is the whole point. `owns` used
+/// to test `.jails/model.jdl` against the *process* directory while the legacy
+/// engine walked up to the build file, so the two disagreed about which
+/// directory the command was about the moment anybody ran one from a
+/// subdirectory: `jails g record` in `src/main/java` of a canonical project
+/// dispatched to the legacy engine, wrote Java into the reader's own tree
+/// instead of `.jails/generated`, and created a `.jails/ledger.toml` in a
+/// project that must never have one.
+///
+/// Nearest wins, and the model markers are checked at each level before the
+/// build marker, so a canonical root is recognised as one. A nested module
+/// with its own build file and no model is its own legacy project rather than
+/// being claimed by an ancestor's model.
+pub(crate) fn project_root() -> Option<PathBuf> {
+    let mut dir = std::env::current_dir().ok()?;
+    loop {
+        if dir.join(JDL_PATH).is_file()
+            || dir.join(TOML_PATH).is_file()
+            || jails_spec::build::detect(&dir) != jails_spec::build::Build::Bare
+        {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+/// The root every canonical command works against.
+///
+/// Falls back to the process directory when there is no project at all, so a
+/// command run outside one refuses for its own reason rather than for this.
+pub(crate) fn root() -> Result<PathBuf> {
+    match project_root() {
+        Some(root) => Ok(root),
+        None => std::env::current_dir()
+            .map_err(|error| Failure::Told(format!("could not read current directory: {error}"))),
+    }
+}
+
+/// Read the model source named by a project-relative path.
+///
+/// **The path stays relative and only the read is anchored**, because the same
+/// value becomes a `ProjectPath` in the exact plan and `ProjectPath` refuses an
+/// absolute one. Every canonical mutation reads its model through here, so a
+/// command run from a subdirectory reads the project's model instead of
+/// reporting that the project has none -- the other half of `project_root`,
+/// and the reason that walk is safe to add.
+pub(crate) fn read_source(model_path: &Path) -> Result<String> {
+    std::fs::read_to_string(root()?.join(model_path)).map_err(|error| {
+        Failure::Told(format!(
+            "could not read canonical model `{}`: {error}",
+            model_path.display()
+        ))
+    })
+}
+
 pub(crate) fn owns() -> bool {
-    Path::new(JDL_PATH).is_file() || Path::new(TOML_PATH).is_file()
+    project_root()
+        .is_some_and(|root| root.join(JDL_PATH).is_file() || root.join(TOML_PATH).is_file())
 }
 
 pub(crate) fn owns_jdl() -> bool {
-    Path::new(JDL_PATH).is_file()
+    project_root().is_some_and(|root| root.join(JDL_PATH).is_file())
 }
 
 pub(crate) fn sync(no_start: bool, invocation: Invocation) -> Result<()> {
@@ -28,8 +89,7 @@ pub(crate) fn sync(no_start: bool, invocation: Invocation) -> Result<()> {
     let manifest = resolve_manifest(None)?;
     let (source, model) = load_model(&manifest, invocation.output)?;
     let bundle = compile(&manifest, source.as_bytes(), model)?;
-    let root = std::env::current_dir()
-        .map_err(|error| Failure::Told(format!("could not read current directory: {error}")))?;
+    let root = crate::model_command::root()?;
     let execution = jails_workspace::execute(&root, &bundle).map_err(|error| {
         Failure::Told(format!("could not synchronize canonical model: {error}"))
     })?;
@@ -76,16 +136,12 @@ pub(crate) fn run(command: ModelCommand, invocation: Invocation) -> Result<()> {
 
 fn format(check: bool, invocation: Invocation) -> Result<()> {
     let model_path = PathBuf::from(JDL_PATH);
-    if !model_path.is_file() {
+    if !root()?.join(&model_path).is_file() {
         return Err(Failure::Told(format!(
             "`jails model fmt` requires the JDL authoring source `{JDL_PATH}`.\n       fix: import or create a JDL v1 model before formatting"
         )));
     }
-    let current_source = std::fs::read_to_string(&model_path).map_err(|error| {
-        Failure::Told(format!(
-            "could not read canonical model `{JDL_PATH}`: {error}"
-        ))
-    })?;
+    let current_source = read_source(&model_path)?;
     let current_model = jails_model::parse_jdl(&current_source)
         .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
     let next_source = jails_model::format_jdl_v1(&current_source)
@@ -158,8 +214,7 @@ fn apply(bundle_path: &Path, output: Output) -> Result<()> {
             bundle_path.display()
         ))
     })?;
-    let root = std::env::current_dir()
-        .map_err(|error| Failure::Told(format!("could not read current directory: {error}")))?;
+    let root = crate::model_command::root()?;
     let execution = jails_workspace::execute(&root, &bundle)
         .map_err(|error| Failure::Told(format!("could not apply exact plan: {error}")))?;
     if output == Output::Human {
@@ -245,8 +300,7 @@ fn compile(
     source: &[u8],
     model: jails_model::AppModel,
 ) -> Result<jails_contracts::PlanBundle> {
-    let root = std::env::current_dir()
-        .map_err(|error| Failure::Told(format!("could not read current directory: {error}")))?;
+    let root = crate::model_command::root()?;
     let reader_paths = jails_compiler::external_project_paths(&model);
     let snapshot =
         jails_workspace::capture_with_reader_paths(&root, manifest, source, model, &reader_paths)
@@ -296,7 +350,9 @@ pub(crate) fn load_model(
     manifest: &Path,
     output: Output,
 ) -> Result<(String, jails_model::AppModel)> {
-    let source = match std::fs::read_to_string(manifest) {
+    // Joined to the project root, which is a no-op on the absolute path an
+    // explicit `--manifest` resolves to. See `resolve_manifest`.
+    let source = match std::fs::read_to_string(root()?.join(manifest)) {
         Ok(source) => source,
         Err(error) => return io_failure(manifest, &error, output),
     };
@@ -322,24 +378,38 @@ pub(crate) fn load_model(
     }
 }
 
+/// Which of the two editable sources this project authors its model in.
+///
+/// **The default is returned project-relative and the *explicit* one
+/// absolute**, because the two are relative to different things: a default is
+/// a fact about the project, while `--manifest` is a path the reader typed in
+/// their own directory. Anchoring the default here instead would put an
+/// absolute path into every report and every plan; resolving the explicit one
+/// lazily would read it against the project root the moment the command ran
+/// from a subdirectory. `load_model` joins the root either way, which is a
+/// no-op on an absolute path.
 pub(crate) fn resolve_manifest(explicit: Option<&Path>) -> Result<PathBuf> {
-    let jdl = Path::new(JDL_PATH);
-    let toml = Path::new(TOML_PATH);
+    let root = root()?;
+    let jdl_path = root.join(JDL_PATH);
+    let toml_path = root.join(TOML_PATH);
+    let (jdl, toml) = (jdl_path.as_path(), toml_path.as_path());
     if jdl.is_file() && toml.is_file() {
         return Err(Failure::Told(format!(
             "this project has two editable application models: `{JDL_PATH}` and `{TOML_PATH}`.\n       fix: keep the JDL authoring source and remove the TOML compatibility source after reviewing that they describe the same model"
         )));
     }
     if let Some(explicit) = explicit {
-        return Ok(explicit.to_path_buf());
+        return std::path::absolute(explicit).map_err(|error| {
+            Failure::Told(format!(
+                "could not resolve `--manifest {}`: {error}",
+                explicit.display()
+            ))
+        });
     }
-    if jdl.is_file() {
-        return Ok(jdl.to_path_buf());
+    if toml.is_file() && !jdl.is_file() {
+        return Ok(PathBuf::from(TOML_PATH));
     }
-    if toml.is_file() {
-        return Ok(toml.to_path_buf());
-    }
-    Ok(jdl.to_path_buf())
+    Ok(PathBuf::from(JDL_PATH))
 }
 
 fn io_failure<T>(manifest: &Path, error: &std::io::Error, output: Output) -> Result<T> {

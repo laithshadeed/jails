@@ -57,11 +57,7 @@ fn run_entity(
 ) -> Result<()> {
     reject_unsupported_options(&args, profile)?;
     let model_path = PathBuf::from(MODEL_PATH);
-    let current_source = std::fs::read_to_string(&model_path).map_err(|error| {
-        Failure::Told(format!(
-            "could not read canonical model `{MODEL_PATH}`: {error}"
-        ))
-    })?;
+    let current_source = crate::model_command::read_source(&model_path)?;
     let current_model = jails_model::parse_toml(&current_source)
         .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
     let entity_label = java_to_label(&args.name);
@@ -116,11 +112,7 @@ fn run_operation(
 ) -> Result<()> {
     reject_unsupported_operation_options(&args, profile)?;
     let model_path = PathBuf::from(MODEL_PATH);
-    let current_source = std::fs::read_to_string(&model_path).map_err(|error| {
-        Failure::Told(format!(
-            "could not read canonical model `{MODEL_PATH}`: {error}"
-        ))
-    })?;
+    let current_source = crate::model_command::read_source(&model_path)?;
     let current_model = jails_model::parse_toml(&current_source)
         .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
     let label = java_to_label(&args.name);
@@ -200,8 +192,7 @@ pub(crate) fn finish_generation_with_reader_paths(
         authored_migration,
     } = prepared;
     let canonical_model_path = model_path.to_string_lossy().replace('\\', "/");
-    let root = std::env::current_dir()
-        .map_err(|error| Failure::Told(format!("could not read current directory: {error}")))?;
+    let root = crate::model_command::root()?;
     let mut next_model = current_model.clone();
     next_model
         .apply(patch.clone())
@@ -210,11 +201,12 @@ pub(crate) fn finish_generation_with_reader_paths(
     capture_paths.extend(jails_compiler::external_project_paths(&next_model));
     capture_paths.sort();
     capture_paths.dedup();
-    let snapshot = jails_workspace::capture_with_reader_paths(
+    let snapshot = jails_workspace::capture_planned(
         &root,
         &model_path,
         current_source.as_bytes(),
         current_model,
+        &next_model,
         &capture_paths,
     )
     .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;

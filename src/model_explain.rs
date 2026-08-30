@@ -36,8 +36,7 @@ pub(crate) fn run(filter: Option<String>, invocation: Invocation) -> Result<()> 
     // layer renames arrive with the workspace and a linked model carries the
     // defaults. Showing `com.example.domain` to a project whose `jails.toml`
     // says `domain = "core"` would be a report about a project nobody has.
-    let root = std::env::current_dir()
-        .map_err(|error| Failure::Told(format!("could not read current directory: {error}")))?;
+    let root = crate::model_command::root()?;
     let snapshot = jails_workspace::capture(&root, &manifest, source.as_bytes(), model)
         .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
     let mut model = snapshot.model.model;

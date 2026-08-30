@@ -19,8 +19,7 @@ type Adoption = (ProjectPath, ProjectPath, Vec<u8>);
 type Translation = (String, Vec<Adoption>);
 
 pub(crate) fn run(invocation: Invocation) -> Result<()> {
-    let root = std::env::current_dir()
-        .map_err(|error| Failure::Told(format!("could not read current directory: {error}")))?;
+    let root = crate::model_command::root()?;
     if root.join(MODEL_PATH).exists() || root.join(crate::model_command::TOML_PATH).exists() {
         return Err(Failure::Told(
             "this project already has a canonical model.\n       fix: use `jails sync` or edit `.jails/model.jdl`; import is one-way"

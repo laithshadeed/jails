@@ -80,7 +80,82 @@ pub fn capture_with_reader_paths(
     model: AppModel,
     reader_paths: &[ProjectPath],
 ) -> Result<WorkspaceSnapshot, String> {
-    capture_model_state(root, model_path, model_source, model, reader_paths, true)
+    let trees = ReaderTrees::of(&model);
+    capture_model_state(
+        root,
+        model_path,
+        model_source,
+        model,
+        reader_paths,
+        true,
+        trees,
+    )
+}
+
+/// Capture for a plan that is about to *change* the model.
+///
+/// **The reader trees are chosen from the model the patch produces, not the
+/// one on disk.** Which of them a plan needs is a question about the intended
+/// state -- `add db` has to splice `@Import(TestcontainersConfig.class)` into
+/// the reader's `@SpringBootTest` classes, and the very command that
+/// introduces `db` is the one whose pre-patch model does not have it.
+///
+/// Asking the wrong model made the first such command do half its work in
+/// silence: `add db` on a Spring project generated the config and added the
+/// starter, spliced nothing, and left `mvn verify` red on the `contextLoads`
+/// test the project shipped with. A later `jails sync` -- whose model *is* the
+/// intended one, which is why it looked fine -- quietly repaired it.
+pub fn capture_planned(
+    root: &Path,
+    model_path: &Path,
+    model_source: &[u8],
+    model: AppModel,
+    intended: &AppModel,
+    reader_paths: &[ProjectPath],
+) -> Result<WorkspaceSnapshot, String> {
+    let trees = ReaderTrees::of(intended);
+    capture_model_state(
+        root,
+        model_path,
+        model_source,
+        model,
+        reader_paths,
+        true,
+        trees,
+    )
+}
+
+/// Which reader-owned source trees a model's plan may need to edit.
+///
+/// Whole trees rather than named files because the anchors are found by
+/// *shape*: the dispatcher `g command` registers into, and the
+/// `@SpringBootTest` classes `add db` imports the container config into. Which
+/// file has that shape is an observation, so the tree is the read set.
+///
+/// Conditional because the cost is real: every captured file is a
+/// precondition, so capturing either tree unconditionally would make an edit
+/// to any unrelated source invalidate a reviewed plan.
+#[derive(Clone, Copy, Debug)]
+struct ReaderTrees {
+    main: bool,
+    test: bool,
+}
+
+impl ReaderTrees {
+    fn of(model: &AppModel) -> Self {
+        Self {
+            main: model.components.values().any(|component| {
+                matches!(
+                    component.kind,
+                    jails_model::ComponentKind::Command | jails_model::ComponentKind::Cli
+                )
+            }),
+            test: model
+                .capabilities
+                .values()
+                .any(|capability| capability.kind == "db"),
+        }
+    }
 }
 
 /// Capture a project before its one-way canonical model is published.
@@ -95,7 +170,16 @@ pub fn capture_import(
     model: AppModel,
     reader_paths: &[ProjectPath],
 ) -> Result<WorkspaceSnapshot, String> {
-    capture_model_state(root, model_path, model_source, model, reader_paths, false)
+    let trees = ReaderTrees::of(&model);
+    capture_model_state(
+        root,
+        model_path,
+        model_source,
+        model,
+        reader_paths,
+        false,
+        trees,
+    )
 }
 
 fn capture_model_state(
@@ -105,6 +189,7 @@ fn capture_model_state(
     model: AppModel,
     reader_paths: &[ProjectPath],
     model_present: bool,
+    trees: ReaderTrees,
 ) -> Result<WorkspaceSnapshot, String> {
     let relative_model = if model_path.is_absolute() {
         model_path
@@ -140,40 +225,24 @@ fn capture_model_state(
     if managed.exists() {
         capture_tree(root, &managed, &mut files, &mut preconditions)?;
     }
-    // **The reader's own tests, when the model has a database.**
+    // **The reader's own sources, when the model's plan may edit them.**
     //
-    // Their `@SpringBootTest` classes are the target set of the container
-    // `@Import`, and which files carry that annotation is an observation --
-    // the compiler cannot enumerate a directory and must not try. Capturing
-    // them here makes the plan exact: every test the plan edits has a
-    // before-image, so one edited after review makes the plan stale rather
-    // than being silently overwritten.
+    // The dispatcher `g command` registers into and the `@SpringBootTest`
+    // classes the container `@Import` targets are found by shape, and which
+    // files have that shape is an observation -- the compiler cannot
+    // enumerate a directory and must not try. Capturing them here makes the
+    // plan exact: every reader file the plan edits has a before-image, so one
+    // edited after review makes the plan stale rather than being silently
+    // overwritten.
     //
-    // Conditional because the cost is real. Every captured file is a
-    // precondition, so capturing the test tree unconditionally would make an
-    // edit to any unrelated test invalidate a reviewed plan.
-    // **The reader's main sources, when the model has a command.** The
-    // dispatcher `g command` registers into is found by shape, and which file
-    // has that shape is an observation -- same rule, same conditionality, and
-    // the same reason: every captured file is a precondition.
+    // Which trees, and why the *intended* model decides it, is
+    // [`ReaderTrees`] and `capture_planned`.
     let reader_main = root.join(READER_MAIN_ROOT);
-    if reader_main.exists()
-        && model.components.values().any(|component| {
-            matches!(
-                component.kind,
-                jails_model::ComponentKind::Command | jails_model::ComponentKind::Cli
-            )
-        })
-    {
+    if trees.main && reader_main.exists() {
         capture_tree(root, &reader_main, &mut files, &mut preconditions)?;
     }
     let reader_tests = root.join(READER_TEST_ROOT);
-    if reader_tests.exists()
-        && model
-            .capabilities
-            .values()
-            .any(|capability| capability.kind == "db")
-    {
+    if trees.test && reader_tests.exists() {
         capture_tree(root, &reader_tests, &mut files, &mut preconditions)?;
     }
     for reader_file in [

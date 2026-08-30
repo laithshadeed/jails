@@ -494,7 +494,7 @@ impl Compiler {
                 });
             }
         }
-        if let Some(class) = emit_component::entry_point(snapshot) {
+        if let Some(class) = emit_component::entry_point(snapshot, &next_model) {
             reader_document_intents.push(DocumentIntent::SetMavenMainClass { class });
         }
         let summary = SemanticPlan {
@@ -523,9 +523,22 @@ impl Compiler {
     }
 }
 
+/// Which emitted files an ejection boundary owns.
+///
+/// **`spring_boot` is a required argument because the emitters branch on it.**
+/// This re-emits the tree to find the boundary's files, and it used to do so
+/// with a hardcoded `None` -- so every `BootCondition::Spring` pack emitted
+/// nothing here while emitting normally everywhere else. On a Spring project
+/// holding `cap kafka`, `jails model eject cap_kafka` refused "emits no
+/// ejectable Java implementation" with `KafkaConfig.java` plainly on disk;
+/// `cap http`, whose pack is `BootCondition::Any`, ejected fine, so the
+/// failure looked like a property of the capability rather than of this
+/// function. The caller observes the version the same way `capture` does.
 pub fn implementation_paths(
     model: &jails_model::AppModel,
     ejection_id: &str,
+    spring_boot: Option<&str>,
+    maven_wrapper: bool,
 ) -> Result<Vec<ProjectPath>, CompileError> {
     let root = ProjectPath::parse(MANAGED_ROOT).map_err(CompileError::new)?;
     let mut generated = RenderedTree::new(root);
@@ -534,9 +547,9 @@ pub fn implementation_paths(
         model,
         &mut generated,
         &emit::Observed {
-            spring_boot: None,
+            spring_boot,
             compose_path: &compose_path,
-            maven_wrapper: false,
+            maven_wrapper,
         },
     )?;
     Ok(generated
