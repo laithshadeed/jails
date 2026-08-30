@@ -88,19 +88,20 @@ looked and still worth removing.
 
 ## A1 — coverage
 
-### A1.1 Thirty-two of thirty-nine generators
+### A1.1 Thirty-three of thirty-nine generators
 
 `src/canonical_support.rs` is the authority and is honest code: an exhaustive
 match that stops compiling when a clap variant is added. Its own test pins
-32/39. Capabilities are closed at 25/25.
+33/39. Capabilities are closed at 25/25.
 
-Still legacy: `migration`, `http-workflow`, `association`, `http-sink`,
-`search`, `durable-job`, `seed`.
+Still legacy: `migration`, `http-workflow`, `association`, `search`,
+`durable-job`, `seed`.
 
-**Three of those seven were blocked on A1.7 and are not any more.**
-`http-workflow`, `http-sink` and `durable-job` each attach to a transactional
-outbox the canonical `usecase` did not have; A1.7 is closed, so what is left
-for them is an emitter each.
+**Three of those were blocked on A1.7 rather than on an emitter.** A1.7 is
+closed, so `http-sink` went through immediately -- it is two files and a
+property against the `<Command>OutboxSink` port the outbox already renders --
+and `http-workflow` and `durable-job` are each an emitter away rather than a
+design away.
 
 **The table gates the `.jails/model.toml` route only.** A project on
 `.jails/model.jdl` goes straight to the JDL frontend, which refuses an

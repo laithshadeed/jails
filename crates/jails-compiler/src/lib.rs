@@ -603,8 +603,9 @@ const fn component_kind_is_emitted(kind: jails_model::ComponentKind) -> bool {
         | Kind::Job
         | Kind::Presence
         | Kind::Socket
+        | Kind::HttpSink
         | Kind::Webhook => true,
-        Kind::HttpWorkflow | Kind::HttpSink | Kind::DurableJob => false,
+        Kind::HttpWorkflow | Kind::DurableJob => false,
     }
 }
 
@@ -621,7 +622,7 @@ fn property_entries(
         .collect::<BTreeMap<_, _>>();
     for property in emit_capability::properties(model, target, spring_boot)
         .into_iter()
-        .chain(emit_component::properties(model, target))
+        .chain(emit_component::properties(model, target)?)
     {
         if let Some(reader_value) = entries.get(&property.key)
             && reader_value != &property.value
@@ -658,7 +659,10 @@ mod tests {
             .filter(|kind| super::component_kind_is_emitted(**kind))
             .count();
         assert_eq!(ComponentKind::ALL.len(), 23);
-        assert_eq!(emitted, 20, "twenty kinds have a compiler backend today");
+        assert_eq!(
+            emitted, 21,
+            "twenty-one kinds have a compiler backend today"
+        );
 
         // The refusal is reachable, not merely written down.
         let model = jails_model::parse_jdl(
@@ -844,6 +848,74 @@ mod tests {
             Compiler::compile(&snapshot, None).expect_err("an outbox without `Json` must refuse");
         assert!(
             error.to_string().contains("fix: declare `cap json`"),
+            "{error}"
+        );
+    }
+
+    /// A sink is a plug, and `deliver outbox` renders the socket.
+    ///
+    /// What this pins is that the two halves fit: the generated class
+    /// implements the port the outbox emitted, delivers the payload type the
+    /// command stages, and hangs its settings off that command's own prefix so
+    /// two sinks on two outboxes cannot collide.
+    #[test]
+    fn an_http_sink_implements_the_port_its_outbox_rendered() {
+        let model = jails_model::parse_jdl(&format!(
+            "{OUTBOX_MODEL}\ncomponent http-sink Provider {{\n  on create\n  yields task_created\n}}\n"
+        ))
+        .unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
+        let plan = Compiler::compile(&snapshot, None).expect("an http sink has a backend");
+        let file = |suffix: &str| {
+            let file = plan
+                .generated
+                .files
+                .iter()
+                .find(|(path, _)| path.as_str().ends_with(suffix))
+                .map(|(_, file)| file)
+                .unwrap_or_else(|| panic!("no rendered file ends with `{suffix}`"));
+            String::from_utf8(file.bytes.clone()).unwrap()
+        };
+        let sink = file("/ProviderHttpOutboxSink.java");
+        assert!(sink.contains("implements CreateOutboxSink"), "{sink}");
+        assert!(sink.contains("deliver(TaskCreatedEvent event)"), "{sink}");
+        // The bounds that fail silently when they are missing.
+        assert!(sink.contains("Redirect.NEVER"), "{sink}");
+        assert!(sink.contains("\"Idempotency-Key\""), "{sink}");
+        // Its settings hang off the command, so two outboxes cannot collide.
+        assert!(
+            sink.contains("${outbox.create.http.provider.url}"),
+            "{sink}"
+        );
+        // The contract test is real rather than @Disabled: every component of
+        // this payload is a builtin, so jails can sample all of them.
+        let test = file("/ProviderHttpOutboxSinkTest.java");
+        assert!(!test.contains("@Disabled"), "{test}");
+    }
+
+    /// A sink whose command publishes directly has no port to implement.
+    #[test]
+    fn an_http_sink_on_a_direct_command_refuses_by_name() {
+        let model = jails_model::parse_jdl(&format!(
+            "{}\ncomponent http-sink Provider {{\n  on create\n  yields task_created\n}}\n",
+            // Direct delivery *and* a projected id, so the model's only
+            // defect is the sink -- a minted id refuses first, and would
+            // have this test pass on the wrong refusal.
+            OUTBOX_MODEL.replace("    deliver outbox\n", "").replace(
+                "event TaskCreated(id: uuid, title)",
+                "event TaskCreated(id, title)"
+            )
+        ))
+        .unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
+        let error = Compiler::compile(&snapshot, None)
+            .expect_err("a sink with no outbox behind it must refuse");
+        assert!(
+            error.to_string().contains("which publishes directly"),
             "{error}"
         );
     }

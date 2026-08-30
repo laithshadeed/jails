@@ -31,6 +31,7 @@ mod client;
 mod command;
 mod fetcher;
 mod handler;
+mod http_sink;
 mod idempotency;
 mod job;
 mod presence;
@@ -57,6 +58,7 @@ pub(crate) fn lower_and_emit(
             ComponentKind::Cli => cli::files(model, component)?,
             ComponentKind::Socket => socket::files(model, component)?,
             ComponentKind::Webhook => webhook::files(model, component)?,
+            ComponentKind::HttpSink => http_sink::files(model, component)?,
             _ => continue,
         };
         for file in files {
@@ -118,6 +120,7 @@ pub(crate) fn dependencies(model: &AppModel) -> Vec<BuildDependency> {
         (ComponentKind::Client, client::DEPENDENCIES),
         (ComponentKind::Fetcher, fetcher::DEPENDENCIES),
         (ComponentKind::Socket, socket::DEPENDENCIES),
+        (ComponentKind::HttpSink, http_sink::DEPENDENCIES),
     ] {
         if !model
             .components
@@ -137,16 +140,24 @@ pub(crate) fn dependencies(model: &AppModel) -> Vec<BuildDependency> {
 }
 
 /// The `application.properties` entries this model's components need.
-pub(crate) fn properties(model: &AppModel, target: SettingTarget) -> Vec<PropertyEntry> {
+pub(crate) fn properties(
+    model: &AppModel,
+    target: SettingTarget,
+) -> Result<Vec<PropertyEntry>, CompileError> {
     if target != SettingTarget::Main {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    model
-        .components
-        .values()
-        .filter(|component| component.kind == ComponentKind::Client)
-        .flat_map(client::properties)
-        .collect()
+    let mut properties = Vec::new();
+    for component in model.components.values() {
+        match component.kind {
+            ComponentKind::Client => properties.extend(client::properties(component)),
+            ComponentKind::HttpSink => {
+                properties.extend(http_sink::properties(model, component)?);
+            }
+            _ => {}
+        }
+    }
+    Ok(properties)
 }
 
 /// One rendered file and where it goes.
