@@ -15,7 +15,7 @@
 //! auto-configuration. The output says which kind of answer it is giving.
 
 use std::collections::{BTreeMap, BTreeSet};
-mod roots;
+pub mod roots;
 
 use crate::inspect::roots::{SourceSet, scanned, source_files_in, source_roots};
 use std::path::{Path, PathBuf};

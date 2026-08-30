@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 /// The label travels with the path so nothing downstream needs the root again:
 /// this is the one function here that re-derives a fact from a primitive, and
 /// the `abstract.md` §7 ladder counts it.
-pub(super) fn source_roots(root: &Path, set: SourceSet) -> Vec<(PathBuf, &'static str)> {
+pub fn source_roots(root: &Path, set: SourceSet) -> Vec<(PathBuf, &'static str)> {
     let (reader, generated) = match set {
         SourceSet::Main => ("src/main/java", GENERATED_MAIN_JAVA),
         SourceSet::Test => ("src/test/java", GENERATED_TEST_JAVA),
@@ -37,13 +37,13 @@ pub(super) fn source_roots(root: &Path, set: SourceSet) -> Vec<(PathBuf, &'stati
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum SourceSet {
+pub enum SourceSet {
     Main,
     Test,
 }
 
 /// Every `.java` file under the roots that exist, in root order.
-pub(super) fn source_files_in(roots: &[(PathBuf, &'static str)]) -> Vec<PathBuf> {
+pub fn source_files_in(roots: &[(PathBuf, &'static str)]) -> Vec<PathBuf> {
     roots
         .iter()
         .flat_map(|(path, _)| crate::java::source_files(path))
@@ -56,7 +56,7 @@ pub(super) fn source_files_in(roots: &[(PathBuf, &'static str)]) -> Vec<PathBuf>
 /// would be the same defect one layer up: a reader who has just generated a
 /// controller needs to know the generated tree was searched and came back
 /// empty, not that it was never opened.
-pub(super) fn scanned(roots: &[(PathBuf, &'static str)]) -> String {
+pub fn scanned(roots: &[(PathBuf, &'static str)]) -> String {
     roots
         .iter()
         .map(|(_, label)| *label)

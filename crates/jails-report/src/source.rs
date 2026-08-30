@@ -90,8 +90,21 @@ pub(crate) fn search(root: &Path, type_name: &str) -> Vec<Found> {
     found
 }
 
+use crate::inspect::roots::SourceSet;
+
 fn roots(root: &Path) -> Vec<PathBuf> {
-    let mut dirs = vec![root.join("src/main/java"), root.join("src/test/java")];
+    // Including the tree the compiler writes. `jails src Order` answered "no
+    // source for `Order` under this project" about a record jails had just
+    // generated -- and this is the one command that deliberately works outside
+    // a build file, so it is the last place a reader would expect to be told
+    // their own type does not exist. Shared with `routes`/`beans`/`stats`
+    // rather than restated: two copies of a path drift, and neither drift is
+    // visible where anyone looks.
+    let mut dirs = [SourceSet::Main, SourceSet::Test]
+        .into_iter()
+        .flat_map(|set| crate::inspect::roots::source_roots(root, set))
+        .map(|(path, _)| path)
+        .collect::<Vec<_>>();
     match std::env::var_os("JAILS_SOURCE_PATH") {
         Some(value) if !value.is_empty() => dirs.extend(std::env::split_paths(&value)),
         // `deps` beside the project is the default only because it is what

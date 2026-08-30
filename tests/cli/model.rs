@@ -13253,6 +13253,19 @@ app Depot {
         "the scaffold's beans should be listed:\n{beans}"
     );
 
+    // `jails src` walks all four roots. It is the one command that
+    // deliberately works outside a build file, so it is the last place a
+    // reader would expect to be told their own generated type does not exist.
+    let located = jails_cmd(&root, None)
+        .args(["src", "Crate"])
+        .output()
+        .unwrap();
+    let located = String::from_utf8_lossy(&located.stdout).to_string();
+    assert!(
+        located.contains(".jails/generated/main/java") && located.contains("Crate.java"),
+        "`jails src` should find a type the compiler wrote:\n{located}"
+    );
+
     // `stats` counts the same tree, summed per layer across both roots.
     let stats = jails_cmd(&root, None).arg("stats").output().unwrap();
     let stats = String::from_utf8_lossy(&stats.stdout).to_string();
