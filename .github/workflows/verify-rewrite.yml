@@ -111,10 +111,11 @@ jobs:
       # With `rustc -V` in the key a compiler change misses honestly, pays for
       # one cold build, and saves artifacts the next run can actually use.
       #
-      # **The key also carries the commit, so every run saves.** Without that
-      # it never did: `actions/cache` skips the save on an exact primary-key
-      # hit, and the old key changed only with `Cargo.lock`, so the cache was
-      # written once and then frozen at whatever commit happened to fill it.
+      # **The key also carries the commit, so every run has something to
+      # save.** Without that it never did: `actions/cache` skips the save on an
+      # exact primary-key hit, and the old key changed only with `Cargo.lock`,
+      # so the cache was written once and then frozen at whatever commit
+      # happened to fill it.
       # Third-party crates were fine -- they only move when the lock does --
       # but all twenty workspace crates recompiled every run against sources
       # that had moved on, which is 194s of the job. The restore-keys walk
@@ -126,8 +127,31 @@ jobs:
       # checking rather than assuming: the whole entry -- registry, git and
       # `target/` together -- is 381 MB compressed, so a save is seconds, not
       # the minute a 5.9 GB `target/debug/deps` suggests.
-      - name: Cache cargo
-        uses: actions/cache@v4
+      #
+      # **And it has to save when the gate fails, which is why this is split
+      # into restore and save rather than the one `actions/cache` step it was.**
+      # That step's automatic post-save is skipped when the job's status is
+      # failure, so a red gate writes nothing -- and a gate can stay red across
+      # a day of commits. Every one of those runs then restored the last
+      # *green* run's entry, so all twenty workspace crates rebuilt against an
+      # ever-staler baseline: measured over five consecutive red runs,
+      # test-harness compilation sat at 216-231s where a fresh entry costs ~60s,
+      # and the trim below never reached a saved entry either, so it stayed at
+      # its pre-trim 1889 MB. Red gate -> no save -> staler cache -> slower
+      # gate, worse with every commit.
+      #
+      # A run that compiled everything and then failed a *test* has artifacts
+      # as good as a green run's, so the save is guarded on `!cancelled()`
+      # rather than `success()`. That is deliberately the opposite of the
+      # Maven/Gradle guard below, and the difference is the key: this key
+      # carries `github.sha` and its restore-keys walk back, so a poor entry is
+      # superseded by the next run, while `jvm-deps` has a static key where one
+      # bad write is permanent. `!cancelled()` rather than `always()` keeps the
+      # original protection -- a run killed two minutes in must not become the
+      # newest entry the restore-keys find.
+      - name: Restore cargo
+        id: cargo
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -208,6 +232,18 @@ jobs:
       - name: Trim the cargo cache to build artifacts
         if: always()
         run: rm -rf target/jails-e2e-cache target/jails-test-logs target/jails-test-permits
+
+      # After the trim, so the entry carries artifacts and not the suite's
+      # scratch trees. Skipped only on cancellation -- see the restore step.
+      - name: Save cargo
+        if: '!cancelled() && steps.cargo.outputs.cache-hit != ''true'''
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ steps.rust.outputs.version }}-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
 
       # Only after the gate has passed, and only when there was nothing to
       # restore -- see the restore step for why both conditions are load-bearing.
