@@ -54,9 +54,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
                 .hasMessageContaining("503");
     }
 
+    // Generous deliberately. What this test proves is the idempotency key and
+    // the typed JSON body; the timeouts are not the subject, and a tight one
+    // proves nothing about them. The stub is a loopback `HttpServer`, but CI
+    // runs several JVMs at once on a small machine, so a round-trip to it can
+    // take longer than a value chosen on an idle laptop -- which failed this
+    // test intermittently with `HttpTimeoutException: request timed out` and
+    // no relation to the behaviour under test.
     private {{name}}HttpOutboxSink sink(String path) {
         return new {{name}}HttpOutboxSink(
                 "http://" + server.getAddress().getHostString() + ":" + server.getAddress().getPort() + path,
-                "test-token", 500, 1000, new SimpleMeterRegistry());
+                "test-token", 5_000, 15_000, new SimpleMeterRegistry());
     }
 }
