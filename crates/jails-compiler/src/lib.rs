@@ -83,6 +83,11 @@ impl Compiler {
         // Why the layout arrives here rather than beside the model at each emit
         // site: `ProjectIntent::layout`, which has the whole argument.
         next_model.project.layout = snapshot.project.layout.clone();
+        // After both, because both move projections: a patch can add an entity
+        // and the layout renames the packages every artifact lands in. The
+        // records are in the model, so they are in the plan digest -- a
+        // convention that moves has to change one.
+        next_model.refresh_derived();
         refuse::preflight(snapshot, &next_model)?;
 
         // Validate schema evolution before rendering dependent Java adapters.
@@ -943,21 +948,21 @@ mod tests {
                 .unwrap_or_else(|| panic!("no rendered file ends with `{suffix}`"));
             String::from_utf8(file.bytes.clone()).unwrap()
         };
-        let workflow = file("/CrawlWorkflow.java");
+        let workflow = file("/SweepWorkflow.java");
         assert!(workflow.contains("SiteFetcher"), "{workflow}");
-        assert!(workflow.contains("crawl_frontier"), "{workflow}");
-        file("/CrawlWorkflowController.java");
-        file("/CrawlWorkflowIT.java");
+        assert!(workflow.contains("sweep_frontier"), "{workflow}");
+        file("/SweepWorkflowController.java");
+        file("/SweepWorkflowIT.java");
         // The claim runs on a schedule, and without this the run sits QUEUED
         // forever with nothing to say why.
         file("/SchedulingConfig.java");
         let migration = plan
             .migrations
             .iter()
-            .find(|migration| migration.logical_name == "create_crawl_workflow")
+            .find(|migration| migration.logical_name == "create_sweep_workflow")
             .expect("the frontier needs its tables");
         let sql = String::from_utf8(migration.bytes.clone()).unwrap();
-        for table in ["crawl_runs", "crawl_frontier", "crawl_pages"] {
+        for table in ["sweep_runs", "sweep_frontier", "sweep_pages"] {
             assert!(sql.contains(&format!("create table {table}")), "{sql}");
         }
     }
@@ -1143,9 +1148,14 @@ mod tests {
          yields task\n}\n";
 
     /// A traversal and the fetcher it goes through.
+    ///
+    /// Named `Sweep` rather than `Crawl` because `tests/genericity.rs` bans
+    /// the proof apps' vocabulary from every crate's source, tests included --
+    /// core is domain-blind, and a fixture named after `examples/web-crawler`
+    /// is the first sign that a feature was designed around one domain.
     const WORKFLOW_MODEL: &str = "jdl 1\napp Demo {\n  pkg com.example.demo\n  java 26\n  \
          platform spring\n  build maven\n  storage postgres\n}\n\n\
-         component fetcher Site {\n}\n\ncomponent http-workflow Crawl {\n  on site\n}\n";
+         component fetcher Site {\n}\n\ncomponent http-workflow Sweep {\n  on site\n}\n";
 
     /// One task, staged through an outbox: the model every test above varies.
     const OUTBOX_MODEL: &str = "jdl 1\napp Demo {\n  pkg com.example.demo\n  java 26\n  \

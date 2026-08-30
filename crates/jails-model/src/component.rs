@@ -142,6 +142,39 @@ impl ComponentKind {
         }
     }
 
+    /// The Java type this kind generates for a declared stem.
+    ///
+    /// **The suffix is the convention and the stem is the author's**, which is
+    /// why a component named `BillingService` is refused: the kind would add
+    /// `Service` to it and the file would be `BillingServiceService`. It lives
+    /// on the kind rather than in the linker because `derived::records` needs
+    /// the same answer -- §18.4 makes it one of the values `model explain`
+    /// shows, and a second copy of a suffix table is a second answer.
+    pub fn primary_type(self, name: &str) -> String {
+        match self {
+            Self::Service => format!("{name}Service"),
+            Self::Controller => format!("{name}Controller"),
+            Self::Handler => format!("{name}Handler"),
+            Self::Command => format!("{name}Command"),
+            Self::Cli => format!("{name}Cli"),
+            Self::Cases => format!("{name}Cases"),
+            Self::Client => format!("{name}Client"),
+            Self::Fetcher => format!("{name}Fetcher"),
+            Self::Job => format!("{name}Job"),
+            Self::HttpWorkflow => format!("{name}Workflow"),
+            Self::HttpSink => format!("{name}HttpOutboxSink"),
+            Self::Idempotency => format!("{name}Guard"),
+            Self::Auth => format!("{name}TokenConfig"),
+            Self::Webhook => format!("{name}Verifier"),
+            Self::DurableJob => format!("{name}Work"),
+            Self::Socket => format!("{name}SocketHandler"),
+            Self::Presence => format!("{name}Presence"),
+            Self::Test => format!("{name}Test"),
+            Self::IntegrationTest => format!("{name}IT"),
+            Self::Class | Self::Interface | Self::Sealed | Self::Strategy => name.to_string(),
+        }
+    }
+
     pub const fn label(self) -> &'static str {
         match self {
             Self::Class => "class",

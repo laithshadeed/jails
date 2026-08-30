@@ -57,6 +57,89 @@ fn jdl_project(label: &str, source: &str) -> PathBuf {
     root
 }
 
+/// **`jdl-sol.md` §18.4: convention must not mean hidden behaviour.**
+///
+/// A generated project is full of names nobody typed, and until `model
+/// explain` the only way to learn which rule produced one was to read the
+/// emitted tree and infer it. This drives the command end to end and asserts
+/// the three things it has to get right.
+///
+/// **The reader's layer rename has to be applied**, which is why the project
+/// carries a `jails.toml`. The records live in the model and a linked model
+/// carries the default packages -- the layout arrives with the workspace --
+/// so a version of this command that reported on the parsed model would print
+/// `com.example.notes.domain` to a project that has no such package.
+///
+/// **And `audit.md` A3.11's divergence has to be visible.** Six of the
+/// twenty-three emitted packages sit under a head §9.7 does not close, so a
+/// layer rename does not reach them. Their rule says `convention.facet.*`
+/// where a layer's says `convention.layer.*`: the same tree, two rules, and
+/// the difference is now something a reader can be shown rather than a table
+/// in an audit document.
+#[test]
+fn model_explain_shows_which_rule_produced_each_derived_name() {
+    let root = jdl_project(
+        "model-explain-derived",
+        "jdl 1\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  \
+         platform plain\n  build maven\n  storage none\n}\n\n\
+         entity SupportPerson @id(ent_person) {\n  use repo\n  \
+         id: uuid @id(fld_person_id) @pk\n  \
+         familyName: string @id(fld_person_family)\n}\n",
+    );
+    write_plain_fixture(&root);
+    fs::write(root.join("jails.toml"), "[layout]\ndomain = \"core\"\n").unwrap();
+
+    let explained = jails_cmd(&root, None)
+        .args(["model", "explain"])
+        .output()
+        .unwrap();
+    assert!(
+        explained.status.success(),
+        "{}",
+        String::from_utf8_lossy(&explained.stderr)
+    );
+    let told = String::from_utf8_lossy(&explained.stdout);
+    for row in [
+        // The rename reached the layer...
+        "com.example.notes.core  [convention.layer.domain]",
+        // ...and did not reach a head §9.7 does not close.
+        "com.example.notes.repository  [convention.facet.repository]",
+        // The pluralizer, on §9.7's own irregular case.
+        "support_people  [convention.sql-table.pluralize]",
+        "family_name  [convention.sql-column.snake-case]",
+    ] {
+        assert!(told.contains(row), "missing `{row}`:\n{told}");
+    }
+
+    // **A filter narrows to one boundary, and a field's column counts as
+    // inside it.** The record for `family_name` names `ent_person` in its
+    // inputs, so asking about the entity answers with the entity's own names
+    // *and* what they were derived for -- which is the question somebody
+    // typing an entity id is asking. What it must not do is answer with the
+    // project: none of the twenty-three package rows belongs to this entity.
+    let filtered = jails_cmd(&root, None)
+        .args(["model", "explain", "ent_person"])
+        .output()
+        .unwrap();
+    assert!(filtered.status.success());
+    let filtered = String::from_utf8_lossy(&filtered.stdout);
+    assert!(filtered.contains("support_people"), "{filtered}");
+    assert!(filtered.contains("family_name"), "{filtered}");
+    assert!(!filtered.contains("java-package"), "{filtered}");
+
+    let missed = jails_cmd(&root, None)
+        .args(["model", "explain", "no-such-boundary"])
+        .output()
+        .unwrap();
+    assert!(missed.status.success());
+    assert!(
+        String::from_utf8_lossy(&missed.stdout).contains("no derived value matches"),
+        "a miss is an answer, not a failure"
+    );
+
+    fs::remove_dir_all(root).ok();
+}
+
 fn eject_model_project(label: &str) -> PathBuf {
     let source = format!("{MODEL}\n[capabilities.fake]\nid = \"cap_fake\"\nkind = \"fake\"\n");
     model_project(label, &source)

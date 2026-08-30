@@ -11,6 +11,7 @@ mod capability;
 mod component;
 mod constraint;
 mod dependency;
+mod derived;
 mod diagnostic;
 mod ejection;
 mod enum_constant;
@@ -41,6 +42,7 @@ pub use component::{
     Component, ComponentKind, ComponentParameter, ComponentReference, ComponentVariant,
 };
 pub use constraint::{ConstraintKind, EntityConstraint};
+pub use derived::{DerivedRole, DerivedRoleKey, DerivedValue};
 pub use diagnostic::{Diagnostic, Diagnostics};
 pub use enum_constant::EnumConstant;
 pub use id::{

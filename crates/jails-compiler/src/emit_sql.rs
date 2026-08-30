@@ -48,6 +48,8 @@ pub(crate) fn derive(
 
     let empty = AppModel {
         schema: next.schema.clone(),
+        language_version: next.language_version,
+        convention_version: next.convention_version,
         project: next.project.clone(),
         capabilities: BTreeMap::new(),
         dependencies: BTreeMap::new(),
@@ -59,6 +61,7 @@ pub(crate) fn derive(
         relations: BTreeMap::new(),
         entities: BTreeMap::new(),
         operations: BTreeMap::new(),
+        derived: BTreeMap::new(),
     };
     let previous = if previous_database {
         accepted.expect("previous database model was checked")

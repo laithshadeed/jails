@@ -7,6 +7,16 @@ use crate::patch::{FieldPlacement, ModelPatch, StorageRetirementPolicy};
 impl AppModel {
     /// Apply a semantic patch without involving syntax or the filesystem.
     pub fn apply(&mut self, patch: ModelPatch) -> Result<(), String> {
+        self.apply_one(patch)?;
+        // Every patch that lands is a patch that could have moved a
+        // projection, and `derived` is in the plan digest -- so it is
+        // recomputed here rather than at the handful of call sites that
+        // currently remember to.
+        self.refresh_derived();
+        Ok(())
+    }
+
+    fn apply_one(&mut self, patch: ModelPatch) -> Result<(), String> {
         match patch {
             ModelPatch::ReplaceModel(model) => *self = *model,
             ModelPatch::AddEntity(entity) => {

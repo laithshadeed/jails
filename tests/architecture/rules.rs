@@ -43,6 +43,11 @@ fn owns_terminal_output(path: &Path) -> bool {
         // requires that review step, and two of the translations mean
         // something a reviewer should not have to spot in the diff.
         || relative == "src/model_upgrade.rs"
+        // A read-only report whose entire contract is terminal output:
+        // `jdl-sol.md` §18.4 asks that a derived name be *inspectable*, and a
+        // command that returned the records to a caller with nowhere to print
+        // them would satisfy the type and not the requirement.
+        || relative == "src/model_explain.rs"
         || relative == "src/parse_error.rs"
         || relative.starts_with("src/new/")
         || relative == "crates/jails-support/src/lib.rs"
@@ -349,6 +354,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     // Canonical semantic model: closed source schema -> linked stable IDs.
     ("jails-model", "diagnostic", 2),
     ("jails-model", "dependency", 2),
+    ("jails-model", "derived", 2),
     ("jails-model", "ejection", 2),
     ("jails-model", "enum_constant", 2),
     ("jails-model", "facet", 2),
@@ -504,6 +510,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails", "model_capability", 9),
     ("jails", "model_destroy", 9),
     ("jails", "model_eject", 9),
+    ("jails", "model_explain", 9),
     ("jails", "model_field_evolution", 9),
     ("jails", "model_field_parse", 9),
     ("jails", "model_generate", 9),

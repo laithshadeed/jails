@@ -366,8 +366,13 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
     let Some(project_id) = project_id else {
         unreachable!("a missing project id always records a diagnostic")
     };
-    Ok(AppModel {
+    let mut model = AppModel {
         schema: document.schema,
+        // Both default here: JDL v1 is convention registry 1, and a linked
+        // model is language 1 whichever dialect the source was in, because the
+        // pre-v1 draft reaches this function through the same `Document`.
+        language_version: 1,
+        convention_version: 1,
         project: ProjectIntent {
             id: project_id,
             name: document.project.name,
@@ -390,7 +395,13 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
         relations,
         entities,
         operations,
-    })
+        derived: std::collections::BTreeMap::new(),
+    };
+    // Last, because it reads the finished model. The reader's layout has not
+    // arrived yet -- capture supplies it and the compiler applies it -- so the
+    // package rows here carry the default names and are recomputed there.
+    model.refresh_derived();
+    Ok(model)
 }
 
 #[derive(Default)]

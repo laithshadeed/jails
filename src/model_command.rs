@@ -70,6 +70,7 @@ pub(crate) fn run(command: ModelCommand, invocation: Invocation) -> Result<()> {
         }
         ModelCommand::Apply { bundle } => apply(&bundle, invocation.output),
         ModelCommand::Eject { semantic_id } => crate::model_eject::run(semantic_id, invocation),
+        ModelCommand::Explain { filter } => crate::model_explain::run(filter, invocation),
     }
 }
 
@@ -291,7 +292,10 @@ fn frozen_failure(
     Err(Failure::Reported)
 }
 
-fn load_model(manifest: &Path, output: Output) -> Result<(String, jails_model::AppModel)> {
+pub(crate) fn load_model(
+    manifest: &Path,
+    output: Output,
+) -> Result<(String, jails_model::AppModel)> {
     let source = match std::fs::read_to_string(manifest) {
         Ok(source) => source,
         Err(error) => return io_failure(manifest, &error, output),
@@ -318,7 +322,7 @@ fn load_model(manifest: &Path, output: Output) -> Result<(String, jails_model::A
     }
 }
 
-fn resolve_manifest(explicit: Option<&Path>) -> Result<PathBuf> {
+pub(crate) fn resolve_manifest(explicit: Option<&Path>) -> Result<PathBuf> {
     let jdl = Path::new(JDL_PATH);
     let toml = Path::new(TOML_PATH);
     if jdl.is_file() && toml.is_file() {
@@ -361,7 +365,7 @@ fn io_failure<T>(manifest: &Path, error: &std::io::Error, output: Output) -> Res
     Err(Failure::Reported)
 }
 
-fn print_json(value: &serde_json::Value) -> Result<()> {
+pub(crate) fn print_json(value: &serde_json::Value) -> Result<()> {
     let rendered = serde_json::to_string_pretty(value)
         .map_err(|error| Failure::Told(format!("could not encode model report: {error}")))?;
     println!("{rendered}");

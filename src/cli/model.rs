@@ -43,6 +43,11 @@ pub(crate) enum ModelCommand {
         #[arg(long, value_name = "FILE")]
         bundle: PathBuf,
     },
+    /// Show every name the convention derived rather than the author writing it
+    Explain {
+        /// Stable id, role, package or value to filter by; omit to list every record
+        filter: Option<String>,
+    },
     /// Transfer generated Java for one semantic node into reader-owned source
     Eject {
         /// Stable entity, operation, or capability id recorded in the model

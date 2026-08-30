@@ -52,7 +52,7 @@ fn canonical_command_path(arguments: impl IntoIterator<Item = std::ffi::OsString
 fn canonical_child(parent: &str, child: &str) -> Option<&'static str> {
     match (parent, child) {
         ("app", "init" | "plan" | "apply")
-        | ("model", "check" | "plan" | "apply" | "eject")
+        | ("model", "check" | "plan" | "apply" | "eject" | "explain")
         | ("sql", "check" | "generate" | "explain")
         | ("introspect", "schema" | "query")
         | ("schema", "diff" | "apply")

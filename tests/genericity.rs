@@ -49,9 +49,10 @@ const ALLOWED: &[AllowedConcept] = &[
     AllowedConcept {
         word: "robots",
         files: &[
-            // Followed the http-workflow generator out of `spring.rs` when rung 11
-            // split it; the concept is unchanged, only its address.
-            "crates/jails-generate/src/spring/http.rs",
+            // The Rust side dropped off when the http-workflow bodies were
+            // extracted to template files: the word is in the Java now and in
+            // no `.rs` at all. Pruned because the gate found it, which is the
+            // whole point of it failing in this direction too.
             "templates/spring/http_workflow_java.java",
             "templates/spring/http_workflow_it_java.java",
         ],

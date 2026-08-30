@@ -41,6 +41,18 @@ pub(crate) use mutation::refuse_ejected_target;
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AppModel {
     pub schema: String,
+    /// Which JDL the source was written in, and which convention registry
+    /// produced every derived name in it.
+    ///
+    /// **Stored separately, per `jdl-sol.md` §7.2**, so a plan cannot compare
+    /// two models produced by different registries and conclude they agree.
+    /// `convention_version` is exactly `1` for JDL v1; `language_version`
+    /// follows the `jdl <n>` header. Both default for a lock written before
+    /// they existed, and the defaults are what that lock in fact used.
+    #[serde(default = "one")]
+    pub language_version: u16,
+    #[serde(default = "one")]
+    pub convention_version: u16,
     pub project: ProjectIntent,
     pub capabilities: BTreeMap<CapabilityId, Capability>,
     pub dependencies: BTreeMap<DependencyId, Dependency>,
@@ -56,6 +68,34 @@ pub struct AppModel {
     pub relations: BTreeMap<RelationId, Relation>,
     pub entities: BTreeMap<EntityId, Entity>,
     pub operations: BTreeMap<OperationId, Operation>,
+    /// Every name the convention decided rather than the author writing it.
+    ///
+    /// §7.2 puts it in the model and §18.4 makes it inspectable, which is one
+    /// requirement rather than two: being *in* the model is what puts it in
+    /// the accepted-model and plan digest, so a convention that moves cannot
+    /// move silently. See [`crate::derived`], including which half of §18.4's
+    /// role list belongs here and which belongs to the plan.
+    ///
+    /// Maintained by [`AppModel::refresh_derived`] and by nothing else.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub derived: BTreeMap<crate::DerivedRoleKey, crate::DerivedValue>,
+}
+
+const fn one() -> u16 {
+    1
+}
+
+impl AppModel {
+    /// Recompute every derived record from the model as it now stands.
+    ///
+    /// **Called after anything that could change a projection** — linking, a
+    /// patch, the reader's layout arriving at compile time. It is a pure
+    /// function of the rest of the model, so calling it twice is calling it
+    /// once, and forgetting to call it is the only way the field can be wrong.
+    /// `derived_records_are_a_function_of_the_model` holds that.
+    pub fn refresh_derived(&mut self) {
+        self.derived = crate::derived::records(self);
+    }
 }
 
 impl Entity {

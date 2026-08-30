@@ -29,6 +29,7 @@ mod model_capability;
 mod model_command;
 mod model_destroy;
 mod model_eject;
+mod model_explain;
 mod model_field_evolution;
 mod model_generate;
 mod model_generate_jdl;

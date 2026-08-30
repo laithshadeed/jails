@@ -149,6 +149,27 @@ references the field. Every successful change still renders THEIRS and
 three-way merges live Java as OURS. Rolling and expand/contract are campaigns,
 not excuses to dispatch a canonical project to the legacy engine.
 
+**Convention is recorded, not hidden: `jails model explain`.** Every name the
+compiler derives rather than the author writing it -- the package, the Java
+type, the SQL table and column, the HTTP route -- is a `DerivedValue` in
+`AppModel.derived`, keyed by owner and role and carrying the `rule_id` that
+produced it. Being *in* the model is the point rather than a convenience: it
+puts the records in the accepted-model and plan digest, so a convention that
+moves cannot move silently, which is `jdl-sol.md` §7.2 and §18.4 as one
+mechanism. Two rules keep it honest -- it is recomputed from the model after
+linking, after every patch and after the layout arrives, never accumulated;
+and `pinned` is decided by comparing with the convention rather than by a flag
+carried from the source, because a flag would make `derived` stop being a
+function of the model.
+
+**It is also where the §9.7 divergence lives.** Six of the twenty-three emitted
+packages sit under a head §9.7 does not close -- `repository`, `application`,
+`ports` -- and a `Head::Facet` is renamed by nothing, so a `jails.toml` that
+renames `adapters` does not reach them. Their rule reads `convention.facet.*`
+where a layer's reads `convention.layer.*`. Reconciling the six would move
+files in every project generated so far, and §3.1 rule 4 forbids a compiler
+changing a convention silently, so they are displayed rather than corrected.
+
 Canonical crates, lowest first:
 
 | crate | contract |

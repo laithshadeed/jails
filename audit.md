@@ -561,36 +561,63 @@ array of integers. 6.2 KB of generated Java produces a 99,892-byte
 mutation. The legacy store separated these deliberately —
 `jails-protocol`'s `envelope.rs` owns the format and hex-encodes the payload.
 
-### A3.11 The emitted layout contradicts §9.7
+### A3.11 / A3.12 The §9.7 divergence, and the derived records — closed
 
-The registry half is closed: `jails_model::Package` is the twenty packages the
-compiler emits Java into, one `placement()` row each, and `package_for` is the
-only thing that turns one into a name. §20.2's rule that an emitter "MUST NOT
-concatenate a package, prefix, suffix, filename, or test marker itself" now
-holds everywhere except `emit_unit.rs`, which is A3.11b below.
+`jails_model::Package` is the twenty-three packages the compiler emits Java
+into, one `placement()` row each, and `package_for` is the only thing that
+turns one into a name. §20.2's rule that an emitter "MUST NOT concatenate a
+package, prefix, suffix, filename, or test marker itself" holds everywhere.
 
-What the registry made visible is the part that is still open. `Head::Facet`
-marks every row §9.7 does not close:
+**What the registry made visible is now recorded rather than only named here.**
+Six of those rows sit under a head §9.7 does not close — `repository`,
+`application`, `ports` — and a `Head::Facet` is renamed by nothing, so a
+project whose `jails.toml` renames a layer gets the rename for `domain` and
+`adapters` and not for these. §3.1 rule 4 makes conventions part of `jdl 1` and
+forbids a compiler changing one silently, so reconciling the six would move
+files in every project generated on this branch. They are therefore *displayed*
+rather than quietly corrected:
 
-| §9.7 | emitted |
-|---|---|
-| repository port in `app` | `repository` |
-| primary SQL adapter in `adapters` | `adapters.jdbc` |
-| fake adapter in `adapters` | `adapters.memory` |
-| query types in `app`/`adapters`/`web` | `application.queries` |
-| HTTP in `web` | `ports.http` |
-| — | `application` (`ExecutionContext`) |
+```
+project_demo/domain       java-package  com.example.demo.core        [convention.layer.domain]
+project_demo/repository   java-package  com.example.demo.repository  [convention.facet.repository]
+```
 
-`application`, `ports` and `repository` are not §9.7 layers, and a `Facet`
-head is renamed by nothing -- so a project whose `jails.toml` renames a layer
-gets the rename for `domain` and `adapters` and not for these. §3.1 rule 4
-makes conventions part of `jdl 1` and forbids a compiler changing one
-silently, so every row above is a future breaking move for any project
-generated on this branch: reconciling them moves files in every such project,
-which is why the table is named rather than quietly corrected.
+That is `jails model explain`, and the `rule_id` is the whole point — one tree,
+two rules, and the difference is something a reader can be shown.
 
-The `ETest.java` row of §9.7 is also unmet: no companion test is emitted for
-an entity record.
+**§7.2's three missing fields are in `AppModel`.** `language_version` and
+`convention_version` are stored separately so a plan cannot compare models
+produced by different convention registries. `derived: BTreeMap<DerivedRoleKey,
+DerivedValue>` holds §18.4's records, and being *in* the model is the
+requirement rather than a convenience: it puts them in the accepted-model and
+plan digest, so a convention that moves cannot move silently. Refreshing the
+compiler-lock and plan goldens was the notice working.
+
+Three decisions worth keeping.
+
+**`derived` is a pure function of the model**, recomputed after linking, after
+every patch and after the layout arrives — never accumulated.
+`derived_records_are_a_function_of_the_model` holds it. An accumulator would
+let two models that agree carry different records, which would make the digest
+report a difference that is not one.
+
+**`pinned` is decided by comparing with the convention, not by a flag carried
+from the source.** The linked model does not remember whether an author wrote
+`@map(notes)` on an entity whose convention already derives `notes`, and
+teaching it to would break the sentence above. The cost is that a redundant pin
+reads as a derivation, and nothing observable turns on it.
+
+**Five of §18.4's eleven roles are here, and the other six are the plan's.**
+`java-package`, `java-type`, `sql-table`, `sql-column` and `http-route` are the
+linker's. `file`, `test`, `migration`, `cap-prerequisite` and `build-entry` are
+decided one pass later against a workspace the model has not seen; recording
+them here would mean either duplicating the compiler's answer or letting a
+filesystem fact into the model, and the second breaks the purity the plan
+digest rests on.
+
+Still open, and smaller than it was: `enums` is not a separate map — enums are
+entities carrying `enum_constants` — and the `ETest.java` row of §9.7 is unmet,
+since no companion test is emitted for an entity record.
 
 ### A3.11b A source unit's package ignored the layout — closed
 
@@ -812,16 +839,14 @@ Closed and deleted from this list: the original items 1–4 and 9, then **A1.1**
 (39/39 generators), **A3.11b** (layer renames), **A5.1** (canonical tree and
 exact-plan goldens), **A5.2** (compiler-lock golden), **A1.2b** (closed *by*
 A1.1), **A2.6** (pluralization), **A2.2b** (pre-v1 declaration order),
-**A5.3** (the G1 corpus on JDL v1), **A5.5** (G4 on the canonical executor)
-and **A6.1** (module docs, now a ratchet at zero). One item remains.
+**A5.3** (the G1 corpus on JDL v1), **A5.5** (G4 on the canonical executor),
+**A6.1** (module docs, now a ratchet at zero) and **A3.11 / A3.12** (the §9.7
+divergence recorded, and §7.2's derived records).
 
-**A3.11 / A3.12** — the registry is built and the source-unit half is closed.
-What is left is the decision the registry made legible: reconcile the six
-`Head::Facet` rows with §9.7 or record the divergence, and add the `derived`
-records and `model explain` so a convention is inspectable rather than
-implied. Every emitter added now picks a placement a later §9.7 reconciliation
-has to move.
+**The ordered list is empty.** What is left in this file is measurement rather
+than work queued behind it: `A3.13`'s three diagnostic vocabularies, `A3.14`'s
+typed artifact IR, `A4.x`, and the residue named inside each closed entry.
 
 `A3.14` (typed artifact IR) is the largest remaining piece of the design and
-is not on this list because it is a phase, not a fix. `A5.7` (git ≥ 2.47) is
+was never on the list because it is a phase, not a fix. `A5.7` (git ≥ 2.47) is
 a one-line preflight in `doctor` whenever somebody wants it.

@@ -493,35 +493,7 @@ fn reference_java_type(
             .map(|operation| operation.names.java_type.clone()),
         ComponentReference::Component(id) => components
             .get(id)
-            .map(|(kind, name)| primary_type(*kind, name)),
-    }
-}
-
-fn primary_type(kind: ComponentKind, name: &str) -> String {
-    match kind {
-        ComponentKind::Service => format!("{name}Service"),
-        ComponentKind::Controller => format!("{name}Controller"),
-        ComponentKind::Handler => format!("{name}Handler"),
-        ComponentKind::Command => format!("{name}Command"),
-        ComponentKind::Cli => format!("{name}Cli"),
-        ComponentKind::Cases => format!("{name}Cases"),
-        ComponentKind::Client => format!("{name}Client"),
-        ComponentKind::Fetcher => format!("{name}Fetcher"),
-        ComponentKind::Job => format!("{name}Job"),
-        ComponentKind::HttpWorkflow => format!("{name}Workflow"),
-        ComponentKind::HttpSink => format!("{name}HttpOutboxSink"),
-        ComponentKind::Idempotency => format!("{name}Guard"),
-        ComponentKind::Auth => format!("{name}TokenConfig"),
-        ComponentKind::Webhook => format!("{name}Verifier"),
-        ComponentKind::DurableJob => format!("{name}Work"),
-        ComponentKind::Socket => format!("{name}SocketHandler"),
-        ComponentKind::Presence => format!("{name}Presence"),
-        ComponentKind::Test => format!("{name}Test"),
-        ComponentKind::IntegrationTest => format!("{name}IT"),
-        ComponentKind::Class
-        | ComponentKind::Interface
-        | ComponentKind::Sealed
-        | ComponentKind::Strategy => name.to_string(),
+            .map(|(kind, name)| kind.primary_type(name)),
     }
 }
 
