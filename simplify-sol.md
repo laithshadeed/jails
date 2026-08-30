@@ -2213,7 +2213,43 @@ Avoid gates that assert only a maximum file length or a minimum scanner count.
 Those improve navigation but can be satisfied while every duplicated concept
 survives.
 
-### Where each rule stands (2026-08-30)
+### Where the gates stand (2026-08-30)
+
+- **G0** — `mise run verify-rewrite`; `.githooks/pre-push` and
+  `.github/workflows/verify-rewrite.yml` invoke it and nothing else, so hook,
+  CI and `CLAUDE.md` cannot disagree about what passing means. Its
+  `cargo build --workspace` was removed with a measurement: it built nothing
+  the suite did not build anyway, and was a barrier between two halves of one
+  compile graph.
+- **G1** — `tests/differential.rs`, 44 scenarios across both implementations.
+- **G2** — the inventory half was already held
+  (`feature_inventory_covers_the_live_clap_tree_exactly_once`); the journey
+  half was not, and now is:
+  `every_inventoried_command_path_is_invoked_by_a_test` maps 99 of 109 live
+  command paths to a test. The ten that are not are `kafka *` and
+  `test daemon *`, named with their reason -- each drives a broker inside a
+  compose container or a resident JVM over a socket, so a journey means a
+  tier-3 fixture nobody has written. The gate fails in *both* directions:
+  coverage may not fall, and an exemption that is no longer needed must come
+  off, because one left in place hides the next command that loses its
+  journey.
+- **G3** — `tests/common/scenarios.rs` is the map, held by
+  `every_kind_and_capability_has_a_golden_scenario` against the binary's own
+  help.
+- **G4** — `fault::POINTS` and the trip sites agree both ways, and
+  `a_capability_install_converges_from_every_failpoint` is the sweep. Still
+  open: G4 asks for the registry and the sites to be *generated from one
+  declaration* rather than checked against each other.
+- **G5** — `examples/` carries the proof manifests and `ACCEPTANCE.md`. Still
+  open: the sanitized adopted and reader-edited corpus.
+
+**On this machine G1 and the engine suite show 8 failures, all
+`git merge-file` exit 129.** That is git 2.43 against the 2.44+ that
+`--diff-algorithm` needs, which `CLAUDE.md` records; 129 is a usage error
+rather than a merge outcome. Any measurement taken here is a measurement of
+the other tiers.
+
+### Where each fitness rule stands (2026-08-30)
 
 Two were enforced by a *type* rather than a test, which is better and is why
 they had none; three were genuinely unheld and now are.

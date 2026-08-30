@@ -959,3 +959,164 @@ fn the_compilers_renameable_layers_are_the_engines_layers() {
         "the compiler and the engine disagree about which layers a project may rename"
     );
 }
+
+/// **G2's other half: every command path reaches at least one journey.**
+///
+/// `simplify-sol.md`'s G2 asks that "all 100 live command paths map to at
+/// least one checked-in journey". Half of that was already held --
+/// `cli::feature_inventory_covers_the_live_clap_tree_exactly_once` pins the
+/// inventory against the live `clap::Command`, so the *list* cannot drift.
+/// Nothing checked the other half, so a command could be inventoried,
+/// advertised in `jails commands`, and invoked by no test at all.
+///
+/// **A floor rather than a hard requirement**, because ten command paths
+/// genuinely have no test here and pretending otherwise would mean either a
+/// permanently red build or a fake test. They are named below with the reason,
+/// so the gate fails in both directions that matter: coverage may not fall,
+/// and a *new* uncovered command is a failure rather than a silent addition
+/// to the list.
+#[test]
+fn every_inventoried_command_path_is_invoked_by_a_test() {
+    /// Command paths with no journey, and why. Each is an operational command
+    /// that drives something this suite has no way to stand up: `kafka *`
+    /// runs the broker image's own CLI *inside* a compose container, and
+    /// `test daemon *` talks to a resident JVM over a unix socket. Testing
+    /// them means starting the real thing, which is a tier-3 fixture nobody
+    /// has written rather than an oversight.
+    const UNJOURNEYED: &[&str] = &[
+        "kafka topics",
+        "kafka describe",
+        "kafka send",
+        "kafka poison",
+        "kafka tail",
+        "kafka dlt",
+        "kafka lag",
+        "kafka reset",
+        "test daemon restart",
+        "test daemon status",
+    ];
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let inventory = std::fs::read_to_string(root.join("docs/feature-inventory.tsv"))
+        .expect("the feature inventory is checked in");
+    let commands: Vec<&str> = inventory
+        .lines()
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(|line| line.split('\t').next())
+        .collect();
+    assert!(
+        commands.len() > 100,
+        "the inventory reader found only {} command paths -- it has lost the \
+         file and this gate would pass over anything",
+        commands.len()
+    );
+
+    let mut corpus = String::new();
+    collect_test_sources(&root.join("tests"), &mut corpus);
+    assert!(
+        corpus.len() > 500_000,
+        "the test-source scan read only {} bytes -- it has lost the suite",
+        corpus.len()
+    );
+
+    let mut uncovered = Vec::new();
+    for command in &commands {
+        if !is_invoked(&corpus, command) {
+            uncovered.push(*command);
+        }
+    }
+
+    let unexpected: Vec<&&str> = uncovered
+        .iter()
+        .filter(|command| !UNJOURNEYED.contains(command))
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "these command paths are advertised and invoked by no test:\n{}\n\n\
+         Add a journey, or -- if it genuinely cannot be driven here -- name it \
+         in `UNJOURNEYED` with the reason. G2 wants every live command path \
+         mapped to at least one checked-in journey.",
+        unexpected
+            .iter()
+            .map(|command| format!("  {command}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    let recovered: Vec<&&str> = UNJOURNEYED
+        .iter()
+        .filter(|command| !uncovered.contains(command))
+        .collect();
+    assert!(
+        recovered.is_empty(),
+        "these command paths now have a journey and should come out of \
+         `UNJOURNEYED`:\n{}\n\n\
+         An exemption that is no longer needed is permission for nothing, and \
+         leaving it means the next command that loses its journey is hidden \
+         behind it.",
+        recovered
+            .iter()
+            .map(|command| format!("  {command}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+/// Whether the test corpus invokes one command path.
+///
+/// A multi-word path is matched as the argument *sequence* it is typed as,
+/// which is exact. A single word is matched only in an argument position --
+/// `.arg("sync")`, `["sync"`, `"sync",` -- because a bare `"sync"` anywhere
+/// in half a megabyte of test source would match prose in an assertion
+/// message and count a command nothing runs.
+fn is_invoked(corpus: &str, command: &str) -> bool {
+    let parts: Vec<&str> = command.split_whitespace().collect();
+    if parts.len() > 1 {
+        return corpus
+            .match_indices(&format!("\"{}\"", parts[0]))
+            .any(|(at, _)| {
+                let mut rest = &corpus[at + parts[0].len() + 2..];
+                parts[1..].iter().all(|part| {
+                    let trimmed = rest.trim_start();
+                    let Some(trimmed) = trimmed.strip_prefix(',') else {
+                        return false;
+                    };
+                    let trimmed = trimmed.trim_start();
+                    match trimmed.strip_prefix(&format!("\"{part}\"")) {
+                        Some(remainder) => {
+                            rest = remainder;
+                            true
+                        }
+                        None => false,
+                    }
+                })
+            });
+    }
+    let quoted = format!("\"{command}\"");
+    corpus.match_indices(&quoted).any(|(at, _)| {
+        let before = corpus[..at].trim_end();
+        let after = corpus[at + quoted.len()..].trim_start();
+        before.ends_with(".arg(")
+            || before.ends_with('[')
+            || before.ends_with(',')
+            || after.starts_with(',')
+            || after.starts_with(']')
+    })
+}
+
+fn collect_test_sources(dir: &Path, out: &mut String) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_test_sources(&path, out);
+        } else if path.extension().is_some_and(|extension| extension == "rs")
+            && let Ok(text) = std::fs::read_to_string(&path)
+        {
+            out.push_str(&text);
+            out.push('\n');
+        }
+    }
+}
