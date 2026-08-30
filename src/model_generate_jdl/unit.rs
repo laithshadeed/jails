@@ -15,7 +15,19 @@ use jails_support::{Failure, Result};
 use serde_json::json;
 use std::path::PathBuf;
 
-pub(super) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
+pub(super) fn run(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
+    // The same rule entities get: a name typed in lower camel case is the Java
+    // type it names, which is what the legacy path writes and what a later
+    // `result:Outcome` has to resolve against. See
+    // `model_generate_jdl::java_type_name`.
+    //
+    // **Except `cases`, whose name is a file rather than a class.** It is one
+    // of the two kinds `CLAUDE.md` names for that -- `jails g cases brief.md`
+    // reads the reader's brief, and capitalising it asks for `Brief.md`, a
+    // file nobody has.
+    if args.kind != ArtifactKind::Cases {
+        args.name = super::java_type_name(&args.name);
+    }
     let component_kind = component_kind(args.kind)
         .expect("the JDL router sends only closed component kinds to this frontend");
     let legacy_kind = legacy_unit_kind(args.kind);

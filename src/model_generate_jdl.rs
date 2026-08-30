@@ -283,7 +283,7 @@ fn operation_declaration(
 /// projection the model is right to hold to, and this is the CLI sugar
 /// resolving what the reader typed, which is where the legacy path does it
 /// too.
-fn java_type_name(name: &str) -> String {
+pub(super) fn java_type_name(name: &str) -> String {
     let mut characters = name.chars();
     match characters.next() {
         Some(first) => first.to_uppercase().collect::<String>() + characters.as_str(),

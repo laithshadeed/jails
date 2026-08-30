@@ -144,8 +144,22 @@ fn verified_plain_toolbox(path: &str) -> &'static std::path::PathBuf {
     static VERIFIED: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     VERIFIED.get_or_init(|| {
         let workdir = temp_dir("plain-toolbox-verified");
+        // **The manifest is applied *at creation*, not after.** `new-cli`
+        // seeds `.jails/model.jdl`, so an ordinary plain project is canonical
+        // -- and a canonical project refuses `app apply`, because
+        // `.jails/app.toml` is the legacy manifest and two editable sources is
+        // what the cutover forbids. `--app` is the supported route for a
+        // manifest and applies it inside the publication, which is what
+        // `plan.md` §R6.5 made it for.
+        let manifest = workdir.join("ledger-cli.app.toml");
+        fs::write(
+            &manifest,
+            include_str!("../../examples/ledger-cli/.jails/app.toml"),
+        )
+        .unwrap();
         let status = jails_cmd_with_path(&workdir, path)
-            .args(["new-cli", "demo"])
+            .args(["new-cli", "demo", "--app"])
+            .arg(&manifest)
             .status()
             .unwrap();
         assert!(status.success(), "new-cli failed for the plain toolbox");
@@ -222,22 +236,21 @@ fn verified_plain_toolbox(path: &str) -> &'static std::path::PathBuf {
             .unwrap();
         assert!(status.success(), "generate cases failed in plain toolbox");
 
-        // Apply the exact control manifest last. Its deferred `format`
-        // capability formats both the manifest output and the toolbox files
-        // above in one invocation, after every source exists.
-        fs::create_dir_all(root.join(".jails")).unwrap();
-        fs::write(
-            root.join(".jails/app.toml"),
-            include_str!("../../examples/ledger-cli/.jails/app.toml"),
-        )
-        .unwrap();
-        let output = jails_cmd_with_path(&root, path)
-            .args(["app", "apply", "--no-start"])
+        // The manifest ran at creation, so its `format` capability formatted
+        // what existed then, which is none of the sources above. One explicit
+        // pass now covers every file, which is what applying the manifest last
+        // used to do.
+        //
+        // Through Maven rather than `jails fmt`: a canonical project refuses
+        // that command, and its own fix line says to run the project formatter
+        // directly, because canonical formatter ownership is not modeled yet.
+        let output = real_maven_cmd(&root, path)
+            .arg("spotless:apply")
             .output()
             .unwrap();
         assert!(
             output.status.success(),
-            "plain toolbox manifest: {}{}",
+            "plain toolbox spotless:apply: {}{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );

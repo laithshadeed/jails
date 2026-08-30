@@ -36,7 +36,7 @@ pub(crate) fn lower(
     let mut imports = BTreeSet::new();
     let body = match facet {
         jails_model::Facet::Enum => enum_body(entity, &mut imports),
-        jails_model::Facet::Record => record_body(entity, &mut imports),
+        jails_model::Facet::Record => record_body(model, entity, &mut imports),
         _ => return Ok(None),
     };
     let package = model.project.package_for(Package::Domain);
@@ -105,7 +105,7 @@ fn null_checked(entity: &Entity) -> Option<&Field> {
         .find(|field| field.required && matches!(field.ty, TypeRef::Builtin(BuiltinType::String)))
 }
 
-fn record_body(entity: &Entity, imports: &mut BTreeSet<String>) -> String {
+fn record_body(model: &AppModel, entity: &Entity, imports: &mut BTreeSet<String>) -> String {
     imports.insert("org.junit.jupiter.api.Test".to_string());
     let name = &entity.names.java_type;
     // A component jails cannot build disables the class rather than the
@@ -114,7 +114,7 @@ fn record_body(entity: &Entity, imports: &mut BTreeSet<String>) -> String {
     let unbuildable = entity
         .fields
         .iter()
-        .find(|field| sample(field, &mut BTreeSet::new()).is_none());
+        .find(|field| sample(model, field, &mut BTreeSet::new()).is_none());
     let class_disabled = match unbuildable {
         Some(field) => {
             imports.insert("org.junit.jupiter.api.Disabled".to_string());
@@ -135,7 +135,9 @@ fn record_body(entity: &Entity, imports: &mut BTreeSet<String>) -> String {
                 .map(
                     |other| match other.names.java_member == field.names.java_member {
                         true => "null".to_string(),
-                        false => sample(other, imports).unwrap_or_else(|| "null".to_string()),
+                        false => {
+                            sample(model, other, imports).unwrap_or_else(|| "null".to_string())
+                        }
                     },
                 )
                 .collect::<Vec<_>>()
@@ -157,7 +159,7 @@ fn record_body(entity: &Entity, imports: &mut BTreeSet<String>) -> String {
             let arguments = entity
                 .fields
                 .iter()
-                .map(|field| sample(field, imports).unwrap_or_else(|| "null".to_string()))
+                .map(|field| sample(model, field, imports).unwrap_or_else(|| "null".to_string()))
                 .collect::<Vec<_>>()
                 .join(", ");
             let variable = lower_first(name);
@@ -177,6 +179,59 @@ fn record_body(entity: &Entity, imports: &mut BTreeSet<String>) -> String {
     }
 }
 
+/// A model-declared type, sampled from what the model already knows.
+///
+/// An enum is one of its own constants -- **by name, not `values()[0]`**,
+/// which starts standing for a different value the moment somebody reorders
+/// the enum with nothing in the diff to say so. A record is a constructor call
+/// over its own components, which is why this recurses.
+///
+/// `seen` stops a record that reaches itself, directly or through another,
+/// from recursing forever: such a type has no finite sample, so it is treated
+/// as unsampleable and the class says so.
+fn declared_sample(
+    model: &AppModel,
+    java_type: &str,
+    imports: &mut BTreeSet<String>,
+    seen: &mut BTreeSet<String>,
+) -> Option<String> {
+    // A sealed component is a unit rather than an entity, and its zero-argument
+    // variant is a complete sample: `Outcome.Accepted()` needs nothing else.
+    if let Some(component) = model.components.values().find(|component| {
+        component.kind == jails_model::ComponentKind::Sealed && component.name == java_type
+    }) && let Some(variant) = component
+        .variants
+        .iter()
+        .find(|variant| variant.parameters.is_empty())
+    {
+        return Some(format!("new {java_type}.{}()", variant.name));
+    }
+    let entity = model
+        .entities
+        .values()
+        .find(|entity| entity.active && entity.names.java_type == java_type)?;
+    if !seen.insert(java_type.to_string()) {
+        return None;
+    }
+    let rendered = if entity.facets.contains(&jails_model::Facet::Enum) {
+        entity
+            .enum_constants
+            .first()
+            .map(|constant| format!("{java_type}.{}", constant.java_name))
+    } else if entity.facets.contains(&jails_model::Facet::Record) {
+        entity
+            .fields
+            .iter()
+            .map(|field| sample_with(model, field, imports, seen))
+            .collect::<Option<Vec<_>>>()
+            .map(|arguments| format!("new {java_type}({})", arguments.join(", ")))
+    } else {
+        None
+    };
+    seen.remove(java_type);
+    rendered
+}
+
 /// The same rule the factory uses, so one type is sampled one way.
 ///
 /// The sample carries the builtin's own import with it, which the factory gets
@@ -184,7 +239,16 @@ fn record_body(entity: &Entity, imports: &mut BTreeSet<String>) -> String {
 /// and a test that only constructs a record never mentions the type anywhere
 /// else. Left out, the file compiles everywhere the sample happens to be a
 /// literal and fails on the first `uuid`, `instant` or `date`.
-fn sample(field: &Field, imports: &mut BTreeSet<String>) -> Option<String> {
+fn sample(model: &AppModel, field: &Field, imports: &mut BTreeSet<String>) -> Option<String> {
+    sample_with(model, field, imports, &mut BTreeSet::new())
+}
+
+fn sample_with(
+    model: &AppModel,
+    field: &Field,
+    imports: &mut BTreeSet<String>,
+    seen: &mut BTreeSet<String>,
+) -> Option<String> {
     if !field.required {
         imports.insert("java.util.Optional".to_string());
         return Some("Optional.empty()".to_string());
@@ -197,7 +261,11 @@ fn sample(field: &Field, imports: &mut BTreeSet<String>) -> Option<String> {
             }
             Some(semantics.sample.to_string())
         }
-        TypeRef::External(_) => None,
+        // A type the *model* declares is one jails can build, which is the
+        // whole of "generators compose through user-owned field types": the
+        // enum and the record were generated two commands ago, so refusing to
+        // fabricate one would be the tool forgetting what it just wrote.
+        TypeRef::External(external) => declared_sample(model, external, imports, seen),
     }
 }
 
