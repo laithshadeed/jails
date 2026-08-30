@@ -834,10 +834,26 @@ fn console_launches_jshell_with_the_project_classpath() {
         "compiled",
     )
     .unwrap();
-    fs::write(root.join("target/jails-runtime-classpath"), "").unwrap();
     let fake = temp_dir("console-jshell-bin");
     let log = fake.join("log.txt");
     write_fake_maven(&fake, &["mvn", "java", "jshell"], &log);
+    // **The fake `mvn` writes the file it is told to, because the real one
+    // does.** This used to seed `target/jails-runtime-classpath` by hand so
+    // the read after the resolve had something to find, and that seed is now
+    // indistinguishable from an already-resolved classpath: `jails console`
+    // reuses one that is newer than the pom, so the resolve this test exists
+    // to observe was correctly skipped and the test failed on its absence. A
+    // stand-in that answers the question differently from the tool it stands
+    // in for will eventually be believed over the tool.
+    fs::write(
+        fake.join("mvn"),
+        format!(
+            "#!/bin/sh\necho \"$0 $*\" >> \"{}\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    -Dmdep.outputFile=*) : > \"${{arg#-Dmdep.outputFile=}}\" ;;\n  esac\ndone\nexit 0\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    set_executable(&fake.join("mvn"));
     fs::write(
         fake.join("java"),
         format!(
