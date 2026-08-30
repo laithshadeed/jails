@@ -17,6 +17,20 @@ pub(crate) fn resource_status(
     datasource: Option<&str>,
     invocation: crate::Invocation,
 ) -> Result<()> {
+    // A canonical project has no ledger, and the legacy report reads one: it
+    // answered `state: ambiguous` about an entity the model describes
+    // completely. `model_status` reads the same four authorities where they
+    // actually live.
+    if crate::model_command::owns() {
+        if let Some(datasource) = datasource {
+            let _ = datasource;
+            return Err(jails_support::Failure::Told(
+                "`resource status --datasource` is not yet available for a canonical project.\n       fix: run `jails resource status <SELECTOR>` for the declared, generated and migration authorities"
+                    .to_string(),
+            ));
+        }
+        return crate::model_status::run(selector, invocation);
+    }
     let Some(datasource) = datasource else {
         return jails_report::lifecycle_status::status(selector, None, invocation.output.is_json());
     };

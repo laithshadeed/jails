@@ -1564,8 +1564,32 @@ mod permit_pool_tests {
     /// That is the change working, aimed at itself. A production pool wants
     /// exactly this sharing; a test *about* the sharing has to own its own
     /// budget, so the name carries the pid.
+    /// A pool nothing outside this process can be holding.
+    ///
+    /// `test-<label>-<pid>` was not that. `run-tests` starts 33 binaries 16 at
+    /// a time, so a binary in a later wave is routinely handed the pid of one
+    /// that has already exited -- and a slot lock outlives the process that
+    /// took it whenever a forked child inherited the descriptor and has not
+    /// reached `exec` yet. These binaries spawn thousands of `jails`
+    /// processes, so that window is hit:
+    /// `infrastructure_start_pool_has_two_reusable_permits` failed its
+    /// *second* acquire under full-suite load and passed every time alone,
+    /// which is what a slot held by somebody else's leftover looks like.
+    ///
+    /// The token is per *process*, not per call, because
+    /// `a_budget_is_shared_by_every_pool_of_the_same_name` needs two pools
+    /// built from one label to be the same pool. Same label, same directory;
+    /// different run, different directory, whatever the kernel does with pids.
     fn pool(label: &str) -> PermitPool {
-        let name = format!("test-{label}-{}", std::process::id());
+        static TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        let token = TOKEN.get_or_init(|| {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|since| since.subsec_nanos())
+                .unwrap_or_default();
+            format!("{}-{nanos}", std::process::id())
+        });
+        let name = format!("test-{label}-{token}");
         PermitPool::new(Box::leak(name.into_boxed_str()))
     }
 

@@ -55,7 +55,7 @@ rename resource	jails-engine	project-mutation	route::rename_resource
 rename storage	jails-engine	project-mutation	route::rename_storage
 destroy	jails-engine	project-mutation	route::destroy
 resource	jails	dispatch-only	main command dispatch
-resource status	jails-report	read-only	lifecycle_status::status
+resource status	jails-report	read-only	model_status::run or lifecycle_status::status
 resource revive	jails-engine	project-mutation	route::revive
 resource repair	jails-engine	project-mutation	route::repair
 resource field	jails	dispatch-only	main command dispatch

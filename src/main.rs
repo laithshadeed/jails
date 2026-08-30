@@ -40,6 +40,7 @@ mod model_migration;
 mod model_rename;
 mod model_resource;
 mod model_setting;
+mod model_status;
 mod model_upgrade;
 mod new;
 mod parse_error;

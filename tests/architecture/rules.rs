@@ -54,6 +54,10 @@ fn owns_terminal_output(path: &Path) -> bool {
         // command that returned the records to a caller with nowhere to print
         // them would satisfy the type and not the requirement.
         || relative == "src/model_explain.rs"
+        // The canonical half of `resource status`, and a read-only report
+        // whose whole contract is the four authority lines it prints. The
+        // legacy half is already allowed through `jails-report`.
+        || relative == "src/model_status.rs"
         || relative == "src/parse_error.rs"
         || relative.starts_with("src/new/")
         || relative == "crates/jails-support/src/lib.rs"
@@ -533,6 +537,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails", "model_rename", 9),
     ("jails", "model_resource", 9),
     ("jails", "model_setting", 9),
+    ("jails", "model_status", 9),
     ("jails", "model_migration", 9),
     ("jails", "model_upgrade", 9),
     ("jails", "canonical_support", 9),

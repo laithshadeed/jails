@@ -12928,3 +12928,130 @@ fn the_health_indicator_capability_packs_compile_and_test_in_one_project() {
         String::from_utf8_lossy(&built.stderr)
     );
 }
+
+/// `jails resource status` used to answer `state: ambiguous` /
+/// `this project has no recorded resource state` about an entity the model
+/// describes completely.
+///
+/// That is not a missing answer but a wrong one: the legacy report reads
+/// `.jails/ledger.toml`, a canonical project has none, and every authority the
+/// report names is present and readable somewhere else. This drives all four
+/// -- declaration, generated, migration history, and the SQL table -- and the
+/// two states that are not `consistent`.
+#[test]
+fn resource_status_answers_from_the_model_when_the_project_is_canonical() {
+    let root = jdl_project(
+        "jdl-v1-resource-status",
+        r#"jdl 1
+app Shop {
+ pkg com.example.shop
+ java 26
+ platform spring
+ build maven
+ storage postgres
+}
+entity Order {
+ id: uuid @pk
+ total: long
+ use repo
+}
+entity Memo {
+ title: string
+}
+"#,
+    );
+    write_spring_fixture(&root);
+
+    // Declared and not yet accepted: an ordinary state, not a fault.
+    let pending = jails_cmd(&root, None)
+        .args(["resource", "status", "Order"])
+        .output()
+        .unwrap();
+    let pending = String::from_utf8_lossy(&pending.stdout).to_string();
+    assert!(
+        pending.contains("state: pending") && pending.contains("next: jails sync"),
+        "an entity the lock has not accepted should say so and name the fix:\n{pending}"
+    );
+
+    let synced = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+
+    let stored = jails_cmd(&root, None)
+        .args(["resource", "status", "Order"])
+        .output()
+        .unwrap();
+    let stored = String::from_utf8_lossy(&stored.stdout).to_string();
+    for expected in [
+        "resource: Order",
+        "state: consistent",
+        "declaration: present",
+        "generated: present",
+        "migration-history: present",
+        "table: orders",
+    ] {
+        assert!(
+            stored.contains(expected),
+            "expected `{expected}` in:\n{stored}"
+        );
+    }
+    assert!(
+        stored.contains("Order.java"),
+        "the entity's own generated file is attributed to it:\n{stored}"
+    );
+
+    // A source-only entity has no table, so the migration authority was never
+    // consulted -- `unknown`, which widens, rather than `absent`, which would
+    // claim a missing migration nobody asked for.
+    let source_only = jails_cmd(&root, None)
+        .args(["resource", "status", "Memo"])
+        .output()
+        .unwrap();
+    let source_only = String::from_utf8_lossy(&source_only.stdout).to_string();
+    assert!(
+        source_only.contains("migration-history: unknown") && !source_only.contains("table:"),
+        "a source-only entity reports no table and an unconsulted migration authority:\n{source_only}"
+    );
+
+    // Editing a managed file is drift against the accepted image, and is
+    // reported as such rather than being re-rendered away.
+    let generated = root.join(".jails/generated/main/java/com/example/shop/domain/Order.java");
+    let edited = format!(
+        "{}\n// touched by the reader\n",
+        fs::read_to_string(&generated).unwrap()
+    );
+    fs::write(&generated, edited).unwrap();
+    let drifted = jails_cmd(&root, None)
+        .args(["resource", "status", "Order"])
+        .output()
+        .unwrap();
+    let drifted = String::from_utf8_lossy(&drifted.stdout).to_string();
+    assert!(
+        drifted.contains("state: drifted") && drifted.contains("finding: generated-drift"),
+        "an edited managed file is drift against the accepted image:\n{drifted}"
+    );
+
+    // `--json` is the same report, and names its schema.
+    let json = jails_cmd(&root, None)
+        .args(["--output", "json", "resource", "status", "Order"])
+        .output()
+        .unwrap();
+    let json: serde_json::Value =
+        serde_json::from_slice(&json.stdout).expect("resource status --json is JSON");
+    assert_eq!(json["schema"], "jails.resource-status.v1");
+    assert_eq!(json["table"], "orders");
+    assert_eq!(json["state"], "drifted");
+
+    let unknown = jails_cmd(&root, None)
+        .args(["resource", "status", "Nobody"])
+        .output()
+        .unwrap();
+    let unknown = String::from_utf8_lossy(&unknown.stdout).to_string();
+    assert!(
+        unknown.contains("declaration: absent") && unknown.contains("resource-not-declared"),
+        "a selector naming nothing says so rather than reporting an empty resource:\n{unknown}"
+    );
+}
