@@ -128,7 +128,7 @@ impl Lock {
 /// Not a wait for the lock, and not a retry loop around a busy resource: this
 /// is how long it takes a *released* lock to actually look released when the
 /// process is also spawning children. See `contend`.
-const SETTLE: std::time::Duration = std::time::Duration::from_millis(50);
+const SETTLE: std::time::Duration = std::time::Duration::from_millis(500);
 const SETTLE_STEP: std::time::Duration = std::time::Duration::from_millis(2);
 
 /// Take the lock, and say what happened in the caller's vocabulary.
@@ -156,11 +156,31 @@ const SETTLE_STEP: std::time::Duration = std::time::Duration::from_millis(2);
 /// -threading the suite made it disappear entirely. The other thread was
 /// spawning processes.
 ///
-/// Fifty milliseconds is far longer than a `fork`/`exec` and far shorter than
-/// anything a person reads as a hang, so it separates the two cases without
-/// reintroducing the invisible wait plan.md §R4.1 rejects. Real contention
-/// still costs the caller 50 ms and then reports who holds it; it never waits
-/// for the holder to finish.
+/// **Fifty milliseconds was not far longer than a `fork`/`exec`, and the
+/// window is not bounded by one.** It is bounded by how long the child takes
+/// to *reach* `exec`, which on a loaded machine is a scheduling question. Held
+/// against a genuine `fork` with a child that delays before `exec`, the delay
+/// tracks it one-for-one -- 2.2 ms at no delay, 12.6 ms at 10 ms, 53.4 ms at
+/// 50 ms, 203.2 ms at 200 ms -- and one `fork` captures *every* lock the
+/// process holds at that instant, not just the one being released.
+///
+/// That is what the suite showed: five `tests/engine.rs` tests failing in the
+/// same run, each unable to re-acquire a lock it had already released, on a
+/// sixteen-CPU machine running sixteen test binaries at once. `bugs.md` B61
+/// has the reproduction.
+///
+/// Five hundred milliseconds covers the measured range with room for a child
+/// that waits for a CPU, and is still far shorter than anything a person reads
+/// as a hang, so it separates the two cases without reintroducing the
+/// invisible wait plan.md §R4.1 rejects. Real contention costs the caller half
+/// a second and then reports who holds it; it never waits for the holder to
+/// finish.
+///
+/// It is a threshold rather than a decision because the two cases are not
+/// distinguishable portably. Linux can tell them apart -- `/proc/locks` names
+/// the holding pid against the device and inode the acquirer already has from
+/// `same_entry` -- and that would replace the guess with an answer, at the
+/// cost of a Linux-only branch in a production error path.
 fn contend(file: &File, path: &Path) -> std::result::Result<(), Contention> {
     let deadline = std::time::Instant::now() + SETTLE;
     loop {
@@ -321,8 +341,12 @@ mod tests {
     /// Contention is reported, not waited out.
     ///
     /// The settle window in `contend` buys a released lock time to look
-    /// released; it must never turn into a queue. A holder that keeps the lock
-    /// for a whole second still gets an answer in a small fraction of it.
+    /// released; it must never turn into a queue. The holder here never lets
+    /// go, so queuing would mean never answering.
+    ///
+    /// Bounded against `SETTLE` rather than a constant of its own: this once
+    /// asserted a bare 500 ms, which silently became the exact value of
+    /// `SETTLE` when that moved and turned a property into a coin flip.
     #[test]
     fn a_held_lock_is_refused_promptly_rather_than_queued_behind_its_holder() {
         let scratch = ScratchDir::in_temp("jails-lock-prompt").unwrap();
@@ -335,8 +359,9 @@ mod tests {
 
         assert!(matches!(error, Contention::Held(_)), "{error}");
         assert!(
-            waited < std::time::Duration::from_millis(500),
-            "refusing took {waited:?}, which is a queue rather than an answer"
+            waited < SETTLE * 2,
+            "refusing took {waited:?} against a {SETTLE:?} settle window, \
+             which is a queue rather than an answer"
         );
         scratch.close().unwrap();
     }

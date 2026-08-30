@@ -15,7 +15,7 @@ run the suite that would have to prove it.**
 | capabilities | **25 of 25** |
 | component kinds with a backend | **23 of 23** -- `every_component_kind_is_emitted_or_refused` has no refusal left to reach |
 | architecture fitness rules | all thirteen held: nine by a test, four by a type or by Cargo. One added that the list did not have. See *Where each fitness rule stands* |
-| merge gates | **all six green** apart from this machine's git (G1). See *Where the gates stand* |
+| merge gates | **all six green**, and G0 reliably so -- two causes of a one-in-three false red are fixed. See *What a run of G0 actually does* |
 | deletion map | **not started**, and no longer blocked. See *Why the deletion has not happened* |
 
 **Why the deletion has not happened.** The *Integration and one coordinated
@@ -43,11 +43,21 @@ the legacy path either moves to the canonical one or goes. That is one
 deliberate commit on a machine with the full toolchain, not a step to slip into
 a session that was doing something else.
 
-The one remaining red mark is **this machine, not the branch**: JDK 21 against
-`TARGET_RELEASE` 26, so 21 tier-3 tests cannot compile what they generate. It
-is recorded in `CLAUDE.md`. That is exactly why the cutover is not a thing to
-do from here -- the suite that would have to prove it cannot fully run on this
-machine.
+The one remaining red mark is **the machine this was written from, not the
+branch**: JDK 21 against `TARGET_RELEASE` 26, so 21 tier-3 tests cannot compile
+what they generate. It is recorded in `CLAUDE.md`.
+
+**And "this machine" is the sentence to be careful with, because there is more
+than one.** Written from the container, that paragraph read as a property of
+the work; it is a property of the box. Measured on the developer machine on
+2026-08-30: **git 2.55.0** (the `merge-file` floor is 2.44), **JDK 26.0.2**
+matching `TARGET_RELEASE`, and a working container engine. The whole gate runs
+there, tier 3 included, and came back green -- 33 binaries, 139s warm, 259s
+cold.
+
+So the toolchain condition the cutover was waiting on is met; it was never
+waiting on the branch. What is left is the size of the change, not a
+prerequisite.
 
 There used to be a second red mark, and it was **not** the machine: jails
 passed `--diff-algorithm` to `git merge-file`, a flag git 2.43 does not have,
@@ -56,6 +66,13 @@ so 58 tests died on a usage error. It is probed now, with
 un-hid 29 tests that had never run here -- six of which were failing for real.
 A gate that cannot run is worth less than no gate, because it reports the same
 green.
+
+One thing went ahead of it. G0 is what step 5 means by "all gates pass", and
+measured over seven runs it failed two in six, from two causes -- a fixture
+corpus that filled `/tmp`, and a lock settle window bounded by the wrong
+quantity. Both are fixed and both are in *What a run of G0 actually does*.
+Deleting most of the workspace behind a gate that is green two times in three
+is how a real regression gets re-run until it passes.
 
 So the next change to this document is the single cutover commit it has been
 building toward.
@@ -2272,6 +2289,73 @@ Add tests for properties that express the new shape, not file-size thresholds:
 Avoid gates that assert only a maximum file length or a minimum scanner count.
 Those improve navigation but can be satisfied while every duplicated concept
 survives.
+
+### What a run of G0 actually does (2026-08-30)
+
+**G0's whole claim is one answer to "is this green", and measured over seven
+runs on the developer machine it gave two answers.** Two runs in six failed,
+from two unrelated causes, neither in the product. A gate that is green two
+times in three is worse than a slow one, because the third answer is
+indistinguishable from a real regression and teaches the reader to re-run
+rather than to look. Both causes are fixed below.
+
+Timing first, since the cutover needs a machine that can afford to prove it.
+Sixteen logical CPUs, 30 GB, full toolchain:
+
+| phase | cold | warm |
+|---|---|---|
+| `fmt --check` + `clippy --workspace --all-targets` | 83s | ~5s |
+| test-harness compilation | ~100s | ~6s |
+| test execution, 33 binaries, 16 at a time | 130-155s | 130-155s |
+| **whole gate** | **259s** | **139-148s** |
+
+1156s of CPU against 139s of wall, so ~8.3x parallel. `cli` is the entire
+critical path at 130-136s; the other 32 binaries finish inside its shadow
+(`engine` 23s, `architecture_allowances` 20s, `differential` 15s).
+
+The two causes:
+
+- **The fixture corpus filled `/tmp`, and the age rule could not see it.**
+  Every fixture is `keep()`d so a failure can be inspected, and the sweep only
+  collected what was over an hour old. One run leaves ~1,900 directories and
+  1.4 GB; six fit inside that hour. The seventh died with **580 `No space left
+  on device` panics, every one in a test that was working**. Fixed by bounding
+  the corpus by count as well as age, with a floor that keeps the age rule's
+  promise that a concurrent run's fixtures are never touched. The policy is a
+  pure function now, because a `Once` over the real temporary directory is not
+  something a test can drive.
+- **A fifty-millisecond settle window that was not long enough.** Five
+  `tests/engine.rs` tests failed at once, each unable to re-acquire a lock it
+  had already released, each reporting *its own* previous command as the
+  holder -- `read_best_effort` reads a file that is deliberately never deleted,
+  so it names the last writer rather than the current one, and that read as a
+  process blocking itself.
+
+  `lock.rs` already documented the cause: a `fork` copies the descriptor table,
+  so a child holds every lock the parent had open until `exec` drops them. What
+  was wrong was the bound. The window is not the length of a `fork`/`exec`; it
+  is how long the child takes to *reach* `exec`, which on a loaded machine is a
+  scheduling question. Measured against a genuine `fork` with a child that
+  delays before `exec`, the re-acquire delay tracks it one-for-one: 2.2 ms at
+  no delay, 12.6 ms at 10 ms, 53.4 ms at 50 ms, 203.2 ms at 200 ms. One `fork`
+  captures every lock held at that instant, which is why five tests failed
+  together rather than one. `SETTLE` is 500 ms now, with that table in the
+  comment.
+
+  **Two earlier measurements looked like refutations and were not**, which is
+  worth recording because both were the same mistake: polling 1500 ms past the
+  deadline freed zero locks, and a direct reproduction showed 0.0 ms over forty
+  trials. The first ran over two runs that never hit the flake, so it measured
+  the deliberate contention tests instead. The second used
+  `subprocess.Popen`, which glibc implements with `vfork` -- the parent is
+  suspended until `exec`, so there is no window to observe. A negative result
+  from an instrument that cannot see the effect is not evidence.
+
+**This matters to the cutover specifically.** Step 5 of *Integration and one
+coordinated cutover* is "switch the entry point once all gates pass", and the
+change it gates deletes most of the workspace. A one-in-three false red is
+exactly the condition under which a real regression gets re-run until it goes
+away.
 
 ### Where the gates stand (2026-08-30)
 
