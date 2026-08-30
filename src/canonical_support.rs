@@ -3,6 +3,16 @@
 //! This is intentionally code, not a roadmap table. Adding a new clap variant
 //! makes the exhaustive matches fail to compile until its canonical ownership
 //! is decided. Frontends use the same answer they report to readers.
+//!
+//! **`Native` means the compiler has a backend, and the gate it drives is the
+//! `.jails/model.toml` route only.** A project on `.jails/model.jdl` -- the
+//! intended authoring boundary -- goes straight to the JDL frontend, which
+//! refuses an unserved kind at *compile* time through
+//! `component_kind_is_emitted`. So this table is the coverage number and the
+//! temporary compatibility input's router at once, and the two agree because
+//! the number is what the cutover is measured on. A kind marked
+//! `Compatibility` that the compiler actually emits under-reports coverage,
+//! which is how `cases` sat here for a while after its backend landed.
 
 use crate::add::Capability;
 use crate::generate::ArtifactKind;
@@ -46,12 +56,12 @@ pub(crate) fn generator(kind: ArtifactKind) -> Support {
         | ArtifactKind::Job
         | ArtifactKind::Socket
         | ArtifactKind::Webhook
-        | ArtifactKind::Auth => Support::Native,
+        | ArtifactKind::Auth
+        | ArtifactKind::Cases => Support::Native,
         ArtifactKind::Migration
         | ArtifactKind::Handler
         | ArtifactKind::Command
         | ArtifactKind::Cli
-        | ArtifactKind::Cases
         | ArtifactKind::HttpWorkflow
         | ArtifactKind::Association
         | ArtifactKind::HttpSink
@@ -109,7 +119,7 @@ mod tests {
                 .iter()
                 .filter(|kind| generator(**kind).is_native())
                 .count(),
-            26
+            27
         );
         // All 25. `format`, `ci`, `docker` and `k8s` were the last four --
         // `plan.md` P13.8 measured them and this is where that number lives,
@@ -120,7 +130,7 @@ mod tests {
                 .iter()
                 .filter(|kind| capability(**kind).is_native())
                 .count(),
-            26
+            25
         );
     }
 }

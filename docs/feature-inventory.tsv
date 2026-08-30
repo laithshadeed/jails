@@ -13,6 +13,7 @@ model plan	jails-compiler/jails-workspace	read-only+optional-report-output	Compi
 model apply	jails-workspace	project-mutation	execute
 model eject	jails-compiler/jails-workspace	project-mutation	model_eject::run
 model import	jails-state/jails-workspace	project-mutation	model_import::run
+model upgrade	jails-model/jails-workspace	project-mutation	model_upgrade::run
 generate	jails-engine	project-mutation	route::recipe
 add	jails-engine	project-mutation	route::install
 add dependency	jails-engine	project-mutation	route::add_dependency

@@ -88,15 +88,22 @@ looked and still worth removing.
 
 ## A1 — coverage
 
-### A1.1 Twenty-six of thirty-nine generators
+### A1.1 Twenty-seven of thirty-nine generators
 
 `src/canonical_support.rs` is the authority and is honest code: an exhaustive
 match that stops compiling when a clap variant is added. Its own test pins
-26/39. Capabilities are closed at 25/25.
+27/39. Capabilities are closed at 25/25.
 
-Still legacy: `migration`, `handler`, `command`, `cli`, `cases`,
-`http-workflow`, `association`, `http-sink`, `idempotency`, `search`,
-`durable-job`, `presence`, `seed`.
+Still legacy: `migration`, `handler`, `command`, `cli`, `http-workflow`,
+`association`, `http-sink`, `idempotency`, `search`, `durable-job`,
+`presence`, `seed`.
+
+**The table gates the `.jails/model.toml` route only.** A project on
+`.jails/model.jdl` goes straight to the JDL frontend, which refuses an
+unserved kind at *compile* time. So it is the coverage number and the
+compatibility input's router at once, and a kind marked `Compatibility` that
+the compiler actually emits under-reports — which `cases` did for a while
+after its backend landed.
 
 `command` and `cli` are blocked on **A1.5** rather than on an emitter: both
 register themselves in the project's dispatcher, which is a
