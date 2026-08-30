@@ -769,17 +769,46 @@ fn assert_proof_app_context_source(project: &Path, file: &str, class_name: &str)
 fn verified_app_unit_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::PathBuf)> {
     static VERIFIED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     let generated = generated_app_fixtures(path);
+    // **A cell that fails here has to say which app and why.** This used to
+    // assert inside the spawned closure and let the scope join re-panic, which
+    // reports `a scoped thread panicked` and nothing else -- the same
+    // diagnostic loss `common::parallel::catching` exists to prevent, in the
+    // one table that predates it. Worse, `-q` with `status()` sends Maven's
+    // output to the terminal rather than into the failure, so a red CI run
+    // showed neither the app nor the Surefire report and read as a flake.
+    //
+    // Each cell returns its finding instead, the scope collects them, and the
+    // assertion carries every failing app with the build output that explains
+    // it.
     VERIFIED.get_or_init(|| {
-        std::thread::scope(|scope| {
-            for (name, root) in generated {
-                scope.spawn(move || {
-                    let mut command = real_maven_cmd(root, path);
-                    configure_app_unit_maven(&mut command, name);
-                    let status = command.args(["-q", "test"]).status().unwrap();
-                    assert!(status.success(), "{name} failed its Surefire tests");
-                });
-            }
+        let failures = std::thread::scope(|scope| {
+            let running = generated
+                .iter()
+                .map(|(name, root)| {
+                    scope.spawn(move || {
+                        let mut command = real_maven_cmd(root, path);
+                        configure_app_unit_maven(&mut command, name);
+                        let output = command.args(["-q", "test"]).output().unwrap();
+                        match output.status.success() {
+                            true => None,
+                            false => Some(format!(
+                                "{name} failed its Surefire tests\n{}\n{}",
+                                String::from_utf8_lossy(&output.stdout),
+                                String::from_utf8_lossy(&output.stderr)
+                            )),
+                        }
+                    })
+                })
+                .collect::<Vec<_>>();
+            running
+                .into_iter()
+                .filter_map(|cell| match cell.join() {
+                    Ok(finding) => finding,
+                    Err(_) => Some("an app fixture cell panicked".to_string()),
+                })
+                .collect::<Vec<_>>()
         });
+        assert!(failures.is_empty(), "{}", failures.join("\n\n"));
     });
     generated
 }
