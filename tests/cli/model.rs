@@ -883,7 +883,6 @@ app Notes {
         "cli",
         "http-workflow",
         "http-sink",
-        "idempotency",
         "durable-job",
         "presence",
     ];
@@ -10902,4 +10901,153 @@ fn canonical_auth_refuses_without_security_then_pins_the_expiry_nothing_else_wou
     )
     .unwrap();
     assert!(test.contains("exp"), "{test}");
+}
+
+/// `g idempotency` on a canonical project.
+///
+/// The migration is the part with a rule of its own: it is an irreproducible
+/// operation, so it is appended once for a guard that is new and never again.
+/// A second `sync` that re-emitted it would append a `create table` the next
+/// `flyway migrate` fails on, and the failure would arrive in production
+/// rather than here.
+#[test]
+fn canonical_idempotency_appends_its_table_once_and_only_when_new() {
+    let root = temp_dir("canonical-idempotency");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+         platform spring\n  build maven\n  storage none\n}\n",
+    )
+    .unwrap();
+
+    // Receipts that do not outlive a restart are not receipts.
+    let refused = jails_cmd(&root, None)
+        .args(["g", "idempotency", "Payment"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("keep receipts across restarts"), "{stderr}");
+
+    let stored = jails_cmd(&root, None).args(["add", "db"]).output().unwrap();
+    assert!(
+        stored.status.success(),
+        "{}",
+        String::from_utf8_lossy(&stored.stderr)
+    );
+    let generated = jails_cmd(&root, None)
+        .args(["g", "idempotency", "Payment"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+
+    for relative in [
+        ".jails/generated/main/java/com/example/demo/domain/PaymentReceipt.java",
+        ".jails/generated/main/java/com/example/demo/application/PaymentReceipts.java",
+        ".jails/generated/main/java/com/example/demo/adapters/jdbc/JdbcPaymentReceipts.java",
+        ".jails/generated/main/java/com/example/demo/service/PaymentGuard.java",
+        ".jails/generated/test/java/com/example/demo/service/PaymentGuardTest.java",
+    ] {
+        assert!(root.join(relative).exists(), "`{relative}` was not written");
+    }
+
+    let migrations = |root: &Path| {
+        let directory = root.join("src/main/resources/db/migration");
+        let mut names: Vec<String> = fs::read_dir(&directory)
+            .map(|entries| {
+                entries
+                    .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    let after_generate = migrations(&root);
+    assert!(
+        after_generate
+            .iter()
+            .any(|name| name.contains("create_payment_receipts")),
+        "{after_generate:?}"
+    );
+
+    // The claim the guard is built on, which select-then-insert would lose.
+    let store = fs::read_to_string(root.join(
+        ".jails/generated/main/java/com/example/demo/adapters/jdbc/JdbcPaymentReceipts.java",
+    ))
+    .unwrap();
+    assert!(store.contains("on conflict do nothing"), "{store}");
+    assert!(store.contains("payment_receipts"), "{store}");
+    assert!(!store.contains("{{"), "{store}");
+
+    // Compiling again must not append a second `create table`.
+    let synced = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    assert_eq!(migrations(&root), after_generate);
+}
+
+/// `jails add db` on a JDL v1 project sets the storage axis, not a capability.
+///
+/// v1's closed capability registry has no `db`: `storage postgres` is what the
+/// reader declares and the `db` capability is what the linker materializes
+/// from it. Appending `cap db` wrote a model that no longer parsed, so the
+/// command refused on every v1 project -- fail-closed, and completely broken.
+#[test]
+fn add_db_on_a_v1_model_sets_the_storage_axis() {
+    let root = temp_dir("v1-add-db");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "jdl 1\n// a comment the edit must not disturb\napp Demo @id(project_demo) {\n  \
+         pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
+    )
+    .unwrap();
+
+    let added = jails_cmd(&root, None).args(["add", "db"]).output().unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+
+    let source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(source.contains("storage postgres"), "{source}");
+    assert!(!source.contains("storage none"), "{source}");
+    assert!(!source.contains("cap db"), "{source}");
+    // The edit is one line inside the `app` block; everything else survives.
+    assert!(
+        source.contains("// a comment the edit must not disturb"),
+        "{source}"
+    );
+    assert!(source.contains("platform spring"), "{source}");
+
+    // And it is the real capability: the JDBC adapter and the schema follow.
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("spring-boot-starter-jdbc"), "{pom}");
+
+    // `sqlite` is deliberately not routed to the axis: v1 carries `cap sqlite`
+    // as well as `storage sqlite`, and the capability is the primary spelling.
+    let sqlite = jails_cmd(&root, None)
+        .args(["add", "sqlite"])
+        .output()
+        .unwrap();
+    assert!(
+        sqlite.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sqlite.stderr)
+    );
+    let source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(source.contains("cap sqlite"), "{source}");
+    assert!(source.contains("storage postgres"), "{source}");
 }

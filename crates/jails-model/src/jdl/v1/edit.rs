@@ -21,6 +21,61 @@ pub fn append_declaration(source: &str, declaration: &str) -> Result<String, Dia
     Ok(edited)
 }
 
+/// Set one `app { }` property, replacing its line or adding it.
+///
+/// **This is how `add db` reaches a JDL v1 project.** v1 has no `cap db`: the
+/// closed capability registry deliberately excludes the storage kinds, because
+/// `storage postgres` is the axis and the `db` capability is what the linker
+/// materializes *from* it. Appending `cap db` therefore wrote a model that no
+/// longer parsed -- which is what `jails add db` did on every v1 project, and
+/// it failed closed, so the command simply did not work.
+///
+/// The edit is scoped to the `app` declaration's own span and rewrites one
+/// line, so every other byte -- comments, ordering, unrelated properties --
+/// survives, which is the rule every edit in this module follows.
+pub fn set_app_property(source: &str, key: &str, value: &str) -> Result<String, Diagnostics> {
+    let cst = parse_cst(source)?;
+    let app = cst
+        .declarations
+        .iter()
+        .find(|declaration| declaration.kind == "app")
+        .ok_or_else(|| {
+            edit_problem(
+                "this JDL v1 source has no `app` declaration",
+                "add an `app` block before setting one of its properties",
+            )
+        })?;
+    let text = cst.source();
+    let block = &text[app.span.start..app.span.end];
+    let indent = block
+        .lines()
+        .nth(1)
+        .map(|line| &line[..line.len() - line.trim_start().len()])
+        .filter(|indent| !indent.is_empty())
+        .unwrap_or("  ")
+        .to_string();
+    let mut offset = app.span.start;
+    for line in block.split_inclusive('\n') {
+        if line.trim_start().starts_with(&format!("{key} ")) {
+            let start = offset + (line.len() - line.trim_start().len());
+            let end = offset + line.trim_end_matches(['\r', '\n']).len();
+            return cst.replace_span(super::Span::new(start, end), &format!("{key} {value}"));
+        }
+        offset += line.len();
+    }
+    let brace = closing_brace(&cst, app.span).ok_or_else(|| {
+        edit_problem(
+            "the `app` block has no unambiguous closing brace",
+            "repair the app block, then retry the command",
+        )
+    })?;
+    let newline = newline_style(source);
+    cst.replace_span(
+        super::Span::new(brace, brace),
+        &format!("{indent}{key} {value}{newline}"),
+    )
+}
+
 /// Remove one complete top-level declaration selected by parsed kind and name.
 pub fn remove_declaration(source: &str, kinds: &[&str], name: &str) -> Result<String, Diagnostics> {
     let cst = parse_cst(source)?;

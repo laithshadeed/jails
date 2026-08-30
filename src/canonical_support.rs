@@ -57,7 +57,8 @@ pub(crate) fn generator(kind: ArtifactKind) -> Support {
         | ArtifactKind::Socket
         | ArtifactKind::Webhook
         | ArtifactKind::Auth
-        | ArtifactKind::Cases => Support::Native,
+        | ArtifactKind::Cases
+        | ArtifactKind::Idempotency => Support::Native,
         ArtifactKind::Migration
         | ArtifactKind::Handler
         | ArtifactKind::Command
@@ -65,7 +66,6 @@ pub(crate) fn generator(kind: ArtifactKind) -> Support {
         | ArtifactKind::HttpWorkflow
         | ArtifactKind::Association
         | ArtifactKind::HttpSink
-        | ArtifactKind::Idempotency
         | ArtifactKind::Search
         | ArtifactKind::DurableJob
         | ArtifactKind::Presence
@@ -119,7 +119,7 @@ mod tests {
                 .iter()
                 .filter(|kind| generator(**kind).is_native())
                 .count(),
-            27
+            28
         );
         // All 25. `format`, `ci`, `docker` and `k8s` were the last four --
         // `plan.md` P13.8 measured them and this is where that number lives,

@@ -53,7 +53,7 @@ pub use jdl::v1::{
     TokenKind as JdlTokenKind, append_jdl_declaration, format as format_jdl_v1,
     insert_jdl_entity_member, parse_cst as parse_jdl_cst, remove_jdl_declaration,
     remove_jdl_entity_member, rename_jdl_declaration, replace_jdl_entity_member,
-    set_jdl_entity_attribute,
+    set_jdl_app_property, set_jdl_entity_attribute,
 };
 pub use layout::{Head, Layer, Layout, Package};
 pub use model::{

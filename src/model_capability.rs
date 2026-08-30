@@ -13,6 +13,23 @@ pub(crate) fn owns() -> bool {
     crate::model_command::owns()
 }
 
+/// The `app { storage ... }` value a legacy capability label means, for the
+/// two kinds JDL v1 states as an axis rather than a capability.
+///
+/// **`sqlite` is deliberately not here.** v1's closed capability registry
+/// carries `cap sqlite` as well as `storage sqlite`, and the linker
+/// materializes the capability from the axis rather than the other way round —
+/// so the capability is the primary spelling and routing `add sqlite` to the
+/// axis would change what a working command writes. Only `db` and `h2` have no
+/// capability spelling at all, which is why only they were broken.
+fn storage_axis(label: &str) -> Option<&'static str> {
+    match label {
+        "db" => Some("postgres"),
+        "h2" => Some("h2"),
+        _ => None,
+    }
+}
+
 pub(crate) fn add(
     capabilities: Vec<CliCapability>,
     name: Option<String>,
@@ -71,15 +88,31 @@ pub(crate) fn add(
         }
         if jdl {
             if v1 {
-                let declaration = format!(
-                    "cap {label}{} @id({})",
-                    name.as_ref()
-                        .map(|name| format!(" {name}"))
-                        .unwrap_or_default(),
-                    id.as_str(),
-                );
-                next_source = jails_model::append_jdl_declaration(&next_source, &declaration)
-                    .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
+                // **The storage kinds are an axis in v1, not a capability.**
+                // Its closed registry has no `db`, `h2` or `sqlite`, because
+                // `storage postgres` is what the reader declares and `cap db`
+                // is what the linker materializes from it. Appending one wrote
+                // a model that no longer parsed -- `jails add db` refused on
+                // every v1 project, and failed closed, so it simply did not
+                // work.
+                if let Some(storage) = storage_axis(label) {
+                    // `--name` never reaches here: `validate_request` already
+                    // limits it to the four packs that have a projection to
+                    // override, and neither of these is one.
+                    next_source =
+                        jails_model::set_jdl_app_property(&next_source, "storage", storage)
+                            .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
+                } else {
+                    let declaration = format!(
+                        "cap {label}{} @id({})",
+                        name.as_ref()
+                            .map(|name| format!(" {name}"))
+                            .unwrap_or_default(),
+                        id.as_str(),
+                    );
+                    next_source = jails_model::append_jdl_declaration(&next_source, &declaration)
+                        .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
+                }
             } else {
                 append_legacy_jdl(
                     &mut next_source,

@@ -88,15 +88,14 @@ looked and still worth removing.
 
 ## A1 — coverage
 
-### A1.1 Twenty-seven of thirty-nine generators
+### A1.1 Twenty-eight of thirty-nine generators
 
 `src/canonical_support.rs` is the authority and is honest code: an exhaustive
 match that stops compiling when a clap variant is added. Its own test pins
-27/39. Capabilities are closed at 25/25.
+28/39. Capabilities are closed at 25/25.
 
 Still legacy: `migration`, `handler`, `command`, `cli`, `http-workflow`,
-`association`, `http-sink`, `idempotency`, `search`, `durable-job`,
-`presence`, `seed`.
+`association`, `http-sink`, `search`, `durable-job`, `presence`, `seed`.
 
 **The table gates the `.jails/model.toml` route only.** A project on
 `.jails/model.jdl` goes straight to the JDL frontend, which refuses an
@@ -110,9 +109,13 @@ register themselves in the project's dispatcher, which is a
 `CommandRegistration` reader-file patch the canonical path has no operation
 for yet.
 
-**Six of the framework-shaped component kinds are through `emit_component`
-now** — `client`, `fetcher`, `job`, `socket`, `webhook` and `auth` — **and it
-is the pattern the rest follow.** They do not fit `SourceUnit` --
+**Seven of the framework-shaped component kinds are through `emit_component`
+now** — `client`, `fetcher`, `job`, `socket`, `webhook`, `auth` and
+`idempotency` — **and it is the pattern the rest follow.** `idempotency` added
+the migration seam the four remaining storage-backed kinds need: a component's
+forward migration is emitted only for a component the accepted model does not
+have, because a migration is irreproducible and re-emitting it appends a
+`create table` the next `flyway migrate` fails on. They do not fit `SourceUnit` --
 `linker::component` projects the eight unit-shaped kinds onto one and returns
 `None` for the rest -- because one declaration is several files plus a build
 dependency plus properties. `jails-compiler`'s `emit_component` reads

@@ -28,6 +28,7 @@ use std::collections::BTreeSet;
 mod auth;
 mod client;
 mod fetcher;
+mod idempotency;
 mod job;
 mod socket;
 mod webhook;
@@ -45,6 +46,7 @@ pub(crate) fn lower_and_emit(
             ComponentKind::Fetcher => fetcher::files(model, component)?,
             ComponentKind::Job => job::files(model, component)?,
             ComponentKind::Auth => auth::files(model, component)?,
+            ComponentKind::Idempotency => idempotency::files(model, component)?,
             ComponentKind::Socket => socket::files(model, component)?,
             ComponentKind::Webhook => webhook::files(model, component)?,
             _ => continue,
@@ -64,6 +66,17 @@ pub(crate) fn lower_and_emit(
             .map_err(CompileError::new)?;
     }
     Ok(())
+}
+
+/// The forward migrations this model's components need.
+///
+/// Takes the accepted model because a migration is an irreproducible
+/// operation: what matters is which components are *new*, not which exist.
+pub(crate) fn migrations(
+    accepted: Option<&AppModel>,
+    next: &AppModel,
+) -> Vec<jails_contracts::RenderedMigration> {
+    idempotency::migrations(accepted, next)
 }
 
 /// The build dependencies this model's components need.

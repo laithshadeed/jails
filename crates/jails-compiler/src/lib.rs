@@ -200,7 +200,11 @@ impl Compiler {
         // A missing backfill or retirement policy is the root semantic error;
         // reporting a downstream constructor/SQL consequence first hides the
         // action the reader must take.
-        let migrations = emit_sql::derive(snapshot, &next_model, schema_patch.as_ref())?;
+        let mut migrations = emit_sql::derive(snapshot, &next_model, schema_patch.as_ref())?;
+        migrations.extend(emit_component::migrations(
+            snapshot.accepted_model.as_ref(),
+            &next_model,
+        ));
         let root = ProjectPath::parse(MANAGED_ROOT).map_err(CompileError::new)?;
         let compose_path = emit::compose_path(snapshot)?;
         let observed = emit::Observed {
@@ -664,15 +668,18 @@ const fn component_kind_is_emitted(kind: jails_model::ComponentKind) -> bool {
         // brief is captured as an exact plan input, so changing the file
         // after review refuses the apply. A backend need not write a file.
         Kind::Cases => true,
-        Kind::Auth | Kind::Client | Kind::Fetcher | Kind::Job | Kind::Socket | Kind::Webhook => {
-            true
-        }
+        Kind::Auth
+        | Kind::Client
+        | Kind::Fetcher
+        | Kind::Idempotency
+        | Kind::Job
+        | Kind::Socket
+        | Kind::Webhook => true,
         Kind::Handler
         | Kind::Command
         | Kind::Cli
         | Kind::HttpWorkflow
         | Kind::HttpSink
-        | Kind::Idempotency
         | Kind::DurableJob
         | Kind::Presence => false,
     }
@@ -728,7 +735,7 @@ mod tests {
             .filter(|kind| super::component_kind_is_emitted(**kind))
             .count();
         assert_eq!(ComponentKind::ALL.len(), 23);
-        assert_eq!(emitted, 15, "fifteen kinds have a compiler backend today");
+        assert_eq!(emitted, 16, "sixteen kinds have a compiler backend today");
 
         // The refusal is reachable, not merely written down.
         let model = jails_model::parse_jdl(
