@@ -7,7 +7,7 @@ landed between the two (`58df59f`..`cd0d45f`) changed no file under
 `jails-model`, `jails-compiler`, `jails-workspace` or `jails-contracts`, so
 every A1-A4 finding is unaltered; the six A2 defects were nonetheless
 re-reproduced against a binary built at `cd0d45f` rather than carried over.
-A5.5 and A5.6 are rewritten for what that series closed.
+A5.6 was rewritten for what that series closed.
 
 **This is a measurement, not a plan.** Every claim below was produced by
 running the binary or reading the tree at that commit, and each carries the
@@ -844,24 +844,6 @@ it is the suite that has to keep testing the compatibility input — and
 `jails-compiler`'s unit tests author in TOML. Neither is a gate protecting the
 old front end, which is what this row was about.
 
-### A5.5 G4 is closed for the kernel being deleted, and empty for the one replacing it
-
-`855e438` closed G4 properly: `every_failpoint_converges_after_a_child_dies_there`
-runs every entry in `fault::POINTS` in a child that `abort()`s inside the
-trip, then opens what the crash left — including a lock whose owner is gone —
-and asserts convergence twice, requiring `SIGABRT` rather than merely an
-unsuccessful exit so a panicking child cannot satisfy it. `plan.md` P13.6
-records it as closed and that is accurate.
-
-All 22 of those failpoints are in `jails-commit`, the legacy kernel.
-`jails-workspace::execute` has none, and there is no canonical equivalent of
-the suite. So the property `simplify-sol.md` trades rollback away for — "a
-crashed command may leave a temporarily mixed but individually valid tree;
-the next identical generation repairs it deterministically" — is now
-rigorously proved for the code that is being deleted and asserted only in
-prose for the code that replaces it. G4's *method* transfers; its coverage
-does not.
-
 ### A5.7 `git merge-file --diff-algorithm=` requires git ≥ 2.47
 
 `crates/jails-workspace/src/merge.rs:42` and legacy
@@ -949,8 +931,8 @@ It is used only under `#[cfg(test)]` (`materialize.rs:673`), and
 Closed and deleted from this list: the original items 1–4 and 9, then **A1.1**
 (39/39 generators), **A3.11b** (layer renames), **A5.1** (canonical tree
 golden), **A5.2** (compiler-lock golden), **A1.2b** (closed *by* A1.1),
-**A2.6** (pluralization) and **A5.3** (the G1 corpus on JDL v1). What remains
-is ordered by consequence.
+**A2.6** (pluralization), **A5.3** (the G1 corpus on JDL v1) and **A5.5**
+(G4 on the canonical executor). What remains is ordered by consequence.
 
 1. **A3.11 / A3.12** — the registry is built and the source-unit half is
    closed. What is left is the decision the registry made legible: reconcile
@@ -958,17 +940,12 @@ is ordered by consequence.
    `derived` records and `model explain` so a convention is inspectable rather
    than implied. Every emitter added now picks a placement a later §9.7
    reconciliation has to move.
-2. **A5.5** — port G4's child-process method to `jails-workspace::execute`.
-   `failpoints!` now generates the registry and the trip sites from one
-   declaration, so what is left is failpoints on the *canonical* publication
-   sequence and the convergence assertion stated against the compiler lock
-   rather than the journal.
-3. **A5.1 remainder** — `jails.plan.v1` and `jails.plan-bundle.v1` still have
+2. **A5.1 remainder** — `jails.plan.v1` and `jails.plan-bundle.v1` still have
    no golden. The plan embeds content digests of a scratch directory, so
    pinning one needs the non-deterministic parts named first;
    `compiler-lock-v2.json` is the pattern.
-4. **A6.1** — write the module docs while the reasons are still recoverable.
-5. **A2.2b** — decide whether pre-v1 JDL should carry declaration order, given
+3. **A6.1** — write the module docs while the reasons are still recoverable.
+4. **A2.2b** — decide whether pre-v1 JDL should carry declaration order, given
    that the mechanism would also give `.jails/model.toml` an ordering it is
    documented as lacking.
 

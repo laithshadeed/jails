@@ -438,6 +438,7 @@ dependencies = [
  "jails-contracts",
  "jails-model",
  "jails-support",
+ "jails-workspace",
  "serde",
  "serde_json",
  "tempfile",

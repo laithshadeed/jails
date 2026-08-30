@@ -86,6 +86,21 @@ The five contracts are authoritative:
 - `jails-workspace::execute` is the only canonical project writer. It locks,
   rechecks preconditions, publishes exact after-images, and converges on retry.
 
+**"Converges on retry" is proved, not asserted, and the proof needs the
+aborting half.** `crates/jails-workspace/tests/crash.rs` runs every point in
+`fault::POINTS` twice -- once with an injected `Err`, once in a child process
+that `abort()`s inside the trip -- and each row asserts its own point actually
+tripped, so a matrix that stopped reaching one reports a failure rather than a
+pass. The unwinding half was green while the aborting half was not, and the
+difference is the whole reason to pay for a child process: an `Err` unwinds, so
+the staged `NamedTempFile`'s guard removes it, while a real crash leaves it on
+disk -- where `verify_preconditions` reads it as *an unmanaged file appeared
+inside the managed tree* and refuses **permanently**, since nothing removed it
+and every later plan refused the same way. `write_atomic` stages under
+`.jails-staged-` rather than `tempfile`'s `.tmp` so `sweep_staged` can
+recognise its own debris, and the sweep runs under the lock, where nothing
+matching can belong to a live run.
+
 Do not make ordinary `new`, offline Spring, Gradle, `new-cli`, or `new --app`
 canonical by default until every advertised follow-up workflow has a compiler
 backend. `.jails/model.jdl` is the intended authoring boundary;

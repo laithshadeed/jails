@@ -15,6 +15,17 @@ tempfile.workspace = true
 
 [dev-dependencies]
 jails-compiler.workspace = true
+# Self-dependency with the feature on, so the crash suite -- an integration
+# test, which links the library built *without* `cfg(test)` -- can reach the
+# failpoints. Enabling it here rather than asking every caller to remember
+# `--features` keeps `cargo test --workspace` complete.
+jails-workspace = { workspace = true, features = ["fault-injection"] }
+
+[features]
+# simplify-sol.md G4: failpoints exist for the crash suite and are compiled
+# out of a release build. An environment-triggered abort in a shipped binary
+# is a way to stop somebody's project halfway.
+fault-injection = []
 
 [lints]
 workspace = true

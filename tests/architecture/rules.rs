@@ -391,6 +391,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-workspace", "capture", 5),
     ("jails-workspace", "documents", 5),
     ("jails-workspace", "execute", 5),
+    ("jails-workspace", "fault", 5),
     ("jails-workspace", "materialize", 5),
     ("jails-workspace", "merge", 5),
     ("jails-workspace", "reader_facet", 5),

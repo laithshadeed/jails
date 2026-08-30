@@ -34,7 +34,10 @@ pub fn execute(root: &Path, bundle: &PlanBundle) -> Result<Execution, String> {
         .map_err(|error| format!("could not open {}: {error}", lock_path.display()))?;
     lock.lock_exclusive()
         .map_err(|error| format!("could not lock {}: {error}", lock_path.display()))?;
+    crate::fault::trip(crate::fault::point::AFTER_LOCK)?;
+    sweep_staged(root, bundle)?;
     verify_preconditions(root, bundle)?;
+    crate::fault::trip(crate::fault::point::AFTER_PRECONDITIONS)?;
 
     let mut written = 0_usize;
     let mut deleted = 0_usize;
@@ -49,7 +52,9 @@ pub fn execute(root: &Path, bundle: &PlanBundle) -> Result<Execution, String> {
                     .trees
                     .get(after)
                     .ok_or_else(|| format!("plan references missing tree `{}`", after.as_str()))?;
+                crate::fault::trip(crate::fault::point::BEFORE_TREE)?;
                 let counts = publish_merged_tree(root, managed_root, tree, bundle)?;
+                crate::fault::trip(crate::fault::point::AFTER_TREE)?;
                 written += counts.0;
                 deleted += counts.1;
             }
@@ -75,8 +80,12 @@ pub fn execute(root: &Path, bundle: &PlanBundle) -> Result<Execution, String> {
             }
             PlannedOperation::RemoveReaderFile { path, .. } => {
                 let absolute = root.join(path.as_str());
+                crate::fault::trip(crate::fault::point::BEFORE_REMOVE)?;
                 match std::fs::remove_file(&absolute) {
-                    Ok(()) => deleted += 1,
+                    Ok(()) => {
+                        crate::fault::trip(crate::fault::point::AFTER_REMOVE)?;
+                        deleted += 1;
+                    }
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                     Err(error) => {
                         return Err(format!("could not delete {}: {error}", absolute.display()));
@@ -85,6 +94,7 @@ pub fn execute(root: &Path, bundle: &PlanBundle) -> Result<Execution, String> {
             }
         }
     }
+    crate::fault::trip(crate::fault::point::BEFORE_VERIFY)?;
     verify_after(root, bundle)?;
     Ok(Execution {
         schema: "jails.execution.v1".to_string(),
@@ -93,6 +103,96 @@ pub fn execute(root: &Path, bundle: &PlanBundle) -> Result<Execution, String> {
         files_written: written,
         files_deleted: deleted,
     })
+}
+
+/// The prefix [`write_atomic`] stages under, and the reason it is not
+/// `tempfile`'s default `.tmp`.
+///
+/// A staged file is jails', and after a crash between staging and rename it is
+/// the only thing in a project that looks like a reader's file but is not.
+/// Nothing else may recognise one, so it says whose it is.
+const STAGED_PREFIX: &str = ".jails-staged-";
+
+/// Delete the debris a run that died between staging and rename left behind.
+///
+/// **Found by `tests/crash.rs`, and only by its aborting half.** An injected
+/// `Err` unwinds, so the staged `NamedTempFile`'s guard removes it; an
+/// `abort()` does not, and the file stays. `verify_preconditions` then reads
+/// it as an unmanaged file that appeared inside the managed tree and refuses
+/// -- permanently, because nothing removes it and every later plan refuses
+/// the same way. A project wedged by its own temporary file is the exact
+/// opposite of "the next identical generation repairs it deterministically",
+/// which is what this executor trades rollback away for.
+///
+/// It runs under the lock, so no other run has a staged file in flight here:
+/// anything matching is a dead run's, never a live one's.
+fn sweep_staged(root: &Path, bundle: &PlanBundle) -> Result<(), String> {
+    let managed = managed_roots(bundle);
+    for managed_root in &managed {
+        let absolute = root.join(managed_root.as_str());
+        if absolute.exists() {
+            sweep_staged_under(&absolute)?;
+        }
+    }
+    for path in desired_files(bundle)?.keys() {
+        if managed.iter().any(|managed| path.is_within(managed)) {
+            continue;
+        }
+        if let Some(parent) = root.join(path.as_str()).parent() {
+            sweep_staged_in(parent)?;
+        }
+    }
+    Ok(())
+}
+
+fn sweep_staged_under(directory: &Path) -> Result<(), String> {
+    for entry in std::fs::read_dir(directory)
+        .map_err(|error| format!("could not read {}: {error}", directory.display()))?
+    {
+        let path = entry
+            .map_err(|error| format!("could not read {}: {error}", directory.display()))?
+            .path();
+        if path.is_dir() {
+            sweep_staged_under(&path)?;
+        } else if is_staged(&path) {
+            remove_staged(&path)?;
+        }
+    }
+    Ok(())
+}
+
+fn sweep_staged_in(directory: &Path) -> Result<(), String> {
+    if !directory.exists() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(directory)
+        .map_err(|error| format!("could not read {}: {error}", directory.display()))?
+    {
+        let path = entry
+            .map_err(|error| format!("could not read {}: {error}", directory.display()))?
+            .path();
+        if path.is_file() && is_staged(&path) {
+            remove_staged(&path)?;
+        }
+    }
+    Ok(())
+}
+
+fn is_staged(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with(STAGED_PREFIX))
+}
+
+fn remove_staged(path: &Path) -> Result<(), String> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "could not clear staged {}: {error}",
+            path.display()
+        )),
+    }
 }
 
 fn verify_preconditions(root: &Path, bundle: &PlanBundle) -> Result<(), String> {
@@ -234,8 +334,10 @@ fn publish_merged_tree(
             continue;
         }
         let absolute = root.join(path.as_str());
+        crate::fault::trip(crate::fault::point::BEFORE_REMOVE)?;
         std::fs::remove_file(&absolute)
             .map_err(|error| format!("could not delete {}: {error}", absolute.display()))?;
+        crate::fault::trip(crate::fault::point::AFTER_REMOVE)?;
         deleted += 1;
     }
     remove_empty_directories(&root.join(managed_root.as_str()))?;
@@ -395,7 +497,9 @@ fn write_atomic(
         .ok_or_else(|| format!("managed path `{path}` has no parent"))?;
     std::fs::create_dir_all(parent)
         .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
-    let mut staged = tempfile::NamedTempFile::new_in(parent)
+    let mut staged = tempfile::Builder::new()
+        .prefix(STAGED_PREFIX)
+        .tempfile_in(parent)
         .map_err(|error| format!("could not stage beside {}: {error}", destination.display()))?;
     staged
         .write_all(bytes)
@@ -406,6 +510,7 @@ fn write_atomic(
         .as_file()
         .sync_all()
         .map_err(|error| format!("could not sync staged {}: {error}", destination.display()))?;
+    crate::fault::trip(crate::fault::point::BEFORE_FILE)?;
     staged.persist(&destination).map_err(|error| {
         format!(
             "could not publish staged {}: {}",
@@ -413,6 +518,7 @@ fn write_atomic(
             error.error
         )
     })?;
+    crate::fault::trip(crate::fault::point::AFTER_FILE)?;
     Ok(())
 }
 

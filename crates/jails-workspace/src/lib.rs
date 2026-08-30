@@ -6,6 +6,7 @@
 mod capture;
 mod documents;
 mod execute;
+pub mod fault;
 mod materialize;
 mod merge;
 mod reader_facet;

@@ -2294,6 +2294,28 @@ survives.
   and one property stays a test because a macro cannot state it: the wire
   names must be distinct, since two points sharing a string would fire
   together and prove a recovery path with the wrong fault.
+
+  **And G4 now covers the executor that is staying**, not only the kernel
+  being deleted. `crates/jails-workspace/tests/crash.rs` declares nine points
+  over the canonical publication sequence and asserts a *different* property,
+  because there is no journal to roll forward: re-running the same bundle
+  after a death at any instant reaches byte-for-byte the tree a clean run
+  reaches, and a further run writes and deletes nothing. The last clause is
+  the half a "the second run fixes it" claim usually skips -- an executor that
+  rewrote everything every time would satisfy convergence forever and still be
+  unable to tell a reader whether anything had changed.
+
+  **The aborting half earned its cost immediately.** The in-process matrix was
+  green; the child-abort matrix was not. An injected `Err` unwinds, so the
+  staged `NamedTempFile`'s guard removes it, and a crash between staging and
+  rename looked survivable. An `abort()` leaves the temporary on disk, where
+  `verify_preconditions` reads it as *an unmanaged file appeared inside the
+  managed tree* -- and refuses, permanently, because nothing removed it and
+  every later plan refused the same way. A project wedged by jails' own
+  temporary file is the exact opposite of the sentence this executor trades
+  rollback away for. `execute::sweep_staged` is the fix, and the prefix is
+  `.jails-staged-` rather than `tempfile`'s `.tmp` so that the only thing in a
+  project which looks like a reader's file and is not says whose it is.
 - **G5** — the proof manifests are promoted: `examples/proof-policy.tsv` is
   enforced by `tests/cli/examples.rs`, and
   `example_manifest_policy_covers_every_checked_in_manifest` stops one being
@@ -2360,7 +2382,7 @@ they had none; three were genuinely unheld and now are.
 | managed output only below the managed root | structural: `RenderedTree::insert` refuses a path outside its root, so it cannot be violated |
 | reader-owned source only via typed patch/eject/adopt | `rules::canonical_workspace_has_one_mutation_owner`, plus `PatchReaderFile`'s captured before-image |
 | persisted tags and field numbers golden-tested | `every_protocol_fixture_is_read_by_something`, `tests/protocol-golden` |
-| every advertised failpoint fires in a test | the compiler, not a test: `failpoints!` emits both the registry and the constants, so an untripped point is unused (`-D dead-code`) and an unadvertised trip site cannot be written. `engine::a_capability_install_converges_from_every_failpoint` is the sweep |
+| every advertised failpoint fires in a test | the compiler, not a test: `failpoints!` emits both the registry and the constants, so an untripped point is unused (`-D dead-code`) and an unadvertised trip site cannot be written. `engine::a_capability_install_converges_from_every_failpoint` sweeps the legacy kernel and `jails-workspace/tests/crash.rs` the canonical executor, each asserting its own point actually tripped |
 | every transaction state has a recovery transition | `recover.rs`'s own tests plus that sweep. **This one is not audited to the letter**: the coverage is by failpoint, and "every active transaction state" is a stronger claim than "every armed fault converges" |
 | planner read set complete by construction | `WorkspaceSnapshot` is the read set, and the purity rule above is what makes it complete |
 | tool crates cannot reach executor internals | Cargo, plus `no_module_depends_on_a_layer_above_its_own` for module edges |
