@@ -64,29 +64,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
-    # **Incremental compilation is build scratch, and on CI it is scratch
-    # nobody reads.** Every run is a fresh checkout at a new commit, so the
-    # restored `target/debug/incremental` is a previous commit's working state:
-    # cargo revalidates it, salvages little, and rewrites it -- and then this
-    # job compresses, uploads, downloads and extracts the result forever after.
-    # Measured on the tree this gate builds: `target/debug` is 13 GB, of which
-    # **4.4 GB is `incremental/`** -- a third of everything the cargo cache
-    # carries, for a speedup that only exists between two builds of the *same*
-    # source on the *same* machine.
-    #
-    # It is off here and nowhere else. Locally incremental is worth what it
-    # costs -- an ordinary edit rebuilds in about four seconds -- so this is a
-    # job-level `env`, not a `.cargo/config.toml` or a `[profile]` key that
-    # would follow the setting onto developers' machines.
-    #
-    # `mise.toml`'s own note already described the gate as running "cold with
-    # `CARGO_INCREMENTAL=0` ... which is exactly the state each CI run starts
-    # in". That was the intent and never the fact: nothing set it, so every
-    # measurement in that comment was taken under a different configuration
-    # from the one CI used.
-    env:
-      CARGO_INCREMENTAL: 0
-
     steps:
       - uses: actions/checkout@v4
         with:
@@ -146,21 +123,10 @@ jobs:
       # starts from its predecessor's artifacts and rebuilds only what the
       # commit actually changed.
       #
-      # **The upload this costs was 381 MB when that was measured and is not
-      # any more, so re-measure it rather than trusting this paragraph.** On
-      # run `33311817728` the save sent **3,703,206,741 bytes** -- 3.7 GB,
-      # nearly ten times the figure this comment used to assert, and it had
-      # been asserting it for long enough that nobody re-read the log line that
-      # prints the real number (`Sent N of N (100.0%)`).
-      #
-      # What it bought at that size: 50s to restore and 45s to save, 95s of a
-      # 479s job -- 20% of the bill -- against the ~134s of compilation the
-      # cache saves. A net gain of about 40s, where the same cache at its
-      # original size was nearly free. `CARGO_INCREMENTAL=0` at the job level
-      # removes the largest single contributor; the entry is expected to be far
-      # smaller, and the `du -sh target` in the trim step below prints what it
-      # actually is so the next reader has a current number instead of this
-      # one.
+      # The upload this costs is small enough to be worth it, which was worth
+      # checking rather than assuming: the whole entry -- registry, git and
+      # `target/` together -- is 381 MB compressed, so a save is seconds, not
+      # the minute a 5.9 GB `target/debug/deps` suggests.
       #
       # **And it has to save when the gate fails, which is why this is split
       # into restore and save rather than the one `actions/cache` step it was.**
@@ -265,15 +231,7 @@ jobs:
       # for the next one, and cargo revalidates everything it restores anyway.
       - name: Trim the cargo cache to build artifacts
         if: always()
-        run: |
-          rm -rf target/jails-e2e-cache target/jails-test-logs target/jails-test-permits
-          # `CARGO_INCREMENTAL=0` above means this run created none. It is
-          # still removed, because the entry this run restored was written by a
-          # run that predates that setting and the restore-keys walk back to
-          # it -- so without this line the 4.4 GB would be carried forward by
-          # inheritance, re-uploaded every run, and never rebuilt by anything.
-          rm -rf target/debug/incremental
-          du -sh target 2>/dev/null || true
+        run: rm -rf target/jails-e2e-cache target/jails-test-logs target/jails-test-permits
 
       # After the trim, so the entry carries artifacts and not the suite's
       # scratch trees. Skipped only on cancellation -- see the restore step.

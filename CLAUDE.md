@@ -1328,6 +1328,25 @@ obvious enough to be proposed again:
   is the dependency half, and that is already cached.
 
 
+**`CARGO_INCREMENTAL=0` on CI is a smaller cache and a slower gate, and the
+gate is what is billed.** The cargo entry really is mostly incremental state --
+4.4 GB of a 13 GB `target/debug` -- and turning it off took the upload from
+3.7 GB to 978 MB and the save step from 45s to 14s, which is 30s of a job that
+spends 95s moving that file around. Every one of those numbers is real and
+none of them mattered, because the same change removed the cross-run
+compilation reuse the entry existed to provide, and a CI run recompiles by
+definition. Measured on this branch: **479s before, then 559s, 568s and 603s
+over three consecutive runs after**, against a run-to-run spread that had been
+about 40s. It is a regression of roughly 90-120s and it was reverted.
+
+The lesson is the one the numbers above are easy to misread: **GitHub bills
+wall clock, not work.** The suite's Maven *work* was cut from 730.2s to 478.0s
+in the same period and the job got slower anyway -- `tests/cli` measured 212s
+before the second batch of merges and 218s after. Reducing total CPU only
+reduces wall while the machine is actually saturated, and a measurement of
+work is not a measurement of the bill. Take the wall clock of the whole job
+from the runs themselves before believing any of it.
+
 **The generated-project cache cannot be made to survive a CI run, and the
 reason is worth recording so nobody spends the afternoon on it twice.**
 `cached_toolchain_dir` reuses a persistent generated tree for as long as the
