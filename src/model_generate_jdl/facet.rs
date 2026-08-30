@@ -184,11 +184,6 @@ fn set_projection(
     if arguments.is_empty() {
         return set_marker(source, entity_java_name, marker, true);
     }
-    if !super::is_v1_source(source) {
-        return Err(Failure::Told(format!(
-            "projection `{marker}` carries arguments, which only `jdl 1` can express.\n       fix: run `jails model upgrade --to 1` first"
-        )));
-    }
     let projection = v1_projection(marker)?;
     jails_model::insert_jdl_entity_member(
         source,
@@ -219,53 +214,17 @@ pub(crate) fn set_marker(
     marker: &str,
     enabled: bool,
 ) -> Result<String> {
-    if super::is_v1_source(source) {
-        let projection = v1_projection(marker)?;
-        if enabled {
-            return jails_model::insert_jdl_entity_member(
-                source,
-                entity_java_name,
-                "use",
-                &format!("  use {projection}"),
-            )
-            .map_err(super::jdl_edit_failure);
-        }
-        return remove_projection(source, entity_java_name, projection);
+    let projection = v1_projection(marker)?;
+    if enabled {
+        return jails_model::insert_jdl_entity_member(
+            source,
+            entity_java_name,
+            "use",
+            &format!("  use {projection}"),
+        )
+        .map_err(super::jdl_edit_failure);
     }
-    let mut byte_offset = 0;
-    for line in source.split_inclusive('\n') {
-        let declaration = line.split("//").next().unwrap_or_default().trim();
-        if declaration.starts_with("entity ") && declaration.ends_with('{') {
-            let name = declaration["entity ".len()..]
-                .split_whitespace()
-                .next()
-                .unwrap_or_default();
-            if name == entity_java_name {
-                let present = declaration.split_whitespace().any(|word| word == marker);
-                if present == enabled {
-                    return Ok(source.to_string());
-                }
-                let mut rewritten = line.to_string();
-                if enabled {
-                    let brace = rewritten.find('{').ok_or_else(|| {
-                        Failure::Told(format!(
-                            "the JDL entity `{entity_java_name}` has no opening brace\n       fix: keep the entity header as `entity {entity_java_name} {{` and retry"
-                        ))
-                    })?;
-                    rewritten.insert_str(brace, &format!("{marker} "));
-                } else {
-                    rewritten = rewritten.replacen(&format!(" {marker}"), "", 1);
-                }
-                let mut next = source.to_string();
-                next.replace_range(byte_offset..byte_offset + line.len(), &rewritten);
-                return Ok(next);
-            }
-        }
-        byte_offset += line.len();
-    }
-    Err(Failure::Told(format!(
-        "could not find the editable JDL entity `{entity_java_name}`\n       fix: keep it as a top-level `entity {entity_java_name} {{ ... }}` block and retry"
-    )))
+    remove_projection(source, entity_java_name, projection)
 }
 
 fn remove_projection(source: &str, entity_java_name: &str, projection: &str) -> Result<String> {

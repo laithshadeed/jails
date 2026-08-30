@@ -31,12 +31,6 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     reject_unsupported_options(&args)?;
     let model_path = PathBuf::from(MODEL_PATH);
     let current_source = read_model()?;
-    if !super::is_v1_source(&current_source) {
-        return Err(Failure::Told(format!(
-            "a canonical association is a `relation` block, which only `jdl 1` can express.\n       fix: run `jails model upgrade --to 1` first, then `jails g association {}`",
-            args.name
-        )));
-    }
     let current_model = parse(&current_source)?;
     let child = stored(
         &current_model,

@@ -24,7 +24,6 @@ pub(crate) fn owns() -> bool {
 }
 
 pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
-    let jdl = crate::model_command::owns_jdl();
     if request.package || request.migration_effect {
         return Err(Failure::Told(
             "canonical removal does not accept legacy path or migration-effect flags.\n       fix: remove those flags; managed output and storage retirement are one exact model plan"
@@ -32,14 +31,14 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         ));
     }
 
-    let model_path = model_path(jdl);
+    let model_path = model_path();
     let current_source = std::fs::read_to_string(&model_path).map_err(|error| {
         Failure::Told(format!(
             "could not read canonical model `{}`: {error}",
             model_path.display()
         ))
     })?;
-    let current_model = parse_model(&current_source, jdl)?;
+    let current_model = parse_model(&current_source)?;
     let label = java_to_label(&request.name);
     let (patch, next_source, patch_bytes) = if matches!(
         request.kind,
@@ -83,16 +82,11 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                         entity: id.clone(),
                         policy: StorageRetirementPolicy::Preserve,
                     },
-                    if jdl {
-                        crate::model_generate_jdl::set_entity_active(
-                            &current_source,
-                            &entity.names.java_type,
-                            false,
-                        )?
-                    } else {
-                        jails_model::set_entity_active(&current_source, &entity.label, false)
-                            .map_err(Failure::Told)?
-                    },
+                    crate::model_generate_jdl::set_entity_active(
+                        &current_source,
+                        &entity.names.java_type,
+                        false,
+                    )?,
                     "retire-entity-preserve-storage",
                 ),
                 (Some(StoragePolicy::Drop), None) => {
@@ -108,16 +102,10 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                             confirmed_table: confirmed.to_string(),
                         },
                     },
-                    if jdl {
-                        crate::model_generate_jdl::remove_entity(
-                            &current_source,
-                            &entity.names.java_type,
-                            entity.id.as_str(),
-                        )?
-                    } else {
-                        jails_model::remove_entity_declaration(&current_source, &entity.label)
-                            .map_err(Failure::Told)?
-                    },
+                    crate::model_generate_jdl::remove_entity(
+                        &current_source,
+                        &entity.names.java_type,
+                    )?,
                     "retire-entity-drop-storage",
                 ),
             }
@@ -130,16 +118,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             }
             (
                 ModelPatch::RemoveEntity(id.clone()),
-                if jdl {
-                    crate::model_generate_jdl::remove_entity(
-                        &current_source,
-                        &entity.names.java_type,
-                        entity.id.as_str(),
-                    )?
-                } else {
-                    jails_model::remove_entity_declaration(&current_source, &entity.label)
-                        .map_err(Failure::Told)?
-                },
+                crate::model_generate_jdl::remove_entity(&current_source, &entity.names.java_type)?,
                 "remove-entity",
             )
         };
@@ -159,12 +138,6 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         request.kind,
         ArtifactKind::Factory | ArtifactKind::Dto | ArtifactKind::Repo
     ) {
-        if !jdl {
-            return Err(Failure::Told(
-                "entity facet removal requires the canonical JDL source\n       fix: migrate `.jails/model.toml` to `.jails/model.jdl`, then retry"
-                    .to_string(),
-            ));
-        }
         if request.storage.is_some() || request.confirm_table.is_some() {
             return Err(Failure::Told(
                 "this projection facet has no independent storage to retire.\n       fix: remove the storage flags"
@@ -208,7 +181,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             marker,
             false,
         )?;
-        let next_model = parse_model(&next, true)?;
+        let next_model = parse_model(&next)?;
         if next_model
             .entity(&id)
             .is_some_and(|entity| entity.facets.contains(&facet))
@@ -230,10 +203,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         }))
         .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
         (patch, next, bytes)
-    } else if jdl
-        && crate::model_generate_jdl::is_v1_source(&current_source)
-        && crate::model_generate_jdl::component_kind(request.kind).is_some()
-    {
+    } else if crate::model_generate_jdl::component_kind(request.kind).is_some() {
         if request.storage.is_some() || request.confirm_table.is_some() {
             return Err(Failure::Told(
                 "components have no independent storage to retire.\n       fix: remove the storage flags"
@@ -269,12 +239,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             .values()
             .find(|unit| unit.id.as_str() == id.as_str())
             .map(|unit| unit.id.clone());
-        let next = crate::model_generate_jdl::remove_unit(
-            &current_source,
-            kind.label(),
-            &component.name,
-            id.as_str(),
-        )?;
+        let next = crate::model_generate_jdl::remove_unit(&current_source, &component.name)?;
         let mut patches = vec![ModelPatch::RemoveComponent(id.clone())];
         if let Some(unit) = unit.clone() {
             patches.push(ModelPatch::RemoveUnit(unit));
@@ -335,21 +300,12 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                 ))
             })?;
         let id = unit.id.clone();
-        let component = jdl
-            .then(|| {
-                current_model
-                    .components
-                    .values()
-                    .find(|component| component.id.as_str() == id.as_str())
-                    .map(|component| component.id.clone())
-            })
-            .flatten();
-        let next = if jdl {
-            crate::model_generate_jdl::remove_unit(&current_source, kind.0, &stem, id.as_str())?
-        } else {
-            jails_model::remove_unit_declaration(&current_source, &unit.label)
-                .map_err(Failure::Told)?
-        };
+        let component = current_model
+            .components
+            .values()
+            .find(|component| component.id.as_str() == id.as_str())
+            .map(|component| component.id.clone());
+        let next = crate::model_generate_jdl::remove_unit(&current_source, &stem)?;
         let bytes = serde_json::to_vec(&json!({
             "kind": "remove-source-unit",
             "unit": id,
@@ -386,16 +342,10 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         proof
             .apply(ModelPatch::RemoveOperation(id.clone()))
             .map_err(Failure::Told)?;
-        let next = if jdl {
-            crate::model_generate_jdl::remove_operation(
-                &current_source,
-                &operation.names.java_type,
-                operation.id.as_str(),
-            )?
-        } else {
-            jails_model::remove_operation_declaration(&current_source, &operation.label)
-                .map_err(Failure::Told)?
-        };
+        let next = crate::model_generate_jdl::remove_operation(
+            &current_source,
+            &operation.names.java_type,
+        )?;
         let bytes = serde_json::to_vec(&json!({
             "kind": "remove-operation",
             "operation": id,
@@ -408,7 +358,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             kind_name(request.kind)
         )));
     };
-    parse_model(&next_source, jdl)?;
+    parse_model(&next_source)?;
     finish_generation(PreparedMutation {
         name: request.name,
         invocation,
@@ -423,15 +373,14 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
 }
 
 pub(crate) fn revive(selector: String, table: String, invocation: Invocation) -> Result<()> {
-    let jdl = crate::model_command::owns_jdl();
-    let model_path = model_path(jdl);
+    let model_path = model_path();
     let current_source = std::fs::read_to_string(&model_path).map_err(|error| {
         Failure::Told(format!(
             "could not read canonical model `{}`: {error}",
             model_path.display()
         ))
     })?;
-    let current_model = parse_model(&current_source, jdl)?;
+    let current_model = parse_model(&current_source)?;
     let label = java_to_label(&selector);
     let entity = current_model
         .entities
@@ -443,24 +392,18 @@ pub(crate) fn revive(selector: String, table: String, invocation: Invocation) ->
             ))
         })?;
     let id = entity.id.clone();
-    let entity_label = entity.label.clone();
-    let next_source = if jdl {
-        crate::model_generate_jdl::set_entity_active(
-            &current_source,
-            &entity.names.java_type,
-            true,
-        )?
-    } else {
-        jails_model::set_entity_active(&current_source, &entity_label, true)
-            .map_err(Failure::Told)?
-    };
+    let next_source = crate::model_generate_jdl::set_entity_active(
+        &current_source,
+        &entity.names.java_type,
+        true,
+    )?;
     let patch = ModelPatch::ReviveEntity {
         entity: id.clone(),
         confirmed_table: table.clone(),
     };
     let mut proof = current_model.clone();
     proof.apply(patch.clone()).map_err(Failure::Told)?;
-    parse_model(&next_source, jdl)?;
+    parse_model(&next_source)?;
     let patch_bytes = serde_json::to_vec(&json!({
         "kind": "revive-entity-preserved-storage",
         "entity": id,
@@ -480,21 +423,13 @@ pub(crate) fn revive(selector: String, table: String, invocation: Invocation) ->
     })
 }
 
-fn model_path(jdl: bool) -> PathBuf {
-    PathBuf::from(if jdl {
-        crate::model_command::JDL_PATH
-    } else {
-        crate::model_command::TOML_PATH
-    })
+fn model_path() -> PathBuf {
+    PathBuf::from(crate::model_command::JDL_PATH)
 }
 
-fn parse_model(source: &str, jdl: bool) -> Result<jails_model::AppModel> {
-    let parsed = if jdl {
-        jails_model::parse_jdl(source)
-    } else {
-        jails_model::parse_toml(source)
-    };
-    parsed.map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))
+fn parse_model(source: &str) -> Result<jails_model::AppModel> {
+    jails_model::parse_jdl(source)
+        .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))
 }
 
 fn operation_kind(kind: ArtifactKind) -> Option<&'static str> {

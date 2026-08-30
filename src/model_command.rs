@@ -8,13 +8,8 @@ use std::path::{Path, PathBuf};
 
 const CHECK_SCHEMA: &str = "jails.model-check.v1";
 pub(crate) const JDL_PATH: &str = ".jails/model.jdl";
-pub(crate) const TOML_PATH: &str = ".jails/model.toml";
 
 pub(crate) fn owns() -> bool {
-    Path::new(JDL_PATH).is_file() || Path::new(TOML_PATH).is_file()
-}
-
-pub(crate) fn owns_jdl() -> bool {
     Path::new(JDL_PATH).is_file()
 }
 
@@ -57,12 +52,11 @@ pub(crate) fn refuse_legacy_mutation(command: &str, fix: &str) -> Result<()> {
 
 pub(crate) fn run(command: ModelCommand, invocation: Invocation) -> Result<()> {
     match command {
-        ModelCommand::Import => crate::model_import::run(invocation),
+        ModelCommand::Init => crate::model_init::run(invocation),
         ModelCommand::Check { manifest, frozen } => {
             let manifest = resolve_manifest(manifest.as_deref())?;
             check(&manifest, frozen, invocation.output)
         }
-        ModelCommand::Upgrade { to } => crate::model_upgrade::run(to, invocation),
         ModelCommand::Fmt { check } => format(check, invocation),
         ModelCommand::Plan { manifest, bundle } => {
             let manifest = resolve_manifest(manifest.as_deref())?;
@@ -300,11 +294,7 @@ pub(crate) fn load_model(
         Ok(source) => source,
         Err(error) => return io_failure(manifest, &error, output),
     };
-    let parsed = if manifest.extension().and_then(|value| value.to_str()) == Some("jdl") {
-        jails_model::parse_jdl(&source)
-    } else {
-        jails_model::parse_toml(&source)
-    };
+    let parsed = jails_model::parse_jdl(&source);
     match parsed {
         Ok(model) => Ok((source, model)),
         Err(diagnostics) if output == Output::Human => Err(Failure::Told(
@@ -324,20 +314,11 @@ pub(crate) fn load_model(
 
 pub(crate) fn resolve_manifest(explicit: Option<&Path>) -> Result<PathBuf> {
     let jdl = Path::new(JDL_PATH);
-    let toml = Path::new(TOML_PATH);
-    if jdl.is_file() && toml.is_file() {
-        return Err(Failure::Told(format!(
-            "this project has two editable application models: `{JDL_PATH}` and `{TOML_PATH}`.\n       fix: keep the JDL authoring source and remove the TOML compatibility source after reviewing that they describe the same model"
-        )));
-    }
     if let Some(explicit) = explicit {
         return Ok(explicit.to_path_buf());
     }
     if jdl.is_file() {
         return Ok(jdl.to_path_buf());
-    }
-    if toml.is_file() {
-        return Ok(toml.to_path_buf());
     }
     Ok(jdl.to_path_buf())
 }

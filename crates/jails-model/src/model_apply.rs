@@ -19,12 +19,29 @@ impl AppModel {
     fn apply_one(&mut self, patch: ModelPatch) -> Result<(), String> {
         match patch {
             ModelPatch::ReplaceModel(model) => *self = *model,
-            ModelPatch::AddEntity(entity) => {
+            ModelPatch::AddEntity {
+                entity,
+                projections,
+            } => {
                 let id = entity.id.clone();
                 if self.entities.contains_key(&id) {
                     return Err(format!("entity id `{id}` already exists"));
                 }
+                for projection in &projections {
+                    if projection.entity != id {
+                        return Err(format!(
+                            "projection `{}` does not belong to entity `{id}`",
+                            projection.id
+                        ));
+                    }
+                    if self.projections.contains_key(&projection.id) {
+                        return Err(format!("projection id `{}` already exists", projection.id));
+                    }
+                }
                 self.entities.insert(id, entity);
+                for projection in projections {
+                    self.projections.insert(projection.id.clone(), projection);
+                }
             }
             ModelPatch::AddRelation(relation) => {
                 let id = relation.id.clone();
@@ -90,6 +107,9 @@ impl AppModel {
                 if self.components.remove(&id).is_none() {
                     return Err(format!("component id `{id}` does not exist"));
                 }
+            }
+            ModelPatch::SetDialect(dialect) => {
+                self.project.dialect = dialect;
             }
             ModelPatch::AddCapability(capability) => {
                 let id = capability.id.clone();
@@ -353,7 +373,17 @@ impl AppModel {
                     .iter_mut()
                     .find(|existing| existing.id == field)
                     .expect("the field was just confirmed to exist");
+                let moved = slot.label != replacement.label;
                 *slot = replacement;
+                // An index or composite constraint is labelled by the field
+                // labels it names, so a rename moves that label too. Leaving
+                // it alone made the patched model disagree with the source it
+                // was written beside -- which is the divergence
+                // `finish_generation` now refuses on.
+                if moved {
+                    crate::index::relabel(target);
+                    crate::constraint::relabel(target);
+                }
             }
             ModelPatch::RemoveField {
                 entity,

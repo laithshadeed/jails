@@ -8,8 +8,6 @@ use jails_support::{Failure, Result};
 use serde_json::json;
 use std::path::PathBuf;
 
-const MODEL_PATH: &str = ".jails/model.toml";
-
 pub(crate) fn owns() -> bool {
     crate::model_command::owns()
 }
@@ -43,19 +41,14 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         ));
     }
 
-    let jdl = crate::model_command::owns_jdl();
-    let model_path = PathBuf::from(if jdl {
-        crate::model_command::JDL_PATH
-    } else {
-        MODEL_PATH
-    });
+    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
     let current_source = std::fs::read_to_string(&model_path).map_err(|error| {
         Failure::Told(format!(
             "could not read canonical model `{}`: {error}",
             model_path.display()
         ))
     })?;
-    let current_model = parse_model(&current_source, jdl)?;
+    let current_model = parse_model(&current_source)?;
     let selector = request.from.rsplit('.').next().unwrap_or_default();
     if selector.is_empty() {
         return Err(Failure::Told(
@@ -83,23 +76,17 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
     let entity_id = entity.id.clone();
     let entity_label = entity.label.clone();
     let sql_table = entity.names.sql_table.clone();
-    let next_source = if jdl {
-        crate::model_generate_jdl::rename_entity(
-            &current_source,
-            &entity.names.java_type,
-            &request.to,
-            &entity_label,
-            entity.id.as_str(),
-            entity
-                .facets
-                .contains(&jails_model::Facet::Record)
-                .then_some(sql_table.as_str()),
-        )?
-    } else {
-        jails_model::set_entity_java_name(&current_source, &entity_label, &request.to)
-            .map_err(Failure::Told)?
-    };
-    let next_model = parse_model(&next_source, jdl)?;
+    let next_source = crate::model_generate_jdl::rename_entity(
+        &current_source,
+        &entity.names.java_type,
+        &request.to,
+        entity.id.as_str(),
+        entity
+            .facets
+            .contains(&jails_model::Facet::Record)
+            .then_some(sql_table.as_str()),
+    )?;
+    let next_model = parse_model(&next_source)?;
     let next_label = next_model
         .entities
         .get(&entity_id)
@@ -145,11 +132,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
     })
 }
 
-fn parse_model(source: &str, jdl: bool) -> Result<jails_model::AppModel> {
-    let parsed = if jdl {
-        jails_model::parse_jdl(source)
-    } else {
-        jails_model::parse_toml(source)
-    };
-    parsed.map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))
+fn parse_model(source: &str) -> Result<jails_model::AppModel> {
+    jails_model::parse_jdl(source)
+        .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))
 }

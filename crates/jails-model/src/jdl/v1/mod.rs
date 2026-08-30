@@ -39,42 +39,15 @@ pub use token::{Span, Token, TokenKind};
 
 use crate::{AppModel, Diagnostics};
 
-pub(super) fn is_v1(input: &str) -> bool {
-    let Ok(tokens) = token::lex(input) else {
-        return first_non_comment_line(input)
-            .is_some_and(|line| line.split_whitespace().next() == Some("jdl"));
-    };
-    let mut syntax = tokens.iter().filter(|token| {
-        !matches!(
-            token.kind,
-            TokenKind::Whitespace
-                | TokenKind::Comment
-                | TokenKind::Newline
-                | TokenKind::TriviaNewline
-                | TokenKind::Eof
-        )
-    });
-    syntax
-        .next()
-        .is_some_and(|token| token.text(input) == "jdl")
-}
-
 pub fn parse_cst(input: &str) -> Result<DocumentCst, Diagnostics> {
     let tokens = token::lex(input)?;
     Ok(parser::parse(input, tokens)?.cst)
 }
 
-pub(super) fn parse(input: &str) -> Result<AppModel, Diagnostics> {
+pub fn parse(input: &str) -> Result<AppModel, Diagnostics> {
     let tokens = token::lex(input)?;
     let parsed = parser::parse(input, tokens)?;
     crate::linker::link(parsed.source)
-}
-
-fn first_non_comment_line(input: &str) -> Option<&str> {
-    input.lines().find_map(|line| {
-        let line = line.trim();
-        (!line.is_empty() && !line.starts_with("//")).then_some(line)
-    })
 }
 
 #[cfg(test)]

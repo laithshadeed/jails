@@ -54,6 +54,34 @@ pub(crate) fn remove(
     Ok(())
 }
 
+/// Recompute every index label from the field labels it names.
+///
+/// The label is a projection of the declaration's bracketed list, exactly as
+/// the parser derives it, so it moves when a covered field is renamed. The SQL
+/// name does not: it is either pinned or already accepted, and moving it would
+/// be a schema change rather than a projection one.
+pub(crate) fn relabel(entity: &mut crate::model::Entity) {
+    let labels = entity
+        .fields
+        .iter()
+        .map(|field| (field.id.clone(), field.label.clone()))
+        .collect::<BTreeMap<_, _>>();
+    for index in entity.indexes.values_mut() {
+        index.label = index
+            .columns
+            .iter()
+            .map(|column| {
+                let label = labels.get(&column.field).cloned().unwrap_or_default();
+                match column.direction {
+                    IndexDirection::Asc => label,
+                    IndexDirection::Desc => format!("{label}_desc"),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("_");
+    }
+}
+
 pub(crate) fn link(
     linker: &mut Linker,
     entity_path: &str,

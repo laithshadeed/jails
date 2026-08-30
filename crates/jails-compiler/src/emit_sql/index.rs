@@ -34,7 +34,13 @@ pub(crate) fn derive_changes(
             descriptions.push(format!("drop_{}", old_index.sql_name));
             continue;
         };
-        if old_index != current_index {
+        // Compared by what reaches PostgreSQL, not by the label. The label is
+        // derived from the field labels the declaration names, so renaming a
+        // covered field moves it while the constraint itself -- its id, its
+        // SQL name and the stable field ids it orders -- is untouched.
+        if (&old_index.sql_name, &old_index.columns)
+            != (&current_index.sql_name, &current_index.columns)
+        {
             return Err(CompileError::new(format!(
                 "accepted index `{}` changed without an evolution policy\n       fix: add a replacement index before retiring this one",
                 old_index.sql_name

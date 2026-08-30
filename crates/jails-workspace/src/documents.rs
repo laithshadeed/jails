@@ -446,9 +446,12 @@ fn refuse_unmanaged_gradle_versions(
 /// coordinate is not understanding a build script, and anything it cannot
 /// recognise is refused rather than guessed.
 fn gradle_manages_versions(text: &str) -> bool {
-    ["io.spring.dependency-management", "spring-boot-dependencies"]
-        .iter()
-        .any(|marker| text.contains(marker))
+    [
+        "io.spring.dependency-management",
+        "spring-boot-dependencies",
+    ]
+    .iter()
+    .any(|marker| text.contains(marker))
 }
 
 fn maven_dependency_block(dependencies: &[jails_contracts::BuildDependency]) -> Option<String> {

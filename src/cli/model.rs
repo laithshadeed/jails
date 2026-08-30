@@ -5,8 +5,8 @@ use std::path::PathBuf;
 
 #[derive(Subcommand)]
 pub(crate) enum ModelCommand {
-    /// Adopt supported legacy declarations and their live Java into the canonical compiler
-    Import,
+    /// Write `.jails/model.jdl` for a project that has none, from its build
+    Init,
     /// Parse, link, and type-check the application model without writing
     Check {
         /// Canonical model file to check
@@ -15,12 +15,6 @@ pub(crate) enum ModelCommand {
         /// Also require the committed managed tree to equal this compilation
         #[arg(long)]
         frozen: bool,
-    },
-    /// Rewrite the pre-v1 JDL draft as JDL v1, preserving every stable id
-    Upgrade {
-        /// JDL language version to upgrade to
-        #[arg(long, value_name = "VERSION")]
-        to: u16,
     },
     /// Canonically format the JDL authoring source
     Fmt {

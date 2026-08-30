@@ -46,6 +46,15 @@ pub enum ModelPatch {
     /// stricter parser, and `jails_model::upgrade` proves every stable ID and
     /// physical name survived before this variant is ever built.
     ReplaceModel(Box<crate::AppModel>),
+    /// The SQL dialect the project's storage axis resolves to.
+    ///
+    /// **`storage` is one axis with two effects**, and a patch that carried
+    /// only one of them left the model disagreeing with its own source: `add
+    /// db` writes `storage postgres`, which the linker reads as *both* a `db`
+    /// capability and `dialect = "postgresql"`, while the patch carried the
+    /// capability alone. The plan was then compiled against a model whose
+    /// dialect was still `none`.
+    SetDialect(String),
     AddCapability(Capability),
     RemoveCapability(CapabilityId),
     AddDependency(Dependency),
@@ -59,7 +68,20 @@ pub enum ModelPatch {
     AddComponent(Component),
     ReplaceComponent(Component),
     RemoveComponent(ComponentId),
-    AddEntity(Entity),
+    /// One entity and the projections its declaration carries.
+    ///
+    /// **The projections travel with it, because they are not derivable from
+    /// the entity.** `AppModel.projections` is a top-level map keyed by its
+    /// own stable ids, and a `use http(path: "/notes")` or
+    /// `use search(fields: [title, body])` states arguments no `Facet` holds.
+    /// Adding only the entity left the patched model without them while the
+    /// re-parsed source had them, so the plan a generator built was compiled
+    /// against a model the source did not describe -- and the next `sync`
+    /// silently added the missing artifacts.
+    AddEntity {
+        entity: Entity,
+        projections: Vec<crate::Projection>,
+    },
     AddFacet {
         entity: EntityId,
         facet: Facet,

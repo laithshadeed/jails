@@ -26,14 +26,13 @@ mod naming;
 /// Exported for one reason: the legacy ladder has its own copy of §9.7's
 /// pluralization, in `jails-protocol`, which this crate cannot depend on. A
 /// test in `tests/` compares them, and needs to be able to call this one.
-pub use naming::plural_snake_case;
+pub use naming::{plural_snake_case, upper_camel_case};
 mod operation;
 mod patch;
 mod projection;
 mod relation;
 mod setting;
 mod source;
-mod syntax_edit;
 mod unit;
 
 pub use app::ProjectIntent;
@@ -51,9 +50,6 @@ pub use id::{
     StableId, UnitId,
 };
 pub use jdl::parse as parse_jdl;
-pub use jdl::upgrade::{
-    Axes as JdlAxes, Build as JdlBuild, Platform as JdlPlatform, upgrade as upgrade_jdl,
-};
 pub use jdl::v1::{
     DeclarationCst, DocumentCst, MemberCst, Span as JdlSpan, Token as JdlToken,
     TokenKind as JdlTokenKind, append_jdl_declaration, format as format_jdl_v1,
@@ -80,19 +76,4 @@ pub use patch::{
 };
 pub use projection::{Projection, ProjectionKind};
 pub use relation::{ReferentialAction, Relation, RelationCardinality, RelationMapping};
-pub use syntax_edit::{
-    remove_capability_declaration, remove_dependency_declaration, remove_entity_declaration,
-    remove_field_declaration, remove_index_declaration, remove_operation_declaration,
-    remove_setting_declaration, remove_unit_declaration, set_entity_active, set_entity_java_name,
-    set_field_column, set_field_java_name, set_field_required, set_field_type,
-};
 pub use unit::{EndpointMethod, HttpEndpoint, RequestFormat, SourceUnit, UnitKind};
-
-/// Parse and link a canonical TOML model.
-///
-/// Syntax and semantic failures share one diagnostic type so the CLI and a
-/// future language server cannot disagree about what makes a model valid.
-pub fn parse_toml(input: &str) -> Result<AppModel, Diagnostics> {
-    let source = toml::from_str(input).map_err(Diagnostics::syntax)?;
-    linker::link(source)
-}

@@ -9,8 +9,8 @@ mod unit;
 pub(crate) use component::{component_kind, component_stem};
 use edit::insert_entity_member;
 pub(crate) use edit::{
-    insert_field, is_v1_source, jdl_edit_failure, remove_capability, remove_dependency,
-    remove_entity, remove_operation, remove_setting, remove_unit, rename_entity, set_entity_active,
+    insert_field, jdl_edit_failure, remove_capability, remove_dependency, remove_entity,
+    remove_operation, remove_setting, remove_unit, rename_entity, set_entity_active,
 };
 
 use crate::cli::GenerateArgs;
@@ -18,7 +18,7 @@ use crate::generate::ArtifactKind;
 use crate::model_generate::{ParsedField, PreparedMutation, finish_generation, parse_field};
 use crate::model_resource::java_to_label;
 use crate::{Invocation, model_generate};
-use jails_model::{EntityId, ModelPatch, OperationId, StableId};
+use jails_model::{EntityId, ModelPatch, OperationId};
 use jails_support::{Failure, Result};
 use serde_json::json;
 use std::collections::BTreeSet;
@@ -86,7 +86,6 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     model_generate::reject_unsupported_operation_options(&args, profile)?;
     let model_path = PathBuf::from(MODEL_PATH);
     let current_source = read_model()?;
-    let v1 = is_v1_source(&current_source);
     let current_model = parse(&current_source)?;
     let on = args
         .strategy_on
@@ -115,9 +114,9 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     let operation_label = java_to_label(&args.name);
     let operation_id = OperationId::parse(format!("op_{operation_label}"))
         .map_err(|error| Failure::Told(format!("could not assign operation identity: {error}")))?;
-    let declaration = operation_declaration(&args, &current_model, &entity_label, &fields, v1)?;
+    let declaration = operation_declaration(&args, &current_model, &entity_label, &fields)?;
     if let Some(existing) = current_model.operations.get(&operation_id) {
-        let without = remove_operation(&current_source, &args.name, operation_id.as_str())?;
+        let without = remove_operation(&current_source, &args.name)?;
         let requested_source = insert_entity_member(&without, &entity_java_name, &declaration)?;
         let requested_model = parse(&requested_source)?;
         let requested = requested_model
@@ -174,7 +173,6 @@ fn operation_declaration(
     model: &jails_model::AppModel,
     entity_label: &str,
     fields: &[String],
-    v1: bool,
 ) -> Result<String> {
     let kind = match args.kind {
         ArtifactKind::Usecase => "command",
@@ -203,18 +201,10 @@ fn operation_declaration(
                     model_generate::operation_field_label(model, entity_label, item)
                 })
                 .collect::<Result<Vec<_>>>()?;
-            if v1 {
-                output.push_str(&format!("    order by [{}]\n", order_by.join(", ")));
-            } else {
-                output.push_str(&format!("    orderBy: {}\n", order_by.join(", ")));
-            }
+            output.push_str(&format!("    order by [{}]\n", order_by.join(", ")));
         }
         if let Some(limit) = args.limit {
-            if v1 {
-                output.push_str(&format!("    limit {limit}\n"));
-            } else {
-                output.push_str(&format!("    limit: {limit}\n"));
-            }
+            output.push_str(&format!("    limit {limit}\n"));
         }
     }
     if args.kind == ArtifactKind::Usecase
@@ -226,24 +216,12 @@ fn operation_declaration(
         // publication, which is the weaker guarantee and the exact
         // substitution `deliver` exists to make impossible.
         let event = java_to_label(yields);
-        if v1 {
-            output.push_str(&format!("    emit {event}\n    deliver outbox\n"));
-        } else {
-            output.push_str(&format!("    emits: {event}\n    delivery: outbox\n"));
-        }
+        output.push_str(&format!("    emit {event}\n    deliver outbox\n"));
     }
     if args.kind == ArtifactKind::Transition {
-        if v1 {
-            output.push_str(&format!("    update [{}]\n", fields.join(", ")));
-        } else {
-            output.push_str(&format!("    sets: {}\n", fields.join(", ")));
-        }
+        output.push_str(&format!("    update [{}]\n", fields.join(", ")));
         if let Some(yields) = &args.strategy_yields {
-            if v1 {
-                output.push_str(&format!("    emit {}\n", java_to_label(yields)));
-            } else {
-                output.push_str(&format!("    yields: {}\n", java_to_label(yields)));
-            }
+            output.push_str(&format!("    emit {}\n", java_to_label(yields)));
         }
     }
     if let Some(path) = &args.path {
@@ -257,13 +235,9 @@ fn operation_declaration(
             ),
             _ => unreachable!("event paths are rejected during validation"),
         };
-        if v1 {
-            let path = serde_json::to_string(path)
-                .map_err(|error| Failure::Told(format!("could not quote route path: {error}")))?;
-            output.push_str(&format!("    route {method} {path}\n"));
-        } else {
-            output.push_str(&format!("    route: {method} {path}\n"));
-        }
+        let path = serde_json::to_string(path)
+            .map_err(|error| Failure::Told(format!("could not quote route path: {error}")))?;
+        output.push_str(&format!("    route {method} {path}\n"));
     }
     output.push_str("  }");
     Ok(output)
@@ -273,38 +247,29 @@ fn run_entity(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     model_generate::validate_entity_args(&args)?;
     let model_path = PathBuf::from(MODEL_PATH);
     let current_source = read_model()?;
-    let v1 = is_v1_source(&current_source);
     let current_model = parse(&current_source)?;
     let entity_label = java_to_label(&args.name);
     let entity_id = EntityId::parse(format!("ent_{entity_label}"))
         .map_err(|error| Failure::Told(format!("could not assign entity identity: {error}")))?;
     let mut fields = args.fields.clone();
     if args.timestamps {
-        fields.extend(if v1 {
-            [
-                "createdAt:instant@default(now())".to_string(),
-                "updatedAt:instant@default(now())@updated".to_string(),
-            ]
-        } else {
-            [
-                "createdAt:instant".to_string(),
-                "updatedAt:instant".to_string(),
-            ]
-        });
+        fields.extend([
+            "createdAt:instant@default(now())".to_string(),
+            "updatedAt:instant@default(now())@updated".to_string(),
+        ]);
     }
     let declaration = match args.kind {
-        ArtifactKind::Enum => enum_declaration(&args.name, &entity_label, &fields, v1)?,
+        ArtifactKind::Enum => enum_declaration(&args.name, &entity_label, &fields)?,
         ArtifactKind::Record | ArtifactKind::Value | ArtifactKind::Scaffold => entity_declaration(
             &args.name,
             &entity_label,
             args.kind == ArtifactKind::Scaffold,
             &fields,
-            v1,
         )?,
         _ => unreachable!("run only accepts entity kinds"),
     };
     if let Some(existing) = current_model.entity(&entity_id) {
-        let requested = declaration_entity(&current_model, &declaration, &entity_id, v1)?;
+        let requested = declaration_entity(&current_model, &declaration, &entity_id)?;
         if !same_entity_contribution(existing, &requested) {
             return Err(Failure::Told(format!(
                 "canonical entity `{}` is already declared with a different shape.\n       fix: evolve it with `jails g field`, `jails resource field`, or `jails rename resource`",
@@ -329,9 +294,16 @@ fn run_entity(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         .entity(&entity_id)
         .cloned()
         .ok_or_else(|| Failure::Told(format!("new entity `{entity_id}` did not link")))?;
+    let projections = next_model
+        .projections
+        .values()
+        .filter(|projection| projection.entity == entity_id)
+        .cloned()
+        .collect::<Vec<_>>();
     let patch_bytes = serde_json::to_vec(&json!({
         "kind": "add-entity",
         "entity": entity,
+        "projections": projections,
     }))
     .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
     finish_generation(PreparedMutation {
@@ -341,7 +313,10 @@ fn run_entity(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         current_source,
         current_model,
         next_source,
-        patch: ModelPatch::AddEntity(entity),
+        patch: ModelPatch::AddEntity {
+            entity,
+            projections,
+        },
         patch_bytes,
         authored_migration: None,
     })
@@ -351,7 +326,6 @@ fn declaration_entity(
     model: &jails_model::AppModel,
     declaration: &str,
     entity_id: &EntityId,
-    v1: bool,
 ) -> Result<jails_model::Entity> {
     let storage = match model.project.dialect.as_str() {
         "postgresql" => "postgres",
@@ -359,24 +333,14 @@ fn declaration_entity(
         "sqlite" => "sqlite",
         _ => "none",
     };
-    let source = if v1 {
-        format!(
-            "jdl 1\napp Comparison @id(project_comparison) {{\n  pkg {}\n  java {}\n  platform {}\n  build {}\n  storage {storage}\n}}\n\n{}",
-            model.project.base_package,
-            model.project.java_release,
-            model.project.platform,
-            model.project.build,
-            declaration
-        )
-    } else {
-        format!(
-            "application Comparison @id(project_comparison)\npackage {}\njava {}\ndialect {}\n\n{}",
-            model.project.base_package,
-            model.project.java_release,
-            model.project.dialect,
-            declaration
-        )
-    };
+    let source = format!(
+        "jdl 1\napp Comparison @id(project_comparison) {{\n  pkg {}\n  java {}\n  platform {}\n  build {}\n  storage {storage}\n}}\n\n{}",
+        model.project.base_package,
+        model.project.java_release,
+        model.project.platform,
+        model.project.build,
+        declaration
+    );
     parse(&source)?
         .entity(entity_id)
         .cloned()
@@ -416,16 +380,8 @@ pub(crate) fn parse(source: &str) -> Result<jails_model::AppModel> {
         .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))
 }
 
-fn append_declaration(mut source: String, declaration: &str) -> Result<String> {
-    if is_v1_source(&source) {
-        return jails_model::append_jdl_declaration(&source, declaration).map_err(jdl_edit_failure);
-    }
-    if !source.ends_with('\n') {
-        source.push('\n');
-    }
-    source.push('\n');
-    source.push_str(declaration);
-    Ok(source)
+fn append_declaration(source: String, declaration: &str) -> Result<String> {
+    jails_model::append_jdl_declaration(&source, declaration).map_err(jdl_edit_failure)
 }
 
 pub(crate) fn entity_declaration(
@@ -433,7 +389,6 @@ pub(crate) fn entity_declaration(
     entity_label: &str,
     scaffold: bool,
     fields: &[String],
-    v1: bool,
 ) -> Result<String> {
     let mut labels = BTreeSet::new();
     let mut parsed = Vec::new();
@@ -449,18 +404,10 @@ pub(crate) fn entity_declaration(
     }
     let mut output = format!("entity {java_name} @id(ent_{entity_label}) {{\n");
     if scaffold {
-        if v1 {
-            output.push_str("  use scaffold\n\n");
-        } else {
-            output = output.replacen(" {", " @scaffold {", 1);
-        }
+        output.push_str("  use scaffold\n\n");
     }
     for field in &parsed {
-        let line = if v1 {
-            render_v1_field_line(entity_label, field)
-        } else {
-            render_field_line(entity_label, field)?
-        };
+        let line = render_v1_field_line(entity_label, field);
         output.push_str(&line);
         output.push('\n');
     }
@@ -468,12 +415,7 @@ pub(crate) fn entity_declaration(
     Ok(output)
 }
 
-pub(crate) fn enum_declaration(
-    java_name: &str,
-    label: &str,
-    values: &[String],
-    v1: bool,
-) -> Result<String> {
+pub(crate) fn enum_declaration(java_name: &str, label: &str, values: &[String]) -> Result<String> {
     let values = values
         .iter()
         .map(|value| {
@@ -484,65 +426,18 @@ pub(crate) fn enum_declaration(
     let mut output = format!("enum {java_name} @id(ent_{label}) {{\n");
     for value in values {
         output.push_str("  ");
-        if v1 {
-            if let Some((constant, wire)) = value.split_once('=') {
-                output.push_str(constant);
-                output.push_str(" = ");
-                output.push_str(&serde_json::to_string(wire).map_err(|error| {
-                    Failure::Told(format!("could not quote enum wire value: {error}"))
-                })?);
-            } else {
-                output.push_str(&value);
-            }
+        if let Some((constant, wire)) = value.split_once('=') {
+            output.push_str(constant);
+            output.push_str(" = ");
+            output.push_str(&serde_json::to_string(wire).map_err(|error| {
+                Failure::Told(format!("could not quote enum wire value: {error}"))
+            })?);
         } else {
             output.push_str(&value);
         }
         output.push('\n');
     }
     output.push_str("}\n");
-    Ok(output)
-}
-
-pub(crate) fn render_field_line(entity_label: &str, field: &ParsedField) -> Result<String> {
-    field.require_v1_for_rich_semantics()?;
-    let suffix = if !field.required {
-        "?"
-    } else if field.non_blank {
-        "!"
-    } else {
-        ""
-    };
-    let range = if field.min_length.is_some() || field.max_length.is_some() {
-        format!(
-            "({}..{})",
-            field
-                .min_length
-                .map(|value| value.to_string())
-                .unwrap_or_default(),
-            field
-                .max_length
-                .map(|value| value.to_string())
-                .unwrap_or_default(),
-        )
-    } else {
-        String::new()
-    };
-    let mut output = format!(
-        "  {}: {}{}{} @id(fld_{}_{})",
-        field.java_name, field.type_name, suffix, range, entity_label, field.label
-    );
-    if field.primary_key {
-        output.push_str(" @pk");
-    }
-    if field.unique {
-        output.push_str(" @unique");
-    }
-    if field.indexed {
-        output.push_str(" @index");
-    }
-    if let Some(column) = &field.mapped_column {
-        output.push_str(&format!(" @column({column})"));
-    }
     Ok(output)
 }
 

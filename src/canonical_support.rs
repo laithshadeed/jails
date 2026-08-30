@@ -19,7 +19,6 @@
 //! variant a compile error until its ownership is decided.
 
 use crate::add::Capability;
-use crate::generate::ArtifactKind;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Support {
@@ -40,50 +39,6 @@ pub(crate) enum Support {
 impl Support {
     pub(crate) fn is_native(self) -> bool {
         self == Self::Native
-    }
-}
-
-pub(crate) fn generator(kind: ArtifactKind) -> Support {
-    match kind {
-        ArtifactKind::Scaffold
-        | ArtifactKind::Controller
-        | ArtifactKind::Service
-        | ArtifactKind::Class
-        | ArtifactKind::Interface
-        | ArtifactKind::Record
-        | ArtifactKind::Field
-        | ArtifactKind::Factory
-        | ArtifactKind::Value
-        | ArtifactKind::Enum
-        | ArtifactKind::Sealed
-        | ArtifactKind::Strategy
-        | ArtifactKind::Repo
-        | ArtifactKind::Dto
-        | ArtifactKind::Usecase
-        | ArtifactKind::Query
-        | ArtifactKind::Transition
-        | ArtifactKind::Event
-        | ArtifactKind::Test
-        | ArtifactKind::IntegrationTest
-        | ArtifactKind::Client
-        | ArtifactKind::Fetcher
-        | ArtifactKind::Job
-        | ArtifactKind::Socket
-        | ArtifactKind::Webhook
-        | ArtifactKind::Auth
-        | ArtifactKind::Cases
-        | ArtifactKind::Idempotency
-        | ArtifactKind::Handler
-        | ArtifactKind::Presence
-        | ArtifactKind::Command
-        | ArtifactKind::Cli
-        | ArtifactKind::HttpSink
-        | ArtifactKind::HttpWorkflow
-        | ArtifactKind::DurableJob
-        | ArtifactKind::Seed
-        | ArtifactKind::Search
-        | ArtifactKind::Association
-        | ArtifactKind::Migration => Support::Native,
     }
 }
 

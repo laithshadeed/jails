@@ -23,6 +23,23 @@ pub enum ConstraintKind {
     Unique,
 }
 
+/// The constraint counterpart to [`crate::index::relabel`].
+pub(crate) fn relabel(entity: &mut crate::model::Entity) {
+    let labels = entity
+        .fields
+        .iter()
+        .map(|field| (field.id.clone(), field.label.clone()))
+        .collect::<BTreeMap<_, _>>();
+    for constraint in entity.constraints.values_mut() {
+        constraint.label = constraint
+            .fields
+            .iter()
+            .map(|field| labels.get(field).cloned().unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("_");
+    }
+}
+
 pub(crate) fn link(
     linker: &mut Linker,
     entity_path: &str,

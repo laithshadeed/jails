@@ -54,25 +54,20 @@ pub(crate) fn add(
     package: Option<String>,
     invocation: Invocation,
 ) -> Result<()> {
-    let jdl = crate::model_command::owns_jdl();
     if package.is_some() {
         return Err(Failure::Told(
             "canonical entities have one stable identity and do not accept a legacy package selector.\n       fix: remove `--package` and name the entity declared in the application model"
                 .to_string(),
         ));
     }
-    let model_path = PathBuf::from(if jdl {
-        crate::model_command::JDL_PATH
-    } else {
-        crate::model_command::TOML_PATH
-    });
+    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
     let current_source = std::fs::read_to_string(&model_path).map_err(|error| {
         Failure::Told(format!(
             "could not read canonical model `{}`: {error}",
             model_path.display()
         ))
     })?;
-    let current_model = parse_model(&current_source, jdl)?;
+    let current_model = parse_model(&current_source)?;
     if !current_model
         .capabilities
         .values()
@@ -105,39 +100,26 @@ pub(crate) fn add(
     let entity_java_name = entity.names.java_type.clone();
     let signature = canonical.join(",");
     let suffix = &hex(&sha256(signature.as_bytes()))[..12];
-    let index_label = format!("index_{suffix}");
     let index_id = IndexId::parse(format!("idx_{model_label}_{suffix}")).map_err(Failure::Told)?;
     let mut next_source = current_source.clone();
-    if jdl {
-        // **JDL v1 spells an index with a bracketed field list and no
-        // `@as`.** This rendered the pre-v1 draft's `index (...) @as(...)`
-        // for any JDL source, so on a v1 model -- the format this compiler
-        // authors -- the command could never succeed: the re-parse below
-        // rejected its own output with "a constraint needs a bracketed field
-        // list". Every other frontend asks `is_v1_source`; this one rendered
-        // the line itself and never asked. The label is derived from the
-        // columns in v1, so only the identity needs pinning.
-        next_source = crate::model_generate_jdl::index::insert(
-            &next_source,
-            &entity_java_name,
-            &format!(
-                "  index [{}] @id({})",
-                canonical.join(", "),
-                index_id.as_str()
-            ),
-        )?;
-    } else {
-        if !next_source.ends_with('\n') {
-            next_source.push('\n');
-        }
-        next_source.push_str(&format!(
-            "\n[entities.{}.indexes.{index_label}]\nid = {}\ncolumns = {}\n",
-            model_label,
-            quote(index_id.as_str())?,
-            quote_list(&canonical)?,
-        ));
-    }
-    let next_model = parse_model(&next_source, jdl)?;
+    // **JDL v1 spells an index with a bracketed field list and no
+    // `@as`.** This rendered the pre-v1 draft's `index (...) @as(...)`
+    // for any JDL source, so on a v1 model -- the format this compiler
+    // authors -- the command could never succeed: the re-parse below
+    // rejected its own output with "a constraint needs a bracketed field
+    // list". Every other frontend asks `is_v1_source`; this one rendered
+    // the line itself and never asked. The label is derived from the
+    // columns in v1, so only the identity needs pinning.
+    next_source = crate::model_generate_jdl::index::insert(
+        &next_source,
+        &entity_java_name,
+        &format!(
+            "  index [{}] @id({})",
+            canonical.join(", "),
+            index_id.as_str()
+        ),
+    )?;
+    let next_model = parse_model(&next_source)?;
     let index = next_model
         .entities
         .get(&entity_id)
@@ -173,25 +155,20 @@ pub(crate) fn remove(
     package: Option<String>,
     invocation: Invocation,
 ) -> Result<()> {
-    let jdl = crate::model_command::owns_jdl();
     if package.is_some() {
         return Err(Failure::Told(
             "canonical entities have one stable identity and do not accept a legacy package selector.\n       fix: remove `--package` and name the entity declared in the application model"
                 .to_string(),
         ));
     }
-    let model_path = PathBuf::from(if jdl {
-        crate::model_command::JDL_PATH
-    } else {
-        crate::model_command::TOML_PATH
-    });
+    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
     let current_source = std::fs::read_to_string(&model_path).map_err(|error| {
         Failure::Told(format!(
             "could not read canonical model `{}`: {error}",
             model_path.display()
         ))
     })?;
-    let current_model = parse_model(&current_source, jdl)?;
+    let current_model = parse_model(&current_source)?;
     if !current_model
         .capabilities
         .values()
@@ -261,21 +238,14 @@ pub(crate) fn remove(
         )));
     }
     let entity_id = entity.id.clone();
-    let entity_model_label = entity.label.clone();
     let entity_java_name = entity.names.java_type.clone();
     let index_id = index.id.clone();
-    let index_label = index.label.clone();
-    let next_source = if jdl {
-        crate::model_generate_jdl::index::remove(
-            &current_source,
-            &entity_java_name,
-            index_id.as_str(),
-        )?
-    } else {
-        jails_model::remove_index_declaration(&current_source, &entity_model_label, &index_label)
-            .map_err(Failure::Told)?
-    };
-    let next_model = parse_model(&next_source, jdl)?;
+    let next_source = crate::model_generate_jdl::index::remove(
+        &current_source,
+        &entity_java_name,
+        index_id.as_str(),
+    )?;
+    let next_model = parse_model(&next_source)?;
     if next_model
         .entities
         .get(&entity_id)
@@ -358,21 +328,7 @@ fn canonical_columns(entity: &jails_model::Entity, columns: &str) -> Result<Vec<
     Ok(canonical)
 }
 
-fn parse_model(source: &str, jdl: bool) -> Result<jails_model::AppModel> {
-    let parsed = if jdl {
-        jails_model::parse_jdl(source)
-    } else {
-        jails_model::parse_toml(source)
-    };
-    parsed.map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))
-}
-
-fn quote(value: &str) -> Result<String> {
-    serde_json::to_string(value)
-        .map_err(|error| Failure::Told(format!("could not quote model value: {error}")))
-}
-
-fn quote_list(values: &[String]) -> Result<String> {
-    serde_json::to_string(values)
-        .map_err(|error| Failure::Told(format!("could not quote model values: {error}")))
+fn parse_model(source: &str) -> Result<jails_model::AppModel> {
+    jails_model::parse_jdl(source)
+        .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))
 }

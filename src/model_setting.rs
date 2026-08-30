@@ -8,18 +8,17 @@ use jails_support::{Failure, Result};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
-const MODEL_PATH: &str = ".jails/model.toml";
+const MODEL_PATH: &str = crate::model_command::JDL_PATH;
 
 pub(crate) fn owns() -> bool {
     crate::model_command::owns()
 }
 
 pub(crate) fn set(key: String, value: String, tests: bool, invocation: Invocation) -> Result<()> {
-    let jdl = crate::model_command::owns_jdl();
     let target = target(tests);
-    let model_path = model_path(jdl);
+    let model_path = model_path();
     let current_source = read_source(&model_path)?;
-    let current_model = parse_model(&current_source, jdl)?;
+    let current_model = parse_model(&current_source)?;
     let existing = current_model
         .settings
         .values()
@@ -46,17 +45,7 @@ pub(crate) fn set(key: String, value: String, tests: bool, invocation: Invocatio
         Some(setting) => (
             setting.id.clone(),
             setting.label.clone(),
-            if jdl {
-                crate::model_generate_jdl::remove_setting(
-                    &current_source,
-                    &setting.key,
-                    setting.id.as_str(),
-                    &setting.label,
-                )?
-            } else {
-                jails_model::remove_setting_declaration(&current_source, &setting.label)
-                    .map_err(Failure::Told)?
-            },
+            crate::model_generate_jdl::remove_setting(&current_source, &setting.label)?,
         ),
         None => {
             let identity = format!("{}:{key}", target.label());
@@ -65,8 +54,8 @@ pub(crate) fn set(key: String, value: String, tests: bool, invocation: Invocatio
             (id, label, current_source.clone())
         }
     };
-    append_setting(&mut next_source, &label, &id, &key, &value, target, jdl)?;
-    let next_model = parse_model(&next_source, jdl)?;
+    append_setting(&mut next_source, &label, &id, &key, &value, target)?;
+    let next_model = parse_model(&next_source)?;
     let setting = next_model
         .settings
         .get(&id)
@@ -91,11 +80,10 @@ pub(crate) fn set(key: String, value: String, tests: bool, invocation: Invocatio
 }
 
 pub(crate) fn unset(key: String, tests: bool, invocation: Invocation) -> Result<()> {
-    let jdl = crate::model_command::owns_jdl();
     let target = target(tests);
-    let model_path = model_path(jdl);
+    let model_path = model_path();
     let current_source = read_source(&model_path)?;
-    let current_model = parse_model(&current_source, jdl)?;
+    let current_model = parse_model(&current_source)?;
     let setting = current_model
         .settings
         .values()
@@ -108,18 +96,8 @@ pub(crate) fn unset(key: String, tests: bool, invocation: Invocation) -> Result<
                 target.label()
             ))
         })?;
-    let next_source = if jdl {
-        crate::model_generate_jdl::remove_setting(
-            &current_source,
-            &setting.key,
-            setting.id.as_str(),
-            &setting.label,
-        )?
-    } else {
-        jails_model::remove_setting_declaration(&current_source, &setting.label)
-            .map_err(Failure::Told)?
-    };
-    parse_model(&next_source, jdl)?;
+    let next_source = crate::model_generate_jdl::remove_setting(&current_source, &setting.label)?;
+    parse_model(&next_source)?;
     let patch_bytes = serde_json::to_vec(&json!({
         "kind": "remove-setting",
         "setting": setting.id,
@@ -145,43 +123,20 @@ fn append_setting(
     key: &str,
     value: &str,
     target: SettingTarget,
-    jdl: bool,
 ) -> Result<()> {
-    if jdl && crate::model_generate_jdl::is_v1_source(source) {
-        let declaration = format!(
-            "prop {key} = {} @id({}){}",
-            quote(value)?,
-            id.as_str(),
-            if target == SettingTarget::Test {
-                " @target(test)"
-            } else {
-                ""
-            },
-        );
-        *source = jails_model::append_jdl_declaration(source, &declaration)
-            .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
-    } else if jdl {
-        if !source.ends_with('\n') {
-            source.push('\n');
-        }
-        source.push_str(&format!(
-            "\nsetting {key} @id({}) @target({}) = {}\n",
-            id.as_str(),
-            target.label(),
-            quote(value)?,
-        ));
-    } else {
-        if !source.ends_with('\n') {
-            source.push('\n');
-        }
-        source.push_str(&format!(
-            "\n[settings.{label}]\nid = {}\nkey = {}\nvalue = {}\ntarget = {}\n",
-            quote(id.as_str())?,
-            quote(key)?,
-            quote(value)?,
-            quote(target.label())?,
-        ));
-    }
+    let _ = label;
+    let declaration = format!(
+        "prop {key} = {} @id({}){}",
+        quote(value)?,
+        id.as_str(),
+        if target == SettingTarget::Test {
+            " @target(test)"
+        } else {
+            ""
+        },
+    );
+    *source = jails_model::append_jdl_declaration(source, &declaration)
+        .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
     Ok(())
 }
 
@@ -201,21 +156,13 @@ fn read_source(path: &Path) -> Result<String> {
     })
 }
 
-fn model_path(jdl: bool) -> PathBuf {
-    PathBuf::from(if jdl {
-        crate::model_command::JDL_PATH
-    } else {
-        crate::model_command::TOML_PATH
-    })
+fn model_path() -> PathBuf {
+    PathBuf::from(crate::model_command::JDL_PATH)
 }
 
-fn parse_model(source: &str, jdl: bool) -> Result<jails_model::AppModel> {
-    let parsed = if jdl {
-        jails_model::parse_jdl(source)
-    } else {
-        jails_model::parse_toml(source)
-    };
-    parsed.map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))
+fn parse_model(source: &str) -> Result<jails_model::AppModel> {
+    jails_model::parse_jdl(source)
+        .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))
 }
 
 fn quote(value: &str) -> Result<String> {

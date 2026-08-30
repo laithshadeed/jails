@@ -109,7 +109,10 @@ pub(crate) fn ensure_maven_source_roots(
     if let Some(at) = was_at {
         let indent = direct_child_close(&text, &["project", "build", "plugins"])
             .and_then(|close| line_indent(&text, close))
-            .map_or_else(|| "            ".to_string(), |parent| format!("{parent}    "));
+            .map_or_else(
+                || "            ".to_string(),
+                |parent| format!("{parent}    "),
+            );
         return Ok(insert_at_line(&text, at, &indent_block(&plugin, &indent)));
     }
     if let Some(at) = direct_child_close(&text, &["project", "build", "plugins"]) {

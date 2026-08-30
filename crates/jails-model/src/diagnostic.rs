@@ -46,17 +46,6 @@ pub struct Diagnostics {
 }
 
 impl Diagnostics {
-    pub(crate) fn syntax(error: toml::de::Error) -> Self {
-        Self {
-            diagnostics: vec![Diagnostic::new(
-                "model-syntax",
-                "$",
-                error.to_string(),
-                "fix the TOML syntax or remove an unknown model key",
-            )],
-        }
-    }
-
     pub(crate) fn from_vec(diagnostics: Vec<Diagnostic>) -> Self {
         Self { diagnostics }
     }

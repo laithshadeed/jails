@@ -117,7 +117,7 @@ fn valid_java_identifier(value: &str, case: Case) -> bool {
         && !KEYWORDS.contains(&value)
 }
 
-pub(crate) fn upper_camel_case(label: &str) -> String {
+pub fn upper_camel_case(label: &str) -> String {
     label
         .split(['_', '-'])
         .filter(|part| !part.is_empty())
