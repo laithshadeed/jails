@@ -521,7 +521,7 @@ pub fn jails_cmd_with_path(cwd: &Path, path: &str) -> ToolchainCommand {
 /// Compose address until the context shuts down. The real messaging IT opts
 /// back in explicitly and supplies a broker through `@ServiceConnection`, so
 /// this removes accidental localhost traffic without omitting that test.
-const REAL_MAVEN_ARGS: &str = "-ntp -Dspring.main.banner-mode=off \
+const REAL_MAVEN_ARGS: &str = "-ntp -DforkCount=0 -Dspring.main.banner-mode=off \
     -Dlogging.level.root=WARN -Dspring.kafka.listener.auto-startup=false \
     -Dspring.datasource.hikari.maximum-pool-size=2 \
     -Dspring.datasource.hikari.minimum-idle=0";

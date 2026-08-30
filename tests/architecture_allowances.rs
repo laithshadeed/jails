@@ -197,7 +197,12 @@ fn project(root: &Path) {
 fn architecture_test(root: &Path) -> Output {
     let _ = fs::remove_dir_all(root.join("target/surefire-reports"));
     Command::new("mvn")
-        .args(["-q", "-Dtest=ArchitectureTest", "test"])
+        // `-DforkCount=0` for the same reason the rest of the suite uses it:
+        // Surefire's default fork starts a *cold* JVM per run and re-pays class
+        // loading and JIT warmup that the Maven JVM has already done. These four
+        // ArchUnit policies are pure classpath analysis with no isolation to
+        // lose.
+        .args(["-q", "-DforkCount=0", "-Dtest=ArchitectureTest", "test"])
         .current_dir(root)
         .output()
         .unwrap()

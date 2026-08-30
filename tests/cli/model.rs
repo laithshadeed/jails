@@ -8450,7 +8450,13 @@ fn canonical_coverage_is_lossless_refuses_owned_edits_and_passes_real_verify() {
     if real_mvn_available() && real_java_supports_target_release() {
         let path = real_path_without_mvnd();
         let verified = real_maven_cmd(&root, &path)
-            .args(["-q", "-B", "verify"])
+            // `-DforkCount=1` overrides the suite-wide `forkCount=0`, and this is
+            // the one place that must: JaCoCo measures coverage by attaching a
+            // `-javaagent` to the *forked* Surefire JVM. Run the tests inside
+            // the Maven JVM instead and the agent never attaches, every class
+            // reads as uncovered, and `jacoco:check` fails a threshold that
+            // nothing in the project got wrong.
+            .args(["-q", "-B", "-DforkCount=1", "verify"])
             .output()
             .unwrap();
         assert!(
