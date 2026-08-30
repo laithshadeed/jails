@@ -415,6 +415,30 @@ pub fn skip(reason: &str) {
     eprintln!("skipping: {reason}");
 }
 
+/// Skip a test whose precondition **cannot be installed**, and stay skipped
+/// even under `JAILS_REQUIRE_TOOLCHAIN`.
+///
+/// `skip` promotes a skip to a failure because the things it guards -- Maven,
+/// a JDK that accepts `TARGET_RELEASE`, a container runtime, git -- are all
+/// things a machine can be given, so a run that silently omits that tier is
+/// hiding a fixable gap. That reasoning does not reach a property of the
+/// *user*: nothing installs "is not root", and the one test guarded this way
+/// needs a directory whose mode bits actually refuse a write, which root
+/// bypasses through `CAP_DAC_OVERRIDE`.
+///
+/// Promoting that to a failure would make the gate permanently red anywhere
+/// the suite runs as root -- every Claude Code on the web session, among
+/// others -- and a gate that is always red is a gate people learn to pass
+/// with `--no-verify`. It still prints, loudly and with the same prefix, so a
+/// run that lost this coverage says so.
+///
+/// **Use it only where no installation could satisfy the precondition.** A
+/// missing tool is `skip`.
+#[track_caller]
+pub fn skip_unsupported_environment(reason: &str) {
+    eprintln!("skipping (this environment cannot express the precondition): {reason}");
+}
+
 pub fn real_mvn_available() -> bool {
     real_path_dirs().any(|dir| dir.join("mvn").is_file())
 }

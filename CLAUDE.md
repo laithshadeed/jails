@@ -915,6 +915,27 @@ jails'. `deps.tsv` and `deps-update.sh` at the repo root *are* tracked.
 mise run verify-rewrite && cargo install --path .
 ```
 
+**A Claude Code on the web session provisions itself.**
+`.claude/hooks/session-start.sh` runs before the session starts and installs
+what the gate needs: mise and the toolchain `mise.toml` pins, JDK 21 beside it
+for the one pinned-Gradle example test, a container engine, and the sandbox's
+interception CAs. It is remote-only (`CLAUDE_CODE_REMOTE`) and touches nothing
+in the repository, so a laptop is unaffected.
+
+**The CA half is the part that will be got wrong again.** The sandbox
+intercepts TLS with *six* CAs; `/root/.ccr/agent-proxy-ca.crt` carries two of
+them and `ca-bundle.crt` carries all of them. Trusting the two passes a
+hand-run `mvn` and then fails inside a parallel suite, because which CA signs a
+connection varies -- so it reads as flaky infrastructure and is not. The hook
+imports every certificate in the bundle the JDK does not already trust,
+diffed by SHA-256 fingerprint, naming no issuer. It cannot merely point the
+JDK at the bundle: `real_maven_cmd` *replaces* `JAVA_TOOL_OPTIONS` with its
+own GC flags, which is where the environment had put the truststore.
+
+Before it existed a web session ran two of the three tiers and said so
+nowhere: `javac` rejected `--release 26`, ~50 tier-3 tests went red, and the
+Stop hook ran `mise run verify-rewrite` into a command that was not installed.
+
 **There is one answer to "is this green", and this is it.** `verify-rewrite`
 is `simplify-sol.md`'s G0 gate, and `.githooks/pre-push` and
 `.github/workflows/verify-rewrite.yml` invoke it and nothing else, so the hook,

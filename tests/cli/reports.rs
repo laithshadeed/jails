@@ -452,7 +452,11 @@ fn doctor_names_an_interrupted_transaction_and_repair_declines_to_adopt_it() {
     if !a_read_only_directory_refuses_a_write(&root) {
         // Root ignores the mode bits, and so do some filesystems. Probing is
         // the honest test: asserting on the uid would claim to know why.
-        common::skip("this user can write into a read-only directory");
+        //
+        // Not `skip`: there is nothing to install here, so
+        // `JAILS_REQUIRE_TOOLCHAIN` must not turn it into a failure. See
+        // `skip_unsupported_environment`.
+        common::skip_unsupported_environment("this user can write into a read-only directory");
         return;
     }
     write_spring_fixture(&root);
