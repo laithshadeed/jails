@@ -406,6 +406,66 @@ entity Tx {
     );
 }
 
+/// A CLI name in lower camel case is the Java type it names.
+///
+/// `jails g enum currency GBP EUR` writes `Currency.java` on the legacy path,
+/// and every later generator saying `currency:Currency` resolves against it --
+/// which is the whole of
+/// `generators_compose_through_user_owned_field_types`. The canonical model
+/// requires a real Java type name for `java_name` and refused the lower-camel
+/// spelling outright, so one command produced a project on one engine and a
+/// diagnostic on the other.
+///
+/// Fixed in the frontend rather than by loosening the model: `java_name` is a
+/// projection the model is right to hold to, and resolving what the reader
+/// typed is what CLI sugar is for. It is where the legacy path does it too.
+#[test]
+fn a_lower_camel_name_becomes_the_java_type_it_names() {
+    let root = jdl_project(
+        "jdl-v1-lower-camel-name",
+        r#"jdl 1
+app Gym {
+ pkg com.example.gym
+ java 26
+ platform plain
+ build maven
+ storage none
+}
+"#,
+    );
+    write_plain_fixture(&root);
+
+    for arguments in [
+        &["g", "enum", "currency", "GBP", "EUR"][..],
+        &["g", "record", "sourceRef", "system:string"][..],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{arguments:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let base = root.join(".jails/generated/main/java/com/example/gym/domain");
+    assert!(base.join("Currency.java").is_file());
+    assert!(base.join("SourceRef.java").is_file());
+
+    // And the point of the capitalisation: another generator can now name
+    // those types, which is what it means for generators to compose.
+    let composed = jails_cmd(&root, None)
+        .args(["g", "value", "money", "amount:long", "currency:Currency"])
+        .output()
+        .unwrap();
+    assert!(
+        composed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&composed.stderr)
+    );
+    let value = fs::read_to_string(base.join("Money.java")).unwrap();
+    assert!(value.contains("Currency currency"), "{value}");
+}
+
 #[test]
 fn model_fmt_keeps_typed_field_semantics_and_refuses_invalid_rules_atomically() {
     let root = jdl_project(

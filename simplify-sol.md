@@ -2292,6 +2292,37 @@ avoided runs the whole canonical loop. `g record`, `g field`, and `add csv`,
 `.jails/generated`, created no legacy ledger, and `mvn clean verify` passed on
 the result. The compiler is ready for this; `new` is what is not.
 
+## What "39 of 39" does not say (2026-08-30, measured)
+
+**A generator being on the canonical path means it has a backend, not that its
+backend does what the legacy one did.** `canonical_support::registry_classifies_
+every_advertised_word` counts backends, and it is right to; it is not a parity
+gate and nothing else is one either. Probing found two gaps that every existing
+test agreed was fine:
+
+- **`g strategy` refused on a plain project.** `refuse.rs` grouped `Strategy`
+  with `Service` and `Controller` and rejected all three without Spring, while
+  `CLAUDE.md` records that "plain-Maven projects get the same layout with no
+  annotation" and the legacy generator has always emitted one there. Fixed.
+- **`g record`, `g value` and `g enum` emit no companion test.** The legacy
+  path writes `<Name>Test.java` beside every one of them, `@Disabled` and
+  naming the component when a sample cannot be built -- `CLAUDE.md` is explicit
+  that "emitting nothing would silently drop coverage". The canonical emitter
+  emits nothing. **Open**, and it is what gates the `new` switch: flipping it
+  today would make every new project quietly stop generating tests.
+
+**Both were invisible to the differential gate, and the reason is worth
+keeping.** G1 compares what it was told to compare -- for the iterative record
+scenario, the record's own source file -- so an artifact the canonical side
+never writes is not a difference it can see. A differential suite proves the
+files it names agree; it says nothing about a file only one side produces. The
+same blind spot hid `g strategy`, whose plain-project shape no scenario runs.
+
+So the cutover needs a parity gate that is not a spot check: for each advertised
+generator, on each fixture shape, the *set* of artifacts both engines write
+should be compared before their bytes are. That is a cheaper thing to build
+than the deletion it protects.
+
 ## Concrete deletion map
 
 | Current area | Destination | Eventual deletion/simplification |

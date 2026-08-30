@@ -269,7 +269,30 @@ fn operation_declaration(
     Ok(output)
 }
 
-fn run_entity(args: GenerateArgs, invocation: Invocation) -> Result<()> {
+/// A CLI name, as the Java type it names.
+///
+/// `jails g enum currency GBP EUR` writes `Currency.java` on the legacy path
+/// and every generator that later says `currency:Currency` resolves against
+/// it -- which is the whole of
+/// `generators_compose_through_user_owned_field_types`. The canonical model
+/// requires a real Java type name and refused the lower-camel spelling
+/// outright, so the same command produced a project on one engine and a
+/// diagnostic on the other.
+///
+/// Capitalising here rather than loosening the model: `java_name` is a
+/// projection the model is right to hold to, and this is the CLI sugar
+/// resolving what the reader typed, which is where the legacy path does it
+/// too.
+fn java_type_name(name: &str) -> String {
+    let mut characters = name.chars();
+    match characters.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + characters.as_str(),
+        None => String::new(),
+    }
+}
+
+fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
+    args.name = java_type_name(&args.name);
     model_generate::validate_entity_args(&args)?;
     let model_path = PathBuf::from(MODEL_PATH);
     let current_source = read_model()?;
