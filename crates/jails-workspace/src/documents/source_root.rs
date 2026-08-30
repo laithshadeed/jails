@@ -41,7 +41,7 @@ pub(crate) fn ensure_maven_source_roots(
     text: &str,
     roots: &[jails_contracts::MavenSourceRoot],
 ) -> Result<String, String> {
-    let mut text = strip_source_root_blocks(text)?;
+    let (mut text, was_at) = strip_source_root_blocks(text)?;
     if roots.is_empty() {
         return Ok(text);
     }
@@ -99,6 +99,19 @@ pub(crate) fn ensure_maven_source_roots(
     plugin.push_str(&close);
     plugin.push('\n');
 
+    // **Back where it was, when it was already there.** This block is rebuilt
+    // from the model on every run, and reinserting it before `</plugins>`
+    // moved it to the end whenever another marked block had been appended
+    // after it -- so `add coverage` or `add format` left the next `sync`
+    // rewriting `pom.xml` purely to reorder two comments. An adapter whose
+    // whole contract is "preserve every other byte" cannot also be the reason
+    // a reader-owned file churns.
+    if let Some(at) = was_at {
+        let indent = direct_child_close(&text, &["project", "build", "plugins"])
+            .and_then(|close| line_indent(&text, close))
+            .map_or_else(|| "            ".to_string(), |parent| format!("{parent}    "));
+        return Ok(insert_at_line(&text, at, &indent_block(&plugin, &indent)));
+    }
     if let Some(at) = direct_child_close(&text, &["project", "build", "plugins"]) {
         return Ok(insert_indented_block(&text, at, &plugin, 0));
     }
@@ -133,23 +146,26 @@ pub(crate) fn ensure_maven_source_roots(
 /// "Owns" is decided by the paths inside: every `<source>`/`<directory>` in
 /// the block must be under the managed root. A block naming anything else is
 /// not jails' to delete, and saying so beats silently dropping it.
-fn strip_source_root_blocks(text: &str) -> Result<String, String> {
+fn strip_source_root_blocks(text: &str) -> Result<(String, Option<usize>), String> {
     let mut text = text.to_string();
-    // The combined block first, then every legacy per-set one. `owned_block`
-    // matches `<!-- {marker} -->` including the trailing ` -->`, so the
-    // singular legacy marker cannot match inside the plural combined one.
-    let mut markers = vec![ROOTS_MARKER.to_string()];
-    markers.extend(
-        [
-            jails_contracts::JavaSourceSet::Main,
-            jails_contracts::JavaSourceSet::Test,
-            jails_contracts::JavaSourceSet::MainResources,
-            jails_contracts::JavaSourceSet::TestResources,
-        ]
-        .into_iter()
-        .map(|source_set| format!("{MARKER}:{}", source_set_label(source_set))),
-    );
+    let mut was_at = None;
+    // Every legacy per-set block first, then the combined one, so the offset
+    // recorded for the combined block is an offset into the text the caller
+    // will insert into. `owned_block` matches `<!-- {marker} -->` including
+    // the trailing ` -->`, so the singular legacy marker cannot match inside
+    // the plural combined one.
+    let mut markers = [
+        jails_contracts::JavaSourceSet::Main,
+        jails_contracts::JavaSourceSet::Test,
+        jails_contracts::JavaSourceSet::MainResources,
+        jails_contracts::JavaSourceSet::TestResources,
+    ]
+    .into_iter()
+    .map(|source_set| format!("{MARKER}:{}", source_set_label(source_set)))
+    .collect::<Vec<_>>();
+    markers.push(ROOTS_MARKER.to_string());
     for marker in markers {
+        let combined = marker == ROOTS_MARKER;
         let open = format!("<!-- {marker} -->");
         let close = format!("<!-- /{marker} -->");
         while let Some(block) = owned_block(&text, &open, &close)? {
@@ -171,9 +187,12 @@ fn strip_source_root_blocks(text: &str) -> Result<String, String> {
                 start
             };
             text.replace_range(head..end, "");
+            if combined {
+                was_at = Some(head);
+            }
         }
     }
-    Ok(text)
+    Ok((text, was_at))
 }
 
 /// The paths a source-root block declares, from either element it can use.

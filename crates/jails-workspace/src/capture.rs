@@ -285,7 +285,8 @@ fn spring_boot_version(root: &Path, build_system: BuildSystem) -> Option<String>
                 .map(str::trim)
                 .map(str::to_string)
         }
-        BuildSystem::Gradle => gradle_spring_boot_version(&source),
+        BuildSystem::Gradle => gradle_spring_boot_version(&source)
+            .or_else(|| gradle_catalog_spring_boot_version(root, &source)),
         BuildSystem::Unknown => None,
     }
 }
@@ -303,6 +304,59 @@ fn gradle_spring_boot_version(source: &str) -> Option<String> {
         return quoted(version);
     }
     None
+}
+
+/// The Boot version a version catalog declares, for a build that aliases its
+/// plugins instead of spelling the id.
+///
+/// **A catalog alias is the Gradle-recommended way to declare a plugin**, and
+/// reading only `id 'org.springframework.boot' version '...'` reported a Boot
+/// project as not-Spring: `storage postgres` then refused with "add Spring
+/// Boot to the build" at a build that has it, and every Spring capability
+/// refused with it. Gradle support exists for an adopted project, which is
+/// exactly the shape most likely to use a catalog.
+///
+/// Deliberately small, the same way `classfile.rs` is: find the alias in the
+/// build script, find the plugin entry it names in `gradle/libs.versions.toml`,
+/// and read either its literal `version` or the `version.ref` it points at.
+/// Anything else -- a settings-block catalog, a published catalog, a computed
+/// version -- is not answered rather than guessed.
+fn gradle_catalog_spring_boot_version(root: &Path, source: &str) -> Option<String> {
+    let alias = catalog_alias(source, "org.springframework.boot")?;
+    let catalog = std::fs::read_to_string(root.join("gradle/libs.versions.toml")).ok()?;
+    let document: toml::Table = toml::from_str(&catalog).ok()?;
+    let entry = document.get("plugins")?.get(&alias)?;
+    if entry.get("id")?.as_str()? != "org.springframework.boot" {
+        return None;
+    }
+    if let Some(version) = entry.get("version").and_then(toml::Value::as_str) {
+        return Some(version.to_string());
+    }
+    // `version.ref = "x"` is a dotted key, so it arrives as a nested table
+    // rather than as a key literally named `version.ref`.
+    let reference = entry.get("version")?.get("ref")?.as_str()?;
+    document
+        .get("versions")?
+        .get(reference)?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// The catalog key an `alias(libs.plugins.<key>)` line names, when the catalog
+/// entry for it is the plugin asked about.
+///
+/// Only the alias is read here -- whether it *is* that plugin is decided by
+/// the catalog, above, so a project whose alias happens to be spelled like
+/// another plugin's is answered by what the catalog says rather than by the
+/// name.
+fn catalog_alias(source: &str, _plugin: &str) -> Option<String> {
+    source.lines().find_map(|line| {
+        let line = line.trim();
+        let rest = line.strip_prefix("alias(")?;
+        let inner = rest.split(')').next()?.trim();
+        let key = inner.strip_prefix("libs.plugins.")?;
+        (!key.is_empty()).then(|| key.replace('.', "-"))
+    })
 }
 
 fn between<'a>(source: &'a str, start: &str, end: &str) -> Option<&'a str> {
@@ -639,5 +693,27 @@ dialect = "postgresql"
 
         let error = decode_compiler_lock(&bytes).unwrap_err();
         assert!(error.contains("accepted projection"), "{error}");
+    }
+}
+
+#[cfg(test)]
+mod catalog_tests {
+    use super::*;
+
+    /// A Gradle build that aliases its plugins is still a Spring Boot project.
+    #[test]
+    fn a_version_catalog_alias_resolves_to_the_boot_version() {
+        let scratch = tempfile::tempdir().expect("a scratch directory");
+        std::fs::create_dir_all(scratch.path().join("gradle")).expect("a gradle directory");
+        std::fs::write(
+            scratch.path().join("gradle/libs.versions.toml"),
+            "[versions]\nspringBoot = \"4.1.0\"\n[plugins]\nspringBoot = { id = \"org.springframework.boot\", version.ref = \"springBoot\" }\n",
+        )
+        .expect("a catalog");
+        let build = "plugins {\n    id 'java'\n    alias(libs.plugins.springBoot)\n}\n";
+        assert_eq!(
+            gradle_catalog_spring_boot_version(scratch.path(), build),
+            Some("4.1.0".to_string())
+        );
     }
 }

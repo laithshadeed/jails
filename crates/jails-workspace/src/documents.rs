@@ -383,6 +383,7 @@ pub(crate) fn reconcile_gradle_dependencies(
 ) -> Result<String, String> {
     let open = format!("// {DEPENDENCY_MARKER}");
     let close = format!("// /{DEPENDENCY_MARKER}");
+    refuse_unmanaged_gradle_versions(text, dependencies)?;
     let body = gradle_dependency_block(dependencies, kotlin);
     if let Some(replaced) = replace_owned_block(text, &open, &close, body.as_deref())? {
         return Ok(replaced);
@@ -404,6 +405,50 @@ pub(crate) fn reconcile_gradle_dependencies(
         "\n"
     };
     Ok(format!("{text}{separator}\n{block}"))
+}
+
+/// Refuse to write a versionless Gradle coordinate into a build that manages
+/// no versions.
+///
+/// **Maven gets this guarantee from capture and Gradle does not.** A
+/// `<dependency>` with no `<version>` is correct under
+/// `spring-boot-starter-parent`, and `spring_boot_version` requires exactly
+/// that parent before reporting a Maven project as Spring -- so a versionless
+/// Maven coordinate is always managed. The Gradle answer is only "the Boot
+/// plugin is applied", which does *not* imply dependency management: that is
+/// `io.spring.dependency-management`, or a `platform(...)` BOM the build
+/// declares itself. Without one, Gradle cannot resolve the coordinate and the
+/// build fails on a line the reader did not write -- the same trap
+/// `compiler/storage.rs` was written to close, reached from the other side.
+fn refuse_unmanaged_gradle_versions(
+    text: &str,
+    dependencies: &[jails_contracts::BuildDependency],
+) -> Result<(), String> {
+    let unmanaged = dependencies
+        .iter()
+        .filter(|dependency| dependency.version.is_none())
+        .map(|dependency| format!("{}:{}", dependency.group, dependency.artifact))
+        .collect::<Vec<_>>();
+    if unmanaged.is_empty() || gradle_manages_versions(text) {
+        return Ok(());
+    }
+    Err(format!(
+        "this Gradle build manages no dependency versions, so `{}` would not resolve
+       fix: apply `io.spring.dependency-management`, or declare the `org.springframework.boot:spring-boot-dependencies` platform",
+        unmanaged.join("`, `")
+    ))
+}
+
+/// Whether this Gradle build has something that supplies versions.
+///
+/// Deliberately a recognition rather than an evaluation, the same rule
+/// `build.rs` states for build files: recognising a plugin id or a platform
+/// coordinate is not understanding a build script, and anything it cannot
+/// recognise is refused rather than guessed.
+fn gradle_manages_versions(text: &str) -> bool {
+    ["io.spring.dependency-management", "spring-boot-dependencies"]
+        .iter()
+        .any(|marker| text.contains(marker))
 }
 
 fn maven_dependency_block(dependencies: &[jails_contracts::BuildDependency]) -> Option<String> {
