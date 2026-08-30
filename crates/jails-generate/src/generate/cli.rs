@@ -13,53 +13,9 @@ use super::*;
 // a Hello World `main` and no pattern for growing past it. ----
 
 pub(super) fn command_java(pkg: &str, name: &str) -> String {
-    let word = name.to_lowercase();
-    format!(
-        r#"package {pkg};
-
-import java.io.PrintStream;
-
-/**
- * The {{@code {word}}} subcommand.
- *
- * <p>{{@link #run}} returns an exit code instead of calling
- * {{@code System.exit}}, and takes its output streams as arguments instead of
- * reaching for {{@code System.out}}. Both exist so a test can drive the whole
- * command in-process and assert on what it printed. Keep {{@code main}} the
- * only place that exits.
- *
- * <p>jails registered this in the project's dispatcher when it generated the
- * class, so {{@code {word}}} already works. If you need to do it by hand -- a
- * second dispatcher, or one jails could not find -- the line is:
- *
- * <pre>{{@code
- * commands.put({name}Command.NAME, {name}Command::run);
- * }}</pre>
- */
-public final class {name}Command {{
-
-    /** The word that selects this command on the command line. */
-    public static final String NAME = "{word}";
-
-    public static final String USAGE = "usage: {word} <argument>";
-
-    /** Conventional exit code for "you invoked this wrong". */
-    public static final int USAGE_ERROR = 2;
-
-    private {name}Command() {{}}
-
-    /** Runs the command, returning the exit code the process should end with. */
-    public static int run(PrintStream out, PrintStream err, String... args) {{
-        if (args.length != 1) {{
-            err.println(USAGE);
-            return USAGE_ERROR;
-        }}
-
-        out.println(args[0]);
-        return 0;
-    }}
-}}
-"#
+    crate::template::render(
+        crate::template_here!("spring/command_java.java"),
+        &[("pkg", pkg), ("name", name), ("word", &name.to_lowercase())],
     )
 }
 
@@ -73,177 +29,16 @@ pub(super) fn command_test(pkg: &str, name: &str) -> String {
 // ---- cli: the dispatcher that `generate command` leaves you to write. ----
 
 pub fn cli_java(pkg: &str, class: &str, program: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import java.io.PrintStream;
-import java.util.LinkedHashMap;
-import java.util.SequencedMap;
-
-/**
- * Argv dispatch for the {program} command line: it owns argument routing, exit
- * codes and streams, and nothing else.
- *
- * <p>The registry is a parameter of {{@link #run}}, not a static the method
- * reaches for. That is what lets a test drive the whole dispatcher with its own
- * commands, without a real one existing and without touching
- * {{@code System.out}}. {{@link #commands()}} is the one place to edit as you add
- * commands; {{@code main}} is the only place that exits.
- *
- * {{@snippet :
- * var out = new ByteArrayOutputStream();
- * int code = {class}.run({class}.commands(), new PrintStream(out), System.err, "greet", "world");
- * }}
- */
-public final class {class} {{
-
-    /**
-     * One subcommand. Matches the shape {{@code jails generate command}} emits,
-     * so {{@code SomethingCommand::run}} is a method reference away.
-     */
-    @FunctionalInterface
-    public interface Command {{
-        int run(PrintStream out, PrintStream err, String... args);
-    }}
-
-    /** Conventional exit code for "you invoked this wrong". */
-    public static final int USAGE_ERROR = 2;
-
-    private {class}() {{}}
-
-    /**
-     * The commands this CLI answers to, in the order they should be listed.
-     *
-     * <p>Add yours here -- a {{@code SequencedMap}} because help output that
-     * reorders itself between runs is a diff nobody wants:
-     *
-     * {{@snippet :
-     * commands.put(ImportCommand.NAME, ImportCommand::run);
-     * }}
-     */
-    public static SequencedMap<String, Command> commands() {{
-        var commands = new LinkedHashMap<String, Command>();
-        return commands;
-    }}
-
-    /** Runs one invocation and returns the exit code the process should end with. */
-    public static int run(SequencedMap<String, Command> commands, PrintStream out, PrintStream err, String... args) {{
-        var name = args.length == 0 ? "help" : args[0];
-
-        if (name.equals("help") || name.equals("--help") || name.equals("-h")) {{
-            usage(commands, out);
-            return 0;
-        }}
-
-        var command = commands.get(name);
-        if (command == null) {{
-            err.println("unknown command: " + name);
-            usage(commands, err);
-            return USAGE_ERROR;
-        }}
-
-        // Everything after the command word belongs to the command itself.
-        var rest = new String[args.length - 1];
-        System.arraycopy(args, 1, rest, 0, rest.length);
-        return command.run(out, err, rest);
-    }}
-
-    private static void usage(SequencedMap<String, Command> commands, PrintStream to) {{
-        to.println("usage: {program} <command> [args]");
-        to.println();
-        to.println("commands:");
-        to.println("  help");
-        commands.keySet().forEach(name -> to.println("  " + name));
-    }}
-
-    public static void main(String[] args) {{
-        System.exit(run(commands(), System.out, System.err, args));
-    }}
-}}
-"#,
-        program = program,
+    crate::template::render(
+        crate::template_here!("spring/cli_java.java"),
+        &[("pkg", pkg), ("class", class), ("program", program)],
     )
 }
 
 pub fn cli_test(pkg: &str, class: &str) -> String {
-    format!(
-        r#"package {pkg};
-
-import org.junit.jupiter.api.Test;
-
-import java.io.ByteArrayOutputStream;
-import java.io.PrintStream;
-import java.util.LinkedHashMap;
-import java.util.SequencedMap;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-class {class}Test {{
-
-    private final ByteArrayOutputStream out = new ByteArrayOutputStream();
-    private final ByteArrayOutputStream err = new ByteArrayOutputStream();
-
-    /**
-     * A registry of test doubles. Because {{@code run}} takes the commands as an
-     * argument, the dispatcher is testable on its own -- these assertions hold
-     * before a single real command exists.
-     */
-    private SequencedMap<String, {class}.Command> commands() {{
-        var commands = new LinkedHashMap<String, {class}.Command>();
-        commands.put("echo", (out, err, args) -> {{
-            out.println(String.join(" ", args));
-            return 0;
-        }});
-        commands.put("boom", (out, err, args) -> {{
-            err.println("failed");
-            return 1;
-        }});
-        return commands;
-    }}
-
-    private int run(String... args) {{
-        return {class}.run(commands(), new PrintStream(out), new PrintStream(err), args);
-    }}
-
-    @Test
-    void routesToTheNamedCommandAndPassesTheRestOfArgv() {{
-        assertThat(run("echo", "hello", "world")).isZero();
-        assertThat(out.toString()).contains("hello world");
-    }}
-
-    @Test
-    void returnsWhateverTheCommandReturned() {{
-        assertThat(run("boom")).isEqualTo(1);
-        assertThat(err.toString()).contains("failed");
-    }}
-
-    @Test
-    void listsEveryCommandInHelp() {{
-        assertThat(run("help")).isZero();
-        assertThat(out.toString()).contains("echo").contains("boom");
-    }}
-
-    @Test
-    void treatsNoArgumentsAsHelpRatherThanAnError() {{
-        assertThat(run()).isZero();
-        assertThat(out.toString()).contains("usage:");
-    }}
-
-    @Test
-    void namesTheUnknownCommandAndExitsTwo() {{
-        assertThat(run("nope")).isEqualTo({class}.USAGE_ERROR);
-        assertThat(err.toString()).contains("nope");
-    }}
-
-    /** Help ordering is part of the contract, hence SequencedMap. */
-    @Test
-    void listsCommandsInRegistrationOrder() {{
-        run("help");
-        var text = out.toString();
-        assertThat(text.indexOf("echo")).isLessThan(text.indexOf("boom"));
-    }}
-}}
-"#
+    crate::template::render(
+        crate::template_here!("spring/cli_test_java.java"),
+        &[("pkg", pkg), ("class", class)],
     )
 }
 

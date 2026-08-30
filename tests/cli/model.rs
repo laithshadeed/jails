@@ -877,13 +877,7 @@ app Notes {
     // that the CLI exited zero, which is exactly how `audit.md` A1.2 stayed
     // invisible: fourteen of these wrote a declaration, reported success, and
     // emitted nothing at all.
-    const UNSERVED: &[&str] = &[
-        "command",
-        "cli",
-        "http-workflow",
-        "http-sink",
-        "durable-job",
-    ];
+    const UNSERVED: &[&str] = &["http-workflow", "http-sink", "durable-job"];
     for command in commands {
         let output = jails_cmd(&root, None).args(&command).output().unwrap();
         if UNSERVED.contains(&command[1]) {
@@ -11316,4 +11310,105 @@ fn canonical_presence_refuses_without_storage_then_shares_the_scheduler() {
     let sql = fs::read_to_string(&migration).unwrap();
     assert!(sql.contains("primary key (scope, member, node)"), "{sql}");
     assert!(!sql.contains("left_at"), "{sql}");
+}
+
+/// `g cli` and `g command` on a canonical project.
+///
+/// Two reader-owned files are edited here and both are surgical: the command
+/// registers itself in the dispatcher rather than leaving a paste instruction
+/// in a Javadoc, and the packaged jar is pointed at the new dispatcher — but
+/// only because the POM still names the `App` stub jails wrote and that stub
+/// registers nothing. A project with two dispatchers has two `main` methods,
+/// and a search of the source picks whichever the walk reaches first, which is
+/// how a jar and `jails run` came to start different classes.
+#[test]
+fn canonical_cli_registers_its_commands_and_claims_the_entry_point() {
+    let root = temp_dir("canonical-cli");
+    write_plain_fixture(&root);
+    // The fixture declares no entry point, and a POM that names none is a
+    // decision jails leaves alone. This one names the `App` stub, which is the
+    // only case the claim applies to.
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    fs::write(
+        root.join("pom.xml"),
+        pom.replace(
+            "<properties>",
+            "<properties>\n        <mainClass>com.example.demo.App</mainClass>",
+        ),
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("src/main/java/com/example/demo")).unwrap();
+    fs::write(
+        root.join("src/main/java/com/example/demo/App.java"),
+        "package com.example.demo;\n\n\
+         import java.util.SequencedMap;\n\n\
+         public final class App {\n\
+         \x20   static SequencedMap<String, Command> commands() {\n\
+         \x20       var commands = new java.util.LinkedHashMap<String, Command>();\n\
+         \x20       return commands;\n\
+         \x20   }\n\
+         }\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+         platform plain\n  build maven\n  storage none\n}\n",
+    )
+    .unwrap();
+
+    for command in [
+        ["g", "cli", "Admin"].as_slice(),
+        ["g", "command", "Greet"].as_slice(),
+    ] {
+        let output = jails_cmd(&root, None).args(command).output().unwrap();
+        assert!(
+            output.status.success(),
+            "`jails {}`: {}",
+            command.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    for relative in [
+        ".jails/generated/main/java/com/example/demo/cli/AdminCli.java",
+        ".jails/generated/test/java/com/example/demo/cli/AdminCliTest.java",
+        ".jails/generated/main/java/com/example/demo/cli/GreetCommand.java",
+        ".jails/generated/test/java/com/example/demo/cli/GreetCommandTest.java",
+    ] {
+        assert!(root.join(relative).exists(), "`{relative}` was not written");
+    }
+
+    // The command registered itself into the dispatcher the project already
+    // had, with the import its different package needs.
+    let app = fs::read_to_string(root.join("src/main/java/com/example/demo/App.java")).unwrap();
+    assert!(
+        app.contains("commands.put(GreetCommand.NAME, GreetCommand::run);"),
+        "{app}"
+    );
+    assert!(
+        app.contains("import com.example.demo.cli.GreetCommand;"),
+        "{app}"
+    );
+
+    // The stub registered nothing when `g cli` ran, so the jar moved.
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(
+        pom.contains("<mainClass>com.example.demo.cli.AdminCli</mainClass>"),
+        "{pom}"
+    );
+
+    // Splicing twice must not stack.
+    let before = app.clone();
+    let resync = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        resync.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resync.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("src/main/java/com/example/demo/App.java")).unwrap(),
+        before
+    );
 }

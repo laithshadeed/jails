@@ -88,14 +88,14 @@ looked and still worth removing.
 
 ## A1 — coverage
 
-### A1.1 Thirty of thirty-nine generators
+### A1.1 Thirty-two of thirty-nine generators
 
 `src/canonical_support.rs` is the authority and is honest code: an exhaustive
 match that stops compiling when a clap variant is added. Its own test pins
-30/39. Capabilities are closed at 25/25.
+32/39. Capabilities are closed at 25/25.
 
-Still legacy: `migration`, `command`, `cli`, `http-workflow`, `association`,
-`http-sink`, `search`, `durable-job`, `seed`.
+Still legacy: `migration`, `http-workflow`, `association`, `http-sink`,
+`search`, `durable-job`, `seed`.
 
 **The table gates the `.jails/model.toml` route only.** A project on
 `.jails/model.jdl` goes straight to the JDL frontend, which refuses an
@@ -104,14 +104,9 @@ compatibility input's router at once, and a kind marked `Compatibility` that
 the compiler actually emits under-reports — which `cases` did for a while
 after its backend landed.
 
-`command` and `cli` are blocked on **A1.5** rather than on an emitter: both
-register themselves in the project's dispatcher, which is a
-`CommandRegistration` reader-file patch the canonical path has no operation
-for yet.
-
 **Eight of the framework-shaped component kinds are through `emit_component`
 now** — `client`, `fetcher`, `job`, `socket`, `webhook`, `auth`,
-`idempotency`, `handler` and `presence` — **and it is the pattern the rest follow.** `idempotency` added
+`idempotency`, `handler`, `presence`, `command` and `cli` — **and it is the pattern the rest follow.** `idempotency` added
 the migration seam the four remaining storage-backed kinds need: a component's
 forward migration is emitted only for a component the accepted model does not
 have, because a migration is irreproducible and re-emitting it appends a
@@ -176,13 +171,15 @@ vocabulary.
 | `Property` | `DocumentIntent::ReconcileProperties` |
 | migration history | `PlannedOperation::AppendMigration` |
 | `MarkedBlock { path, marker }` | **none** — only compose is modelled |
-| `CommandRegistration { dispatcher, command }` | **none** |
+| `CommandRegistration { dispatcher, command }` | `DocumentIntent::EnsureCommandRegistration` |
 | `SpringTestImport { path, class }` | `DocumentIntent::EnsureSpringTestImport` |
-| `MavenMainClass(ProjectPath)` | **none** |
+| `MavenMainClass(ProjectPath)` | `DocumentIntent::SetMavenMainClass` |
 | `Query(QueryId)` | **none** |
 
-The four missing ones are exactly the surgical edits into reader-owned files —
-the hardest category.
+The two missing ones are `MarkedBlock` — only compose is modelled — and
+`Query`. The three that were the hardest category are closed: the container
+`@Import`, the dispatcher registration and the entry-point claim are all
+`DocumentIntent`s now, and all three follow one rule.
 
 **`storage postgres` is closed.** It writes `TestcontainersConfig`, the three
 Testcontainers dependencies, `spring.datasource.*`, the two settings that are

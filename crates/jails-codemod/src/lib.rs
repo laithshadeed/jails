@@ -14,7 +14,12 @@
 //! `jails-workspace`. They were not careless: neither crate depends on
 //! `jails-project`, so there was nothing to reuse.
 //!
-//! [`annotate`] and [`tidy`] arrived the same way and for the same reason.
+//! [`dispatch`] is the other splice: one line above `return commands;`, which
+//! is how `g command` registers itself in a project's CLI dispatcher rather
+//! than leaving a paste instruction in a Javadoc.
+//!
+//! [`annotate`], [`dispatch`] and [`tidy`] arrived the same way and for the
+//! same reason.
 //! They lived in `jails-java`, which no canonical crate may depend on, and
 //! `jails-workspace` needed the `@Import` splice to give a canonical
 //! `storage postgres` project the test wiring its build cannot start without.
@@ -29,6 +34,7 @@
 //! capability is.
 
 pub mod annotate;
+pub mod dispatch;
 pub mod marked;
 pub mod text;
 pub mod tidy;

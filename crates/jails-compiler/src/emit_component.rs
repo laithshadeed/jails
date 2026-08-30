@@ -26,7 +26,9 @@ use jails_model::{
 use std::collections::BTreeSet;
 
 mod auth;
+mod cli;
 mod client;
+mod command;
 mod fetcher;
 mod handler;
 mod idempotency;
@@ -51,6 +53,8 @@ pub(crate) fn lower_and_emit(
             ComponentKind::Idempotency => idempotency::files(model, component)?,
             ComponentKind::Handler => handler::files(model, component)?,
             ComponentKind::Presence => presence::files(model, component)?,
+            ComponentKind::Command => command::files(model, component)?,
+            ComponentKind::Cli => cli::files(model, component)?,
             ComponentKind::Socket => socket::files(model, component)?,
             ComponentKind::Webhook => webhook::files(model, component)?,
             _ => continue,
@@ -88,6 +92,11 @@ pub(crate) fn migrations(
     let mut migrations = idempotency::migrations(accepted, next);
     migrations.extend(presence::migrations(accepted, next));
     migrations
+}
+
+/// The entry point a `cli` component may claim, if jails may claim one.
+pub(crate) fn entry_point(snapshot: &jails_contracts::WorkspaceSnapshot) -> Option<String> {
+    cli::entry_point(snapshot)
 }
 
 /// Whether this model has SQL storage, which several components require.

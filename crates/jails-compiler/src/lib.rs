@@ -585,6 +585,20 @@ impl Compiler {
                 package: next_model.project.package_for(jails_model::Package::Base),
             });
         }
+        // The dispatcher registration for every command in the model. Like the
+        // container `@Import`, it names no path: which file is the dispatcher
+        // is an observation, and the materializer reads it off the snapshot.
+        for component in next_model.components.values() {
+            if component.kind == jails_model::ComponentKind::Command {
+                reader_document_intents.push(DocumentIntent::EnsureCommandRegistration {
+                    class: format!("{}Command", component.name),
+                    package: next_model.project.package_for(jails_model::Package::Cli),
+                });
+            }
+        }
+        if let Some(class) = emit_component::entry_point(snapshot) {
+            reader_document_intents.push(DocumentIntent::SetMavenMainClass { class });
+        }
         let summary = SemanticPlan {
             model_nodes: next_model.node_count(),
             managed_files: generated.files.len(),
@@ -688,7 +702,9 @@ const fn component_kind_is_emitted(kind: jails_model::ComponentKind) -> bool {
         // after review refuses the apply. A backend need not write a file.
         Kind::Cases => true,
         Kind::Auth
+        | Kind::Cli
         | Kind::Client
+        | Kind::Command
         | Kind::Handler
         | Kind::Fetcher
         | Kind::Idempotency
@@ -696,7 +712,7 @@ const fn component_kind_is_emitted(kind: jails_model::ComponentKind) -> bool {
         | Kind::Presence
         | Kind::Socket
         | Kind::Webhook => true,
-        Kind::Command | Kind::Cli | Kind::HttpWorkflow | Kind::HttpSink | Kind::DurableJob => false,
+        Kind::HttpWorkflow | Kind::HttpSink | Kind::DurableJob => false,
     }
 }
 
@@ -750,7 +766,7 @@ mod tests {
             .filter(|kind| super::component_kind_is_emitted(**kind))
             .count();
         assert_eq!(ComponentKind::ALL.len(), 23);
-        assert_eq!(emitted, 18, "eighteen kinds have a compiler backend today");
+        assert_eq!(emitted, 20, "twenty kinds have a compiler backend today");
 
         // The refusal is reachable, not merely written down.
         let model = jails_model::parse_jdl(

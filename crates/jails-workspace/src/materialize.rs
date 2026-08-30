@@ -309,6 +309,27 @@ fn materialize_document_intents(
                     })?;
                 }
             }
+            DocumentIntent::EnsureCommandRegistration { class, package } => {
+                // Silence is the right answer when there is no dispatcher, or
+                // more than one: the generated command's Javadoc carries the
+                // line to paste, and splicing into a file jails cannot
+                // uniquely identify is worse than saying nothing.
+                if let Some(path) = crate::documents::command_dispatcher(snapshot) {
+                    update_document(snapshot, &mut desired, path, |text| {
+                        Ok(crate::documents::ensure_command_registration(
+                            text, class, package,
+                        ))
+                    })?;
+                }
+            }
+            DocumentIntent::SetMavenMainClass { class } => {
+                update_document(
+                    snapshot,
+                    &mut desired,
+                    ProjectPath::parse("pom.xml")?,
+                    |text| Ok(crate::documents::set_maven_main_class(text, class)),
+                )?;
+            }
             DocumentIntent::ReconcileDependencies { dependencies } => {
                 match snapshot.project.build_system {
                     jails_contracts::BuildSystem::Maven => update_document(

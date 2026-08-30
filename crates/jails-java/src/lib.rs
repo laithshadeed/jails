@@ -16,10 +16,9 @@
 // dependencies at all, because `jails-workspace` needs the `@Import` splice
 // and no canonical crate may depend on this one. Every caller here is
 // unchanged.
-pub use jails_codemod::{annotate, tidy};
+pub use jails_codemod::{annotate, dispatch, tidy};
 
 pub mod classfile;
-pub mod dispatch;
 pub mod identifier;
 pub mod java;
 

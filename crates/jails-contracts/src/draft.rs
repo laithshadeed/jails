@@ -211,6 +211,32 @@ pub enum DocumentIntent {
         /// Its package, so a test in another one gets the import statement.
         package: String,
     },
+    /// Register a generated command in the project's CLI dispatcher.
+    ///
+    /// The dispatcher is found by *shape* rather than by filename — the
+    /// registry type plus the `return commands;` anchor — so both `App.java`
+    /// from `new-cli` and a `<Name>Cli.java` from `g cli` are found, and a
+    /// class that merely happens to be called `App` is not. Like
+    /// [`Self::EnsureSpringTestImport`] it names no path: which file is the
+    /// dispatcher is an observation, so the snapshot carries the candidates.
+    ///
+    /// Nothing is written when there is no dispatcher, or when there is more
+    /// than one: the generated command's Javadoc already carries the line to
+    /// paste, and splicing into a file jails cannot uniquely identify is worse
+    /// than saying nothing.
+    EnsureCommandRegistration {
+        /// The generated command's simple class name.
+        class: String,
+        /// Its package, so a dispatcher elsewhere gets the import statement.
+        package: String,
+    },
+    /// Point the packaged jar at a `cli` component this model declares.
+    ///
+    /// The compiler decides whether it *may* — see `emit_component::cli` — so
+    /// this intent existing at all means the claim is jails' to make.
+    SetMavenMainClass {
+        class: String,
+    },
     ReconcileDependencies {
         dependencies: Vec<BuildDependency>,
     },

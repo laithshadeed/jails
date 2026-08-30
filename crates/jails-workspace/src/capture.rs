@@ -11,6 +11,7 @@ use std::path::Path;
 
 const MANAGED_ROOT: &str = ".jails/generated";
 pub(crate) const MIGRATION_ROOT: &str = "src/main/resources/db/migration";
+const READER_MAIN_ROOT: &str = "src/main/java";
 const READER_TEST_ROOT: &str = "src/test/java";
 pub(crate) const COMPILER_LOCK: &str = ".jails/compiler.lock.json";
 const COMPILER_LOCK_SCHEMA_V1: &str = "jails.compiler-lock.v1";
@@ -126,6 +127,21 @@ fn capture_model_state(
     // Conditional because the cost is real. Every captured file is a
     // precondition, so capturing the test tree unconditionally would make an
     // edit to any unrelated test invalidate a reviewed plan.
+    // **The reader's main sources, when the model has a command.** The
+    // dispatcher `g command` registers into is found by shape, and which file
+    // has that shape is an observation -- same rule, same conditionality, and
+    // the same reason: every captured file is a precondition.
+    let reader_main = root.join(READER_MAIN_ROOT);
+    if reader_main.exists()
+        && model.components.values().any(|component| {
+            matches!(
+                component.kind,
+                jails_model::ComponentKind::Command | jails_model::ComponentKind::Cli
+            )
+        })
+    {
+        capture_tree(root, &reader_main, &mut files, &mut preconditions)?;
+    }
     let reader_tests = root.join(READER_TEST_ROOT);
     if reader_tests.exists()
         && model

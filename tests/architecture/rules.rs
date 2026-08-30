@@ -326,6 +326,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     // three more implementations of the marked block had appeared in crates
     // that could not depend on it.
     ("jails-codemod", "annotate", 0),
+    ("jails-codemod", "dispatch", 0),
     ("jails-codemod", "marked", 0),
     ("jails-codemod", "text", 0),
     ("jails-codemod", "tidy", 0),
@@ -338,7 +339,6 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-support", "lock", 0),
     // jails-java: reading Java and rendering templates into it.
     ("jails-java", "java", 1),
-    ("jails-java", "dispatch", 1),
     ("jails-java", "classfile", 1),
     ("jails-java", "identifier", 1),
     ("jails-java", "template", 1),
