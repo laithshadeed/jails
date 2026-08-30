@@ -1383,16 +1383,37 @@ run-tests: slowest cli 298.1s, engine 75.2s, architecture_allowances 45.6s,
 inside it and are free; nothing that speeds them up can show. Only `cli` has a
 critical path, so only `cli` has a budget.
 
-The trap underneath that is worse, and it invalidated a day of local work.
-`tests/cli`'s most expensive tests are the container-dependent ones -- whole
-generated applications verified against a real PostgreSQL and Kafka. On a
-machine with no Docker daemon they fail in milliseconds, so a local run
-measures the suite *minus* its critical path. Measured on this branch:
-`-DforkCount=0` took local `tests/cli` from 218s to 167s and took CI's from
-298s to 298s, because the 136s of Maven work it removed was never what CI was
-waiting for. Take a local `tests/cli` number as evidence about CI only with
-`JAILS_REQUIRE_TOOLCHAIN=1` **and** a container engine running; otherwise it
-is a different suite wearing the same name.
+Take a local `tests/cli` number as evidence about CI only with
+`JAILS_REQUIRE_TOOLCHAIN=1` **and** a container engine running. With both,
+local and CI agree closely -- 245s against 298s, and 474 of 476 tests passing
+-- so the suite *can* be profiled off CI. Without a container runtime the
+container-dependent tests fail in milliseconds and the run measures the suite
+minus a third of its work, which is how `-DforkCount=0` came to look like a
+51s win locally while moving CI from 298s to 298s.
+
+**Profiled with both present, the shape is not what the sections above
+assume.** Over one warm `tests/cli`: **507.1s of Maven across 34 runs, 285.2s
+across 170 `jails` invocations, and 28.9s of `docker`** -- 821s of work
+against a 245s span, so 84% of a perfect four-core packing.
+
+Three things follow, and each contradicts a plausible guess:
+
+- **Containers are 3% of the cost.** Starting PostgreSQL and Kafka is not
+  where the time goes, so sharing or pooling them buys almost nothing.
+- **The product binary is fast.** Median `jails` invocation is **73.5 ms**;
+  the 1.7s mean is twenty invocations that are themselves JVM work
+  (`jails check` is `mvn clean verify`, `jails test`, `app apply`), and they
+  carry 92% of that bucket. Optimising the CLI itself would move nothing.
+- **So ~770s of the 821s is a JVM**, and the only lever that matters is
+  running fewer or cheaper ones.
+
+The 236.9s behind the three proof applications is **not** the duplicate build
+it looks like. `verified_app_fixtures` calls `verified_app_unit_fixtures`
+deliberately, so Surefire runs while the containers are still starting, and
+then executes only `failsafe:integration-test failsafe:verify`. Two lifecycle
+phases, overlapped on purpose -- roughly 80s of unit tests and 153s of
+integration tests against live services. Merging them removes the overlap
+rather than the work.
 
 **What the gate actually costs, measured step by step on run `33322968191`**
 -- a commit that changed no Rust at all, against a warm cache, so the compile
