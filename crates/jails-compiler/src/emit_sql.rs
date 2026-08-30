@@ -375,6 +375,16 @@ fn evolve_field(
         FieldEvolutionPolicy::Rename { column } => {
             let mut expected = before.clone();
             expected.names.java_member = after.names.java_member.clone();
+            // **The label moves too, and that is what a rename is.** Identity
+            // is the stable field id; the label is the projection every other
+            // name is derived from, and JDL states it by writing the
+            // declaration's name. So a v1 source cannot rename the Java member
+            // without moving the label, and holding the label fixed here made
+            // `resource field rename` impossible on every stored entity --
+            // refusing with "use the canonical rename command" at the reader
+            // who had just run it. What must not move without a policy is the
+            // SQL projection, and that is checked immediately below.
+            expected.label = after.label.clone();
             match column {
                 ColumnRenamePolicy::Preserve => {}
                 ColumnRenamePolicy::SingleCutover => {
@@ -492,6 +502,17 @@ fn drop_column(
     )])
 }
 
+/// The widenings this compiler can prove lose nothing.
+///
+/// **`bigint -> double precision` is not one of them, and used to be listed.**
+/// IEEE-754 doubles carry a 53-bit significand, so every stored value beyond
+/// 2^53 is silently rounded -- and PostgreSQL performs that cast without a
+/// word. The Java side moves `long -> double` in the same plan, so the loss
+/// lands on both sides at once under a flag whose name is `--strategy safe`.
+/// `integer -> double precision` stays: an int32 is exactly representable.
+///
+/// A number that needs more range than `bigint` belongs in `numeric`, which is
+/// exact and is already accepted from both integer widths.
 fn safe_widening(from: &str, to: &str) -> bool {
     matches!(
         (from, to),
@@ -499,7 +520,6 @@ fn safe_widening(from: &str, to: &str) -> bool {
             | ("integer", "numeric")
             | ("integer", "double precision")
             | ("bigint", "numeric")
-            | ("bigint", "double precision")
     )
 }
 

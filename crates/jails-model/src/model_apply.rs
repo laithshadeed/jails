@@ -391,6 +391,32 @@ impl AppModel {
                     .get_mut(&entity)
                     .ok_or_else(|| format!("entity id `{entity}` does not exist"))?;
                 refuse_retired_entity(target)?;
+                // An index and a composite constraint are stable children that
+                // name fields by identity, and nothing else in the model
+                // reaches them. Dropping a field they cover used to succeed:
+                // the migration was written, the source lost the field, and
+                // the index declaration was left naming a label that no longer
+                // linked -- so every later command refused and the project had
+                // no way back through the CLI.
+                let covering = target
+                    .indexes
+                    .values()
+                    .filter(|index| index.columns.iter().any(|column| column.field == field))
+                    .map(|index| index.label.as_str())
+                    .chain(
+                        target
+                            .constraints
+                            .values()
+                            .filter(|constraint| constraint.fields.contains(&field))
+                            .map(|constraint| constraint.label.as_str()),
+                    )
+                    .collect::<Vec<_>>();
+                if !covering.is_empty() {
+                    return Err(format!(
+                        "field id `{field}` is still covered by: {}\n       fix: remove those indexes and constraints before dropping the field",
+                        covering.join(", ")
+                    ));
+                }
                 let before = target.fields.len();
                 target.fields.retain(|existing| existing.id != field);
                 if target.fields.len() == before {

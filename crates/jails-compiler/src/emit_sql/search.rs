@@ -32,7 +32,18 @@ pub(super) fn derive_into(
         let ProjectionKind::Search { fields } = &projection.kind else {
             continue;
         };
-        if previous.projections.contains_key(&projection.id) {
+        if let Some(old) = previous.projections.get(&projection.id) {
+            // Same rule the relation pass keeps: an accepted search column
+            // whose indexed set moved is a different generated column under
+            // the same name, and `generated always as (...) stored` cannot be
+            // narrowed in place. Skipping it left the lock claiming an
+            // expression the table does not have.
+            if old != projection {
+                return Err(CompileError::new(format!(
+                    "accepted search column on `{}` changed its indexed components without a retirement policy\n       fix: keep the accepted field list, or drop the column and index in a migration you write and redeclare it",
+                    projection.entity
+                )));
+            }
             continue;
         }
         let entity = next.entities.get(&projection.entity).ok_or_else(|| {

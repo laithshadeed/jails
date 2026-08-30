@@ -24,7 +24,19 @@ pub(super) fn derive_into(
     descriptions: &mut Vec<String>,
 ) -> Result<(), CompileError> {
     for relation in next.relations.values() {
-        if previous.relations.contains_key(&relation.id) {
+        if let Some(old) = previous.relations.get(&relation.id) {
+            // Presence is not the whole diff. A relation whose columns or
+            // referential actions moved is a *different* constraint under the
+            // same name, and skipping it left the accepted model claiming a
+            // foreign key the database does not have -- silently, which is the
+            // one outcome the accepted-schema lock exists to prevent. Indexes
+            // already refuse this; so does this.
+            if old != relation {
+                return Err(CompileError::new(format!(
+                    "accepted foreign key `{}` changed without a retirement policy\n       fix: keep the accepted relation, or drop the constraint in a migration you write and redeclare it",
+                    old.sql_name
+                )));
+            }
             continue;
         }
         statements.push(add_foreign_key(next, relation)?);

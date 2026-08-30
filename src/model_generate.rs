@@ -206,6 +206,15 @@ pub(crate) fn finish_generation_with_reader_paths(
     next_model
         .apply(patch.clone())
         .map_err(|error| Failure::Told(format!("could not prepare model capture: {error}")))?;
+    // **The patched model has to equal what re-parsing the new source yields.**
+    // Every frontend edits two things -- the authoring source and the semantic
+    // patch -- and nothing used to check that they agree. The one frontend
+    // that happened to re-parse (`finish_replace`, which needs the parse to
+    // build its replacement field) failed closed; the one that did not
+    // (`resource field drop`) wrote a source whose index declaration named a
+    // field the patch had removed, and every later command refused. The check
+    // belongs here, once, where every mutation already funnels.
+    agree(&next_source, &next_model)?;
     let mut capture_paths = reader_paths.to_vec();
     capture_paths.extend(jails_compiler::external_project_paths(&next_model));
     capture_paths.sort();
@@ -601,4 +610,26 @@ fn kind_name(kind: ArtifactKind) -> String {
     kind.to_possible_value()
         .map(|value| value.get_name().to_string())
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Refuse a mutation whose source and semantic patch disagree.
+///
+/// Re-parsing is cheap next to compiling, and it is the only thing that can
+/// catch a frontend that edited one representation and not the other. The
+/// message names the frontend rather than the author, because a divergence
+/// here is never something the reader wrote.
+fn agree(next_source: &str, next_model: &jails_model::AppModel) -> Result<()> {
+    let reparsed = jails_model::parse_jdl(next_source).map_err(|diagnostics| {
+        Failure::Told(format!(
+            "the mutation wrote a model source that does not link:\n{}\n       fix: this is a frontend defect -- nothing was written; report it rather than editing the source",
+            diagnostics.to_string().trim_end()
+        ))
+    })?;
+    if &reparsed != next_model {
+        return Err(Failure::Told(
+            "the mutation's source edit and its semantic patch disagree.\n       fix: this is a frontend defect -- nothing was written; report it rather than editing the source"
+                .to_string(),
+        ));
+    }
+    Ok(())
 }

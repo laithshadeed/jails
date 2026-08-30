@@ -109,11 +109,19 @@ pub(crate) fn add(
     let index_id = IndexId::parse(format!("idx_{model_label}_{suffix}")).map_err(Failure::Told)?;
     let mut next_source = current_source.clone();
     if jdl {
+        // **JDL v1 spells an index with a bracketed field list and no
+        // `@as`.** This rendered the pre-v1 draft's `index (...) @as(...)`
+        // for any JDL source, so on a v1 model -- the format this compiler
+        // authors -- the command could never succeed: the re-parse below
+        // rejected its own output with "a constraint needs a bracketed field
+        // list". Every other frontend asks `is_v1_source`; this one rendered
+        // the line itself and never asked. The label is derived from the
+        // columns in v1, so only the identity needs pinning.
         next_source = crate::model_generate_jdl::index::insert(
             &next_source,
             &entity_java_name,
             &format!(
-                "  index ({}) @id({}) @as({index_label})",
+                "  index [{}] @id({})",
                 canonical.join(", "),
                 index_id.as_str()
             ),
