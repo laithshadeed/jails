@@ -2304,12 +2304,14 @@ test agreed was fine:
   with `Service` and `Controller` and rejected all three without Spring, while
   `CLAUDE.md` records that "plain-Maven projects get the same layout with no
   annotation" and the legacy generator has always emitted one there. Fixed.
-- **`g record`, `g value` and `g enum` emit no companion test.** The legacy
+- **`g record`, `g value` and `g enum` emitted no companion test.** The legacy
   path writes `<Name>Test.java` beside every one of them, `@Disabled` and
   naming the component when a sample cannot be built -- `CLAUDE.md` is explicit
-  that "emitting nothing would silently drop coverage". The canonical emitter
-  emits nothing. **Open**, and it is what gates the `new` switch: flipping it
-  today would make every new project quietly stop generating tests.
+  that "emitting nothing would silently drop coverage". Fixed:
+  `emit_companion_test` writes all three shapes, on JUnit's own assertions
+  rather than AssertJ, because a canonical project is not guaranteed to declare
+  AssertJ and a generator that drags in a dependency for a file the reader did
+  not ask for is the plumbing this tool exists to remove.
 
 **Both were invisible to the differential gate, and the reason is worth
 keeping.** G1 compares what it was told to compare -- for the iterative record

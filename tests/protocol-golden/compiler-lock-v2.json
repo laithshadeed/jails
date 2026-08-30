@@ -821,6 +821,19 @@
           ]
         }
       },
+      ".jails/generated/test/java/com/example/notes/domain/NoteTest.java": {
+        "bytes": "<614 bytes elided>",
+        "kind": "java-test",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_ent_note_test",
+          "compiler_pass": "java-companion-test",
+          "ejectable": true,
+          "semantic_ids": [
+            "ent_note"
+          ]
+        }
+      },
       ".jails/generated/test/java/com/example/notes/domain/OutcomeTest.java": {
         "bytes": "<684 bytes elided>",
         "kind": "java-test",
@@ -1204,6 +1217,6 @@
     },
     "root": ".jails/generated"
   },
-  "projection_digest": "sha256:eba5747259abb36e5f3ebcf592e0660493aa5bb2e9a284c146591a389b81fd74",
+  "projection_digest": "sha256:bed1e4c519cc4a8a5d4b2c30b11b20d205f3d63fbb1e20e531b260d83f9dfbf7",
   "schema": "jails.compiler-lock.v2"
 }

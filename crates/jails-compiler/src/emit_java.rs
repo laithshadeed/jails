@@ -56,6 +56,14 @@ pub(crate) fn lower_and_emit(
             output
                 .insert(unit.path, unit.file)
                 .map_err(CompileError::new)?;
+            // The companion test ships with the type, not as an opt-in: a
+            // generated class nobody asserts anything about leaves the suite
+            // green over it. See `emit_companion_test`.
+            if let Some(unit) = crate::emit_companion_test::lower(model, entity, *facet)? {
+                output
+                    .insert(unit.path, unit.file)
+                    .map_err(CompileError::new)?;
+            }
             if spring_boot && *facet == Facet::Enum && crate::emit_enum::has_wire_values(entity) {
                 let (path, file) = crate::emit_enum::lower_converter(model, entity)?;
                 output.insert(path, file).map_err(CompileError::new)?;

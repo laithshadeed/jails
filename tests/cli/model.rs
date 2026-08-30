@@ -466,6 +466,94 @@ app Gym {
     assert!(value.contains("Currency currency"), "{value}");
 }
 
+/// Every generated domain type ships a test, and which test is a fact about
+/// the type.
+///
+/// The canonical emitter wrote the class and nothing else, where the legacy
+/// path has always written `<Name>Test.java` beside it. `CLAUDE.md` says why
+/// that matters: emitting a guess produces a test that does not compile, and
+/// emitting nothing leaves the suite green over a type nobody asserted
+/// anything about. No gate saw it, because a differential suite compares the
+/// files it names and an artifact only one side writes is not a difference.
+///
+/// Three shapes here, and the third is the one that is easy to get wrong: a
+/// component jails cannot sample disables the *class*, because every
+/// construction in the file would fail to compile.
+#[test]
+fn every_generated_domain_type_ships_the_test_its_shape_allows() {
+    let root = jdl_project(
+        "jdl-v1-companion-tests",
+        r#"jdl 1
+app Demo {
+ pkg com.example.demo
+ java 26
+ platform plain
+ build maven
+ storage none
+}
+"#,
+    );
+    write_plain_fixture(&root);
+
+    for arguments in [
+        &["g", "record", "Note", "title:string!", "count:int"][..],
+        &["g", "record", "Plain", "count:int", "amount:long"][..],
+        &["g", "record", "Odd", "ref:SomeUnknown"][..],
+        &["g", "enum", "Status", "OPEN", "CLOSED"][..],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{arguments:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let tests = root.join(".jails/generated/test/java/com/example/demo/domain");
+
+    // A component that can be null-checked gives the test something real.
+    let note = fs::read_to_string(tests.join("NoteTest.java")).unwrap();
+    assert!(note.contains("void rejectsANullComponent()"), "{note}");
+    assert!(note.contains("new Note(null, 1)"), "{note}");
+    assert!(note.contains(r#"contains("title")"#), "{note}");
+    assert!(!note.contains("@Disabled"), "{note}");
+
+    // None to check: disabled, and saying what to write instead rather than
+    // asserting that javac generated an accessor.
+    let plain = fs::read_to_string(tests.join("PlainTest.java")).unwrap();
+    assert!(
+        plain.contains("@Disabled(\"todo: state what Plain guarantees"),
+        "{plain}"
+    );
+    assert!(plain.contains("new Plain(1, 1L)"), "{plain}");
+
+    // A type jails cannot build disables the class: the constructor call in
+    // the body would not compile, so no half of the file still runs.
+    let odd = fs::read_to_string(tests.join("OddTest.java")).unwrap();
+    assert!(
+        odd.contains("@Disabled(\"todo: supply a sample for ref"),
+        "{odd}"
+    );
+
+    // An enum can be asked three things without knowing the domain, and
+    // `valueOf` throwing rather than returning null is the one worth pinning.
+    let status = fs::read_to_string(tests.join("StatusTest.java")).unwrap();
+    for assertion in [
+        "assertEquals(Status.OPEN, Status.valueOf(\"OPEN\"))",
+        "assertThrows(IllegalArgumentException.class",
+        "assertEquals(2, Status.values().length)",
+    ] {
+        assert!(status.contains(assertion), "{assertion} missing:\n{status}");
+    }
+
+    // JUnit's own assertions, not AssertJ: a canonical project is not
+    // guaranteed to declare AssertJ, and the other canonical test emitters
+    // already write JUnit. A companion test that drags in a dependency would
+    // be a generator supplying one for a file the reader did not ask for.
+    for source in [&note, &plain, &odd, &status] {
+        assert!(!source.contains("assertj"), "{source}");
+    }
+}
+
 #[test]
 fn model_fmt_keeps_typed_field_semantics_and_refuses_invalid_rules_atomically() {
     let root = jdl_project(
@@ -4259,7 +4347,9 @@ fn model_plan_is_deterministic_and_writes_a_self_verifying_bundle() {
         serde_json::from_slice(&fs::read(&first).unwrap()).unwrap();
     jails_workspace::verify_bundle(&bundle).unwrap();
     assert_eq!(bundle.plan.operations.len(), 2);
-    assert_eq!(bundle.plan.summary.managed_files, 5);
+    // Six, not five: every record and enum now ships its companion test, so
+    // the entity in this model contributes two managed files rather than one.
+    assert_eq!(bundle.plan.summary.managed_files, 6);
     assert_eq!(bundle.plan.id, bundle.plan.digest.as_str());
 }
 

@@ -4,6 +4,7 @@
 //! transaction API. Equal snapshots and patches produce equal drafts.
 
 mod emit_capability;
+mod emit_companion_test;
 mod emit_component;
 mod emit_dto;
 mod emit_enum;
