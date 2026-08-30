@@ -543,8 +543,17 @@ pub fn real_maven_cmd(cwd: &Path, path: &str) -> ToolchainCommand {
     cmd.current_dir(cwd);
     cmd.env("PATH", path);
     cmd.env("MAVEN_ARGS", REAL_MAVEN_ARGS);
-    cmd.env("JAVA_TOOL_OPTIONS", REAL_JAVA_TOOL_OPTIONS);
+    cmd.env("JAVA_TOOL_OPTIONS", real_java_tool_options());
     ToolchainCommand::new(cmd)
+}
+
+/// The JVM startup policy, overridable for measurement.
+///
+/// `JAILS_JAVA_TOOL_OPTIONS` replaces it wholesale. The right flags depend on
+/// how long these JVMs actually live, and that changed when Surefire stopped
+/// forking -- so the choice has to stay measurable rather than remembered.
+fn real_java_tool_options() -> String {
+    std::env::var("JAILS_JAVA_TOOL_OPTIONS").unwrap_or_else(|_| REAL_JAVA_TOOL_OPTIONS.to_string())
 }
 
 /// A Docker-compatible command which shares the generated-project process
