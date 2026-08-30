@@ -735,79 +735,6 @@ banked until two of the three front ends are gone.
 
 ## A5 — the proof
 
-### A5.1 Zero golden coverage for canonical output — closed
-
-`tests/golden/canonical-tree/` is the first scenario whose output is
-`.jails/generated`, so `grep -rl "jails/generated" tests/golden` now returns
-something. Twenty-four files: the domain record, its factory and repository
-port, the JDBC command/query/transition adapters, the event payload, a sealed
-type, a service, the migration, the compose service, the property file and the
-`@Import` spliced into the reader's own test.
-
-**Seeded with a model rather than driven by `g` commands**, because the model
-*is* the input on this path — and one model reaching many emitters is a better
-snapshot than many models reaching one each: it is where the packages, the
-imports and the shared files have to agree with each other.
-
-The mechanism needed nothing new; `collect` already walked `.jails/`. What was
-missing was a scenario producing a canonical tree, and three rules that had
-only ever seen legacy output:
-
-- `.jails/generated/` is a **third category** beside the registry and the
-  executor's bookkeeping — the compiler's output, the canonical counterpart of
-  `src/main/java` — so the rung-8 gate names it as one rather than failing
-  every file in it.
-- the compiler lock and `apply.lock` are excluded. The lock is goldened as a
-  *format* in `tests/protocol-golden/`, and holding it here too would put a
-  second verbatim copy of the whole tree inside the snapshot of that tree.
-- a canonical file opens with its provenance banner, which is how a
-  merge-managed artifact says where it came from. The Java-shape property
-  accepts that spelling *and* requires the package declaration on the next
-  line, rather than being loosened to "starts with anything" — what it catches
-  is a stray blank line or leftover preamble, and both correct openings are
-  exact.
-
-### A5.2 No golden for any canonical persisted format — closed for the lock
-
-`tests/protocol-golden/compiler-lock-v2.json` is the encoding, byte-compared
-by `the_compiler_lock_encoding_matches_its_golden`, and
-`a_v1_compiler_lock_still_decodes` proves the older envelope still reads —
-G0's "old fixtures decode and new canonical encodings are golden", on the
-canonical side.
-
-**Byte-compared rather than round-tripped**, because a round-trip goes through
-whatever the current serializer does and can never notice that it changed.
-`UPDATE_GOLDEN=1` refreshes it and the diff is then the notice, which is the
-thing this row was asking for: the shape had moved three times, each time the
-lock failed closed on the next run as it should, and each time nothing said
-the format had moved.
-
-Two decisions worth keeping.
-
-**The fixture reaches every persisted struct**, and a first draft did not — it
-reused the TOML `MODEL` above, which has no source units, so adding a field to
-`SourceUnit` changed nothing and the golden reported green. It is JDL v1 now,
-with an entity, projections, an index, all four operation kinds, a capability,
-a dependency, a setting and two components, plus a captured `pom.xml` so the
-dependency and setting structs are actually in the plan. A struct missing from
-that model is a struct whose shape can change unseen.
-
-**The projection's file contents are elided and only they.** A lock carries
-the whole accepted projection, so a verbatim golden is 380 KB of generated
-Java as JSON byte arrays — and a diff nobody can read is a golden nobody
-reads, which is this row's failure recreated rather than fixed. Every struct
-shape survives: `RenderedFile`, `Provenance`, `FileKind` and `FileMode` are
-all there with their fields. What the bytes themselves say is A5.1's job.
-
-The compiler version is pinned in the fixture rather than read from
-`COMPILER_VERSION`: that constant is *meant* to move, and a golden churning on
-every bump is one refreshed without being read.
-
-Still open: `jails.plan.v1` and `jails.plan-bundle.v1` have no golden. The
-plan embeds content digests of a scratch directory, so pinning one needs the
-non-deterministic parts named first — which is a smaller job than this was,
-and now has a pattern to follow.
-
 ### A5.3 The G1 differential corpus does not exercise JDL v1 — closed
 
 `tests/differential.rs` seeds `jdl 1` now. The gate that says the replacement
@@ -929,10 +856,11 @@ It is used only under `#[cfg(test)]` (`materialize.rs:673`), and
 ## A7 — suggested order
 
 Closed and deleted from this list: the original items 1–4 and 9, then **A1.1**
-(39/39 generators), **A3.11b** (layer renames), **A5.1** (canonical tree
-golden), **A5.2** (compiler-lock golden), **A1.2b** (closed *by* A1.1),
-**A2.6** (pluralization), **A5.3** (the G1 corpus on JDL v1) and **A5.5**
-(G4 on the canonical executor). What remains is ordered by consequence.
+(39/39 generators), **A3.11b** (layer renames), **A5.1** (canonical tree and
+exact-plan goldens), **A5.2** (compiler-lock golden), **A1.2b** (closed *by*
+A1.1), **A2.6** (pluralization), **A5.3** (the G1 corpus on JDL v1) and
+**A5.5** (G4 on the canonical executor). What remains is ordered by
+consequence.
 
 1. **A3.11 / A3.12** — the registry is built and the source-unit half is
    closed. What is left is the decision the registry made legible: reconcile
@@ -940,12 +868,8 @@ golden), **A5.2** (compiler-lock golden), **A1.2b** (closed *by* A1.1),
    `derived` records and `model explain` so a convention is inspectable rather
    than implied. Every emitter added now picks a placement a later §9.7
    reconciliation has to move.
-2. **A5.1 remainder** — `jails.plan.v1` and `jails.plan-bundle.v1` still have
-   no golden. The plan embeds content digests of a scratch directory, so
-   pinning one needs the non-deterministic parts named first;
-   `compiler-lock-v2.json` is the pattern.
-3. **A6.1** — write the module docs while the reasons are still recoverable.
-4. **A2.2b** — decide whether pre-v1 JDL should carry declaration order, given
+2. **A6.1** — write the module docs while the reasons are still recoverable.
+3. **A2.2b** — decide whether pre-v1 JDL should carry declaration order, given
    that the mechanism would also give `.jails/model.toml` an ordering it is
    documented as lacking.
 

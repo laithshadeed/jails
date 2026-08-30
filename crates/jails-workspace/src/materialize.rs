@@ -851,14 +851,89 @@ primary_key = true
 </project>
 "#;
 
+    /// **The exact plan's own encoding, which is what a reviewer confirms.**
+    ///
+    /// `audit.md` A5.1 left this open: the compiler lock had a golden and the
+    /// two schemas `--plan-out` actually writes -- `jails.plan.v1` inside
+    /// `jails.plan-bundle.v1` -- had none. They are the format with the widest
+    /// contract in the system. `preview`, `--plan-out`, the confirmation
+    /// prompt and `execute` all refer to one bundle, and "apply never replans"
+    /// means the bytes reviewed are the bytes applied. A field appearing or
+    /// changing shape there moves what a reader is agreeing to.
+    ///
+    /// Byte-compared for the same reason the lock is: a round-trip cannot
+    /// notice that the serializer moved. `UPDATE_GOLDEN=1` refreshes it and
+    /// the diff is the notice.
+    ///
+    /// **The blobs are elided and their digests are not**, which costs the
+    /// golden nothing: a `ContentDigest` key *is* an assertion about the bytes
+    /// it names, and a stronger one than a JSON array of them, so eliding the
+    /// value keeps the diff readable while leaving any change to the content
+    /// visible as a changed key. The same fixture as the lock golden is used
+    /// deliberately -- one model reaching every persisted struct, so a new
+    /// operation variant or a new precondition field cannot land unseen.
     #[test]
-    fn the_compiler_lock_encoding_matches_its_golden() {
+    fn the_exact_plan_encoding_matches_its_golden() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tests/protocol-golden/compiler-lock-v2.json");
+            .join("../../tests/protocol-golden/plan-bundle-v1.json");
+        let bundle = golden_bundle();
+        let mut parsed = serde_json::to_value(&bundle).unwrap();
+        if let Some(blobs) = parsed
+            .get_mut("blobs")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            for bytes in blobs.values_mut() {
+                let length = bytes.as_array().map_or(0, Vec::len);
+                *bytes = serde_json::json!(format!("<{length} bytes elided>"));
+            }
+        }
+        let encoded = serde_json::to_string_pretty(&parsed).unwrap() + "\n";
+
+        if std::env::var_os("UPDATE_GOLDEN").is_some() {
+            std::fs::write(&fixture, &encoded).unwrap();
+            return;
+        }
+        let expected = std::fs::read_to_string(&fixture)
+            .expect("tests/protocol-golden/plan-bundle-v1.json is checked in");
+        assert_eq!(
+            encoded, expected,
+            "the exact plan encoding changed.\n       \
+             This is the document a reviewer confirms and the executor \
+             applies, so a change here changes what confirmation means.\n       \
+             If it is intended, refresh with `UPDATE_GOLDEN=1 cargo test -p \
+             jails-workspace` and read the diff."
+        );
+    }
+
+    /// **The digest is part of the format, and is asserted separately.**
+    ///
+    /// The golden above would still pass if `plan_digest` stopped covering a
+    /// field: the plan's `id` and `digest` are serialized like anything else,
+    /// so a digest computed over less would simply be goldened as a different
+    /// string. Recomputing it from the parts here is what makes the golden's
+    /// digest an *answer* rather than a record of whatever the code produced.
+    #[test]
+    fn the_goldened_plan_digest_is_the_digest_of_its_own_parts() {
+        let bundle = golden_bundle();
+        let recomputed = plan_digest(
+            &bundle.plan.compiler,
+            &bundle.plan.base,
+            &bundle.plan.input,
+            &bundle.plan.summary,
+            &bundle.plan.operations,
+            &bundle.plan.follow_up_effects,
+        )
+        .unwrap();
+        assert_eq!(recomputed, bundle.plan.digest);
+        assert_eq!(bundle.plan.id, bundle.plan.digest.as_str());
+    }
+
+    /// The one bundle every golden here is taken from.
+    fn golden_bundle() -> PlanBundle {
         let model = jails_model::parse_jdl(EVERY_SHAPE).unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
         // Pinned rather than observed: a Spring service unit needs a captured
-        // Boot project, and the golden must not depend on what is on the
+        // Boot project, and a golden must not depend on what is on the
         // machine running it.
         snapshot.project.build_system = jails_contracts::BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.1.0".to_string());
@@ -866,8 +941,8 @@ primary_key = true
         // build and properties files, and an exact plan will not touch a file
         // it has no before-image for. Captured here rather than dropped from
         // the fixture: `Dependency` and `Setting` are two more persisted
-        // structs, and a golden that skipped them would be the same gap this
-        // test exists to close.
+        // structs, and a golden that skipped them would be the same gap these
+        // tests exist to close.
         snapshot.files.insert(
             ProjectPath::parse("pom.xml").unwrap(),
             jails_contracts::CapturedFile {
@@ -876,7 +951,7 @@ primary_key = true
             },
         );
         let draft = Compiler::compile(&snapshot, None).unwrap();
-        let bundle = materialize(
+        materialize(
             &snapshot,
             CanonicalModelPatch::reconcile(),
             draft,
@@ -885,7 +960,14 @@ primary_key = true
             // without being read, which is how a golden stops being one.
             "jails.compiler.golden",
         )
-        .unwrap();
+        .unwrap()
+    }
+
+    #[test]
+    fn the_compiler_lock_encoding_matches_its_golden() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/protocol-golden/compiler-lock-v2.json");
+        let bundle = golden_bundle();
         let lock = bundle
             .plan
             .operations
