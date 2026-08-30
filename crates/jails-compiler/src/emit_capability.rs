@@ -19,6 +19,7 @@ mod messaging;
 mod project_file;
 mod reader_facet;
 mod spring;
+mod storage;
 
 use basic::{
     COVERAGE_PACK, CSV_PACK, FAKE_PACK, FORMAT_PACK, HTTP_PACK, JSON_PACK, SQLITE_PACK,
@@ -28,9 +29,11 @@ use messaging::{KAFKA_PACK, MAIL_PACK};
 use reader_facet::ComposeService;
 
 use spring::{
-    ACTUATOR_PACK, CACHE_PACK, CORS_PACK, H2_PACK, K8S_PACK, OBSERVABILITY_PACK, REDIS_PACK,
-    SECURITY_PACK, SSE_PACK,
+    ACTUATOR_PACK, CACHE_PACK, CORS_PACK, K8S_PACK, OBSERVABILITY_PACK, REDIS_PACK, SECURITY_PACK,
+    SSE_PACK,
 };
+
+use storage::{DB_PACK, H2_PACK};
 
 const MAIN_ROOT: &str = ".jails/generated/main/java";
 const TEST_ROOT: &str = ".jails/generated/test/java";
@@ -270,6 +273,7 @@ fn pack(kind: &str) -> Option<&'static Pack> {
         "coverage" => Some(&COVERAGE_PACK),
         "format" => Some(&FORMAT_PACK),
         "sqlite" => Some(&SQLITE_PACK),
+        "db" => Some(&DB_PACK),
         "h2" => Some(&H2_PACK),
         "actuator" => Some(&ACTUATOR_PACK),
         "cache" => Some(&CACHE_PACK),
@@ -386,6 +390,8 @@ fn render(
         .replace("{{REDIS_IMAGE}}", "redis:7-alpine")
         .replace("{{image}}", "axllent/mailpit:v1.21")
         .replace("{{KAFKA_TESTCONTAINERS_CONFIG}}", class)
+        .replace("{{TESTCONTAINERS_CONFIG}}", class)
+        .replace("{{POSTGRES_IMAGE}}", "postgres:17-alpine")
         .replace("{{database}}", &sqlite_database_class(capability))
         .replace("{{migrations}}", &sqlite_migrations_class(capability))
         .replace("{{test_url}}", "jdbc:h2:mem:test")

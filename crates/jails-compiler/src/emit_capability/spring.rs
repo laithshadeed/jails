@@ -10,15 +10,6 @@ use jails_model::Package;
 mod names;
 use names::*;
 
-const H2_FILES: &[JavaFile] = &[JavaFile {
-    suffix: "test",
-    template: include_str!("../../../../templates/spring/h2_database_test_java.java"),
-    before_boot: None,
-    source_set: SourceSet::Test,
-    class_name: h2_test_class,
-    template_class: h2_test_class,
-}];
-
 const ACTUATOR_FILES: &[JavaFile] = &[JavaFile {
     suffix: "endpoints_test",
     template: include_str!("../../../../templates/spring/actuator_test_java.java"),
@@ -201,36 +192,6 @@ const REDIS_FILES: &[JavaFile] = &[
     },
 ];
 
-const H2_DEPENDENCIES: &[DependencySpec] = &[
-    DependencySpec {
-        group: "org.springframework.boot",
-        artifact: "spring-boot-starter-jdbc",
-        version: None,
-        scope: DependencyScope::Compile,
-        spring_managed_version: true,
-        only_when_build_exists: false,
-        boot: BootCondition::Any,
-    },
-    DependencySpec {
-        group: "com.h2database",
-        artifact: "h2",
-        version: None,
-        scope: DependencyScope::Runtime,
-        spring_managed_version: true,
-        only_when_build_exists: false,
-        boot: BootCondition::Any,
-    },
-    DependencySpec {
-        group: "org.springframework.boot",
-        artifact: "spring-boot-h2console",
-        version: None,
-        scope: DependencyScope::Compile,
-        spring_managed_version: true,
-        only_when_build_exists: false,
-        boot: BootCondition::AtLeast(4),
-    },
-];
-
 const ACTUATOR_DEPENDENCIES: &[DependencySpec] = &[DependencySpec {
     group: "org.springframework.boot",
     artifact: "spring-boot-starter-actuator",
@@ -368,45 +329,6 @@ const REDIS_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Test,
         spring_managed_version: true,
         only_when_build_exists: false,
-        boot: BootCondition::Any,
-    },
-];
-
-const H2_PROPERTIES: &[PropertySpec] = &[
-    PropertySpec {
-        key: "spring.datasource.url",
-        value: "jdbc:h2:file:./data/app;AUTO_SERVER=TRUE",
-        target: SettingTarget::Main,
-        boot: BootCondition::Any,
-    },
-    PropertySpec {
-        key: "spring.h2.console.enabled",
-        value: "true",
-        target: SettingTarget::Main,
-        boot: BootCondition::Any,
-    },
-    PropertySpec {
-        key: "spring.h2.console.path",
-        value: "/h2-console",
-        target: SettingTarget::Main,
-        boot: BootCondition::Any,
-    },
-    PropertySpec {
-        key: "spring.persistence.exceptiontranslation.enabled",
-        value: "false",
-        target: SettingTarget::Main,
-        boot: BootCondition::AtLeast(4),
-    },
-    PropertySpec {
-        key: "spring.dao.exceptiontranslation.enabled",
-        value: "false",
-        target: SettingTarget::Main,
-        boot: BootCondition::Before(4),
-    },
-    PropertySpec {
-        key: "spring.datasource.url",
-        value: "jdbc:h2:mem:test;DB_CLOSE_DELAY=-1",
-        target: SettingTarget::Test,
         boot: BootCondition::Any,
     },
 ];
@@ -562,7 +484,7 @@ const SSE_PACKAGE_OVERRIDES: &[PackageOverride] = &[PackageOverride {
     project_subpackage: Package::Web,
 }];
 
-const fn property(key: &'static str, value: &'static str) -> PropertySpec {
+pub(super) const fn property(key: &'static str, value: &'static str) -> PropertySpec {
     PropertySpec {
         key,
         value,
@@ -570,19 +492,6 @@ const fn property(key: &'static str, value: &'static str) -> PropertySpec {
         boot: BootCondition::Any,
     }
 }
-
-pub(super) const H2_PACK: Pack = Pack {
-    files: H2_FILES,
-    files_when: BootCondition::Any,
-    resources: NO_RESOURCES,
-    dependencies: H2_DEPENDENCIES,
-    properties: H2_PROPERTIES,
-    compose_services: NO_COMPOSE_SERVICES,
-    build_features: NO_BUILD_FEATURES,
-    default_package: adapters_package,
-    package_overrides: NO_PACKAGE_OVERRIDES,
-    minimum_boot: None,
-};
 
 pub(super) const ACTUATOR_PACK: Pack = Pack {
     files: ACTUATOR_FILES,

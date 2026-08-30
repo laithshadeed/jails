@@ -182,10 +182,16 @@ vocabulary.
 | `Query(QueryId)` | **none** |
 
 The five missing ones are exactly the surgical edits into reader-owned files —
-the hardest category. Concretely, canonical `storage postgres` emits no
-`TestcontainersConfig` and no `@Import` splice, so the trap `CLAUDE.md`
-records at length ("`add db` on Spring must wire tests, or `mvn verify` goes
-red on a test nobody wrote") has no canonical answer.
+the hardest category.
+
+**`storage postgres` now writes its test half**: `TestcontainersConfig`, the
+three Testcontainers dependencies, `spring.datasource.*`, the two settings
+that are not tuning, and the compose service. What is still missing is the
+`@Import(TestcontainersConfig.class)` splice into the `@SpringBootTest`
+classes already on disk, which is `SpringTestImport` in the table above — so
+the trap `CLAUDE.md` records at length ("`add db` on Spring must wire tests, or
+`mvn verify` goes red on a test nobody wrote") is closed for a project's *own*
+database tests and still open for the `contextLoads` test `jails new` wrote.
 
 ### A1.6 Lifecycle commands with no canonical backend
 

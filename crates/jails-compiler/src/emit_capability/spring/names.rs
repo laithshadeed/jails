@@ -14,7 +14,6 @@ macro_rules! fixed_name {
     };
 }
 
-fixed_name!(h2_test_class, "H2DatabaseTest");
 fixed_name!(actuator_test_class, "ActuatorEndpointsTest");
 fixed_name!(cache_config_class, "CacheConfig");
 fixed_name!(cache_test_class, "CacheConfigTest");

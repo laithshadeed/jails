@@ -11120,3 +11120,76 @@ fn canonical_handlers_share_one_error_envelope_without_a_framework() {
         "{envelope}"
     );
 }
+
+/// Canonical `storage postgres` wires the test half, not just the main half.
+///
+/// Once `spring-boot-starter-jdbc` is present, JDBC auto-configuration demands
+/// a `DataSource` for **every** `@SpringBootTest` — including the
+/// `contextLoads` test that shipped with the project and never touches a
+/// database. Before this, canonical `storage postgres` added the starter and
+/// none of the wiring, so a project that declared it and touched nothing else
+/// failed `mvn verify` on a test nobody wrote, with "Failed to determine a
+/// suitable driver class".
+#[test]
+fn canonical_storage_postgres_writes_the_container_compose_and_datasource() {
+    let root = temp_dir("canonical-db-wiring");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+         platform spring\n  build maven\n  storage postgres\n}\n",
+    )
+    .unwrap();
+    let generated = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+
+    // The container is a `@Bean` with `@ServiceConnection`, not a
+    // `@Testcontainers`/`@Container` static field: Spring caches the context
+    // past the container's JUnit-managed lifetime, and later tests then fail
+    // against a stopped container.
+    let container = fs::read_to_string(
+        root.join(".jails/generated/test/java/com/example/demo/TestcontainersConfig.java"),
+    )
+    .unwrap();
+    assert!(container.contains("@ServiceConnection"), "{container}");
+    assert!(container.contains("@TestConfiguration"), "{container}");
+    assert!(!container.contains("{{"), "{container}");
+
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    // Testcontainers 2.0 renamed every module, so the coordinate is the new
+    // one and it is pinned -- the Boot parent does not manage these.
+    assert!(pom.contains("testcontainers-postgresql"), "{pom}");
+    assert!(pom.contains("spring-boot-testcontainers"), "{pom}");
+
+    let properties =
+        fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
+    assert!(
+        properties.contains("spring.datasource.url=jdbc:postgresql://localhost:5432/app"),
+        "{properties}"
+    );
+    // Not tuning: JDBC auto-config CGLIB-proxies every `@Repository` for
+    // exception translation and fails on a `final` class, and jails writes raw
+    // SQL with no ORM for it to translate.
+    assert!(
+        properties.contains("spring.persistence.exceptiontranslation.enabled=false"),
+        "{properties}"
+    );
+    // Also not tuning: jails starts compose itself, and Boot's module shells
+    // out with Docker Compose v2 syntax podman-compose rejects.
+    assert!(
+        properties.contains("spring.docker.compose.enabled=false"),
+        "{properties}"
+    );
+
+    let compose = fs::read_to_string(root.join("compose.yaml")).unwrap();
+    assert!(compose.contains("postgres:17-alpine"), "{compose}");
+    assert!(compose.contains("pg_isready"), "{compose}");
+}
