@@ -687,75 +687,49 @@ mod tests {
     use super::*;
     use crate::OperationKind;
 
-    const VALID: &str = r#"
-schema = "jails.model.v1"
+    const VALID: &str = r#"jdl 1
 
-[project]
-id = "project_notes"
-name = "Notes"
-base_package = "com.example.notes"
-java_release = 26
-dialect = "postgresql"
+app Notes @id(project_notes) {
+  pkg com.example.notes
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
 
-[capabilities.database]
-id = "cap_database"
-kind = "db"
+entity Note @id(ent_note) {
+  use repo
+  use service
+  use http
+  id: uuid @id(fld_note_id) @pk
+  title: string @id(fld_note_title) @notBlank
 
-[entities.note]
-id = "ent_note"
-facets = ["record", "repository", "http"]
-
-[entities.note.fields.id]
-id = "fld_note_id"
-type = "uuid"
-primary_key = true
-
-[entities.note.fields.title]
-id = "fld_note_title"
-type = "string"
-non_blank = true
-
-[operations.note_created]
-kind = "event"
-id = "op_note_created"
-on = "note"
-fields = ["id", "title"]
-
-[operations.create_note]
-kind = "command"
-id = "op_create_note"
-on = "note"
-fields = ["title"]
-route = "POST /notes"
-
-[operations.open_notes]
-kind = "query"
-id = "op_open_notes"
-on = "note"
-filters = ["title"]
-order_by = ["id"]
-limit = 50
-route = "GET /notes"
-
-[operations.rename_note]
-kind = "transition"
-id = "op_rename_note"
-on = "note"
-fields = ["title"]
-sets = ["title"]
-yields = "note_created"
-route = "PATCH /notes/{id}"
+  event NoteCreated(id, title) @id(op_note_created)
+  command CreateNote(title) @id(op_create_note) {
+    route POST "/notes"
+  }
+  query OpenNotes(title) @id(op_open_notes) {
+    route GET "/notes"
+    order by [id]
+    limit 50
+  }
+  transition RenameNote(title) @id(op_rename_note) {
+    route PATCH "/notes/{id}"
+    update [title]
+    emit NoteCreated
+  }
+}
 "#;
 
     #[test]
     fn links_every_label_to_a_stable_identity() {
-        let model = crate::parse_toml(VALID).unwrap();
+        let model = crate::parse_jdl(VALID).unwrap();
         let entity = model.entity(&EntityId::parse("ent_note").unwrap()).unwrap();
         assert_eq!(entity.names.java_type, "Note");
         // Pluralized per §9.7: the table is `notes`, and importing a legacy
         // project must not rename it.
         assert_eq!(entity.names.sql_table, "notes");
-        assert_eq!(model.node_count(), 9);
+        assert_eq!(model.node_count(), 12);
         assert_eq!(
             model.canonical_json().unwrap(),
             model.canonical_json().unwrap()
@@ -776,10 +750,10 @@ route = "PATCH /notes/{id}"
     #[test]
     fn reports_independent_semantic_problems_together() {
         let invalid = VALID
-            .replace("id = \"cap_database\"", "id = \"ent_note\"")
-            .replace("route = \"GET /notes\"", "route = \"POST /notes\"")
-            .replace("filters = [\"title\"]", "filters = [\"missing\"]");
-        let diagnostics = crate::parse_toml(&invalid).unwrap_err();
+            .replace("@id(op_note_created)", "@id(ent_note)")
+            .replace("route GET \"/notes\"", "route POST \"/notes\"")
+            .replace("query OpenNotes(title)", "query OpenNotes(missing)");
+        let diagnostics = crate::parse_jdl(&invalid).unwrap_err();
         let codes = diagnostics
             .diagnostics
             .iter()
@@ -792,12 +766,9 @@ route = "PATCH /notes/{id}"
 
     #[test]
     fn a_label_rename_preserves_explicit_identity() {
-        let renamed = VALID
-            .replace("[entities.note]", "[entities.memo]")
-            .replace("[entities.note.fields", "[entities.memo.fields")
-            .replace("on = \"note\"", "on = \"memo\"");
-        let before = crate::parse_toml(VALID).unwrap();
-        let after = crate::parse_toml(&renamed).unwrap();
+        let renamed = VALID.replace("entity Note @id(ent_note)", "entity Memo @id(ent_note)");
+        let before = crate::parse_jdl(VALID).unwrap();
+        let after = crate::parse_jdl(&renamed).unwrap();
         let id = EntityId::parse("ent_note").unwrap();
         assert_eq!(
             before.entity(&id).unwrap().id,
@@ -808,7 +779,7 @@ route = "PATCH /notes/{id}"
 
     #[test]
     fn semantic_removal_refuses_dangling_operation_edges() {
-        let mut model = crate::parse_toml(VALID).unwrap();
+        let mut model = crate::parse_jdl(VALID).unwrap();
         let event = OperationId::parse("op_note_created").unwrap();
         let error = model
             .apply(crate::ModelPatch::RemoveOperation(event))
@@ -826,11 +797,9 @@ route = "PATCH /notes/{id}"
 
     #[test]
     fn ejection_is_a_semantic_ownership_edge() {
-        let source = format!(
-            "{VALID}\n[ejections.database]\nid = \"eject_database\"\ntarget = \"art_cap_database_ent_note_repository\"\n"
-        );
-        let mut model = crate::parse_toml(&source).unwrap();
-        let capability = CapabilityId::parse("cap_database").unwrap();
+        let source = format!("{VALID}\neject art_cap_db_ent_note_repository @id(eject_database)\n");
+        let mut model = crate::parse_jdl(&source).unwrap();
+        let capability = CapabilityId::parse("cap_db").unwrap();
         let error = model
             .apply(crate::ModelPatch::RemoveCapability(capability))
             .unwrap_err();
@@ -848,10 +817,8 @@ route = "PATCH /notes/{id}"
 
     #[test]
     fn unknown_source_keys_fail_closed() {
-        let diagnostics = crate::parse_toml(
-            &VALID.replace("java_release = 26", "java_release = 26\njava_relese = 26"),
-        )
-        .unwrap_err();
-        assert_eq!(diagnostics.diagnostics[0].code, "model-syntax");
+        let diagnostics =
+            crate::parse_jdl(&VALID.replace("  java 26\n", "  java 26\n  jaba 26\n")).unwrap_err();
+        assert_eq!(diagnostics.diagnostics[0].code, "JDL0210");
     }
 }

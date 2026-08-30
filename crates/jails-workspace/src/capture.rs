@@ -646,20 +646,20 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    const MODEL: &str = r#"
-schema = "jails.model.v1"
+    const MODEL: &str = r#"jdl 1
 
-[project]
-id = "project_notes"
-name = "Notes"
-base_package = "com.example.notes"
-java_release = 26
-dialect = "postgresql"
+app Notes @id(project_notes) {
+  pkg com.example.notes
+  java 26
+  platform plain
+  build maven
+  storage none
+}
 "#;
 
     #[test]
     fn v1_lock_remains_a_one_way_upgrade_input() {
-        let model = jails_model::parse_toml(MODEL).unwrap();
+        let model = jails_model::parse_jdl(MODEL).unwrap();
         let model_digest = digest(&model.canonical_json().unwrap()).unwrap();
         let bytes = serde_json::to_vec(&json!({
             "schema": COMPILER_LOCK_SCHEMA_V1,
@@ -675,7 +675,7 @@ dialect = "postgresql"
 
     #[test]
     fn v2_lock_refuses_a_projection_that_does_not_match_its_digest() {
-        let model = jails_model::parse_toml(MODEL).unwrap();
+        let model = jails_model::parse_jdl(MODEL).unwrap();
         let model_digest = digest(&model.canonical_json().unwrap()).unwrap();
         let projection = RenderedTree::new(ProjectPath::parse(MANAGED_ROOT).unwrap());
         let projection_digest = digest(&serde_json::to_vec(&projection).unwrap()).unwrap();

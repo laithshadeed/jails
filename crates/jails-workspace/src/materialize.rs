@@ -734,29 +734,24 @@ mod tests {
     use super::*;
     use jails_compiler::Compiler;
 
-    const MODEL: &str = r#"
-schema = "jails.model.v1"
+    const MODEL: &str = r#"jdl 1
 
-[project]
-id = "project_notes"
-name = "Notes"
-base_package = "com.example.notes"
-java_release = 26
-dialect = "postgresql"
+app Notes @id(project_notes) {
+  pkg com.example.notes
+  java 26
+  platform plain
+  build maven
+  storage none
+}
 
-[entities.note]
-id = "ent_note"
-facets = ["record"]
-
-[entities.note.fields.id]
-id = "fld_note_id"
-type = "uuid"
-primary_key = true
+entity Note @id(ent_note) {
+  id: uuid @id(fld_note_id) @pk
+}
 "#;
 
     #[test]
     fn materialization_is_exact_and_self_verifying() {
-        let model = jails_model::parse_toml(MODEL).unwrap();
+        let model = jails_model::parse_jdl(MODEL).unwrap();
         let snapshot = WorkspaceSnapshot::detached(model);
         let draft = Compiler::compile(&snapshot, None).unwrap();
         let bundle = materialize(
@@ -797,7 +792,7 @@ primary_key = true
     /// not a fragment, so it exercises the maps every emitter builds.
     #[test]
     fn the_same_snapshot_patch_and_compiler_produce_the_same_plan_digest() {
-        let model = jails_model::parse_toml(MODEL).unwrap();
+        let model = jails_model::parse_jdl(MODEL).unwrap();
         let snapshot = WorkspaceSnapshot::detached(model);
         let digest = || {
             let draft = Compiler::compile(&snapshot, None).unwrap();
@@ -823,7 +818,7 @@ primary_key = true
     /// question `simplify-sol.md` exists to delete.
     #[test]
     fn a_different_compiler_version_is_a_different_plan() {
-        let model = jails_model::parse_toml(MODEL).unwrap();
+        let model = jails_model::parse_jdl(MODEL).unwrap();
         let snapshot = WorkspaceSnapshot::detached(model);
         let digest = |version: &str| {
             let draft = Compiler::compile(&snapshot, None).unwrap();
@@ -1088,7 +1083,7 @@ primary_key = true
     /// against a request nobody made.
     #[test]
     fn a_different_patch_input_is_a_different_plan() {
-        let model = jails_model::parse_toml(MODEL).unwrap();
+        let model = jails_model::parse_jdl(MODEL).unwrap();
         let snapshot = WorkspaceSnapshot::detached(model);
         let digest = |input: CanonicalModelPatch| {
             let draft = Compiler::compile(&snapshot, None).unwrap();
@@ -1108,8 +1103,8 @@ primary_key = true
 
     #[test]
     fn an_absent_empty_managed_tree_is_already_converged() {
-        let source = MODEL.split("\n[entities.note]").next().unwrap();
-        let model = jails_model::parse_toml(source).unwrap();
+        let source = MODEL.split("\nentity Note").next().unwrap();
+        let model = jails_model::parse_jdl(source).unwrap();
         let snapshot = WorkspaceSnapshot::detached(model);
         let draft = Compiler::compile(&snapshot, None).unwrap();
         let bundle = materialize(
@@ -1128,7 +1123,7 @@ primary_key = true
 
     #[test]
     fn a_partially_published_tree_converges_before_lock_acceptance() {
-        let model = jails_model::parse_toml(MODEL).unwrap();
+        let model = jails_model::parse_jdl(MODEL).unwrap();
         let snapshot = WorkspaceSnapshot::detached(model);
         let draft = Compiler::compile(&snapshot, None).unwrap();
         let bundle = materialize(

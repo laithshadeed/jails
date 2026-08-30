@@ -670,7 +670,7 @@ mod tests {
 
         // The refusal is reachable, not merely written down.
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\n",
+            "jdl 1\n\napp Demo {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -1358,69 +1358,45 @@ mod tests {
     use jails_contracts::{BuildSystem, ContentDigest, MigrationRecord, WorkspaceSnapshot};
     use jails_model::{FieldAddPolicy, FieldId};
 
-    const MODEL: &str = r#"
-schema = "jails.model.v1"
+    const MODEL: &str = r#"jdl 1
 
-[project]
-id = "project_notes"
-name = "Notes"
-base_package = "com.example.notes"
-java_release = 26
-dialect = "postgresql"
+app Notes @id(project_notes) {
+  pkg com.example.notes
+  java 26
+  platform spring
+  build maven
+  storage none
+}
 
-[capabilities.fake]
-id = "cap_fake"
-kind = "fake"
+cap fake @id(cap_fake)
 
-[entities.note]
-id = "ent_note"
-facets = ["record", "repository", "service", "http", "events", "search"]
+entity Note @id(ent_note) {
+  use repo
+  use service
+  use http
+  id: uuid @id(fld_note_id) @pk
+  title: string @id(fld_note_title) @notBlank
 
-[entities.note.fields.id]
-id = "fld_note_id"
-type = "uuid"
-primary_key = true
-
-[entities.note.fields.title]
-id = "fld_note_title"
-type = "string"
-non_blank = true
-
-[operations.note_created]
-kind = "event"
-id = "op_note_created"
-on = "note"
-fields = ["id", "title"]
-
-[operations.create_note]
-kind = "command"
-id = "op_create_note"
-on = "note"
-fields = ["title"]
-route = "POST /notes"
-
-[operations.open_notes]
-kind = "query"
-id = "op_open_notes"
-on = "note"
-filters = ["title"]
-order_by = ["id"]
-limit = 50
-route = "GET /notes"
-
-[operations.rename_note]
-kind = "transition"
-id = "op_rename_note"
-on = "note"
-fields = ["title"]
-sets = ["title"]
-yields = "note_created"
-route = "PATCH /notes/{id}"
+  event NoteCreated(id, title) @id(op_note_created)
+  command CreateNote(title) @id(op_create_note) {
+    route POST "/notes"
+  }
+  query OpenNotes(title) @id(op_open_notes) {
+    route GET "/notes"
+    order by [id]
+    limit 50
+  }
+  transition RenameNote(title) @id(op_rename_note) {
+    route PATCH "/notes/{id}"
+    update [title]
+    emit NoteCreated
+  }
+}
 "#;
 
     #[test]
     fn equal_inputs_produce_equal_drafts() {
-        let model = jails_model::parse_toml(MODEL).unwrap();
+        let model = jails_model::parse_jdl(MODEL).unwrap();
         let snapshot = WorkspaceSnapshot::detached(model);
         let first = Compiler::compile(&snapshot, None).unwrap();
         let second = Compiler::compile(&snapshot, None).unwrap();
@@ -1456,7 +1432,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn data_capabilities_lower_from_one_declarative_pack_registry() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability csv @id(cap_csv) @name(Dataset) @package(imports)\ncapability json @id(cap_json)\n",
+            "jdl 1\n\napp Demo {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap csv Dataset @id(cap_csv)\ncap json @id(cap_json)\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -1477,7 +1453,7 @@ route = "PATCH /notes/{id}"
         assert_eq!(packs.len(), 4);
         assert!(draft.generated.files.keys().any(|path| {
             path.as_str()
-                .ends_with("com/example/demo/imports/DatasetReader.java")
+                .ends_with("com/example/demo/adapters/DatasetReader.java")
         }));
         assert!(draft.generated.files.keys().any(|path| {
             path.as_str()
@@ -1514,7 +1490,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn test_packs_share_the_same_file_dependency_and_ejection_engine() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability fake @id(cap_fake)\ncapability http @id(cap_http) @name(Admin) @package(gateway)\ncapability testkit @id(cap_testkit)\n",
+            "jdl 1\n\napp Demo {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap fake @id(cap_fake)\ncap http Admin @id(cap_http)\ncap testkit @id(cap_testkit)\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -1526,8 +1502,8 @@ route = "PATCH /notes/{id}"
         let expected = [
             ".jails/generated/test/java/com/example/demo/testkit/Fake.java",
             ".jails/generated/test/java/com/example/demo/testkit/FakeTest.java",
-            ".jails/generated/main/java/com/example/demo/gateway/AdminServer.java",
-            ".jails/generated/test/java/com/example/demo/gateway/AdminServerTest.java",
+            ".jails/generated/main/java/com/example/demo/api/AdminServer.java",
+            ".jails/generated/test/java/com/example/demo/api/AdminServerTest.java",
             ".jails/generated/test/java/com/example/demo/testkit/Clocks.java",
             ".jails/generated/test/java/com/example/demo/testkit/Ids.java",
             ".jails/generated/test/java/com/example/demo/testkit/Fixtures.java",
@@ -1583,7 +1559,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn sqlite_pack_projects_java_roles_and_an_append_only_migration() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability sqlite @id(cap_sqlite) @name(Store) @package(storage)\n",
+            "jdl 1\n\napp Demo {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap sqlite Store @id(cap_sqlite)\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -1591,9 +1567,9 @@ route = "PATCH /notes/{id}"
         snapshot.project.spring_boot = Some("4.0.0".to_string());
         let draft = Compiler::compile(&snapshot, None).unwrap();
         let expected = [
-            ".jails/generated/main/java/com/example/demo/storage/StoreDatabase.java",
-            ".jails/generated/main/java/com/example/demo/storage/StoreMigrations.java",
-            ".jails/generated/test/java/com/example/demo/storage/StoreDatabaseTest.java",
+            ".jails/generated/main/java/com/example/demo/adapters/StoreDatabase.java",
+            ".jails/generated/main/java/com/example/demo/adapters/StoreMigrations.java",
+            ".jails/generated/test/java/com/example/demo/adapters/StoreDatabaseTest.java",
         ];
         for path in expected {
             let file = draft
@@ -1637,7 +1613,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn h2_pack_projects_one_test_dependency_set_and_two_property_targets() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect h2\ncapability h2 @id(cap_h2)\n",
+            "jdl 1\n\napp Demo {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage h2\n}\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -1710,7 +1686,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn actuator_pack_projects_one_ejectable_test_dependency_and_owned_properties() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability actuator @id(cap_actuator)\n",
+            "jdl 1\n\napp Demo {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap actuator @id(cap_actuator)\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -1774,7 +1750,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn cache_pack_projects_two_ejectable_files_dependencies_and_bounded_configuration() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability cache @id(cap_cache)\n",
+            "jdl 1\n\napp Demo {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap cache @id(cap_cache)\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -1836,7 +1812,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn cors_pack_selects_boot_specific_tests_and_owns_one_property() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability cors @id(cap_cors)\n",
+            "jdl 1\n\napp Demo {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap cors @id(cap_cors)\n",
         )
         .unwrap();
         let compile = |version: &str| {
@@ -1939,7 +1915,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn observability_pack_projects_versioned_metrics_dependencies_and_bounded_properties() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability observability @id(cap_observability)\n",
+            "jdl 1\n\napp Demo {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap observability @id(cap_observability)\n",
         )
         .unwrap();
         let compile = |version: &str| {
@@ -2035,7 +2011,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn security_pack_projects_one_ejectable_boundary_and_enforces_its_boot_floor() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability security @id(cap_security)\n",
+            "jdl 1\n\napp Demo {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap security @id(cap_security)\n",
         )
         .unwrap();
         let compile = |version: &str| {
@@ -2119,7 +2095,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn sse_pack_projects_one_multi_package_iterative_boundary() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability sse @id(cap_sse) @package(streaming)\n",
+            "jdl 1\n\napp Demo {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap sse @id(cap_sse)\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -2128,10 +2104,10 @@ route = "PATCH /notes/{id}"
         let draft = Compiler::compile(&snapshot, None).unwrap();
 
         for path in [
-            ".jails/generated/main/java/com/example/demo/streaming/EventHub.java",
-            ".jails/generated/main/java/com/example/demo/streaming/SchedulingConfig.java",
+            ".jails/generated/main/java/com/example/demo/EventHub.java",
+            ".jails/generated/main/java/com/example/demo/SchedulingConfig.java",
             ".jails/generated/main/java/com/example/demo/web/EventStreamController.java",
-            ".jails/generated/test/java/com/example/demo/streaming/EventHubTest.java",
+            ".jails/generated/test/java/com/example/demo/EventHubTest.java",
         ] {
             let file = draft
                 .generated
@@ -2155,7 +2131,7 @@ route = "PATCH /notes/{id}"
                 .clone(),
         )
         .unwrap();
-        assert!(controller.contains("import com.example.demo.streaming.EventHub;"));
+        assert!(controller.contains("import com.example.demo.EventHub;"));
         assert!(controller.contains("/events/{topic}/stream"));
 
         let dependencies = draft
@@ -2189,7 +2165,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn redis_pack_projects_merge_managed_source_compose_and_integration_build() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability redis @id(cap_redis)\n",
+            "jdl 1\n\napp Demo {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap redis @id(cap_redis)\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -2262,7 +2238,7 @@ route = "PATCH /notes/{id}"
 
     #[test]
     fn kafka_pack_projects_spring_sources_plain_client_and_one_compose_facet() {
-        let source = "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability kafka @id(cap_kafka)\n";
+        let source = "jdl 1\n\napp Demo {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap kafka @id(cap_kafka)\n";
         let model = jails_model::parse_jdl(source).unwrap();
         let mut spring = WorkspaceSnapshot::detached(model.clone());
         spring.project.build_system = BuildSystem::Maven;
@@ -2360,7 +2336,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn mail_pack_projects_merge_managed_source_compose_and_boot_specific_tests() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability mail @id(cap_mail)\n",
+            "jdl 1\n\napp Demo {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap mail @id(cap_mail)\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model.clone());
@@ -2469,7 +2445,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn toxiproxy_pack_projects_merge_managed_testkit_sources_and_exact_test_dependencies() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability toxiproxy @id(cap_toxiproxy)\n",
+            "jdl 1\n\napp Demo {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap toxiproxy @id(cap_toxiproxy)\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -2522,7 +2498,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn coverage_pack_is_a_pure_build_feature_without_generated_files() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability coverage @id(cap_coverage)\n",
+            "jdl 1\n\napp Demo {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap coverage @id(cap_coverage)\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -2542,7 +2518,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn loadtest_projects_six_merge_managed_files_from_typed_controller_routes() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncontroller Health\ncapability loadtest @id(cap_loadtest)\n",
+            "jdl 1\n\napp Demo {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncomponent controller Health\ncap loadtest @id(cap_loadtest)\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -2582,11 +2558,10 @@ route = "PATCH /notes/{id}"
 
     #[test]
     fn database_capability_lowers_ejectable_operation_implementations() {
-        let source = MODEL.replace(
-            "[capabilities.fake]\nid = \"cap_fake\"\nkind = \"fake\"",
-            "[capabilities.db]\nid = \"cap_db\"\nkind = \"db\"",
-        );
-        let model = jails_model::parse_toml(&source).unwrap();
+        let source = MODEL
+            .replace("cap fake @id(cap_fake)\n", "")
+            .replace("  storage none\n", "  storage postgres\n");
+        let model = jails_model::parse_jdl(&source).unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.spring_boot = Some("4.0.0".to_string());
         snapshot.project.build_system = BuildSystem::Maven;
@@ -2675,7 +2650,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn factory_is_an_ejectable_test_projection_of_the_entity_fields() {
         let model = jails_model::parse_jdl(
-            "application Notes\npackage com.example.notes\njava 26\ndialect postgresql\n\nentity Note @factory {\n  id: uuid @pk\n  title: string!\n  publishedAt: instant?\n}\n",
+            "jdl 1\n\napp Notes {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n\nentity Note {\n  use factory\n  id: uuid @pk\n  title: string @notBlank\n  publishedAt: instant?\n}\n",
         )
         .unwrap();
         let draft = Compiler::compile(&WorkspaceSnapshot::detached(model), None).unwrap();
@@ -2701,7 +2676,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn dto_is_three_independently_mergeable_managed_abi_files() {
         let model = jails_model::parse_jdl(
-            "application Notes\npackage com.example.notes\njava 26\ndialect postgresql\n\nentity Note @dto {\n  id: uuid @pk\n  title: string!\n  publishedAt: instant?\n}\n",
+            "jdl 1\n\napp Notes {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n\nentity Note {\n  use dto\n  id: uuid @pk\n  title: string @notBlank\n  publishedAt: instant?\n}\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -2757,7 +2732,7 @@ route = "PATCH /notes/{id}"
 
     #[test]
     fn accepted_projection_is_the_exact_merge_base_across_emitter_versions() {
-        let model = jails_model::parse_toml(MODEL).unwrap();
+        let model = jails_model::parse_jdl(MODEL).unwrap();
         let first = Compiler::compile(&WorkspaceSnapshot::detached(model.clone()), None).unwrap();
         let mut old_projection = first.generated.clone();
         let record = old_projection
@@ -2781,7 +2756,7 @@ route = "PATCH /notes/{id}"
 
     #[test]
     fn compilation_refuses_a_snapshot_model_disagreement() {
-        let model = jails_model::parse_toml(MODEL).unwrap();
+        let model = jails_model::parse_jdl(MODEL).unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.java_release = 21;
         let error = Compiler::compile(&snapshot, None).unwrap_err();
@@ -2790,7 +2765,7 @@ route = "PATCH /notes/{id}"
 
     #[test]
     fn a_new_ejection_transfers_matching_units_and_removes_them_from_the_tree() {
-        let model = jails_model::parse_toml(MODEL).unwrap();
+        let model = jails_model::parse_jdl(MODEL).unwrap();
         let snapshot = WorkspaceSnapshot::detached(model);
         let before = Compiler::compile(&snapshot, None).unwrap();
         let ejection = jails_model::Ejection {
@@ -2824,10 +2799,8 @@ route = "PATCH /notes/{id}"
 
     #[test]
     fn an_ejection_that_emits_nothing_is_rejected() {
-        let source = format!(
-            "{MODEL}\n[ejections.database]\nid = \"eject_database\"\ntarget = \"art_missing_repository\"\n"
-        );
-        let model = jails_model::parse_toml(&source).unwrap();
+        let source = format!("{MODEL}\neject art_missing_repository @id(eject_database)\n");
+        let model = jails_model::parse_jdl(&source).unwrap();
         let snapshot = WorkspaceSnapshot::detached(model);
         let error = Compiler::compile(&snapshot, None).unwrap_err();
         assert!(
@@ -2838,10 +2811,8 @@ route = "PATCH /notes/{id}"
 
     #[test]
     fn managed_abi_cannot_be_ejected() {
-        let source = format!(
-            "{MODEL}\n[ejections.note]\nid = \"eject_ent_note\"\ntarget = \"art_ent_note_record\"\n"
-        );
-        let model = jails_model::parse_toml(&source).unwrap();
+        let source = format!("{MODEL}\neject art_ent_note_record @id(eject_ent_note)\n");
+        let model = jails_model::parse_jdl(&source).unwrap();
         let snapshot = WorkspaceSnapshot::detached(model);
         let error = Compiler::compile(&snapshot, None).unwrap_err();
         assert!(error.to_string().contains("managed ABI"), "{error}");
@@ -2849,9 +2820,8 @@ route = "PATCH /notes/{id}"
 
     #[test]
     fn database_capability_lowers_storage_dependencies_adapter_and_initial_schema() {
-        let source =
-            format!("{MODEL}\n[capabilities.database]\nid = \"cap_database\"\nkind = \"db\"\n");
-        let model = jails_model::parse_toml(&source).unwrap();
+        let source = MODEL.replace("  storage none\n", "  storage postgres\n");
+        let model = jails_model::parse_jdl(&source).unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         // The adapters this asserts on are `JdbcClient` classes annotated
@@ -2877,13 +2847,13 @@ route = "PATCH /notes/{id}"
 
     #[test]
     fn accepted_schema_and_field_policy_lower_one_forward_add_column() {
-        let source =
-            format!("{MODEL}\n[capabilities.database]\nid = \"cap_database\"\nkind = \"db\"\n");
-        let model = jails_model::parse_toml(&source).unwrap();
-        let next_source = format!(
-            "{source}\n[entities.note.fields.summary]\nid = \"fld_note_summary\"\ntype = \"string\"\nrequired = false\n"
+        let source = MODEL.replace("  storage none\n", "  storage postgres\n");
+        let model = jails_model::parse_jdl(&source).unwrap();
+        let next_source = source.replace(
+            "  title: string @id(fld_note_title) @notBlank\n",
+            "  title: string @id(fld_note_title) @notBlank\n  summary: string? @id(fld_note_summary)\n",
         );
-        let next = jails_model::parse_toml(&next_source).unwrap();
+        let next = jails_model::parse_jdl(&next_source).unwrap();
         let field_id = FieldId::parse("fld_note_summary").unwrap();
         let field = next
             .entities
@@ -2923,13 +2893,13 @@ route = "PATCH /notes/{id}"
 
     #[test]
     fn required_direct_model_edit_refuses_without_an_explicit_backfill_policy() {
-        let source =
-            format!("{MODEL}\n[capabilities.database]\nid = \"cap_database\"\nkind = \"db\"\n");
-        let accepted = jails_model::parse_toml(&source).unwrap();
-        let next_source = format!(
-            "{source}\n[entities.note.fields.summary]\nid = \"fld_note_summary\"\ntype = \"string\"\n"
+        let source = MODEL.replace("  storage none\n", "  storage postgres\n");
+        let accepted = jails_model::parse_jdl(&source).unwrap();
+        let next_source = source.replace(
+            "  title: string @id(fld_note_title) @notBlank\n",
+            "  title: string @id(fld_note_title) @notBlank\n  summary: string @id(fld_note_summary)\n",
         );
-        let next = jails_model::parse_toml(&next_source).unwrap();
+        let next = jails_model::parse_jdl(&next_source).unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(next);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
