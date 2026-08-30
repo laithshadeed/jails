@@ -1,53 +1,45 @@
 use super::*;
 
-const MODEL: &str = r#"
-schema = "jails.model.v1"
+const MODEL: &str = r#"jdl 1
 
-[project]
-id = "project_notes"
-name = "Notes"
-base_package = "com.example.notes"
-java_release = 26
-dialect = "postgresql"
+app Notes @id(project_notes) {
+  pkg com.example.notes
+  java 26
+  platform spring
+  build maven
+  storage none
+}
 
-[entities.note]
-id = "ent_note"
-facets = ["record", "repository", "http"]
+entity Note @id(ent_note) {
+  use repo
+  use service
+  use http
+  id: uuid @id(fld_note_id) @pk
+  title: string @id(fld_note_title) @notBlank
 
-[entities.note.fields.id]
-id = "fld_note_id"
-type = "uuid"
-primary_key = true
-
-[entities.note.fields.title]
-id = "fld_note_title"
-type = "string"
-non_blank = true
-
-[operations.create_note]
-kind = "command"
-id = "op_create_note"
-on = "note"
-fields = ["title"]
-route = "POST /notes"
+  command CreateNote(title) @id(op_create_note) {
+    route POST "/notes"
+  }
+}
 "#;
 
-const EMPTY_MODEL: &str = r#"
-schema = "jails.model.v1"
+const EMPTY_MODEL: &str = r#"jdl 1
 
-[project]
-id = "project_notes"
-name = "Notes"
-base_package = "com.example.notes"
-java_release = 26
-dialect = "postgresql"
+app Notes @id(project_notes) {
+  pkg com.example.notes
+  java 26
+  platform spring
+  build maven
+  storage none
+}
 "#;
 
+/// A canonical project seeded from one JDL v1 source.
+///
+/// It wrote `.jails/model.jdl` until the cutover, which is what let the v1
+/// frontends' defects hide behind a dialect the tool no longer writes.
 fn model_project(label: &str, source: &str) -> PathBuf {
-    let root = temp_dir(label);
-    fs::create_dir_all(root.join(".jails")).unwrap();
-    fs::write(root.join(".jails/model.toml"), source).unwrap();
-    root
+    jdl_project(label, source)
 }
 
 fn jdl_project(label: &str, source: &str) -> PathBuf {
@@ -1330,7 +1322,7 @@ fn canonical_source_units_merge_every_main_and_test_file_and_wire_both_roots() {
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
 
@@ -1436,7 +1428,7 @@ fn canonical_standalone_tests_merge_reader_edits_and_refuse_edited_build_wiring(
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
 
@@ -1568,7 +1560,7 @@ fn canonical_sealed_types_evolve_through_merge_and_destroy_as_one_semantic_unit(
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
 
@@ -1719,7 +1711,7 @@ fn canonical_factory_tracks_entity_fields_without_owning_the_record() {
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
 
@@ -1870,7 +1862,7 @@ fn canonical_strategy_evolves_all_implementation_boundaries_in_one_plan() {
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
     for command in [
@@ -2078,7 +2070,7 @@ fn canonical_controller_merges_both_files_and_refuses_overlapping_route_edits() 
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
     for command in [
@@ -2293,7 +2285,7 @@ fn canonical_controller_ejection_transfers_the_whole_http_adapter_boundary() {
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
     let generated = jails_cmd(&root, None)
@@ -2377,7 +2369,7 @@ fn canonical_loadtest_merges_every_project_file_and_refuses_route_overlap_atomic
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
     for arguments in [
@@ -2497,7 +2489,7 @@ fn canonical_repository_is_a_managed_abi_facet_of_the_record() {
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
 
@@ -2679,7 +2671,7 @@ fn canonical_dto_evolves_three_merge_managed_abi_files_without_losing_reader_edi
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
 
@@ -2904,7 +2896,7 @@ fn canonical_source_unit_destroy_removes_only_the_selected_artifacts() {
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
     let generated = jails_cmd(&root, None)
@@ -3022,7 +3014,7 @@ fn legacy_record_import_adopts_live_bytes_then_joins_the_iterative_merge_loop() 
         "the one-way importer mutated its legacy evidence"
     );
     assert!(root.join(".jails/model.jdl").is_file());
-    assert!(!root.join(".jails/model.toml").exists());
+    assert!(!root.join(".jails/model.jdl").exists());
 
     let evolved = jails_cmd(&root, None)
         .args(["g", "field", "Task", "done:boolean"])
@@ -3176,7 +3168,7 @@ fn legacy_import_plan_refuses_a_later_reader_edit_before_any_cutover_write() {
         "stale import wrote part of cutover"
     );
     assert!(!root.join(".jails/model.jdl").exists());
-    assert!(!root.join(".jails/model.toml").exists());
+    assert!(!root.join(".jails/model.jdl").exists());
     assert!(!root.join(".jails/generated").exists());
 }
 
@@ -3194,10 +3186,7 @@ fn model_check_links_the_real_model_through_the_binary() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(
-        stdout.contains("model valid: .jails/model.toml"),
-        "{stdout}"
-    );
+    assert!(stdout.contains("model valid: .jails/model.jdl"), "{stdout}");
     assert!(
         stdout.contains("5 nodes, 1 entities, 1 operations"),
         "{stdout}"
@@ -3213,14 +3202,18 @@ fn model_check_links_the_real_model_through_the_binary() {
 fn jdl_is_compiled_directly_as_the_single_authoring_source() {
     let root = jdl_project(
         "model-jdl",
-        r#"
-application Notes @id(project_notes)
-package com.example.notes
-java 26
-dialect postgresql
+        r#"jdl 1
+
+app Notes @id(project_notes) {
+  pkg com.example.notes
+  java 26
+  platform spring
+  build maven
+  storage none
+}
 
 entity Task @id(ent_task) {
-  title: string! @id(fld_task_title)
+  title: string @notBlank @id(fld_task_title)
   done: boolean?
 }
 
@@ -3273,28 +3266,10 @@ enum Status {
 }
 
 #[test]
-fn two_editable_model_sources_refuse_instead_of_choosing_an_authority() {
-    let root = jdl_project(
-        "model-two-sources",
-        "application Notes\npackage com.example.notes\njava 26\ndialect postgresql\n",
-    );
-    fs::write(root.join(".jails/model.toml"), EMPTY_MODEL).unwrap();
-    let before = snapshot_tree(&root);
-    let refused = jails_cmd(&root, None).args(["sync"]).output().unwrap();
-    assert!(!refused.status.success());
-    let stderr = String::from_utf8(refused.stderr).unwrap();
-    assert!(
-        stderr.contains("two editable application models"),
-        "{stderr}"
-    );
-    assert_eq!(snapshot_tree(&root), before);
-}
-
-#[test]
 fn jdl_destroy_removes_nested_operations_and_entities_without_legacy_state() {
     let root = jdl_project(
         "model-jdl-destroy",
-        "application Notes\npackage com.example.notes\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Notes {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     );
     for arguments in [
         vec!["g", "record", "Task", "title:string!"],
@@ -3357,7 +3332,7 @@ fn jdl_destroy_removes_nested_operations_and_entities_without_legacy_state() {
 fn jdl_storage_preserve_and_revive_toggle_one_entity_declaration() {
     let root = jdl_project(
         "model-jdl-retire-revive",
-        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     );
     write_spring_fixture(&root);
     for arguments in [
@@ -3418,7 +3393,7 @@ fn jdl_storage_preserve_and_revive_toggle_one_entity_declaration() {
 fn jdl_dependencies_and_settings_edit_one_source_and_reconcile_reader_files() {
     let root = jdl_project(
         "model-jdl-dependency-setting",
-        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     );
     fs::write(
         root.join("pom.xml"),
@@ -3537,7 +3512,7 @@ fn jdl_dependencies_and_settings_edit_one_source_and_reconcile_reader_files() {
 fn jdl_capability_commands_edit_the_authoring_source_and_recompile() {
     let root = jdl_project(
         "model-jdl-capability",
-        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     );
     let scaffold = jails_cmd(&root, None)
         .args(["g", "scaffold", "Note", "id:uuid@pk", "title:string!"])
@@ -3584,7 +3559,7 @@ fn jdl_capability_commands_edit_the_authoring_source_and_recompile() {
 fn jdl_generate_edit_generate_preserves_clean_edits_and_refuses_overlap() {
     let root = jdl_project(
         "model-jdl-iterative-record",
-        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     );
     let generated = root.join(".jails/generated/main/java/com/example/notes/domain/Task.java");
 
@@ -3665,7 +3640,7 @@ fn jdl_generate_edit_generate_preserves_clean_edits_and_refuses_overlap() {
 fn compiler_upgrade_uses_the_exact_accepted_projection_as_merge_base() {
     let root = jdl_project(
         "model-compiler-upgrade-base",
-        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     );
     let generated = root.join(".jails/generated/main/java/com/example/notes/domain/Task.java");
     let first = jails_cmd(&root, None)
@@ -3731,7 +3706,7 @@ fn compiler_upgrade_uses_the_exact_accepted_projection_as_merge_base() {
 fn jdl_generate_writes_enum_and_scaffold_declarations() {
     let root = jdl_project(
         "model-jdl-generate-profiles",
-        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     );
     let enumeration = jails_cmd(&root, None)
         .args(["g", "enum", "Status", "OPEN", "IN_PROGRESS=in_progress"])
@@ -3774,7 +3749,7 @@ fn canonical_sync_recompiles_model_state_without_the_legacy_store() {
         ),
     )
     .unwrap();
-    let model_path = root.join(".jails/model.toml");
+    let model_path = root.join(".jails/model.jdl");
     let mut source = fs::read_to_string(&model_path).unwrap();
     source.push_str("\n[capabilities.fake]\nid = \"cap_fake\"\nkind = \"fake\"\n");
     fs::write(&model_path, source).unwrap();
@@ -3827,9 +3802,9 @@ fn canonical_fast_test_is_model_owned_and_never_journaled() {
         "{}",
         String::from_utf8_lossy(&installed.stderr)
     );
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
-    assert!(model.contains("[capabilities.fast_test]"), "{model}");
-    assert!(model.contains("kind = \"fast-test\""), "{model}");
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(model.contains("cap fast-test"), "{model}");
+    assert!(model.contains("cap fast-test"), "{model}");
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
     assert!(pom.contains("junit-platform-console"), "{pom}");
     for legacy in ["objects", "receipts", "journal", "state"] {
@@ -3846,7 +3821,7 @@ fn canonical_fast_test_is_model_owned_and_never_journaled() {
         String::from_utf8_lossy(&removed.stderr)
     );
     assert!(
-        !fs::read_to_string(root.join(".jails/model.toml"))
+        !fs::read_to_string(root.join(".jails/model.jdl"))
             .unwrap()
             .contains("fast-test")
     );
@@ -3861,7 +3836,7 @@ fn canonical_fast_test_is_model_owned_and_never_journaled() {
 fn jdl_fast_test_is_a_capability_in_the_authoring_source() {
     let root = jdl_project(
         "model-jdl-fast-test",
-        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     );
     write_spring_fixture(&root);
     apply_canonical_model(&root, "initial-jdl-fast-test");
@@ -4089,7 +4064,7 @@ fn model_apply_rejects_a_stale_plan_before_writing() {
         .unwrap();
     assert!(planned.status.success());
     fs::write(
-        root.join(".jails/model.toml"),
+        root.join(".jails/model.jdl"),
         format!("{MODEL}\n# changed\n"),
     )
     .unwrap();
@@ -4115,7 +4090,7 @@ fn model_eject_transfers_generated_java_once_and_reader_edits_survive() {
     let reader =
         root.join("src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java");
     let generated_bytes = fs::read(&generated).unwrap();
-    let model_before = fs::read(root.join(".jails/model.toml")).unwrap();
+    let model_before = fs::read(root.join(".jails/model.jdl")).unwrap();
 
     let preview = jails_cmd(&root, None)
         .args([
@@ -4133,7 +4108,7 @@ fn model_eject_transfers_generated_java_once_and_reader_edits_survive() {
         String::from_utf8_lossy(&preview.stderr)
     );
     assert_eq!(
-        fs::read(root.join(".jails/model.toml")).unwrap(),
+        fs::read(root.join(".jails/model.jdl")).unwrap(),
         model_before
     );
     assert_eq!(fs::read(&generated).unwrap(), generated_bytes);
@@ -4150,7 +4125,7 @@ fn model_eject_transfers_generated_java_once_and_reader_edits_survive() {
     );
     assert!(!generated.exists());
     assert_eq!(fs::read(&reader).unwrap(), generated_bytes);
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(model.contains("[ejections.eject_"), "{model}");
     assert!(
         model.contains("target = \"art_cap_fake_ent_note_repository\""),
@@ -4194,7 +4169,7 @@ fn model_eject_transfers_generated_java_once_and_reader_edits_survive() {
 fn jdl_ejection_transfers_only_one_artifact_and_records_inline_ownership() {
     let root = jdl_project(
         "model-jdl-eject",
-        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     );
     let scaffold = jails_cmd(&root, None)
         .args(["g", "scaffold", "Note", "id:uuid@pk", "title:string!"])
@@ -4253,7 +4228,7 @@ fn jdl_ejection_transfers_only_one_artifact_and_records_inline_ownership() {
 fn factory_ejection_transfers_only_the_testkit_implementation_boundary() {
     let root = jdl_project(
         "model-jdl-factory-eject",
-        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     );
     for command in [
         ["g", "record", "Note", "title:string!"].as_slice(),
@@ -4358,7 +4333,7 @@ fn model_eject_plan_refuses_a_destination_created_after_review() {
         "{}",
         String::from_utf8_lossy(&planned.stderr)
     );
-    let model_before = fs::read(root.join(".jails/model.toml")).unwrap();
+    let model_before = fs::read(root.join(".jails/model.jdl")).unwrap();
     let generated = root.join(
         ".jails/generated/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
     );
@@ -4380,7 +4355,7 @@ fn model_eject_plan_refuses_a_destination_created_after_review() {
     let stderr = String::from_utf8(applied.stderr).unwrap();
     assert!(stderr.contains("stale exact plan"), "{stderr}");
     assert_eq!(
-        fs::read(root.join(".jails/model.toml")).unwrap(),
+        fs::read(root.join(".jails/model.jdl")).unwrap(),
         model_before
     );
     assert!(generated.exists());
@@ -4411,7 +4386,7 @@ fn familiar_record_generation_is_a_model_patch_in_canonical_projects() {
         String::from_utf8_lossy(&preview.stderr)
     );
     assert_eq!(
-        fs::read_to_string(root.join(".jails/model.toml")).unwrap(),
+        fs::read_to_string(root.join(".jails/model.jdl")).unwrap(),
         EMPTY_MODEL
     );
     assert!(!root.join(".jails/generated").exists());
@@ -4432,10 +4407,10 @@ fn familiar_record_generation_is_a_model_patch_in_canonical_projects() {
         "{}",
         String::from_utf8_lossy(&applied.stderr)
     );
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
-    assert!(model.contains("[entities.note]"), "{model}");
-    assert!(model.contains("id = \"ent_note\""), "{model}");
-    assert!(model.contains("id = \"fld_note_title\""), "{model}");
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(model.contains("entity Note"), "{model}");
+    assert!(model.contains("@id(ent_note)"), "{model}");
+    assert!(model.contains("@id(fld_note_title)"), "{model}");
 
     let source = fs::read_to_string(
         root.join(".jails/generated/main/java/com/example/notes/domain/Note.java"),
@@ -4533,8 +4508,8 @@ fn canonical_enum_frontend_writes_a_typed_wire_vocabulary() {
         "{}",
         String::from_utf8_lossy(&generated.stderr)
     );
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
-    assert!(model.contains("facets = [\"enum\"]"), "{model}");
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(model.contains("enum "), "{model}");
     assert!(
         model.contains("values = [\"OPEN\", \"IN_PROGRESS=in_progress\"]"),
         "{model}"
@@ -4594,15 +4569,14 @@ fn canonical_preserve_table_rename_moves_artifacts_and_keeps_hand_edits() {
     let source = fs::read_to_string(&new).unwrap();
     assert!(source.contains("public record WorkItem("), "{source}");
     assert!(source.contains("handWritten()"), "{source}");
-    let model =
-        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
-            .unwrap();
+    let model = jails_model::parse_jdl(&fs::read_to_string(root.join(".jails/model.jdl")).unwrap())
+        .unwrap();
     let entity = model.entities.values().next().unwrap();
     assert_eq!(entity.id.to_string(), "ent_task");
     assert_eq!(entity.names.java_type, "WorkItem");
     assert_eq!(entity.names.sql_table, "task");
     assert!(
-        fs::read_to_string(root.join(".jails/model.toml"))
+        fs::read_to_string(root.join(".jails/model.jdl"))
             .unwrap()
             .contains("java_name = \"WorkItem\"")
     );
@@ -4612,7 +4586,7 @@ fn canonical_preserve_table_rename_moves_artifacts_and_keeps_hand_edits() {
 fn jdl_rename_keeps_the_stable_identity_and_reader_edits() {
     let root = jdl_project(
         "model-jdl-rename-preserve-edits",
-        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     );
     let old = root.join(".jails/generated/main/java/com/example/notes/domain/Task.java");
     let new = root.join(".jails/generated/main/java/com/example/notes/domain/WorkItem.java");
@@ -4752,13 +4726,13 @@ fn familiar_scaffold_generation_is_one_semantic_entity_profile() {
         String::from_utf8_lossy(&applied.stderr)
     );
 
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(
-        model.contains("facets = [\"record\", \"repository\", \"service\", \"http\"]"),
+        model.contains("use repo") && model.contains("use service") && model.contains("use http"),
         "{model}"
     );
-    assert!(model.contains("id = \"fld_note_created_at\""), "{model}");
-    assert!(model.contains("id = \"fld_note_updated_at\""), "{model}");
+    assert!(model.contains("@id(fld_note_created_at)"), "{model}");
+    assert!(model.contains("@id(fld_note_updated_at)"), "{model}");
 
     for relative in [
         "domain/Note.java",
@@ -4987,7 +4961,7 @@ fn familiar_operation_commands_are_model_patches_not_legacy_routes() {
         );
     }
 
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     for declaration in [
         "[operations.note_created]",
         "[operations.create_note]",
@@ -5027,7 +5001,7 @@ fn familiar_operation_commands_are_model_patches_not_legacy_routes() {
 fn familiar_operation_commands_edit_nested_jdl_and_compile_typed_abis() {
     let root = jdl_project(
         "model-jdl-operation-frontends",
-        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     );
     for arguments in [
         vec!["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
@@ -5329,8 +5303,8 @@ fn canonical_destroy_is_model_subtraction_and_whole_tree_recompilation() {
         "{}",
         String::from_utf8_lossy(&applied.stderr)
     );
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
-    assert!(!model.contains("[entities.note]"), "{model}");
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(!model.contains("entity Note"), "{model}");
     assert!(
         !root
             .join(".jails/generated/main/java/com/example/notes/domain/Note.java")
@@ -5431,9 +5405,9 @@ fn fake_capability_is_a_global_compiler_profile_and_remove_is_recompilation() {
         "{}",
         String::from_utf8_lossy(&added.stderr)
     );
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
-    assert!(model.contains("[capabilities.fake]"), "{model}");
-    assert!(model.contains("id = \"cap_fake\""), "{model}");
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(model.contains("cap fake"), "{model}");
+    assert!(model.contains("@id(cap_fake)"), "{model}");
     let adapter_path = root.join(
         ".jails/generated/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
     );
@@ -5460,8 +5434,8 @@ fn fake_capability_is_a_global_compiler_profile_and_remove_is_recompilation() {
         String::from_utf8_lossy(&removed.stderr)
     );
     assert!(!adapter_path.exists());
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
-    assert!(!model.contains("[capabilities.fake]"), "{model}");
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(!model.contains("cap fake"), "{model}");
     let frozen = jails_cmd(&root, None)
         .args(["model", "check", "--frozen"])
         .output()
@@ -5519,7 +5493,7 @@ fn dependency_is_semantic_model_data_and_one_exact_maven_projection() {
         "{}",
         String::from_utf8_lossy(&added.stderr)
     );
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(model.contains("[dependencies.dep_"), "{model}");
     assert!(model.contains("group = \"org.jsoup\""), "{model}");
     assert!(model.contains("artifact = \"jsoup\""), "{model}");
@@ -5559,7 +5533,7 @@ fn dependency_is_semantic_model_data_and_one_exact_maven_projection() {
         "{}",
         String::from_utf8_lossy(&removed.stderr)
     );
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(!model.contains("org.jsoup"), "{model}");
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
     assert!(pom.contains("<!-- reader-owned -->"), "{pom}");
@@ -5911,7 +5885,7 @@ fn canonical_settings_preview_update_reconcile_and_unset_end_to_end() {
         String::from_utf8_lossy(&added.stderr)
     );
     let first_model =
-        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
+        jails_model::parse_jdl(&fs::read_to_string(root.join(".jails/model.jdl")).unwrap())
             .unwrap();
     let first = first_model.settings.values().next().unwrap();
     let stable_id = first.id.clone();
@@ -5933,7 +5907,7 @@ fn canonical_settings_preview_update_reconcile_and_unset_end_to_end() {
         String::from_utf8_lossy(&updated.stderr)
     );
     let updated_model =
-        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
+        jails_model::parse_jdl(&fs::read_to_string(root.join(".jails/model.jdl")).unwrap())
             .unwrap();
     let updated_setting = updated_model.settings.values().next().unwrap();
     assert_eq!(updated_setting.id, stable_id);
@@ -5965,7 +5939,7 @@ fn canonical_settings_preview_update_reconcile_and_unset_end_to_end() {
         "# reader\nreader.key=keep\n"
     );
     let final_model =
-        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
+        jails_model::parse_jdl(&fs::read_to_string(root.join(".jails/model.jdl")).unwrap())
             .unwrap();
     assert!(final_model.settings.is_empty());
     let frozen = jails_cmd(&root, None)
@@ -6000,9 +5974,8 @@ fn canonical_test_setting_creates_the_additive_config_overlay() {
         fs::read_to_string(root.join("src/test/resources/config/application.properties")).unwrap(),
         "spring.datasource.url=jdbc:h2:mem:test\n"
     );
-    let model =
-        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
-            .unwrap();
+    let model = jails_model::parse_jdl(&fs::read_to_string(root.join(".jails/model.jdl")).unwrap())
+        .unwrap();
     let setting = model.settings.values().next().unwrap();
     assert_eq!(setting.target, jails_model::SettingTarget::Test);
 }
@@ -6042,7 +6015,7 @@ fn canonical_setting_plan_is_stale_if_a_missing_reader_file_appears() {
         "{}",
         String::from_utf8_lossy(&planned.stderr)
     );
-    let model_before = fs::read(root.join(".jails/model.toml")).unwrap();
+    let model_before = fs::read(root.join(".jails/model.jdl")).unwrap();
     let properties = root.join("src/main/resources/application.properties");
     fs::create_dir_all(properties.parent().unwrap()).unwrap();
     fs::write(&properties, "reader.key=late\n").unwrap();
@@ -6059,7 +6032,7 @@ fn canonical_setting_plan_is_stale_if_a_missing_reader_file_appears() {
         "{stderr}"
     );
     assert_eq!(
-        fs::read(root.join(".jails/model.toml")).unwrap(),
+        fs::read(root.join(".jails/model.jdl")).unwrap(),
         model_before,
         "stale setting plan changed the model"
     );
@@ -6113,11 +6086,11 @@ fn maven_build_compiles_the_managed_source_root_end_to_end() {
         String::from_utf8_lossy(&fake.stderr)
     );
 
-    let mut model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    let mut model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     model.push_str(
         "\n[operations.create_note]\nkind = \"command\"\nid = \"op_create_note\"\non = \"note\"\nfields = [\"title\"]\nroute = \"POST /notes\"\n\n[operations.open_notes]\nkind = \"query\"\nid = \"op_open_notes\"\non = \"note\"\nfilters = [\"title\"]\nlimit = 25\nroute = \"GET /notes\"\n\n[operations.rename_note]\nkind = \"transition\"\nid = \"op_rename_note\"\non = \"note\"\nfields = [\"title\"]\nsets = [\"title\"]\nroute = \"PATCH /notes/{id}\"\n\n[operations.note_created]\nkind = \"event\"\nid = \"op_note_created\"\non = \"note\"\nfields = [\"id\", \"title\"]\n",
     );
-    fs::write(root.join(".jails/model.toml"), model).unwrap();
+    fs::write(root.join(".jails/model.jdl"), model).unwrap();
     let operation_plan = root.join("operations.json");
     let planned = jails_cmd(&root, None)
         .args(["model", "plan", "--bundle"])
@@ -6199,7 +6172,7 @@ fn canonical_data_capability_packs_keep_the_iterative_loop_and_eject_as_one_boun
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
 
@@ -6449,7 +6422,7 @@ fn canonical_http_and_fake_packs_merge_and_eject_as_complete_boundaries() {
     let model_path = root.join(".jails/model.jdl");
     fs::write(
         &model_path,
-        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
 
@@ -6588,7 +6561,7 @@ fn canonical_testkit_merges_and_ejects_java_and_resources_as_one_boundary() {
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
     let added = jails_cmd(&root, None)
@@ -6697,7 +6670,7 @@ fn canonical_sqlite_pack_moves_merges_ejects_and_builds_as_one_boundary() {
     let model_path = root.join(".jails/model.jdl");
     fs::write(
         &model_path,
-        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
     let added = jails_cmd(&root, None)
@@ -6851,7 +6824,7 @@ fn canonical_h2_pack_merges_ejects_and_builds() {
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect h2\n",
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage h2\n}\n",
     )
     .unwrap();
     let added = jails_cmd(&root, None).args(["add", "h2"]).output().unwrap();
@@ -6961,7 +6934,7 @@ fn canonical_actuator_pack_merges_ejects_only_java_and_builds() {
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
     let added = jails_cmd(&root, None)
@@ -7065,7 +7038,7 @@ fn canonical_cache_pack_merges_ejects_the_java_boundary_and_builds() {
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
     let added = jails_cmd(&root, None)
@@ -7184,7 +7157,7 @@ fn canonical_cors_pack_merges_ejects_the_java_boundary_and_builds() {
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
     let added = jails_cmd(&root, None)
@@ -7287,7 +7260,7 @@ fn canonical_observability_pack_merges_ejects_and_serves_prometheus() {
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
     let added = jails_cmd(&root, None)
@@ -7413,7 +7386,7 @@ fn canonical_security_pack_merges_ejects_and_keeps_cors_buildable() {
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
     for capability in ["security", "cors"] {
@@ -7531,7 +7504,7 @@ fn canonical_sse_pack_merges_ejects_across_packages_and_runs_its_proof() {
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
     let added = jails_cmd(&root, None)
@@ -7648,7 +7621,7 @@ fn canonical_redis_pack_keeps_source_and_compose_in_the_iterative_loop() {
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
     let added = jails_cmd(&root, None)
@@ -7771,7 +7744,7 @@ fn canonical_kafka_pack_keeps_source_and_compose_in_the_iterative_loop() {
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
     let added = jails_cmd(&root, None)
@@ -7900,7 +7873,7 @@ fn canonical_mail_pack_keeps_source_and_compose_in_the_iterative_loop() {
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
     let added = jails_cmd(&root, None)
@@ -8021,7 +7994,7 @@ fn canonical_toxiproxy_pack_keeps_testkit_edits_and_runs_with_real_maven() {
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
     let added = jails_cmd(&root, None)
@@ -8139,7 +8112,7 @@ fn canonical_coverage_is_lossless_refuses_owned_edits_and_passes_real_verify() {
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/model.jdl"),
-        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
 
@@ -8250,7 +8223,7 @@ fn canonical_coverage_is_lossless_refuses_owned_edits_and_passes_real_verify() {
 fn canonical_database_query_keeps_the_iterative_loop_and_ejects_only_its_adapter() {
     let root = jdl_project(
         "model-db-query-loop",
-        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     );
     write_spring_fixture(&root);
     for arguments in [
@@ -8446,7 +8419,7 @@ fn canonical_database_query_keeps_the_iterative_loop_and_ejects_only_its_adapter
 fn canonical_database_commands_and_transitions_are_independent_iterative_boundaries() {
     let root = jdl_project(
         "model-db-write-operation-loop",
-        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     );
     write_spring_fixture(&root);
     for arguments in [
@@ -8728,9 +8701,8 @@ fn canonical_preserve_table_rename_keeps_the_accepted_database_projection() {
     );
     assert!(!old.exists());
     assert!(new.exists());
-    let model =
-        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
-            .unwrap();
+    let model = jails_model::parse_jdl(&fs::read_to_string(root.join(".jails/model.jdl")).unwrap())
+        .unwrap();
     let entity = model.entities.values().next().unwrap();
     assert_eq!(entity.id.to_string(), "ent_note");
     assert_eq!(entity.names.java_type, "Memo");
@@ -8778,8 +8750,8 @@ fn canonical_database_and_safe_field_evolution_are_one_exact_compiler_path() {
         "{}",
         String::from_utf8_lossy(&db.stderr)
     );
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
-    assert!(model.contains("[capabilities.db]"), "{model}");
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(model.contains("storage postgres"), "{model}");
     let initial = root.join("src/main/resources/db/migration/V001__create_notes.sql");
     let initial_sql = fs::read_to_string(&initial).unwrap();
     assert!(initial_sql.contains("create table notes"), "{initial_sql}");
@@ -9207,7 +9179,7 @@ fn canonical_migration_plan_refuses_a_concurrent_history_append_without_writes()
         jails_contracts::PlannedOperation::ReplaceStateFile { path, .. }
             if path.as_str() == ".jails/compiler.lock.json"
     )));
-    let model_before = fs::read(root.join(".jails/model.toml")).unwrap();
+    let model_before = fs::read(root.join(".jails/model.jdl")).unwrap();
     let generated_before =
         fs::read(root.join(".jails/generated/main/java/com/example/notes/domain/Note.java"))
             .unwrap();
@@ -9226,7 +9198,7 @@ fn canonical_migration_plan_refuses_a_concurrent_history_append_without_writes()
     assert!(stderr.contains("stale exact plan"), "{stderr}");
     assert!(stderr.contains("directory"), "{stderr}");
     assert_eq!(
-        fs::read(root.join(".jails/model.toml")).unwrap(),
+        fs::read(root.join(".jails/model.jdl")).unwrap(),
         model_before
     );
     assert_eq!(
@@ -9277,7 +9249,7 @@ fn canonical_reader_sql_is_exact_plan_input_and_stale_changes_refuse_all_writes(
         String::from_utf8_lossy(&bundle.plan.input.bytes).contains("reader-owned-sql"),
         "reader SQL policy was not represented in canonical input"
     );
-    let model_before = fs::read(root.join(".jails/model.toml")).unwrap();
+    let model_before = fs::read(root.join(".jails/model.jdl")).unwrap();
     let record = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
     let record_before = fs::read(&record).unwrap();
     fs::write(
@@ -9297,7 +9269,7 @@ fn canonical_reader_sql_is_exact_plan_input_and_stale_changes_refuse_all_writes(
         String::from_utf8_lossy(&stale.stderr)
     );
     assert_eq!(
-        fs::read(root.join(".jails/model.toml")).unwrap(),
+        fs::read(root.join(".jails/model.jdl")).unwrap(),
         model_before
     );
     assert_eq!(fs::read(&record).unwrap(), record_before);
@@ -9398,7 +9370,7 @@ fn canonical_field_evolution_refuses_campaigns_and_referenced_field_drop_atomica
 fn jdl_field_evolution_keeps_ids_edits_and_forward_schema_history() {
     let root = jdl_project(
         "model-jdl-field-evolution",
-        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     );
     write_spring_fixture(&root);
     for arguments in [
@@ -9585,9 +9557,8 @@ fn canonical_composite_index_is_model_data_and_one_forward_migration() {
         migration.contains(" on notes (title, id desc);"),
         "{migration}"
     );
-    let model =
-        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
-            .unwrap();
+    let model = jails_model::parse_jdl(&fs::read_to_string(root.join(".jails/model.jdl")).unwrap())
+        .unwrap();
     let entity = model.entities.values().next().unwrap();
     let index = entity.indexes.values().next().unwrap();
     assert_eq!(index.columns.len(), 2);
@@ -9628,7 +9599,7 @@ fn canonical_composite_index_is_model_data_and_one_forward_migration() {
 fn jdl_composite_index_is_nested_model_data_and_preserves_record_edits() {
     let root = jdl_project(
         "model-jdl-composite-index",
-        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     );
     write_spring_fixture(&root);
     for arguments in [
@@ -9711,7 +9682,7 @@ fn jdl_composite_index_is_nested_model_data_and_preserves_record_edits() {
 fn jdl_index_removal_is_forward_only_atomic_and_preserves_reader_edits() {
     let root = jdl_project(
         "model-jdl-index-remove",
-        "application Notes @id(project_notes)\npackage com.example.notes\njava 26\ndialect postgresql\n",
+        "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n",
     );
     write_spring_fixture(&root);
     for arguments in [
@@ -9891,9 +9862,8 @@ fn canonical_storage_preserve_removes_projections_and_revive_reuses_the_table() 
             .join("src/main/resources/db/migration/V002__drop_notes.sql")
             .exists()
     );
-    let model =
-        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
-            .unwrap();
+    let model = jails_model::parse_jdl(&fs::read_to_string(root.join(".jails/model.jdl")).unwrap())
+        .unwrap();
     let entity = model.entities.values().next().unwrap();
     assert!(!entity.active);
     assert_eq!(entity.names.sql_table, "notes");
@@ -9940,9 +9910,8 @@ fn canonical_storage_preserve_removes_projections_and_revive_reuses_the_table() 
         1,
         "revive must not recreate preserved storage"
     );
-    let model =
-        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
-            .unwrap();
+    let model = jails_model::parse_jdl(&fs::read_to_string(root.join(".jails/model.jdl")).unwrap())
+        .unwrap();
     assert!(model.entities.values().next().unwrap().active);
     let frozen = jails_cmd(&root, None)
         .args(["model", "check", "--frozen"])
@@ -9997,9 +9966,8 @@ fn canonical_storage_drop_needs_exact_confirmation_and_appends_one_drop_table() 
         migration,
         "-- Generated by jails from the accepted semantic schema.\ndrop table notes;\n"
     );
-    let model =
-        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
-            .unwrap();
+    let model = jails_model::parse_jdl(&fs::read_to_string(root.join(".jails/model.jdl")).unwrap())
+        .unwrap();
     assert!(model.entities.is_empty());
     assert!(
         !root
@@ -10287,7 +10255,7 @@ entity Task {
 /// `audit.md` A2.2, second attempt. Keeping declaration order made `AddField`
 /// positional, and the first version guessed the position by reading the
 /// existing order: "already sorted by label" was taken to mean "the source
-/// states no order". That is true for `.jails/model.toml` and for the pre-v1
+/// states no order". That is true for `.jails/model.jdl` and for the pre-v1
 /// JDL draft, which reaches the linker by rendering that same TOML -- and
 /// false for a JDL v1 entity that happens to be declared alphabetically.
 /// Appending `delta` to `alpha, beta, gamma` then put it third in the model
@@ -10377,198 +10345,6 @@ entity Task {
         String::from_utf8_lossy(&frozen.stderr)
     );
 }
-
-/// `jdl-sol.md` §22's bridge, end to end on a real project.
-///
-/// The property that matters is not that the file changed shape -- it is that
-/// **nothing was re-identified**. The two dialects derive a field's stable ID
-/// from different things (`fld_<entity label>_<field>` against
-/// `fld_<entity id>_<field>`), so a translation that only fixed the syntax
-/// would hand the next `sync` a model where every field is new: a dropped
-/// column and an added one, against a table that is already there. So this
-/// asserts the generated tree is byte-identical across the upgrade, which is
-/// the observable form of "the identities held".
-#[test]
-fn jdl_upgrade_moves_a_pre_v1_draft_onto_v1_without_re_identifying_anything() {
-    let root = temp_dir("jdl-upgrade-to-v1");
-    write_spring_fixture(&root);
-    fs::create_dir_all(root.join(".jails")).unwrap();
-    let draft = "// the demo application\n\
-                 application Demo @id(project_demo)\n\
-                 package com.example.demo\n\
-                 java 26\n\
-                 dialect postgresql\n\
-                 \n\
-                 capability api @id(cap_api)\n\
-                 dependency org.apache.commons:commons-csv = \"1.13.0\"\n\
-                 setting server.port = \"8080\"\n\
-                 \n\
-                 entity Task @id(ent_task) @scaffold {\n\
-                 \x20 id: uuid @pk\n\
-                 \x20 title: string!\n\
-                 \x20 done: boolean?\n\
-                 }\n";
-    fs::write(root.join(".jails/model.jdl"), draft).unwrap();
-
-    let sync = jails_cmd(&root, None).arg("sync").output().unwrap();
-    assert!(
-        sync.status.success(),
-        "{}",
-        String::from_utf8_lossy(&sync.stderr)
-    );
-    let before = generated_tree(&root);
-    assert!(
-        before.keys().any(|path| path.ends_with("domain/Task.java")),
-        "{before:?}"
-    );
-
-    let upgrade = jails_cmd(&root, None)
-        .args(["model", "upgrade", "--to", "1"])
-        .output()
-        .unwrap();
-    assert!(
-        upgrade.status.success(),
-        "{}",
-        String::from_utf8_lossy(&upgrade.stderr)
-    );
-
-    let upgraded = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
-    assert!(upgraded.starts_with("jdl 1\n"), "{upgraded}");
-    assert!(upgraded.contains("platform spring"), "{upgraded}");
-    assert!(upgraded.contains("build maven"), "{upgraded}");
-    assert!(upgraded.contains("storage postgres"), "{upgraded}");
-    assert!(upgraded.contains("// the demo application"), "{upgraded}");
-    assert!(upgraded.contains("@id(ent_task)"), "{upgraded}");
-
-    // **Every artifact that existed still exists, byte for byte, except the
-    // record.** That is the identity property stated observably: a re-keyed
-    // field would change a JDBC column, an artifact id, or a file path, and
-    // all three are in this comparison.
-    let after = generated_tree(&root);
-    for (path, bytes) in &before {
-        let Some(upgraded) = after.get(path) else {
-            panic!("`{path}` disappeared across the upgrade");
-        };
-        assert_eq!(upgraded, bytes, "`{path}` changed across the upgrade");
-    }
-
-    // **`domain/Task.java` used to be excluded from that comparison**, and is
-    // not any more. The pre-v1 path rendered intermediate TOML and lost
-    // declaration order, so upgrading re-ordered `Task(done, id, title)` into
-    // `Task(id, title, done)` -- a moved positional constructor, which the
-    // command had to report as a note. `audit.md` A2.2b fixed it at the
-    // source, so the two dialects now agree and the whole tree is
-    // byte-identical across the upgrade. An exclusion removed is worth more
-    // than the note it replaced: this is the property the test claims to be
-    // asserting, now asserted without a hole in it.
-    let told = String::from_utf8_lossy(&upgrade.stdout);
-    assert!(told.contains("note: the `db` capability"), "{told}");
-    assert!(
-        !told.contains("declaration order"),
-        "the upgrade still moves a record's constructor: {told}"
-    );
-
-    // And the order itself is the declared one, on both sides of the upgrade.
-    let record = after
-        .get("main/java/com/example/demo/domain/Task.java")
-        .unwrap();
-    let components = record
-        .split_once("public record Task(")
-        .unwrap()
-        .1
-        .split_once(')')
-        .unwrap()
-        .0;
-    assert!(
-        components.find("UUID id").unwrap() < components.find("String title").unwrap(),
-        "{components}"
-    );
-    assert!(
-        components.find("String title").unwrap()
-            < components.find("Optional<Boolean> done").unwrap(),
-        "{components}"
-    );
-
-    // The storage axis is the other one: `dialect postgresql` has no v1
-    // spelling that leaves the `db` capability out, so the JDBC adapter it
-    // implies arrives with it.
-    assert!(
-        after
-            .keys()
-            .any(|path| path.ends_with("adapters/jdbc/JdbcTaskRepository.java")),
-        "{:?}",
-        after.keys().collect::<Vec<_>>()
-    );
-
-    // The upgraded source is the one file nobody hand-wrote, so it must
-    // already satisfy the formatter and must be idempotent under `sync`.
-    let formatted = jails_cmd(&root, None)
-        .args(["model", "fmt", "--check"])
-        .output()
-        .unwrap();
-    assert!(
-        formatted.status.success(),
-        "{}",
-        String::from_utf8_lossy(&formatted.stderr)
-    );
-    let resync = jails_cmd(&root, None).arg("sync").output().unwrap();
-    assert!(
-        resync.status.success(),
-        "{}",
-        String::from_utf8_lossy(&resync.stderr)
-    );
-    assert_eq!(
-        generated_tree(&root),
-        after,
-        "`sync` after the upgrade is not a no-op"
-    );
-
-    // Upgrading twice is a refusal, not a second rewrite.
-    let again = jails_cmd(&root, None)
-        .args(["model", "upgrade", "--to", "1"])
-        .output()
-        .unwrap();
-    assert!(!again.status.success());
-    assert!(
-        String::from_utf8_lossy(&again.stderr).contains("already JDL v1"),
-        "{}",
-        String::from_utf8_lossy(&again.stderr)
-    );
-}
-
-/// Every file under the managed root, so two trees can be compared as one
-/// value.
-fn generated_tree(root: &Path) -> std::collections::BTreeMap<String, String> {
-    let mut tree = std::collections::BTreeMap::new();
-    let generated = root.join(".jails/generated");
-    if !generated.exists() {
-        return tree;
-    }
-    let mut stack = vec![generated.clone()];
-    while let Some(directory) = stack.pop() {
-        for entry in fs::read_dir(&directory).unwrap() {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                stack.push(path);
-            } else {
-                let relative = path.strip_prefix(&generated).unwrap();
-                tree.insert(
-                    relative.to_string_lossy().replace('\\', "/"),
-                    fs::read_to_string(&path).unwrap_or_default(),
-                );
-            }
-        }
-    }
-    tree
-}
-
-/// `jdl-sol.md` §22 has the importer "materialize `platform spring|plain` and
-/// `build maven|gradle`", which the pre-v1 draft cannot state at all.
-///
-/// Asserted through the exact plan rather than the applied tree, because the
-/// bundle carries the model file bytes and needs no three-way merge -- so this
-/// answers the question on a machine whose `git merge-file` is too old for the
-/// adoption half.
 #[test]
 fn legacy_import_writes_jdl_v1_with_both_new_axes_materialized() {
     let root = temp_dir("model-import-emits-v1");

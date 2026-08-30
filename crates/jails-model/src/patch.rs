@@ -82,9 +82,16 @@ pub enum ModelPatch {
         entity: Entity,
         projections: Vec<crate::Projection>,
     },
+    /// A facet and the projection its `use` declaration carries.
+    ///
+    /// The projection travels for the same reason it does on
+    /// [`ModelPatch::AddEntity`]: `use search(fields: [title, body])` states
+    /// arguments no `Facet` holds, and `AppModel.projections` is a top-level
+    /// map the patch would otherwise leave behind.
     AddFacet {
         entity: EntityId,
         facet: Facet,
+        projection: Option<crate::Projection>,
     },
     RemoveFacet {
         entity: EntityId,

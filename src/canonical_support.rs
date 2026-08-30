@@ -4,19 +4,12 @@
 //! makes the exhaustive matches fail to compile until its canonical ownership
 //! is decided. Frontends use the same answer they report to readers.
 //!
-//! **`Native` means the compiler has a backend, and the gate it drives is the
-//! `.jails/model.toml` route only.** A project on `.jails/model.jdl` -- the
-//! intended authoring boundary -- goes straight to the JDL frontend, which
-//! refuses an unserved kind at *compile* time through
-//! `component_kind_is_emitted`. So this table is the coverage number and the
-//! temporary compatibility input's router at once, and the two agree because
-//! the number is what the cutover is measured on. A kind marked
-//! `Compatibility` that the compiler actually emits under-reports coverage,
-//! which is how `cases` sat here for a while after its backend landed.
-//!
-//! **It is 39/39 as of this commit**, so every arm below is `Native` and the
-//! table's remaining job is the one it was built for: making the next clap
-//! variant a compile error until its ownership is decided.
+//! **`Native` means the compiler has a backend.** The generator half of this
+//! registry is gone: `model_generate_jdl::run` is an exhaustive match over
+//! `ArtifactKind` and is the only route a generator has, so a kind added
+//! without a canonical backend is a compile error rather than a row somebody
+//! has to remember to flip. What is left is the capability side, which
+//! dispatches on this classifier, and the counts the cutover is measured on.
 
 use crate::add::Capability;
 
@@ -75,21 +68,22 @@ pub(crate) fn capability(kind: Capability) -> Support {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::generate::ArtifactKind;
     use clap::ValueEnum as _;
 
+    /// **The generator half of this row is a compile error now.**
+    /// `model_generate_jdl::run` is an exhaustive match over `ArtifactKind`
+    /// and is the only route a generator has, so a kind added without a
+    /// canonical backend does not build. What is left to hold here is the
+    /// number itself -- 39 advertised words, so a kind added without being
+    /// counted still surfaces -- and the capability side, which dispatches on
+    /// a classifier rather than a match.
     #[test]
     fn registry_classifies_every_advertised_word() {
         let generator_count = ArtifactKind::value_variants().len();
         let capability_count = Capability::value_variants().len();
         assert_eq!(generator_count, 39);
         assert_eq!(capability_count, 25);
-        assert_eq!(
-            ArtifactKind::value_variants()
-                .iter()
-                .filter(|kind| generator(**kind).is_native())
-                .count(),
-            39
-        );
         // All 25. `format`, `ci`, `docker` and `k8s` were the last four --
         // `plan.md` P13.8 measured them and this is where that number lives,
         // so a capability added without a canonical backend fails here rather

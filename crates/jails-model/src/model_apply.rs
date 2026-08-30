@@ -57,7 +57,11 @@ impl AppModel {
                 }
                 self.relations.insert(id, relation);
             }
-            ModelPatch::AddFacet { entity, facet } => crate::facet::add(self, entity, facet)?,
+            ModelPatch::AddFacet {
+                entity,
+                facet,
+                projection,
+            } => crate::facet::add(self, entity, facet, projection)?,
             ModelPatch::RemoveFacet { entity, facet } => crate::facet::remove(self, entity, facet)?,
             ModelPatch::AddUnit(unit) => {
                 crate::unit::insert(&mut self.units, unit)?;
@@ -231,6 +235,8 @@ impl AppModel {
                 if self.entities.remove(&id).is_none() {
                     return Err(format!("entity id `{id}` does not exist"));
                 }
+                self.projections
+                    .retain(|_, projection| projection.entity != id);
             }
             ModelPatch::RetireEntity { entity, policy } => {
                 refuse_ejected_target(self, entity.as_str())?;
@@ -288,6 +294,8 @@ impl AppModel {
                             ));
                         }
                         self.entities.remove(&entity);
+                        self.projections
+                            .retain(|_, projection| projection.entity != entity);
                     }
                 }
             }

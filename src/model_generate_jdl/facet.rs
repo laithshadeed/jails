@@ -54,6 +54,19 @@ impl Kind {
         }
     }
 
+    /// The label the linked projection carries.
+    ///
+    /// Not the marker with its `@` stripped: `@repository` links as `repo`.
+    fn projection_label(self) -> &'static str {
+        match self {
+            Self::Factory => "factory",
+            Self::Dto => "dto",
+            Self::Repository => "repo",
+            Self::Seed => "seed",
+            Self::Search => "search",
+        }
+    }
+
     /// Whether this projection's field list is its own declaration rather than
     /// a flag it has no use for.
     fn takes_fields(self) -> bool {
@@ -147,9 +160,17 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation, kind: Kind) -> Res
             kind.marker()
         )));
     }
+    let projection = next_model
+        .projections
+        .values()
+        .find(|projection| {
+            projection.entity == entity_id && projection.kind.label() == kind.projection_label()
+        })
+        .cloned();
     let patch = ModelPatch::AddFacet {
         entity: entity_id.clone(),
         facet,
+        projection,
     };
     let patch_bytes = serde_json::to_vec(&json!({
         "kind": "add-facet",
