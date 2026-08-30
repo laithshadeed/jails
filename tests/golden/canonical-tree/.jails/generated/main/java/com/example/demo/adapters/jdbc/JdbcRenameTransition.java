@@ -23,7 +23,7 @@ public final class JdbcRenameTransition implements RenameTransition {
     @Transactional
     public Note execute(UUID id, RenameTransition.Input input) {
         var predicates = new ArrayList<>(List.of("id = :id"));
-        var sql = "update note set title = :title where " + String.join(" and ", predicates) + " returning id, title, status";
+        var sql = "update notes set title = :title where " + String.join(" and ", predicates) + " returning id, title, status";
         JdbcClient.StatementSpec statement = jdbc.sql(sql);
         statement = statement.param("id", id);
         statement = statement.param("title", input.title());

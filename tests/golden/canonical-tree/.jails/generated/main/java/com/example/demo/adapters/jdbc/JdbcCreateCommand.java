@@ -22,7 +22,7 @@ public final class JdbcCreateCommand implements CreateCommand {
 
     @Override
     public Note execute(CreateCommand.Input input) {
-        JdbcClient.StatementSpec statement = jdbc.sql("insert into note (id, title, status) values (:id, :title, :status) returning id, title, status");
+        JdbcClient.StatementSpec statement = jdbc.sql("insert into notes (id, title, status) values (:id, :title, :status) returning id, title, status");
         statement = statement.param("id", TimeOrderedUuid.next());
         statement = statement.param("title", input.title());
         statement = statement.param("status", input.status());

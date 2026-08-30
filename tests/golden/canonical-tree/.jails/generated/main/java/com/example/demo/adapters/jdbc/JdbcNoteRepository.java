@@ -20,7 +20,7 @@ public final class JdbcNoteRepository implements NoteRepository {
 
     @Override
     public Optional<Note> findById(UUID id) {
-        return jdbc.sql("select id, title, status from note where id = :id")
+        return jdbc.sql("select id, title, status from notes where id = :id")
                 .param("id", id)
                 .query(Note.class)
                 .optional();
@@ -28,14 +28,14 @@ public final class JdbcNoteRepository implements NoteRepository {
 
     @Override
     public List<Note> findAll() {
-        return jdbc.sql("select id, title, status from note order by id")
+        return jdbc.sql("select id, title, status from notes order by id")
                 .query(Note.class)
                 .list();
     }
 
     @Override
     public Note save(Note value) {
-        return jdbc.sql("insert into note (id, title, status) values (:id, :title, :status) on conflict (id) do update set title = excluded.title, status = excluded.status returning id, title, status")
+        return jdbc.sql("insert into notes (id, title, status) values (:id, :title, :status) on conflict (id) do update set title = excluded.title, status = excluded.status returning id, title, status")
                 .param("id", value.id())
                 .param("title", value.title())
                 .param("status", value.status())
@@ -45,7 +45,7 @@ public final class JdbcNoteRepository implements NoteRepository {
 
     @Override
     public boolean deleteById(UUID id) {
-        return jdbc.sql("delete from note where id = :id")
+        return jdbc.sql("delete from notes where id = :id")
                 .param("id", id)
                 .update() > 0;
     }

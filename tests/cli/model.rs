@@ -308,7 +308,7 @@ app Notes {
     assert!(record.contains("attempts must be positive"), "{record}");
     assert!(record.contains("credits.isPresent()"), "{record}");
     let migration =
-        fs::read_to_string(root.join("src/main/resources/db/migration/V001__create_task.sql"))
+        fs::read_to_string(root.join("src/main/resources/db/migration/V001__create_tasks.sql"))
             .unwrap();
     assert!(migration.contains("attempts > 0"), "{migration}");
     assert!(migration.contains("credits >= 0"), "{migration}");
@@ -615,7 +615,7 @@ entity Job {
     assert!(adapter.contains("TimeOrderedUuid.next()"), "{adapter}");
     assert!(
         adapter.contains(
-            "insert into job (id, title, status, updated_at) values (:id, :title, 'QUEUED', current_timestamp) returning id, title, status, version, created_at, updated_at"
+            "insert into jobs (id, title, status, updated_at) values (:id, :title, 'QUEUED', current_timestamp) returning id, title, status, version, created_at, updated_at"
         ),
         "{adapter}"
     );
@@ -626,7 +626,7 @@ entity Job {
         fs::read_to_string(generated.join("adapters/jdbc/JdbcArchiveTransition.java")).unwrap();
     assert!(
         transition.contains(
-            "update job set status = 'ARCHIVED', version = version + 1, updated_at = current_timestamp where"
+            "update jobs set status = 'ARCHIVED', version = version + 1, updated_at = current_timestamp where"
         ),
         "{transition}"
     );
@@ -3290,11 +3290,11 @@ fn jdl_storage_preserve_and_revive_toggle_one_entity_declaration() {
         let output = jails_cmd(&root, None).args(arguments).output().unwrap();
         assert!(output.status.success());
     }
-    let migration = root.join("src/main/resources/db/migration/V001__create_note.sql");
+    let migration = root.join("src/main/resources/db/migration/V001__create_notes.sql");
     let migration_before = fs::read(&migration).unwrap();
     let record = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
     let initial_migration =
-        fs::read_to_string(root.join("src/main/resources/db/migration/V001__create_note.sql"))
+        fs::read_to_string(root.join("src/main/resources/db/migration/V001__create_notes.sql"))
             .unwrap();
     assert!(
         initial_migration.contains("check (char_length(title) between 1 and 200)"),
@@ -3316,7 +3316,7 @@ fn jdl_storage_preserve_and_revive_toggle_one_entity_declaration() {
     assert_eq!(fs::read(&migration).unwrap(), migration_before);
 
     let revived = jails_cmd(&root, None)
-        .args(["resource", "revive", "Note", "--table", "note"])
+        .args(["resource", "revive", "Note", "--table", "notes"])
         .output()
         .unwrap();
     assert!(
@@ -8258,7 +8258,7 @@ fn canonical_database_query_keeps_the_iterative_loop_and_ejects_only_its_adapter
         &adapter,
         evolved_source.replace(
             "select id, status, summary, title from note",
-            "select id, status, summary, title from note /* reader owns this line */",
+            "select id, status, summary, title from notes /* reader owns this line */",
         ),
     )
     .unwrap();
@@ -8399,7 +8399,7 @@ fn canonical_database_commands_and_transitions_are_independent_iterative_boundar
     let command_source = fs::read_to_string(&command).unwrap();
     for contract in [
         "implements CreateNoteCommand",
-        "insert into note (id, status, title) values (:id, :status, :title)",
+        "insert into notes (id, status, title) values (:id, :status, :title)",
         "TimeOrderedUuid.next()",
         "statement.query(Note.class).single()",
     ] {
@@ -8411,7 +8411,7 @@ fn canonical_database_commands_and_transitions_are_independent_iterative_boundar
     let transition_source = fs::read_to_string(&transition).unwrap();
     for contract in [
         "implements RenameNoteTransition",
-        "update note set title = :title where",
+        "update notes set title = :title where",
         "id = :id",
         "@Transactional",
         "events.publishEvent(new NoteRenamedEvent(result.id(), result.title()))",
@@ -8458,7 +8458,7 @@ fn canonical_database_commands_and_transitions_are_independent_iterative_boundar
     assert!(evolved_transition.contains("readerTransitionMethod()"));
     assert!(
         evolved_command.contains(
-            "insert into note (id, status, summary, title) values (:id, :status, :summary, :title)"
+            "insert into notes (id, status, summary, title) values (:id, :status, :summary, :title)"
         ),
         "{evolved_command}"
     );
@@ -8470,8 +8470,8 @@ fn canonical_database_commands_and_transitions_are_independent_iterative_boundar
     fs::write(
         &command,
         evolved_command.replace(
-            "insert into note (id, status, summary, title)",
-            "insert into note /* reader owns this SQL */ (id, status, summary, title)",
+            "insert into notes (id, status, summary, title)",
+            "insert into notes /* reader owns this SQL */ (id, status, summary, title)",
         ),
     )
     .unwrap();
@@ -8609,7 +8609,7 @@ fn canonical_database_commands_and_transitions_are_independent_iterative_boundar
 #[test]
 fn canonical_preserve_table_rename_keeps_the_accepted_database_projection() {
     let root = canonical_database_project("model-db-preserve-table-rename");
-    let migration = root.join("src/main/resources/db/migration/V001__create_note.sql");
+    let migration = root.join("src/main/resources/db/migration/V001__create_notes.sql");
     let migration_before = fs::read(&migration).unwrap();
     let old = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
     let new = root.join(".jails/generated/main/java/com/example/notes/domain/Memo.java");
@@ -8645,12 +8645,12 @@ fn canonical_preserve_table_rename_keeps_the_accepted_database_projection() {
     let entity = model.entities.values().next().unwrap();
     assert_eq!(entity.id.to_string(), "ent_note");
     assert_eq!(entity.names.java_type, "Memo");
-    assert_eq!(entity.names.sql_table, "note");
+    assert_eq!(entity.names.sql_table, "notes");
     let lock: serde_json::Value =
         serde_json::from_slice(&fs::read(root.join(".jails/compiler.lock.json")).unwrap()).unwrap();
     assert_eq!(
         lock["model"]["entities"]["ent_note"]["names"]["sql_table"],
-        "note"
+        "notes"
     );
     assert_eq!(
         lock["model"]["entities"]["ent_note"]["names"]["java_type"],
@@ -8691,9 +8691,9 @@ fn canonical_database_and_safe_field_evolution_are_one_exact_compiler_path() {
     );
     let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
     assert!(model.contains("[capabilities.db]"), "{model}");
-    let initial = root.join("src/main/resources/db/migration/V001__create_note.sql");
+    let initial = root.join("src/main/resources/db/migration/V001__create_notes.sql");
     let initial_sql = fs::read_to_string(&initial).unwrap();
-    assert!(initial_sql.contains("create table note"), "{initial_sql}");
+    assert!(initial_sql.contains("create table notes"), "{initial_sql}");
     assert!(
         initial_sql.contains("id uuid not null primary key"),
         "{initial_sql}"
@@ -8762,12 +8762,12 @@ fn canonical_database_and_safe_field_evolution_are_one_exact_compiler_path() {
         String::from_utf8_lossy(&added.stderr)
     );
     let second = fs::read_to_string(
-        root.join("src/main/resources/db/migration/V002__add_summary_to_note.sql"),
+        root.join("src/main/resources/db/migration/V002__add_summary_to_notes.sql"),
     )
     .unwrap();
     assert_eq!(
         second,
-        "-- Generated by jails from the accepted semantic schema.\nalter table note add column summary text;\n"
+        "-- Generated by jails from the accepted semantic schema.\nalter table notes add column summary text;\n"
     );
     let record = fs::read_to_string(
         root.join(".jails/generated/main/java/com/example/notes/domain/Note.java"),
@@ -8793,14 +8793,14 @@ fn canonical_database_and_safe_field_evolution_are_one_exact_compiler_path() {
         String::from_utf8_lossy(&required.stderr)
     );
     let third = fs::read_to_string(
-        root.join("src/main/resources/db/migration/V003__add_status_to_note.sql"),
+        root.join("src/main/resources/db/migration/V003__add_status_to_notes.sql"),
     )
     .unwrap();
     for statement in [
-        "alter table note add column status text;",
-        "update note set status = 'new' where status is null;",
-        "alter table note alter column status set not null;",
-        "chk_note_status_non_blank",
+        "alter table notes add column status text;",
+        "update notes set status = 'new' where status is null;",
+        "alter table notes alter column status set not null;",
+        "chk_notes_status_non_blank",
     ] {
         assert!(
             third.contains(statement),
@@ -8908,7 +8908,7 @@ fn canonical_field_evolution_preserves_hand_edits_and_lowers_explicit_sql_polici
         fs::read_to_string(root.join("src/main/resources/db/migration/V002__evolve_title.sql"))
             .unwrap();
     assert!(
-        rename_sql.contains("alter table note rename column title to subject;"),
+        rename_sql.contains("alter table notes rename column title to subject;"),
         "{rename_sql}"
     );
     let source = fs::read_to_string(&record).unwrap();
@@ -8947,7 +8947,7 @@ fn canonical_field_evolution_preserves_hand_edits_and_lowers_explicit_sql_polici
         fs::read_to_string(root.join("src/main/resources/db/migration/V004__evolve_priority.sql"))
             .unwrap();
     assert!(
-        type_sql.contains("alter table note alter column priority type bigint;"),
+        type_sql.contains("alter table notes alter column priority type bigint;"),
         "{type_sql}"
     );
     let before_unsafe = snapshot_tree(&root);
@@ -8981,7 +8981,7 @@ fn canonical_field_evolution_preserves_hand_edits_and_lowers_explicit_sql_polici
     fs::create_dir_all(root.join("backfills")).unwrap();
     fs::write(
         root.join("backfills/status.sql"),
-        "update note set status = 'new' where status is null;\n",
+        "update notes set status = 'new' where status is null;\n",
     )
     .unwrap();
     let required = jails_cmd(&root, None)
@@ -9005,7 +9005,7 @@ fn canonical_field_evolution_preserves_hand_edits_and_lowers_explicit_sql_polici
     let required_sql =
         fs::read_to_string(root.join("src/main/resources/db/migration/V006__evolve_status.sql"))
             .unwrap();
-    let update = required_sql.find("update note set status").unwrap();
+    let update = required_sql.find("update notes set status").unwrap();
     let constraint = required_sql
         .find("alter column status set not null")
         .unwrap();
@@ -9069,7 +9069,7 @@ fn canonical_field_evolution_preserves_hand_edits_and_lowers_explicit_sql_polici
     let drop_sql =
         fs::read_to_string(root.join("src/main/resources/db/migration/V008__drop_priority.sql"))
             .unwrap();
-    assert!(drop_sql.contains("alter table note drop column priority;"));
+    assert!(drop_sql.contains("alter table notes drop column priority;"));
     let source = fs::read_to_string(&record).unwrap();
     assert!(!source.contains("priority"), "{source}");
     assert!(source.contains("handWritten()"), "{source}");
@@ -9111,7 +9111,7 @@ fn canonical_migration_plan_refuses_a_concurrent_history_append_without_writes()
     assert!(bundle.plan.operations.iter().any(|operation| matches!(
         operation,
         jails_contracts::PlannedOperation::AppendMigration { path, .. }
-            if path.as_str().ends_with("V002__add_summary_to_note.sql")
+            if path.as_str().ends_with("V002__add_summary_to_notes.sql")
     )));
     assert!(bundle.plan.operations.iter().any(|operation| matches!(
         operation,
@@ -9147,7 +9147,7 @@ fn canonical_migration_plan_refuses_a_concurrent_history_append_without_writes()
     );
     assert!(
         !root
-            .join("src/main/resources/db/migration/V002__add_summary_to_note.sql")
+            .join("src/main/resources/db/migration/V002__add_summary_to_notes.sql")
             .exists()
     );
 }
@@ -9159,7 +9159,7 @@ fn canonical_reader_sql_is_exact_plan_input_and_stale_changes_refuse_all_writes(
     let backfill = root.join("backfills/status.sql");
     fs::write(
         &backfill,
-        "update note set status = 'new' where status is null;\n",
+        "update notes set status = 'new' where status is null;\n",
     )
     .unwrap();
     let plan = root.join("field-plan.json");
@@ -9193,7 +9193,7 @@ fn canonical_reader_sql_is_exact_plan_input_and_stale_changes_refuse_all_writes(
     let record_before = fs::read(&record).unwrap();
     fs::write(
         &backfill,
-        "update note set status = 'ready' where status is null;\n",
+        "update notes set status = 'ready' where status is null;\n",
     )
     .unwrap();
     let stale = jails_cmd(&root, None)
@@ -9214,7 +9214,7 @@ fn canonical_reader_sql_is_exact_plan_input_and_stale_changes_refuse_all_writes(
     assert_eq!(fs::read(&record).unwrap(), record_before);
     assert!(
         !root
-            .join("src/main/resources/db/migration/V002__add_status_to_note.sql")
+            .join("src/main/resources/db/migration/V002__add_status_to_notes.sql")
             .exists()
     );
 
@@ -9236,10 +9236,10 @@ fn canonical_reader_sql_is_exact_plan_input_and_stale_changes_refuse_all_writes(
         String::from_utf8_lossy(&applied.stderr)
     );
     let migration = fs::read_to_string(
-        root.join("src/main/resources/db/migration/V002__add_status_to_note.sql"),
+        root.join("src/main/resources/db/migration/V002__add_status_to_notes.sql"),
     )
     .unwrap();
-    let update = migration.find("update note set status = 'ready'").unwrap();
+    let update = migration.find("update notes set status = 'ready'").unwrap();
     let constraint = migration.find("alter column status set not null").unwrap();
     assert!(update < constraint, "{migration}");
 }
@@ -9386,7 +9386,7 @@ fn jdl_field_evolution_keeps_ids_edits_and_forward_schema_history() {
     fs::create_dir_all(root.join("backfills")).unwrap();
     fs::write(
         root.join("backfills/priority.sql"),
-        "update note set priority = 0 where priority is null;\n",
+        "update notes set priority = 0 where priority is null;\n",
     )
     .unwrap();
     let required = jails_cmd(&root, None)
@@ -9484,16 +9484,16 @@ fn canonical_composite_index_is_model_data_and_one_forward_migration() {
             path.file_name()
                 .unwrap()
                 .to_string_lossy()
-                .starts_with("V002__add_idx_note_index_")
+                .starts_with("V002__add_idx_notes_index_")
         })
         .expect("canonical index migration");
     let migration = fs::read_to_string(migration_path).unwrap();
     assert!(
-        migration.contains("create index idx_note_index_"),
+        migration.contains("create index idx_notes_index_"),
         "{migration}"
     );
     assert!(
-        migration.contains(" on note (title, id desc);"),
+        migration.contains(" on notes (title, id desc);"),
         "{migration}"
     );
     let model =
@@ -9609,7 +9609,7 @@ fn jdl_composite_index_is_nested_model_data_and_preserves_record_edits() {
     assert!(
         fs::read_to_string(migration)
             .unwrap()
-            .contains(" on note (title, id desc);")
+            .contains(" on notes (title, id desc);")
     );
     let frozen = jails_cmd(&root, None)
         .args(["model", "check", "--frozen"])
@@ -9782,7 +9782,7 @@ fn jdl_index_removal_is_forward_only_atomic_and_preserves_reader_edits() {
 #[test]
 fn canonical_storage_preserve_removes_projections_and_revive_reuses_the_table() {
     let root = canonical_database_project("model-db-preserve-revive");
-    let initial = root.join("src/main/resources/db/migration/V001__create_note.sql");
+    let initial = root.join("src/main/resources/db/migration/V001__create_notes.sql");
     let initial_bytes = fs::read(&initial).unwrap();
     let record = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
 
@@ -9799,7 +9799,7 @@ fn canonical_storage_preserve_removes_projections_and_revive_reuses_the_table() 
     assert_eq!(fs::read(&initial).unwrap(), initial_bytes);
     assert!(
         !root
-            .join("src/main/resources/db/migration/V002__drop_note.sql")
+            .join("src/main/resources/db/migration/V002__drop_notes.sql")
             .exists()
     );
     let model =
@@ -9807,7 +9807,7 @@ fn canonical_storage_preserve_removes_projections_and_revive_reuses_the_table() 
             .unwrap();
     let entity = model.entities.values().next().unwrap();
     assert!(!entity.active);
-    assert_eq!(entity.names.sql_table, "note");
+    assert_eq!(entity.names.sql_table, "notes");
     assert_eq!(entity.fields.len(), 2);
 
     for mutation in [
@@ -9834,7 +9834,7 @@ fn canonical_storage_preserve_removes_projections_and_revive_reuses_the_table() 
     assert_eq!(snapshot_tree(&root), before_wrong);
 
     let revived = jails_cmd(&root, None)
-        .args(["resource", "revive", "Note", "--table", "note"])
+        .args(["resource", "revive", "Note", "--table", "notes"])
         .output()
         .unwrap();
     assert!(
@@ -9892,7 +9892,7 @@ fn canonical_storage_drop_needs_exact_confirmation_and_appends_one_drop_table() 
             "--storage",
             "drop",
             "--confirm-table",
-            "note",
+            "notes",
         ])
         .output()
         .unwrap();
@@ -9902,11 +9902,11 @@ fn canonical_storage_drop_needs_exact_confirmation_and_appends_one_drop_table() 
         String::from_utf8_lossy(&dropped.stderr)
     );
     let migration =
-        fs::read_to_string(root.join("src/main/resources/db/migration/V002__drop_note.sql"))
+        fs::read_to_string(root.join("src/main/resources/db/migration/V002__drop_notes.sql"))
             .unwrap();
     assert_eq!(
         migration,
-        "-- Generated by jails from the accepted semantic schema.\ndrop table note;\n"
+        "-- Generated by jails from the accepted semantic schema.\ndrop table notes;\n"
     );
     let model =
         jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
@@ -11663,7 +11663,7 @@ fn canonical_search_and_seed_write_their_projections_and_compile() {
     assert!(adapter.contains("websearch_to_tsquery"), "{adapter}");
     read("main/java/com/example/demo/ports/search/NoteSearch.java");
     // Seed: the data, the guarded loader, and the test that reads it.
-    read("main/resources/db/seeds/note.json");
+    read("main/resources/db/seeds/notes.json");
     let seeder = read("main/java/com/example/demo/adapters/NoteSeeder.java");
     assert!(seeder.contains("@Profile(\"seed\")"), "{seeder}");
     read("test/java/com/example/demo/adapters/NoteSeederTest.java");
@@ -11837,7 +11837,7 @@ fn canonical_migration_allocates_a_file_without_declaring_anything() {
     // rendered from the model, so nothing recomputes it.
     fs::write(
         &migration,
-        "alter table note add column archived_at timestamptz;\n",
+        "alter table notes add column archived_at timestamptz;\n",
     )
     .unwrap();
     let resynced = jails_cmd(&root, None).arg("sync").output().unwrap();
@@ -11848,7 +11848,7 @@ fn canonical_migration_allocates_a_file_without_declaring_anything() {
     );
     assert_eq!(
         fs::read_to_string(&migration).unwrap(),
-        "alter table note add column archived_at timestamptz;\n"
+        "alter table notes add column archived_at timestamptz;\n"
     );
 
     // A readable name is normalised into the Flyway description, and one that

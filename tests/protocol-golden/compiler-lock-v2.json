@@ -156,13 +156,13 @@
             ],
             "id": "idx_note_status",
             "label": "status",
-            "sql_name": "idx_note_status"
+            "sql_name": "idx_notes_status"
           }
         },
         "label": "note",
         "names": {
           "java_type": "Note",
-          "sql_table": "note"
+          "sql_table": "notes"
         }
       }
     },
@@ -451,7 +451,7 @@
       }
     }
   },
-  "model_digest": "sha256:5999bbb100427ac405b327104779a077d82c26ef3e754aa754ee6b43fd1cc48e",
+  "model_digest": "sha256:046eeab20ee27a8e6a22af458eaf639587f239587acb5addf2a9d2b1edb84455",
   "projection": {
     "files": {
       ".jails/generated/main/java/com/example/notes/adapters/Json.java": {
@@ -469,7 +469,7 @@
         }
       },
       ".jails/generated/main/java/com/example/notes/adapters/jdbc/JdbcCreateCommand.java": {
-        "bytes": "<1400 bytes elided>",
+        "bytes": "<1401 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -484,7 +484,7 @@
         }
       },
       ".jails/generated/main/java/com/example/notes/adapters/jdbc/JdbcNoteRepository.java": {
-        "bytes": "<1680 bytes elided>",
+        "bytes": "<1684 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -498,7 +498,7 @@
         }
       },
       ".jails/generated/main/java/com/example/notes/adapters/jdbc/JdbcOpenQuery.java": {
-        "bytes": "<1137 bytes elided>",
+        "bytes": "<1138 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -513,7 +513,7 @@
         }
       },
       ".jails/generated/main/java/com/example/notes/adapters/jdbc/JdbcRenameTransition.java": {
-        "bytes": "<1217 bytes elided>",
+        "bytes": "<1218 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -1055,6 +1055,6 @@
     },
     "root": ".jails/generated"
   },
-  "projection_digest": "sha256:5063cdbe2782566fedecc500e24750bca1ab4e19d9ca88733cc59a0fb28e6fd3",
+  "projection_digest": "sha256:eba5747259abb36e5f3ebcf592e0660493aa5bb2e9a284c146591a389b81fd74",
   "schema": "jails.compiler-lock.v2"
 }

@@ -871,7 +871,7 @@ entity Item {
         assert_eq!(relation.on_delete, crate::ReferentialAction::Cascade);
         assert_eq!(relation.on_update, crate::ReferentialAction::Restrict);
         assert_eq!(relation.cardinality, crate::RelationCardinality::OneToOne);
-        assert_eq!(relation.sql_name, "fk_item_owner");
+        assert_eq!(relation.sql_name, "fk_items_owner");
 
         let mut removal = model.clone();
         let owner_id = owner.id.clone();

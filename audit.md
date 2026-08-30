@@ -217,19 +217,19 @@ are the same `templates/spring/*.java` files the legacy generator renders, for
 the reason `CLAUDE.md` gives for the project files: two copies drift on the
 details nobody re-reads.
 
-### A1.2b The CST editor for the unserved kinds has no test through the CLI
+### A1.2b The CST editor for the unserved kinds had no CLI test — closed by A1.1
 
-Closing A1.2 made those fourteen kinds refuse at compile, and a canonical
-mutation compiles before it writes -- so refusing to emit is refusing to
-record, and `jails g handler Health` can no longer reach
-`model_generate_jdl/component.rs` at all. That renderer is ~400 lines of real
-code whose only coverage was
-`familiar_mutations_write_valid_jdl_v1_through_one_cst_pipeline`, and its rows
-for those kinds are gone.
+Closing A1.2 made fourteen component kinds refuse at compile, and a canonical
+mutation compiles before it writes — so refusing to emit was refusing to
+record, and `jails g handler Health` could no longer reach
+`model_generate_jdl/component.rs` at all. That left ~400 lines of CST
+rendering whose only coverage had been through a command that must now fail.
 
-The coverage should come back against the syntax editor directly rather than
-through a command that must now fail. Until it does, the CST rendering for
-fourteen component kinds is untested.
+A1.1 gave every one of those kinds a backend, so every one reaches the editor
+through the CLI again.
+`familiar_mutations_write_valid_jdl_v1_through_one_cst_pipeline` drives 31
+kinds and asserts the JDL each writes; its `UNSERVED` list is empty and the
+loop fails if a kind is added to it without a backend.
 
 ### A1.7 A canonical use case publishes directly, where the legacy one has an outbox
 
@@ -420,14 +420,37 @@ route off itself, and there is one. What is left of this entry is whether the
 ~47 E2E blocks and `model import`'s output should be moved (**A5.3**, **A1.4**)
 or whether pre-v1 keeps the defect until it is deleted.
 
-### A2.6 Tables are not pluralized
+### A2.6 Tables are not pluralized — closed
 
-`crates/jails-model/src/naming.rs` has no pluralizer. Canonical emits
-`create table task` and `V001__create_task.sql`; legacy emits `tasks` and
-`V001__create_tasks.sql` (`tests/cli/reports.rs:414`,
-`tests/cli/effects.rs:208`). §9.7 specifies the irregular map, the invariant
-list and the `fe→ves` / `y→ies` rules in full. Importing a legacy project
-silently changes its table name.
+`jails_model::plural_snake_case` implements `jdl-sol.md` §9.7 in full: the
+eight irregulars, the ten invariants, `fe→ves`, a non-`ff` final `f→ves`,
+`ss|x|z|ch|sh→...es`, an existing final `s` unchanged, consonant+`y→ies`, and
+`s` otherwise — applied to the final snake-case word, so `SupportPerson` is
+`support_people`.
+
+**It was a data defect, not a naming preference.** `jails model import`
+carries a legacy project onto the canonical path, and a canonical table name
+of `note` where the legacy one is `notes` pointed every statement the compiler
+then wrote at a table the database does not have.
+
+**Two implementations, one rule, and a gate holding them equal.** The legacy
+ladder has this in `jails-protocol::SqlName::conventional_table` and the
+canonical one cannot depend on it, so
+`both_pluralizers_answer_the_same_for_every_specified_rule` compares them word
+for word over every branch of §9.7 plus the words a guesser would get wrong.
+`CLAUDE.md`'s "one pluraliser" rule is exactly right about what drift costs —
+a route served `/categorys` over a table called `categories` — and until the
+cutover deletes the legacy copy, a gate is what replaces one owner. Delete
+that test with `jails-protocol`'s copy, not before.
+
+`@table` still wins: a contract pin is the reader saying what the database
+already calls it.
+
+The goldens moved with it, and so did roughly sixty assertions across the
+suite that had encoded the singular name. Each was updated by name rather than
+by a sweep, because a `--confirm-table wrong` argument is *meant* to be a
+mismatch and a blanket rename would have quietly repaired the test that proves
+mismatches refuse.
 
 ---
 
@@ -898,36 +921,31 @@ It is used only under `#[cfg(test)]` (`materialize.rs:673`), and
 
 ## A7 — suggested order
 
-Items 1–4 and 9 of the original list are closed and deleted; what remains is
-ordered by consequence.
+Closed and deleted from this list: the original items 1–4 and 9, then **A1.1**
+(39/39 generators), **A3.11b** (layer renames), **A5.1** (canonical tree
+golden), **A5.2** (compiler-lock golden), **A1.2b** (closed *by* A1.1) and
+**A2.6** (pluralization). What remains is ordered by consequence.
 
-1. **A3.11 / A3.11b / A3.12** — the registry is built; what is left is the
-   decision it made legible. Reconcile the six `Head::Facet` rows with §9.7 or
-   record the divergence, make a source unit's package a layout-aware
-   projection, and add the `derived` records and `model explain` so a
-   convention is inspectable rather than implied. Do it *before* more emitters
-   land: each one added now picks a placement §9.7 will later have to move.
-2. **A1.1** — the nineteen generator kinds with no compiler backend. It is the
-   cutover's remaining blocker and it now blocks **A1.4**'s last item too: a
-   `jails new` that writes a model makes every new project canonical, which
-   `CLAUDE.md` forbids while coverage is partial.
-3. **A5.3** — port `tests/differential.rs` and `tests/cli/model.rs` onto
+1. **A3.11 / A3.12** — the registry is built and the source-unit half is
+   closed. What is left is the decision the registry made legible: reconcile
+   the six `Head::Facet` rows with §9.7 or record the divergence, and add the
+   `derived` records and `model explain` so a convention is inspectable rather
+   than implied. Every emitter added now picks a placement a later §9.7
+   reconciliation has to move.
+2. **A5.3** — port `tests/differential.rs` and `tests/cli/model.rs` onto
    `jdl 1`, now that `model upgrade` and `model import` both produce it. Until
    that lands the G1 gate protects the front end §22 says to delete.
-4. **A5.1 / A5.2** — golden the canonical tree and the three canonical
-   persisted formats, and add the v1-lock decode test. This session changed
-   the serialized shape of `AppModel` twice; both times the lock failed closed
-   as it should, and both times nothing compared bytes.
-5. **A1.2b** — give the CST editor for the fourteen unserved component kinds
-   a direct test, replacing the CLI coverage that closing A1.2 removed.
-6. **A5.5** — port G4's child-process method to `jails-workspace::execute`.
-   The suite `855e438` wrote is the template; what it needs is failpoints on
-   the canonical publication sequence and the convergence assertion stated
-   against the compiler lock rather than the journal.
-7. **A6.1** — write the module docs while the reasons are still recoverable.
-8. **A2.6** — pluralize table names, or record the divergence from §9.7 as a
-   decision. Right now importing a legacy project silently renames its tables.
-9. **A2.2b** — decide whether pre-v1 JDL should carry declaration order, given
+3. **A5.5** — port G4's child-process method to `jails-workspace::execute`.
+   `failpoints!` now generates the registry and the trip sites from one
+   declaration, so what is left is failpoints on the *canonical* publication
+   sequence and the convergence assertion stated against the compiler lock
+   rather than the journal.
+4. **A5.1 remainder** — `jails.plan.v1` and `jails.plan-bundle.v1` still have
+   no golden. The plan embeds content digests of a scratch directory, so
+   pinning one needs the non-deterministic parts named first;
+   `compiler-lock-v2.json` is the pattern.
+5. **A6.1** — write the module docs while the reasons are still recoverable.
+6. **A2.2b** — decide whether pre-v1 JDL should carry declaration order, given
    that the mechanism would also give `.jails/model.toml` an ordering it is
    documented as lacking.
 

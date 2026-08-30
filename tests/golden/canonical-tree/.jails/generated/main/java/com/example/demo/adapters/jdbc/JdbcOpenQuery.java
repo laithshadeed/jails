@@ -19,7 +19,7 @@ public final class JdbcOpenQuery implements OpenQuery {
 
     @Override
     public List<Note> execute(OpenQuery.Input input) {
-        var sql = new StringBuilder("select id, title, status from note");
+        var sql = new StringBuilder("select id, title, status from notes");
         var predicates = new ArrayList<>(List.of("status = :status"));
         if (!predicates.isEmpty()) {
             sql.append(" where ").append(String.join(" and ", predicates));

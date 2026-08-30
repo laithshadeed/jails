@@ -151,10 +151,10 @@ use repo for Author\nuse repo for Book\n";
     fn a_declared_relation_becomes_a_foreign_key() {
         let sql = first_migration(MODEL);
         assert!(
-            sql.contains("foreign key (author_id) references author (id)"),
+            sql.contains("foreign key (author_id) references authors (id)"),
             "{sql}"
         );
-        assert!(sql.contains("add constraint fk_book_author"), "{sql}");
+        assert!(sql.contains("add constraint fk_books_author"), "{sql}");
     }
 
     /// The declared action is honoured, not replaced by a fixed one.

@@ -1120,3 +1120,92 @@ fn collect_test_sources(dir: &Path, out: &mut String) {
         }
     }
 }
+
+/// The two pluralizers agree, word for word.
+///
+/// **There are two, and there has to be until the cutover.** `jdl-sol.md`
+/// §9.7 specifies one table-naming rule; the legacy ladder implements it in
+/// `jails-protocol::SqlName::conventional_table` and the canonical one in
+/// `jails_model::plural_snake_case`, and the two ladders cannot depend on each
+/// other. `CLAUDE.md`'s rule about a second pluraliser is exactly right about
+/// what happens when they drift -- a route served `/categorys` over a table
+/// called `categories`, from two functions forty lines apart -- so what
+/// replaces "one owner" here is this: one *rule*, two implementations, and a
+/// gate that fails the moment they answer differently.
+///
+/// It matters more than a style disagreement would. `jails model import`
+/// carries a legacy project onto the canonical path, and a canonical
+/// pluralizer that said `task` where the legacy one said `tasks` pointed every
+/// generated statement at a table the database does not have (`audit.md`
+/// A2.6).
+///
+/// Delete this test when `jails-protocol`'s copy goes, not before.
+#[test]
+fn both_pluralizers_answer_the_same_for_every_specified_rule() {
+    // Every branch of §9.7, plus the compounds that make the "final word"
+    // rule observable, plus the words a guesser would get wrong.
+    const WORDS: &[&str] = &[
+        "reward",
+        "work_item",
+        "address",
+        "box",
+        "quiz",
+        "batch",
+        "dish",
+        "category",
+        "toy",
+        "knife",
+        "shelf",
+        "cliff",
+        "status",
+        "person",
+        "child",
+        "man",
+        "woman",
+        "foot",
+        "tooth",
+        "goose",
+        "mouse",
+        "support_person",
+        "pocket_knife",
+        "equipment",
+        "information",
+        "money",
+        "news",
+        "series",
+        "species",
+        "staff",
+        "audio",
+        "metadata",
+        "data",
+        "ox",
+        "note",
+        "task",
+        "invoice",
+        "company",
+        "party",
+        "day",
+    ];
+    let mut disagreements = Vec::new();
+    for word in WORDS {
+        let canonical = jails_model::plural_snake_case(word);
+        let name = jails_protocol::identity::Name::parse(word)
+            .unwrap_or_else(|error| panic!("`{word}` is not a valid name: {error}"));
+        let legacy = jails_protocol::identity::SqlName::conventional_table(&name)
+            .as_str()
+            .to_string();
+        if canonical != legacy {
+            disagreements.push(format!(
+                "  {word}: canonical `{canonical}`, legacy `{legacy}`"
+            ));
+        }
+    }
+    assert!(
+        disagreements.is_empty(),
+        "the canonical and legacy pluralizers disagree:\n{}\n\n\
+         Both implement `jdl-sol.md` §9.7 and both are used on projects that \
+         cross between them, so a disagreement renames a table under a running \
+         application. Fix whichever one departs from the spec.",
+        disagreements.join("\n")
+    );
+}

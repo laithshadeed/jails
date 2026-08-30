@@ -104,7 +104,11 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
         let id = linker.stable_id::<EntityId>(&entity.id, &format!("{path}.id"));
 
         let java_type = entity.java_name.unwrap_or_else(|| upper_camel_case(&label));
-        let sql_table = entity.table.unwrap_or_else(|| snake_case(&label));
+        // Pluralized, per §9.7. `@table` still wins: a contract pin is the
+        // reader saying what the database already calls it.
+        let sql_table = entity
+            .table
+            .unwrap_or_else(|| crate::naming::plural_snake_case(&label));
         linker.java_type(&java_type, &format!("{path}.java_name"));
         linker.sql_identifier(&sql_table, &format!("{path}.table"));
         collision(
@@ -737,7 +741,9 @@ route = "PATCH /notes/{id}"
         let model = crate::parse_toml(VALID).unwrap();
         let entity = model.entity(&EntityId::parse("ent_note").unwrap()).unwrap();
         assert_eq!(entity.names.java_type, "Note");
-        assert_eq!(entity.names.sql_table, "note");
+        // Pluralized per §9.7: the table is `notes`, and importing a legacy
+        // project must not rename it.
+        assert_eq!(entity.names.sql_table, "notes");
         assert_eq!(model.node_count(), 9);
         assert_eq!(
             model.canonical_json().unwrap(),

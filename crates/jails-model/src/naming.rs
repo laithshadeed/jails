@@ -152,3 +152,164 @@ pub(crate) fn valid_route(route: &str) -> bool {
         && !path.contains(char::is_whitespace)
         && !path.contains("//")
 }
+
+/// The conventional table for an entity label, pluralized per `jdl-sol.md`
+/// §9.7.
+///
+/// **The rule is the spec's, in full, because a partial one renames tables.**
+/// Canonical emitted `create table task` where the legacy generator emits
+/// `tasks`, so `jails model import` silently pointed an imported project at a
+/// table its database does not have -- and every statement the compiler then
+/// wrote was against that name (`audit.md` A2.6). The spec is explicit about
+/// which irregulars and which invariants, so guessing is neither necessary nor
+/// permitted: "there is no project-level override map".
+///
+/// **Pluralization applies to the final snake-case word.** `SupportPerson` is
+/// `support_people`, not `support_persons` — the last word is what carries
+/// number, and a compound whose head is irregular is the ordinary case rather
+/// than an edge one.
+///
+/// The suffix rules read the whole string rather than the last word, which is
+/// equivalent: the last word *is* the suffix.
+pub fn plural_snake_case(label: &str) -> String {
+    let base = snake_case(label);
+    let (prefix, last) = match base.rfind('_') {
+        Some(at) => base.split_at(at + 1),
+        None => ("", base.as_str()),
+    };
+    if let Some(plural) = irregular_plural(last) {
+        return format!("{prefix}{plural}");
+    }
+    if let Some(stem) = base.strip_suffix("fe") {
+        return format!("{stem}ves");
+    }
+    // `ff` is not the `f -> ves` case: cliffs, not clives.
+    if !base.ends_with("ff")
+        && let Some(stem) = base.strip_suffix('f')
+    {
+        return format!("{stem}ves");
+    }
+    if base.ends_with("ss")
+        || base.ends_with('x')
+        || base.ends_with('z')
+        || base.ends_with("ch")
+        || base.ends_with("sh")
+    {
+        format!("{base}es")
+    } else if base.ends_with('s') {
+        // Already plural: a second `s` is worse than nothing.
+        base
+    } else if let Some(stem) = base.strip_suffix('y')
+        && stem
+            .chars()
+            .next_back()
+            .is_some_and(|before| !matches!(before, 'a' | 'e' | 'i' | 'o' | 'u'))
+    {
+        format!("{stem}ies")
+    } else {
+        format!("{base}s")
+    }
+}
+
+/// §9.7's irregular map and invariant list, exactly.
+///
+/// Eight irregulars and ten invariants, and no more: an irregular jails
+/// guesses at is a table name a reader has to discover from a migration.
+fn irregular_plural(word: &str) -> Option<&'static str> {
+    Some(match word {
+        "person" => "people",
+        "child" => "children",
+        "man" => "men",
+        "woman" => "women",
+        "foot" => "feet",
+        "tooth" => "teeth",
+        "goose" => "geese",
+        "mouse" => "mice",
+        "equipment" => "equipment",
+        "information" => "information",
+        "money" => "money",
+        "news" => "news",
+        "series" => "series",
+        "species" => "species",
+        "staff" => "staff",
+        "audio" => "audio",
+        "metadata" => "metadata",
+        "data" => "data",
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::plural_snake_case;
+
+    /// `jdl-sol.md` §9.7's rules, each spelled out.
+    ///
+    /// **Table-driven against the spec rather than against the other
+    /// implementation**, because the other one is in `jails-protocol` -- a
+    /// legacy crate this ladder cannot depend on. Until the cutover deletes
+    /// it, two implementations of one rule is the situation, and the spec is
+    /// what makes them one rule rather than two behaviours. The cross-check
+    /// that they actually agree lives in `tests/`, which can see both.
+    #[test]
+    fn pluralization_follows_the_specified_rules() {
+        for (label, expected) in [
+            // The regular case, and the compound whose last word carries it.
+            ("reward", "rewards"),
+            ("work_item", "work_items"),
+            // `ss|x|z|ch|sh -> ...es`
+            ("address", "addresses"),
+            ("box", "boxes"),
+            ("quiz", "quizes"),
+            ("batch", "batches"),
+            ("dish", "dishes"),
+            // consonant + `y -> ies`, but a vowel before it does not.
+            ("category", "categories"),
+            ("toy", "toys"),
+            // `fe -> ves`, `f -> ves`, and `ff` is neither.
+            ("knife", "knives"),
+            ("shelf", "shelves"),
+            ("cliff", "cliffs"),
+            // An existing final `s` is left alone: a second one is worse
+            // than nothing.
+            ("status", "status"),
+        ] {
+            assert_eq!(plural_snake_case(label), expected, "{label}");
+        }
+    }
+
+    /// The eight irregulars and ten invariants §9.7 names, and no others.
+    ///
+    /// The last word decides, so a compound whose head is irregular is the
+    /// ordinary case rather than an edge one -- `support_persons` is the kind
+    /// of name that reads as a bug in somebody else's schema.
+    #[test]
+    fn the_irregular_map_and_invariant_list_are_the_specified_ones() {
+        for (label, expected) in [
+            ("person", "people"),
+            ("child", "children"),
+            ("man", "men"),
+            ("woman", "women"),
+            ("foot", "feet"),
+            ("tooth", "teeth"),
+            ("goose", "geese"),
+            ("mouse", "mice"),
+            ("support_person", "support_people"),
+            ("equipment", "equipment"),
+            ("information", "information"),
+            ("money", "money"),
+            ("news", "news"),
+            ("series", "series"),
+            ("species", "species"),
+            ("staff", "staff"),
+            ("audio", "audio"),
+            ("metadata", "metadata"),
+            ("data", "data"),
+        ] {
+            assert_eq!(plural_snake_case(label), expected, "{label}");
+        }
+        // Not guessed at: an irregular jails invents is a table name a reader
+        // has to discover from a migration.
+        assert_eq!(plural_snake_case("ox"), "oxes");
+    }
+}
