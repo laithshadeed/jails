@@ -88,23 +88,24 @@ looked and still worth removing.
 
 ## A1 — coverage
 
-### A1.1 Twenty-three of thirty-nine generators
+### A1.1 Twenty-five of thirty-nine generators
 
 `src/canonical_support.rs` is the authority and is honest code: an exhaustive
 match that stops compiling when a clap variant is added. Its own test pins
-23/39. Capabilities are closed at 25/25.
+25/39. Capabilities are closed at 25/25.
 
 Still legacy: `migration`, `handler`, `command`, `cli`, `cases`,
-`http-workflow`, `association`, `http-sink`, `idempotency`, `auth`, `webhook`,
-`search`, `durable-job`, `socket`, `presence`, `seed`.
+`http-workflow`, `association`, `http-sink`, `idempotency`, `auth`,
+`search`, `durable-job`, `presence`, `seed`.
 
 `command` and `cli` are blocked on **A1.5** rather than on an emitter: both
 register themselves in the project's dispatcher, which is a
 `CommandRegistration` reader-file patch the canonical path has no operation
 for yet.
 
-**`client`, `fetcher` and `job` are the first of the framework-shaped
-component kinds and their emitter is the pattern the rest follow.** They do not fit `SourceUnit` --
+**Five of the framework-shaped component kinds are through `emit_component`
+now** — `client`, `fetcher`, `job`, `socket` and `webhook` — **and it is the
+pattern the rest follow.** They do not fit `SourceUnit` --
 `linker::component` projects the eight unit-shaped kinds onto one and returns
 `None` for the rest -- because one declaration is several files plus a build
 dependency plus properties. `jails-compiler`'s `emit_component` reads

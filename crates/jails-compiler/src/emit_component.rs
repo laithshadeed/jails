@@ -28,6 +28,8 @@ use std::collections::BTreeSet;
 mod client;
 mod fetcher;
 mod job;
+mod socket;
+mod webhook;
 
 const MAIN_ROOT: &str = ".jails/generated/main/java";
 const TEST_ROOT: &str = ".jails/generated/test/java";
@@ -41,6 +43,8 @@ pub(crate) fn lower_and_emit(
             ComponentKind::Client => client::files(model, component)?,
             ComponentKind::Fetcher => fetcher::files(model, component)?,
             ComponentKind::Job => job::files(model, component)?,
+            ComponentKind::Socket => socket::files(model, component)?,
+            ComponentKind::Webhook => webhook::files(model, component)?,
             _ => continue,
         };
         for file in files {
@@ -70,6 +74,7 @@ pub(crate) fn dependencies(model: &AppModel) -> Vec<BuildDependency> {
     for (kind, required) in [
         (ComponentKind::Client, client::DEPENDENCIES),
         (ComponentKind::Fetcher, fetcher::DEPENDENCIES),
+        (ComponentKind::Socket, socket::DEPENDENCIES),
     ] {
         if !model
             .components

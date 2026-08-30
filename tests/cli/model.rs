@@ -881,9 +881,7 @@ app Notes {
         "http-sink",
         "idempotency",
         "auth",
-        "webhook",
         "durable-job",
-        "socket",
         "presence",
     ];
     for command in commands {
@@ -10755,4 +10753,80 @@ fn canonical_jobs_share_one_scheduling_config() {
         config.contains("package com.example.demo.jobs;"),
         "{config}"
     );
+}
+
+/// `g socket` and `g webhook` on a canonical project.
+///
+/// Both are inbound surfaces that split their framework half from their
+/// testable half, and both put something in the build the project cannot work
+/// without: the WebSocket starter is not in the web starter, and a webhook's
+/// shared secret is a property with no default, because one that silently
+/// defaults is a webhook anybody can call.
+#[test]
+fn canonical_socket_and_webhook_split_their_framework_half_from_their_testable_one() {
+    let root = temp_dir("canonical-socket-webhook");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+         platform spring\n  build maven\n  storage none\n}\n",
+    )
+    .unwrap();
+
+    for command in [
+        [
+            "g", "socket", "Chat", "--path", "/ws/chat", "--method", "get",
+        ]
+        .as_slice(),
+        ["g", "webhook", "Stripe"].as_slice(),
+    ] {
+        let output = jails_cmd(&root, None).args(command).output().unwrap();
+        assert!(
+            output.status.success(),
+            "`jails {}`: {}",
+            command.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    for relative in [
+        ".jails/generated/main/java/com/example/demo/web/ChatSocketHandler.java",
+        ".jails/generated/main/java/com/example/demo/web/ChatSocketConfig.java",
+        ".jails/generated/test/java/com/example/demo/web/ChatSocketHandlerTest.java",
+        ".jails/generated/main/java/com/example/demo/StripeVerifier.java",
+        ".jails/generated/main/java/com/example/demo/web/StripeWebhookController.java",
+        ".jails/generated/test/java/com/example/demo/StripeVerifierTest.java",
+    ] {
+        assert!(root.join(relative).exists(), "`{relative}` was not written");
+    }
+
+    let config = fs::read_to_string(
+        root.join(".jails/generated/main/java/com/example/demo/web/ChatSocketConfig.java"),
+    )
+    .unwrap();
+    assert!(config.contains("/ws/chat"), "{config}");
+    assert!(!config.contains("{{"), "{config}");
+
+    // The controller lives in `web` and the verifier in the base package, so
+    // the import is real rather than a sibling one that would not compile.
+    let controller = fs::read_to_string(
+        root.join(".jails/generated/main/java/com/example/demo/web/StripeWebhookController.java"),
+    )
+    .unwrap();
+    assert!(
+        controller.contains("import com.example.demo.StripeVerifier;"),
+        "{controller}"
+    );
+    assert!(controller.contains("X-Stripe-Signature"), "{controller}");
+    assert!(!controller.contains("{{"), "{controller}");
+
+    let verifier = fs::read_to_string(
+        root.join(".jails/generated/main/java/com/example/demo/StripeVerifier.java"),
+    )
+    .unwrap();
+    assert!(verifier.contains("app.stripe.secret"), "{verifier}");
+
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("spring-boot-starter-websocket"), "{pom}");
 }
