@@ -720,16 +720,46 @@ canonical `.jails/generated` tree — the product of the new architecture — ha
 no byte snapshot anywhere, so nothing fails when a canonical emitter changes
 bytes.
 
-### A5.2 No golden for any canonical persisted format
+### A5.2 No golden for any canonical persisted format — closed for the lock
 
-`tests/protocol-golden/` holds five fixtures, all legacy. There is none for
-`jails.compiler-lock.v2`, `jails.plan.v1` or `jails.plan-bundle.v1`. These are
-`#[derive(Serialize)]` over `AppModel`, so **adding a field to any model
-struct silently changes the persisted format**. There is already a v1→v2 lock
-bump and no test that a v1 lock still decodes. `simplify-sol.md`'s fitness
-rule ("every persisted union tag and field number is generated and
-golden-tested") and G0's "old fixtures decode and new canonical encodings are
-golden" are unmet on the canonical side.
+`tests/protocol-golden/compiler-lock-v2.json` is the encoding, byte-compared
+by `the_compiler_lock_encoding_matches_its_golden`, and
+`a_v1_compiler_lock_still_decodes` proves the older envelope still reads —
+G0's "old fixtures decode and new canonical encodings are golden", on the
+canonical side.
+
+**Byte-compared rather than round-tripped**, because a round-trip goes through
+whatever the current serializer does and can never notice that it changed.
+`UPDATE_GOLDEN=1` refreshes it and the diff is then the notice, which is the
+thing this row was asking for: the shape had moved three times, each time the
+lock failed closed on the next run as it should, and each time nothing said
+the format had moved.
+
+Two decisions worth keeping.
+
+**The fixture reaches every persisted struct**, and a first draft did not — it
+reused the TOML `MODEL` above, which has no source units, so adding a field to
+`SourceUnit` changed nothing and the golden reported green. It is JDL v1 now,
+with an entity, projections, an index, all four operation kinds, a capability,
+a dependency, a setting and two components, plus a captured `pom.xml` so the
+dependency and setting structs are actually in the plan. A struct missing from
+that model is a struct whose shape can change unseen.
+
+**The projection's file contents are elided and only they.** A lock carries
+the whole accepted projection, so a verbatim golden is 380 KB of generated
+Java as JSON byte arrays — and a diff nobody can read is a golden nobody
+reads, which is this row's failure recreated rather than fixed. Every struct
+shape survives: `RenderedFile`, `Provenance`, `FileKind` and `FileMode` are
+all there with their fields. What the bytes themselves say is A5.1's job.
+
+The compiler version is pinned in the fixture rather than read from
+`COMPILER_VERSION`: that constant is *meant* to move, and a golden churning on
+every bump is one refreshed without being read.
+
+Still open: `jails.plan.v1` and `jails.plan-bundle.v1` have no golden. The
+plan embeds content digests of a scratch directory, so pinning one needs the
+non-deterministic parts named first — which is a smaller job than this was,
+and now has a pattern to follow.
 
 ### A5.3 The G1 differential corpus does not exercise JDL v1
 

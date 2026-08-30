@@ -350,6 +350,16 @@ fn accepted_compiler_state(
         .transpose()
 }
 
+/// The decoder, reachable from a test in a sibling module.
+///
+/// `audit.md` A5.2 asks that an *older* lock still decode, and the v1 arm
+/// below is the only place that can be asserted -- a schema branch nothing
+/// exercises is one that has already rotted without saying so.
+#[cfg(test)]
+pub(crate) fn decode_compiler_lock_for_test(bytes: &[u8]) -> Result<(), String> {
+    decode_compiler_lock(bytes).map(|_| ())
+}
+
 fn decode_compiler_lock(bytes: &[u8]) -> Result<AcceptedCompilerState, String> {
     let header: serde_json::Value = serde_json::from_slice(bytes)
         .map_err(|error| format!("could not decode `{COMPILER_LOCK}`: {error}"))?;

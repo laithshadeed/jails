@@ -1,0 +1,1060 @@
+{
+  "compiler": "jails.compiler.golden",
+  "model": {
+    "capabilities": {
+      "cap_db": {
+        "id": "cap_db",
+        "java_package": null,
+        "kind": "db",
+        "label": "db",
+        "name": null
+      },
+      "cap_json": {
+        "id": "cap_json",
+        "java_package": null,
+        "kind": "json",
+        "label": "json",
+        "name": null
+      }
+    },
+    "components": {
+      "cmp_notifier": {
+        "bindings": [],
+        "id": "cmp_notifier",
+        "kind": "service",
+        "label": "notifier",
+        "name": "Notifier",
+        "on": null,
+        "parameters": [],
+        "route": null,
+        "source": null,
+        "variants": [],
+        "yields": null
+      },
+      "cmp_outcome": {
+        "bindings": [],
+        "id": "cmp_outcome",
+        "kind": "sealed",
+        "label": "outcome",
+        "name": "Outcome",
+        "on": null,
+        "parameters": [],
+        "route": null,
+        "source": null,
+        "variants": [
+          {
+            "id": "var_cmp_outcome_accepted",
+            "name": "Accepted",
+            "parameters": []
+          },
+          {
+            "id": "var_cmp_outcome_rejected",
+            "name": "Rejected",
+            "parameters": []
+          }
+        ],
+        "yields": null
+      }
+    },
+    "dependencies": {
+      "dep_org_jsoup_jsoup": {
+        "artifact": "jsoup",
+        "group": "org.jsoup",
+        "id": "dep_org_jsoup_jsoup",
+        "label": "org_jsoup_jsoup",
+        "scope": "compile",
+        "version": "1.18.3"
+      }
+    },
+    "ejections": {},
+    "entities": {
+      "ent_note": {
+        "active": true,
+        "enum_constants": [],
+        "facets": [
+          "record",
+          "factory",
+          "repository"
+        ],
+        "fields": [
+          {
+            "id": "fld_note_id",
+            "indexed": false,
+            "label": "id",
+            "length": null,
+            "names": {
+              "java_member": "id",
+              "sql_column": "id"
+            },
+            "non_blank": false,
+            "primary_key": true,
+            "required": true,
+            "semantics": {
+              "default": {
+                "derived": true,
+                "value": {
+                  "Function": {
+                    "arguments": [],
+                    "name": "uuid7"
+                  }
+                }
+              },
+              "nonnegative": false,
+              "positive": false,
+              "scope": null,
+              "updated": false,
+              "version": false
+            },
+            "ty": {
+              "Builtin": "uuid"
+            },
+            "unique": false
+          },
+          {
+            "id": "fld_note_title",
+            "indexed": false,
+            "label": "title",
+            "length": null,
+            "names": {
+              "java_member": "title",
+              "sql_column": "title"
+            },
+            "non_blank": true,
+            "primary_key": false,
+            "required": true,
+            "ty": {
+              "Builtin": "string"
+            },
+            "unique": false
+          },
+          {
+            "id": "fld_note_status",
+            "indexed": false,
+            "label": "status",
+            "length": null,
+            "names": {
+              "java_member": "status",
+              "sql_column": "status"
+            },
+            "non_blank": false,
+            "primary_key": false,
+            "required": true,
+            "ty": {
+              "Builtin": "string"
+            },
+            "unique": false
+          }
+        ],
+        "id": "ent_note",
+        "indexes": {
+          "idx_note_status": {
+            "columns": [
+              {
+                "direction": "asc",
+                "field": "fld_note_status"
+              }
+            ],
+            "id": "idx_note_status",
+            "label": "status",
+            "sql_name": "idx_note_status"
+          }
+        },
+        "label": "note",
+        "names": {
+          "java_type": "Note",
+          "sql_table": "note"
+        }
+      }
+    },
+    "operations": {
+      "op_note_create": {
+        "id": "op_note_create",
+        "kind": {
+          "Command": {
+            "fields": [
+              "fld_note_title",
+              "fld_note_status"
+            ],
+            "on": "ent_note",
+            "route": null,
+            "semantics": {
+              "assignments": [],
+              "bindings": [],
+              "conflict_key": [],
+              "emits": [
+                "op_note_created"
+              ],
+              "internal": false,
+              "parameters": [
+                {
+                  "constraints": {
+                    "default": null,
+                    "length": null,
+                    "non_blank": false,
+                    "nonnegative": false,
+                    "positive": false
+                  },
+                  "name": "title",
+                  "optional_filter": false,
+                  "required": true,
+                  "source": {
+                    "Field": {
+                      "entity": "ent_note",
+                      "field": "fld_note_title",
+                      "qualifier": null
+                    }
+                  }
+                },
+                {
+                  "constraints": {
+                    "default": null,
+                    "length": null,
+                    "non_blank": false,
+                    "nonnegative": false,
+                    "positive": false
+                  },
+                  "name": "status",
+                  "optional_filter": false,
+                  "required": true,
+                  "source": {
+                    "Field": {
+                      "entity": "ent_note",
+                      "field": "fld_note_status",
+                      "qualifier": null
+                    }
+                  }
+                }
+              ],
+              "resolutions": [],
+              "route": null
+            }
+          }
+        },
+        "label": "create",
+        "names": {
+          "java_type": "Create"
+        }
+      },
+      "op_note_created": {
+        "id": "op_note_created",
+        "kind": {
+          "Event": {
+            "fields": [
+              "fld_note_id",
+              "fld_note_title"
+            ],
+            "on": "ent_note",
+            "semantics": {
+              "parameters": [
+                {
+                  "constraints": {
+                    "default": null,
+                    "length": null,
+                    "non_blank": false,
+                    "nonnegative": false,
+                    "positive": false
+                  },
+                  "name": "id",
+                  "optional_filter": false,
+                  "required": true,
+                  "source": {
+                    "Field": {
+                      "entity": "ent_note",
+                      "field": "fld_note_id",
+                      "qualifier": null
+                    }
+                  }
+                },
+                {
+                  "constraints": {
+                    "default": null,
+                    "length": null,
+                    "non_blank": false,
+                    "nonnegative": false,
+                    "positive": false
+                  },
+                  "name": "title",
+                  "optional_filter": false,
+                  "required": true,
+                  "source": {
+                    "Field": {
+                      "entity": "ent_note",
+                      "field": "fld_note_title",
+                      "qualifier": null
+                    }
+                  }
+                }
+              ],
+              "partition_by": null
+            }
+          }
+        },
+        "label": "created",
+        "names": {
+          "java_type": "Created"
+        }
+      },
+      "op_note_open": {
+        "id": "op_note_open",
+        "kind": {
+          "Query": {
+            "filters": [
+              "fld_note_status"
+            ],
+            "on": "ent_note",
+            "route": null,
+            "semantics": {
+              "bindings": [],
+              "internal": false,
+              "joins": [],
+              "limit": 20,
+              "order": [],
+              "parameters": [
+                {
+                  "constraints": {
+                    "default": null,
+                    "length": null,
+                    "non_blank": false,
+                    "nonnegative": false,
+                    "positive": false
+                  },
+                  "name": "status",
+                  "optional_filter": false,
+                  "required": true,
+                  "source": {
+                    "Field": {
+                      "entity": "ent_note",
+                      "field": "fld_note_status",
+                      "qualifier": null
+                    }
+                  }
+                }
+              ],
+              "route": null
+            }
+          }
+        },
+        "label": "open",
+        "names": {
+          "java_type": "Open"
+        }
+      },
+      "op_note_rename": {
+        "id": "op_note_rename",
+        "kind": {
+          "Transition": {
+            "fields": [
+              "fld_note_title"
+            ],
+            "on": "ent_note",
+            "route": null,
+            "semantics": {
+              "assignments": [],
+              "bindings": [],
+              "emits": [],
+              "internal": false,
+              "parameters": [
+                {
+                  "constraints": {
+                    "default": null,
+                    "length": null,
+                    "non_blank": false,
+                    "nonnegative": false,
+                    "positive": false
+                  },
+                  "name": "title",
+                  "optional_filter": false,
+                  "required": true,
+                  "source": {
+                    "Field": {
+                      "entity": "ent_note",
+                      "field": "fld_note_title",
+                      "qualifier": null
+                    }
+                  }
+                }
+              ],
+              "precondition": null,
+              "route": null,
+              "select": [],
+              "update": [
+                "fld_note_title"
+              ]
+            }
+          }
+        },
+        "label": "rename",
+        "names": {
+          "java_type": "Rename"
+        }
+      }
+    },
+    "project": {
+      "base_package": "com.example.notes",
+      "build": "maven",
+      "dialect": "postgresql",
+      "id": "project_notes",
+      "java_release": 26,
+      "layout": {},
+      "name": "Notes",
+      "platform": "spring"
+    },
+    "projections": {
+      "prj_ent_note_factory": {
+        "entity": "ent_note",
+        "id": "prj_ent_note_factory",
+        "kind": "Factory"
+      },
+      "prj_ent_note_repo": {
+        "entity": "ent_note",
+        "id": "prj_ent_note_repo",
+        "kind": "Repository"
+      }
+    },
+    "schema": "jails.model.v1",
+    "settings": {
+      "prop_main_server_port": {
+        "id": "prop_main_server_port",
+        "key": "server.port",
+        "label": "main_server_port",
+        "target": "main",
+        "value": "8080"
+      }
+    },
+    "units": {
+      "cmp_notifier": {
+        "endpoint": null,
+        "id": "cmp_notifier",
+        "java_package": "com.example.notes.service",
+        "java_type": "NotifierService",
+        "kind": "service",
+        "label": "notifier",
+        "layer": "service",
+        "on": null,
+        "variants": [],
+        "yields": null
+      },
+      "cmp_outcome": {
+        "endpoint": null,
+        "id": "cmp_outcome",
+        "java_package": "com.example.notes.domain",
+        "java_type": "Outcome",
+        "kind": "sealed",
+        "label": "outcome",
+        "layer": "domain",
+        "on": null,
+        "variants": [
+          "Accepted",
+          "Rejected"
+        ],
+        "yields": null
+      }
+    }
+  },
+  "model_digest": "sha256:5999bbb100427ac405b327104779a077d82c26ef3e754aa754ee6b43fd1cc48e",
+  "projection": {
+    "files": {
+      ".jails/generated/main/java/com/example/notes/adapters/Json.java": {
+        "bytes": "<4356 bytes elided>",
+        "kind": "java-main",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_cap_json_main",
+          "compiler_pass": "capability-pack-json",
+          "ejectable": true,
+          "ejection_id": "cap_json",
+          "semantic_ids": [
+            "cap_json"
+          ]
+        }
+      },
+      ".jails/generated/main/java/com/example/notes/adapters/jdbc/JdbcCreateCommand.java": {
+        "bytes": "<1400 bytes elided>",
+        "kind": "java-main",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_cap_db_op_note_create_command",
+          "compiler_pass": "capability-db-command",
+          "ejectable": true,
+          "semantic_ids": [
+            "cap_db",
+            "ent_note",
+            "op_note_create"
+          ]
+        }
+      },
+      ".jails/generated/main/java/com/example/notes/adapters/jdbc/JdbcNoteRepository.java": {
+        "bytes": "<1680 bytes elided>",
+        "kind": "java-main",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_cap_db_ent_note_repository",
+          "compiler_pass": "capability-db",
+          "ejectable": true,
+          "semantic_ids": [
+            "cap_db",
+            "ent_note"
+          ]
+        }
+      },
+      ".jails/generated/main/java/com/example/notes/adapters/jdbc/JdbcOpenQuery.java": {
+        "bytes": "<1137 bytes elided>",
+        "kind": "java-main",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_cap_db_op_note_open_query",
+          "compiler_pass": "capability-db-query",
+          "ejectable": true,
+          "semantic_ids": [
+            "cap_db",
+            "ent_note",
+            "op_note_open"
+          ]
+        }
+      },
+      ".jails/generated/main/java/com/example/notes/adapters/jdbc/JdbcRenameTransition.java": {
+        "bytes": "<1217 bytes elided>",
+        "kind": "java-main",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_cap_db_op_note_rename_transition",
+          "compiler_pass": "capability-db-transition",
+          "ejectable": true,
+          "semantic_ids": [
+            "cap_db",
+            "ent_note",
+            "op_note_rename"
+          ]
+        }
+      },
+      ".jails/generated/main/java/com/example/notes/application/commands/CreateCommand.java": {
+        "bytes": "<665 bytes elided>",
+        "kind": "java-main",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_op_note_create_command",
+          "compiler_pass": "java-operations",
+          "ejectable": false,
+          "semantic_ids": [
+            "op_note_create"
+          ]
+        }
+      },
+      ".jails/generated/main/java/com/example/notes/application/queries/OpenQuery.java": {
+        "bytes": "<477 bytes elided>",
+        "kind": "java-main",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_op_note_open_query",
+          "compiler_pass": "java-operations",
+          "ejectable": false,
+          "semantic_ids": [
+            "op_note_open"
+          ]
+        }
+      },
+      ".jails/generated/main/java/com/example/notes/application/transitions/RenameTransition.java": {
+        "bytes": "<629 bytes elided>",
+        "kind": "java-main",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_op_note_rename_transition",
+          "compiler_pass": "java-operations",
+          "ejectable": false,
+          "semantic_ids": [
+            "op_note_rename"
+          ]
+        }
+      },
+      ".jails/generated/main/java/com/example/notes/domain/Note.java": {
+        "bytes": "<558 bytes elided>",
+        "kind": "java-main",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_ent_note_record",
+          "compiler_pass": "java-facets",
+          "ejectable": false,
+          "semantic_ids": [
+            "ent_note"
+          ]
+        }
+      },
+      ".jails/generated/main/java/com/example/notes/domain/Outcome.java": {
+        "bytes": "<408 bytes elided>",
+        "kind": "java-main",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_cmp_outcome_main",
+          "compiler_pass": "java-source-units",
+          "ejectable": false,
+          "semantic_ids": [
+            "cmp_outcome"
+          ]
+        }
+      },
+      ".jails/generated/main/java/com/example/notes/domain/TimeOrderedUuid.java": {
+        "bytes": "<1199 bytes elided>",
+        "kind": "java-main",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_app_time_ordered_uuid",
+          "compiler_pass": "java-default-support",
+          "ejectable": false,
+          "semantic_ids": [
+            "project_notes"
+          ]
+        }
+      },
+      ".jails/generated/main/java/com/example/notes/domain/events/CreatedEvent.java": {
+        "bytes": "<518 bytes elided>",
+        "kind": "java-main",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_op_note_created_event",
+          "compiler_pass": "java-operations",
+          "ejectable": false,
+          "semantic_ids": [
+            "op_note_created"
+          ]
+        }
+      },
+      ".jails/generated/main/java/com/example/notes/repository/NoteRepository.java": {
+        "bytes": "<466 bytes elided>",
+        "kind": "java-main",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_ent_note_repository",
+          "compiler_pass": "java-facets",
+          "ejectable": false,
+          "semantic_ids": [
+            "ent_note"
+          ]
+        }
+      },
+      ".jails/generated/main/java/com/example/notes/service/NotifierService.java": {
+        "bytes": "<212 bytes elided>",
+        "kind": "java-main",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_cmp_notifier_main",
+          "compiler_pass": "java-source-units",
+          "ejectable": true,
+          "semantic_ids": [
+            "cmp_notifier"
+          ]
+        }
+      },
+      ".jails/generated/test/java/com/example/notes/TestcontainersConfig.java": {
+        "bytes": "<3825 bytes elided>",
+        "kind": "java-test",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_cap_db_testcontainers_config",
+          "compiler_pass": "capability-pack-db",
+          "ejectable": true,
+          "ejection_id": "cap_db",
+          "semantic_ids": [
+            "cap_db"
+          ]
+        }
+      },
+      ".jails/generated/test/java/com/example/notes/adapters/JsonTest.java": {
+        "bytes": "<3651 bytes elided>",
+        "kind": "java-test",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_cap_json_test",
+          "compiler_pass": "capability-pack-json",
+          "ejectable": true,
+          "ejection_id": "cap_json",
+          "semantic_ids": [
+            "cap_json"
+          ]
+        }
+      },
+      ".jails/generated/test/java/com/example/notes/domain/OutcomeTest.java": {
+        "bytes": "<684 bytes elided>",
+        "kind": "java-test",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_cmp_outcome_test",
+          "compiler_pass": "java-source-units",
+          "ejectable": true,
+          "semantic_ids": [
+            "cmp_outcome"
+          ]
+        }
+      },
+      ".jails/generated/test/java/com/example/notes/service/NotifierServiceTest.java": {
+        "bytes": "<343 bytes elided>",
+        "kind": "java-test",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_cmp_notifier_test",
+          "compiler_pass": "java-source-units",
+          "ejectable": true,
+          "semantic_ids": [
+            "cmp_notifier"
+          ]
+        }
+      },
+      ".jails/generated/test/java/com/example/notes/testkit/NoteFactory.java": {
+        "bytes": "<1064 bytes elided>",
+        "kind": "java-test",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_ent_note_factory",
+          "compiler_pass": "java-test-factory",
+          "ejectable": true,
+          "semantic_ids": [
+            "ent_note"
+          ]
+        }
+      }
+    },
+    "reader_facets": {
+      "doc_cap_db_compose_db": {
+        "bytes": [
+          32,
+          32,
+          35,
+          32,
+          106,
+          97,
+          105,
+          108,
+          115,
+          58,
+          100,
+          98,
+          10,
+          32,
+          32,
+          112,
+          111,
+          115,
+          116,
+          103,
+          114,
+          101,
+          115,
+          58,
+          10,
+          32,
+          32,
+          32,
+          32,
+          105,
+          109,
+          97,
+          103,
+          101,
+          58,
+          32,
+          112,
+          111,
+          115,
+          116,
+          103,
+          114,
+          101,
+          115,
+          58,
+          49,
+          55,
+          45,
+          97,
+          108,
+          112,
+          105,
+          110,
+          101,
+          10,
+          32,
+          32,
+          32,
+          32,
+          101,
+          110,
+          118,
+          105,
+          114,
+          111,
+          110,
+          109,
+          101,
+          110,
+          116,
+          58,
+          10,
+          32,
+          32,
+          32,
+          32,
+          32,
+          32,
+          80,
+          79,
+          83,
+          84,
+          71,
+          82,
+          69,
+          83,
+          95,
+          68,
+          66,
+          58,
+          32,
+          97,
+          112,
+          112,
+          10,
+          32,
+          32,
+          32,
+          32,
+          32,
+          32,
+          80,
+          79,
+          83,
+          84,
+          71,
+          82,
+          69,
+          83,
+          95,
+          85,
+          83,
+          69,
+          82,
+          58,
+          32,
+          97,
+          112,
+          112,
+          10,
+          32,
+          32,
+          32,
+          32,
+          32,
+          32,
+          80,
+          79,
+          83,
+          84,
+          71,
+          82,
+          69,
+          83,
+          95,
+          80,
+          65,
+          83,
+          83,
+          87,
+          79,
+          82,
+          68,
+          58,
+          32,
+          97,
+          112,
+          112,
+          10,
+          32,
+          32,
+          32,
+          32,
+          112,
+          111,
+          114,
+          116,
+          115,
+          58,
+          10,
+          32,
+          32,
+          32,
+          32,
+          32,
+          32,
+          45,
+          32,
+          34,
+          53,
+          52,
+          51,
+          50,
+          58,
+          53,
+          52,
+          51,
+          50,
+          34,
+          10,
+          32,
+          32,
+          32,
+          32,
+          104,
+          101,
+          97,
+          108,
+          116,
+          104,
+          99,
+          104,
+          101,
+          99,
+          107,
+          58,
+          10,
+          32,
+          32,
+          32,
+          32,
+          32,
+          32,
+          116,
+          101,
+          115,
+          116,
+          58,
+          32,
+          91,
+          34,
+          67,
+          77,
+          68,
+          45,
+          83,
+          72,
+          69,
+          76,
+          76,
+          34,
+          44,
+          32,
+          34,
+          112,
+          103,
+          95,
+          105,
+          115,
+          114,
+          101,
+          97,
+          100,
+          121,
+          32,
+          45,
+          85,
+          32,
+          97,
+          112,
+          112,
+          32,
+          45,
+          100,
+          32,
+          97,
+          112,
+          112,
+          34,
+          93,
+          10,
+          32,
+          32,
+          32,
+          32,
+          32,
+          32,
+          105,
+          110,
+          116,
+          101,
+          114,
+          118,
+          97,
+          108,
+          58,
+          32,
+          50,
+          115,
+          10,
+          32,
+          32,
+          32,
+          32,
+          32,
+          32,
+          116,
+          105,
+          109,
+          101,
+          111,
+          117,
+          116,
+          58,
+          32,
+          53,
+          115,
+          10,
+          32,
+          32,
+          32,
+          32,
+          32,
+          32,
+          114,
+          101,
+          116,
+          114,
+          105,
+          101,
+          115,
+          58,
+          32,
+          49,
+          48,
+          10,
+          32,
+          32,
+          35,
+          32,
+          47,
+          106,
+          97,
+          105,
+          108,
+          115,
+          58,
+          100,
+          98,
+          10
+        ],
+        "kind": {
+          "kind": "compose-service",
+          "marker": "db",
+          "service": "postgres"
+        },
+        "path": "compose.yaml",
+        "provenance": {
+          "artifact_id": "doc_cap_db_compose_db",
+          "compiler_pass": "capability-pack-db",
+          "ejectable": false,
+          "ejection_id": "cap_db",
+          "semantic_ids": [
+            "cap_db"
+          ]
+        }
+      }
+    },
+    "root": ".jails/generated"
+  },
+  "projection_digest": "sha256:5063cdbe2782566fedecc500e24750bca1ab4e19d9ca88733cc59a0fb28e6fd3",
+  "schema": "jails.compiler-lock.v2"
+}

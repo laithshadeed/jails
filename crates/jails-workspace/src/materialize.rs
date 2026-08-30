@@ -808,6 +808,166 @@ primary_key = true
         );
     }
 
+    /// **The canonical persisted formats, as bytes.**
+    ///
+    /// `audit.md` A5.2: `jails.compiler-lock.v2` is `#[derive(Serialize)]`
+    /// over `AppModel`, so *adding a field to any model struct silently
+    /// changes the persisted format*. It had happened three times before this
+    /// existed. Each time the lock failed closed on the next run, which is
+    /// right and is also the whole problem: a project's accepted state stops
+    /// decoding and nothing said the shape moved.
+    ///
+    /// Byte-compared rather than round-tripped, because a round-trip passes
+    /// through whatever the current serializer does and can never notice that
+    /// it changed. `UPDATE_GOLDEN=1` refreshes it -- and the diff is then the
+    /// notice, which is what the audit asked for.
+    /// A model that reaches **every persisted struct**, so the golden below
+    /// covers the format rather than the part of it this fixture happens to
+    /// use.
+    ///
+    /// Written in JDL v1 rather than TOML because that is the authoring
+    /// boundary, and because the TOML fixture above cannot express half of
+    /// these. A struct missing from here is a struct whose shape can change
+    /// without the golden noticing -- which is what a first draft of this test
+    /// did: `MODEL` has no source units, so adding a field to `SourceUnit`
+    /// changed nothing and the golden reported green.
+    const EVERY_SHAPE: &str = "jdl 1\napp Notes @id(project_notes) {\n           pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n           storage postgres\n}\n\ncap json\n\ndep org.jsoup:jsoup @version(\"1.18.3\")\n\n         prop server.port = \"8080\"\n\nentity Note @id(ent_note) {\n  use repo\n           use factory\n  id: uuid @id(fld_note_id) @pk\n           title: string @id(fld_note_title) @notBlank\n           status: string @id(fld_note_status)\n\n  index [status] @id(idx_note_status)\n\n           command Create(title, status) @id(op_note_create) {\n    emit Created\n  }\n\n           query Open(status) @id(op_note_open) {\n    limit 20\n  }\n\n           transition Rename(title) @id(op_note_rename) {\n    update [title]\n  }\n\n           event Created(id, title) @id(op_note_created)\n}\n\n         component sealed Outcome @id(cmp_outcome) {\n  variant Accepted\n  variant Rejected\n}\n\n         component service Notifier @id(cmp_notifier) {\n}\n";
+
+    /// The smallest build file the golden's plan can edit.
+    const GOLDEN_POM: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>4.1.0</version>
+    <relativePath/>
+  </parent>
+  <groupId>com.example</groupId>
+  <artifactId>notes</artifactId>
+  <version>0.0.1-SNAPSHOT</version>
+  <dependencies>
+  </dependencies>
+</project>
+"#;
+
+    #[test]
+    fn the_compiler_lock_encoding_matches_its_golden() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/protocol-golden/compiler-lock-v2.json");
+        let model = jails_model::parse_jdl(EVERY_SHAPE).unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        // Pinned rather than observed: a Spring service unit needs a captured
+        // Boot project, and the golden must not depend on what is on the
+        // machine running it.
+        snapshot.project.build_system = jails_contracts::BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.1.0".to_string());
+        // A `dep` and a `prop` in the model mean the plan edits the reader's
+        // build and properties files, and an exact plan will not touch a file
+        // it has no before-image for. Captured here rather than dropped from
+        // the fixture: `Dependency` and `Setting` are two more persisted
+        // structs, and a golden that skipped them would be the same gap this
+        // test exists to close.
+        snapshot.files.insert(
+            ProjectPath::parse("pom.xml").unwrap(),
+            jails_contracts::CapturedFile {
+                bytes: GOLDEN_POM.as_bytes().to_vec(),
+                executable: false,
+            },
+        );
+        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let bundle = materialize(
+            &snapshot,
+            CanonicalModelPatch::reconcile(),
+            draft,
+            // Pinned rather than `COMPILER_VERSION`: the version is *meant* to
+            // move, and a golden that churned on every bump would be refreshed
+            // without being read, which is how a golden stops being one.
+            "jails.compiler.golden",
+        )
+        .unwrap();
+        let lock = bundle
+            .plan
+            .operations
+            .iter()
+            .find_map(|operation| match operation {
+                PlannedOperation::ReplaceStateFile { path, after, .. }
+                    if path.as_str() == crate::capture::COMPILER_LOCK =>
+                {
+                    bundle.blobs.get(&after.blob)
+                }
+                _ => None,
+            })
+            .expect("the plan writes a compiler lock");
+        // **The file *contents* are elided, and only they.** A lock carries
+        // the whole accepted projection, so a verbatim golden is 380 KB of
+        // generated Java as JSON byte arrays -- and a diff nobody can read is
+        // a golden nobody reads, which is the failure this is meant to
+        // prevent rather than cause. Every struct shape survives the
+        // elision: `RenderedFile`, `Provenance`, `FileKind` and `FileMode`
+        // are all still here with their fields. What the bytes themselves say
+        // is `audit.md` A5.1's job, and belongs in a tree golden rather than
+        // in the middle of a format one.
+        let mut parsed: serde_json::Value = serde_json::from_slice(lock).unwrap();
+        if let Some(files) = parsed
+            .get_mut("projection")
+            .and_then(|projection| projection.get_mut("files"))
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            for file in files.values_mut() {
+                if let Some(bytes) = file.get_mut("bytes") {
+                    let length = bytes.as_array().map_or(0, Vec::len);
+                    *bytes = serde_json::json!(format!("<{length} bytes elided>"));
+                }
+            }
+        }
+        let encoded = serde_json::to_string_pretty(&parsed).unwrap() + "\n";
+
+        if std::env::var_os("UPDATE_GOLDEN").is_some() {
+            std::fs::write(&fixture, &encoded).unwrap();
+            return;
+        }
+        let expected = std::fs::read_to_string(&fixture)
+            .expect("tests/protocol-golden/compiler-lock-v2.json is checked in");
+        assert_eq!(
+            encoded, expected,
+            "the compiler lock encoding changed.\n       \
+             If that is intended -- a field added to a model struct is enough \
+             -- refresh with UPDATE_GOLDEN=1 and read the diff: every existing \
+             project's accepted state stops decoding at the same moment."
+        );
+    }
+
+    /// A lock written by an older jails still decodes.
+    ///
+    /// G0 asks that "old fixtures decode", and the v1 envelope is the one
+    /// there is: no `compiler`, no `projection`. `capture` still has the arm,
+    /// and this is what proves the arm works rather than merely existing --
+    /// a schema branch nothing exercises is a branch that has already rotted.
+    #[test]
+    fn a_v1_compiler_lock_still_decodes() {
+        let model = jails_model::parse_jdl(EVERY_SHAPE).unwrap();
+        let bytes = model.canonical_json().unwrap();
+        let v1 = serde_json::json!({
+            "schema": "jails.compiler-lock.v1",
+            "model_digest": digest(&bytes).unwrap(),
+            "model": serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+        });
+        crate::capture::decode_compiler_lock_for_test(&serde_json::to_vec(&v1).unwrap())
+            .expect("a v1 lock decodes");
+
+        // ... and a lock whose model does not match its digest is refused
+        // rather than trusted, which is the property the digest is for.
+        let mut tampered = v1.clone();
+        tampered["model_digest"] = serde_json::json!(
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        );
+        let error =
+            crate::capture::decode_compiler_lock_for_test(&serde_json::to_vec(&tampered).unwrap())
+                .expect_err("a lock that disagrees with its own digest must refuse");
+        assert!(error.contains("compiler.lock"), "{error}");
+    }
+
     /// A different patch is a different plan, for the same reason.
     ///
     /// The input is part of the reviewed identity: two plans that write the
