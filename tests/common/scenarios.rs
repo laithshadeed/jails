@@ -300,10 +300,17 @@ pub const SCENARIOS: &[Scenario] = &[
         steps: &[&["g", "socket", "Chat"]],
     },
     Scenario {
+        // `add kafka` first, because `g event` requires it: all four files it
+        // writes import `org.springframework.kafka`, and without the starter
+        // the generate used to report success over a project that could not
+        // compile -- bugs.md B58.
         name: "event",
         fixture: Fixture::Spring,
         seed: &[],
-        steps: &[&["g", "event", "Transaction"]],
+        steps: &[
+            &["add", "kafka", "--no-start"],
+            &["g", "event", "Transaction"],
+        ],
     },
     // ---- capabilities, plain Maven ----
     Scenario {
@@ -580,6 +587,10 @@ pub const SCENARIOS: &[Scenario] = &[
         steps: &[
             &["add", "db", "--no-start"],
             &["add", "json", "--no-start"],
+            // `g event` requires Kafka: every file it writes imports
+            // `org.springframework.kafka`, and this scenario's whole point is
+            // an outbox that publishes. bugs.md B58.
+            &["add", "kafka", "--no-start"],
             &[
                 "g",
                 "scaffold",

@@ -1,23 +1,6 @@
 # Local development services. `jails add` / `jails remove` own the marked
 # blocks; `jails run` starts everything here.
 services:
-  # jails:db
-  postgres:
-    image: postgres:17-alpine
-    environment:
-      POSTGRES_DB: app
-      POSTGRES_USER: app
-      POSTGRES_PASSWORD: app
-    ports:
-      - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U app -d app"]
-      interval: 2s
-      timeout: 5s
-      retries: 10
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-  # /jails:db
   # jails:kafka
   kafka:
     image: apache/kafka:4.1.0
@@ -45,7 +28,3 @@ services:
       timeout: 10s
       retries: 10
   # /jails:kafka
-volumes:
-  # jails:db
-  postgres-data:
-  # /jails:db

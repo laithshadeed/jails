@@ -374,6 +374,30 @@ pub(crate) fn write_ledger(
                 })?;
             }
         }
+        // **An unchanged ledger is not rewritten, and cannot be.**
+        //
+        // Preparation carries the previous image forward rather than
+        // re-rendering one, so a run that changed no rows still reports
+        // "already set up" -- `is_no_op` is exactly that plus no operations
+        // and no effect. The object behind a carried-over image was interned
+        // by the commit that wrote it and then promoted to the durable store,
+        // so *this* transaction's object directory has never held its bytes
+        // and staging from there cannot work.
+        //
+        // Re-rendering instead of skipping is not the alternative: the payload
+        // carries a generation and an operation id, so a fresh render of an
+        // unchanged store is different bytes under a different id, and the
+        // image would stop matching what the ledger actually is. Nothing needs
+        // writing anyway -- the file is already these exact bytes.
+        //
+        // bugs.md B57. A *post-commit effect* is what made this reachable: it
+        // leaves the ledger untouched while making the change non-trivial, so
+        // the run walked past `is_no_op` into staging an object that was never
+        // there. That is why it took a compose service to reproduce, and why
+        // `sqlite` -- a database capability with no service -- was the control
+        // that did not. Both failpoints still fire: what is skipped is one
+        // redundant write, not the commit point around it.
+        FileImage::Present { .. } if change.ledger_after == change.ledger_before => {}
         FileImage::Present { object, mode } => {
             let staged = crate::activate::stage(&publish, objects, &object, mode, usize::MAX)
                 .map_err(|failure| LedgerFailure::BeforeCommit(failure.to_string()))?;

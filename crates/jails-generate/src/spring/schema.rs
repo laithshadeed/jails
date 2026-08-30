@@ -589,6 +589,22 @@ pub(crate) fn scratch_jdbc_project(tag: &str) -> (std::path::PathBuf, Project) {
 }
 
 #[cfg(test)]
+/// A project whose build declares Kafka, for the generators that require it.
+///
+/// `g event` writes four files importing `org.springframework.kafka` and now
+/// refuses without the starter, so a fixture that does not declare it is a
+/// project the command correctly will not serve -- bugs.md B58.
+pub(crate) fn scratch_kafka_project(tag: &str) -> (std::path::PathBuf, Project) {
+    scratch_project(
+        tag,
+        "<project><dependencies><dependency>\
+         <groupId>org.springframework.boot</groupId>\
+         <artifactId>spring-boot-starter-kafka</artifactId>\
+         </dependency></dependencies></project>",
+    )
+}
+
+#[cfg(test)]
 mod association_and_http_sink_tests {
     use super::*;
 

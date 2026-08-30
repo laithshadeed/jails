@@ -138,6 +138,122 @@ fn add_accepts_a_project_pinned_to_an_lts_below_the_jails_default() {
     );
 }
 
+/// bugs.md B57: re-running an installed capability bricked a project that has
+/// a compose service, terminally.
+///
+/// The second `add` reported the missing object behind `.jails/transactions/`
+/// and every mutating command after it -- `add`, `sync`, `g record` -- failed
+/// with the same line, so `jails sync`, whose whole job is re-applying
+/// recorded capabilities, was the command that could not run.
+///
+/// Preparation carries the previous ledger image forward when no row changed,
+/// so that a run which did nothing still reports "already set up". The object
+/// behind that image belongs to the commit that wrote it and was promoted to
+/// the durable store, so this transaction's own object directory never held
+/// it. Normally none of that is reached, because such a change is a no-op --
+/// `is_no_op` is exactly those conditions plus an empty effect list. A compose
+/// service supplies the effect, which makes the change non-trivial while
+/// leaving the ledger untouched, and the run walks into staging an object that
+/// was never there.
+///
+/// So the test needs all three: a capability that declares a compose service,
+/// a second capability, and that second one run twice. `sqlite` was the
+/// control that never reproduced -- a database capability with no service.
+#[test]
+fn reinstalling_a_capability_beside_a_compose_service_leaves_the_project_usable() {
+    let root = temp_dir("add-twice-with-compose");
+    write_spring_fixture(&root);
+
+    for arguments in [
+        &["add", "db", "--no-start"][..],
+        &["add", "cors"][..],
+        &["add", "cors"][..],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{arguments:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // Terminal, not transient, was the whole shape of B57: what proves it
+    // fixed is the commands *after* the second install, not that install.
+    for arguments in [
+        &["sync", "--no-start"][..],
+        &["g", "record", "Note", "title:string!"][..],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{arguments:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // And `doctor` no longer reports an unfinished transaction whose fix --
+    // run the same command again -- was the reproduction.
+    let doctor = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    let report = String::from_utf8_lossy(&doctor.stdout);
+    assert!(
+        !report.contains("started and did not finish"),
+        "doctor still reports an interrupted transaction:\n{report}"
+    );
+}
+
+/// bugs.md B58: `g event` wrote Kafka code into a project with no Kafka.
+///
+/// All four generated files import `org.springframework.kafka`, so the
+/// generate reported success, listed its files, and left a project where
+/// `mvn compile` fails on code the reader never wrote.
+///
+/// It refuses rather than splicing the coordinate, unlike `g dto` and
+/// `g client`: a listener needs what `add kafka` writes around it -- the
+/// `DefaultErrorHandler`, the dead-letter routing, the
+/// `ErrorHandlingDeserializer` -- so supplying only the dependency would trade
+/// a compile error for a listener that compiles and drops poison messages
+/// silently.
+#[test]
+fn generating_an_event_without_kafka_refuses_and_names_the_capability() {
+    let root = temp_dir("event-without-kafka");
+    write_spring_fixture(&root);
+
+    let refused = jails_cmd(&root, None)
+        .args(["g", "event", "Shipped"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let told = String::from_utf8_lossy(&refused.stderr);
+    assert!(told.contains("jails add kafka"), "{told}");
+    assert!(
+        !root
+            .join("src/main/java/com/example/demo/messaging")
+            .exists(),
+        "the refusal still wrote the messaging package"
+    );
+
+    // And it is a precondition, not a ban: with the capability installed the
+    // same command works.
+    let installed = jails_cmd(&root, None)
+        .args(["add", "kafka", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(
+        installed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&installed.stderr)
+    );
+    let generated = jails_cmd(&root, None)
+        .args(["g", "event", "Shipped"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+}
+
 #[test]
 fn add_dry_run_changes_nothing() {
     let root = temp_dir("add-dry-run");

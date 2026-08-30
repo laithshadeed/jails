@@ -191,12 +191,54 @@ pub(crate) fn kafka_files(root: &Path, pkg: &str, base: &str) -> Vec<Artifact> {
     ]
 }
 
+/// `g event` writes Kafka and must not hand back a project that cannot build.
+///
+/// Every one of the four files imports `org.springframework.kafka`, so without
+/// the starter the generate succeeds, prints its created files, and leaves a
+/// project where `mvn compile` fails on code the reader did not write --
+/// `bugs.md` B58.
+///
+/// **Refusing rather than splicing the dependency, unlike `g dto` and
+/// `g client`.** Those need one artifact and nothing else. A listener needs
+/// what `add kafka` writes around it: the `DefaultErrorHandler`, the
+/// dead-letter routing and the `ErrorHandlingDeserializer`. Supplying only the
+/// coordinate would trade a compile error for a listener that compiles and
+/// drops poison messages silently, which is the worse of the two. This is
+/// `require_scope_authorizer`'s shape -- a generator that needs a capability's
+/// output names the capability.
+///
+/// Asked of the *projection* for that helper's reason: in an aggregate
+/// `app apply` the `add kafka` row and the `g event` row are one transition,
+/// so reading the pom off disk would refuse a manifest whose steps are
+/// perfectly well ordered.
+fn require_kafka(slice: &Slice, name: &str) -> Result<()> {
+    let declared = slice
+        .project()
+        .projected_text("pom.xml")
+        .or_else(|| slice.project().projected_text("build.gradle"))
+        .or_else(|| slice.project().projected_text("build.gradle.kts"))
+        // The *starter*, which is what `add kafka` declares -- matching
+        // `spring-kafka` looked right and found nothing, because Boot's
+        // starter is what brings that artifact in transitively. A check that
+        // silently stops applying after a dependency bump is worse than no
+        // check, which is why `doctor` matches Testcontainers on its groupId.
+        .is_some_and(|build| build.contains("spring-boot-starter-kafka"));
+    if declared {
+        return Ok(());
+    }
+    Err(format!(
+        "event {name} publishes and consumes over Kafka, and the project has no Kafka support.\n       fix: run `jails add kafka` before generating an event."
+    )
+    .into())
+}
+
 pub(crate) fn event_files(
     slice: &Slice,
     name: &str,
     fields: &[crate::generate::Field],
     entity: Option<&str>,
 ) -> Result<Vec<Artifact>> {
+    require_kafka(slice, name)?;
     let root: &Path = slice.project().root();
     let pkg: &str = &slice.placed(Layer::Messaging);
     let domain: &str = &slice.placed(Layer::Domain);

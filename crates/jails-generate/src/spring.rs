@@ -671,7 +671,7 @@ mod event_tests {
             "occurredAt:instant".to_string(),
         ])
         .unwrap();
-        let (_root, project) = scratch_jdbc_project("event-field");
+        let (_root, project) = crate::spring::schema::scratch_kafka_project("event-field");
         let files =
             event_files(&Slice::new(&project, None), "PageDiscovered", &fields, None).unwrap();
 
@@ -703,7 +703,7 @@ mod event_tests {
     #[test]
     fn typed_events_refuse_to_invent_a_durable_identity() {
         let fields = crate::generate::parse_fields(&["occurredAt:instant".to_string()]).unwrap();
-        let (_root, project) = scratch_jdbc_project("event-no-id");
+        let (_root, project) = crate::spring::schema::scratch_kafka_project("event-no-id");
         let error =
             event_files(&Slice::new(&project, None), "PageDiscovered", &fields, None).unwrap_err();
         assert!(error.contains("stable `id`"), "{error}");
@@ -717,7 +717,7 @@ mod event_tests {
             "occurredAt:instant".to_string(),
         ])
         .unwrap();
-        let (_root, project) = scratch_jdbc_project("event-ordered");
+        let (_root, project) = crate::spring::schema::scratch_kafka_project("event-ordered");
         let files = event_files(
             &Slice::new(&project, None),
             "PageDiscovered",
@@ -745,7 +745,8 @@ mod event_tests {
             "occurredAt:instant".to_string(),
         ])
         .unwrap();
-        let (_root, project) = scratch_jdbc_project("event-ordered-missing");
+        let (_root, project) =
+            crate::spring::schema::scratch_kafka_project("event-ordered-missing");
         let error = event_files(
             &Slice::new(&project, None),
             "PageDiscovered",
