@@ -1368,6 +1368,32 @@ obvious enough to be proposed again:
   is the dependency half, and that is already cached.
 
 
+**The suite is `tests/cli`, and every measurement taken on a machine without
+Docker is a measurement of something else.** From the gate's own summary on
+run `33334340369`:
+
+```
+run-tests: 33 binaries, 4 at a time
+run-tests: 298.2s wall for 33 binaries
+run-tests: slowest cli 298.1s, engine 75.2s, architecture_allowances 45.6s,
+           differential 32.4s, agreement 24.9s
+```
+
+**298.1s of a 298.2s test phase is one binary.** The other thirty-two finish
+inside it and are free; nothing that speeds them up can show. Only `cli` has a
+critical path, so only `cli` has a budget.
+
+The trap underneath that is worse, and it invalidated a day of local work.
+`tests/cli`'s most expensive tests are the container-dependent ones -- whole
+generated applications verified against a real PostgreSQL and Kafka. On a
+machine with no Docker daemon they fail in milliseconds, so a local run
+measures the suite *minus* its critical path. Measured on this branch:
+`-DforkCount=0` took local `tests/cli` from 218s to 167s and took CI's from
+298s to 298s, because the 136s of Maven work it removed was never what CI was
+waiting for. Take a local `tests/cli` number as evidence about CI only with
+`JAILS_REQUIRE_TOOLCHAIN=1` **and** a container engine running; otherwise it
+is a different suite wearing the same name.
+
 **What the gate actually costs, measured step by step on run `33322968191`**
 -- a commit that changed no Rust at all, against a warm cache, so the compile
 is zero and what is left is the floor:
