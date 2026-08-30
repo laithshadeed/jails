@@ -383,6 +383,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-compiler", "emit_operation", 4),
     ("jails-compiler", "emit", 4),
     ("jails-compiler", "emit_sql", 4),
+    ("jails-compiler", "refuse", 4),
     ("jails-compiler", "storage", 4),
     ("jails-compiler", "emit_unit", 4),
     // The only canonical filesystem capture/materialization/execution owner.
@@ -807,7 +808,7 @@ const DEFAULT_BRANCH_IS_EXECUTED: &[(&str, &str)] = &[
         "canonical_observability_pack_merges_ejects_and_serves_prometheus",
     ),
     (
-        "crates/jails-compiler/src/lib.rs",
+        "crates/jails-compiler/src/refuse.rs",
         "canonical_security_pack_merges_ejects_and_keeps_cors_buildable",
     ),
     (

@@ -154,9 +154,20 @@ silently doing less, which is the right failure — but it means the registry's
 `durable-job` cannot be ported: each attaches to the outbox that is not there.
 `canonical_usecase_refuses_the_yields_flag_it_has_no_outbox_for` pins it.
 
-Closing it is model work before it is emitter work: a command needs a typed
-delivery policy (publish directly, or through a stored outbox), because the
-two are different promises and the compiler must not pick one.
+**The model half is done.** `CommandSemantics.delivery` is a typed policy —
+`direct` or `outbox` — spelled `deliver outbox` in JDL v1, because the two are
+different promises and the compiler must not pick one: publishing directly is
+a write and a publish that can fail independently, while an outbox makes the
+event part of the same transaction as the row. `outbox` with no `emit` is a
+link diagnostic, and the compiler refuses `outbox` outright until its emitter
+lands, so a model can state the stronger promise but never silently receive
+the weaker one.
+
+What is left is the emitter: an outbox table, an `Outbox<Name>UseCase`, a JDBC
+store, a sink port, a Kafka sink, a relay worker and its integration test. All
+six Java bodies are already templates on the legacy side, so it is a port
+rather than a design — and the arguments each event row carries are the ones
+`emit_operation::publications` already derives.
 
 ### A1.4 `jails new` still writes no model
 

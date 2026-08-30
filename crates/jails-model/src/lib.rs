@@ -62,10 +62,11 @@ pub use model::{
     IndexDirection, LengthRange, Setting, SettingTarget, TypeRef,
 };
 pub use operation::{
-    Assignment, BindingSource, Command, CommandSemantics, Event, EventSemantics, FieldMapping,
-    Join, Operation, OperationKind, OperationNames, OperationParameter, OperationRoute, Ordering,
-    ParameterBinding, ParameterConstraints, ParameterSource, Precondition, Query, QuerySemantics,
-    Resolution, SortDirection, Transition, TransitionSemantics, Value, VisibleField,
+    Assignment, BindingSource, Command, CommandSemantics, Delivery, Event, EventSemantics,
+    FieldMapping, Join, Operation, OperationKind, OperationNames, OperationParameter,
+    OperationRoute, Ordering, ParameterBinding, ParameterConstraints, ParameterSource,
+    Precondition, Query, QuerySemantics, Resolution, SortDirection, Transition,
+    TransitionSemantics, Value, VisibleField,
 };
 pub use patch::{
     ColumnRenamePolicy, FieldAddPolicy, FieldEvolutionPolicy, FieldPlacement, ModelPatch,

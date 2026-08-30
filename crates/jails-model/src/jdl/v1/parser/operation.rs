@@ -292,6 +292,29 @@ impl Parser<'_> {
                 }
                 self.end_line()
             }
+            // `deliver outbox` rather than an attribute on `emit`, because it
+            // is one policy for the command, not one per event: two events
+            // from one command travel the same way or the transaction means
+            // nothing.
+            "deliver" if kind == Kind::Command => {
+                self.bump();
+                let policy = self.take_word("delivery policy")?;
+                if !matches!(policy.as_str(), "direct" | "outbox") {
+                    return Err(self.here(
+                        "JDL0730",
+                        format!("unknown delivery policy `{policy}`"),
+                        "use `deliver direct` or `deliver outbox`",
+                    ));
+                }
+                if command.delivery.replace(policy).is_some() {
+                    return Err(self.here(
+                        "JDL0731",
+                        "delivery is declared more than once",
+                        "keep one `deliver` member",
+                    ));
+                }
+                self.end_line()
+            }
             "conflict" if kind == Kind::Command => {
                 self.bump();
                 self.expect("on", "JDL0911", "conflict must be followed by `on`")?;

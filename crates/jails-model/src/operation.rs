@@ -93,9 +93,39 @@ pub struct CommandSemantics {
     pub resolutions: Vec<Resolution>,
     pub conflict_key: Vec<FieldId>,
     pub emits: Vec<OperationId>,
+    /// How this command's events reach their subscribers.
+    ///
+    /// **A typed policy rather than a compiler choice**, because the two are
+    /// different promises. Publishing directly is one write and one publish
+    /// that can fail independently; publishing through a stored outbox makes
+    /// the event part of the same transaction as the row and relays it after.
+    /// A compiler that picked one would be choosing a delivery guarantee on
+    /// the reader's behalf.
+    #[serde(default, skip_serializing_if = "Delivery::is_default")]
+    pub delivery: Delivery,
     pub bindings: Vec<ParameterBinding>,
     pub route: Option<OperationRoute>,
     pub internal: bool,
+}
+
+/// How a command's events are delivered.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Delivery {
+    /// Publish inside the command. The default, and the weaker promise: the
+    /// write and the publish can fail independently.
+    #[default]
+    Direct,
+    /// Write the event to a stored outbox in the command's own transaction and
+    /// relay it afterwards, so a committed row and an unpublished event cannot
+    /// disagree.
+    Outbox,
+}
+
+impl Delivery {
+    fn is_default(&self) -> bool {
+        *self == Self::Direct
+    }
 }
 
 impl CommandSemantics {

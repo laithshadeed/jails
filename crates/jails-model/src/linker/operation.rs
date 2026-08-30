@@ -293,6 +293,27 @@ pub(super) fn link(
     operations
 }
 
+/// The delivery policy, or a diagnostic naming the two that exist.
+///
+/// A command that delivers through an outbox and emits nothing is refused
+/// separately, in `validate`: the policy is about *how* events travel, so one
+/// with no events is a declaration that does nothing.
+fn link_delivery(delivery: Option<&str>, path: &str, linker: &mut Linker) -> linked::Delivery {
+    match delivery {
+        None | Some("direct") => linked::Delivery::Direct,
+        Some("outbox") => linked::Delivery::Outbox,
+        Some(other) => {
+            linker.problem(
+                "model-command-delivery",
+                format!("{path}.semantics.delivery"),
+                format!("`{other}` is not a delivery policy"),
+                "use `direct` or `outbox`",
+            );
+            linked::Delivery::Direct
+        }
+    }
+}
+
 fn link_command_semantics(
     source: source::CommandSemantics,
     path: &str,
@@ -342,10 +363,22 @@ fn link_command_semantics(
             events.event_labels,
             linker,
         ),
+        delivery: link_delivery(source.delivery.as_deref(), path, linker),
         bindings: source.bindings.into_iter().map(link_binding).collect(),
         route: source.route.map(link_route),
         internal: source.internal,
     };
+    // A policy about *how* events travel, on a command with none, is a
+    // declaration that does nothing -- and it would emit an outbox table,
+    // store, worker and relay that never carry a row.
+    if semantics.delivery == linked::Delivery::Outbox && semantics.emits.is_empty() {
+        linker.problem(
+            "model-command-delivery-without-events",
+            format!("{path}.semantics.delivery"),
+            "`outbox` delivery needs at least one event to deliver",
+            "add an `emit`, or use the default direct delivery",
+        );
+    }
     validate_http_semantics(
         RoutedKind::Command,
         &semantics.parameters,

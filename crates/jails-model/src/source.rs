@@ -378,6 +378,9 @@ pub(crate) struct CommandSemantics {
     pub(crate) conflict_key: Vec<String>,
     #[serde(default)]
     pub(crate) emits: Vec<String>,
+    /// `direct` or `outbox`; anything else is a diagnostic at link time.
+    #[serde(default)]
+    pub(crate) delivery: Option<String>,
     #[serde(default)]
     pub(crate) bindings: Vec<ParameterBinding>,
     pub(crate) route: Option<OperationRoute>,

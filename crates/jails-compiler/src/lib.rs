@@ -13,6 +13,7 @@ mod emit_java;
 mod emit_operation;
 mod emit_sql;
 mod emit_unit;
+mod refuse;
 
 use jails_contracts::{
     BuildDependency, BuildFeature, BuildSystem, DocumentIntent, FileKind, JavaSourceSet, PlanDraft,
@@ -81,121 +82,8 @@ impl Compiler {
         // Why the layout arrives here rather than beside the model at each emit
         // site: `ProjectIntent::layout`, which has the whole argument.
         next_model.project.layout = snapshot.project.layout.clone();
-        if snapshot.project.java_release != next_model.project.java_release {
-            return Err(CompileError::new(format!(
-                "captured Java release {} disagrees with model release {}; recapture or update the model",
-                snapshot.project.java_release, next_model.project.java_release
-            )));
-        }
-        if snapshot.project.base_package != next_model.project.base_package {
-            return Err(CompileError::new(format!(
-                "captured base package `{}` disagrees with model package `{}`; recapture or update the model",
-                snapshot.project.base_package, next_model.project.base_package
-            )));
-        }
-        if (next_model
-            .capabilities
-            .values()
-            .any(|capability| capability.kind == "api")
-            || next_model
-                .units
-                .values()
-                .any(|unit| unit.kind == jails_model::UnitKind::Controller))
-            && snapshot.project.spring_boot.is_none()
-        {
-            return Err(CompileError::new(
-                "canonical `api` adapters require a captured Spring Boot project\n       fix: add Spring Boot to the build or remove the `api` capability",
-            ));
-        }
-        if next_model.capabilities.values().any(|capability| {
-            matches!(
-                capability.kind.as_str(),
-                "h2" | "actuator"
-                    | "cache"
-                    | "cors"
-                    | "observability"
-                    | "security"
-                    | "sse"
-                    | "redis"
-                    | "mail"
-            )
-        }) && snapshot.project.spring_boot.is_none()
-        {
-            return Err(CompileError::new(
-                "canonical Spring capability packs require a captured Spring Boot project\n       fix: add the capability to a Spring project or remove it from the model",
-            ));
-        }
-        if let Some((kind, minimum, actual)) =
-            next_model.capabilities.values().find_map(|capability| {
-                let minimum = emit_capability::minimum_boot(&capability.kind)?;
-                let actual = emit_capability::boot_major(snapshot.project.spring_boot.as_deref())?;
-                (actual < minimum).then_some((capability.kind.as_str(), minimum, actual))
-            })
-        {
-            return Err(CompileError::new(format!(
-                "canonical `{kind}` requires Spring Boot {minimum}+ but the captured project uses Boot {actual}\n       fix: raise the Spring Boot version or remove the `{kind}` capability"
-            )));
-        }
-        if next_model.units.values().any(|unit| {
-            matches!(
-                unit.kind,
-                jails_model::UnitKind::Service
-                    | jails_model::UnitKind::Strategy
-                    | jails_model::UnitKind::Controller
-            )
-        }) && snapshot.project.spring_boot.is_none()
-        {
-            return Err(CompileError::new(
-                "canonical Spring source units require a captured Spring Boot project\n       fix: add Spring Boot to the build or use a plain class/interface unit",
-            ));
-        }
-        if next_model
-            .entities
-            .values()
-            .any(|entity| entity.active && entity.facets.contains(&jails_model::Facet::Dto))
-            && snapshot.project.spring_boot.is_none()
-        {
-            return Err(CompileError::new(
-                "canonical DTO facets require a captured Spring Boot project\n       fix: add Spring Boot to the build or remove the `dto` facet",
-            ));
-        }
-        if let Some(component) = next_model
-            .components
-            .values()
-            .find(|component| !component_kind_is_emitted(component.kind))
-        {
-            return Err(CompileError::new(format!(
-                "canonical `component {}` has no compiler backend yet\n       fix: remove the declaration, or generate `{}` on a legacy project until its emitter lands",
-                component.kind.label(),
-                component.kind.label()
-            )));
-        }
-        // The database backend renders `JdbcClient` adapters annotated
-        // `@Repository`, so it is Spring-only in the same way `api` and the
-        // Spring capability packs are. Without this it emitted that Java into
-        // a project that cannot compile it, *and* spliced four versionless
-        // dependencies into a pom with no parent to manage them -- which
-        // Maven refuses to read at all, `validate` included.
-        if next_model
-            .capabilities
-            .values()
-            .any(|capability| capability.kind == "db")
-            && snapshot.project.spring_boot.is_none()
-        {
-            return Err(CompileError::new(
-                "canonical `storage postgres` renders Spring JDBC adapters and requires a captured Spring Boot project\n       fix: add Spring Boot to the build, or choose `storage none` and write the persistence by hand",
-            ));
-        }
-        if next_model
-            .capabilities
-            .values()
-            .any(|capability| capability.kind == "fast-test")
-            && snapshot.project.spring_boot.is_none()
-        {
-            return Err(CompileError::new(
-                "canonical fast-test ownership currently requires captured Spring Boot dependency management\n       fix: import a Spring Boot or JUnit BOM project before using `test --fast`",
-            ));
-        }
+        refuse::preflight(snapshot, &next_model)?;
+
         // Validate schema evolution before rendering dependent Java adapters.
         // A missing backfill or retirement policy is the root semantic error;
         // reporting a downstream constructor/SQL consequence first hides the
@@ -792,6 +680,49 @@ mod tests {
                 "{kind:?}: {error}"
             );
         }
+    }
+
+    /// A delivery policy that links must be honoured or refused.
+    ///
+    /// Direct and outbox delivery are different promises: one is a write and a
+    /// publish that can fail independently, the other makes the event part of
+    /// the same transaction as the row. Compiling a model that asks for the
+    /// stronger one and quietly emitting the weaker is the silent failure this
+    /// path exists to remove -- and it would be invisible, because the
+    /// generated code compiles and the events do arrive, until one does not.
+    #[test]
+    fn outbox_delivery_refuses_until_it_has_a_backend() {
+        let model = jails_model::parse_jdl(
+            "jdl 1\napp Demo {\n  pkg com.example.demo\n  java 26\n  platform spring\n  \
+             build maven\n  storage postgres\n}\n\nentity Task {\n  use repo\n  id: uuid @pk\n  \
+             title: string\n\n  command Create(title) {\n    emit TaskCreated\n    \
+             deliver outbox\n  }\n\n  event TaskCreated(id, title)\n}\n",
+        )
+        .unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
+        let error = Compiler::compile(&snapshot, None)
+            .expect_err("a delivery policy with no backend must refuse");
+        assert!(
+            error.to_string().contains("`deliver outbox` on `create`"),
+            "{error}"
+        );
+    }
+
+    /// A policy about how events travel, on a command with none, does nothing.
+    #[test]
+    fn outbox_delivery_without_events_is_a_link_diagnostic() {
+        let error = jails_model::parse_jdl(
+            "jdl 1\napp Demo {\n  pkg com.example.demo\n  java 26\n  platform spring\n  \
+             build maven\n  storage postgres\n}\n\nentity Task {\n  use repo\n  id: uuid @pk\n  \
+             title: string\n\n  command Create(title) {\n    deliver outbox\n  }\n}\n",
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:?}").contains("needs at least one event to deliver"),
+            "{error:?}"
+        );
     }
 
     /// A projection that links must render something or say why.
