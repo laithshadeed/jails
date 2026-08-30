@@ -186,7 +186,21 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // model, which is a fact about the filesystem and not one
                 // re-derived from a resolved `Project`. `jails model init`
                 // exists precisely because there is no model to read it off.
-                ceiling: 78,
+                // 78 -> 79 for `inspect::roots::source_roots`, which asks
+                // which Java source roots a *directory* has -- the reader's
+                // tree always, and `.jails/generated/{main,test}/java` when the
+                // compiler has written one. It is the same canonical shape as
+                // the row above: a fact about the filesystem, not one
+                // re-derived from a resolved `Project`. Three sibling helpers
+                // took a root in the first draft; folding the label into the
+                // returned value and passing files rather than directories to
+                // `collect_stats` removed all three, so this is the one that is
+                // load-bearing. Reading it off a `Project` is the honest cure
+                // and is a separate change: `collect_routes` and
+                // `collect_beans` are public, and their four callers in
+                // `add/tooling`, `doctor`, `why_subject` and `editor_command`
+                // do not all hold one.
+                ceiling: 79,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;

@@ -13143,3 +13143,115 @@ entity Visit {
         String::from_utf8_lossy(&refused.stdout)
     );
 }
+
+/// `jails routes` and `jails beans` read `src/main/java`, and a canonical
+/// project's controllers are not there.
+///
+/// `bugs.md` B56 already recorded the shape of this: *a route jails emitted
+/// and cannot see is worse than a gap, because the reader cannot tell an
+/// unlisted route from an absent one.* Moving reproducible output to
+/// `.jails/generated` reintroduced it for every route at once.
+#[test]
+fn routes_and_beans_see_the_tree_a_canonical_project_generates_into() {
+    let root = jdl_project(
+        "jdl-v1-inspect-generated",
+        r#"jdl 1
+app Depot {
+ pkg com.example.depot
+ java 26
+ platform spring
+ build maven
+ storage postgres
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    let scaffolded = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Crate", "id:uuid@pk", "label:string"])
+        .output()
+        .unwrap();
+    assert!(
+        scaffolded.status.success(),
+        "{}",
+        String::from_utf8_lossy(&scaffolded.stderr)
+    );
+
+    // The scaffold emits the port; a *route* is a routed semantic operation's,
+    // and the Spring adapter carrying the mapping annotation is the `api`
+    // capability's. Both are needed before there is anything to list.
+    let query = jails_cmd(&root, None)
+        .args([
+            "g",
+            "usecase",
+            "AddCrate",
+            "label",
+            "--on",
+            "Crate",
+            "--path",
+            "/depot/crates",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        query.status.success(),
+        "{}",
+        String::from_utf8_lossy(&query.stderr)
+    );
+    let api = jails_cmd(&root, None)
+        .args(["add", "api"])
+        .output()
+        .unwrap();
+    assert!(
+        api.status.success(),
+        "{}",
+        String::from_utf8_lossy(&api.stderr)
+    );
+
+    let routes = jails_cmd(&root, None).arg("routes").output().unwrap();
+    let routes = String::from_utf8_lossy(&routes.stdout).to_string();
+    assert!(
+        routes.contains("/depot/crates"),
+        "the operation's own route should be listed:\n{routes}"
+    );
+    assert!(
+        routes.contains("AddCrateController"),
+        "named by the controller the compiler wrote into `.jails/generated`:\n{routes}"
+    );
+
+    let beans = jails_cmd(&root, None).arg("beans").output().unwrap();
+    let beans = String::from_utf8_lossy(&beans.stdout).to_string();
+    assert!(
+        beans.contains("CrateController") || beans.contains("CrateService"),
+        "the scaffold's beans should be listed:\n{beans}"
+    );
+
+    // `stats` counts the same tree, summed per layer across both roots.
+    let stats = jails_cmd(&root, None).arg("stats").output().unwrap();
+    let stats = String::from_utf8_lossy(&stats.stdout).to_string();
+    assert!(
+        !stats.contains("No Java sources under"),
+        "a project whose every Java file is generated is not an empty project:\n{stats}"
+    );
+
+    // An empty report has to say where it looked, or the reader cannot tell a
+    // searched-and-empty tree from an unopened one.
+    let bare = jdl_project(
+        "jdl-v1-inspect-bare",
+        r#"jdl 1
+app Bare {
+ pkg com.example.bare
+ java 26
+ platform spring
+ build maven
+ storage none
+}
+"#,
+    );
+    write_spring_fixture(&bare);
+    let empty = jails_cmd(&bare, None).arg("routes").output().unwrap();
+    let empty = String::from_utf8_lossy(&empty.stdout).to_string();
+    assert!(
+        empty.contains("No routes found under src/main/java."),
+        "a project with no generated tree reports exactly the roots it walked:\n{empty}"
+    );
+}
