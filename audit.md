@@ -808,16 +808,41 @@ plan embeds content digests of a scratch directory, so pinning one needs the
 non-deterministic parts named first — which is a smaller job than this was,
 and now has a pattern to follow.
 
-### A5.3 The G1 differential corpus does not exercise JDL v1
+### A5.3 The G1 differential corpus does not exercise JDL v1 — closed
 
-`tests/differential.rs:17` defines `EMPTY_JDL` as the pre-v1 draft, and all
-32 scenarios use it. Across the whole tree, `jdl 1` appears in 10 blocks in
-one file (`tests/cli/model.rs`); the pre-v1 draft appears in 47 and
-`.jails/model.toml` in 44. Even `jails-compiler`'s own unit tests author
-their models in TOML (`crates/jails-compiler/src/lib.rs:694`).
+`tests/differential.rs` seeds `jdl 1` now. The gate that says the replacement
+behaves like the implementation it replaces was protecting the front end §22
+says to delete; a differential suite exercising only the dialect on its way out
+proves nothing about the one staying.
 
-The G1 gate is currently protecting the front end that `jdl-sol.md` §22 says
-to delete.
+**The port is not a rename, and two of the differences cost work.**
+
+`dialect postgresql` was a loose property nothing acted on, so the old seed
+effectively said *no storage until a scenario adds one* — and every scenario
+that wants storage does, with `add db` or `add h2`. Translating it literally to
+`storage postgres` was a correct reading of the words and a wrong reading of
+the meaning: v1 makes storage a capability, so it refused outright on a
+plain-Maven project, and on a Spring one it fought the scenario that installs
+h2 over the same `spring.datasource.url`. The seed is `storage none`.
+
+`platform`, by contrast, *is* a fact about the fixture and cannot be omitted —
+`platform spring` on a plain project renders Spring adapters against a build
+that has none — so the seed is flavour-aware where the pre-v1 header was one
+string for both.
+
+**It found a defect on the first run, which is the argument for the port.**
+`add h2` on a v1 project sets `storage h2` rather than appending `cap h2`,
+because storage is an axis and the closed registry has no `h2` in it. Removal
+went looking for the declaration `add` had deliberately not written and refused
+with a diagnostic naming a `cap h2` that was never going to exist — so a
+project could enter a storage it could not leave, and the message read like a
+corrupt model rather than a missing inverse. `remove` mirrors `add` now, and
+`canonical_storage_add_and_remove_are_inverses` pins it.
+
+Still on the pre-v1 dialect: `tests/cli/model.rs` mixes both deliberately —
+it is the suite that has to keep testing the compatibility input — and
+`jails-compiler`'s unit tests author in TOML. Neither is a gate protecting the
+old front end, which is what this row was about.
 
 ### A5.5 G4 is closed for the kernel being deleted, and empty for the one replacing it
 
@@ -923,8 +948,9 @@ It is used only under `#[cfg(test)]` (`materialize.rs:673`), and
 
 Closed and deleted from this list: the original items 1–4 and 9, then **A1.1**
 (39/39 generators), **A3.11b** (layer renames), **A5.1** (canonical tree
-golden), **A5.2** (compiler-lock golden), **A1.2b** (closed *by* A1.1) and
-**A2.6** (pluralization). What remains is ordered by consequence.
+golden), **A5.2** (compiler-lock golden), **A1.2b** (closed *by* A1.1),
+**A2.6** (pluralization) and **A5.3** (the G1 corpus on JDL v1). What remains
+is ordered by consequence.
 
 1. **A3.11 / A3.12** — the registry is built and the source-unit half is
    closed. What is left is the decision the registry made legible: reconcile
@@ -932,20 +958,17 @@ golden), **A5.2** (compiler-lock golden), **A1.2b** (closed *by* A1.1) and
    `derived` records and `model explain` so a convention is inspectable rather
    than implied. Every emitter added now picks a placement a later §9.7
    reconciliation has to move.
-2. **A5.3** — port `tests/differential.rs` and `tests/cli/model.rs` onto
-   `jdl 1`, now that `model upgrade` and `model import` both produce it. Until
-   that lands the G1 gate protects the front end §22 says to delete.
-3. **A5.5** — port G4's child-process method to `jails-workspace::execute`.
+2. **A5.5** — port G4's child-process method to `jails-workspace::execute`.
    `failpoints!` now generates the registry and the trip sites from one
    declaration, so what is left is failpoints on the *canonical* publication
    sequence and the convergence assertion stated against the compiler lock
    rather than the journal.
-4. **A5.1 remainder** — `jails.plan.v1` and `jails.plan-bundle.v1` still have
+3. **A5.1 remainder** — `jails.plan.v1` and `jails.plan-bundle.v1` still have
    no golden. The plan embeds content digests of a scratch directory, so
    pinning one needs the non-deterministic parts named first;
    `compiler-lock-v2.json` is the pattern.
-5. **A6.1** — write the module docs while the reasons are still recoverable.
-6. **A2.2b** — decide whether pre-v1 JDL should carry declaration order, given
+4. **A6.1** — write the module docs while the reasons are still recoverable.
+5. **A2.2b** — decide whether pre-v1 JDL should carry declaration order, given
    that the mechanism would also give `.jails/model.toml` an ordering it is
    documented as lacking.
 

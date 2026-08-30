@@ -219,7 +219,21 @@ pub(crate) fn remove(
                 )));
             }
         }
-        next_source = if jdl {
+        let v1 = jdl && crate::model_generate_jdl::is_v1_source(&next_source);
+        next_source = if v1 && storage_axis(label).is_some() {
+            // **`remove` is the exact inverse of `add`, including here.**
+            // `add h2` on a v1 project sets `storage h2` rather than
+            // appending `cap h2`, because storage is an axis and the closed
+            // capability registry has no `h2` in it. Removal went looking for
+            // the declaration `add` had deliberately not written, and refused
+            // with a diagnostic about a `cap h2` that was never going to
+            // exist -- so a project could enter a storage it could not leave.
+            //
+            // `none` rather than deleting the line: `storage` is a required
+            // member of `app`, and an axis with no value is not a v1 model.
+            jails_model::set_jdl_app_property(&next_source, "storage", "none")
+                .map_err(crate::model_generate_jdl::jdl_edit_failure)?
+        } else if jdl {
             crate::model_generate_jdl::remove_capability(
                 &next_source,
                 &declaration.kind,

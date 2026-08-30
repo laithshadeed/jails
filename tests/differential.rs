@@ -17,10 +17,54 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-const EMPTY_JDL: &str = "application Demo @id(project_demo)\n\
-package com.example.demo\n\
-java 26\n\
-dialect postgresql\n";
+/// The canonical subject's starting model, in **JDL v1**.
+///
+/// `audit.md` A5.3: every scenario here used to seed the *pre-v1* draft, so
+/// the G1 gate -- the thing that says the replacement behaves like the
+/// implementation it replaces -- was protecting the front end `jdl-sol.md`
+/// §22 says to delete. A differential suite that only exercises the dialect
+/// on its way out proves nothing about the one staying.
+///
+/// `storage postgres` rather than `dialect postgresql`: v1 reads storage as a
+/// capability of the app rather than a loose property, which is one of the
+/// differences that makes this a port rather than a rename.
+/// The adopted subject's model: the *reader's* base package, and the axes
+/// their build actually has.
+///
+/// Separate from [`empty_jdl`] because the base package is the point of these
+/// scenarios -- jails did not choose `net.acme.legacy` and must not assume it.
+fn adopted_jdl(flavour: Adopted) -> String {
+    let platform = match flavour {
+        Adopted::Spring => "spring",
+        Adopted::Plain => "plain",
+    };
+    format!(
+        "jdl 1\napp Orders @id(project_orders) {{\n  pkg net.acme.legacy\n  java 26\n  \
+         platform {platform}\n  build maven\n  storage none\n}}\n"
+    )
+}
+
+fn empty_jdl(spring: bool) -> String {
+    // **`storage none`, and the platform matching the fixture.**
+    //
+    // Pre-v1 `dialect postgresql` was a loose property nothing acted on, so
+    // the old seed effectively said *no storage until a scenario adds one* --
+    // and every scenario that wants storage does add one, with `add db` or
+    // `add h2`. Translating it to `storage postgres` would have been a
+    // literal reading of the words and a wrong reading of the meaning: v1
+    // makes storage a capability, so it would refuse on a plain project, and
+    // on a Spring one it would fight the scenario that installs h2 over the
+    // same `spring.datasource.url`.
+    //
+    // The platform, by contrast, *is* a fact about the fixture and cannot be
+    // omitted: `platform spring` on a plain-Maven project renders Spring
+    // adapters against a build that has none.
+    let platform = if spring { "spring" } else { "plain" };
+    format!(
+        "jdl 1\napp Demo @id(project_demo) {{\n  pkg com.example.demo\n  java 26\n  \
+         platform {platform}\n  build maven\n  storage none\n}}\n"
+    )
+}
 
 struct Subject {
     name: &'static str,
@@ -76,7 +120,7 @@ fn subjects_with_fixture(label: &str, spring: bool) -> [Subject; 2] {
         write_plain_fixture(&canonical_root);
     }
     fs::create_dir_all(canonical_root.join(".jails")).unwrap();
-    fs::write(canonical_root.join(".jails/model.jdl"), EMPTY_JDL).unwrap();
+    fs::write(canonical_root.join(".jails/model.jdl"), empty_jdl(spring)).unwrap();
 
     [
         Subject {
@@ -2372,12 +2416,7 @@ fn adopted_project_is_treated_the_same(flavour: Adopted) {
         );
 
         if subject.name == "canonical" {
-            fs::write(
-                subject.root.join(".jails/model.jdl"),
-                "application Orders @id(project_orders)\n\
-                 package net.acme.legacy\njava 26\ndialect postgresql\n",
-            )
-            .unwrap();
+            fs::write(subject.root.join(".jails/model.jdl"), adopted_jdl(flavour)).unwrap();
         }
 
         subject.succeeds(&["g", "record", "Receipt", "id:uuid", "total:long"]);
@@ -2453,8 +2492,7 @@ fn both_implementations_write_adapters_into_the_reader_s_own_package() {
         if subject.name == "canonical" {
             fs::write(
                 subject.root.join(".jails/model.jdl"),
-                "application Orders @id(project_orders)\n\
-                 package net.acme.legacy\njava 26\ndialect postgresql\n",
+                adopted_jdl(Adopted::Spring),
             )
             .unwrap();
         }

@@ -11965,3 +11965,104 @@ fn preview_export_and_apply_all_name_one_plan_digest() {
         "the applied plan is not the reviewed one"
     );
 }
+
+/// `remove <storage>` is the exact inverse of `add <storage>`.
+///
+/// **A project could enter a storage it could not leave.** `add h2` on a JDL
+/// v1 project sets `storage h2` rather than appending `cap h2` -- storage is
+/// an axis in v1 and the closed capability registry has no `h2` in it -- and
+/// removal went looking for the declaration `add` had deliberately not
+/// written. It refused with a diagnostic naming a `cap h2` that was never
+/// going to exist, which reads like a corrupt model rather than a missing
+/// inverse.
+///
+/// `CLAUDE.md` states the rule this restores: `remove` is the exact inverse of
+/// `add`. Found by porting the differential corpus onto JDL v1 (`audit.md`
+/// A5.3) -- on the pre-v1 dialect `dialect postgresql` was inert, so nothing
+/// exercised the axis at all.
+#[test]
+fn canonical_storage_add_and_remove_are_inverses() {
+    let root = temp_dir("canonical-storage-inverse");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    let source = "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+         platform spring\n  build maven\n  storage none\n}\n";
+    fs::write(root.join(".jails/model.jdl"), source).unwrap();
+
+    // **`h2`, not `db`.** Both are axis kinds and both were broken the same
+    // way, but removing `db` is refused by a *different* rule -- it would
+    // abandon accepted storage, and retiring tables is an explicit schema
+    // policy with its own tests. Asserting through it here would be asserting
+    // two things at once and reporting the wrong one when either moved.
+    //
+    // `sqlite` is deliberately a *capability* in v1: the registry carries
+    // `cap sqlite` beside `storage sqlite` and the linker materializes the
+    // axis from it, so routing `add sqlite` to the axis would change what a
+    // working command writes. It round-trips below, by the ordinary path.
+    {
+        let storage = "h2";
+        let added = jails_cmd(&root, None)
+            .args(["add", storage])
+            .output()
+            .unwrap();
+        assert!(
+            added.status.success(),
+            "`jails add {storage}`: {}",
+            String::from_utf8_lossy(&added.stderr)
+        );
+        let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+        assert!(
+            !model.contains(&format!("cap {storage}")),
+            "`add {storage}` wrote a capability where v1 has an axis:\n{model}"
+        );
+
+        let removed = jails_cmd(&root, None)
+            .args(["remove", storage, "--force"])
+            .output()
+            .unwrap();
+        assert!(
+            removed.status.success(),
+            "`jails remove {storage}`: {}",
+            String::from_utf8_lossy(&removed.stderr)
+        );
+        // Back to `none`, and `none` rather than an absent line: `storage` is
+        // a required member of `app`, so an axis with no value is not a model.
+        let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+        assert!(
+            model.contains("storage none"),
+            "after `remove {storage}`:\n{model}"
+        );
+    }
+
+    // The capability spelling round-trips too, by the ordinary path. Asserted
+    // beside the axis so the difference between them is visible rather than
+    // implied.
+    let added = jails_cmd(&root, None)
+        .args(["add", "sqlite"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    assert!(
+        fs::read_to_string(root.join(".jails/model.jdl"))
+            .unwrap()
+            .contains("cap sqlite")
+    );
+    let removed = jails_cmd(&root, None)
+        .args(["remove", "sqlite", "--force"])
+        .output()
+        .unwrap();
+    assert!(
+        removed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    assert!(
+        !fs::read_to_string(root.join(".jails/model.jdl"))
+            .unwrap()
+            .contains("cap sqlite")
+    );
+}
