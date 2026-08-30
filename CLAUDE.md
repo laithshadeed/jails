@@ -1163,6 +1163,25 @@ rather than by duration is what makes that visible:
 | proof-app | 163.0s | 3 | 54.3s |
 | toolbox (already batched) | 113.1s | 3 | 37.7s |
 
+**Those totals are from a partly cold run, and the trap they set is the one
+this section was written to warn about.** The same suite profiled warm is
+471.8s over 33 runs, so "730.2s" is mostly `jails-e2e-cache` being rebuilt,
+not work batching can remove. Merging nine capability packs into two shared
+projects was measured warm-to-warm at **471.8s -> 478.0s: nothing, inside the
+noise** of a suite whose individual Maven runs are 20-55s on a contended box.
+Compare warm against warm or the number will tell you whatever you hoped.
+
+**And batching cannot help here anyway, which the concurrency profile says
+outright.** Over a warm `tests/cli`: mean concurrency **3.25** on four cores,
+peak 6, **0.0s** ever spent queueing for a Maven permit, 1.9s with nothing
+running at all, against a perfect four-core packing of 169s for an observed
+208.7s. The suite is 81% utilised and within a quarter of optimal. There is no
+queue to drain and no idle to fill, so collapsing runs into shared projects
+trades away per-test isolation for a saving the machine has no room to give.
+The merges that exist are worth keeping because merging is the *stronger*
+check -- it is what caught `mail` and `actuator` contradicting each other --
+not because they made the suite faster.
+
 **And the second test class in a run is free.** The same project built with
 one, two, four and eight `@SpringBootTest` classes, one Maven invocation each:
 6.56s, 6.48s, 6.44s, 6.49s. Spring caches a context per configuration inside
