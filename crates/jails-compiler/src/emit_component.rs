@@ -27,6 +27,7 @@ use std::collections::BTreeSet;
 
 mod client;
 mod fetcher;
+mod job;
 
 const MAIN_ROOT: &str = ".jails/generated/main/java";
 const TEST_ROOT: &str = ".jails/generated/test/java";
@@ -39,6 +40,7 @@ pub(crate) fn lower_and_emit(
         let files = match component.kind {
             ComponentKind::Client => client::files(model, component)?,
             ComponentKind::Fetcher => fetcher::files(model, component)?,
+            ComponentKind::Job => job::files(model, component)?,
             _ => continue,
         };
         for file in files {
@@ -46,6 +48,14 @@ pub(crate) fn lower_and_emit(
                 .insert(file.path, file.file)
                 .map_err(CompileError::new)?;
         }
+    }
+    // Emitted after the loop and once: `SchedulingConfig` belongs to every job
+    // in the model rather than to one, and a managed tree refuses two units
+    // writing the same path.
+    if let Some(shared) = job::scheduling(model)? {
+        output
+            .insert(shared.path, shared.file)
+            .map_err(CompileError::new)?;
     }
     Ok(())
 }

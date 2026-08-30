@@ -877,7 +877,6 @@ app Notes {
         "handler",
         "command",
         "cli",
-        "job",
         "http-workflow",
         "http-sink",
         "idempotency",
@@ -10689,7 +10688,10 @@ fn canonical_fetcher_emits_the_bounds_that_make_it_safe() {
         "jails.fetchers.page.max-redirects",
         "jails.fetchers.page.allowed-content-types",
     ] {
-        assert!(adapter.contains(bound), "`{bound}` is missing from\n{adapter}");
+        assert!(
+            adapter.contains(bound),
+            "`{bound}` is missing from\n{adapter}"
+        );
     }
 
     // Both dependencies are load-bearing: the JDK client follows a redirect to
@@ -10698,4 +10700,59 @@ fn canonical_fetcher_emits_the_bounds_that_make_it_safe() {
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
     assert!(pom.contains("httpclient5"), "{pom}");
     assert!(pom.contains("spring-boot-starter-actuator"), "{pom}");
+}
+
+/// `g job` on a canonical project, twice.
+///
+/// The second job is the point. `SchedulingConfig` belongs to every job in the
+/// model rather than to one, so it is emitted once — and a managed tree
+/// refuses two units writing the same path, which is exactly what a per-job
+/// emitter would have done on the second declaration.
+#[test]
+fn canonical_jobs_share_one_scheduling_config() {
+    let root = temp_dir("canonical-job");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+         platform spring\n  build maven\n  storage none\n}\n",
+    )
+    .unwrap();
+
+    for name in ["Reconcile", "Expire"] {
+        let generated = jails_cmd(&root, None)
+            .args(["g", "job", name])
+            .output()
+            .unwrap();
+        assert!(
+            generated.status.success(),
+            "`g job {name}`: {}",
+            String::from_utf8_lossy(&generated.stderr)
+        );
+    }
+
+    for relative in [
+        ".jails/generated/main/java/com/example/demo/jobs/ReconcileJob.java",
+        ".jails/generated/main/java/com/example/demo/jobs/ExpireJob.java",
+        ".jails/generated/main/java/com/example/demo/jobs/SchedulingConfig.java",
+        ".jails/generated/test/java/com/example/demo/jobs/ReconcileJobTest.java",
+        ".jails/generated/test/java/com/example/demo/jobs/ExpireJobTest.java",
+    ] {
+        assert!(root.join(relative).exists(), "`{relative}` was not written");
+    }
+
+    // The default `spring.task.scheduling.pool.size` is 1, so a second job
+    // waits for the first however unrelated they are -- and nothing reports
+    // it, the jobs simply do not run. This file is generated to fix that, so
+    // the fix is what is asserted.
+    let config = fs::read_to_string(
+        root.join(".jails/generated/main/java/com/example/demo/jobs/SchedulingConfig.java"),
+    )
+    .unwrap();
+    assert!(!config.contains("{{"), "{config}");
+    assert!(
+        config.contains("package com.example.demo.jobs;"),
+        "{config}"
+    );
 }

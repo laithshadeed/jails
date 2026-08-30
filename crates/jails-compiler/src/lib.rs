@@ -664,11 +664,10 @@ const fn component_kind_is_emitted(kind: jails_model::ComponentKind) -> bool {
         // brief is captured as an exact plan input, so changing the file
         // after review refuses the apply. A backend need not write a file.
         Kind::Cases => true,
-        Kind::Client | Kind::Fetcher => true,
+        Kind::Client | Kind::Fetcher | Kind::Job => true,
         Kind::Handler
         | Kind::Command
         | Kind::Cli
-        | Kind::Job
         | Kind::HttpWorkflow
         | Kind::HttpSink
         | Kind::Idempotency
@@ -730,7 +729,7 @@ mod tests {
             .filter(|kind| super::component_kind_is_emitted(**kind))
             .count();
         assert_eq!(ComponentKind::ALL.len(), 23);
-        assert_eq!(emitted, 11, "eleven kinds have a compiler backend today");
+        assert_eq!(emitted, 12, "twelve kinds have a compiler backend today");
 
         // The refusal is reachable, not merely written down.
         let model = jails_model::parse_jdl(
