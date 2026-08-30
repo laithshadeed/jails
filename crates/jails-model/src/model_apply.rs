@@ -16,6 +16,20 @@ impl AppModel {
                 }
                 self.entities.insert(id, entity);
             }
+            ModelPatch::AddRelation(relation) => {
+                let id = relation.id.clone();
+                if self.relations.contains_key(&id) {
+                    return Err(format!("relation id `{id}` already exists"));
+                }
+                for (side, entity) in [("child", &relation.child), ("parent", &relation.parent)] {
+                    if !self.entities.contains_key(entity) {
+                        return Err(format!(
+                            "relation `{id}` names a missing {side} entity `{entity}`"
+                        ));
+                    }
+                }
+                self.relations.insert(id, relation);
+            }
             ModelPatch::AddFacet { entity, facet } => crate::facet::add(self, entity, facet)?,
             ModelPatch::RemoveFacet { entity, facet } => crate::facet::remove(self, entity, facet)?,
             ModelPatch::AddUnit(unit) => {

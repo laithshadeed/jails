@@ -11691,3 +11691,94 @@ fn canonical_search_and_seed_write_their_projections_and_compile() {
         String::from_utf8_lossy(&refused.stderr)
     );
 }
+
+/// `g association` writes the relation the compiler already lowers.
+///
+/// **The declaration goes in the child**, because the foreign key column
+/// does. A relation named on the parent would read as ownership and compile
+/// to a column on the wrong table; `map <child> -> <parent>` says which way
+/// round it goes and the block's position says whose column it is.
+#[test]
+fn canonical_association_writes_a_relation_and_its_foreign_key() {
+    let root = temp_dir("canonical-association");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+         platform spring\n  build maven\n  storage postgres\n}\n",
+    )
+    .unwrap();
+    for command in [
+        ["g", "scaffold", "Owner", "id:uuid@pk", "name:string"].as_slice(),
+        [
+            "g",
+            "scaffold",
+            "Note",
+            "id:uuid@pk",
+            "ownerId:uuid",
+            "title:string",
+        ]
+        .as_slice(),
+        [
+            "g",
+            "association",
+            "Owner",
+            "ownerId=id",
+            "--on",
+            "Note",
+            "--yields",
+            "Owner",
+        ]
+        .as_slice(),
+    ] {
+        let output = jails_cmd(&root, None).args(command).output().unwrap();
+        assert!(
+            output.status.success(),
+            "`jails {}`: {}",
+            command.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // The block is inside `entity Note`, the child -- not `entity Owner`.
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    let note = model
+        .split("entity Note")
+        .nth(1)
+        .expect("the child entity is declared");
+    // lowerCamel, because a relation is a member and not a type -- and the
+    // mapping is spelled the way the field list three lines above spells it.
+    assert!(note.contains("relation owner to Owner"), "{model}");
+    assert!(note.contains("map ownerId -> id"), "{model}");
+
+    let migrations = fs::read_dir(root.join("src/main/resources/db/migration"))
+        .unwrap()
+        .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(migrations.contains("foreign key"), "{migrations}");
+    assert!(migrations.contains("references owner"), "{migrations}");
+
+    // A column that is not on the side it names is caught here rather than at
+    // `flyway migrate`, which is the furthest point from the mistake.
+    let refused = jails_cmd(&root, None)
+        .args([
+            "g",
+            "association",
+            "Missing",
+            "ownerId=headline",
+            "--on",
+            "Note",
+            "--yields",
+            "Owner",
+        ])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("is not a field on `owner`"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+}

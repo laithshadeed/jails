@@ -88,15 +88,38 @@ looked and still worth removing.
 
 ## A1 — coverage
 
-### A1.1 Thirty-seven of thirty-nine generators
+### A1.1 Thirty-eight of thirty-nine generators
 
 `src/canonical_support.rs` is the authority and is honest code: an exhaustive
 match that stops compiling when a clap variant is added. Its own test pins
-37/39. Capabilities are closed at 25/25, and **every one of the 23 component
+38/39. Capabilities are closed at 25/25, and **every one of the 23 component
 kinds now has a backend** -- `every_component_kind_is_emitted_or_refused` no
 longer has a refusal to reach.
 
-Still legacy: `migration`, `association`.
+Still legacy: `migration`, alone.
+
+**`association` was the same shape as `search`**: `emit_sql::relation` derives
+the foreign key, its referential actions and its index from a declared
+`AppModel.relations` entry and always has, and only the editor writing
+`relation <name> to <Parent> { map <child> -> <parent> }` was missing. The
+declaration goes in the *child*, because the foreign key column does -- naming
+it on the parent would read as ownership and compile to a column on the wrong
+table.
+
+Two spellings the frontend has to translate, and both are the familiar command
+disagreeing with the language rather than the reader being wrong. `g
+association Owner` capitalises, because every other name it takes is a type;
+a relation is a member, so JDL v1 wants lowerCamel. And the mapping is written
+the way the entity's own field list writes it -- `map ownerId -> id`, not the
+stable label `owner_id`, which sits three lines under `ownerId: uuid` in the
+same block and would read as a different field.
+
+**`migration` is the one whose gap is genuinely in the plan.** A migration
+nobody derived is an irreproducible operation and the exact plan has no seam
+for one -- only the schema diff appends them. Every other refusal in
+`unsupported_kind` has now been deleted because it was a missing editor in
+front of a complete backend, which is the pattern to check before writing an
+emitter.
 
 **`search` needed no emitter at all** -- the port, the JDBC adapter, the
 `tsvector` column and its GIN index were all already there, and only the

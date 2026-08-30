@@ -67,6 +67,14 @@ pub enum ModelPatch {
         entity: EntityId,
         index: Index,
     },
+    /// One declared relation, which the compiler lowers to a foreign key.
+    ///
+    /// Whole rather than `{ child, parent, mappings }` for the same reason
+    /// [`Self::AddIndex`] carries an [`Index`]: the linker has already
+    /// resolved both sides to stable field IDs and assigned the constraint its
+    /// SQL name, and re-deriving any of that here would be a second answer to
+    /// a question the model already answered.
+    AddRelation(crate::Relation),
     RemoveIndex {
         entity: EntityId,
         index: IndexId,
