@@ -2399,12 +2399,67 @@ file format to retire rather than a subsystem to port.
 2. Retire `.jails/app.toml`: `app plan`/`app apply`/`new --app` go with it, and
    the proof applications under `examples/` move to JDL.
 3. `adopt` and `modernize` onto reader-file operations.
-4. `jails-drive` and `jails-report` off the legacy value types -- `Project`,
-   `TestScope`, `TestEngine`, `ObjectId`, `jails_spec::build`,
-   `jails_state::compat`. Thin, and the crates themselves stay.
+4. `jails-drive` and `jails-report` off the legacy value types. **Half done,
+   and the half that is done was not porting.** Counting the 111 references
+   these two crates held into the nine crates is the finding: roughly two
+   thirds were *vocabulary* parked in a crate that happens to die, not calls
+   into the engine at all. `identity` (997 lines, `Result` and `codec` its only
+   dependencies), `identifier` (405, `std::path`) and `testing` with `testd`
+   (1,178, seven consumers in `jails-drive` and one in the binary) moved down a
+   layer behind re-exports, so the 115 files that say
+   `jails_protocol::identity::Name` still say it. `jails-drive` went 61 -> 18.
+
+   `jails-report` is at 46, and its remainder is a different problem: twelve of
+   them are `jails_state::compat`, in three modules that report *on the legacy
+   ledger*. All three now have canonical counterparts -- `lifecycle_status` in
+   `model_status`, `managed_drift` and `schema_lineage` in `model_doctor` -- so
+   removing them is mechanical once the engine goes rather than a hole to fill
+   first.
+
+   The crates themselves stay. So do `jails-project`, `jails-spec` and
+   `jails-java`: their contracts are reader-project facts the canonical world
+   still needs, and calling them legacy was this document's own imprecision.
 5. Then the deletion the map describes: `jails-engine`, `jails-commit`,
    `jails-prepare`, `jails-generate`, `jails-protocol`, `jails-project`,
    `jails-spec`, `jails-state`, `jails-java`.
+
+### What probing the canonical path found, and the map did not
+
+The table above was built by running each *mutation* against a canonical
+project and reading which ones refuse. That is the right question for deleting
+the engine and the wrong one for whether the canonical path is finished,
+because a read-only command does not refuse -- it answers, from the ledger that
+is not there, and the answer looks like a report rather than a gap.
+
+Six were found by running them:
+
+| command | what it said about a canonical project |
+|---|---|
+| `resource status Order` | `state: ambiguous` / `this project has no recorded resource state`, about an entity the model describes completely |
+| `doctor` | `all clear`, with one generated file edited and another deleted |
+| `doctor` | `jails.toml records none -- nothing to reconcile`, seconds after `add json` recorded one |
+| `routes`, `beans` | `No routes found under src/main/java` -- every controller jails writes is under `.jails/generated` |
+| `stats` | a domain of zero files, for a project made entirely of generated records |
+| `src Order` | `no source for \`Order\` under this project`, for a record it had just written |
+
+Each is a *wrong* answer rather than a missing one, and each was invisible to
+the refusal test the deletion map is built on. The pattern is worth writing
+down because it will recur for every read-only command added before the
+cutover finishes: **a report that reads a legacy authority does not fail on a
+canonical project, it succeeds and describes a project nobody has.**
+
+Two smaller rules fell out of fixing them, both cheap to lose:
+
+- **A generated file belongs to an entity because the compiler said so.**
+  `Provenance::semantic_ids` carries the stable IDs a file was lowered from, so
+  `JdbcOrderRepository.java` is attributed to `Order` by the same record that
+  attributes a file naming no entity at all. Matching on the file name misses
+  the prefixed adapters and claims a `PaymentOrder` file for `Order`.
+- **A `fix:` line has to be checked against the binary.** `doctor`'s first
+  draft told a reader to run `jails model eject art_ent_order_record` for an
+  edited record; running it answers "records and ports remain managed ABI". It
+  is gated on `Provenance::ejectable` now. `research.md` §0.2's theme --
+  oracles that disagree -- reaches `fix:` lines too.
 
 ## Concrete deletion map
 
