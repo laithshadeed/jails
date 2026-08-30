@@ -157,12 +157,27 @@ source, never reconciliation with an existing one.
 
 During cutover, `.jails/model.jdl` or temporary `.jails/model.toml` opts a
 project into the canonical path.
-`g record` and `g scaffold` are routed through it today; scaffold is one typed
-entity profile over four facets, not a copied planner. Unsupported canonical
-mutations must refuse rather than silently invoking the legacy engine. Delete
-this qualification only when all advertised mutations, capabilities, schema
-evolution and reader-file patches use the canonical contracts and the
-legacy planner/state/executor have been removed.
+
+**Every advertised generator is routed through it: 39 of 39**, held by
+`canonical_support::registry_classifies_every_advertised_word`, so a kind
+added without a backend fails there rather than at the cutover. `scaffold` is
+one typed entity profile over four facets, not a copied planner.
+
+**Three of the last four needed no emitter at all**, which is the pattern to
+check before writing one: `search` and `association` already had a complete
+compiler backend and only wanted the syntax editor in front of it, so their
+refusals told the reader to hand-edit `.jails/model.jdl` -- true, and useless.
+**`migration` is the one that is deliberately not a declaration**, per
+`jdl-sol.md` §2.1 ("Flyway/ordered migration files | no | immutable,
+append-only history") and §12.6 ("authors never name managed migrations in
+JDL"). It joins `PlanDraft.migrations` beside the derived ones, so it is an
+ordinary `AppendMigration` in the reviewed plan rather than a side effect.
+
+Unsupported canonical mutations must still refuse rather than silently
+invoking the legacy engine. Delete this qualification only when all advertised
+mutations, capabilities, schema evolution and reader-file patches use the
+canonical contracts and the legacy planner/state/executor have been removed --
+**the generators are through; the legacy crates are still there.**
 
 `jails sync` in a canonical project compiles the current model and executes its
 exact plan directly. Never route canonical sync through `jails-engine`; it is
