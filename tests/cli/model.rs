@@ -6607,19 +6607,10 @@ fn canonical_data_capability_packs_keep_the_iterative_loop_and_eject_as_one_boun
         "{}",
         String::from_utf8_lossy(&frozen.stderr)
     );
-    if real_mvn_available() && real_java_supports_target_release() {
-        let path = real_path_without_mvnd();
-        let compiled = real_maven_cmd(&root, &path)
-            .args(["-q", "-B", "test"])
-            .output()
-            .unwrap();
-        assert!(
-            compiled.status.success(),
-            "canonical data capability packs did not compile and test after ejection:\n{}\n{}",
-            String::from_utf8_lossy(&compiled.stdout),
-            String::from_utf8_lossy(&compiled.stderr)
-        );
-    }
+    // The build check for this pack now lives in
+    // `every_orthogonal_capability_pack_compiles_and_tests_in_one_project`,
+    // which compiles it beside the other orthogonal packs in one project.
+    // What *this* test asserts is what the pack writes, and that needs no JVM.
 }
 
 #[test]
@@ -7010,19 +7001,10 @@ fn canonical_sqlite_pack_moves_merges_ejects_and_builds_as_one_boundary() {
     );
     assert!(!pom.contains("<goal>add-resource</goal>"), "{pom}");
 
-    if real_mvn_available() && real_java_supports_target_release() {
-        let path = real_path_without_mvnd();
-        let built = real_maven_cmd(&root, &path)
-            .args(["-q", "-B", "test"])
-            .output()
-            .unwrap();
-        assert!(
-            built.status.success(),
-            "canonical SQLite pack did not compile and test:\n{}\n{}",
-            String::from_utf8_lossy(&built.stdout),
-            String::from_utf8_lossy(&built.stderr)
-        );
-    }
+    // The build check for this pack now lives in
+    // `every_orthogonal_capability_pack_compiles_and_tests_in_one_project`,
+    // which compiles it beside the other orthogonal packs in one project.
+    // What *this* test asserts is what the pack writes, and that needs no JVM.
 }
 
 #[test]
@@ -7662,19 +7644,10 @@ fn canonical_security_pack_merges_ejects_and_keeps_cors_buildable() {
         assert!(pom.contains(&format!("<artifactId>{artifact}</artifactId>")));
     }
 
-    if real_mvn_available() && real_java_supports_target_release() {
-        let path = real_path_without_mvnd();
-        let built = real_maven_cmd(&root, &path)
-            .args(["-q", "-B", "test"])
-            .output()
-            .unwrap();
-        assert!(
-            built.status.success(),
-            "canonical Security/CORS stack did not compile and test after ejection:\n{}\n{}",
-            String::from_utf8_lossy(&built.stdout),
-            String::from_utf8_lossy(&built.stderr)
-        );
-    }
+    // The build check for this pack now lives in
+    // `every_orthogonal_capability_pack_compiles_and_tests_in_one_project`,
+    // which compiles it beside the other orthogonal packs in one project.
+    // What *this* test asserts is what the pack writes, and that needs no JVM.
 }
 
 #[test]
@@ -12338,7 +12311,18 @@ fn every_orthogonal_capability_pack_compiles_and_tests_in_one_project() {
     )
     .unwrap();
 
-    for capability in ["actuator", "cache", "cors", "observability", "sse"] {
+    for capability in [
+        "actuator",
+        "cache",
+        "cors",
+        "observability",
+        "sse",
+        "security",
+        "csv",
+        "json",
+        "sqlite",
+        "fake",
+    ] {
         let added = jails_cmd(&root, None)
             .args(["add", capability])
             .output()
@@ -12359,6 +12343,9 @@ fn every_orthogonal_capability_pack_compiles_and_tests_in_one_project() {
         "cap_cors",
         "cap_observability",
         "cap_sse",
+        "cap_security",
+        "cap_csv",
+        "cap_sqlite",
     ] {
         let ejected = jails_cmd(&root, None)
             .args(["model", "eject", artifact])
