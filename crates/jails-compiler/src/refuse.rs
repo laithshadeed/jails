@@ -76,9 +76,13 @@ pub(crate) fn preflight(
     if next_model.units.values().any(|unit| {
         matches!(
             unit.kind,
-            jails_model::UnitKind::Service
-                | jails_model::UnitKind::Strategy
-                | jails_model::UnitKind::Controller
+            // `Strategy` is deliberately not here. A service and a
+            // controller are an annotation with a class around them and mean
+            // nothing without Spring; a strategy is a port, its
+            // implementations and an evaluator that takes them as a
+            // constructor argument, all of which compile on plain Maven --
+            // which is what the legacy generator has always emitted there.
+            jails_model::UnitKind::Service | jails_model::UnitKind::Controller
         )
     }) && snapshot.project.spring_boot.is_none()
     {

@@ -20,7 +20,7 @@ pub(crate) fn lower_and_emit(
     output: &mut RenderedTree,
     spring_boot: bool,
 ) -> Result<(), CompileError> {
-    crate::emit_unit::lower_and_emit(model, output)?;
+    crate::emit_unit::lower_and_emit(model, output, spring_boot)?;
     if let Some(unit) = execution_context::lower(model)? {
         output
             .insert(unit.path, unit.file)

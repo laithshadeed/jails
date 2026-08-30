@@ -11,9 +11,10 @@ const JAVA_TEST_ROOT: &str = ".jails/generated/test/java";
 pub(crate) fn lower_and_emit(
     model: &AppModel,
     output: &mut RenderedTree,
+    spring_boot: bool,
 ) -> Result<(), CompileError> {
     for source in model.units.values() {
-        for unit in lower(source, model)? {
+        for unit in lower(source, model, spring_boot)? {
             output
                 .insert(unit.path, unit.file)
                 .map_err(CompileError::new)?;
@@ -39,7 +40,11 @@ struct Unit {
 /// layout, which is what `package_for` is for. A unit whose package the reader
 /// named carries no layer, and keeps the name they gave it -- they said where
 /// it goes, so a rename of that layer is not about them.
-fn lower(source: &SourceUnit, model: &AppModel) -> Result<Vec<Unit>, CompileError> {
+fn lower(
+    source: &SourceUnit,
+    model: &AppModel,
+    spring_boot: bool,
+) -> Result<Vec<Unit>, CompileError> {
     let id = source.id.as_str();
     let package = &placed(source, model);
     let type_name = &source.java_type;
@@ -61,7 +66,7 @@ fn lower(source: &SourceUnit, model: &AppModel) -> Result<Vec<Unit>, CompileErro
         )?]);
     }
     if source.kind == UnitKind::Strategy {
-        return lower_strategy(source, model);
+        return lower_strategy(source, model, spring_boot);
     }
     if source.kind == UnitKind::Controller {
         return lower_controller(source, model);
@@ -196,7 +201,24 @@ fn standalone_test_body(kind: UnitKind, type_name: &str) -> String {
     }
 }
 
-fn lower_strategy(source: &SourceUnit, model: &AppModel) -> Result<Vec<Unit>, CompileError> {
+/// **A strategy is the one Spring-shaped unit a plain project also gets.**
+///
+/// `@Component` on each implementation is how Spring collects them into the
+/// evaluator's `List<Port>`; without Spring the reader passes the list to the
+/// constructor themselves, which the evaluator already accepts. Nothing else
+/// about the shape changes, so `CLAUDE.md`'s rule holds -- "plain-Maven
+/// projects get the same layout with no annotation, because one placement is
+/// easier to explain than one that depends on the build file".
+///
+/// `refuse.rs` used to group `Strategy` with `Service` and `Controller` and
+/// reject all three without Spring. That is right for the other two, whose
+/// whole body is an annotation, and wrong here: it made `g strategy` refuse on
+/// exactly the plain projects the legacy generator has always supported.
+fn lower_strategy(
+    source: &SourceUnit,
+    model: &AppModel,
+    spring_boot: bool,
+) -> Result<Vec<Unit>, CompileError> {
     let id = source.id.as_str();
     let domain = &placed(source, model);
     // Compared against the *projection*, so a project that renames `domain`
@@ -254,10 +276,12 @@ fn lower_strategy(source: &SourceUnit, model: &AppModel) -> Result<Vec<Unit>, Co
     let evaluator_artifact = format!("art_{id}_evaluator");
     let mut evaluator_imports = BTreeSet::from([
         "java.util.List".to_string(),
-        "org.springframework.stereotype.Component".to_string(),
         format!("{domain}.{name}"),
         format!("{domain}.{on}"),
     ]);
+    if spring_boot {
+        evaluator_imports.insert("org.springframework.stereotype.Component".to_string());
+    }
     if let Some(yields) = source.yields.as_deref() {
         evaluator_imports.insert("java.util.Optional".to_string());
         evaluator_imports.insert(format!("{domain}.{yields}"));
@@ -271,8 +295,12 @@ fn lower_strategy(source: &SourceUnit, model: &AppModel) -> Result<Vec<Unit>, Co
         format!("return {plural}.stream().anyMatch(strategy -> strategy.{method}(value));")
     };
     let evaluator = format!("{name}Evaluator");
+    let bean = match spring_boot {
+        true => "@Component\n",
+        false => "",
+    };
     let evaluator_body = format!(
-        "@Component\npublic final class {evaluator} {{\n\n    private final List<{name}> {plural};\n\n    public {evaluator}(List<{name}> {plural}) {{\n        this.{plural} = List.copyOf({plural});\n    }}\n\n    public {return_type} {method}({on} value) {{\n        {evaluation}\n    }}\n\n    // Reader-owned evaluator methods belong below this stable boundary.\n}}"
+        "{bean}public final class {evaluator} {{\n\n    private final List<{name}> {plural};\n\n    public {evaluator}(List<{name}> {plural}) {{\n        this.{plural} = List.copyOf({plural});\n    }}\n\n    public {return_type} {method}({on} value) {{\n        {evaluation}\n    }}\n\n    // Reader-owned evaluator methods belong below this stable boundary.\n}}"
     );
     units.push(file(
         JAVA_MAIN_ROOT,
@@ -294,19 +322,24 @@ fn lower_strategy(source: &SourceUnit, model: &AppModel) -> Result<Vec<Unit>, Co
         let implementation = format!("{variant}{name}");
         let variant_id = lower_first(variant);
         let implementation_artifact = format!("art_{id}_impl_{variant_id}");
-        let mut imports = BTreeSet::from([
-            "org.springframework.core.annotation.Order".to_string(),
-            "org.springframework.stereotype.Component".to_string(),
-            format!("{domain}.{name}"),
-            format!("{domain}.{on}"),
-        ]);
+        let mut imports = BTreeSet::from([format!("{domain}.{name}"), format!("{domain}.{on}")]);
+        if spring_boot {
+            imports.insert("org.springframework.core.annotation.Order".to_string());
+            imports.insert("org.springframework.stereotype.Component".to_string());
+        }
         if let Some(yields) = source.yields.as_deref() {
             imports.insert("java.util.Optional".to_string());
             imports.insert(format!("{domain}.{yields}"));
         }
+        // Order is only expressible as an annotation, so without Spring the
+        // list arrives in the order the reader passes it -- which the
+        // evaluator's Javadoc already says decides the answer.
+        let ordering = match spring_boot {
+            true => format!("@Component\n@Order({})\n", position + 1),
+            false => String::new(),
+        };
         let implementation_body = format!(
-            "@Component\n@Order({})\npublic final class {implementation} implements {name} {{\n\n    @Override\n    public {return_type} {method}({on} value) {{\n        return {empty};\n    }}\n\n    // Reader-owned implementation methods belong below this stable boundary.\n}}",
-            position + 1
+            "{ordering}public final class {implementation} implements {name} {{\n\n    @Override\n    public {return_type} {method}({on} value) {{\n        return {empty};\n    }}\n\n    // Reader-owned implementation methods belong below this stable boundary.\n}}"
         );
         units.push(file(
             JAVA_MAIN_ROOT,

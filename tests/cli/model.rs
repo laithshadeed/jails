@@ -330,6 +330,82 @@ entity Note {
     );
 }
 
+/// A strategy is the one Spring-shaped unit a plain project also gets.
+///
+/// The canonical compiler grouped `Strategy` with `Service` and `Controller`
+/// and refused all three without a captured Spring Boot project. That is right
+/// for the other two -- a service and a controller are an annotation with a
+/// class around them -- and wrong here: `CLAUDE.md` records that "plain-Maven
+/// projects get the same layout with no annotation", and the legacy generator
+/// has always emitted one there. So canonical `g strategy` refused on exactly
+/// the projects `new-cli` creates.
+///
+/// The port, the implementations and the evaluator all compile without Spring:
+/// `@Component` is only how Spring *collects* the implementations into the
+/// evaluator's `List<Port>`, and without it the reader passes the list to the
+/// constructor the evaluator already has. `@Order` goes the same way, and the
+/// evaluator's own Javadoc already says the caller's order decides the answer.
+#[test]
+fn a_strategy_lowers_without_spring_on_a_plain_project() {
+    let root = jdl_project(
+        "jdl-v1-plain-strategy",
+        r#"jdl 1
+app Ledger {
+ pkg com.example.ledger
+ java 26
+ platform plain
+ build maven
+ storage none
+}
+entity Tx {
+ id: uuid @pk
+ amount: long
+}
+"#,
+    );
+    write_plain_fixture(&root);
+
+    let generated = jails_cmd(&root, None)
+        .args(["g", "strategy", "Elig", "Domestic", "--on", "Tx"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+
+    let base = root.join(".jails/generated/main/java/com/example/ledger");
+    let port = fs::read_to_string(base.join("domain/Elig.java")).unwrap();
+    assert!(port.contains("public interface Elig"), "{port}");
+
+    let implementation = fs::read_to_string(base.join("service/DomesticElig.java")).unwrap();
+    assert!(
+        implementation.contains("public final class DomesticElig implements Elig"),
+        "{implementation}"
+    );
+    assert!(
+        !implementation.contains("org.springframework"),
+        "a plain project got a Spring import: {implementation}"
+    );
+    assert!(
+        !implementation.contains("@Component") && !implementation.contains("@Order"),
+        "a plain project got a Spring annotation: {implementation}"
+    );
+
+    // The evaluator still takes the whole set, which is what makes the plain
+    // shape work at all: without component scanning the reader passes it.
+    let evaluator = fs::read_to_string(base.join("service/EligEvaluator.java")).unwrap();
+    assert!(
+        evaluator.contains("public EligEvaluator(List<Elig> eligs)"),
+        "{evaluator}"
+    );
+    assert!(
+        !evaluator.contains("org.springframework"),
+        "a plain project got a Spring import: {evaluator}"
+    );
+}
+
 #[test]
 fn model_fmt_keeps_typed_field_semantics_and_refuses_invalid_rules_atomically() {
     let root = jdl_project(
