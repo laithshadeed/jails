@@ -28,6 +28,7 @@ mod history_command;
 mod model_capability;
 mod model_command;
 mod model_destroy;
+mod model_doctor;
 mod model_eject;
 mod model_explain;
 mod model_field_evolution;
@@ -512,7 +513,7 @@ fn main() -> std::process::ExitCode {
             },
             debug,
         ),
-        Command::Doctor { json } => doctor::doctor(json),
+        Command::Doctor { json } => doctor::doctor(json, crate::model_doctor::checks()),
         Command::Why {
             log,
             name,

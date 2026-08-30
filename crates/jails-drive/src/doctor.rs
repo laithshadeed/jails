@@ -23,10 +23,17 @@ const JSHELL_GUIDE: &str = "https://docs.oracle.com/en/java/javase/26/jshell/ind
 const MAVEN_INSTALL: &str = "https://maven.apache.org/install.html";
 const GRADLE_INSTALL: &str = "https://docs.gradle.org/current/userguide/installation.html";
 
-pub fn doctor(json: bool) -> Result<()> {
+/// `additional` carries the checks this crate cannot ask.
+///
+/// A canonical project's managed-output questions are answered from the lock,
+/// which lives above `jails-report` and beside the binary; passing them in
+/// keeps `jails-workspace` out of the read-only crate rather than pulling the
+/// compiler ladder into it.
+pub fn doctor(json: bool, additional: Vec<Check>) -> Result<()> {
     let root = crate::generate::find_project_root()?;
     let project = Project::inspect(&root)?;
-    let checks = developer_tool_checks(&project);
+    let mut checks = developer_tool_checks(&project);
+    checks.extend(additional);
     jails_report::doctor::doctor(&project, json, checks)
 }
 

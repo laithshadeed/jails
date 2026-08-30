@@ -1135,18 +1135,42 @@ impl PermitPool {
 
     #[cfg(test)]
     fn try_acquire(&self, maximum: usize) -> Option<ProcessPermit> {
+        self.try_acquire_reporting(maximum).0
+    }
+
+    /// The same attempt, plus why each slot was refused.
+    ///
+    /// `infrastructure_start_pool_has_two_reusable_permits` failed its second
+    /// acquire only under full-suite load, and "returned `None`" is not enough
+    /// to tell a slot that was locked from a slot that could not be opened.
+    /// The reason travels with the failure so the panic names it.
+    #[cfg(test)]
+    fn try_acquire_reporting(&self, maximum: usize) -> (Option<ProcessPermit>, Vec<String>) {
         let directory = self.directory();
-        (0..maximum).find_map(|slot| {
-            let file = fs::OpenOptions::new()
+        let mut refusals = Vec::new();
+        for slot in 0..maximum {
+            let path = directory.join(format!("{slot}.lock"));
+            let file = match fs::OpenOptions::new()
                 .create(true)
                 .truncate(false)
                 .write(true)
-                .open(directory.join(format!("{slot}.lock")))
-                .ok()?;
-            fs2::FileExt::try_lock_exclusive(&file)
-                .ok()
-                .map(|()| ProcessPermit { _file: Some(file) })
-        })
+                .open(&path)
+            {
+                Ok(file) => file,
+                Err(error) => {
+                    refusals.push(format!(
+                        "slot {slot}: could not open {}: {error}",
+                        path.display()
+                    ));
+                    continue;
+                }
+            };
+            match fs2::FileExt::try_lock_exclusive(&file) {
+                Ok(()) => return (Some(ProcessPermit { _file: Some(file) }), refusals),
+                Err(error) => refusals.push(format!("slot {slot}: locked ({error})")),
+            }
+        }
+        (None, refusals)
     }
 }
 
@@ -1600,9 +1624,13 @@ mod permit_pool_tests {
         let first = pool
             .try_acquire(MAX_INFRASTRUCTURE_START_PROCESSES)
             .unwrap();
-        let second = pool
-            .try_acquire(MAX_INFRASTRUCTURE_START_PROCESSES)
-            .unwrap();
+        let (second, refusals) = pool.try_acquire_reporting(MAX_INFRASTRUCTURE_START_PROCESSES);
+        let second = second.unwrap_or_else(|| {
+            panic!(
+                "the second of two permits was refused; slot by slot: {}",
+                refusals.join("; ")
+            )
+        });
 
         assert!(
             pool.try_acquire(MAX_INFRASTRUCTURE_START_PROCESSES)

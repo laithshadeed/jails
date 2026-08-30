@@ -13055,3 +13055,91 @@ entity Memo {
         "a selector naming nothing says so rather than reporting an empty resource:\n{unknown}"
     );
 }
+
+/// `jails doctor` said `all clear` about a canonical project whose generated
+/// tree had been edited and part of it deleted.
+///
+/// Its managed-output checks read `.jails/ledger.toml`, and a canonical
+/// project has none -- so the whole tree jails writes was outside the report.
+/// Both rows here are worded from what the binary does rather than from what
+/// the design suggests: `sync` refuses while an accepted file is missing, and
+/// merges an edited one forward without writing anything.
+#[test]
+fn doctor_reports_the_generated_tree_of_a_canonical_project() {
+    let root = jdl_project(
+        "jdl-v1-doctor-managed",
+        r#"jdl 1
+app Clinic {
+ pkg com.example.clinic
+ java 26
+ platform spring
+ build maven
+ storage postgres
+}
+entity Visit {
+ id: uuid @pk
+ reason: string
+ use repo
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    let synced = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+
+    let clean = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    let clean = String::from_utf8_lossy(&clean.stdout).to_string();
+    assert!(
+        clean.contains("every file the lock accepted is on disk")
+            && clean.contains("no generated file has been changed"),
+        "a freshly synced project reports both managed rows clean:\n{clean}"
+    );
+
+    let record = root.join(".jails/generated/main/java/com/example/clinic/domain/Visit.java");
+    fs::write(
+        &record,
+        format!(
+            "{}\n// a reader's note\n",
+            fs::read_to_string(&record).unwrap()
+        ),
+    )
+    .unwrap();
+    let edited = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    let edited = String::from_utf8_lossy(&edited.stdout).to_string();
+    assert!(
+        edited.contains("changed since generation")
+            && edited.contains("merges the edit forward on every sync"),
+        "an edited managed file is a warning that says what happens next:\n{edited}"
+    );
+    // A record is managed ABI: `jails model eject` refuses for it, so the row
+    // must not offer ejection as the fix.
+    assert!(
+        !edited.contains("jails model eject art_ent_visit_record"),
+        "an artifact that cannot be ejected must not be offered as one:\n{edited}"
+    );
+
+    let test = root.join(".jails/generated/test/java/com/example/clinic/domain/VisitTest.java");
+    fs::remove_file(&test).unwrap();
+    let deleted = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    let deleted_out = String::from_utf8_lossy(&deleted.stdout).to_string();
+    assert!(
+        deleted_out.contains("deleted") && deleted_out.contains("refuses while it is gone"),
+        "a deleted managed file is a failure, because sync cannot converge past it:\n{deleted_out}"
+    );
+    assert!(
+        !deleted.status.success(),
+        "a FAIL row must leave doctor with a non-zero status"
+    );
+
+    // And the refusal the row describes is the one `sync` actually gives.
+    let refused = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        !refused.status.success(),
+        "sync should refuse while an accepted file is missing:\n{}",
+        String::from_utf8_lossy(&refused.stdout)
+    );
+}

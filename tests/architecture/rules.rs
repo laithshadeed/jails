@@ -525,6 +525,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails", "model_capability", 9),
     ("jails", "model_destroy", 9),
     ("jails", "model_eject", 9),
+    ("jails", "model_doctor", 9),
     ("jails", "model_explain", 9),
     ("jails", "model_field_evolution", 9),
     ("jails", "model_field_parse", 9),
