@@ -191,7 +191,73 @@ fn collect() -> Result<Vec<Check>> {
         .fix("jails sync"),
     });
 
+    checks.extend(schema_lineage(&snapshot));
     Ok(checks)
+}
+
+/// Does every column a stored entity's Java carries exist in its migrations?
+///
+/// `schema_lineage`'s finding, on the canonical path. `doctor` answers "are
+/// these the bytes jails wrote"; it did not answer "is this project
+/// coherent", and that gap is what let a torn transaction and a half-carried
+/// rename both end green -- the Java carried a component, the schema history
+/// did not, every file was byte-identical to what jails wrote, and only a
+/// query at runtime found it.
+///
+/// The SQL reader is `jails-report`'s, not a second one. Two readers of the
+/// handful of statements the compiler emits would drift, and the drift would
+/// be invisible: each would keep answering confidently about a different
+/// project.
+///
+/// **Unknown widens.** A lineage the reader cannot fold -- a hand-written
+/// migration, a statement outside that handful, no `create table` at all --
+/// produces no check rather than an accusation.
+fn schema_lineage(snapshot: &jails_contracts::WorkspaceSnapshot) -> Vec<Check> {
+    let mut checks = Vec::new();
+    let texts = snapshot
+        .migration_history
+        .records
+        .iter()
+        .filter_map(|record| snapshot.files.get(&record.path))
+        .filter_map(|file| std::str::from_utf8(&file.bytes).ok())
+        .collect::<Vec<_>>();
+    if texts.len() != snapshot.migration_history.records.len() {
+        return checks;
+    }
+    for entity in snapshot.model.model.entities.values() {
+        if !entity.active || !entity.facets.contains(&jails_model::Facet::Repository) {
+            continue;
+        }
+        let table = entity.names.sql_table.as_str();
+        let Some(declared) = jails_report::schema_lineage::columns_from(&texts, table) else {
+            continue;
+        };
+        let missing = entity
+            .fields
+            .iter()
+            .map(|field| field.names.sql_column.as_str())
+            .filter(|column| !declared.contains(*column))
+            .collect::<Vec<_>>();
+        let title = format!("schema {}", entity.names.java_type);
+        checks.push(match missing.is_empty() {
+            true => Check::new(
+                Status::Ok,
+                title,
+                format!("`{table}` has every column the record carries"),
+            ),
+            false => Check::new(
+                Status::Fail,
+                title,
+                format!(
+                    "`{table}` is missing {}, which `{}` carries",
+                    missing.join(", "),
+                    entity.names.java_type
+                ),
+            )
+            .fix("jails sync"),
+        });
+    }
+    checks
 }
 
 /// Name up to three paths, then say how many more there are.

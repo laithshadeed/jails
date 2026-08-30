@@ -13127,6 +13127,14 @@ entity Visit {
         "a synced capability is accepted, entities and capabilities alike:\n{recorded}"
     );
 
+    // Every column the record carries exists in the migrations. `doctor`
+    // answers "are these the bytes jails wrote"; this is the half that answers
+    // "is this project coherent", and a canonical project had neither.
+    assert!(
+        clean.contains("`visits` has every column the record carries"),
+        "the stored entity's lineage should be checked:\n{clean}"
+    );
+
     let record = root.join(".jails/generated/main/java/com/example/clinic/domain/Visit.java");
     fs::write(
         &record,
@@ -13294,5 +13302,89 @@ app Bare {
     assert!(
         empty.contains("No routes found under src/main/java."),
         "a project with no generated tree reports exactly the roots it walked:\n{empty}"
+    );
+}
+
+/// The incoherence `doctor` could not see: the Java carries a component the
+/// schema history does not.
+///
+/// Every file is byte-identical to what jails wrote, so nothing else has a
+/// reason to complain, and only a query at runtime finds it. `schema_lineage`
+/// answers this for a legacy project; a canonical one had no answer at all.
+#[test]
+fn doctor_names_a_column_the_record_carries_and_the_migrations_do_not() {
+    let root = jdl_project(
+        "jdl-v1-doctor-lineage",
+        r#"jdl 1
+app Ward {
+ pkg com.example.ward
+ java 26
+ platform spring
+ build maven
+ storage postgres
+}
+entity Bed {
+ id: uuid @pk
+ label: string
+ use repo
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    let synced = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+
+    let migrations = root.join("src/main/resources/db/migration");
+    let migration = fs::read_dir(&migrations)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| path.extension().is_some_and(|extension| extension == "sql"))
+        .expect("the stored entity's migration");
+    let sql = fs::read_to_string(&migration).unwrap();
+    assert!(
+        sql.contains("label"),
+        "the migration declares the column:\n{sql}"
+    );
+
+    // Drop the column from the history while the record keeps the component.
+    let torn = sql
+        .lines()
+        .filter(|line| !line.contains("label"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&migration, format!("{torn}\n")).unwrap();
+
+    let torn = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    let reported = String::from_utf8_lossy(&torn.stdout).to_string();
+    assert!(
+        reported.contains("is missing label") && reported.contains("which `Bed` carries"),
+        "the missing column should be named, with the record that needs it:\n{reported}"
+    );
+    // A failure, not a note. Asserted on the row rather than on the exit
+    // status, which this fixture also fails for an unrelated reason.
+    assert!(
+        reported
+            .lines()
+            .any(|line| line.contains("is missing label") && line.starts_with("FAIL")),
+        "the incoherence is a failure, not a note:\n{reported}"
+    );
+
+    // A lineage this reader cannot fold is not an accusation. Unknown widens.
+    fs::write(
+        &migration,
+        "create table bed_things using something_else;\n",
+    )
+    .unwrap();
+    let unreadable = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    let unreadable = String::from_utf8_lossy(&unreadable.stdout).to_string();
+    assert!(
+        !unreadable.contains("schema Bed"),
+        "a migration outside the statements jails emits produces no check at all, \
+         neither a pass nor an accusation:\n{unreadable}"
     );
 }
