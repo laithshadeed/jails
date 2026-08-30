@@ -11873,3 +11873,95 @@ fn canonical_migration_allocates_a_file_without_declaring_anything() {
         .unwrap();
     assert!(!refused.status.success());
 }
+
+/// The digest a reader reviews is the digest that gets applied.
+///
+/// `simplify-sol.md`'s fitness rules: "preview, plan export, confirmation and
+/// apply reference the same digest". It is the whole reason apply may execute
+/// a bundle rather than recompute one -- `CLAUDE.md`'s fifth contract says
+/// "apply never replans" -- and the question `simplify-sol.md` exists to
+/// delete is exactly *did preview and apply run the same computation?*
+///
+/// Four surfaces, one number. `--pretend` is what a human reads, `--plan-out`
+/// is what leaves the machine, and the execution report is what happened; a
+/// disagreement between any two would mean the review was of something else.
+#[test]
+fn preview_export_and_apply_all_name_one_plan_digest() {
+    let root = temp_dir("one-plan-digest");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+         platform spring\n  build maven\n  storage postgres\n}\n",
+    )
+    .unwrap();
+    let synced = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+
+    let mutation = ["g", "record", "Note", "id:uuid@pk", "title:string"];
+
+    // 1. Preview, as a human reads it.
+    let previewed = jails_cmd(&root, None)
+        .args(mutation)
+        .arg("--pretend")
+        .output()
+        .unwrap();
+    assert!(
+        previewed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&previewed.stderr)
+    );
+    let preview = String::from_utf8_lossy(&previewed.stdout);
+    let previewed_digest = preview
+        .split_whitespace()
+        .nth(1)
+        .expect("`plan <digest>: …`")
+        .trim_end_matches(':')
+        .to_string();
+    // `sha256:` plus 64 hex.
+    assert_eq!(previewed_digest.len(), 71, "{preview}");
+
+    // 2. Export, as it leaves the machine. `--plan-out` reports too, so this
+    //    also covers the human line staying in step with the file.
+    let bundle_path = root.join("plan.json");
+    let exported = jails_cmd(&root, None)
+        .args(mutation)
+        .arg("--plan-out")
+        .arg(&bundle_path)
+        .output()
+        .unwrap();
+    assert!(
+        exported.status.success(),
+        "{}",
+        String::from_utf8_lossy(&exported.stderr)
+    );
+    let bundle: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&bundle_path).unwrap()).unwrap();
+    assert_eq!(bundle["plan"]["digest"].as_str().unwrap(), previewed_digest);
+
+    // 3. Apply. Nothing has changed in between, so replanning -- if that is
+    //    what it were doing -- would have to land on the same number, and the
+    //    contract is that it does not replan at all.
+    let applied = jails_cmd(&root, None)
+        .args(mutation)
+        .args(["--output", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    let execution: serde_json::Value =
+        serde_json::from_slice(&applied.stdout).expect("an execution report");
+    assert_eq!(
+        execution["plan_digest"].as_str().unwrap(),
+        previewed_digest,
+        "the applied plan is not the reviewed one"
+    );
+}

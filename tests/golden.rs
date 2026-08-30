@@ -361,6 +361,68 @@ const COVERED_ELSEWHERE: &[(&str, &str)] = &[(
     "a_freshly_generated_project_passes_check_with_no_manual_formatting",
 )];
 
+#[test]
+fn no_generated_java_carries_an_unsubstituted_placeholder() {
+    if updating() {
+        return;
+    }
+    let root = golden_root();
+    let mut offenders = Vec::new();
+    let mut examined = 0;
+    for scenario in SCENARIOS {
+        for (relative, text) in snapshot(&root.join(scenario.name)) {
+            if !relative.ends_with(".java") {
+                continue;
+            }
+            examined += 1;
+            if !text.contains("{{") {
+                continue;
+            }
+            let line = text
+                .lines()
+                .position(|line| line.contains("{{"))
+                .map_or(0, |index| index + 1);
+            offenders.push(format!("  {}/{relative}:{line}", scenario.name));
+        }
+    }
+    // A scanner that has lost the corpus reports exactly what a clean one
+    // does, which is the trap `CLAUDE.md` records for every gate here.
+    assert!(
+        examined > 200,
+        "only {examined} generated Java files were examined -- this check has \
+         lost the golden corpus and would pass over anything"
+    );
+    assert!(
+        offenders.is_empty(),
+        "generated Java carries a template placeholder nothing substituted:\n{}\n\n\
+         `{{{{name}}}}` was chosen as the placeholder syntax *because* no `{{{{` \
+         appears in any Java jails writes, so one that survives into output is \
+         always a key the renderer did not supply. It compiles nowhere and the \
+         golden bytes record it as if it were intended.",
+        offenders.join("\n")
+    );
+}
+
+/// **The rule this generalises, and why it is here rather than per test.**
+///
+/// `{{{{name}}}}` is the placeholder syntax precisely because no `{{{{` appears in
+/// any Java jails writes -- `CLAUDE.md` records the check. So a `{{{{` in
+/// generated Java is never content: it is a key the renderer was not given,
+/// and it produces a file that compiles nowhere.
+///
+/// It was caught three times in one afternoon by hand-written
+/// `assert!(!bytes.contains("{{{{"))` lines in individual emitter tests, which
+/// is the shape of a rule nobody wrote down: every new emitter has to remember
+/// it, and the golden suite records the broken bytes as if they were intended.
+/// The golden corpus is the broadest output jails has, so the check belongs
+/// over all of it at once.
+///
+/// **Java only, deliberately.** A generated `.http` file uses `{{{{baseUrl}}}}`
+/// as the HTTP Client format's own variable syntax, a GitHub workflow writes
+/// `${{{{ github.ref }}}}`, and a compose healthcheck reads
+/// `{{{{.Config.User}}}}`. All three are the file format's syntax rather than
+/// jails', which is the same distinction that keeps those files off
+/// `template!` in the first place.
 /// The header of this file claims *"every artifact kind and every capability,
 /// in the smallest invocation that exercises it."* That comment was false by
 /// twelve when `plan.md` §8.5 counted: eight kinds were added and the golden

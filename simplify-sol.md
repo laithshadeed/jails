@@ -2213,6 +2213,40 @@ Avoid gates that assert only a maximum file length or a minimum scanner count.
 Those improve navigation but can be satisfied while every duplicated concept
 survives.
 
+### Where each rule stands (2026-08-30)
+
+Two were enforced by a *type* rather than a test, which is better and is why
+they had none; three were genuinely unheld and now are.
+
+| rule | held by |
+|---|---|
+| compiler pure after capture | `rules::canonical_compiler_is_pure_after_capture` |
+| identical snapshot/patch/version ⇒ identical digest | **added:** `materialize::the_same_snapshot_patch_and_compiler_produce_the_same_plan_digest`, plus the two negatives -- a different compiler version and a different patch are different plans |
+| preview, export, confirmation and apply name one digest | **added:** `preview_export_and_apply_all_name_one_plan_digest` |
+| one generated command catalog | `commands.rs` walks the live `clap::Command`; `every_command_a_message_tells_the_reader_to_run_is_one_that_exists` checks messages against it |
+| every builtin has one semantics row | `BuiltinSemantics` is one exhaustive match, and the ladder's *largest table of per-builtin knowledge outside its row* keeps a second one from growing -- it is what sent `alternate` and `json` onto that row this week |
+| requirements from IR, never a content scan | structural: the canonical crates cannot reach the filesystem, and no production line inspects rendered bytes to decide a requirement |
+| managed output only below the managed root | structural: `RenderedTree::insert` refuses a path outside its root, so it cannot be violated |
+| reader-owned source only via typed patch/eject/adopt | `rules::canonical_workspace_has_one_mutation_owner`, plus `PatchReaderFile`'s captured before-image |
+| persisted tags and field numbers golden-tested | `every_protocol_fixture_is_read_by_something`, `tests/protocol-golden` |
+| every advertised failpoint fires in a test | `tests/engine.rs` |
+| every transaction state has a recovery transition | `tests/engine.rs` -- **not audited here**, and G4 still wants the registry and trip sites generated from one declaration |
+| planner read set complete by construction | `WorkspaceSnapshot` is the read set, and the purity rule above is what makes it complete |
+| tool crates cannot reach executor internals | Cargo, plus `no_module_depends_on_a_layer_above_its_own` for module edges |
+
+**One rule this list did not have, added because it cost three separate
+hand-written assertions in one afternoon:** no generated Java may carry an
+unsubstituted `{{placeholder}}`. `{{name}}` is the placeholder syntax
+*because* no `{{` appears in any Java jails writes, so one that survives is
+always a key the renderer was not given -- a file that compiles nowhere, which
+the golden bytes then record as if it were intended. It is checked over the
+whole golden corpus at once (`no_generated_java_carries_an_unsubstituted_placeholder`),
+with a floor on the files examined, since a scanner that has lost the corpus
+reports exactly what a clean one does. Java only: a generated `.http` file
+uses `{{baseUrl}}`, a workflow writes `${{ github.ref }}`, and a compose
+healthcheck reads `{{.Config.User}}` -- all three the file format's own syntax
+rather than jails'.
+
 ## Final recommendation
 
 The crazy idea that fits the evidence is not “write a new language.” It is:

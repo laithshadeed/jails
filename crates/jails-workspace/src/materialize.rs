@@ -750,6 +750,90 @@ primary_key = true
         assert!(verify_bundle(&damaged).is_err());
     }
 
+    /// **The property `apply never replans` rests on.**
+    ///
+    /// `simplify-sol.md`'s fitness rules: "identical `WorkspaceSnapshot +
+    /// CanonicalModelPatch + CompilerVersion` yields an identical plan
+    /// digest". Every other guarantee in the protocol is downstream of it --
+    /// preview shows a digest, the reader confirms that digest, and the
+    /// executor applies a bundle rather than recomputing one. If the same
+    /// three inputs could produce two digests, the thing reviewed and the
+    /// thing applied would be related only by hope.
+    ///
+    /// **The compile is run twice, not the materialization**, because the
+    /// interesting half is the compiler: a `HashMap` iterated into a `Vec`, a
+    /// timestamp, a path read from the environment, or an unsorted set would
+    /// all be invisible in one run and fatal here. This is the whole model,
+    /// not a fragment, so it exercises the maps every emitter builds.
+    #[test]
+    fn the_same_snapshot_patch_and_compiler_produce_the_same_plan_digest() {
+        let model = jails_model::parse_toml(MODEL).unwrap();
+        let snapshot = WorkspaceSnapshot::detached(model);
+        let digest = || {
+            let draft = Compiler::compile(&snapshot, None).unwrap();
+            materialize(
+                &snapshot,
+                CanonicalModelPatch::reconcile(),
+                draft,
+                jails_compiler::COMPILER_VERSION,
+            )
+            .unwrap()
+            .plan
+            .digest
+        };
+        assert_eq!(digest(), digest());
+    }
+
+    /// ... and a different compiler version is a different plan.
+    ///
+    /// The other half of the same rule, and the one that makes the first
+    /// half safe to rely on: a digest that ignored the compiler version would
+    /// let a bundle reviewed under one renderer be applied by another, which
+    /// is exactly the "did preview and apply run the same computation?"
+    /// question `simplify-sol.md` exists to delete.
+    #[test]
+    fn a_different_compiler_version_is_a_different_plan() {
+        let model = jails_model::parse_toml(MODEL).unwrap();
+        let snapshot = WorkspaceSnapshot::detached(model);
+        let digest = |version: &str| {
+            let draft = Compiler::compile(&snapshot, None).unwrap();
+            materialize(&snapshot, CanonicalModelPatch::reconcile(), draft, version)
+                .unwrap()
+                .plan
+                .digest
+        };
+        assert_ne!(
+            digest(jails_compiler::COMPILER_VERSION),
+            digest("jails.compiler.test-only")
+        );
+    }
+
+    /// A different patch is a different plan, for the same reason.
+    ///
+    /// The input is part of the reviewed identity: two plans that write the
+    /// same bytes for different reasons are not the same plan, and a digest
+    /// that could not tell them apart would let a confirmation be replayed
+    /// against a request nobody made.
+    #[test]
+    fn a_different_patch_input_is_a_different_plan() {
+        let model = jails_model::parse_toml(MODEL).unwrap();
+        let snapshot = WorkspaceSnapshot::detached(model);
+        let digest = |input: CanonicalModelPatch| {
+            let draft = Compiler::compile(&snapshot, None).unwrap();
+            materialize(&snapshot, input, draft, jails_compiler::COMPILER_VERSION)
+                .unwrap()
+                .plan
+                .digest
+        };
+        assert_ne!(
+            digest(CanonicalModelPatch::reconcile()),
+            digest(CanonicalModelPatch {
+                schema: "jails.model-patch.v1".to_string(),
+                bytes: br#"{"kind":"batch","patches":[]}"#.to_vec(),
+            })
+        );
+    }
+
     #[test]
     fn an_absent_empty_managed_tree_is_already_converged() {
         let source = MODEL.split("\n[entities.note]").next().unwrap();
