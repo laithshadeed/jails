@@ -94,6 +94,11 @@ const ALLOWED: &[AllowedConcept] = &[
             // and its semantics carry the intent for it.
             "crates/jails-prepare/src/prepare.rs",
             "crates/jails-prepare/src/operation.rs",
+            // `model init` refuses a project that already has one, and sends
+            // it to `model import` instead: a project jails has generated
+            // into keeps its declarations rather than discarding them. Saying
+            // which file it found is what makes that refusal actionable.
+            "src/model_init.rs",
             // Preparation guards the ledger generation the plan was computed
             // against, renders the image the commit will write, and atomically
             // records lifecycle transitions in that same durable image.

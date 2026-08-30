@@ -180,7 +180,13 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // already took an explicit root (`capture_*`, `materialize*`,
                 // `execute`); the five stop the walk rather than threading a
                 // root further down.
-                ceiling: 77,
+                // 77 -> 78 for `model_init::refuse_if_modelled`, and it is the
+                // canonical shape rather than the one this rung is about: the
+                // question is whether a *directory* already holds an editable
+                // model, which is a fact about the filesystem and not one
+                // re-derived from a resolved `Project`. `jails model init`
+                // exists precisely because there is no model to read it off.
+                ceiling: 78,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;

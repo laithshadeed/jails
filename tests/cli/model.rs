@@ -602,6 +602,116 @@ app Demo {
     assert!(formatted.status.success(), "{told}");
 }
 
+/// `model init`: the on-ramp for a repository jails did not create.
+///
+/// **This is what kept the legacy engine load-bearing.** `new` seeds a model,
+/// so a project jails creates is canonical from its first command, and
+/// `model import` carries a legacy *ledger* across. Neither reaches somebody
+/// else's repository, which has no model and no ledger -- so every mutation
+/// there went through the legacy path, and no command could change that.
+///
+/// What it writes is the app block and nothing else. The reader's Java is not
+/// adopted, moved or rewritten; what changes is that the next `jails g`
+/// renders through the compiler into `.jails/generated` instead of splicing
+/// into `src/`.
+#[test]
+fn model_init_makes_a_foreign_project_canonical_without_touching_its_sources() {
+    let root = temp_dir("model-init-foreign");
+    write_plain_fixture(&root);
+    let reader = root.join("src/main/java/com/example/demo/Existing.java");
+    fs::create_dir_all(reader.parent().unwrap()).unwrap();
+    let untouched = "package com.example.demo;\n\npublic class Existing {\n}\n";
+    fs::write(&reader, untouched).unwrap();
+
+    let created = jails_cmd(&root, None)
+        .args(["model", "init"])
+        .output()
+        .unwrap();
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+
+    // Every field is read off the project rather than asked for, because each
+    // is a fact the project already states.
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(model.starts_with("jdl 1\n"), "{model}");
+    assert!(model.contains("pkg com.example.demo"), "{model}");
+    assert!(model.contains("build maven"), "{model}");
+    // `storage none` is the one judgement, and it is the same one `new` makes:
+    // jails has installed no database here, so the model claims none.
+    assert!(model.contains("storage none"), "{model}");
+
+    // Canonical from here: the generator renders into the managed tree.
+    let generated = jails_cmd(&root, None)
+        .args(["g", "record", "Note", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    assert!(
+        root.join(".jails/generated/main/java/com/example/demo/domain/Note.java")
+            .is_file()
+    );
+    assert!(
+        !root.join(".jails/ledger.toml").exists(),
+        "a canonical project created a legacy ledger"
+    );
+
+    // And the reader's own file is exactly as they left it.
+    assert_eq!(fs::read_to_string(&reader).unwrap(), untouched);
+}
+
+/// One editable source, which is the rule the whole cutover turns on.
+#[test]
+fn model_init_refuses_a_project_that_already_has_a_model_or_a_ledger() {
+    let modelled = jdl_project(
+        "model-init-twice",
+        r#"jdl 1
+app Demo {
+ pkg com.example.demo
+ java 26
+ platform plain
+ build maven
+ storage none
+}
+"#,
+    );
+    write_plain_fixture(&modelled);
+    let refused = jails_cmd(&modelled, None)
+        .args(["model", "init"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let told = String::from_utf8_lossy(&refused.stderr);
+    assert!(told.contains("already has an application model"), "{told}");
+
+    // A project jails already generated into keeps its declarations rather
+    // than discarding them, so it is sent to the one-way door instead.
+    let legacy = temp_dir("model-init-legacy");
+    write_plain_fixture(&legacy);
+    let generated = jails_cmd(&legacy, None)
+        .args(["g", "record", "Task", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let refused = jails_cmd(&legacy, None)
+        .args(["model", "init"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let told = String::from_utf8_lossy(&refused.stderr);
+    assert!(told.contains("jails model import"), "{told}");
+}
+
 #[test]
 fn model_fmt_keeps_typed_field_semantics_and_refuses_invalid_rules_atomically() {
     let root = jdl_project(

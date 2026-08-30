@@ -14,6 +14,7 @@ model apply	jails-workspace	project-mutation	execute
 model eject	jails-compiler/jails-workspace	project-mutation	model_eject::run
 model explain	jails-model/jails-workspace	read-only	model_explain::run
 model import	jails-state/jails-workspace	project-mutation	model_import::run
+model init	jails-workspace	project-mutation	model_init::run
 model upgrade	jails-model/jails-workspace	project-mutation	model_upgrade::run
 generate	jails-engine	project-mutation	route::recipe
 add	jails-engine	project-mutation	route::install

@@ -37,6 +37,12 @@ fn owns_terminal_output(path: &Path) -> bool {
         || relative == "src/model_command.rs"
         || relative == "src/model_generate.rs"
         || relative == "src/model_import.rs"
+        // The other half of the same door. `model_import` carries a legacy
+        // ledger across; this one gives a project jails never created its
+        // first model, and saying so is part of the command: a reader who has
+        // just made their repository canonical needs to know that generation
+        // has moved to `.jails/generated` and their own sources have not.
+        || relative == "src/model_init.rs"
         // Sibling of `model_import.rs` and classified for the same reason: a
         // CLI command module whose contract includes telling the reader what
         // the upgrade changes about the model before the plan is shown. §22
@@ -519,6 +525,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails", "model_generate", 9),
     ("jails", "model_generate_jdl", 9),
     ("jails", "model_import", 9),
+    ("jails", "model_init", 9),
     ("jails", "model_index", 9),
     ("jails", "model_jdl_edit", 9),
     ("jails", "model_rename", 9),

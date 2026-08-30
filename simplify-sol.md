@@ -2338,17 +2338,17 @@ freshly created canonical project and reading which ones refuse.
 | `adopt`, `modernize` | **not gaps.** Both are pre-canonical by design and say so: `adopt` maps a foreign project's directories onto layers before a model exists, and `modernize` raises the build before capture. They are legacy *users*, though, so deleting the engine means giving each a reader-file path that does not need a compiled model. |
 | `app plan`, `app apply` | `.jails/app.toml` is the legacy manifest and a canonical project refuses it, because two editable sources is the thing the cutover forbids. Closing it means retiring the manifest, not porting it -- its rows are the same intents the JDL frontends already accept. |
 | `new --app` | Deliberately exempt from seeding, for the same reason: the manifest is applied through the legacy engine inside the publication, so a model as well would be the second source. Goes when `app.toml` goes. |
-| a foreign project | **the real gap.** A project jails never created has no model and no ledger, and there is no command that gives it one: `model import` is one-way from a *legacy ledger* and its supported boundary is record and enum intents. So every mutation in somebody else's repository is still legacy, which is the case `minicom-public/spring` exists to represent. |
+| a foreign project | **closed by `jails model init`.** A project jails never created has no model and no ledger, and no command could give it one: `model import` is one-way from a *legacy ledger* with a record-and-enum boundary. So every mutation in somebody else's repository was legacy, which is the case `minicom-public/spring` exists to represent. `model init` reads the app block off the project -- package, release, platform, build, all facts it already states -- writes it through the canonical executor, and adopts not one line of the reader's Java. |
 
 **The order that follows from this** is not the deletion map's order, because the
 map assumed the engine's callers were engine-shaped. They are not: three of the
 five are reader-file edits that never needed a transaction, and the fourth is a
 file format to retire rather than a subsystem to port.
 
-1. A canonical on-ramp for a project jails did not create -- capture it into a
-   model the way `adopt` captures its layout. Without this the legacy engine is
-   load-bearing for every foreign repository, and nothing else on this list
-   matters.
+1. ~~A canonical on-ramp for a project jails did not create.~~ **Done:**
+   `jails model init`. This was the one that mattered -- without it the legacy
+   engine was load-bearing for every foreign repository, and no amount of
+   porting the rest would have changed that.
 2. Retire `.jails/app.toml`: `app plan`/`app apply`/`new --app` go with it, and
    the proof applications under `examples/` move to JDL.
 3. `adopt` and `modernize` onto reader-file operations.
