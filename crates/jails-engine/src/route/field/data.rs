@@ -1,3 +1,15 @@
+//! What a new column is filled with: a default, a backfill file, or neither.
+//!
+//! **The two are mutually exclusive and saying both is an error.** A default
+//! and a backfill are two answers to one question, and picking either silently
+//! would mean the column ends up holding what the *other* one said. There is
+//! no last-one-wins here.
+//!
+//! A required column's backfill is reader-owned bytes captured as a
+//! precondition and embedded verbatim ahead of `set not null`, so the plan
+//! carries the exact statement that was reviewed rather than a path that might
+//! read differently by the time it runs.
+
 use super::*;
 use jails_protocol::request::TypedLiteral;
 

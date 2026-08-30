@@ -1,3 +1,22 @@
+//! The `app` block and the top-level statements: `cap`, `dep`, `prop`,
+//! `entity` and its members.
+//!
+//! Every arm follows the same shape — `expect` the keyword, take the name,
+//! read the attributes, reject the ones this declaration does not accept —
+//! and each refusal carries a `JDL####` code and a fix, so a diagnostic can be
+//! looked up rather than only read.
+//!
+//! **An unknown attribute is an error, never ignored.** `reject_unknown_
+//! attributes` is called from every arm for the reason `@primary` is not a
+//! silent alias for `@pk`: an attribute quietly dropped produces a model that
+//! is missing exactly what the author believed they had asked for, and nothing
+//! downstream can tell that from a model where they never asked.
+//!
+//! Stable IDs are read from `@id(...)` and derived from the label when absent,
+//! which is what makes a hand-written model editable without inventing
+//! identifiers — and why the derivation must stay stable: it *is* the identity
+//! for every declaration written without one.
+
 use super::*;
 
 impl Parser<'_> {

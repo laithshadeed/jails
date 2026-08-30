@@ -1,3 +1,18 @@
+//! Resolving an operation's parameters, assignments, emissions and route.
+//!
+//! **This is where "the fact a renderer turns on" is decided, once.** Each
+//! `OperationParameter` comes out of here with a `ParameterSource` — the
+//! caller's body, the path, the request context, a constant — and its
+//! constraints attached. Every emitter and every generated test then reads
+//! that resolved answer instead of re-deriving it from the declaration, which
+//! is the drift a route renderer and its own test suite once had between them.
+//!
+//! Every function takes `&mut Linker` and reports rather than returning early,
+//! so one pass over a model with several unresolved names produces one
+//! diagnostic set. That is why the argument lists are long: the resolution
+//! needs the entity labels, the per-entity field maps and the aliases in
+//! scope, and threading them beats rebuilding them per parameter.
+
 use super::super::Linker;
 use crate::id::{EntityId, FieldId, OperationId};
 use crate::operation as linked;

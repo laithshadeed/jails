@@ -1,3 +1,13 @@
+//! Where a field evolution's Java lives, and which table — if any — it
+//! migrates.
+//!
+//! The module's own doc on `evolution` states the rule and the defect that
+//! produced it; this header is here so the file has one. The short version:
+//! a `scaffold` owns a table and its identity must come from the *recorded*
+//! lifecycle rather than from the entity name, and every source-only kind
+//! answers `None` — which is what keeps `alter table tags` out of a project
+//! that has never had a `tags` table.
+
 use super::*;
 
 /// Where a field evolution's Java lives, and which table -- if any -- it

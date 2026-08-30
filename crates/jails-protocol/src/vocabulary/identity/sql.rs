@@ -1,3 +1,14 @@
+//! `SqlName` — a validated unquoted SQL identifier.
+//!
+//! Deliberately narrow: lowercase snake case, the shape jails' own generated
+//! tables have. It is used at destructive lifecycle boundaries, where the
+//! reader confirms a drop by typing the table's exact name, so accepting a
+//! broader SQL expression would make that confirmation mean less than it
+//! looks like it means.
+//!
+//! One constructor, refusing rather than quoting or normalising, and every
+//! decoder goes through it.
+
 use super::Name;
 use crate::Result;
 use jails_java::identifier::snake_case;

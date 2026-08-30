@@ -1,3 +1,15 @@
+//! `relation <name> to <Parent> { ... }`.
+//!
+//! A relation is a stable child of its entity, with its own ID derived from
+//! the pair (`rel_<entity>_<label>`) when the author does not name one, and an
+//! optional `@map` for the SQL name — the same identity-versus-projection
+//! split every other declaration follows.
+//!
+//! The block may not be empty: a relation with no mappings names a target and
+//! says nothing about how the two are joined, which would parse cleanly and
+//! give the compiler nothing to emit. Refusing at the syntax is cheaper than a
+//! link error about a model that should not have been representable.
+
 use super::*;
 
 impl Parser<'_> {

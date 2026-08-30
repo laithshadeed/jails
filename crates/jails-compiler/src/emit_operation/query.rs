@@ -1,3 +1,19 @@
+//! The JDBC adapter behind a linked `query`.
+//!
+//! Filters, ordering and a row limit, lowered to one `select` over the
+//! entity's column projection.
+//!
+//! **The limit is bounded by default and may not be zero.** An omitted limit
+//! renders [`DEFAULT_LIMIT`], not an unbounded scan: a query with no ceiling is
+//! fine on the reader's laptop and is the failure mode nobody discovers until
+//! the table is large. A declared zero is refused rather than treated as "no
+//! limit", because the two readings of `0` are opposite and only one of them
+//! can be silent.
+//!
+//! Ordering is emitted from the model's `SortDirection` rather than spliced
+//! from text, so a column name can never reach SQL as an ordering clause — the
+//! `created_at desc` trap the legacy index validator had to split on.
+
 use super::{context_parameter, context_value, java_string, operation_file, scopes};
 use crate::CompileError;
 use crate::emit_java::{domain_import, java_type, with_suffix};

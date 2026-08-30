@@ -1,3 +1,28 @@
+//! `generate` / `destroy` dispatch, and the write path every kind goes through.
+//!
+//! **`abstract.md` §3.2 calls this shape Ousterhout's named anti-pattern
+//! verbatim** — parse, dispatch, write, side effects — and says so here rather
+//! than only in the document, because the file reads as ordinary until you
+//! notice it is four responsibilities. The per-kind generators live in the
+//! submodules beside it; what stays is the dispatch, `scaffold_artifacts`, the
+//! project helpers, and `write.rs`'s rules.
+//!
+//! The rules that live in the write path rather than in each generator are
+//! there for one reason: a rule twenty templates have to remember is a rule
+//! that decays the first time somebody adds the twenty-first. Import
+//! normalisation, `package-info.java` planning, `ensure_failsafe` and
+//! `ensure_assertj` are all keyed off the emitted bytes, so a new kind cannot
+//! forget them.
+//!
+//! `ArtifactKind` is a `clap::ValueEnum` and must stay one — it is the only
+//! shape a static completion list can be generated from.
+//!
+//! Everything below the generators once reached *up* into this file for
+//! `Field`, `layout` and `find_project_root`, which is what made `src/` a
+//! twelve-module cycle. `jails-spec` is those symbols at their own layer, and
+//! the re-exports at the top of this file are what kept the move a one-line
+//! change instead of a sweep.
+
 use crate::model::{Artifact, Change, Layer, Project};
 use jails_support::Result;
 use std::collections::BTreeSet;

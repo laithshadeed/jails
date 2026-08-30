@@ -1,3 +1,32 @@
+//! The only canonical project writer.
+//!
+//! It takes a verified `PlanBundle` and nothing else: locks `.jails/apply.lock`,
+//! rechecks every captured precondition against the tree as it is *now*,
+//! applies the plan's typed operations in order, and verifies the exact
+//! after-images it published. There is no replanning here and no path where a
+//! desired byte is computed — `simplify-sol.md`'s "apply never replans" is
+//! enforced by this module having no compiler and no model to reach for.
+//!
+//! **It converges rather than rolls back**, which is the deliberate trade the
+//! legacy kernel does not make: no journal, no preimage, no recovery command.
+//! A crashed run may leave a temporarily mixed but individually valid tree,
+//! and the next identical generation repairs it deterministically. Every
+//! `continue` in here is that property — an operation whose after-image is
+//! already on disk is skipped, so a re-run reports zero written and zero
+//! deleted rather than rewriting a tree it agrees with.
+//!
+//! `crates/jails-workspace/tests/crash.rs` proves it at nine named instants,
+//! in-process and in a child that `abort()`s. The aborting half is not
+//! ceremony: it found `sweep_staged`'s absence, where a temporary left by a
+//! crash between staging and rename wedged the project permanently.
+//!
+//! The precondition check has three deliberate escape hatches, and they are
+//! what makes convergence possible at all: a file already carrying its desired
+//! content passes, an absent file that the plan removes passes, and a
+//! directory that holds exactly its captured contents plus this plan's own new
+//! migrations passes. Without them the second run of an interrupted plan would
+//! refuse over its own half-finished work.
+
 use crate::verify_bundle;
 use fs2::FileExt as _;
 use jails_contracts::{

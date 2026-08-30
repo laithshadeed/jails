@@ -1,3 +1,15 @@
+//! The concrete syntax tree: declaration boundaries over a lossless token run.
+//!
+//! `source` plus `tokens` reproduces the input byte for byte, and a
+//! `DeclarationCst` is a *span* rather than a copy — so a syntax-preserving
+//! edit is a splice into the original string, not a re-render of a parsed
+//! structure.
+//!
+//! `MemberCst` exists because entities are edited from the inside: `resource
+//! field add` and `g field` change one member of one entity, and naming that
+//! member's span is what keeps the rest of the block — its comments, its
+//! ordering, its spacing — exactly as the reader left it.
+
 use super::token::{Span, Token};
 use crate::{Diagnostic, Diagnostics};
 

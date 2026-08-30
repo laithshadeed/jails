@@ -1,3 +1,23 @@
+//! The `serde` shape of `.jails/model.toml`, and only that.
+//!
+//! **A wire format, deliberately separate from `AppModel`.** Everything here
+//! is `Deserialize`-only, uses plain `String` keys, and carries
+//! `deny_unknown_fields` on every struct — so a typo in a hand-edited model is
+//! an error naming the key rather than a silently ignored line. The
+//! authoritative model has validated IDs, resolved references and linked
+//! semantics; this has none of that, because a parser that validated as it
+//! decoded could only report the first problem it met.
+//!
+//! Nothing outside this module may hold one of these values. `Linker` turns a
+//! `Document` into an `AppModel`, running every stable-ID constructor and every
+//! reference check, and reporting all of them at once as `Diagnostics`.
+//!
+//! `.jails/model.toml` is a *temporary compatibility input* — `.jails/model.jdl`
+//! is the authoring boundary, and never both — so this module is on the
+//! cutover's deletion list rather than a shape to extend. A new declaration
+//! belongs in the JDL v1 parser; adding it here as well would give a project
+//! two editable sources for one fact.
+
 use crate::model::{DependencyScope, Facet, SettingTarget};
 use crate::{ComponentKind, EndpointMethod, RequestFormat, UnitKind};
 use serde::Deserialize;

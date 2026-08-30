@@ -1,3 +1,21 @@
+//! `jails new` and `jails new-cli` — an empty directory to a working project.
+//!
+//! `new` wraps start.spring.io and is the one command that uses the network;
+//! `new-cli` writes a pom, an `App` and its test by hand and uses none. Both
+//! also seed `src/test/resources/fixtures/.gitkeep`, and both accept
+//! `--app <manifest>` to create the project and apply a whole manifest in one
+//! command.
+//!
+//! **Nothing on the apply path may call `Project::discover()`**, and this is
+//! where that rule was paid for. `discover` reads the *process* working
+//! directory, which during `new --app` is the parent of the project that was
+//! just created — so every route takes an explicit `Run` carrying an already
+//! resolved `Project` instead.
+//!
+//! Split by what is being written: `spring.rs` and `plain.rs` are the two
+//! project shapes, `gradle_project.rs` the third build system, `seed.rs` the
+//! files both shapes share, and `publish.rs` the write path.
+
 mod gradle_project;
 mod plain;
 mod publish;

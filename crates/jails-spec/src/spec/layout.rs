@@ -1,3 +1,10 @@
+//! Which subpackage each artifact kind lives in.
+//!
+//! The module's own comments below carry the reasoning; this header exists so
+//! the file has one. See `config::LAYERS_IN_ORDER`, which is the single owner
+//! of the layer list itself — this maps kinds onto those layers, and
+//! `Config::layers()` applies the project's renames on top.
+
 // Where each kind of artifact lives, relative to the project's base package.
 //
 // A generated project should look like one a person laid out, and nobody

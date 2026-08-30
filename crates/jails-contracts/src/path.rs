@@ -1,3 +1,18 @@
+//! `ProjectPath` — the only spelling of "somewhere in this project".
+//!
+//! One constructor, and it rejects rather than normalises: absolute, empty,
+//! trailing-slash, backslash, NUL, `.` and `..` are all errors. Normalising
+//! would be the friendlier choice and the wrong one, because these values are
+//! *keys* — a plan's preconditions, its operations and its tree manifest all
+//! address the same file by this string, and two spellings that normalise to
+//! one path would be two keys that address one file. The plan would then
+//! contain a contradiction the digest could not see.
+//!
+//! Refusing `..` here is also what makes `is_within` sound. Nothing below the
+//! compiler resolves symlinks or canonicalises against the disk, so a lexical
+//! containment check is only an escape check if the path cannot lexically
+//! escape in the first place.
+
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 

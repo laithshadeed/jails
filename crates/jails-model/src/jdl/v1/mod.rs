@@ -1,3 +1,25 @@
+//! JDL v1 — the authoring boundary.
+//!
+//! `.jails/model.jdl` is the file a reader edits, and `jdl-sol.md` is its
+//! specification. This module is the whole language: a lossless lexer, a CST
+//! that keeps every input byte, syntax-preserving edits, a formatter, and a
+//! parser that produces the same `source::Document` the TOML input does — so
+//! the linker below is shared and the two dialects cannot diverge about what a
+//! declaration *means*.
+//!
+//! **Lossless is the requirement, not a nicety.** Every CLI mutation is a
+//! syntax edit on this file: `g record`, `add`, `set`, `resource field rename`
+//! all land as an append or a splice into the reader's own document, which has
+//! their comments and their ordering in it. A parse that discarded trivia
+//! could only rewrite the file whole, and rewriting a file somebody edits is
+//! how a tool stops being trusted with it.
+//!
+//! `is_v1` decides which dialect a document is in, and it deliberately falls
+//! back to reading the first non-comment line when lexing fails: a document
+//! that says `jdl 1` and then has a syntax error must be reported as broken
+//! v1, never silently retried as pre-v1 — where the same bytes would mean
+//! something else.
+
 mod cst;
 mod edit;
 mod format;

@@ -1,3 +1,28 @@
+//! `PlanDraft` — what the compiler decided, before anything knows about disk.
+//!
+//! The compiler's output is *semantic desire*: a `RenderedTree` of managed
+//! files, the migrations to append, the reader-file intents, the build
+//! dependencies and features, the properties, and a `SemanticPlan` summary. It
+//! is deliberately not a plan. There are no digests here, no before-images and
+//! no preconditions, because those are facts about a workspace and the
+//! compiler has none — `jails-workspace::materialize` turns this into the
+//! exact `Plan` by pairing it with a snapshot.
+//!
+//! Two shapes here carry more weight than their size suggests.
+//!
+//! `Provenance` rides on every rendered file and is what makes regeneration a
+//! merge rather than an overwrite: `artifact_id` is the identity a BASE/THEIRS
+//! pair is matched by, so a file that *moves* is still the same artifact and
+//! its hand edits follow it. `ejection_id` is the separate question of what
+//! transfers together, and `ejectable` says whether transfer is offered at all
+//! — managed ABI is not.
+//!
+//! `BuildFeature` is keyed by what a plugin *does*, never by its coordinate,
+//! because `jacoco-maven-plugin` is not a name Gradle resolves and keying by
+//! it filed a Gradle project's claim under a plugin it does not have. Adding a
+//! variant is a compile error in the Gradle backend until that side exists,
+//! which is what replaced a run-time refusal for an unrecognised plugin.
+
 use crate::ProjectPath;
 use jails_model::AppModel;
 use serde::{Deserialize, Serialize};

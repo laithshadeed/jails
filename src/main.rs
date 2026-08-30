@@ -1,3 +1,21 @@
+//! The binary: the clap tree, and dispatch to it.
+//!
+//! **Argument parsing and nothing else.** Every subcommand's work lives in a
+//! crate below; what is here is the `clap` derive tree, the module list, and
+//! `main`'s translation of a `Failure` into an exit status. That boundary is
+//! what lets `jails commands` walk this same tree to describe the CLI, so
+//! there is no second list of subcommands, kinds or capabilities anywhere.
+//!
+//! Two conventions the tree depends on and neither is decorative: anything
+//! meant to be typed interactively uses `visible_alias`, because a hidden
+//! `alias` is invisible to `clap_complete`; and any argument with a closed
+//! value set is a `ValueEnum` rather than a `String` matched by hand, because
+//! that is the only shape a static completion list can be generated from.
+//!
+//! A failure exits non-zero through an *empty* `Err` where the command has
+//! already printed its own report, so `main` does not add a redundant
+//! `jails: ` line under a formatted one.
+
 mod app;
 mod arguments;
 mod canonical_support;

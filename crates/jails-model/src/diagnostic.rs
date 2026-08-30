@@ -1,3 +1,16 @@
+//! Model problems, as values with a path and a fix.
+//!
+//! A `Diagnostic` is a code, the canonical model path it is about, what is
+//! wrong, and what to do — the last of those is not optional, because a
+//! refusal that does not say what to do next is a refusal the reader has to
+//! guess at, which is the property `tests/architecture/` counts across the
+//! whole binary.
+//!
+//! `Diagnostics` is a *set* rather than a first error, and that is the point of
+//! separating this from `Result`: a parse or link pass reports everything it
+//! found in one go. Fixing one problem and being told about the next one is
+//! the experience this shape exists to avoid.
+
 use serde::Serialize;
 use std::fmt::{Display, Formatter};
 

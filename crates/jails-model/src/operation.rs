@@ -1,3 +1,25 @@
+//! `command`, `query`, `transition` and `event` — the four verbs.
+//!
+//! **Operations are compiler nodes, not manifest metadata.** A linked
+//! operation emits typed managed Java ABI and, with the `db` capability, an
+//! executable JDBC adapter; the HTTP surface is the `api` capability's
+//! rendering of the same node. That is the whole reason the kinds are closed:
+//! four verbs the compiler can reason about beat an open set it can only pass
+//! through.
+//!
+//! The split between the declaration and its `*Semantics` is deliberate and
+//! easy to lose. The declaration is what the author wrote — which entity, which
+//! fields, which route. The semantics are what the linker *resolved* — the
+//! parameter list with sources and constraints, the assignments, the emitted
+//! events, the ordering and limit. An emitter reads semantics; a formatter
+//! reads the declaration. Reading the wrong one is how a renderer and its test
+//! came to disagree about where a request's values come from.
+//!
+//! `Event` is the odd verb: it declares a payload rather than an action, and
+//! whether emitting it publishes in-process or stages a row in an outbox is
+//! not stated here at all — that follows from the model as a whole, and the
+//! compiler decides it.
+
 use crate::model::{LengthRange, TypeRef};
 use crate::{EndpointMethod, EntityId, FieldId, OperationId, RequestFormat};
 use serde::{Deserialize, Serialize};

@@ -1,3 +1,19 @@
+//! One resolved project: where it is, what builds it, and how it is laid out.
+//!
+//! `Project` is the parameter object `abstract.md` rung 1 asks for, and its
+//! existence is what the `root: &Path` ratchet is measuring the absence of: a
+//! root threaded through a call graph lets every level re-derive the same
+//! facts, differently. Resolving once and passing the value is the cure.
+//!
+//! It answers the questions the generators actually ask — the base package,
+//! the layer packages after `jails.toml`'s renames, the pom flavour, the SQL
+//! dialect, whether this is a multi-module build — and it answers them from
+//! the project rather than from a manifest wherever the two could disagree.
+//!
+//! **`base_package()` falls back to the shallowest `.java` file** rather than
+//! requiring `*Application.java`, which only Spring projects have. Requiring
+//! it made `add` fail on exactly the projects it is most useful for.
+
 use std::collections::HashSet;
 use std::env;
 use std::fs;

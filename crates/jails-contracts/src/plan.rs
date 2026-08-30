@@ -1,3 +1,27 @@
+//! The exact reviewed transition: `Plan`, its operations, and the
+//! content-addressed `PlanBundle` that carries their bytes.
+//!
+//! **This is the document confirmation is about.** `simplify-sol.md`'s fifth
+//! contract is that preview, export, confirmation and apply all refer to one
+//! digest and that apply never replans, which means every fact the executor
+//! needs has to be *in here* rather than re-derivable. Hence the shape: a
+//! `Plan` carries preconditions, a semantic summary and a list of typed
+//! operations, and a `PlanBundle` adds the `trees` and `blobs` those
+//! operations name by digest.
+//!
+//! Bytes live in `blobs` and are referenced by `ContentDigest` from every
+//! other position — an operation names an after-image, never carries one. Two
+//! operations writing the same content therefore share one entry, and the
+//! plan cannot disagree with itself about what a digest means.
+//!
+//! The operation set is closed on purpose. `PublishMergedTree` is the managed
+//! tree, `ReplaceModelFile`/`ReplaceStateFile` are jails' own, `AppendMigration`
+//! is forward-only history, and `PatchReaderFile`/`RemoveReaderFile` are the
+//! two ways anything reader-owned may move — each with a captured before-image.
+//! A new way to touch a project is a new variant here, which is a compile
+//! error in the executor until it is handled, rather than a new caller
+//! somewhere writing a file.
+
 use crate::{
     ContentDigest, EffectIntent, FileKind, FileMode, ProjectPath, SemanticPlan,
     SnapshotPreconditions,

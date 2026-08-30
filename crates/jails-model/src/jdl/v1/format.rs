@@ -1,3 +1,18 @@
+//! `jails model fmt` — whole-document layout, and the only pass allowed to do
+//! it.
+//!
+//! Ordinary CST edits are surgical by contract: they touch one span and leave
+//! every other byte alone. The formatter is the deliberate exception, so it is
+//! the one place that may canonicalize lexical spellings, line endings,
+//! indentation, blank-line runs, trailing space and the final newline.
+//!
+//! **Comment text is retained and declaration ordering is not changed.** Both
+//! are the reader's, and a formatter that reorders declarations makes every
+//! subsequent diff unreadable — which is how a formatter stops being run.
+//! Token wrapping and member reordering are held out for the same reason:
+//! each would be a judgement about the reader's document rather than about its
+//! whitespace.
+
 use super::{TokenKind, parse_cst};
 use crate::Diagnostics;
 use std::collections::BTreeSet;

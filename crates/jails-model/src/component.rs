@@ -1,3 +1,22 @@
+//! Declarations that are not entities: enums, sealed types, values, services,
+//! clients, jobs, DTOs and the rest.
+//!
+//! An entity is a stored thing with fields, a table and a lifecycle. A
+//! `Component` is everything else a project declares, and it is one type with
+//! a `kind` rather than a family of types because the *shape* they share is
+//! real — a label, a stable ID, parameters, optional `on`/`yields` references,
+//! optional variants, an optional route — and the differences are what the
+//! emitter does with them, not what the model holds.
+//!
+//! That is the decision worth defending, because the alternative keeps
+//! suggesting itself. Fifteen structs would let each kind state its own
+//! constraints in its own type; they would also mean fifteen parse arms,
+//! fifteen patch variants, fifteen linker arms and fifteen match arms in every
+//! pass that walks components — and a kind added without one of them would be
+//! a silent no-op rather than a compile error. `ComponentKind` being an enum
+//! is what lets `registry.rs` state, once and exhaustively, that every kind
+//! either emits or refuses.
+
 use crate::operation::{OperationRoute, ParameterBinding, ParameterConstraints};
 use crate::{ComponentId, ComponentVariantId, EntityId, OperationId, TypeRef};
 use serde::{Deserialize, Serialize};

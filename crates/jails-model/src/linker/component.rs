@@ -1,3 +1,22 @@
+//! Linking component declarations: names, references, routes and units.
+//!
+//! Takes the parsed `source::Component` map and produces validated
+//! `Component`s plus the `SourceUnit`s their emitters will be placed by,
+//! reporting every problem rather than the first.
+//!
+//! **Which fields a kind may carry is a table, not a pile of `if`s.**
+//! `registry.rs` states, per `ComponentKind`, whether `on`, `yields`, `route`
+//! and `source` are forbidden, optional or required, and the match over the
+//! enum is exhaustive — so a new kind does not compile until somebody has
+//! answered those questions for it. That is the difference between a
+//! declaration whose constraints were decided and one whose constraints are
+//! whatever the linker happened not to check.
+//!
+//! Names are projections (`upper_camel_case`, `lower_camel_case`) and
+//! collisions are refused here rather than downstream, because two components
+//! projecting to one Java type is a build failure in generated code the reader
+//! did not write.
+
 mod registry;
 
 use super::{Linker, collision};

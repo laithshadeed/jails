@@ -1,3 +1,15 @@
+//! `component <kind> <Name> { ... }`.
+//!
+//! The kind goes through `ComponentKind::parse` immediately, so an unspelled
+//! kind is refused at the word rather than surviving as a string that means
+//! nothing further down. That is the parser half of the closed set
+//! `linker/component/registry.rs` enforces the field rules for.
+//!
+//! What a kind may carry is deliberately *not* decided here. The parser reads
+//! the shape and the linker checks it against the registry, so there is one
+//! table of those rules rather than one table and a parser that half agrees
+//! with it.
+
 use super::{Parser, one_arg, reject_unknown_attributes, stable_fragment};
 use crate::source;
 use crate::{ComponentKind, Diagnostics};

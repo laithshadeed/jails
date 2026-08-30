@@ -1129,6 +1129,28 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
         ),
         (
             Ratchet {
+                name: "modules with no module doc",
+                rung: "audit.md A6.1 — written-down reasoning is the mechanism",
+                // 52 when the audit measured it, and the four canonical crates
+                // carried 32 of them -- including `materialize.rs`, the single
+                // boundary where a semantic patch becomes filesystem bytes.
+                // All 52 are written, so this is closed. It stays on the board
+                // because the gate is what keeps it closed: a new module with
+                // no doc is now a failing build rather than a slow return to
+                // one percent.
+                ceiling: 0,
+                target: 0,
+                why: "Written-down reasoning is how this project stops a decision being \
+                      silently reversed: 262 source comments cite `plan.md` by section, and \
+                      a closed item is recoverable only through `git log -p`. A module with \
+                      no doc is a module whose reasons live nowhere, and the audit found the \
+                      canonical crates at one percent comment density -- so a `serde` field \
+                      added to a compatibility projection read as an accepted design.",
+            },
+            modules_without_a_module_doc(src),
+        ),
+        (
+            Ratchet {
                 name: "inline Java bodies in `spring.rs` (`r#\"package `)",
                 rung: "10 — templates out of `spring.rs`",
                 ceiling: 0,

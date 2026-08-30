@@ -1,3 +1,15 @@
+//! Re-desiring the other intents that project the same logical type.
+//!
+//! `g field` changes one field spec, and a project can have several recorded
+//! intents rendering that same type — `record X` and `scaffold X` deliberately
+//! leave two owners, which is what lets destroying the scaffold keep the
+//! record. So the edit has to reach all of them or the project ends up with a
+//! record carrying the new component and a scaffold whose DTO does not.
+//!
+//! The reads are declared rather than performed here: what this module returns
+//! is a set of desired changes plus the `ReadDeclaration` that justifies them,
+//! so the plan stays a value and the capture stays the executor's.
+
 use super::*;
 
 pub(super) struct CompanionUpdates {

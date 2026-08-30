@@ -1,3 +1,14 @@
+//! `Status` and `Check` — the shape every `doctor` answer has.
+//!
+//! Four outcomes, and the fourth is the one that matters: `Skip` means the
+//! check could not run from here, and it is never counted as a failure. A
+//! report that turned "I could not look" into "this is fine" is worse than no
+//! report, because the reader stops looking too.
+//!
+//! Every `Fail` carries a `fix:` line — an integration test asserts it across
+//! the whole binary — for the same reason a `Diagnostic` does in `jails-model`:
+//! a refusal that does not say what to do next leaves the reader guessing.
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
     /// Checked, and fine.

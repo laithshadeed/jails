@@ -1,3 +1,23 @@
+//! `ModelPatch` — every way the model may change, as one closed enum.
+//!
+//! **Desired state is edited by applying one of these, never by rewriting the
+//! model in place.** A patch is what a CLI mutation lowers to, what `apply`
+//! validates against the current model, and what the exact plan records as its
+//! input, so a mutation that has no variant here is a mutation that cannot
+//! happen — which is what keeps `.jails/model.jdl` and the CLI from becoming
+//! two editable sources of truth.
+//!
+//! The variants are deliberately fine-grained: `ReplaceField` carries exactly
+//! one typed policy, `RemoveEntity` carries a storage decision, an index is a
+//! stable child rather than an entity rewrite. Coarser variants would be
+//! easier to build and would lose the evolution *intent* — retire versus drop,
+//! preserve-column versus single-cutover, which backfill file a required
+//! column is proved against — and that intent is the only thing that tells the
+//! compiler whether a migration is owed.
+//!
+//! `ReplaceModel` is the documented exception and says on itself why it exists
+//! and why nothing else may use it.
+
 use crate::id::{
     CapabilityId, ComponentId, DependencyId, EntityId, FieldId, IndexId, OperationId, SettingId,
     UnitId,

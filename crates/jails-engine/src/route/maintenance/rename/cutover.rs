@@ -1,3 +1,16 @@
+//! `rename resource --strategy single-cutover`: the rename that moves the
+//! table.
+//!
+//! The sibling strategy, preserve-table, is a projection change — the Java
+//! moves and the SQL does not. This one changes both, so it plans one forward
+//! migration alongside the source moves and has to name every SQL source that
+//! referred to the old table, in the same transition, or the project compiles
+//! against a table that no longer exists.
+//!
+//! Planning only: everything here returns a `CutoverPlan`, and nothing is
+//! written until the executor applies it. A destination collision or an
+//! overlapping edit refuses before any model, migration or source write.
+
 use super::*;
 
 pub(super) struct CutoverPlan {

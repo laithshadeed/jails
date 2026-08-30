@@ -1356,6 +1356,25 @@ pub(crate) fn owns_writing(path: &Path) -> bool {
             .any(|name| path.file_name().map(|file| file == *name).unwrap_or(false))
 }
 
+/// Modules whose file does not open with a `//!` doc comment.
+///
+/// **Read off the raw file, because `blank` erases the very thing being
+/// counted.** Same trap `inline_java_bodies` documents one row down: a gate
+/// measured on blanked source cannot see comments at all, and would report a
+/// clean zero whatever the tree said.
+///
+/// The first line rather than anywhere in the file: a module doc has to be the
+/// first item, so a `//!` further down is either inside a nested `mod` block
+/// or a compile error, and neither is this module having one.
+pub(crate) fn modules_without_a_module_doc(src: &[Source]) -> usize {
+    src.iter()
+        .filter(|file| {
+            let text = fs::read_to_string(&file.path).expect("the file was read once already");
+            !text.trim_start_matches(['\u{feff}']).starts_with("//!")
+        })
+        .count()
+}
+
 pub(crate) fn inline_java_bodies(src: &[Source]) -> usize {
     // Counted on the *raw* source: `blank` deliberately erases these bodies,
     // which is what makes them invisible to every other measurement here.

@@ -1,3 +1,19 @@
+//! JDL v1 to `source::Document`, plus the CST the same pass builds.
+//!
+//! **Two outputs from one walk, on purpose.** The `source::Document` is what
+//! the linker turns into an `AppModel`; the `DocumentCst` is what the edit
+//! functions splice into. Parsing twice would let the two disagree about where
+//! a declaration begins, and an edit that splices at the wrong boundary
+//! corrupts a file the reader owns.
+//!
+//! No resolution happens here — names stay strings and every reference is
+//! checked by the linker — so that a document with several bad references
+//! reports all of them at once instead of stopping at the first.
+//!
+//! Split by declaration shape: `declaration.rs` for the app block and the
+//! top-level statements, `component.rs`, `operation.rs`, `projection.rs` and
+//! `relation.rs` for the rest.
+
 use super::cst::{DeclarationCst, DocumentCst, MemberCst};
 use super::token::{Span, Token, TokenKind, problem};
 use crate::source;

@@ -784,27 +784,6 @@ version, and `doctor` does not check it.
 
 ## A6 — craft
 
-### A6.1 The comment density collapsed
-
-| crate | code | comment lines | % |
-|---|---:|---:|---:|
-| `jails-generate` | 23,871 | 4,773 | 19 |
-| `jails-project` | 13,172 | 2,483 | 18 |
-| `jails-prepare` | 10,266 | 1,509 | 14 |
-| `jails-model` | 13,925 | 199 | **1** |
-| `jails-compiler` | 8,328 | 85 | **1** |
-| `jails-workspace` | 3,779 | 37 | **0** |
-
-`crates/jails-workspace/src/materialize.rs` — the single boundary where a
-semantic patch becomes filesystem bytes — has no module doc comment at all.
-
-This is not style. Written-down reasoning is the mechanism this project uses
-to stop a decision being silently reversed: 262 source comments cite
-`plan.md` by section, `CLAUDE.md` records each trap with the failure that
-paid for it, and closed items are recoverable only through `git log -p`. A
-one-line "this is the compatibility projection; the rich value in `semantics`
-is not read yet" would have flagged A2.3 and A2.4 at review time.
-
 ### A6.2 Three functions carry what §20.1 specifies as nine layers
 
 ```
@@ -858,9 +837,9 @@ It is used only under `#[cfg(test)]` (`materialize.rs:673`), and
 Closed and deleted from this list: the original items 1–4 and 9, then **A1.1**
 (39/39 generators), **A3.11b** (layer renames), **A5.1** (canonical tree and
 exact-plan goldens), **A5.2** (compiler-lock golden), **A1.2b** (closed *by*
-A1.1), **A2.6** (pluralization), **A5.3** (the G1 corpus on JDL v1) and
-**A5.5** (G4 on the canonical executor). What remains is ordered by
-consequence.
+A1.1), **A2.6** (pluralization), **A5.3** (the G1 corpus on JDL v1), **A5.5**
+(G4 on the canonical executor) and **A6.1** (module docs, now a ratchet at
+zero). What remains is ordered by consequence.
 
 1. **A3.11 / A3.12** — the registry is built and the source-unit half is
    closed. What is left is the decision the registry made legible: reconcile
@@ -868,8 +847,7 @@ consequence.
    `derived` records and `model explain` so a convention is inspectable rather
    than implied. Every emitter added now picks a placement a later §9.7
    reconciliation has to move.
-2. **A6.1** — write the module docs while the reasons are still recoverable.
-3. **A2.2b** — decide whether pre-v1 JDL should carry declaration order, given
+2. **A2.2b** — decide whether pre-v1 JDL should carry declaration order, given
    that the mechanism would also give `.jails/model.toml` an ordering it is
    documented as lacking.
 

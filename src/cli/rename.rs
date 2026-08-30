@@ -1,3 +1,14 @@
+//! Arguments for `jails rename`, and the two policies it forces a caller to
+//! state.
+//!
+//! `RenameStrategy` and `StoragePolicy` are `ValueEnum`s rather than flags
+//! because each names a decision with no safe default: preserve-table is a
+//! projection change with no migration, single-cutover changes the SQL
+//! explicitly, and rolling is a campaign. Retiring a stored entity is the same
+//! shape — preserve keeps an inactive semantic node, drop appends a forward
+//! migration — so the caller says which, and jails never guesses which of two
+//! irreversible readings was meant.
+
 use clap::Subcommand;
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]

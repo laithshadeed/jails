@@ -1,3 +1,9 @@
+//! Arguments for `jails history` and `jails history show`.
+//!
+//! Argument shapes only — the receipts themselves are `jails-commit`'s, and
+//! reading them is `history_command.rs`'s. Kept beside the rest of the clap
+//! tree so `jails commands` walks one structure to describe the whole surface.
+
 /// Arguments for authenticated receipt history.
 #[derive(clap::Args)]
 pub(crate) struct HistoryArgs {

@@ -1,3 +1,24 @@
+//! `WorkspaceSnapshot` — every external fact, captured once.
+//!
+//! **The second contract, and the one the compiler's purity rests on.** The
+//! compiler may not read the filesystem, the environment or a subprocess; it
+//! reads this. So anything the compiler needs to know about the world outside
+//! the model has to appear here as a value — the build system, the Java
+//! release, the Boot version, the declared dependencies, the reader's layer
+//! renames, the captured file bytes, the migration history, the external type
+//! index. A fact that is missing is not a fact the compiler asks for later; it
+//! is a fact the compiler cannot use.
+//!
+//! That is why the type is wide and boring. Each field is a question somebody
+//! wanted to answer inside a pass and could not, answered at the boundary
+//! instead: `maven_wrapper` is the clearest example, and its own comment says
+//! what went wrong without it.
+//!
+//! `SnapshotPreconditions` is the other half — not what the compiler read, but
+//! what the executor must find unchanged. `ContentDigest` is how both halves
+//! name content, and it too has one constructor that refuses rather than
+//! repairs, for `path.rs`'s reason: these are keys.
+
 use crate::{Layout, ProjectPath, RenderedTree};
 use jails_model::AppModel;
 use serde::{Deserialize, Serialize};

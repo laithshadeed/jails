@@ -1,3 +1,23 @@
+//! `AppModel` — desired-state authority, and the only thing the compiler reads.
+//!
+//! **The first of `simplify-sol.md`'s five contracts lives here**: this value
+//! is what the application *should* be, stable IDs carry identity, and every
+//! Java type, SQL table, column, route and property name is a projection off
+//! a label. Nothing in this struct describes a file, a path or a build tool —
+//! those are the compiler's answers to what is declared here, and keeping them
+//! out is what makes one model render a Maven project and a Gradle one.
+//!
+//! Everything is a `BTreeMap` keyed by stable ID, which is three properties at
+//! once: identity is the key rather than a position, iteration is
+//! deterministic so the compiler's output is, and a rename touches a label
+//! while the key stays put.
+//!
+//! Mutation is `model_apply.rs`'s (re-exported here as `mutation`), applying
+//! one `ModelPatch` at a time and refusing rather than repairing. There is no
+//! setter path: a caller that could edit a field in place could edit it into a
+//! state no patch describes, and the plan's recorded input would then no
+//! longer explain the model it produced.
+
 #[path = "model_apply.rs"]
 mod mutation;
 

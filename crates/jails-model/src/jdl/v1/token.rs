@@ -1,3 +1,14 @@
+//! The lossless lexer: every byte of the document ends up in a token.
+//!
+//! Trivia is a token kind rather than something skipped. That is what lets
+//! `cst.rs` reconstruct the source exactly and lets an edit replace one
+//! declaration's span while every comment and blank line around it stays
+//! byte-identical.
+//!
+//! `Span` is a byte range into the original input, so a diagnostic can point at
+//! the source the reader wrote rather than at a re-rendered approximation of
+//! it. Every token carries one; nothing here reformats on the way through.
+
 use crate::{Diagnostic, Diagnostics};
 
 /// A UTF-8 byte range in the original JDL document.

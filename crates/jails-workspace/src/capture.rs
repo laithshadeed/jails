@@ -1,3 +1,28 @@
+//! The one place jails looks at a project, and the only place it may.
+//!
+//! `WorkspaceSnapshot` is `simplify-sol.md`'s second contract and this module
+//! is where it is filled in: the build system, the release, the Boot version,
+//! the declared dependencies, the layer renames, the bytes of every file the
+//! plan could touch, the migration history, and the *accepted* state from
+//! `.jails/compiler.lock.json`. Everything above this line is a pure function
+//! of what comes out of here, which is what makes the compiler's determinism
+//! checkable at all.
+//!
+//! **Capture must be over-inclusive, and the failure when it is not is
+//! silent.** An exact plan may only touch a path it captured a before-image
+//! for, so a path this module did not read is a path the executor will refuse
+//! to write — not with a bug report, but with a plan that quietly omits it.
+//! That is why the reader roots are walked whole and why callers hand in extra
+//! `reader_paths` for files a particular mutation might reach.
+//!
+//! **The lock is read, never repaired.** Two schema versions decode — v1 has a
+//! model, v2 adds the compiler version and the accepted projection — and an
+//! envelope this binary cannot read is an error rather than an absence, for
+//! `crates/jails-state/src/compat.rs`'s reason: treating unreadable state as
+//! empty would offer to regenerate a project's whole contents. The accepted
+//! projection is BASE for every later three-way merge, so losing it does not
+//! lose a file, it loses every hand edit in one.
+
 use jails_contracts::{
     BuildSystem, CapturedFile, ContentDigest, DirectoryPrecondition, FilePrecondition, Layout,
     MigrationHistory, MigrationRecord, ProjectFacts, ProjectPath, RenderedTree,

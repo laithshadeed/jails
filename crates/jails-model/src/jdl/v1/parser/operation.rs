@@ -1,3 +1,16 @@
+//! `command`, `query`, `transition` and `event` declarations.
+//!
+//! The four verbs share a parser because they share a grammar — a name, a
+//! parameter list, attributes, an optional block — and differ in which block
+//! members they accept: `emit` for a command, `limit` and `order by` for a
+//! query, `update` for a transition. `Kind` carries that difference so the
+//! shared path stays shared and the differences are one match each.
+//!
+//! Nothing is resolved: the entity, the fields and the emitted event stay
+//! strings until the linker turns them into IDs. A parser that resolved as it
+//! read could only report the first unknown name, and an operation typically
+//! names several.
+
 use super::{
     Parser, flag_attribute, length, one_arg, one_raw_arg, reject_unknown_attributes,
     stable_fragment,

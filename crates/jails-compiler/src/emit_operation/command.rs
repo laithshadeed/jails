@@ -1,3 +1,32 @@
+//! The JDBC adapter behind a linked `command`.
+//!
+//! A command is the write side: one `insert ... returning`, built from the
+//! entity's own column projection so the insert list, the bind list and the row
+//! mapper cannot drift apart. Everything it needs is in the model — which
+//! fields are inputs, which are assigned constants, which come from the request
+//! context, and which are minted — so nothing here guesses a value the reader
+//! did not declare.
+//!
+//! **Emitting is refusing, quite often.** A field the operation names and the
+//! entity does not, an entity with no primary key, an assignment whose value
+//! has no SQL rendering: each is an error here rather than Java that fails
+//! later, because the compiler is the last place that still knows *why* the
+//! shape was asked for. A generated adapter that compiles and does the wrong
+//! thing is the one outcome worse than a refusal.
+//!
+//! The order the insert value for a field is chosen in is the interesting
+//! part, and it is a ladder rather than a table: a declared assignment wins,
+//! then a `@scope` field (which comes from the request context, never from the
+//! caller's body), then `updated`, then a `uuid7` default the adapter mints
+//! client-side, then any other default, which is *omitted* so the database
+//! supplies it. Reordering those arms silently changes where a value comes
+//! from.
+//!
+//! Event publication is not this module's — `emit_operation::publications`
+//! decides whether an emitted event is published in-process or staged in an
+//! outbox, because that answer belongs to the operation as a whole rather than
+//! to the statement.
+
 use super::{
     assignment_sql_value, context_parameter, context_value, operation_file, resolve_fields,
     stored_entity,

@@ -1,3 +1,24 @@
+//! `test`, `build`, `clean`, `run`, `watch` — the commands that shell out to
+//! the build tool.
+//!
+//! Every one of these needs Maven, so the root is resolved through
+//! `require_maven` and the refusal happens once here rather than as a
+//! confusing failure inside a subprocess. `mvnd` is preferred for real use and
+//! probed before it is chosen: it writes a registry under the Maven user home
+//! *before* Maven runs, so a read-only home kills it with an exit status
+//! indistinguishable from a failing build.
+//!
+//! **`mvn spring-boot:run` exits 0 over a failed startup**, because devtools
+//! runs `main` on its own thread and catches the exception there. So the Spring
+//! path pipes the child's output, scans it for `why::FATAL_MARKERS` and
+//! explains the failure inline — the one edge from this crate back down into
+//! `jails-report`. Piping costs the child its terminal, which is why the same
+//! path passes `-Dstyle.color=always` and `spring.output.ansi.enabled=always`;
+//! drop those and `jails run` goes monochrome.
+//!
+//! `run` and `watch` start compose services first when a `compose.yaml` is
+//! present, and only then.
+
 use crate::generate::find_project_root;
 use jails_support::Result;
 use std::fs;

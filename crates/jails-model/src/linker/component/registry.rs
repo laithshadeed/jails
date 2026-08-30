@@ -1,3 +1,15 @@
+//! One row per `ComponentKind`: which fields it may, must and must not carry.
+//!
+//! **A table, and exhaustive over the enum.** The linker used to answer these
+//! questions inline, which meant a kind added without an arm was silently
+//! permissive — `on` accepted where it means nothing, a route ignored, a
+//! required reference not required. Here the compiler refuses to build until
+//! the new kind has a row.
+//!
+//! `Presence` is three-valued for the same reason: `Optional` has to be a
+//! deliberate answer rather than the absence of one, or the table decays back
+//! into "whatever nobody thought about is allowed".
+
 use super::super::Linker;
 use crate::source;
 use crate::{ComponentKind, EndpointMethod};

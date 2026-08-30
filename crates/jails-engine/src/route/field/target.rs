@@ -1,3 +1,11 @@
+//! Which recorded artifact a field is being added to.
+//!
+//! Read from the store, never off disk, and the function below says why: a
+//! record's Java cannot state what its components were *declared* as, because
+//! `@pk`, `@unique` and `@index` change the DDL and nothing about the type.
+//! Recovering a spec from source would silently drop them and produce a table
+//! missing the key somebody believed they had asked for.
+
 use super::*;
 
 /// The artifact this field is being added to, as the store records it.

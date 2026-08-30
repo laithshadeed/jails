@@ -1,3 +1,17 @@
+//! `use` — which facets an entity gets, and which entities a top-level `use`
+//! applies to.
+//!
+//! Two forms with one member parser: nested inside an entity block it selects
+//! that entity, so a `for`/`except` selector there is refused rather than
+//! silently ignored — the nesting has already answered the question the
+//! selector would be asking, and accepting both would let one declaration say
+//! two different things.
+//!
+//! A projection is `simplify-sol.md`'s "names are projections" made
+//! author-visible: `use repo` does not say which files exist, it says this
+//! entity has a repository, and the compiler decides what that renders to on
+//! this platform and build system.
+
 use super::*;
 
 impl Parser<'_> {

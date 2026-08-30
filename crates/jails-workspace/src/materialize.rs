@@ -1,3 +1,33 @@
+//! Where semantic desire becomes an exact, reviewable transition.
+//!
+//! **The single boundary between the compiler and the filesystem**, and the
+//! seam `simplify-sol.md`'s fifth contract is drawn along: a `PlanDraft` says
+//! what should be true, a `WorkspaceSnapshot` says what is, and the `PlanBundle`
+//! that comes out of here is the exact difference — preconditions, typed
+//! operations, content-addressed trees and blobs, and one digest that preview,
+//! export, confirmation and apply all refer to. Apply never replans, so
+//! anything the executor needs must be decided here.
+//!
+//! Three properties are load-bearing and each has a test rather than a
+//! comment:
+//!
+//! - **Equal snapshot, patch and compiler version give an equal digest.**
+//!   Every other guarantee is downstream of it — a reviewed digest and an
+//!   applied digest would otherwise be related only by hope. The digest covers
+//!   the compiler version deliberately, so a compiler change is a different
+//!   plan rather than the same plan meaning something else.
+//! - **The bundle verifies itself.** `verify_bundle` recomputes every digest
+//!   before the executor is allowed to touch anything, so a truncated or
+//!   edited plan file fails at the boundary instead of halfway through a tree.
+//! - **The persisted shape is goldened**, both the compiler lock and the plan
+//!   itself. Byte-compared, because a round-trip goes through whatever the
+//!   serializer currently does and can never notice that it moved.
+//!
+//! Regeneration is a merge, not an overwrite: the accepted projection in the
+//! lock is BASE, the live tree is OURS, this draft is THEIRS. A clean merge is
+//! frozen into the plan and the lock advances to THEIRS, so hand edits stay
+//! deltas; a conflict refuses before any write.
+
 use jails_contracts::{
     CanonicalModelPatch, ContentDigest, DocumentIntent, FileImageRef, FileKind, FileMode,
     ModelFileUpdate, Plan, PlanBundle, PlanDraft, PlannedOperation, ProjectPath, TreeEntry,

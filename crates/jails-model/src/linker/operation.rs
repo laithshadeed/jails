@@ -1,3 +1,19 @@
+//! Linking the four verbs: resolving every reference an operation names.
+//!
+//! An authored operation is labels — an entity, some field names, maybe a
+//! route. A linked one is IDs, with each parameter carrying where its value
+//! comes from and what constrains it. That resolution happens once, here, so
+//! no emitter has to do it again and no two emitters can do it differently.
+//!
+//! Split three ways by what the work is: this module walks the declarations,
+//! `semantics.rs` resolves the parts that become `*Semantics`, and
+//! `field_rules.rs` holds the cross-cutting checks that need the whole model
+//! (which fields an operation may touch given the capabilities present).
+//!
+//! Errors accumulate into the `Linker` rather than returning early, which is
+//! the same rule `Diagnostics` exists for: a model with four unresolved names
+//! should report four.
+
 mod field_rules;
 mod semantics;
 

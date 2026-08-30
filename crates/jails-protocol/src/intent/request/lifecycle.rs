@@ -1,3 +1,16 @@
+//! The lifecycle requests: retire, rename, evolve a field.
+//!
+//! These are the intents whose *policy* cannot be defaulted, so the policy is
+//! in the type. `StorageRetirement` has exactly two arms and `force` is
+//! deliberately not one of them: force means "the bytes are not jails'", which
+//! is a different question from preserve-versus-drop and must not be able to
+//! answer it. A rename carries its strategy, a field change carries exactly
+//! one typed evolution.
+//!
+//! Every value here has one constructor and every wire decoder calls it, so a
+//! policy rejected at the CLI cannot arrive through a recovered journal
+//! instead — the rule the whole crate is built on.
+
 use crate::Result;
 use crate::application::RoutePath;
 use crate::declaration::{FieldSpec, FieldType};

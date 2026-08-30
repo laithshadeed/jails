@@ -1,3 +1,14 @@
+//! A field's name, holding both renderings a field has.
+//!
+//! The type's own doc below carries the defect this exists for; the header is
+//! here so the file has one. The rule in one line: **the column is the normal
+//! form and the Java name is derived from it**, which is what makes `user_id`,
+//! `userId` and `user_ID` one field rather than three.
+//!
+//! Owning the derivation in the type rather than in each caller's `format!` is
+//! the point — three call sites deriving it separately is exactly how the two
+//! spellings came to agree about SQL and disagree about Java.
+
 use super::{Name, SqlName};
 use crate::Result;
 use jails_support::codec::{Codec, Decoder, Encoder};

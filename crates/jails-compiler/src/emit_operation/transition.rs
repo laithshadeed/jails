@@ -1,3 +1,22 @@
+//! The JDBC adapter behind a linked `transition`.
+//!
+//! A transition is the narrow write: `update ... set ... where <selector>`,
+//! where the selector is the entity's primary key plus any guard the
+//! declaration named. Both halves are resolved against the model, so a
+//! transition cannot update a column the entity does not have and cannot
+//! select on one either.
+//!
+//! **The selector is the whole safety property.** An `update` whose `where`
+//! clause silently lost a term still compiles, still runs, and rewrites every
+//! row in the table. So the selector is built from typed field references and
+//! the primary key is required rather than inferred; there is no path here
+//! where an empty selector renders.
+//!
+//! Constant assignments and input assignments are kept apart deliberately: a
+//! declared constant is the model's, an input is the caller's, and rendering
+//! them through one list would let a request supply a value the declaration
+//! said was fixed.
+
 use super::{
     assignment_sql_value, context_parameter, context_value, java_string, operation_file,
     resolve_fields, scopes, stored_entity,
