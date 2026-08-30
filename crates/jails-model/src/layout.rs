@@ -117,6 +117,7 @@ pub enum Package {
     Web,
     Api,
     Messaging,
+    Clients,
     Testkit,
     Adapters,
     AdaptersJdbc,
@@ -134,7 +135,7 @@ pub enum Package {
 
 impl Package {
     /// Declaration order, so `model explain` and this table cannot drift.
-    pub const ALL: [Package; 20] = [
+    pub const ALL: [Package; 21] = [
         Self::Base,
         Self::Domain,
         Self::DomainEvents,
@@ -142,6 +143,7 @@ impl Package {
         Self::Web,
         Self::Api,
         Self::Messaging,
+        Self::Clients,
         Self::Testkit,
         Self::Adapters,
         Self::AdaptersJdbc,
@@ -173,6 +175,7 @@ impl Package {
             Self::Web => (Some(Head::Layer(Layer::Web)), ""),
             Self::Api => (Some(Head::Layer(Layer::Api)), ""),
             Self::Messaging => (Some(Head::Layer(Layer::Messaging)), ""),
+            Self::Clients => (Some(Head::Layer(Layer::Clients)), ""),
             Self::Testkit => (Some(Head::Layer(Layer::Testkit)), ""),
             Self::Adapters => (Some(Head::Layer(Layer::Adapters)), ""),
             Self::AdaptersJdbc => (Some(Head::Layer(Layer::Adapters)), "jdbc"),

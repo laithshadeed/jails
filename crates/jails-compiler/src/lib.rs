@@ -4,6 +4,7 @@
 //! transaction API. Equal snapshots and patches produce equal drafts.
 
 mod emit_capability;
+mod emit_component;
 mod emit_dto;
 mod emit_enum;
 mod emit_factory;
@@ -392,6 +393,13 @@ impl Compiler {
                 dependencies.push(required);
             }
         }
+        for required in emit_component::dependencies(&next_model) {
+            if !dependencies.iter().any(|declared| {
+                declared.group == required.group && declared.artifact == required.artifact
+            }) {
+                dependencies.push(required);
+            }
+        }
         if next_model
             .entities
             .values()
@@ -656,10 +664,10 @@ const fn component_kind_is_emitted(kind: jails_model::ComponentKind) -> bool {
         // brief is captured as an exact plan input, so changing the file
         // after review refuses the apply. A backend need not write a file.
         Kind::Cases => true,
+        Kind::Client => true,
         Kind::Handler
         | Kind::Command
         | Kind::Cli
-        | Kind::Client
         | Kind::Fetcher
         | Kind::Job
         | Kind::HttpWorkflow
@@ -684,7 +692,10 @@ fn property_entries(
         .filter(|setting| setting.target == target)
         .map(|setting| (setting.key.clone(), setting.value.clone()))
         .collect::<BTreeMap<_, _>>();
-    for property in emit_capability::properties(model, target, spring_boot) {
+    for property in emit_capability::properties(model, target, spring_boot)
+        .into_iter()
+        .chain(emit_component::properties(model, target))
+    {
         if let Some(reader_value) = entries.get(&property.key)
             && reader_value != &property.value
         {
@@ -720,7 +731,7 @@ mod tests {
             .filter(|kind| super::component_kind_is_emitted(**kind))
             .count();
         assert_eq!(ComponentKind::ALL.len(), 23);
-        assert_eq!(emitted, 9, "nine kinds have a compiler backend today");
+        assert_eq!(emitted, 10, "ten kinds have a compiler backend today");
 
         // The refusal is reachable, not merely written down.
         let model = jails_model::parse_jdl(

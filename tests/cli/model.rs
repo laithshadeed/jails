@@ -877,7 +877,6 @@ app Notes {
         "handler",
         "command",
         "cli",
-        "client",
         "fetcher",
         "job",
         "http-workflow",
@@ -10531,4 +10530,113 @@ fn legacy_import_writes_jdl_v1_with_both_new_axes_materialized() {
         "{model_source}"
     );
     assert!(model_source.contains("@map(title)"), "{model_source}");
+}
+
+/// `g client` on a canonical project, which was a refusal until its emitter
+/// landed.
+///
+/// The three files are one declaration and the two the project cannot start
+/// without are the ones easiest to forget: the `spring-boot-starter-restclient`
+/// dependency and the base-url property. `@ImportHttpServices` builds the
+/// proxies without either, so the project compiles, starts, and dies on the
+/// first call with `URI with undefined scheme` -- a message that names neither.
+#[test]
+fn canonical_client_emits_its_registration_dependency_and_base_url() {
+    let root = temp_dir("canonical-client");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+         platform spring\n  build maven\n  storage none\n}\n",
+    )
+    .unwrap();
+
+    let generated = jails_cmd(&root, None)
+        .args(["g", "client", "Ledger"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+
+    let source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(source.contains("component client Ledger"), "{source}");
+
+    for relative in [
+        ".jails/generated/main/java/com/example/demo/clients/LedgerClient.java",
+        ".jails/generated/main/java/com/example/demo/clients/LedgerClientConfig.java",
+        ".jails/generated/test/java/com/example/demo/clients/LedgerClientTest.java",
+    ] {
+        assert!(root.join(relative).exists(), "`{relative}` was not written");
+    }
+
+    let interface = fs::read_to_string(
+        root.join(".jails/generated/main/java/com/example/demo/clients/LedgerClient.java"),
+    )
+    .unwrap();
+    assert!(
+        interface.contains("package com.example.demo.clients;"),
+        "{interface}"
+    );
+    assert!(
+        interface.contains("public interface LedgerClient"),
+        "{interface}"
+    );
+    // The collection route the frontend materialized, matching what the
+    // legacy generator defaults to rather than a second guess here.
+    assert!(
+        interface.contains("@GetExchange(\"/ledgers\")"),
+        "{interface}"
+    );
+    assert!(source.contains("route GET \"/ledgers\""), "{source}");
+    // Nothing of the template's own placeholder syntax survives into the Java.
+    assert!(!interface.contains("{{"), "{interface}");
+
+    let config = fs::read_to_string(
+        root.join(".jails/generated/main/java/com/example/demo/clients/LedgerClientConfig.java"),
+    )
+    .unwrap();
+    assert!(
+        config.contains("@ImportHttpServices(group = \"ledger\", types = LedgerClient.class)"),
+        "{config}"
+    );
+
+    // The half that is silent when it is missing.
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("spring-boot-starter-restclient"), "{pom}");
+    // The properties go into the reader's own file, spliced key by key -- they
+    // are a `ReconcileProperties` document intent, not a managed file.
+    let properties =
+        fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
+    assert!(
+        properties.contains("spring.http.serviceclient.ledger.base-url=https://example.invalid"),
+        "{properties}"
+    );
+    assert!(
+        properties.contains("spring.http.serviceclient.ledger.connect-timeout=2s"),
+        "{properties}"
+    );
+    assert!(
+        properties.contains("spring.http.serviceclient.ledger.read-timeout=5s"),
+        "{properties}"
+    );
+
+    // Compiling again writes the same bytes: the emitter is a function of the
+    // model, not of what it found on disk.
+    let synced = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(
+            root.join(".jails/generated/main/java/com/example/demo/clients/LedgerClient.java")
+        )
+        .unwrap(),
+        interface
+    );
 }

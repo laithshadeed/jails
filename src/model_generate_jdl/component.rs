@@ -33,7 +33,21 @@ pub(super) fn v1_declaration(
     if let Some(yields) = &args.strategy_yields {
         members.push(format!("  yields {}", reference_label(model, yields)));
     }
-    if let Some(path) = &args.path {
+    // A client with no `--path` gets the collection route written down, not
+    // required of the reader and not invented later by the compiler. The
+    // legacy generator defaults it to `/{plural}` and renders a collection
+    // interface -- `findAll` and `findById` -- so refusing the command here
+    // would reject one that works on every legacy project. It is materialized
+    // rather than defaulted downstream because `jdl-sol.md` §3.1 rule 4 makes
+    // a convention part of the language, not something a compiler applies out
+    // of sight.
+    let default_path = (args.kind == ArtifactKind::Client && args.path.is_none()).then(|| {
+        format!(
+            "/{}",
+            jails_generate::sql::table_name(name).replace('_', "-")
+        )
+    });
+    if let Some(path) = args.path.as_ref().or(default_path.as_ref()) {
         let default_method = if args.kind == ArtifactKind::Webhook {
             "POST"
         } else {
@@ -351,7 +365,14 @@ pub(super) fn reject_v1_options(args: &GenerateArgs, kind: ComponentKind) -> Res
         kind,
         K::Controller | K::Handler | K::Client | K::Webhook | K::Socket
     );
-    let requires_route = kind == K::Client;
+    // **A client with no `--path` gets the collection route written down, not
+    // required and not guessed later.** The legacy generator defaults it to
+    // `/{plural}` and the interface it renders is a collection -- `findAll`
+    // and `findById` -- so requiring the flag here would refuse a command that
+    // works on every legacy project, for a default that is already documented.
+    // It is materialized in `v1_declaration` instead, because `jdl-sol.md`
+    // §3.1 rule 4 makes a convention part of the language rather than
+    // something a compiler applies out of sight.
     let accepts_bind = matches!(kind, K::Controller | K::Webhook);
     let unrelated = args.timestamps
         || args.default_literal.is_some()
@@ -388,12 +409,6 @@ pub(super) fn reject_v1_options(args: &GenerateArgs, kind: ComponentKind) -> Res
             "component {} requires `--yields`.\n       fix: name its output semantic symbol",
             kind.label()
         )));
-    }
-    if requires_route && args.path.is_none() {
-        return Err(Failure::Told(
-            "component client requires an outbound `--path`.\n       fix: pin the remote method and route"
-                .to_string(),
-        ));
     }
     if (args.method.is_some() || args.consumes.is_some()) && args.path.is_none() {
         return Err(Failure::Told(

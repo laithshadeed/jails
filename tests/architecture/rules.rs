@@ -374,6 +374,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     // Pure lowering: semantic world -> desired artifact tree.
     ("jails-compiler", "emit_dto", 4),
     ("jails-compiler", "emit_capability", 4),
+    ("jails-compiler", "emit_component", 4),
     ("jails-compiler", "emit_enum", 4),
     ("jails-compiler", "emit_factory", 4),
     ("jails-compiler", "emit_http", 4),

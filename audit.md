@@ -88,16 +88,25 @@ looked and still worth removing.
 
 ## A1 — coverage
 
-### A1.1 Twenty of thirty-nine generators, twenty-one of twenty-five capabilities
+### A1.1 Twenty-one of thirty-nine generators
 
 `src/canonical_support.rs` is the authority and is honest code: an exhaustive
 match that stops compiling when a clap variant is added. Its own test pins
-20/39 and 21/25.
+21/39. Capabilities are closed at 25/25.
 
-Still legacy: `migration`, `handler`, `command`, `cli`, `cases`, `client`,
-`fetcher`, `job`, `http-workflow`, `association`, `http-sink`,
-`idempotency`, `auth`, `webhook`, `search`, `durable-job`, `socket`,
-`presence`, `seed`; and `format`, `ci`, `docker`, `k8s`.
+Still legacy: `migration`, `handler`, `command`, `cli`, `cases`, `fetcher`,
+`job`, `http-workflow`, `association`, `http-sink`, `idempotency`, `auth`,
+`webhook`, `search`, `durable-job`, `socket`, `presence`, `seed`.
+
+**`client` was the first of the framework-shaped component kinds and its
+emitter is the pattern the rest follow.** They do not fit `SourceUnit` --
+`linker::component` projects the eight unit-shaped kinds onto one and returns
+`None` for the rest -- because one declaration is several files plus a build
+dependency plus properties. `jails-compiler`'s `emit_component` reads
+`model.components` directly and contributes to all three, and its Java bodies
+are the same `templates/spring/*.java` files the legacy generator renders, for
+the reason `CLAUDE.md` gives for the project files: two copies drift on the
+details nobody re-reads.
 
 ### A1.2b The CST editor for the unserved kinds has no test through the CLI
 

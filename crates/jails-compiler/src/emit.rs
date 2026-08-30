@@ -9,7 +9,7 @@
 //! field on [`Observed`] and a line in [`Observed::of`], rather than another
 //! parameter threaded through four signatures.
 
-use crate::{CompileError, emit_capability, emit_http, emit_java, emit_operation};
+use crate::{CompileError, emit_capability, emit_component, emit_http, emit_java, emit_operation};
 use jails_contracts::{ProjectPath, RenderedTree, WorkspaceSnapshot};
 
 /// The workspace facts emission needs and a pure compiler may not observe.
@@ -36,6 +36,7 @@ pub(crate) fn emit(
     emit_capability::lower_and_emit(model, output, observed)?;
     emit_java::lower_and_emit(model, output, observed.spring_boot.is_some())?;
     emit_operation::lower_and_emit(model, output)?;
+    emit_component::lower_and_emit(model, output)?;
     emit_http::lower_and_emit(model, output)
 }
 
