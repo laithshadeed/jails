@@ -983,6 +983,72 @@ mod tests {
         );
     }
 
+    /// A renamed layer is renamed for *every* artifact, not most of them.
+    ///
+    /// `audit.md` A3.11b. `jails.toml`'s `[layout]` is the reader saying where
+    /// their code lives, and it reached entities and capabilities but not
+    /// source units: `linker::unit` built a package as `{base}.domain` before
+    /// the layout was on the model at all, and `emit_unit` compared against
+    /// that same spelling. So a project that calls its domain `core` got
+    /// `core` for its records and `domain` for its sealed types -- two
+    /// packages for one layer, in one tree, with nothing to report it.
+    ///
+    /// Nothing in the suite covered a renamed layout in either direction,
+    /// which is why it survived the registry that was built to find it.
+    #[test]
+    fn a_renamed_layer_moves_source_units_and_not_only_entities() {
+        let model = jails_model::parse_jdl(
+            "jdl 1\napp Demo {\n pkg com.example.demo\n java 26\n platform spring\n \
+             build maven\n storage postgres\n}\nentity Note {\n use repo\n id: uuid @pk\n \
+             title: string\n}\n\ncomponent sealed Outcome {\n  variant Accepted\n  \
+             variant Rejected\n}\n\ncomponent service Notifier {\n}\n",
+        )
+        .unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
+        snapshot.project.layout =
+            jails_model::Layout::parse("[layout]\ndomain = \"core\"\nservice = \"usecases\"\n")
+                .unwrap();
+        let plan = Compiler::compile(&snapshot, None).expect("a renamed layout still compiles");
+        let paths = plan
+            .generated
+            .files
+            .keys()
+            .map(|path| path.as_str().to_string())
+            .collect::<Vec<_>>();
+        let holding = |needle: &str| {
+            paths
+                .iter()
+                .filter(|path| path.contains(needle))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        // The entity already honoured the rename.
+        assert!(
+            holding("/core/Note.java").len() == 1,
+            "the record did not move to the renamed layer: {paths:?}"
+        );
+        // The source units did not, and that is the defect.
+        assert!(
+            holding("/core/Outcome.java").len() == 1
+                && holding("/core/OutcomeTest.java").len() == 1,
+            "a sealed type or its test ignored the layer rename: {paths:?}"
+        );
+        assert!(
+            holding("/usecases/NotifierService.java").len() == 1
+                && holding("/usecases/NotifierServiceTest.java").len() == 1,
+            "a service and its test did not both move with the rename: {paths:?}"
+        );
+        // ... and nothing was left behind under the default names, which is
+        // the half that makes the tree incoherent rather than merely oddly
+        // placed.
+        assert!(
+            holding("/domain/").is_empty() && holding("/service/").is_empty(),
+            "artifacts remain under the pre-rename layer names: {paths:?}"
+        );
+    }
+
     /// A durable job runs an existing command later, and proves a retry is
     /// not a repeat.
     ///

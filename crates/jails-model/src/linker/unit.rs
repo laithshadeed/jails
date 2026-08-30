@@ -145,13 +145,32 @@ pub(super) fn link(
         } else {
             None
         };
-        let relative_package = unit.package.unwrap_or_else(|| match unit.kind {
-            UnitKind::Service => "service".to_string(),
-            UnitKind::Sealed | UnitKind::Strategy => "domain".to_string(),
-            UnitKind::Controller => "web".to_string(),
+        // The derived layer, kept as the layer rather than as its default
+        // spelling. The linker has no `[layout]` -- it is a captured fact that
+        // reaches the model one pass later -- so a string decided here is a
+        // string that cannot be renamed, which is what put a sealed type in
+        // `domain` on a project whose records were already in `core`.
+        // `audit.md` A3.11b.
+        let derived = match unit.kind {
+            UnitKind::Service => Some(crate::Package::Service),
+            UnitKind::Sealed | UnitKind::Strategy => Some(crate::Package::Domain),
+            UnitKind::Controller => Some(crate::Package::Web),
             UnitKind::Class | UnitKind::Interface | UnitKind::Test | UnitKind::IntegrationTest => {
-                String::new()
+                Some(crate::Package::Base)
             }
+        };
+        // Named by the reader wins, and turns the derivation off: they said
+        // where it goes, so a later rename of that layer must leave it alone.
+        let layer = if unit.package.is_some() {
+            None
+        } else {
+            derived
+        };
+        let relative_package = unit.package.unwrap_or_else(|| match derived {
+            Some(crate::Package::Service) => "service".to_string(),
+            Some(crate::Package::Domain) => "domain".to_string(),
+            Some(crate::Package::Web) => "web".to_string(),
+            _ => String::new(),
         });
         let java_package = if relative_package.is_empty() {
             base_package.to_string()
@@ -176,6 +195,7 @@ pub(super) fn link(
                     kind: unit.kind,
                     java_type,
                     java_package,
+                    layer,
                     variants,
                     on: unit.on,
                     yields: unit.yields,

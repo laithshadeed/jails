@@ -595,22 +595,33 @@ which is why the table is named rather than quietly corrected.
 The `ETest.java` row of §9.7 is also unmet: no companion test is emitted for
 an entity record.
 
-### A3.11b A source unit's package is decided by the linker, without the layout
+### A3.11b A source unit's package ignored the layout — closed
 
-`linker::unit` builds a unit's `java_package` as `{base}.domain` /
-`{base}.service` / `{base}.web` and has no layout to apply -- the layout is a
-captured fact that reaches the model on the snapshot, one pass later.
-`emit_unit.rs` therefore has to compare against that same spelling, which is
-why it is the one emitter still concatenating: routing it through
-`package_for` would make it expect `core` where the linker wrote `domain` on
-any project that renamed the layer, and refuse every strategy through a check
-that used to pass. Its module comment records this, because the change looks
-like tidying.
+**The defect, as it reproduced.** A project whose `jails.toml` says
+`domain = "core"` got `core/Note.java` and `domain/Outcome.java` in the same
+tree: two packages for one layer, and nothing to report it. `linker::unit`
+built a unit's package as `{base}.domain` and the layout is a captured fact
+that reaches the model one pass later, so the string was decided before there
+was anything to apply. `emit_unit.rs` then had to compare against that same
+spelling, which is why it was the one emitter still concatenating — and its
+module comment said so, because the change looks like tidying.
 
-So `g sealed`, `g strategy`, `g service` and `g controller` ignore layer
-renames on the canonical path. Closing it means making a unit's package a
-projection computed with the layout rather than a linker-time string. Nothing
-in the suite covers a renamed layout, in either direction.
+**The fix is that the layer travels and the name is computed.**
+`SourceUnit::layer` carries the §9.7 layer a derived placement came from, and
+`emit_unit` projects it through `package_for` with the layout applied. A unit
+whose package the *reader* named carries no layer and keeps the name they
+gave it: they said where it goes, so a rename of that layer is not about them.
+`lower_strategy`'s domain check compares against the projection too, so the
+rule is unchanged — a strategy's port belongs in the domain layer, because
+`g scaffold` writes an ArchUnit rule forbidding Spring inside it — and only
+its spelling now follows the reader's.
+
+`g sealed`, `g strategy`, `g service` and `g controller` honour a layer rename
+now, and
+`a_renamed_layer_moves_source_units_and_not_only_entities` is the coverage
+that did not exist in either direction. It asserts both halves: the artifacts
+move, *and* nothing is left under the pre-rename names — the second is what
+makes the tree incoherent rather than merely oddly placed.
 
 ### A3.12 `AppModel` is missing three fields the spec puts in the digest
 

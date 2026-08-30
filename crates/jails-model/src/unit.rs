@@ -11,6 +11,20 @@ pub struct SourceUnit {
     pub kind: UnitKind,
     pub java_type: String,
     pub java_package: String,
+    /// The §9.7 layer this unit's package was *derived* from, when it was
+    /// derived rather than named.
+    ///
+    /// **The package alone cannot answer a renamed layout.** `java_package` is
+    /// computed by the linker, which runs before the project's `[layout]` is
+    /// on the model at all -- so it spells the default, and an emitter reading
+    /// it put a sealed type in `domain` on a project whose records had already
+    /// moved to `core`. Two packages for one layer, in one tree, with nothing
+    /// to report it (`audit.md` A3.11b).
+    ///
+    /// `None` means the reader named the package themselves, and a rename must
+    /// not touch it: they said where it goes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layer: Option<crate::Package>,
     #[serde(default)]
     pub variants: Vec<String>,
     #[serde(default)]

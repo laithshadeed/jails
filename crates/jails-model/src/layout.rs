@@ -107,7 +107,8 @@ pub enum Head {
 /// writes a package no other emitter imports, and fails at `javac`. It is also
 /// the only place the §9.7 divergence can be *seen*: `Head::Facet` marks each
 /// row that is not a layer.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Package {
     /// The base package itself.
     Base,

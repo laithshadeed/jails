@@ -13,7 +13,7 @@ pub(crate) fn lower_and_emit(
     output: &mut RenderedTree,
 ) -> Result<(), CompileError> {
     for source in model.units.values() {
-        for unit in lower(source, &model.project.base_package)? {
+        for unit in lower(source, model)? {
             output
                 .insert(unit.path, unit.file)
                 .map_err(CompileError::new)?;
@@ -27,24 +27,21 @@ struct Unit {
     file: RenderedFile,
 }
 
-/// **Takes the base package rather than a `Package`, deliberately.**
+/// **A unit's package is projected here, not read off the unit.**
 ///
-/// A source unit's `java_package` is decided by the *linker*
-/// (`linker::unit`), which concatenates `"domain"` / `"service"` / `"web"`
-/// onto the base package and has no layout to apply -- the layout is a
-/// captured fact that reaches the model on the snapshot, one pass later. So
-/// these comparisons have to spell the package the way the linker spelled it.
-/// Routing them through `package_for` looks like tidying and is not: on a
-/// project whose `jails.toml` renames `domain`, the emitter would then expect
-/// `core` where the linker wrote `domain`, and every strategy would be refused
-/// by a check that used to pass.
+/// `SourceUnit::java_package` is written by the linker, which runs before the
+/// project's `[layout]` is on the model -- so it always spells the default.
+/// Reading it put a sealed type in `domain` on a project whose records had
+/// already moved to `core`: two packages for one layer, in one tree, and
+/// nothing to report it. `audit.md` A3.11b.
 ///
-/// The divergence is real and recorded as `audit.md` A3.11b. Closing it means
-/// making the unit package a projection computed with the layout, not a
-/// substitution here.
-fn lower(source: &SourceUnit, base_package: &str) -> Result<Vec<Unit>, CompileError> {
+/// So the *layer* travels on the unit and the name is computed with the
+/// layout, which is what `package_for` is for. A unit whose package the reader
+/// named carries no layer, and keeps the name they gave it -- they said where
+/// it goes, so a rename of that layer is not about them.
+fn lower(source: &SourceUnit, model: &AppModel) -> Result<Vec<Unit>, CompileError> {
     let id = source.id.as_str();
-    let package = &source.java_package;
+    let package = &placed(source, model);
     let type_name = &source.java_type;
     if matches!(source.kind, UnitKind::Test | UnitKind::IntegrationTest) {
         let artifact = format!("art_{id}_test");
@@ -64,10 +61,10 @@ fn lower(source: &SourceUnit, base_package: &str) -> Result<Vec<Unit>, CompileEr
         )?]);
     }
     if source.kind == UnitKind::Strategy {
-        return lower_strategy(source, base_package);
+        return lower_strategy(source, model);
     }
     if source.kind == UnitKind::Controller {
-        return lower_controller(source, base_package);
+        return lower_controller(source, model);
     }
     let main_body = match source.kind {
         UnitKind::Class => format!("public final class {type_name} {{\n}}"),
@@ -199,10 +196,15 @@ fn standalone_test_body(kind: UnitKind, type_name: &str) -> String {
     }
 }
 
-fn lower_strategy(source: &SourceUnit, base_package: &str) -> Result<Vec<Unit>, CompileError> {
+fn lower_strategy(source: &SourceUnit, model: &AppModel) -> Result<Vec<Unit>, CompileError> {
     let id = source.id.as_str();
-    let domain = &source.java_package;
-    if domain != &format!("{base_package}.domain") {
+    let domain = &placed(source, model);
+    // Compared against the *projection*, so a project that renames `domain`
+    // to `core` is asked for `core` rather than refused for not saying
+    // `domain`. The rule is unchanged -- a strategy's port belongs in the
+    // domain layer, because `g scaffold` writes an ArchUnit rule forbidding
+    // Spring inside it -- and only its spelling now follows the reader's.
+    if domain != &model.project.package_for(jails_model::Package::Domain) {
         return Err(CompileError::new(format!(
             "strategy `{}` must use the canonical domain package",
             source.java_type
@@ -352,7 +354,7 @@ fn lower_strategy(source: &SourceUnit, base_package: &str) -> Result<Vec<Unit>, 
     Ok(units)
 }
 
-fn lower_controller(source: &SourceUnit, base_package: &str) -> Result<Vec<Unit>, CompileError> {
+fn lower_controller(source: &SourceUnit, model: &AppModel) -> Result<Vec<Unit>, CompileError> {
     let endpoint = source.endpoint.as_ref().ok_or_else(|| {
         CompileError::new(format!(
             "controller `{}` has no HTTP endpoint",
@@ -360,10 +362,10 @@ fn lower_controller(source: &SourceUnit, base_package: &str) -> Result<Vec<Unit>
         ))
     })?;
     let id = source.id.as_str();
-    let package = &source.java_package;
+    let package = &placed(source, model);
     let type_name = &source.java_type;
     let stem = type_name.strip_suffix("Controller").unwrap_or(type_name);
-    let domain = format!("{base_package}.domain");
+    let domain = model.project.package_for(jails_model::Package::Domain);
     let mapping = match endpoint.method {
         jails_model::EndpointMethod::Get => "GetMapping",
         jails_model::EndpointMethod::Post => "PostMapping",
@@ -503,4 +505,17 @@ fn lower_first(value: &str) -> String {
     characters.next().map_or_else(String::new, |first| {
         first.to_ascii_lowercase().to_string() + characters.as_str()
     })
+}
+
+/// Where this unit's Java goes, with the project's layout applied.
+///
+/// A derived placement is a *layer*, so it is renamed with every other
+/// artifact in that layer. A package the reader named is theirs, and is used
+/// exactly as written -- which is why this is not simply `package_for` on a
+/// layer the linker always supplies.
+fn placed(source: &SourceUnit, model: &AppModel) -> String {
+    source.layer.map_or_else(
+        || source.java_package.clone(),
+        |layer| model.project.package_for(layer),
+    )
 }

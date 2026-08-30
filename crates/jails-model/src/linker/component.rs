@@ -400,6 +400,15 @@ fn compatibility_unit(
         UnitKind::IntegrationTest => format!("{}IT", component.name),
         _ => component.name.clone(),
     };
+    // The layer, not its default spelling: see `SourceUnit::layer`. A
+    // component-derived unit is always derived -- a `component` declaration
+    // carries no package of its own -- so this is never `None` here.
+    let layer = Some(match kind {
+        UnitKind::Service => crate::Package::Service,
+        UnitKind::Sealed | UnitKind::Strategy => crate::Package::Domain,
+        UnitKind::Controller => crate::Package::Web,
+        _ => crate::Package::Base,
+    });
     let relative_package = match kind {
         UnitKind::Service => "service",
         UnitKind::Sealed | UnitKind::Strategy => "domain",
@@ -438,6 +447,7 @@ fn compatibility_unit(
         kind,
         java_type,
         java_package,
+        layer,
         variants: component
             .variants
             .iter()
