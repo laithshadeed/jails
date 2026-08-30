@@ -15,6 +15,12 @@ pub(super) enum Kind {
     Factory,
     Dto,
     Repository,
+    Seed,
+    /// **The one projection that carries an argument.** Which components are
+    /// indexed is a decision, not a derivation: a `tsvector` over every text
+    /// column indexes ids and status codes as if they were prose, and the
+    /// reader then cannot tell why a search for "active" returns everything.
+    Search,
 }
 
 impl Kind {
@@ -23,6 +29,8 @@ impl Kind {
             Self::Factory => Facet::Factory,
             Self::Dto => Facet::Dto,
             Self::Repository => Facet::Repository,
+            Self::Seed => Facet::Seed,
+            Self::Search => Facet::Search,
         }
     }
 
@@ -31,6 +39,8 @@ impl Kind {
             Self::Factory => "factory",
             Self::Dto => "dto",
             Self::Repository => "repository",
+            Self::Seed => "seed",
+            Self::Search => "search",
         }
     }
 
@@ -39,7 +49,15 @@ impl Kind {
             Self::Factory => "@factory",
             Self::Dto => "@dto",
             Self::Repository => "@repository",
+            Self::Seed => "@seed",
+            Self::Search => "@search",
         }
+    }
+
+    /// Whether this projection's field list is its own declaration rather than
+    /// a flag it has no use for.
+    fn takes_fields(self) -> bool {
+        matches!(self, Self::Search)
     }
 }
 
@@ -66,8 +84,37 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation, kind: Kind) -> Res
             kind.name()
         )));
     }
+    // **Resolved before the already-declared check, not after.** A typo in a
+    // field name would otherwise be reported only on a first run: a second
+    // `jails g search Note headlien` on an entity that already searches would
+    // take the no-op path and report success over a component that does not
+    // exist.
+    let arguments = if kind.takes_fields() {
+        let labels = crate::model_generate::operation_field_labels(
+            &current_model,
+            &entity.label,
+            &args.fields,
+        )?;
+        format!("(fields: [{}])", labels.join(", "))
+    } else {
+        String::new()
+    };
     let facet = kind.facet();
     if entity.facets.contains(&facet) {
+        // Re-declaring a *parameterised* projection with different arguments
+        // is a change, and there is no path for one: the indexed set is baked
+        // into a generated column, so altering it is a migration nothing here
+        // writes. Saying so beats a silent no-op that leaves the reader
+        // believing the new field is indexed.
+        if let Some(existing) = declared_arguments(&current_source, &entity.names.java_type, kind)?
+            && existing != arguments
+        {
+            return Err(Failure::Told(format!(
+                "canonical `{}` already declares `{}{existing}`\n       fix: the indexed set is a generated column, so changing it is a migration jails does not write -- edit `{MODEL_PATH}` and add one by hand, or keep the current fields",
+                args.name,
+                kind.name()
+            )));
+        }
         return finish_generation(PreparedMutation {
             name: args.name,
             invocation,
@@ -79,11 +126,11 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation, kind: Kind) -> Res
             patch_bytes: br#"{"kind":"batch","patches":[]}"#.to_vec(),
         });
     }
-    let next_source = set_marker(
+    let next_source = set_projection(
         &current_source,
         &entity.names.java_type,
         kind.marker(),
-        true,
+        &arguments,
     )?;
     let next_model = parse(&next_source)?;
     let next = next_model.entity(&entity_id).ok_or_else(|| {
@@ -121,6 +168,49 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation, kind: Kind) -> Res
     })
 }
 
+/// Add one projection, with the arguments it carries.
+///
+/// Separate from [`set_marker`] because only this direction can take an
+/// argument: removing `use search(fields: [...])` names the projection, not
+/// its fields.
+fn set_projection(
+    source: &str,
+    entity_java_name: &str,
+    marker: &str,
+    arguments: &str,
+) -> Result<String> {
+    if arguments.is_empty() {
+        return set_marker(source, entity_java_name, marker, true);
+    }
+    if !super::is_v1_source(source) {
+        return Err(Failure::Told(format!(
+            "projection `{marker}` carries arguments, which only `jdl 1` can express.\n       fix: run `jails model upgrade --to 1` first"
+        )));
+    }
+    let projection = v1_projection(marker)?;
+    jails_model::insert_jdl_entity_member(
+        source,
+        entity_java_name,
+        "use",
+        &format!("  use {projection}{arguments}"),
+    )
+    .map_err(super::jdl_edit_failure)
+}
+
+/// The JDL v1 spelling of one projection marker.
+fn v1_projection(marker: &str) -> Result<&'static str> {
+    match marker {
+        "@factory" => Ok("factory"),
+        "@dto" => Ok("dto"),
+        "@repository" => Ok("repo"),
+        "@seed" => Ok("seed"),
+        "@search" => Ok("search"),
+        _ => Err(Failure::Told(format!(
+            "unsupported JDL v1 projection marker `{marker}`.\n       fix: use factory, dto, repository, seed, or search through its typed frontend"
+        ))),
+    }
+}
+
 pub(crate) fn set_marker(
     source: &str,
     entity_java_name: &str,
@@ -128,16 +218,7 @@ pub(crate) fn set_marker(
     enabled: bool,
 ) -> Result<String> {
     if super::is_v1_source(source) {
-        let projection = match marker {
-            "@factory" => "factory",
-            "@dto" => "dto",
-            "@repository" => "repo",
-            _ => {
-                return Err(Failure::Told(format!(
-                    "unsupported JDL v1 projection marker `{marker}`.\n       fix: use factory, dto, or repository through its typed frontend"
-                )));
-            }
-        };
+        let projection = v1_projection(marker)?;
         if enabled {
             return jails_model::insert_jdl_entity_member(
                 source,
@@ -281,7 +362,15 @@ fn projection_name(segment: &str) -> &str {
 }
 
 fn reject_unsupported_options(args: &GenerateArgs, kind: Kind) -> Result<()> {
-    let unsupported = !args.fields.is_empty()
+    if kind.takes_fields() && args.fields.is_empty() {
+        return Err(Failure::Told(format!(
+            "canonical `{}` needs the components to index
+       fix: run `jails g {} Name title body` -- indexing every text column would index ids and status codes as prose",
+            kind.name(),
+            kind.name()
+        )));
+    }
+    let unsupported = (!kind.takes_fields() && !args.fields.is_empty())
         || args.timestamps
         || args.package.is_some()
         || args.default_literal.is_some()
@@ -308,6 +397,50 @@ fn reject_unsupported_options(args: &GenerateArgs, kind: Kind) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+/// The arguments an entity's existing projection of this kind carries, or
+/// `None` when it has none.
+///
+/// Read off the source rather than the model because the model normalises:
+/// `ProjectionKind::Search { fields }` holds stable field IDs, and comparing
+/// those against a freshly rendered label list would be a second projection of
+/// one thing. The source is what the reader sees and what the next edit
+/// rewrites.
+fn declared_arguments(source: &str, entity_java_name: &str, kind: Kind) -> Result<Option<String>> {
+    if !kind.takes_fields() {
+        return Ok(None);
+    }
+    let projection = v1_projection(kind.marker())?;
+    // Entity-scoped: `use` members are inside the block that names
+    // the entity, and a second entity's `use search(...)` must not answer for
+    // this one.
+    let mut inside = false;
+    for line in source.lines() {
+        let declaration = line.split("//").next().unwrap_or_default().trim();
+        if declaration.starts_with("entity ") {
+            let name = declaration
+                .strip_prefix("entity ")
+                .unwrap_or_default()
+                .split(|character: char| character.is_whitespace() || character == '{')
+                .next()
+                .unwrap_or_default();
+            inside = name == entity_java_name;
+            continue;
+        }
+        if inside && declaration == "}" {
+            break;
+        }
+        if !inside {
+            continue;
+        }
+        if let Some(rest) = declaration.strip_prefix("use ")
+            && let Some(arguments) = rest.trim().strip_prefix(projection)
+        {
+            return Ok(Some(arguments.trim().to_string()));
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(test)]

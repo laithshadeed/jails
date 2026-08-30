@@ -41,6 +41,8 @@ pub(crate) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         ArtifactKind::Factory => facet::run(args, invocation, facet::Kind::Factory),
         ArtifactKind::Dto => facet::run(args, invocation, facet::Kind::Dto),
         ArtifactKind::Repo => facet::run(args, invocation, facet::Kind::Repository),
+        ArtifactKind::Seed => facet::run(args, invocation, facet::Kind::Seed),
+        ArtifactKind::Search => facet::run(args, invocation, facet::Kind::Search),
         ArtifactKind::Usecase
         | ArtifactKind::Query
         | ArtifactKind::Transition
@@ -68,21 +70,23 @@ pub(crate) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         | ArtifactKind::Sealed
         | ArtifactKind::Strategy
         | ArtifactKind::Controller => unit::run(args, invocation),
-        ArtifactKind::Migration
-        | ArtifactKind::Association
-        | ArtifactKind::Search
-        | ArtifactKind::Seed => Err(Failure::Told(unsupported_kind(args.kind))),
+        ArtifactKind::Migration | ArtifactKind::Association => {
+            Err(Failure::Told(unsupported_kind(args.kind)))
+        }
     }
 }
 
-/// What is actually missing for the four kinds a canonical project refuses.
+/// What is actually missing for the two kinds a canonical project refuses.
 ///
 /// The generic refusal told the reader to edit `.jails/model.jdl` and run
 /// `jails sync`. That is false advice for every one of these: the model
-/// carries the *vocabulary* -- `ProjectionKind::Search { fields }`,
-/// `ProjectionKind::Seed`, `AppModel.relations` -- and no emitter reads it, so
-/// hand-editing the JDL produces a valid model and no artifact. `plan.md`
-/// P13.8 has the measurement. A `fix:` line naming a repair that does not
+/// carries the vocabulary -- `AppModel.relations` -- and the frontend has no
+/// editor that writes it, so telling the reader to run `jails sync` after a
+/// hand edit is only half the story. `plan.md` P13.8 has the measurement.
+///
+/// It was four kinds. `search` and `seed` are gone from here because they now
+/// have both halves; `migration` is the one whose gap is genuinely in the
+/// plan rather than in a syntax editor. A `fix:` line naming a repair that does not
 /// repair is worse than no fix line, which is why
 /// `every_command_a_message_tells_the_reader_to_run_is_one_that_exists`
 /// exists.
@@ -95,14 +99,6 @@ fn unsupported_kind(kind: ArtifactKind) -> String {
         ArtifactKind::Association => (
             "an association",
             "the compiler emits the foreign key from a declared relation; what is missing is only the JDL syntax editor that would write the declaration for you.\n       fix: add a `relation <name> to <Parent> { map <child> -> <parent> }` block to the child entity in `.jails/model.jdl`, then run `jails sync`".to_string(),
-        ),
-        ArtifactKind::Search => (
-            "full-text search",
-            "the compiler emits the port, the `tsvector` column, the GIN index and the JDBC adapter; what is missing is only the JDL syntax editor that would write the declaration for you.\n       fix: add `use search(fields: [title, body]) for <Entity>` to `.jails/model.jdl`, then run `jails sync`".to_string(),
-        ),
-        ArtifactKind::Seed => (
-            "seed data",
-            "`ProjectionKind::Seed` links and no emitter reads it, so the model would accept the declaration and write nothing.\n       fix: write the seed file and its runner by hand for now".to_string(),
         ),
         other => (
             "this generator",

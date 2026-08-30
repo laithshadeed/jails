@@ -88,15 +88,32 @@ looked and still worth removing.
 
 ## A1 — coverage
 
-### A1.1 Thirty-six of thirty-nine generators
+### A1.1 Thirty-seven of thirty-nine generators
 
 `src/canonical_support.rs` is the authority and is honest code: an exhaustive
 match that stops compiling when a clap variant is added. Its own test pins
-36/39. Capabilities are closed at 25/25, and **every one of the 23 component
+37/39. Capabilities are closed at 25/25, and **every one of the 23 component
 kinds now has a backend** -- `every_component_kind_is_emitted_or_refused` no
 longer has a refusal to reach.
 
-Still legacy: `migration`, `association`, `search`.
+Still legacy: `migration`, `association`.
+
+**`search` needed no emitter at all** -- the port, the JDBC adapter, the
+`tsvector` column and its GIN index were all already there, and only the
+syntax editor that writes `use search(fields: [...])` was missing. So the
+refusal was true and useless: it told the reader to hand-edit
+`.jails/model.jdl`, which is exactly the half-answer this row is about.
+
+Two things fell out of writing it. `search` is the only projection carrying an
+argument, because *which* components are indexed is a decision rather than a
+derivation -- a `tsvector` over every text column indexes ids and status codes
+as if they were prose. And the field list is now resolved **before** the
+already-declared no-op check, because it was reachable only on a first run: a
+second `g search Note headlien` on an entity that already searches took the
+no-op path and reported success over a component that does not exist. A
+re-declaration with *different* fields refuses now, since the indexed set is
+baked into a generated column and altering it is a migration nothing here
+writes.
 
 **`use seed` is emitted rather than refused**, which closes `bugs.md` B59 in
 the direction it should have gone. It is three artifacts: the JSON row file,

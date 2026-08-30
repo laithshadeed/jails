@@ -11601,3 +11601,93 @@ fn canonical_outbox_delivery_reaches_disk_and_its_table_is_written_once() {
     );
     assert_eq!(migrations(), after_first, "sync re-emitted a migration");
 }
+
+/// `g search` and `g seed` write the projection the compiler already reads.
+///
+/// Both had complete backends and no syntax editor, so the CLI refused with a
+/// `fix:` line telling the reader to hand-edit `.jails/model.jdl` -- true, and
+/// exactly the half-answer `audit.md` A1.1 is about. The interesting half is
+/// `search`: it is the only projection carrying an argument, because *which*
+/// components are indexed is a decision rather than a derivation. A `tsvector`
+/// over every text column indexes ids and status codes as if they were prose,
+/// and the reader then cannot tell why a search for "active" returns
+/// everything.
+#[test]
+fn canonical_search_and_seed_write_their_projections_and_compile() {
+    let root = temp_dir("canonical-search-seed");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+         platform spring\n  build maven\n  storage postgres\n}\n",
+    )
+    .unwrap();
+    for command in [
+        [
+            "g",
+            "scaffold",
+            "Note",
+            "id:uuid@pk",
+            "title:string",
+            "body:string",
+        ]
+        .as_slice(),
+        ["add", "json"].as_slice(),
+        ["g", "search", "Note", "title", "body"].as_slice(),
+        ["g", "seed", "Note"].as_slice(),
+    ] {
+        let output = jails_cmd(&root, None).args(command).output().unwrap();
+        assert!(
+            output.status.success(),
+            "`jails {}`: {}",
+            command.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(
+        model.contains("use search(fields: [title, body])"),
+        "{model}"
+    );
+    assert!(model.contains("use seed"), "{model}");
+
+    let generated = root.join(".jails/generated");
+    let read = |relative: &str| {
+        fs::read_to_string(generated.join(relative))
+            .unwrap_or_else(|error| panic!("{relative}: {error}"))
+    };
+    // Search: the port, its JDBC adapter, and the generated column both use.
+    let adapter = read("main/java/com/example/demo/adapters/jdbc/JdbcNoteSearch.java");
+    assert!(adapter.contains("websearch_to_tsquery"), "{adapter}");
+    read("main/java/com/example/demo/ports/search/NoteSearch.java");
+    // Seed: the data, the guarded loader, and the test that reads it.
+    read("main/resources/db/seeds/note.json");
+    let seeder = read("main/java/com/example/demo/adapters/NoteSeeder.java");
+    assert!(seeder.contains("@Profile(\"seed\")"), "{seeder}");
+    read("test/java/com/example/demo/adapters/NoteSeederTest.java");
+
+    let migrations = fs::read_dir(root.join("src/main/resources/db/migration"))
+        .unwrap()
+        .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+    // The indexed columns are the two named, not every text column.
+    assert!(migrations.contains("search_vector"), "{migrations}");
+    assert!(migrations.contains("coalesce(title, '')"), "{migrations}");
+    assert!(!migrations.contains("coalesce(id, '')"), "{migrations}");
+
+    // A component the entity does not have is caught here rather than at
+    // `flyway migrate`, which is the furthest point from the mistake.
+    let refused = jails_cmd(&root, None)
+        .args(["g", "search", "Note", "headline"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("is not a field on `note`"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+}
