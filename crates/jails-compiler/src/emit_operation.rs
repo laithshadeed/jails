@@ -117,19 +117,34 @@ pub(super) fn publications(
             ),
             "org.springframework.context.ApplicationEventPublisher".to_string(),
         ]);
+        // **Read off `semantics.parameters`, not `fields`.** The flat list can
+        // only name fields of the target entity; the linked parameters can
+        // also carry a `Typed` component -- an event's own identity, a
+        // timestamp -- and an emitter reading the flat form renders an empty
+        // payload for an event declared with one. The linker folds `fields`
+        // into the parameters, so this is the whole payload either way.
         let arguments = event
-            .fields
+            .semantics
+            .parameters
             .iter()
-            .map(|field_id| {
-                target
-                    .field(field_id)
+            .map(|parameter| match &parameter.source {
+                jails_model::ParameterSource::Field(visible) => target
+                    .field(&visible.field)
                     .map(|field| format!("result.{}()", field.names.java_member))
                     .ok_or_else(|| {
                         CompileError::new(format!(
-                            "linked event `{}` references missing field `{field_id}`",
-                            yielded.label
+                            "linked event `{}` references missing field `{}`",
+                            yielded.label, visible.field
                         ))
-                    })
+                    }),
+                // A component the target row does not carry has no value a
+                // direct publication can supply: the command's own inputs are
+                // gone by the time the row comes back, and inventing one is
+                // how an event's identity silently became the row's.
+                jails_model::ParameterSource::Typed(_) => Err(CompileError::new(format!(
+                    "canonical event `{}` declares `{}`, which the target row does not carry\n       fix: project it from a field of `{}`, or wait for the transactional outbox that can supply it",
+                    yielded.label, parameter.name, target.label
+                ))),
             })
             .collect::<Result<Vec<_>, _>>()?
             .join(", ");

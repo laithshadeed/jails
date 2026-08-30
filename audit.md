@@ -175,18 +175,23 @@ reading before anyone starts:
 > nothing` silently discarded the second event about that resource instead of
 > deduplicating a retried stage.
 
-Canonically, an event's `fields` are `FieldId`s **on the target entity**, so an
-event that declares `id` means the target's id — exactly the value that must
-not be used. `emit_operation::publications` renders it as `result.id()` today,
-which is correct for direct publication and wrong for an outbox row.
+An event *can* carry its own identity: `ParameterSource::Typed` is a payload
+component that is not a field of the target, which is exactly what a minted
+event id is. What was missing is that nothing read it. `Event` carried both
+`fields` — the flat, target-scoped list `.jails/model.toml` and the pre-v1
+draft write — and `semantics.parameters`, and `emit_operation::publications`
+read the flat one. So an event declared with a typed component rendered an
+**empty payload**, silently.
 
-So the model needs one more thing before the emitter: **an event must be able
-to carry its own identity, distinct from the row it describes.** The legacy
-resolves this by name at render time (`id` mints, `<target>Id` maps to
-`result.id()`) because it matches against Java it read off disk; the canonical
-model has no such component to point at. Until it does, an outbox emitter would
-either mint an id the model does not describe or reuse the row's and inherit
-the deduplication defect this comment records.
+That fold is done: the linker folds `fields` into `parameters` and the emitter
+reads only the rich form, which is the last of A3.9. A `Typed` component now
+refuses at compile with a message naming it, because direct publication has
+nothing to supply it from — the command's inputs are gone by the time the row
+comes back.
+
+So the emitter is what is left, and it is the piece that can give a `Typed`
+component a value: a minted id for the outbox row, `Instant.now()` for a
+timestamp. Its six Java bodies are already templates on the legacy side.
 
 ### A1.4 `jails new` still writes no model
 
