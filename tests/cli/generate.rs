@@ -4245,6 +4245,20 @@ fn record_and_command_compile_and_pass_in_a_plain_cli_project() {
         root.join(".jails/generated/test/java/com/example/demo/MoneyMovedTest.java")
             .exists()
     );
+    // And the negatives, which are what a regression actually trips over: the
+    // reader's own tree is untouched, and no legacy ledger appears. A project
+    // that quietly fell back to the legacy engine writes both, and every
+    // positive assertion above still passes when it does.
+    assert!(
+        !root
+            .join("src/main/java/com/example/demo/MoneyMoved.java")
+            .exists(),
+        "the class was written into the reader's own tree"
+    );
+    assert!(
+        !root.join(".jails/ledger.toml").exists(),
+        "a canonical project was given a legacy ledger"
+    );
 
     let verified = verified_plain_toolbox(&path);
     for class in ["MoneyMoved", "cli/GreetCommand", "domain/Tally"] {

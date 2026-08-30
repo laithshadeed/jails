@@ -180,6 +180,20 @@ fields = [\"id:uuid\", \"label:string!\"]
     let root = workspace.join("demo");
     // The manifest is seeded where `app apply` will find it next time...
     assert!(root.join(".jails/app.toml").is_file());
+    // ...and it is the *only* desired-state authority this project has.
+    //
+    // **The negative is the assertion.** `new-cli` seeds `.jails/model.jdl`,
+    // and `app apply` refuses to run beside one precisely so no project holds
+    // two editable sources -- but `new --app` reaches `app::apply_in` directly
+    // rather than through that guard, so seeding both produced exactly the
+    // state the refusal exists to prevent, silently: a model, a manifest, a
+    // legacy ledger, and every generated class outside the managed tree, with
+    // the next command taking the canonical path and seeing none of it.
+    // Asserting only what is present cannot catch that.
+    assert!(
+        !root.join(".jails/model.jdl").exists(),
+        "a manifest-driven project was also given a canonical model"
+    );
     // ...and its intents are already applied, against the project that was
     // just created rather than whatever encloses the process CWD.
     assert!(
