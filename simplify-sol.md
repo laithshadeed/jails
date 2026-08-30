@@ -16,7 +16,7 @@ run the suite that would have to prove it.**
 | component kinds with a backend | **23 of 23** -- `every_component_kind_is_emitted_or_refused` has no refusal left to reach |
 | architecture fitness rules | all thirteen held: nine by a test, four by a type or by Cargo. One added that the list did not have. See *Where each fitness rule stands* |
 | merge gates | **all six green**, and G0 reliably so -- two causes of a one-in-three false red are fixed. See *What a run of G0 actually does* |
-| deletion map | **not started**, and no longer blocked. See *Why the deletion has not happened* |
+| deletion map | **not started.** Its first step is the `new` generation paths row, measured -- see *What `new` has to become first* |
 
 **Why the deletion has not happened.** The *Integration and one coordinated
 cutover* section makes it step 5 through 7, after "all gates pass". Both things
@@ -74,8 +74,10 @@ quantity. Both are fixed and both are in *What a run of G0 actually does*.
 Deleting most of the workspace behind a gate that is green two times in three
 is how a real regression gets re-run until it passes.
 
-So the next change to this document is the single cutover commit it has been
-building toward.
+What is left is the cutover, and its first step is `new` -- not a deletion.
+Seeding `.jails/model.jdl` from `new` was tried and refused by two canonical
+adapters, because `new` hand-writes the pom and properties the model expects to
+own. See *What `new` has to become first*.
 
 ---
 
@@ -2240,6 +2242,55 @@ validated, agents port all remaining facet families in parallel.
 
 There is no shadow production engine or long dual-write period in this plan.
 Parallel AI throughput handles the volume; the E2E firewall handles the risk.
+
+## What `new` has to become first (2026-08-30, measured)
+
+**The cutover's first step is not deleting anything. It is `new`.**
+
+`model_command::owns` is the whole canonical switch -- a project is canonical
+if `.jails/model.jdl` exists and legacy otherwise -- and `jails new` seeds no
+model, so every project jails creates is legacy and every project that is
+canonical got there by a `model.jdl` written by hand, which in practice means
+the tests and `model import`. Seeding one from `new` looks like the small
+commit that flips the default. It was tried, and it is not:
+
+- **`new-cli` + `add fake` refuses.** `could not materialize exact plan: Maven
+  already declares 'org.assertj:assertj-core' outside
+  `<!-- jails:dependencies -->``. `new-cli` hand-writes a pom carrying AssertJ
+  and JUnit; the canonical dependency adapter reconciles the complete set
+  inside its marked block and refuses to adopt a coordinate declared outside
+  it.
+- **`new` (Spring) + `add db` refuses.** `reader-owned properties already
+  declare `server.shutdown``. `write_default_properties` hand-writes six keys,
+  two of which -- `server.shutdown` and
+  `spring.lifecycle.timeout-per-shutdown-phase` -- the `db` capability also
+  declares. Even `jails set server.shutdown=graceful` refuses on a project
+  jails created seconds earlier.
+
+Neither adapter is wrong. Refusing a reader-owned collision is what stops jails
+silently taking over a line somebody else wrote, and the legacy property splice
+claiming such a key idempotently is exactly the looseness the canonical
+contract exists to remove. What is wrong is the premise: **`new` hand-writes
+build content that the canonical model expects to be the authority on.** A
+seeded model turns every one of those bytes into a reader-owned collision with
+its own project.
+
+So this is the deletion map's `new` generation paths row -- *compiler
+`PlanDraft` plus workspace materializer* -- and it is a precondition of the
+cutover rather than a consequence of it. Two things it needs that are not
+there yet: the pom and `application.properties` a new project starts with have
+to be compiler output rather than `new`'s own text, and the canonical sync has
+to accept an explicit root. `model_command::sync` reads the process CWD, which
+for a project being created is its parent -- the same edge `plan.md` §R6.5 hit
+with `--app`, and the reason every route already takes a resolved `Project`
+instead of calling `discover`.
+
+**What did hold, and is worth knowing before that work starts:** a plain
+project whose `.jails/model.jdl` is seeded *and* whose pom collisions are
+avoided runs the whole canonical loop. `g record`, `g field`, and `add csv`,
+`add json` and `add testkit` all applied model patches, wrote to
+`.jails/generated`, created no legacy ledger, and `mvn clean verify` passed on
+the result. The compiler is ready for this; `new` is what is not.
 
 ## Concrete deletion map
 
