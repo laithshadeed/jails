@@ -318,13 +318,11 @@ pub enum CanonicalMutationRequest {
 }
 
 /// A forward file restoration named by one authenticated receipt.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct UndoFilesRequestV1 {
     pub transaction: TransactionId,
     pub merge: bool,
 }
-
-jails_support::codec!(struct UndoFilesRequestV1 { transaction, merge });
 
 impl CanonicalMutationRequest {
     /// `add` / `remove`: a non-empty, sorted, duplicate-free capability list.

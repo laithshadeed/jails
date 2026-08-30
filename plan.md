@@ -664,7 +664,7 @@ verbatim from `customer.js` and `admin.js`:
       artifact's version, which is a lookup rather than an opinion about
       structure.
 
-- [ ] **P13.4** **144 wire formats are still written by hand, and the seam is
+- [ ] **P13.4** **133 wire formats are still written by hand, and the seam is
       *not* exhausted -- the first sweep was wrong about why.** It concluded
       the remainder needed per-type work because it treated
       `encoder.count(..)` as a hard blocker. It is not one.
@@ -674,6 +674,17 @@ verbatim from `customer.js` and `admin.js`:
       `Vec<T>`, `BTreeSet<T>` or `BTreeMap<K, V>` doing it -- the canonical
       ordering guarantee included, which is the part that looked like it had
       to stay hand-written.
+
+      **144 -> 133 came from deleting two more *mechanisms*, not from
+      converting more types.** `codec!(struct T { .. })` in `jails-support`
+      and `contract_field_codec!` in `vocabulary/database.rs` both expanded to
+      exactly what the derive emits -- `Codec::encode(&self.field, encoder)?`
+      in declaration order -- so three spellings of one rule were live at once,
+      and the two macro ones restated the field list beside the type, which is
+      the defect the derive exists to remove. All 23 uses were checked against
+      declaration order first; all 23 agreed, so no wire moved. Both macros are
+      deleted, and `codec!`'s `enum` arm turned out to have no users at all.
+      **Look for a third mechanism before converting types one at a time.**
 
       **29 codecs frame a collection by hand**, roughly half of them with the
       `ordered` check. Every one whose field is already a `Vec`, `BTreeSet` or

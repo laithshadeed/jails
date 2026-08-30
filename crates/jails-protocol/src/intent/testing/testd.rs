@@ -109,15 +109,13 @@ impl Codec for OutputPath {
     }
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, jails_codec_derive::Codec)]
 pub struct OutputEntryV1 {
     pub path: OutputPath,
     pub size: u64,
     pub modified_ns: u64,
     pub digest: ObjectId,
 }
-
-jails_support::codec!(struct OutputEntryV1 { path, size, modified_ns, digest });
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutputSnapshotV1 {

@@ -1035,7 +1035,7 @@ pub(crate) const WIRE_RS: &str = "jails-support/src/codec/wire.rs";
 /// had a public `tag()`/`from_tag()` pair and no impl, because its containers
 /// wrote the tag inline; the derive reproduces that byte and `label = "owner"`
 /// keeps the refusal the test pins.
-pub(crate) const HAND_WRITTEN_CODECS: usize = 144;
+pub(crate) const HAND_WRITTEN_CODECS: usize = 133;
 
 /// The `spring.rs` these two rows are about.
 ///
@@ -1104,7 +1104,7 @@ pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 // type (`#[codec(unknown_fix = "...")]`) rather than in the one place the
 // message is built. `PlannedSubject` is the first to use it; the other ten
 // `fix:`-carrying decoders are still hand-written.
-pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 396;
+pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 395;
 
 /// A refusal that builds a message and does not say what to do next.
 ///

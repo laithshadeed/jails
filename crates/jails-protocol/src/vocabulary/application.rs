@@ -125,14 +125,12 @@ pub struct EntitySpecV1 {
     pub audit: AuditPolicy,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct QuerySpecV1 {
     pub source: ProjectPath,
 }
 
-jails_support::codec!(struct QuerySpecV1 { source });
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct SliceSpecV1 {
     pub package: Option<Package>,
     pub route_prefix: Option<RoutePath>,
@@ -143,28 +141,6 @@ pub struct SliceSpecV1 {
 }
 
 pub type SliceSpec = SliceSpecV1;
-
-impl Codec for SliceSpecV1 {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.maybe(self.package.as_ref())?;
-        encoder.maybe(self.route_prefix.as_ref())?;
-        encoder.map(&self.entities)?;
-        encoder.map(&self.queries)?;
-        encoder.map(&self.events)?;
-        encoder.map(&self.policies)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            package: decoder.option(Package::decode)?,
-            route_prefix: decoder.option(RoutePath::decode)?,
-            entities: decoder.map()?,
-            queries: decoder.map()?,
-            events: decoder.map()?,
-            policies: decoder.map()?,
-        })
-    }
-}
 
 #[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct ApplicationSpecV1 {

@@ -84,7 +84,7 @@ pub enum TemplateOrigin {
     UserOverride { logical_name: TemplateId },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct TemplateStamp {
     pub origin: TemplateOrigin,
     pub source_object: ObjectId,
@@ -195,8 +195,6 @@ impl Codec for RendererId {
         })
     }
 }
-
-jails_support::codec!(struct TemplateStamp { origin, source_object });
 
 impl RendererStamp {
     /// `SHA256("JAILS-RELEVANT-INPUT-1" || encode(rows))`.

@@ -393,21 +393,9 @@ impl Codec for CapabilitySpec {
 /// that could only say "pinned X" could not describe the commonest project
 /// there is, and recording an invented number would be a claim about bytes
 /// jails did not write.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct ToolFeatureSpec {
     pub console_version: crate::coordinate::MavenVersion,
-}
-
-impl Codec for ToolFeatureSpec {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.console_version.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            console_version: crate::coordinate::MavenVersion::decode(decoder)?,
-        })
-    }
 }
 
 /// The content half of an entity. Its discriminant must match its identity's —

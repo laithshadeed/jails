@@ -63,12 +63,10 @@ impl Codec for MigrationVersion {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct TableBinding {
     pub table: SqlName,
 }
-
-jails_support::codec!(struct TableBinding { table });
 
 #[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum ResourceState {

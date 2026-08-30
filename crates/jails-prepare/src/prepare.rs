@@ -42,13 +42,11 @@ pub(crate) const FORMAT: u32 = 1;
 ///
 /// Unlike [`FileImage`] this cannot be absent: a replace or a delete is about
 /// a file that is there, and "guard against absence" is a create.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct GuardedImage {
     pub object: ObjectRef,
     pub mode: FileMode,
 }
-
-jails_support::codec!(struct GuardedImage { object, mode });
 
 /// One file's transition, with the guard that makes it safe.
 #[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]

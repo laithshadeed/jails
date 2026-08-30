@@ -102,7 +102,7 @@ impl Codec for AppliedEntity {
 /// Kept even when retired. A migration that has been applied to a database
 /// cannot be un-applied by deleting its record, and a receipt that vanished
 /// with its target would make the same `g field` run a second time.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct OneShotReceipt {
     pub id: OneShotId,
     pub spec: OneShotSpec,
@@ -110,8 +110,6 @@ pub struct OneShotReceipt {
     pub lifecycle: OneShotLifecycle,
     pub operation: OperationId,
 }
-
-jails_support::codec!(struct OneShotReceipt { id, spec, state, lifecycle, operation });
 
 /// One canonical row per path jails has written.
 ///

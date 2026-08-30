@@ -53,13 +53,11 @@ impl Codec for ToolInvocationKey {
 }
 
 /// One offline input a tool is permitted to read.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub struct ToolInput {
     pub path: ProjectPath,
     pub sha256: ObjectId,
 }
-
-jails_support::codec!(struct ToolInput { path, sha256 });
 
 /// Everything about a tool that can change its output.
 ///
@@ -147,13 +145,11 @@ impl Codec for ToolIdentityFingerprint {
 }
 
 /// A tool as it was actually run: its identity plus the exact arguments.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct ToolFingerprint {
     pub identity: ToolIdentityFingerprint,
     pub canonical_args_sha256: ObjectId,
 }
-
-jails_support::codec!(struct ToolFingerprint { identity, canonical_args_sha256 });
 
 /// One tool invocation as preparation will actually make it.
 ///

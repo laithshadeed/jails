@@ -157,24 +157,10 @@ impl Codec for SqlTypeName {
     }
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub struct QualifiedSqlName {
     pub namespace: Option<SqlName>,
     pub name: SqlName,
-}
-
-impl Codec for QualifiedSqlName {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.maybe(self.namespace.as_ref())?;
-        self.name.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            namespace: decoder.option(SqlName::decode)?,
-            name: SqlName::decode(decoder)?,
-        })
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
@@ -209,33 +195,13 @@ pub enum SchemaObjectKind {
     Opaque,
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub struct SchemaObjectId {
     pub dialect: SqlDialect,
     pub namespace: SqlName,
     pub kind: SchemaObjectKind,
     pub name: SqlName,
     pub parent: Option<QualifiedSqlName>,
-}
-
-impl Codec for SchemaObjectId {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.dialect.encode(encoder)?;
-        self.namespace.encode(encoder)?;
-        self.kind.encode(encoder)?;
-        self.name.encode(encoder)?;
-        encoder.maybe(self.parent.as_ref())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            dialect: SqlDialect::decode(decoder)?,
-            namespace: SqlName::decode(decoder)?,
-            kind: SchemaObjectKind::decode(decoder)?,
-            name: SqlName::decode(decoder)?,
-            parent: decoder.option(QualifiedSqlName::decode)?,
-        })
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
@@ -318,15 +284,13 @@ impl Codec for Cardinality {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct DeclaredParameter {
     pub name: Name,
     pub sql_type: SqlTypeName,
     pub nullable: bool,
     pub span: ByteSpan,
 }
-
-jails_support::codec!(struct DeclaredParameter { name, sql_type, nullable, span });
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QuerySource {
@@ -440,7 +404,7 @@ impl Codec for EvidenceLevel {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct EvidenceRecord {
     pub subject: EvidenceSubject,
     pub level: EvidenceLevel,
@@ -450,29 +414,7 @@ pub struct EvidenceRecord {
     pub details_digest: ObjectId,
 }
 
-impl Codec for EvidenceRecord {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.subject.encode(encoder)?;
-        self.level.encode(encoder)?;
-        self.input_digest.encode(encoder)?;
-        encoder.maybe(self.catalog_digest.as_ref())?;
-        self.toolchain_digest.encode(encoder)?;
-        self.details_digest.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            subject: EvidenceSubject::decode(decoder)?,
-            level: EvidenceLevel::decode(decoder)?,
-            input_digest: ObjectId::decode(decoder)?,
-            catalog_digest: decoder.option(ObjectId::decode)?,
-            toolchain_digest: ObjectId::decode(decoder)?,
-            details_digest: ObjectId::decode(decoder)?,
-        })
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct ParameterContract {
     pub name: Name,
     pub sql_type: SqlTypeName,
@@ -481,7 +423,7 @@ pub struct ParameterContract {
     pub evidence: ObjectId,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct ColumnContract {
     pub name: SqlName,
     pub sql_type: SqlTypeName,
@@ -490,31 +432,6 @@ pub struct ColumnContract {
     pub nullable: bool,
     pub evidence: ObjectId,
 }
-
-macro_rules! contract_field_codec {
-    ($type:ident, $name:ident, $($extra:ident),+) => {
-        impl Codec for $type {
-            fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-                self.$name.encode(encoder)?;
-                $(self.$extra.encode(encoder)?;)+
-                encoder.bool(self.nullable);
-                self.evidence.encode(encoder)
-            }
-
-            fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-                Ok(Self {
-                    $name: Codec::decode(decoder)?,
-                    $($extra: Codec::decode(decoder)?,)+
-                    nullable: decoder.bool()?,
-                    evidence: ObjectId::decode(decoder)?,
-                })
-            }
-        }
-    };
-}
-
-contract_field_codec!(ParameterContract, name, sql_type, java_type);
-contract_field_codec!(ColumnContract, name, sql_type, java_name, java_type);
 
 #[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct QueryContractV1 {

@@ -290,11 +290,9 @@ impl Codec for DesiredFile {
 /// `force` is what distinguishes "remove the file jails wrote" from "remove
 /// whatever is there" — the second needs a human to have asked for it, which
 /// is why it is recorded on the absence rather than decided at execution.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct ManagedPath {
     pub path: ProjectPath,
     pub resource: ResourceKey,
     pub force: bool,
 }
-
-jails_support::codec!(struct ManagedPath { path, resource, force });
