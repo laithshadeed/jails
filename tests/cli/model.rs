@@ -1220,13 +1220,13 @@ entity Task {
     );
     let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(model.contains("entity WorkItem @id(ent_task) {"), "{model}");
-    assert!(model.contains("table \"task\""), "{model}");
+    assert!(model.contains("table \"tasks\""), "{model}");
     assert!(model.contains("// keep entity note"), "{model}");
     let linked = jails_model::parse_jdl(&model).unwrap();
     let entity = linked.entities.values().next().unwrap();
     assert_eq!(entity.id.to_string(), "ent_task");
     assert_eq!(entity.label, "work_item");
-    assert_eq!(entity.names.sql_table, "task");
+    assert_eq!(entity.names.sql_table, "tasks");
     let moved = root.join(".jails/generated/main/java/com/example/notes/domain/WorkItem.java");
     assert!(!task.exists());
     assert!(
@@ -3108,14 +3108,22 @@ fn legacy_enum_import_adopts_the_abi_and_converter_then_keeps_both_in_the_merge_
 
     let model_path = root.join(".jails/model.jdl");
     let model = fs::read_to_string(&model_path).unwrap();
-    fs::write(
-        &model_path,
-        model.replace(
-            "  IN_PROGRESS=in_progress\n}",
-            "  IN_PROGRESS=in_progress\n  CLOSED=closed\n}",
-        ),
-    )
-    .unwrap();
+    // JDL v1 renders a wire value as `NAME = "value"`. This edit used to look
+    // for the unspaced, unquoted `IN_PROGRESS=in_progress` the pre-v1 draft
+    // wrote, so it silently matched nothing and the sync below regenerated an
+    // enum that had never gained `CLOSED` -- a fixture bug wearing a product
+    // failure's clothes. Assert the edit landed, so the next syntax change
+    // fails here rather than three assertions later.
+    let declared = "  IN_PROGRESS = \"in_progress\"\n}";
+    let extended = model.replace(
+        declared,
+        "  IN_PROGRESS = \"in_progress\"\n  CLOSED = \"closed\"\n}",
+    );
+    assert_ne!(
+        extended, model,
+        "the fixture no longer matches how JDL renders an enum constant: {model}"
+    );
+    fs::write(&model_path, extended).unwrap();
     let synced = jails_cmd(&root, None).args(["sync"]).output().unwrap();
     assert!(
         synced.status.success(),
@@ -4600,7 +4608,7 @@ fn canonical_preserve_table_rename_moves_artifacts_and_keeps_hand_edits() {
     let entity = model.entities.values().next().unwrap();
     assert_eq!(entity.id.to_string(), "ent_task");
     assert_eq!(entity.names.java_type, "WorkItem");
-    assert_eq!(entity.names.sql_table, "task");
+    assert_eq!(entity.names.sql_table, "tasks");
     assert!(
         fs::read_to_string(root.join(".jails/model.toml"))
             .unwrap()
@@ -8330,7 +8338,7 @@ fn canonical_database_query_keeps_the_iterative_loop_and_ejects_only_its_adapter
     let evolved_source = fs::read_to_string(&adapter).unwrap();
     assert!(evolved_source.contains("handWritten()"), "{evolved_source}");
     assert!(
-        evolved_source.contains("select id, status, summary, title from note"),
+        evolved_source.contains("select id, title, status, summary from notes"),
         "{evolved_source}"
     );
 
@@ -8343,14 +8351,15 @@ fn canonical_database_query_keeps_the_iterative_loop_and_ejects_only_its_adapter
     );
     assert_eq!(snapshot_tree(&root), stable, "query rerun changed bytes");
 
-    fs::write(
-        &adapter,
-        evolved_source.replace(
-            "select id, status, summary, title from note",
-            "select id, status, summary, title from notes /* reader owns this line */",
-        ),
-    )
-    .unwrap();
+    let edited_adapter = evolved_source.replace(
+        "select id, title, status, summary from notes",
+        "select id, title, status, summary from notes /* reader owns this line */",
+    );
+    assert_ne!(
+        edited_adapter, evolved_source,
+        "the reader edit matched nothing, so the overlap below would not exist: {evolved_source}"
+    );
+    fs::write(&adapter, edited_adapter).unwrap();
     let before_overlap = snapshot_tree(&root);
     let refused = jails_cmd(&root, None)
         .args(["resource", "field", "add", "Note", "priority:int?"])
@@ -8379,9 +8388,10 @@ fn canonical_database_query_keeps_the_iterative_loop_and_ejects_only_its_adapter
         String::from_utf8_lossy(&retried.stderr)
     );
     let before_ejection = fs::read(&adapter).unwrap();
+    let before_ejection_source = String::from_utf8_lossy(&before_ejection).to_string();
     assert!(
-        String::from_utf8_lossy(&before_ejection)
-            .contains("select id, priority, status, summary, title from note")
+        before_ejection_source.contains("select id, title, status, summary, priority from notes"),
+        "{before_ejection_source}"
     );
 
     let ejected = jails_cmd(&root, None)
@@ -8547,23 +8557,24 @@ fn canonical_database_commands_and_transitions_are_independent_iterative_boundar
     assert!(evolved_transition.contains("readerTransitionMethod()"));
     assert!(
         evolved_command.contains(
-            "insert into notes (id, status, summary, title) values (:id, :status, :summary, :title)"
+            "insert into notes (id, title, status, summary) values (:id, :title, :status, :summary)"
         ),
         "{evolved_command}"
     );
     assert!(
-        evolved_transition.contains("returning id, status, summary, title"),
+        evolved_transition.contains("returning id, title, status, summary"),
         "{evolved_transition}"
     );
 
-    fs::write(
-        &command,
-        evolved_command.replace(
-            "insert into notes (id, status, summary, title)",
-            "insert into notes /* reader owns this SQL */ (id, status, summary, title)",
-        ),
-    )
-    .unwrap();
+    let edited_command = evolved_command.replace(
+        "insert into notes (id, title, status, summary)",
+        "insert into notes /* reader owns this SQL */ (id, title, status, summary)",
+    );
+    assert_ne!(
+        edited_command, evolved_command,
+        "the reader edit matched nothing, so the overlap below would not exist: {evolved_command}"
+    );
+    fs::write(&command, edited_command).unwrap();
     let before_overlap = snapshot_tree(&root);
     let refused = jails_cmd(&root, None)
         .args(["resource", "field", "add", "Note", "priority:int?"])
@@ -8631,9 +8642,12 @@ fn canonical_database_commands_and_transitions_are_independent_iterative_boundar
     );
     assert_eq!(fs::read(&reader_command).unwrap(), reader_command_bytes);
     let transition_before_ejection = fs::read(&transition).unwrap();
+    let transition_before_ejection_source =
+        String::from_utf8_lossy(&transition_before_ejection).to_string();
     assert!(
-        String::from_utf8_lossy(&transition_before_ejection)
-            .contains("returning category, id, priority, status, summary, title")
+        transition_before_ejection_source
+            .contains("returning id, title, status, summary, priority, category"),
+        "{transition_before_ejection_source}"
     );
 
     let ejected_transition = jails_cmd(&root, None)
