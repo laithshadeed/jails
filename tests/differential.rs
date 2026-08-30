@@ -2810,7 +2810,7 @@ fn corpus_root() -> PathBuf {
 struct CorpusEntry {
     name: String,
     spring: bool,
-    adopt: Adoption,
+    adopt: Vec<Adoption>,
 }
 
 /// What an entry expects `jails adopt` to discover.
@@ -2819,18 +2819,29 @@ struct CorpusEntry {
 /// adopt" is a *correct* answer for a project whose directories jails would
 /// have chosen anyway and a bug for one whose layout it must learn. A single
 /// shape for both would have to be the weaker of the two.
+///
+/// **A row carries a list, because one project can mean several of these at
+/// once.** A real tree renames two layers, holds a third directory jails
+/// cannot classify, and has two candidates for a fourth -- all in one adopt.
+/// The first version of this took one expectation per entry, so an entry could
+/// state a quarter of what it was checked in to prove and the rest lived in
+/// the prose column where nothing reads it.
+#[derive(Debug)]
 enum Adoption {
     /// One `[layout]` row adoption must write.
     Records { key: String, value: String },
-    /// Adoption must name this directory as unrecognised and write nothing.
+    /// Adoption must name this directory and must not record it.
     ///
-    /// "An unrecognised directory is reported not guessed" is one of adopt's
-    /// three rules, and it is the one this distinguishes from [`Self::Nothing`]:
-    /// a project *with* a directory jails cannot classify must say which,
-    /// because silence there is indistinguishable from having looked and found
-    /// nothing to do.
+    /// Covers both halves of "reported, never guessed at": a directory the
+    /// synonym table does not know, and one of two candidates for a layer that
+    /// a `[layout]` table can only name once. In each case silence is
+    /// indistinguishable from having looked and found nothing, and the reader
+    /// is the only one who can decide.
     Reports { directory: String },
     /// Adoption has nothing to learn, and writes nothing.
+    ///
+    /// Stands alone: a row that says `nothing` beside anything else is a row
+    /// that contradicts itself.
     Nothing,
 }
 
@@ -2864,29 +2875,35 @@ fn corpus_policy() -> Vec<CorpusEntry> {
                 matches!(flavour, "spring" | "plain"),
                 "corpus row `{name}` has flavour `{flavour}`; use spring or plain"
             );
-            let adopt = match adopt.strip_prefix("reports:") {
-                Some(directory) => Adoption::Reports {
-                    directory: directory.to_string(),
-                },
-                None => match adopt.strip_prefix("records:") {
-                Some(pair) => {
-                    let (key, value) = pair.split_once('=').unwrap_or_else(|| {
-                        panic!("corpus row `{name}` adopt expectation is not `key=value`")
-                    });
-                    Adoption::Records {
-                        key: key.to_string(),
-                        value: value.to_string(),
+            let adopt: Vec<Adoption> = adopt
+                .split(';')
+                .map(|expectation| {
+                    if let Some(directory) = expectation.strip_prefix("reports:") {
+                        return Adoption::Reports {
+                            directory: directory.to_string(),
+                        };
                     }
-                }
-                None => {
+                    if let Some(pair) = expectation.strip_prefix("records:") {
+                        let (key, value) = pair.split_once('=').unwrap_or_else(|| {
+                            panic!("corpus row `{name}` adopt expectation is not `key=value`")
+                        });
+                        return Adoption::Records {
+                            key: key.to_string(),
+                            value: value.to_string(),
+                        };
+                    }
                     assert_eq!(
-                        adopt, "nothing",
-                        "corpus row `{name}` adopt column must be `records:k=v`, `reports:<dir>` or `nothing`"
+                        expectation, "nothing",
+                        "corpus row `{name}` adopt column must be `;`-separated \
+                         `records:k=v` / `reports:<dir>`, or the single word `nothing`"
                     );
                     Adoption::Nothing
-                }
-                },
-            };
+                })
+                .collect();
+            assert!(
+                !adopt.iter().any(|one| matches!(one, Adoption::Nothing)) || adopt.len() == 1,
+                "corpus row `{name}` says `nothing` beside another expectation"
+            );
             CorpusEntry {
                 name: name.to_string(),
                 spring: flavour == "spring",
@@ -2969,62 +2986,74 @@ fn every_corpus_project_is_treated_the_same_by_both_implementations() {
             let before = reader_tree(&subject.root);
             let manifest = subject.root.join("jails.toml");
 
-            match &entry.adopt {
-                Adoption::Records { key, value } => {
-                    subject.succeeds(&["adopt"]);
-                    let recorded = fs::read_to_string(&manifest).unwrap_or_else(|error| {
-                        panic!(
-                            "{}: {} adopted without writing jails.toml: {error}",
-                            entry.name, subject.name
-                        )
-                    });
-                    assert!(
+            let expects_layout = entry
+                .adopt
+                .iter()
+                .any(|one| matches!(one, Adoption::Records { .. }));
+            let output = subject.run(&["adopt"]);
+            let said = String::from_utf8_lossy(&output.stdout).into_owned()
+                + &String::from_utf8_lossy(&output.stderr);
+            assert_eq!(
+                output.status.success(),
+                expects_layout,
+                "{}: {} adopt exit disagrees with its policy row:\n{said}",
+                entry.name,
+                subject.name
+            );
+            assert_eq!(
+                manifest.exists(),
+                expects_layout,
+                "{}: {} wrote a jails.toml it should not have, or did not write one it should",
+                entry.name,
+                subject.name
+            );
+            let recorded = if expects_layout {
+                fs::read_to_string(&manifest).unwrap_or_else(|error| {
+                    panic!(
+                        "{}: {} adopted without writing jails.toml: {error}",
+                        entry.name, subject.name
+                    )
+                })
+            } else {
+                String::new()
+            };
+            for expectation in &entry.adopt {
+                match expectation {
+                    Adoption::Records { key, value } => assert!(
                         recorded.contains(&format!("{key} = \"{value}\"")),
                         "{}: {} did not record `{key} = {value}`:\n{recorded}",
                         entry.name,
                         subject.name
-                    );
-                }
-                Adoption::Reports { directory } => {
-                    // Reported *by name*. A refusal that does not say which
-                    // directory it could not classify leaves the reader
-                    // unable to tell "I looked and there was nothing" from "I
-                    // found something I do not understand" -- and the second
-                    // is the one they can act on.
-                    let output = subject.run(&["adopt"]);
-                    let said = String::from_utf8_lossy(&output.stdout).into_owned()
-                        + &String::from_utf8_lossy(&output.stderr);
-                    assert!(
-                        said.contains(directory.as_str()),
-                        "{}: {} did not name `{directory}` as unrecognised:\n{said}",
-                        entry.name,
-                        subject.name
-                    );
-                    assert!(
-                        !manifest.exists(),
-                        "{}: {} wrote a jails.toml for a directory it could not classify",
-                        entry.name,
-                        subject.name
-                    );
-                }
-                Adoption::Nothing => {
-                    // A refusal, and an *empty-handed* one: inventing a
-                    // `[layout]` for a project that does not need one would
-                    // pin a layout nobody chose, and every later command would
-                    // read it as the reader's decision.
-                    let output = subject.run(&["adopt"]);
-                    assert!(
-                        !output.status.success(),
-                        "{}: {} claimed to adopt a project with no layout to learn",
-                        entry.name,
-                        subject.name
-                    );
-                    assert!(
-                        !manifest.exists(),
-                        "{}: {} wrote a jails.toml while refusing to adopt",
-                        entry.name,
-                        subject.name
-                    );
+                    ),
+                    Adoption::Reports { directory } => {
+                        // Named *by name*. A refusal that does not say which
+                        // directory it could not place leaves the reader
+                        // unable to tell "I looked and there was nothing" from
+                        // "I found something I do not understand" -- and only
+                        // the second is something they can act on.
+                        assert!(
+                            said.contains(directory.as_str()),
+                            "{}: {} did not name `{directory}`:\n{said}",
+                            entry.name,
+                            subject.name
+                        );
+                        // ...and reported is not recorded. This is the half
+                        // that catches a guess: naming a directory in the
+                        // output and then writing it into `[layout]` anyway
+                        // would read as diligence and behave as a coin toss.
+                        assert!(
+                            !recorded.contains(&format!("= \"{directory}\"")),
+                            "{}: {} recorded `{directory}` after reporting it:\n{recorded}",
+                            entry.name,
+                            subject.name
+                        );
+                    }
+                    // The exit status and the absent manifest above are the
+                    // whole assertion: inventing a `[layout]` for a project
+                    // that does not need one would pin a layout nobody chose,
+                    // and every later command would read it as the reader's
+                    // decision.
+                    Adoption::Nothing => {}
                 }
             }
 

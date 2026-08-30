@@ -14,12 +14,12 @@ that is not met yet.**
 | capabilities | **25 of 25** |
 | component kinds with a backend | **23 of 23** -- `every_component_kind_is_emitted_or_refused` has no refusal left to reach |
 | architecture fitness rules | all thirteen held: nine by a test, four by a type or by Cargo. One added that the list did not have. See *Where each fitness rule stands* |
-| merge gates | G0, G2, G3, G4 green; G1 green apart from this machine's git; G5 has its harness and wants entries. See *Where the gates stand* |
-| deletion map | **not started**, and blocked on one additive thing: more corpus entries |
+| merge gates | **all six green** apart from this machine's git (G1). See *Where the gates stand* |
+| deletion map | **not started**, and no longer blocked. See *Why the deletion has not happened* |
 
 **Why the deletion has not happened.** The *Integration and one coordinated
-cutover* section makes it step 5 through 7, after "all gates pass", and two
-things block that honestly rather than incidentally:
+cutover* section makes it step 5 through 7, after "all gates pass". Both things
+this document listed as blocking it are closed:
 
 - **G1 survives the deletion, and this document said how.** Step 6 keeps "the
   frozen old binary fixture needed by compatibility tests", and
@@ -29,22 +29,28 @@ things block that honestly rather than incidentally:
   assertion and means nothing. So the differential gate keeps working after
   the legacy crates are gone. This was recorded here as a blocker on
   2026-08-30 and it was wrong; checking beat asserting.
-- **G5 is incomplete.** The proof manifests are promoted, the workouts are
-  measured and the sanitized corpus now exists with two entries -- one of
-  which found an `adopt` defect the moment it was written. What it does not
-  have yet is *volume*: two shapes is a harness, not a corpus, and the value
-  is in the shapes nobody has thought to check in. That is the one thing left
-  between here and the cutover, and it is additive.
+- **G5 has its corpus.** Five checked-in projects jails did not write, covering
+  all three of `adopt`'s rules and both build systems, each run through both
+  binaries with `policy.tsv` accounting for every one. Two of the five found
+  something the moment they were written -- an `adopt` defect, and a synonym
+  nobody should add.
+
+What is left is not a *condition*; it is the cutover itself, which is a change
+of a different kind from everything above it. Nineteen crates become four plus
+two leaves, `LAYERS` loses two thirds of its rows, and every test that drives
+the legacy path either moves to the canonical one or goes. That is one
+deliberate commit on a machine with the full toolchain, not a step to slip into
+a session that was doing something else.
 
 Two of the remaining red marks are **this machine, not the branch**: git 2.43
 against the 2.44+ `git merge-file --diff-algorithm` needs, and JDK 21 against
 `TARGET_RELEASE` 26. Both are recorded in `CLAUDE.md`. Any gate measured here
-without them is a measurement of the other tiers.
+without them is a measurement of the other tiers -- which is exactly why the
+cutover is not a thing to do from here: the suite that would have to prove it
+cannot fully run on this machine.
 
-So the next change to this document is not a further simplification. It is
-either the adopted-project corpus, or -- on a machine with the full toolchain,
-with G1 and G5 green -- the single cutover commit this file has been building
-toward.
+So the next change to this document is the single cutover commit it has been
+building toward.
 
 ---
 
@@ -2336,10 +2342,32 @@ survives.
   a single `Jdbc<Name>Repository` whatever the dialect, and these expect the
   dialect in the name. Left failing rather than renamed away.
 
-  **The sanitized corpus now exists**: `tests/corpus/` holds checked-in
-  project trees jails did not write, with `policy.tsv` accounting for every
-  one, and `every_corpus_project_is_treated_the_same_by_both_implementations`
-  runs each through both binaries. The point of bytes over the existing Rust
+  **The sanitized corpus now exists and has five entries**: `tests/corpus/`
+  holds checked-in project trees jails did not write, with `policy.tsv`
+  accounting for every one, and
+  `every_corpus_project_is_treated_the_same_by_both_implementations` runs each
+  through both binaries. Between them they cover all three of `adopt`'s rules
+  and both build systems: a layer nested two deep, a project with no layers at
+  all, two known synonyms beside one unknown name, two candidates for one layer
+  (neither written, both named, and the unambiguous sibling still recorded),
+  and a Kotlin-DSL Gradle build with no `pom.xml` at all.
+
+  **Widening the corpus widened the harness first.** A row carried one
+  expectation, so an entry could state a quarter of what it was checked in to
+  prove and the rest lived in the prose column, where nothing reads it. A row
+  is a `;`-separated list now, and `reports:` asserts both halves of "reported,
+  never guessed at" -- named in the output *and* absent from `[layout]` --
+  because naming a directory and then recording it anyway reads as diligence
+  and behaves as a coin toss.
+
+  One finding, and it is a refusal rather than a defect: `core` is not a
+  synonym for `domain`, and should not become one. It is a name real projects
+  use constantly and it means the domain model in one codebase and shared
+  framework glue in the next, so it fails the table's own bar on the second
+  half rather than the first -- common is not the test, unambiguous is.
+  `spring-renamed-layers` pins the refusal so nobody adds it on a guess.
+
+  The point of bytes over the existing Rust
   fixture is that it grows without a Rust change -- a corpus only a Rust
   programmer can extend is not a corpus.
 

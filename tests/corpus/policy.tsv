@@ -13,11 +13,19 @@
 # per entry because the same outcome is correct for one project and a bug for
 # another -- only the entry knows which:
 #
+# Expectations are `;`-separated, because one real tree means several at once:
+#
 #   records:<key>=<value>  one `[layout]` row adoption must write
-#   reports:<dir>          adoption must name <dir> as unrecognised and write
-#                          nothing -- "reported, never guessed at"
-#   nothing                adoption has nothing to learn and writes nothing
+#   reports:<dir>          adoption must name <dir> -- because it cannot
+#                          classify it, or because a layer has two candidates
+#                          and a `[layout]` table can only say one -- and must
+#                          NOT record it: "reported, never guessed at"
+#   nothing                adoption has nothing to learn and writes nothing.
+#                          Stands alone
 #
 # name	flavour	adopt	what it exercises
 spring-nested-adapters	spring	reports:infra.jdbc	a layer nested two deep. `Config::layers()` honours `adapters = "infra.jdbc"` written by hand, but `adopt` cannot discover one: `jdbc` is a technology rather than a layer name, so it is reported and left alone. Before this entry existed, adopt recorded `adapters = "infra"` -- the grandparent, which holds no Java at all
 plain-flat-package	plain	nothing	a project with no layer directories at all, plus a hand-written record sitting where jails generates -- adoption has nothing to learn and must say so instead of inventing a layout
+spring-renamed-layers	spring	records:adapters=persistence;records:web=rest;reports:core	the ordinary foreign shape: two layers under names the synonym table knows, and a third the reader has to decide about. `core` is deliberately not a synonym for `domain` -- it means the domain model in one codebase and shared framework glue in the next, and the table's rule is that an entry earns its place by being unambiguous, not by being plausible. So this pins the refusal rather than the guess
+spring-two-web-directories	spring	records:adapters=persistence;reports:controllers;reports:rest	two directories that both mean `web`. A `[layout]` table can only name one, so neither is written and both are named -- and the unambiguous `persistence` is still recorded, because one undecidable layer must not make the others undecidable. This is the only entry that exercises that third adopt rule
+gradle-kotlin-dsl	spring	records:domain=model;records:clients=gateways	no `pom.xml` at all: a Kotlin-DSL Gradle build, which is the door `find_project_root` opens for any recognised marker rather than for Maven alone. `adopt`, `routes` and `beans` are questions about a directory and its Java, so all three must answer here -- jails never reads, writes or parses a foreign build file, and recognising its filename is not understanding it

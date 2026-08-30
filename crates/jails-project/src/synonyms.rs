@@ -36,6 +36,14 @@ use std::collections::BTreeMap;
 /// serves them; `usecase`/`usecases`/`application` is the port layer under
 /// Clean Architecture's own naming. A name nobody uses costs nothing to leave
 /// out and something real to get wrong.
+///
+/// **`core` is the deliberate omission**, and it is the one somebody will
+/// reach for. It is a name real projects use constantly and it means the
+/// domain model in one codebase and shared framework glue in the next -- so it
+/// fails the test above on the second half rather than the first: common is
+/// not the bar, unambiguous is. Reporting it and letting the reader write one
+/// line costs them a line; guessing it wrong points every later command at the
+/// wrong package. `tests/corpus/spring-renamed-layers` pins the refusal.
 const SYNONYMS: &[(&str, &str)] = &[
     (layout::DOMAIN, layout::DOMAIN),
     ("model", layout::DOMAIN),
