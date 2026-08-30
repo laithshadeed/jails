@@ -118,3 +118,10 @@ workspace = true
 [profile.dev]
 opt-level = 1
 debug = "line-tables-only"
+
+# Dependencies carry no debug info at all. A panic location inside `clap` or
+# `serde` is not a thing anyone here debugs, and every byte of it is linked
+# into all thirty-two test binaries and then into the CI cache -- which is
+# restored and saved on every run.
+[profile.dev.package."*"]
+debug = 0
