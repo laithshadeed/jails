@@ -88,20 +88,45 @@ looked and still worth removing.
 
 ## A1 — coverage
 
-### A1.1 Thirty-four of thirty-nine generators
+### A1.1 Thirty-five of thirty-nine generators
 
 `src/canonical_support.rs` is the authority and is honest code: an exhaustive
 match that stops compiling when a clap variant is added. Its own test pins
-34/39. Capabilities are closed at 25/25.
+35/39. Capabilities are closed at 25/25, and **every one of the 23 component
+kinds now has a backend** -- `every_component_kind_is_emitted_or_refused` no
+longer has a refusal to reach.
 
-Still legacy: `migration`, `association`, `search`, `durable-job`, `seed`.
+Still legacy: `migration`, `association`, `search`, `seed`.
 
 **`http-workflow` was never blocked on A1.7**, whatever this file said before:
 it fetches through a `fetcher` component and keeps its frontier in PostgreSQL,
 and neither is the outbox. `http-sink` genuinely was, and went through
 immediately once there was a `<Command>OutboxSink` port to implement.
-`durable-job` is the one still waiting, and it is an emitter away rather than
-a design away.
+`durable-job` went through too, and the canonical version is smaller than the
+legacy one in two ways worth recording.
+
+**Its payload is the command's own `Input`.** The legacy generator writes a
+separate `<Name>Work` record whose fields must *exactly* match the command's,
+in declaration order, and refuses when they drift -- a check that exists only
+because there are two declarations of one thing. Canonically there is one, so
+adding a field to the command changes the queue's payload with it and there is
+nothing to check.
+
+**Its queue table stores that payload as one `jsonb` column**, like the
+outbox's. A column per field makes the table's shape a function of the
+command's, so every field added to the command is a migration for work that has
+not run yet -- and nothing queries a work queue by payload field, because it is
+the application's own bookkeeping rather than the reader's schema. The
+idempotency contract is unchanged: an `on conflict (id) do nothing` that
+inserted nothing means the id is taken, and comparing the decoded payloads
+answers whether it is the same request.
+
+The consequence for the templates is that this kind does *not* share the legacy
+ones -- a different schema and a different command ABI are a different
+implementation, not a second copy of one. `BuiltinSemantics` gained an
+`alternate` beside `sample` for the conflict test, which needs a payload that
+provably differs; the ratchet on per-builtin knowledge outside its own row is
+what said to put it there rather than in a match in the emitter.
 
 **Both migrations' DDL moved to `templates/sql/`**, read by `include_str!` from
 both engines. It is the rule `CLAUDE.md` gives for the project files, and the

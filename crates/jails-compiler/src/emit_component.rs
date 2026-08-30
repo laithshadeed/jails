@@ -29,6 +29,7 @@ mod auth;
 mod cli;
 mod client;
 mod command;
+mod durable_job;
 mod fetcher;
 mod handler;
 mod http_sink;
@@ -61,6 +62,7 @@ pub(crate) fn lower_and_emit(
             ComponentKind::Webhook => webhook::files(model, component)?,
             ComponentKind::HttpSink => http_sink::files(model, component)?,
             ComponentKind::HttpWorkflow => http_workflow::files(model, component)?,
+            ComponentKind::DurableJob => durable_job::files(model, component)?,
             _ => continue,
         };
         for file in files {
@@ -96,6 +98,7 @@ pub(crate) fn migrations(
     let mut migrations = idempotency::migrations(accepted, next);
     migrations.extend(presence::migrations(accepted, next));
     migrations.extend(http_workflow::migrations(accepted, next));
+    migrations.extend(durable_job::migrations(accepted, next));
     migrations
 }
 

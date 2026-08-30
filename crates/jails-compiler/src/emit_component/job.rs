@@ -78,6 +78,10 @@ pub(super) fn scheduling(model: &AppModel) -> Result<Option<Emitted>, CompileErr
                     // without the config the claim never runs: the run sits
                     // QUEUED forever and nothing says why.
                     | jails_model::ComponentKind::HttpWorkflow
+                    // A durable job's worker drains its queue on a schedule.
+                    // Without the config nothing claims: items sit PENDING
+                    // forever and the only symptom is work that never happens.
+                    | jails_model::ComponentKind::DurableJob
             )
         })
         .map(|component| component.id.as_str().to_string())

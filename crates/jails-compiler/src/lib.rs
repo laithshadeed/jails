@@ -605,8 +605,8 @@ const fn component_kind_is_emitted(kind: jails_model::ComponentKind) -> bool {
         | Kind::Socket
         | Kind::HttpSink
         | Kind::HttpWorkflow
+        | Kind::DurableJob
         | Kind::Webhook => true,
-        Kind::DurableJob => false,
     }
 }
 
@@ -660,10 +660,7 @@ mod tests {
             .filter(|kind| super::component_kind_is_emitted(**kind))
             .count();
         assert_eq!(ComponentKind::ALL.len(), 23);
-        assert_eq!(
-            emitted, 22,
-            "twenty-two kinds have a compiler backend today"
-        );
+        assert_eq!(emitted, 23, "every component kind has a compiler backend");
 
         // The refusal is reachable, not merely written down.
         let model = jails_model::parse_jdl(
@@ -984,6 +981,99 @@ mod tests {
             "{error}"
         );
     }
+
+    /// A durable job runs an existing command later, and proves a retry is
+    /// not a repeat.
+    ///
+    /// The recovery check is what this is really about. A process can die
+    /// after the command commits and before the queue row is acknowledged, so
+    /// the expired lease hands the same item to the next worker -- and without
+    /// asking the repository first, at-least-once *delivery* becomes
+    /// at-least-once *effect*.
+    #[test]
+    fn a_durable_job_executes_its_command_and_will_not_repeat_a_committed_effect() {
+        let model = jails_model::parse_jdl(DURABLE_MODEL).unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
+        let plan = Compiler::compile(&snapshot, None).expect("a durable job has a backend");
+        let file = |suffix: &str| {
+            let file = plan
+                .generated
+                .files
+                .iter()
+                .find(|(path, _)| path.as_str().ends_with(suffix))
+                .map(|(_, file)| file)
+                .unwrap_or_else(|| panic!("no rendered file ends with `{suffix}`"));
+            String::from_utf8(file.bytes.clone()).unwrap()
+        };
+        let worker = file("/DispatchWorker.java");
+        assert!(
+            worker.contains("if (results.findById(claimed.id()).isEmpty())"),
+            "{worker}"
+        );
+        assert!(
+            worker.contains("command.execute(claimed.work())"),
+            "{worker}"
+        );
+        // The payload is the command's own Input, so a queued item cannot
+        // describe work the command could not do.
+        let queue = file("/DispatchQueue.java");
+        assert!(
+            queue.contains("void enqueue(UUID id, CreateCommand.Input work)"),
+            "{queue}"
+        );
+        let store = file("/JdbcDispatchStore.java");
+        assert!(store.contains("insert into dispatch_jobs"), "{store}");
+        assert!(store.contains("for update skip locked"), "{store}");
+        file("/DispatchJobController.java");
+        file("/SchedulingConfig.java");
+        // The conflict test is rendered, with a second payload that differs.
+        let test = file("/DispatchJobIT.java");
+        assert!(test.contains("IdempotencyConflictException"), "{test}");
+        assert!(test.contains("\"other\""), "{test}");
+        // ... and no placeholder survived into it.
+        assert!(!test.contains("{{"), "{test}");
+        let migration = plan
+            .migrations
+            .iter()
+            .find(|migration| migration.logical_name == "create_dispatch_jobs")
+            .expect("the queue needs a table");
+        assert!(
+            String::from_utf8(migration.bytes.clone())
+                .unwrap()
+                .contains("payload jsonb not null")
+        );
+    }
+
+    /// The recovery proof is a repository lookup, so an entity without one
+    /// leaves the worker unable to tell a retry from a repeat.
+    #[test]
+    fn a_durable_job_yielding_an_unstored_entity_refuses_by_name() {
+        // A *second* entity with no repository, so the command's own target
+        // stays stored and this is the only defect in the model.
+        let model = jails_model::parse_jdl(&format!(
+            "{}\nentity Note {{\n  id: uuid @pk\n  body: string\n}}\n",
+            DURABLE_MODEL.replace("yields task", "yields note")
+        ))
+        .unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
+        let error = Compiler::compile(&snapshot, None)
+            .expect_err("a durable job with no recovery proof must refuse");
+        assert!(
+            error.to_string().contains("which has no repository"),
+            "{error}"
+        );
+    }
+
+    /// A command run later, its target, and the queue between them.
+    const DURABLE_MODEL: &str = "jdl 1\napp Demo {\n  pkg com.example.demo\n  java 26\n  \
+         platform spring\n  build maven\n  storage postgres\n}\n\ncap json\n\n\
+         entity Task {\n  use repo\n  id: uuid @pk\n  title: string\n\n  \
+         command Create(title)\n}\n\ncomponent durable-job Dispatch {\n  on create\n  \
+         yields task\n}\n";
 
     /// A traversal and the fetcher it goes through.
     const WORKFLOW_MODEL: &str = "jdl 1\napp Demo {\n  pkg com.example.demo\n  java 26\n  \

@@ -883,11 +883,14 @@ app Notes {
             "--bind",
             "signature=stripe_signature",
         ],
+        // `--on` is the command it runs later and `--yields` the entity that
+        // command creates -- the row whose presence tells a retry from a
+        // repeat. The payload is the command's own `Input`, so unlike the
+        // legacy generator there are no fields to repeat here.
         vec![
             "g",
             "durable-job",
             "Dispatch",
-            "id:uuid",
             "--on",
             "CreateTask",
             "--yields",
@@ -898,12 +901,12 @@ app Notes {
         ],
         vec!["g", "presence", "Online"],
     ];
-    // Kinds the compiler has no backend for refuse instead of succeeding, and
-    // the refusal leaves the source untouched. This loop used to assert only
-    // that the CLI exited zero, which is exactly how `audit.md` A1.2 stayed
-    // invisible: fourteen of these wrote a declaration, reported success, and
-    // emitted nothing at all.
-    const UNSERVED: &[&str] = &["durable-job"];
+    // **Nothing here is unserved any more**, and the list stays because the
+    // property it holds is what `audit.md` A1.2 was about: this loop used to
+    // assert only that the CLI exited zero, and fourteen of these wrote a
+    // declaration, reported success, and emitted nothing at all. A kind added
+    // without a backend belongs here rather than in the success path.
+    const UNSERVED: &[&str] = &[];
     for command in commands {
         let output = jails_cmd(&root, None).args(&command).output().unwrap();
         if UNSERVED.contains(&command[1]) {

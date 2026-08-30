@@ -72,6 +72,17 @@ pub struct BuiltinSemantics {
     pub java_import: Option<&'static str>,
     /// A Java expression of this type, for a generated factory.
     pub sample: &'static str,
+    /// A *second* expression of this type, guaranteed unequal to [`sample`].
+    ///
+    /// A generated test sometimes has to show that two values differ -- a
+    /// durable queue's idempotency conflict is one payload against another --
+    /// and the honest way to build one is a value stated beside the first
+    /// rather than derived from it. `bytes` is the exception: Java arrays
+    /// compare by identity, so two of them are unequal whatever they hold and
+    /// a "different" one would prove nothing.
+    ///
+    /// [`sample`]: Self::sample
+    pub alternate: Option<&'static str>,
     /// The Postgres column type. One dialect on purpose: a second one is a
     /// column on this row, not a second table somewhere else.
     pub sql_postgres: &'static str,
@@ -96,6 +107,7 @@ static STRING: BuiltinSemantics = BuiltinSemantics {
     java_primitive: None,
     java_import: None,
     sample: "\"sample\"",
+    alternate: Some("\"other\""),
     sql_postgres: "text",
     literal: LiteralKind::Text,
     defaults: &[],
@@ -110,6 +122,7 @@ static INTEGER: BuiltinSemantics = BuiltinSemantics {
     java_primitive: Some("int"),
     java_import: None,
     sample: "1",
+    alternate: Some("7"),
     sql_postgres: "integer",
     literal: LiteralKind::Int32,
     defaults: &["identity"],
@@ -124,6 +137,7 @@ static LONG: BuiltinSemantics = BuiltinSemantics {
     java_primitive: Some("long"),
     java_import: None,
     sample: "1L",
+    alternate: Some("7L"),
     sql_postgres: "bigint",
     literal: LiteralKind::Int64,
     defaults: &["identity"],
@@ -138,6 +152,7 @@ static DOUBLE: BuiltinSemantics = BuiltinSemantics {
     java_primitive: Some("double"),
     java_import: None,
     sample: "1.0d",
+    alternate: Some("7.0d"),
     sql_postgres: "double precision",
     literal: LiteralKind::Fractional,
     defaults: &[],
@@ -152,6 +167,7 @@ static DECIMAL: BuiltinSemantics = BuiltinSemantics {
     java_primitive: None,
     java_import: Some("java.math.BigDecimal"),
     sample: "BigDecimal.ONE",
+    alternate: Some("BigDecimal.TEN"),
     sql_postgres: "numeric",
     literal: LiteralKind::Fractional,
     defaults: &[],
@@ -166,6 +182,7 @@ static BOOLEAN: BuiltinSemantics = BuiltinSemantics {
     java_primitive: Some("boolean"),
     java_import: None,
     sample: "false",
+    alternate: Some("true"),
     sql_postgres: "boolean",
     literal: LiteralKind::Boolean,
     defaults: &[],
@@ -180,6 +197,7 @@ static UUID: BuiltinSemantics = BuiltinSemantics {
     java_primitive: None,
     java_import: Some("java.util.UUID"),
     sample: "UUID.fromString(\"00000000-0000-0000-0000-000000000001\")",
+    alternate: Some("UUID.fromString(\"00000000-0000-0000-0000-000000000007\")"),
     sql_postgres: "uuid",
     literal: LiteralKind::Text,
     defaults: &["uuid7"],
@@ -194,6 +212,7 @@ static DATE: BuiltinSemantics = BuiltinSemantics {
     java_primitive: None,
     java_import: Some("java.time.LocalDate"),
     sample: "LocalDate.parse(\"2026-01-01\")",
+    alternate: Some("LocalDate.parse(\"2026-07-07\")"),
     sql_postgres: "date",
     literal: LiteralKind::Text,
     defaults: &["today"],
@@ -208,6 +227,7 @@ static DATE_TIME: BuiltinSemantics = BuiltinSemantics {
     java_primitive: None,
     java_import: Some("java.time.LocalDateTime"),
     sample: "LocalDateTime.parse(\"2026-01-01T00:00:00\")",
+    alternate: Some("LocalDateTime.parse(\"2026-07-07T07:07:07\")"),
     sql_postgres: "timestamp",
     literal: LiteralKind::Text,
     defaults: &["now"],
@@ -222,6 +242,7 @@ static INSTANT: BuiltinSemantics = BuiltinSemantics {
     java_primitive: None,
     java_import: Some("java.time.Instant"),
     sample: "Instant.parse(\"2026-01-01T00:00:00Z\")",
+    alternate: Some("Instant.parse(\"2026-07-07T07:07:07Z\")"),
     sql_postgres: "timestamptz",
     literal: LiteralKind::Text,
     defaults: &["now"],
@@ -236,6 +257,7 @@ static DURATION: BuiltinSemantics = BuiltinSemantics {
     java_primitive: None,
     java_import: Some("java.time.Duration"),
     sample: "Duration.ofMinutes(1)",
+    alternate: Some("Duration.ofMinutes(7)"),
     sql_postgres: "interval",
     literal: LiteralKind::Text,
     defaults: &[],
@@ -253,6 +275,7 @@ static URI: BuiltinSemantics = BuiltinSemantics {
     java_primitive: None,
     java_import: Some("java.net.URI"),
     sample: "URI.create(\"https://example.test\")",
+    alternate: Some("URI.create(\"https://other.test\")"),
     sql_postgres: "text",
     literal: LiteralKind::Text,
     defaults: &[],
@@ -267,6 +290,7 @@ static PATH: BuiltinSemantics = BuiltinSemantics {
     java_primitive: None,
     java_import: Some("java.nio.file.Path"),
     sample: "Path.of(\"sample\")",
+    alternate: Some("Path.of(\"other\")"),
     sql_postgres: "text",
     literal: LiteralKind::Text,
     defaults: &[],
@@ -281,6 +305,7 @@ static ZONE_ID: BuiltinSemantics = BuiltinSemantics {
     java_primitive: None,
     java_import: Some("java.time.ZoneId"),
     sample: "ZoneId.of(\"UTC\")",
+    alternate: Some("ZoneId.of(\"Europe/Paris\")"),
     sql_postgres: "text",
     literal: LiteralKind::Text,
     defaults: &[],
@@ -295,6 +320,7 @@ static CURRENCY: BuiltinSemantics = BuiltinSemantics {
     java_primitive: None,
     java_import: Some("java.util.Currency"),
     sample: "Currency.getInstance(\"USD\")",
+    alternate: Some("Currency.getInstance(\"EUR\")"),
     sql_postgres: "text",
     literal: LiteralKind::Text,
     defaults: &[],
@@ -311,6 +337,7 @@ static BYTES: BuiltinSemantics = BuiltinSemantics {
     java_primitive: None,
     java_import: None,
     sample: "new byte[]{1}",
+    alternate: None,
     sql_postgres: "bytea",
     literal: LiteralKind::Opaque,
     defaults: &[],
