@@ -294,15 +294,32 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
         }
         OperationKind::Event(event) => {
             let mut imports = BTreeSet::new();
-            let fields = event.on.as_ref().map_or_else(
-                || Ok(Vec::new()),
-                |entity_id| {
-                    let entity = entity(model, entity_id)?;
-                    fields(entity, &event.fields)
-                },
-            )?;
             let type_name = with_suffix(&operation.names.java_type, "Event");
-            let body = record_shape(&type_name, &fields, &mut imports);
+            // **The linked parameters, not the flat `fields`.** The flat list
+            // can only name fields of the target entity, so an event
+            // declaring a component the row does not carry -- its own minted
+            // `id`, the moment it happened -- rendered a record without it,
+            // and the emitter that stages the payload then named an accessor
+            // no record had. The linker folds `fields` into the parameters,
+            // so this is the whole payload either way; the command's `Input`
+            // has read it this way all along.
+            let body = if event.semantics.parameters.is_empty() {
+                let fields = event.on.as_ref().map_or_else(
+                    || Ok(Vec::new()),
+                    |entity_id| {
+                        let entity = entity(model, entity_id)?;
+                        fields(entity, &event.fields)
+                    },
+                )?;
+                record_shape(&type_name, &fields, &mut imports)
+            } else {
+                operation_record_shape(
+                    model,
+                    &type_name,
+                    &event.semantics.parameters,
+                    &mut imports,
+                )?
+            };
             (Package::DomainEvents, type_name, body, imports)
         }
     };

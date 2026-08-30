@@ -145,10 +145,16 @@ pub(super) fn lower(
         &command.semantics.emits,
         &mut imports,
     )?;
-    let (event_member, event_parameter, event_assignment, result) = if publications.is_empty() {
+    // What the collaborator *is* follows from how the command delivers. A
+    // direct publication takes Spring's publisher; an outbox stages into its
+    // own store, and the staging insert has to be in the statement's
+    // transaction or the whole guarantee is gone -- so `@Transactional` is
+    // part of the same decision rather than a separate one somebody can
+    // forget.
+    let staged = super::outbox::delivery(operation) == jails_model::Delivery::Outbox;
+    let (collaborator, method_annotation, result) = if publications.is_empty() {
         (
-            "",
-            "",
+            None,
             "",
             format!(
                 "        return statement.query({}.class).single();",
@@ -157,9 +163,12 @@ pub(super) fn lower(
         )
     } else {
         (
-            "\n    private final ApplicationEventPublisher events;",
-            ", ApplicationEventPublisher events",
-            "\n        this.events = events;",
+            Some(if staged {
+                (format!("Jdbc{}Outbox", operation.names.java_type), "outbox")
+            } else {
+                ("ApplicationEventPublisher".to_string(), "events")
+            }),
+            if staged { "    @Transactional\n" } else { "" },
             format!(
                 "        var result = statement.query({}.class).single();{}\n        return result;",
                 target.names.java_type,
@@ -167,8 +176,16 @@ pub(super) fn lower(
             ),
         )
     };
+    let (member, parameter, assignment) = match &collaborator {
+        None => (String::new(), String::new(), String::new()),
+        Some((ty, name)) => (
+            format!("\n    private final {ty} {name};"),
+            format!(", {ty} {name}"),
+            format!("\n        this.{name} = {name};"),
+        ),
+    };
     let body = format!(
-        "@Repository\npublic final class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;{event_member}\n\n    public {type_name}(JdbcClient jdbc{event_parameter}) {{\n        this.jdbc = jdbc;{event_assignment}\n    }}\n\n    @Override\n    public {} execute({context}{port_type}.Input input) {{\n{resolutions}        JdbcClient.StatementSpec statement = jdbc.sql(\"{insert} returning {returning}\");\n{params}{result}\n    }}\n}}",
+        "@Repository\npublic final class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;{member}\n\n    public {type_name}(JdbcClient jdbc{parameter}) {{\n        this.jdbc = jdbc;{assignment}\n    }}\n\n    @Override\n{method_annotation}    public {} execute({context}{port_type}.Input input) {{\n{resolutions}        JdbcClient.StatementSpec statement = jdbc.sql(\"{insert} returning {returning}\");\n{params}{result}\n    }}\n}}",
         target.names.java_type
     );
     operation_file(

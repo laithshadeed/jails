@@ -11413,14 +11413,15 @@ fn canonical_cli_registers_its_commands_and_claims_the_entry_point() {
     );
 }
 
-/// The canonical `usecase` accepts `emit` in JDL but refuses `--yields`.
+/// The canonical `usecase` accepts `emit` and `deliver outbox` in JDL but
+/// still refuses `--yields`.
 ///
-/// Recorded rather than fixed, because the gap it exposes is bigger than the
-/// flag: `audit.md` A1.7. The compiler publishes a command's events -- `emit`
-/// in the model reaches `emit_operation::publications` -- so this is a
-/// frontend gap on top of a semantic one, and the semantic one is that a
-/// canonical command publishes *directly* where the legacy use case publishes
-/// through a transactional outbox.
+/// **The semantic gap this used to record is closed** -- `audit.md` A1.7. A
+/// canonical command staged through an outbox is `emit E` plus
+/// `deliver outbox` in the model, and the compiler renders the store, the
+/// relay and the table. What is left is the frontend: `--yields` does not
+/// write those two lines, so it refuses rather than silently generating the
+/// weaker direct publication under a flag that asked for the stronger one.
 #[test]
 fn canonical_usecase_refuses_the_yields_flag_it_has_no_outbox_for() {
     let root = temp_dir("canonical-usecase-yields");
@@ -11464,4 +11465,84 @@ fn canonical_usecase_refuses_the_yields_flag_it_has_no_outbox_for() {
         "{}",
         String::from_utf8_lossy(&refused.stderr)
     );
+}
+
+/// `deliver outbox` end to end: the model says it, the project has it.
+///
+/// The compiler's own tests pin what is rendered; this pins what reaches disk,
+/// and one property only the executor can show -- **the table is written
+/// once**. A migration is irreproducible, so a second `sync` that re-emitted
+/// `create <name>_outbox` would leave a project that was working yesterday
+/// failing its next `flyway migrate`, and nothing between here and there says
+/// so.
+#[test]
+fn canonical_outbox_delivery_reaches_disk_and_its_table_is_written_once() {
+    let root = temp_dir("canonical-outbox-sync");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+         platform spring\n  build maven\n  storage postgres\n}\n\ncap json\n\n\
+         entity Task @id(ent_task) {\n  use repo\n  id: uuid @pk\n  title: string @notBlank\n\n  \
+         command Create(title) {\n    emit TaskCreated\n    deliver outbox\n  }\n\n  \
+         event TaskCreated(id: uuid, title)\n}\n",
+    )
+    .unwrap();
+
+    let synced = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+
+    let generated = root.join(".jails/generated/main/java/com/example/demo");
+    let read = |relative: &str| {
+        fs::read_to_string(generated.join(relative))
+            .unwrap_or_else(|error| panic!("{relative}: {error}"))
+    };
+    // The staging happens in the transaction that made the row, which is the
+    // entire guarantee; a store, a port and a relay to carry it out of there.
+    let command = read("adapters/jdbc/JdbcCreateCommand.java");
+    assert!(command.contains("@Transactional"), "{command}");
+    assert!(
+        command.contains("outbox.stage(new TaskCreatedEvent("),
+        "{command}"
+    );
+    read("jobs/JdbcCreateOutbox.java");
+    read("jobs/CreateOutboxSink.java");
+    read("jobs/CreateLoggingOutboxSink.java");
+    read("jobs/CreateOutboxWorker.java");
+    read("jobs/SchedulingConfig.java");
+    // The minted identity, and the class that mints it.
+    read("domain/TimeOrderedUuid.java");
+    let event = read("domain/events/TaskCreatedEvent.java");
+    assert!(event.contains("UUID id"), "{event}");
+
+    let migrations = || {
+        let mut names = fs::read_dir(root.join("src/main/resources/db/migration"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        names.sort();
+        names
+    };
+    let after_first = migrations();
+    assert_eq!(
+        after_first
+            .iter()
+            .filter(|name| name.contains("create_outbox"))
+            .count(),
+        1,
+        "{after_first:?}"
+    );
+
+    let resynced = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        resynced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resynced.stderr)
+    );
+    assert_eq!(migrations(), after_first, "sync re-emitted a migration");
 }

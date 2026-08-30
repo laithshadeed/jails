@@ -62,7 +62,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
 /// for: removing a single job must not retire a file the others still need,
 /// and the merge history has to survive that.
 pub(super) fn scheduling(model: &AppModel) -> Result<Option<Emitted>, CompileError> {
-    let owners = model
+    let mut owners = model
         .components
         .values()
         .filter(|component| {
@@ -77,6 +77,16 @@ pub(super) fn scheduling(model: &AppModel) -> Result<Option<Emitted>, CompileErr
         })
         .map(|component| component.id.as_str().to_string())
         .collect::<BTreeSet<_>>();
+    // An outbox relay is a `@Scheduled` bean, so it fails the same silent way:
+    // without the config the worker is never invoked, rows stage forever and
+    // the only symptom is a topic that stays empty. It is not a component, so
+    // it cannot come out of the filter above -- but it is an owner, and the
+    // set is what stops removing one owner retiring a file the others need.
+    owners.extend(
+        crate::emit_operation::outbox::commands(model)
+            .into_iter()
+            .map(|operation| operation.id.as_str().to_string()),
+    );
     if owners.is_empty() {
         return Ok(None);
     }

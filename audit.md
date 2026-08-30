@@ -97,9 +97,10 @@ match that stops compiling when a clap variant is added. Its own test pins
 Still legacy: `migration`, `http-workflow`, `association`, `http-sink`,
 `search`, `durable-job`, `seed`.
 
-**Three of those seven are blocked on A1.7 rather than on an emitter.**
+**Three of those seven were blocked on A1.7 and are not any more.**
 `http-workflow`, `http-sink` and `durable-job` each attach to a transactional
-outbox the canonical `usecase` does not have.
+outbox the canonical `usecase` did not have; A1.7 is closed, so what is left
+for them is an emitter each.
 
 **The table gates the `.jails/model.toml` route only.** A project on
 `.jails/model.jdl` goes straight to the JDL frontend, which refuses an
@@ -163,35 +164,54 @@ link diagnostic, and the compiler refuses `outbox` outright until its emitter
 lands, so a model can state the stronger promise but never silently receive
 the weaker one.
 
-What is left is the emitter — an outbox table, an `Outbox<Name>UseCase`, a
-JDBC store, a sink port, a Kafka sink, a relay worker and its integration test.
-All six Java bodies are already templates on the legacy side. But it is **not**
-a straight port, and the reason is one line of the legacy generator worth
-reading before anyone starts:
+**Closed.** `jails-compiler`'s `emit_operation::outbox` renders the store, the
+sink port, the relay worker, a default sink and the table; `deliver outbox` no
+longer refuses. But it is **not** a port of the legacy shape, and the two
+places it differs are the interesting ones.
 
-> The event's own identity is **minted**, never mapped. Both the command and
-> the target usually carry an `id` of the same type, and taking it made the
-> event id equal the resource id — so the outbox's `on conflict (id) do
-> nothing` silently discarded the second event about that resource instead of
-> deduplicating a retried stage.
+**Staging is not a second bean.** The legacy generator writes an
+`Outbox<Name>UseCase` marked `@Primary` that delegates to a
+`Storing<Name>UseCase` and stages afterwards, because it had already written a
+service it could not reach inside. Canonically the command *port* is the ABI
+and `Jdbc<Name>Command` is its one implementation, so staging is a line in the
+statement's own method under `@Transactional`. One bean, one transaction, and
+no `@Primary` deciding which of two implementations Spring injects.
 
-An event *can* carry its own identity: `ParameterSource::Typed` is a payload
-component that is not a field of the target, which is exactly what a minted
-event id is. What was missing is that nothing read it. `Event` carried both
-`fields` — the flat, target-scoped list `.jails/model.toml` and the pre-v1
-draft write — and `semantics.parameters`, and `emit_operation::publications`
-read the flat one. So an event declared with a typed component rendered an
-**empty payload**, silently.
+**The identity is minted, and the model is where that is said.** The legacy
+generator infers it: an event component called `id` is minted, one matching a
+target field is projected, one named `...At` becomes `Instant.now()`. The
+canonical rule is a declaration — `ParameterSource::Typed` is a payload
+component the target row does not carry, so `event TaskCreated(id: uuid, ...)`
+mints and `event TaskCreated(id, ...)` projects, and the second refuses by
+name under an outbox because a staged event keyed on the resource id makes
+`on conflict (id) do nothing` discard the *second* event about that resource.
+Direct publication still refuses every `Typed` component, because nothing in
+that path can supply one honestly.
 
-That fold is done: the linker folds `fields` into `parameters` and the emitter
-reads only the rich form, which is the last of A3.9. A `Typed` component now
-refuses at compile with a message naming it, because direct publication has
-nothing to supply it from — the command's inputs are gone by the time the row
-comes back.
+Two consequences that were not on the legacy side:
 
-So the emitter is what is left, and it is the piece that can give a `Typed`
-component a value: a minted id for the outbox row, `Instant.now()` for a
-timestamp. Its six Java bodies are already templates on the legacy side.
+- **The event record is rendered from `semantics.parameters`**, not the flat
+  `fields`. The flat list can only name fields of the target entity, so an
+  event with a minted `id` rendered a record without it and the staging call
+  named an accessor no record had. `Input` had read the rich form all along;
+  events had not. This is the same flat/rich defect A3.9 closed elsewhere,
+  found by needing it.
+- **`TimeOrderedUuid` has a second reason to exist.** `emit_java` emitted it
+  only for a `uuid7()` field default, so a model whose only minter was an
+  event's own id emitted the call and not the class.
+
+**There is no canonical Kafka sink**, and that is a gap rather than a
+decision: the legacy outbox injects a `<Event>Publisher` that `g event`
+writes, and the canonical `cap kafka` emits no such class. So the port is the
+extension point and a `<Name>LoggingOutboxSink` is what the project starts
+with — the relay refuses to start with no sink at all, and a project that
+cannot start is worse than one that can. It logs at WARN and says a
+destination is not configured, because a sink that quietly marked every event
+SUCCEEDED would drop the whole topic with nothing to read.
+
+Not yet done: the legacy `<Name>OutboxIT` has no canonical counterpart, and
+`g usecase --yields <Event>` still refuses rather than writing `emit` plus
+`deliver outbox` into the model.
 
 ### A1.4 `jails new` still writes no model
 

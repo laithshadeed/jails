@@ -96,22 +96,6 @@ pub(crate) fn preflight(
             "canonical DTO facets require a captured Spring Boot project\n       fix: add Spring Boot to the build or remove the `dto` facet",
         ));
     }
-    // **A declared delivery policy the compiler cannot honour must refuse.**
-    // Direct and outbox delivery are different promises, so compiling a
-    // model that asks for the stronger one and emitting the weaker is the
-    // exact silent failure this path exists to remove.
-    if let Some(operation) = next_model.operations.values().find(|operation| {
-        matches!(
-            &operation.kind,
-            jails_model::OperationKind::Command(command)
-                if command.semantics.delivery == jails_model::Delivery::Outbox
-        )
-    }) {
-        return Err(CompileError::new(format!(
-            "canonical `deliver outbox` on `{}` has no compiler backend yet\n       fix: use the default direct delivery, or generate the use case on a legacy project until the transactional outbox lands",
-            operation.label
-        )));
-    }
     if let Some(component) = next_model
         .components
         .values()

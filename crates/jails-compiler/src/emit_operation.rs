@@ -1,6 +1,7 @@
 //! Executable JDBC adapters for canonical operations.
 
 mod command;
+pub(crate) mod outbox;
 mod query;
 mod transition;
 
@@ -89,6 +90,18 @@ pub(super) fn publications(
     emits: &[jails_model::OperationId],
     imports: &mut BTreeSet<String>,
 ) -> Result<Vec<String>, CompileError> {
+    let staged = outbox::delivery(operation) == jails_model::Delivery::Outbox;
+    if staged {
+        // Checked before a byte is rendered: exactly one event, staged by a
+        // minted `id`. The refusals name the declaration to change.
+        outbox::relayed(model, operation)?;
+        imports.insert(format!(
+            "{}.Jdbc{}Outbox",
+            model.project.package_for(Package::Jobs),
+            operation.names.java_type
+        ));
+        imports.insert("org.springframework.transaction.annotation.Transactional".to_string());
+    }
     let mut publications = Vec::new();
     for event_id in emits {
         let yielded = model.operations.get(event_id).ok_or_else(|| {
@@ -110,13 +123,13 @@ pub(super) fn publications(
             )));
         }
         let event_type = crate::emit_java::with_suffix(&yielded.names.java_type, "Event");
-        imports.extend([
-            format!(
-                "{}.{event_type}",
-                model.project.package_for(Package::DomainEvents)
-            ),
-            "org.springframework.context.ApplicationEventPublisher".to_string(),
-        ]);
+        imports.insert(format!(
+            "{}.{event_type}",
+            model.project.package_for(Package::DomainEvents)
+        ));
+        if !staged {
+            imports.insert("org.springframework.context.ApplicationEventPublisher".to_string());
+        }
         // **Read off `semantics.parameters`, not `fields`.** The flat list can
         // only name fields of the target entity; the linked parameters can
         // also carry a `Typed` component -- an event's own identity, a
@@ -137,20 +150,43 @@ pub(super) fn publications(
                             yielded.label, visible.field
                         ))
                     }),
-                // A component the target row does not carry has no value a
-                // direct publication can supply: the command's own inputs are
-                // gone by the time the row comes back, and inventing one is
-                // how an event's identity silently became the row's.
+                // A component the target row does not carry needs a value
+                // from somewhere, and a *direct* publication has none: the
+                // command's own inputs are gone by the time the row comes
+                // back, and inventing one is how an event's identity silently
+                // became the row's. Staging happens inside the transaction
+                // that made the row, which is where the two values a payload
+                // legitimately mints -- its own id and the moment it happened
+                // -- can be produced honestly.
+                jails_model::ParameterSource::Typed(ty) if staged => match ty {
+                    TypeRef::Builtin(BuiltinType::Uuid) => {
+                        imports.insert(format!(
+                            "{}.TimeOrderedUuid",
+                            model.project.package_for(Package::Domain)
+                        ));
+                        Ok("TimeOrderedUuid.next()".to_string())
+                    }
+                    TypeRef::Builtin(BuiltinType::Instant) => {
+                        imports.insert("java.time.Instant".to_string());
+                        Ok("Instant.now()".to_string())
+                    }
+                    _ => Err(CompileError::new(format!(
+                        "outbox event `{}` declares `{}`, which nothing in the staging transaction can supply\n       fix: project it from a field of `{}`, or declare it `uuid` (minted) or `instant` (now)",
+                        yielded.label, parameter.name, target.label
+                    ))),
+                },
                 jails_model::ParameterSource::Typed(_) => Err(CompileError::new(format!(
-                    "canonical event `{}` declares `{}`, which the target row does not carry\n       fix: project it from a field of `{}`, or wait for the transactional outbox that can supply it",
+                    "canonical event `{}` declares `{}`, which the target row does not carry\n       fix: project it from a field of `{}`, or deliver this command through an outbox, which can mint one",
                     yielded.label, parameter.name, target.label
                 ))),
             })
             .collect::<Result<Vec<_>, _>>()?
             .join(", ");
-        publications.push(format!(
-            "\n        events.publishEvent(new {event_type}({arguments}));"
-        ));
+        publications.push(if staged {
+            format!("\n        outbox.stage(new {event_type}({arguments}));")
+        } else {
+            format!("\n        events.publishEvent(new {event_type}({arguments}));")
+        });
     }
     Ok(publications)
 }

@@ -7,15 +7,20 @@ use jails_model::{AppModel, Package, StableId, Value};
 use std::collections::BTreeSet;
 
 pub(super) fn lower(model: &AppModel) -> Result<Option<Unit>, CompileError> {
-    if !model.entities.values().any(|entity| {
-        entity.fields.iter().any(|field| {
-            matches!(
+    // An outbox mints its event's own identity, which is the second minter in
+    // the model and reaches this class the same way a `uuid7()` field default
+    // does. Asking only about defaults emitted the call and not the class.
+    if !crate::emit_operation::outbox::mints_identity(model)
+        && !model.entities.values().any(|entity| {
+            entity.fields.iter().any(|field| {
+                matches!(
                 field.semantics.default.as_ref().map(|default| &default.value),
                 Some(Value::Function { name, arguments })
                     if name == "uuid7" && arguments.is_empty()
-            )
+                )
+            })
         })
-    }) {
+    {
         return Ok(None);
     }
 

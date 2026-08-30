@@ -93,6 +93,10 @@ impl Compiler {
             snapshot.accepted_model.as_ref(),
             &next_model,
         ));
+        migrations.extend(emit_operation::outbox::migrations(
+            snapshot.accepted_model.as_ref(),
+            &next_model,
+        ));
         let root = ProjectPath::parse(MANAGED_ROOT).map_err(CompileError::new)?;
         let compose_path = emit::compose_path(snapshot)?;
         let observed = emit::Observed {
@@ -690,25 +694,166 @@ mod tests {
     /// stronger one and quietly emitting the weaker is the silent failure this
     /// path exists to remove -- and it would be invisible, because the
     /// generated code compiles and the events do arrive, until one does not.
+    ///
+    /// So what is pinned here is the *difference*: the adapter stages rather
+    /// than publishes, and it does so under `@Transactional`. An outbox that
+    /// stages outside the statement's transaction has all of the machinery and
+    /// none of the guarantee.
     #[test]
-    fn outbox_delivery_refuses_until_it_has_a_backend() {
+    fn outbox_delivery_stages_the_event_in_the_writing_transaction() {
+        let model = jails_model::parse_jdl(OUTBOX_MODEL).unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
+        let plan = Compiler::compile(&snapshot, None).expect("`deliver outbox` has a backend");
+        let file = |suffix: &str| {
+            let file = plan
+                .generated
+                .files
+                .iter()
+                .find(|(path, _)| path.as_str().ends_with(suffix))
+                .map(|(_, file)| file)
+                .unwrap_or_else(|| panic!("no rendered file ends with `{suffix}`"));
+            String::from_utf8(file.bytes.clone()).unwrap()
+        };
+
+        let command = file("/JdbcCreateCommand.java");
+        assert!(command.contains("@Transactional"), "{command}");
+        assert!(
+            command.contains("outbox.stage(new TaskCreatedEvent("),
+            "{command}"
+        );
+        assert!(
+            !command.contains("publishEvent"),
+            "staging and publishing are alternatives: {command}"
+        );
+        // The identity is minted rather than read off the row it describes.
+        assert!(command.contains("TimeOrderedUuid.next()"), "{command}");
+        assert!(command.contains("result.title()"), "{command}");
+        // ... and the class that mints it is emitted, though no field default
+        // asked for one.
+        file("/TimeOrderedUuid.java");
+
+        // The event record has to be able to hold what the command stages.
+        let event = file("/TaskCreatedEvent.java");
+        assert!(event.contains("UUID id"), "{event}");
+
+        // The relay, its store, the port that makes it extensible, and the
+        // scheduling that runs it at all.
+        assert!(file("/JdbcCreateOutbox.java").contains("insert into create_outbox"));
+        assert!(file("/CreateOutboxSink.java").contains("interface CreateOutboxSink"));
+        assert!(file("/CreateOutboxWorker.java").contains("@Scheduled"));
+        file("/SchedulingConfig.java");
+        // A relay with no sink refuses to start, so a project that generates
+        // clean has to have one.
+        assert!(file("/CreateLoggingOutboxSink.java").contains("implements CreateOutboxSink"));
+
+        let migration = plan
+            .migrations
+            .iter()
+            .find(|migration| migration.logical_name == "create_create_outbox")
+            .expect("the staged events need a table");
+        assert!(
+            String::from_utf8(migration.bytes.clone())
+                .unwrap()
+                .contains("delivered text[] not null")
+        );
+    }
+
+    /// A migration is irreproducible, so compiling twice must not stage two
+    /// `create table`s -- the second one is found by `flyway migrate`, in a
+    /// project that was working yesterday.
+    #[test]
+    fn an_accepted_outbox_does_not_re_emit_its_table() {
+        let model = jails_model::parse_jdl(OUTBOX_MODEL).unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model.clone());
+        snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
+        snapshot.accepted_model = Some(model);
+        let plan = Compiler::compile(&snapshot, None).expect("`deliver outbox` has a backend");
+        assert!(
+            !plan
+                .migrations
+                .iter()
+                .any(|migration| migration.logical_name == "create_create_outbox"),
+            "an accepted outbox re-emitted its table"
+        );
+    }
+
+    /// The store stages by `event.id()`, so an event without one would name an
+    /// accessor its record does not have -- a compile error in the reader's
+    /// project for a class they never wrote.
+    #[test]
+    fn an_outbox_event_that_projects_its_id_refuses_by_name() {
+        let model = jails_model::parse_jdl(&OUTBOX_MODEL.replace(
+            "event TaskCreated(id: uuid, title)",
+            "event TaskCreated(id, title)",
+        ))
+        .unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
+        let error = Compiler::compile(&snapshot, None)
+            .expect_err("an event id taken from the row must refuse");
+        assert!(
+            error
+                .to_string()
+                .contains("projects its `id` from the target row"),
+            "{error}"
+        );
+    }
+
+    /// One command, one outbox: the store is typed on a single payload.
+    #[test]
+    fn an_outbox_relaying_two_events_refuses_by_name() {
         let model = jails_model::parse_jdl(
-            "jdl 1\napp Demo {\n  pkg com.example.demo\n  java 26\n  platform spring\n  \
-             build maven\n  storage postgres\n}\n\nentity Task {\n  use repo\n  id: uuid @pk\n  \
-             title: string\n\n  command Create(title) {\n    emit TaskCreated\n    \
-             deliver outbox\n  }\n\n  event TaskCreated(id, title)\n}\n",
+            &OUTBOX_MODEL
+                .replace(
+                    "    emit TaskCreated\n",
+                    "    emit TaskCreated\n    emit TaskFiled\n",
+                )
+                .replace(
+                    "  event TaskCreated(id: uuid, title)\n",
+                    "  event TaskCreated(id: uuid, title)\n  event TaskFiled(id: uuid, title)\n",
+                ),
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
         let error = Compiler::compile(&snapshot, None)
-            .expect_err("a delivery policy with no backend must refuse");
+            .expect_err("two events through one outbox must refuse");
         assert!(
-            error.to_string().contains("`deliver outbox` on `create`"),
+            error
+                .to_string()
+                .contains("delivers 2 events through one outbox"),
             "{error}"
         );
     }
+
+    /// The rendered store calls `Json.toJson`, so the capability that writes
+    /// `Json` is a prerequisite -- named as a declaration the reader can make,
+    /// not as a symbol they never asked for.
+    #[test]
+    fn an_outbox_without_the_json_capability_refuses_by_name() {
+        let model = jails_model::parse_jdl(&OUTBOX_MODEL.replace("cap json\n", "")).unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
+        let error =
+            Compiler::compile(&snapshot, None).expect_err("an outbox without `Json` must refuse");
+        assert!(
+            error.to_string().contains("fix: declare `cap json`"),
+            "{error}"
+        );
+    }
+
+    /// One task, staged through an outbox: the model every test above varies.
+    const OUTBOX_MODEL: &str = "jdl 1\napp Demo {\n  pkg com.example.demo\n  java 26\n  \
+         platform spring\n  build maven\n  storage postgres\n}\n\ncap json\n\n\
+         entity Task {\n  use repo\n  id: uuid @pk\n  title: string\n\n  \
+         command Create(title) {\n    emit TaskCreated\n    deliver outbox\n  }\n\n  \
+         event TaskCreated(id: uuid, title)\n}\n";
 
     /// A policy about how events travel, on a command with none, does nothing.
     #[test]
