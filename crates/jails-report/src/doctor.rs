@@ -238,6 +238,12 @@ fn template_override_checks() -> Vec<Check> {
 fn capability_drift_checks(project: &Project) -> Vec<Check> {
     use clap::ValueEnum as _;
 
+    // This check reads `jails.toml`, and a modelled project records its
+    // capabilities in the model. See `Project::is_modelled`.
+    if project.is_modelled() {
+        let detail = "declared in the model, not `jails.toml` -- reconciled by `jails sync`";
+        return vec![Check::new(Status::Skip, "capabilities", detail)];
+    }
     let recorded = project.capabilities();
     if recorded.is_empty() {
         return vec![Check::new(

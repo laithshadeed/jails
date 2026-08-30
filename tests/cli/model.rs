@@ -13099,6 +13099,34 @@ entity Visit {
         "a freshly synced project reports both managed rows clean:\n{clean}"
     );
 
+    // The `jails.toml` capability row reported "records none -- nothing to
+    // reconcile" about a project whose model declares capabilities. It now
+    // says where they live, and the accepted-model row is what reconciles
+    // them.
+    let capability = jails_cmd(&root, None)
+        .args(["add", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        capability.status.success(),
+        "{}",
+        String::from_utf8_lossy(&capability.stderr)
+    );
+    let recorded = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    let recorded = String::from_utf8_lossy(&recorded.stdout).to_string();
+    assert!(
+        recorded.contains("declared in the model, not `jails.toml`"),
+        "the capability row must not claim a model-declared capability is absent:\n{recorded}"
+    );
+    assert!(
+        !recorded.contains("jails.toml records none"),
+        "and must not report the legacy manifest as the authority:\n{recorded}"
+    );
+    assert!(
+        recorded.contains("the lock has accepted everything the model declares"),
+        "a synced capability is accepted, entities and capabilities alike:\n{recorded}"
+    );
+
     let record = root.join(".jails/generated/main/java/com/example/clinic/domain/Visit.java");
     fs::write(
         &record,

@@ -26,6 +26,7 @@
 //! edited file it writes nothing and the warning stands, which is the point of
 //! the merge, and on a deleted one it refuses.
 
+use jails_model::StableId;
 use jails_report::doctor::{Check, Status};
 use jails_support::Result;
 
@@ -137,31 +138,55 @@ fn collect() -> Result<Vec<Check>> {
 
     // The lock's accepted model is what the last executed plan agreed to.
     // Declared-and-not-accepted is the ordinary state between `g` and `sync`.
+    // Capabilities as well as entities: a canonical project declares
+    // `cap json` in the model, and `doctor`'s `jails.toml` check reported
+    // "records none -- nothing to reconcile" about it. That row now says where
+    // they live; this one is what actually reconciles them.
     let declared = &snapshot.model.model;
-    let pending = match snapshot.accepted_model.as_ref() {
-        None => (!declared.entities.is_empty()).then_some(declared.entities.len()),
-        Some(accepted) => {
-            let count = declared
-                .entities
-                .iter()
-                .filter(|(id, entity)| accepted.entities.get(*id) != Some(*entity))
-                .count();
-            (count > 0).then_some(count)
+    let mut pending = Vec::new();
+    match snapshot.accepted_model.as_ref() {
+        None => {
+            pending.extend(
+                declared
+                    .entities
+                    .values()
+                    .map(|entity| entity.label.clone()),
+            );
+            pending.extend(
+                declared
+                    .capabilities
+                    .keys()
+                    .map(|id| id.as_str().to_string()),
+            );
         }
-    };
-    checks.push(match pending {
-        None => Check::new(
+        Some(accepted) => {
+            pending.extend(
+                declared
+                    .entities
+                    .iter()
+                    .filter(|(id, entity)| accepted.entities.get(*id) != Some(*entity))
+                    .map(|(_, entity)| entity.label.clone()),
+            );
+            pending.extend(
+                declared
+                    .capabilities
+                    .keys()
+                    .filter(|id| !accepted.capabilities.contains_key(*id))
+                    .map(|id| id.as_str().to_string()),
+            );
+        }
+    }
+    pending.sort();
+    checks.push(match pending.is_empty() {
+        true => Check::new(
             Status::Ok,
             "model accepted",
-            "the lock has accepted every declared entity",
+            "the lock has accepted everything the model declares",
         ),
-        Some(count) => Check::new(
+        false => Check::new(
             Status::Warn,
             "model accepted",
-            format!(
-                "{count} declared entit{} not in the accepted model",
-                if count == 1 { "y is" } else { "ies are" }
-            ),
+            format!("{} not in the accepted model", list(&pending)),
         )
         .fix("jails sync"),
     });

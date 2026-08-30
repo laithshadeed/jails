@@ -601,6 +601,26 @@ impl Project {
         &self.root
     }
 
+    /// Does this project hold an editable application model?
+    ///
+    /// The canonical switch, as a fact about the project rather than a path a
+    /// caller re-derives. `doctor`'s capability check needs it: it reads
+    /// `jails.toml`, and a modelled project records its capabilities in the
+    /// model instead -- so it reported "records none -- nothing to reconcile"
+    /// about a project whose model declares them.
+    ///
+    /// Both spellings, because `.jails/model.toml` is still a compatibility
+    /// input for projects that were canonical before JDL, and recognising only
+    /// the current one would give those the wrong answer rather than none.
+    /// Recognised by the file rather than by an import: this crate does not
+    /// depend on the canonical ladder, and which file holds a project's
+    /// declarations is the one fact about it that a reader-facing report
+    /// needs.
+    pub fn is_modelled(&self) -> bool {
+        self.root.join(".jails/model.jdl").is_file()
+            || self.root.join(".jails/model.toml").is_file()
+    }
+
     /// What builds this project. `plan.md` §12.
     pub fn build(&self) -> crate::build::Build {
         self.build

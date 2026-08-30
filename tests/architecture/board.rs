@@ -948,7 +948,17 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // where every regeneration over an edited file was about to
                 // refuse. Two lines for doctor's only git row being able to
                 // fail.
-                ceiling: 1611,
+                //
+                // 1611 -> 1615: four lines for the capability row not lying to
+                // a modelled project. It reads `jails.toml`, a modelled project
+                // records its capabilities in the model, and the answer every
+                // canonical project got was "records none -- nothing to
+                // reconcile" about capabilities it had just declared. That is
+                // the rung's own complaint -- doctor deriving a fact from the
+                // wrong owner -- so the guard belongs here rather than being
+                // paid for by a check that stays wrong. The reasoning lives on
+                // `Project::is_modelled`; these four lines are the branch.
+                ceiling: 1615,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.
