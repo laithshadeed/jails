@@ -2229,8 +2229,8 @@ they had none; three were genuinely unheld and now are.
 | managed output only below the managed root | structural: `RenderedTree::insert` refuses a path outside its root, so it cannot be violated |
 | reader-owned source only via typed patch/eject/adopt | `rules::canonical_workspace_has_one_mutation_owner`, plus `PatchReaderFile`'s captured before-image |
 | persisted tags and field numbers golden-tested | `every_protocol_fixture_is_read_by_something`, `tests/protocol-golden` |
-| every advertised failpoint fires in a test | `tests/engine.rs` |
-| every transaction state has a recovery transition | `tests/engine.rs` -- **not audited here**, and G4 still wants the registry and trip sites generated from one declaration |
+| every advertised failpoint fires in a test | `fault::every_advertised_failpoint_is_tripped_somewhere_and_the_reverse` holds `POINTS` and the trip sites in agreement *both ways* -- a name that fires nowhere proves a recovery path nothing exercises, and a site nothing names is a real path no enumeration reaches. `engine::a_capability_install_converges_from_every_failpoint` is the sweep. G4 still wants the two generated from one declaration rather than checked against each other |
+| every transaction state has a recovery transition | `recover.rs`'s own tests plus that sweep. **This one is not audited to the letter**: the coverage is by failpoint, and "every active transaction state" is a stronger claim than "every armed fault converges" |
 | planner read set complete by construction | `WorkspaceSnapshot` is the read set, and the purity rule above is what makes it complete |
 | tool crates cannot reach executor internals | Cargo, plus `no_module_depends_on_a_layer_above_its_own` for module edges |
 
