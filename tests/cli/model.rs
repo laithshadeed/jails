@@ -233,6 +233,103 @@ fn model_fmt_checks_then_atomically_formats_only_the_jdl_source() {
     );
 }
 
+/// D1's acceptance loop, on a project that also has a database.
+///
+/// The guard this pins used to read the *project's* storage and refuse any
+/// field add on an entity without a repository facet -- so a project that had
+/// ever run `add db` could never evolve an ordinary source-only record, which
+/// is half of D1. Storedness is the entity's: `Note` has no table, so its new
+/// field is a pure source change and emits no migration, while `Task` keeps
+/// the backfill contract exactly as before.
+///
+/// It is asserted here rather than only through `model import` because the
+/// import path merely *reached* the bug: pre-v1 `dialect` has no way to say
+/// "no storage", so an imported project always looks stored. The defect is one
+/// step below that, and so is this test.
+#[test]
+fn a_source_only_record_gains_a_field_in_a_project_that_has_a_database() {
+    let root = jdl_project(
+        "jdl-v1-source-only-field",
+        r#"jdl 1
+app Notes {
+ pkg com.example.notes
+ java 26
+ platform spring
+ build maven
+ storage postgres
+}
+entity Task {
+ id: uuid @pk
+ title: string
+ use repo
+}
+entity Note {
+ title: string
+}
+"#,
+    );
+    write_spring_fixture(&root);
+
+    let evolved = jails_cmd(&root, None)
+        .args(["g", "field", "Note", "done:boolean"])
+        .output()
+        .unwrap();
+    assert!(
+        evolved.status.success(),
+        "{}",
+        String::from_utf8_lossy(&evolved.stderr)
+    );
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(model.contains("done: boolean"), "{model}");
+
+    // No table, so no migration: the only one is the stored entity's create.
+    let migrations = root.join("src/main/resources/db/migration");
+    let mut names: Vec<String> = fs::read_dir(&migrations)
+        .map(|entries| {
+            entries
+                .filter_map(|entry| Some(entry.ok()?.file_name().to_string_lossy().into_owned()))
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    assert!(
+        names.iter().all(|name| !name.contains("note")),
+        "a source-only record emitted schema: {names:?}"
+    );
+
+    // A backfill for rows that do not exist is still refused, by the arm the
+    // old guard made unreachable.
+    let refused = jails_cmd(&root, None)
+        .args([
+            "g",
+            "field",
+            "Note",
+            "flag:boolean",
+            "--default-literal",
+            "true",
+        ])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let told = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        told.contains("source-only record has no rows to backfill"),
+        "{told}"
+    );
+
+    // And the stored entity keeps the contract it always had.
+    let stored = jails_cmd(&root, None)
+        .args(["g", "field", "Task", "extra:string"])
+        .output()
+        .unwrap();
+    assert!(!stored.status.success());
+    let told = String::from_utf8_lossy(&stored.stderr);
+    assert!(
+        told.contains("needs a backfill for existing rows"),
+        "{told}"
+    );
+}
+
 #[test]
 fn model_fmt_keeps_typed_field_semantics_and_refuses_invalid_rules_atomically() {
     let root = jdl_project(
