@@ -61,6 +61,7 @@ pub fn new_cli(request: &Request<'_>) -> Result<()> {
                 .join(package.replace('.', "/"))
                 .join("AppTest.java"),
             root.join("src/test/resources/fixtures/.gitkeep"),
+            root.join(".jails/model.jdl"),
             root.join("mise.toml"),
             root.join("AGENTS.md"),
         ];
@@ -92,6 +93,16 @@ pub fn new_cli(request: &Request<'_>) -> Result<()> {
         "pom.xml",
         pom_xml(name, &group_of(group, &package), &package, java),
         "pom.xml",
+    )?;
+    // The project is canonical from its first command, which is the whole
+    // point of seeding this: `model_command::owns` is `.jails/model.jdl`
+    // exists, and without one every project jails created took the legacy
+    // path -- so the compiler could only ever be reached by a model somebody
+    // wrote by hand.
+    tree.put_named(
+        ".jails/model.jdl",
+        seed_model(name, &package, java),
+        ".jails/model.jdl",
     )?;
     // Through write_new_file, not fs::write, so the entry point and its test
     // get the same import ordering as everything jails generates later --
@@ -164,7 +175,92 @@ pub(super) fn ensure_enforcer(tree: &publish::Tree<'_>, java: &str) -> Result<()
     Ok(())
 }
 
+/// The dependencies a plain project starts with, and the one place they are
+/// named.
+///
+/// The same list seeds `.jails/model.jdl` and renders the pom's
+/// `<!-- jails:dependencies -->` block, so the project is canonical from birth:
+/// the compiler already owns these coordinates, and the first `jails add` finds
+/// its own block rather than a reader-owned duplicate it has to refuse.
+///
+/// **JSpecify is not optional here.** `@NullMarked` is a package-level opt-in
+/// and every package jails generates carries one, so without this dependency
+/// the `package-info.java` files written beside the sources do not compile.
+pub(super) fn seed_dependencies() -> Vec<jails_contracts::BuildDependency> {
+    use jails_model::DependencyScope;
+    let dependency =
+        |group: &str, artifact: &str, version: &str, scope| jails_contracts::BuildDependency {
+            group: group.to_string(),
+            artifact: artifact.to_string(),
+            version: Some(version.to_string()),
+            scope,
+        };
+    vec![
+        dependency(
+            "org.assertj",
+            "assertj-core",
+            "3.27.7",
+            DependencyScope::Test,
+        ),
+        dependency(
+            "org.jspecify",
+            "jspecify",
+            "1.0.0",
+            DependencyScope::Compile,
+        ),
+        dependency(
+            "org.junit.jupiter",
+            "junit-jupiter",
+            "6.1.2",
+            DependencyScope::Test,
+        ),
+    ]
+}
+
+/// `.jails/model.jdl` for a project that has nothing in it yet.
+///
+/// Seeding this is what makes every later command take the canonical path.
+/// It declares only what `new-cli` actually writes -- the app node and the
+/// dependencies above -- so the first canonical plan is a no-op over the tree
+/// rather than a rewrite of it.
+pub(super) fn seed_model(name: &str, package: &str, java: &str) -> String {
+    // The model's app node is a Java type name, not the directory name: a
+    // project in `./demo3` links as `Demo3`, and the linker refuses the
+    // lowercase spelling rather than silently accepting a name no generated
+    // class could carry.
+    let name = camel_case(name);
+    let mut source = format!(
+        "jdl 1\n\napp {name} {{\n  pkg {package}\n  java {java}\n  platform plain\n  build maven\n  storage none\n}}\n\n"
+    );
+    for dependency in seed_dependencies() {
+        let scope = match dependency.scope {
+            jails_model::DependencyScope::Test => " @scope(test)",
+            jails_model::DependencyScope::Runtime => " @scope(runtime)",
+            jails_model::DependencyScope::Compile => "",
+        };
+        let version = dependency.version.as_deref().unwrap_or_default();
+        source.push_str(&format!(
+            "dep {}:{} @version(\"{version}\"){scope}\n",
+            dependency.group, dependency.artifact
+        ));
+    }
+    source
+}
+
 pub(super) fn pom_xml(artifact: &str, group: &str, package: &str, java: &str) -> String {
+    // Rendered by the canonical adapter rather than written out here, so the
+    // bytes are the ones a later plan reconciles to. Two spellings of this
+    // block differ in whitespace or an omitted `<scope>` long before anyone
+    // notices, and the difference surfaces as a surprise diff in a file the
+    // reader believes jails has not touched since it created the project.
+    let dependencies = jails_workspace::maven_dependency_block(&seed_dependencies())
+        .map(|block| {
+            block
+                .lines()
+                .map(|line| format!("        {line}\n"))
+                .collect::<String>()
+        })
+        .unwrap_or_default();
     format!(
         r#"<project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -182,29 +278,7 @@ pub(super) fn pom_xml(artifact: &str, group: &str, package: &str, java: &str) ->
     </properties>
 
     <dependencies>
-        <!--
-          JSpecify's @NullMarked is a package-level opt-in, and every package
-          jails generates carries one. Without this dependency those
-          package-info.java files do not compile.
-        -->
-        <dependency>
-            <groupId>org.jspecify</groupId>
-            <artifactId>jspecify</artifactId>
-            <version>1.0.0</version>
-        </dependency>
-        <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <version>6.1.2</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.assertj</groupId>
-            <artifactId>assertj-core</artifactId>
-            <version>3.27.7</version>
-            <scope>test</scope>
-        </dependency>
-    </dependencies>
+{dependencies}    </dependencies>
 
     <build>
         <finalName>{artifact}</finalName>

@@ -152,7 +152,7 @@ fn application_class(name: &str) -> String {
     derived
 }
 
-fn camel_case(name: &str) -> String {
+pub(crate) fn camel_case(name: &str) -> String {
     let mut out = String::new();
     let mut uppercase = true;
     for character in name.chars() {

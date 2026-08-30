@@ -406,7 +406,15 @@ pub(crate) fn reconcile_gradle_dependencies(
     Ok(format!("{text}{separator}\n{block}"))
 }
 
-fn maven_dependency_block(dependencies: &[jails_contracts::BuildDependency]) -> Option<String> {
+/// The exact `<!-- jails:dependencies -->` block the canonical plan renders.
+///
+/// Public because `jails new` writes a pom whose dependency block the compiler
+/// will own from the project's first canonical command. Rendering it here
+/// rather than in `new` is what keeps that first command a no-op instead of a
+/// rewrite: two spellings of this block differ in whitespace or scope long
+/// before anyone notices, and the difference shows up as a surprise diff in a
+/// file the reader believes jails has not touched yet.
+pub fn maven_dependency_block(dependencies: &[jails_contracts::BuildDependency]) -> Option<String> {
     if dependencies.is_empty() {
         return None;
     }

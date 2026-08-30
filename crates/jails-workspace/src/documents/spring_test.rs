@@ -90,8 +90,17 @@ pub(crate) fn command_dispatcher(snapshot: &WorkspaceSnapshot) -> Option<Project
 }
 
 /// The dispatcher with one registration line spliced above `return commands;`.
+///
+/// **The "already registered" check reads blanked source**, for the same
+/// reason `is_spring_boot_test` does: the dispatcher jails writes carries a
+/// Javadoc example, `commands.put(ImportCommand.NAME, ImportCommand::run);`,
+/// and a raw `contains` reads that comment as a registration. So
+/// `jails g command Import` -- the one name the example happens to use --
+/// silently registered nothing, and `g cli` then moved the entry point out
+/// from under a dispatcher it believed was in use. Blanking replaces comments
+/// with spaces of the same length, so the example cannot be mistaken for code.
 pub(crate) fn ensure_command_registration(text: &str, class: &str, package: &str) -> String {
-    if text.contains(&format!("commands.put({class}.NAME")) {
+    if jails_codemod::text::blanked(text).contains(&format!("commands.put({class}.NAME")) {
         return text.to_string();
     }
     let import = if text.contains(&format!("\npackage {package};"))
@@ -118,4 +127,62 @@ pub(crate) fn set_maven_main_class(pom: &str, class: &str) -> String {
         return pom.to_string();
     };
     format!("{}{class}{}", &pom[..start], &pom[end..])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The dispatcher `new-cli` writes, abbreviated to the parts that matter:
+    /// a Javadoc example naming `ImportCommand`, and the `return commands;`
+    /// anchor the registration goes above.
+    fn dispatcher() -> String {
+        [
+            "package com.example.demo;",
+            "",
+            "import java.util.LinkedHashMap;",
+            "import java.util.SequencedMap;",
+            "",
+            "public final class App {",
+            "    /**",
+            "     * Add yours here, for example:",
+            "     * commands.put(ImportCommand.NAME, ImportCommand::run);",
+            "     */",
+            "    public static SequencedMap<String, Command> commands() {",
+            "        var commands = new LinkedHashMap<String, Command>();",
+            "        return commands;",
+            "    }",
+            "}",
+            "",
+        ]
+        .join("\n")
+    }
+
+    /// **The example in the dispatcher's own Javadoc is not a registration.**
+    ///
+    /// `new-cli` ships a dispatcher whose comment demonstrates the call with
+    /// `ImportCommand`, so a raw `contains` reported that exact class as
+    /// already registered. `jails g command Import` then wrote the command and
+    /// spliced nothing, and because the dispatcher still registered nothing, a
+    /// later `g cli` moved `<mainClass>` out from under it -- the one thing
+    /// `entry_point` exists to prevent.
+    #[test]
+    fn a_javadoc_example_is_not_read_as_an_existing_registration() {
+        let registered =
+            ensure_command_registration(&dispatcher(), "ImportCommand", "com.example.demo.cli");
+        assert!(
+            registered.contains("        commands.put(ImportCommand.NAME, ImportCommand::run);"),
+            "the Javadoc example suppressed the registration:\n{registered}"
+        );
+    }
+
+    /// And a real registration still suppresses a second one, so the splice
+    /// stays idempotent across re-planning.
+    #[test]
+    fn an_existing_registration_is_not_written_twice() {
+        let once =
+            ensure_command_registration(&dispatcher(), "ImportCommand", "com.example.demo.cli");
+        let twice = ensure_command_registration(&once, "ImportCommand", "com.example.demo.cli");
+        assert_eq!(once, twice);
+    }
 }
