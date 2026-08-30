@@ -1347,6 +1347,30 @@ obvious enough to be proposed again:
   is the dependency half, and that is already cached.
 
 
+**What the gate actually costs, measured step by step on run `33322968191`**
+-- a commit that changed no Rust at all, against a warm cache, so the compile
+is zero and what is left is the floor:
+
+| step | s |
+|---|---|
+| set up, checkout, rustup cache, `rustup toolchain install` | 11 |
+| **restore cargo** | **42** |
+| restore `~/.m2` and `~/.gradle` | 4 |
+| mise, JDK 21, toolchain banner | 14 |
+| **`mise run verify-rewrite`** | **217** |
+| **save cargo** | **21** |
+| post steps | 2 |
+| **job** | **314** |
+
+So the irreducible part of a 314s job is a 217s gate and 97s of overhead, of
+which 63s is moving the cargo entry on and off the runner. A commit that does
+change code adds its compile to the 217s and nothing else.
+
+**Read the gate's 217s against the concurrency numbers below before trying to
+cut it**: `tests/cli` is 81% utilised on four cores with zero permit queueing,
+so it is within a quarter of a perfect packing and there is no slack there to
+reclaim.
+
 **`CARGO_INCREMENTAL=0` on CI is a smaller cache and a slower gate, and the
 gate is what is billed.** The cargo entry really is mostly incremental state --
 4.4 GB of a 13 GB `target/debug` -- and turning it off took the upload from
