@@ -154,7 +154,7 @@ pub(crate) fn relayed<'a>(
 ) -> Result<&'a Operation, CompileError> {
     let OperationKind::Command(command) = &operation.kind else {
         return Err(CompileError::new(format!(
-            "`deliver outbox` is a command policy; `{}` is not a command",
+            "`deliver outbox` is a command policy; `{}` is not a command\n       fix: move the policy to the command that writes the row",
             operation.label
         )));
     };
@@ -167,13 +167,13 @@ pub(crate) fn relayed<'a>(
     };
     let event = model.operations.get(event_id).ok_or_else(|| {
         CompileError::new(format!(
-            "canonical command `{}` emits missing event `{event_id}`",
+            "canonical command `{}` emits missing event `{event_id}`\n       fix: declare the event, or remove the `emit`",
             operation.label
         ))
     })?;
     let OperationKind::Event(payload) = &event.kind else {
         return Err(CompileError::new(format!(
-            "canonical command `{}` emits non-event operation `{}`",
+            "canonical command `{}` emits non-event operation `{}`\n       fix: `emit` names an event; declare one",
             operation.label, event.label
         )));
     };

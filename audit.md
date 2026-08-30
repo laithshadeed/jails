@@ -209,9 +209,21 @@ cannot start is worse than one that can. It logs at WARN and says a
 destination is not configured, because a sink that quietly marked every event
 SUCCEEDED would drop the whole topic with nothing to read.
 
-Not yet done: the legacy `<Name>OutboxIT` has no canonical counterpart, and
-`g usecase --yields <Event>` still refuses rather than writing `emit` plus
-`deliver outbox` into the model.
+`g usecase --yields <Event>` writes both lines now. **The flag is a delivery
+policy, not just an event** -- it is what made the legacy generator build an
+outbox at all -- so writing `emit E` alone would honour it with the weaker
+guarantee, which is the substitution `deliver` exists to stop.
+
+Making it reachable needed one more spelling. An outbox stages by a *minted*
+id, and `g event TaskCreated id title --on Task` projects the row's, which the
+compiler refuses. So on an event -- and only there, because an event is the one
+operation whose payload is not a subset of the row -- a typed token is a
+component the target does not carry: `g event TaskCreated id:uuid title` is
+`event TaskCreated(id: uuid, title)`, the same distinction JDL v1 already
+draws. Everywhere else a typed token stays a redundant checked restatement of a
+projection.
+
+Not yet done: the legacy `<Name>OutboxIT` has no canonical counterpart.
 
 ### A1.4 `jails new` still writes no model
 

@@ -11413,17 +11413,17 @@ fn canonical_cli_registers_its_commands_and_claims_the_entry_point() {
     );
 }
 
-/// The canonical `usecase` accepts `emit` and `deliver outbox` in JDL but
-/// still refuses `--yields`.
+/// `g usecase --yields <Event>` writes both lines an outbox needs.
 ///
-/// **The semantic gap this used to record is closed** -- `audit.md` A1.7. A
-/// canonical command staged through an outbox is `emit E` plus
-/// `deliver outbox` in the model, and the compiler renders the store, the
-/// relay and the table. What is left is the frontend: `--yields` does not
-/// write those two lines, so it refuses rather than silently generating the
-/// weaker direct publication under a flag that asked for the stronger one.
+/// **The flag is a delivery policy, not just an event.** `--yields` has
+/// always been the spelling that made the legacy generator build a
+/// transactional outbox, so writing `emit E` alone would honour it with
+/// direct publication -- a write and a publish that can fail independently --
+/// under a flag that asked for the stronger guarantee. That substitution is
+/// exactly what `deliver` exists to make impossible, so it is what this pins.
+/// `audit.md` A1.7.
 #[test]
-fn canonical_usecase_refuses_the_yields_flag_it_has_no_outbox_for() {
+fn canonical_usecase_yields_writes_an_outbox_delivery_policy() {
     let root = temp_dir("canonical-usecase-yields");
     write_spring_fixture(&root);
     fs::create_dir_all(root.join(".jails")).unwrap();
@@ -11435,7 +11435,23 @@ fn canonical_usecase_refuses_the_yields_flag_it_has_no_outbox_for() {
     .unwrap();
     for command in [
         ["g", "scaffold", "Task", "id:uuid@pk", "title:string!"].as_slice(),
-        ["g", "event", "TaskCreated", "id", "title", "--on", "Task"].as_slice(),
+        // The store encodes the staged payload with `Json`, so the capability
+        // that writes it is a prerequisite -- the legacy outbox refuses the
+        // same way, naming the same command.
+        ["add", "json"].as_slice(),
+        // `id: uuid` rather than `id`: the event's own identity, minted, not
+        // the row's. An outbox staged on the row's id makes
+        // `on conflict (id) do nothing` discard the second event about it.
+        [
+            "g",
+            "event",
+            "TaskCreated",
+            "id:uuid",
+            "title",
+            "--on",
+            "Task",
+        ]
+        .as_slice(),
     ] {
         let output = jails_cmd(&root, None).args(command).output().unwrap();
         assert!(
@@ -11445,7 +11461,7 @@ fn canonical_usecase_refuses_the_yields_flag_it_has_no_outbox_for() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    let refused = jails_cmd(&root, None)
+    let generated = jails_cmd(&root, None)
         .args([
             "g",
             "usecase",
@@ -11458,13 +11474,21 @@ fn canonical_usecase_refuses_the_yields_flag_it_has_no_outbox_for() {
         ])
         .output()
         .unwrap();
-    assert!(!refused.status.success());
     assert!(
-        String::from_utf8_lossy(&refused.stderr)
-            .contains("does not represent one or more supplied flags"),
+        generated.status.success(),
         "{}",
-        String::from_utf8_lossy(&refused.stderr)
+        String::from_utf8_lossy(&generated.stderr)
     );
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(model.contains("emit task_created"), "{model}");
+    assert!(model.contains("deliver outbox"), "{model}");
+    // And the policy is honoured rather than recorded: the adapter stages.
+    let command = fs::read_to_string(root.join(
+        ".jails/generated/main/java/com/example/demo/adapters/jdbc/JdbcCreateTaskCommand.java",
+    ))
+    .unwrap();
+    assert!(command.contains("outbox.stage("), "{command}");
+    assert!(command.contains("@Transactional"), "{command}");
 }
 
 /// `deliver outbox` end to end: the model says it, the project has it.

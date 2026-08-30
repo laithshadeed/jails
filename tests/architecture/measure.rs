@@ -1164,7 +1164,13 @@ fn is_canonical_new_world(path: &Path) -> bool {
         || path.contains("/crates/jails-workspace/src/")
         || path.ends_with("/src/model_command.rs")
         || path.ends_with("/src/model_eject.rs")
+        // The module *and its children*. This gate names files by path and
+        // `model_generate` grew a `render.rs`, which is the same module in the
+        // same world -- matching only the basename dragged its refusals into a
+        // legacy count. `CLAUDE.md` records the same trap costing two rows
+        // when `src/new/spring.rs` appeared beside `spring.rs`.
         || path.ends_with("/src/model_generate.rs")
+        || path.contains("/src/model_generate/")
         || path.ends_with("/src/model_import.rs")
         || path.ends_with("/src/model_setting.rs")
 }

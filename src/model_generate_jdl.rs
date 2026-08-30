@@ -142,8 +142,14 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         })?;
     let entity_label = entity.label.clone();
     let entity_java_name = entity.names.java_type.clone();
-    let fields =
-        model_generate::operation_field_labels(&current_model, &entity_label, &args.fields)?;
+    // An event's payload can carry a component the row does not: see
+    // `event_component_declarations`. Every other operation's field list is a
+    // projection of the target, so it goes through the checked resolver.
+    let fields = if args.kind == ArtifactKind::Event {
+        model_generate::event_component_declarations(&current_model, &entity_label, &args.fields)?
+    } else {
+        model_generate::operation_field_labels(&current_model, &entity_label, &args.fields)?
+    };
     let operation_label = java_to_label(&args.name);
     let operation_id = OperationId::parse(format!("op_{operation_label}"))
         .map_err(|error| Failure::Told(format!("could not assign operation identity: {error}")))?;
@@ -245,6 +251,21 @@ fn operation_declaration(
             } else {
                 output.push_str(&format!("    limit: {limit}\n"));
             }
+        }
+    }
+    if args.kind == ArtifactKind::Usecase
+        && let Some(yields) = &args.strategy_yields
+    {
+        // `--yields` on a use case is the legacy spelling of *staged*
+        // delivery: it is what `g usecase --yields E` has always built an
+        // outbox for. Writing `emit` alone would honour the flag with direct
+        // publication, which is the weaker guarantee and the exact
+        // substitution `deliver` exists to make impossible.
+        let event = java_to_label(yields);
+        if v1 {
+            output.push_str(&format!("    emit {event}\n    deliver outbox\n"));
+        } else {
+            output.push_str(&format!("    emits: {event}\n    delivery: outbox\n"));
         }
     }
     if args.kind == ArtifactKind::Transition {
