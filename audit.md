@@ -97,6 +97,10 @@ match that stops compiling when a clap variant is added. Its own test pins
 Still legacy: `migration`, `http-workflow`, `association`, `http-sink`,
 `search`, `durable-job`, `seed`.
 
+**Three of those seven are blocked on A1.7 rather than on an emitter.**
+`http-workflow`, `http-sink` and `durable-job` each attach to a transactional
+outbox the canonical `usecase` does not have.
+
 **The table gates the `.jails/model.toml` route only.** A project on
 `.jails/model.jdl` goes straight to the JDL frontend, which refuses an
 unserved kind at *compile* time. So it is the coverage number and the
@@ -132,6 +136,27 @@ for those kinds are gone.
 The coverage should come back against the syntax editor directly rather than
 through a command that must now fail. Until it does, the CST rendering for
 fourteen component kinds is untested.
+
+### A1.7 A canonical use case publishes directly, where the legacy one has an outbox
+
+`ArtifactKind::Usecase` is marked native, and the canonical frontend maps it
+onto a plain `Command` operation. The legacy one emits a *second* half when
+given `--yields <Event>`: an outbox table, an `Outbox<Name>UseCase`, a JDBC
+store, a sink port, a Kafka sink, a relay worker and a scheduling config.
+Canonical emits none of that — a command with `emit` publishes directly, which
+is a different delivery guarantee, not a smaller rendering of the same one.
+
+Reproduced: `g usecase CreateTask title --on Task --yields TaskCreated` on a
+canonical project refuses with "the canonical `usecase` operation frontend does
+not represent one or more supplied flags". So the flag is refused rather than
+silently doing less, which is the right failure — but it means the registry's
+`Native` overstates this row, and it is why `http-workflow`, `http-sink` and
+`durable-job` cannot be ported: each attaches to the outbox that is not there.
+`canonical_usecase_refuses_the_yields_flag_it_has_no_outbox_for` pins it.
+
+Closing it is model work before it is emitter work: a command needs a typed
+delivery policy (publish directly, or through a stored outbox), because the
+two are different promises and the compiler must not pick one.
 
 ### A1.4 `jails new` still writes no model
 

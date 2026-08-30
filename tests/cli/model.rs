@@ -11412,3 +11412,56 @@ fn canonical_cli_registers_its_commands_and_claims_the_entry_point() {
         before
     );
 }
+
+/// The canonical `usecase` accepts `emit` in JDL but refuses `--yields`.
+///
+/// Recorded rather than fixed, because the gap it exposes is bigger than the
+/// flag: `audit.md` A1.7. The compiler publishes a command's events -- `emit`
+/// in the model reaches `emit_operation::publications` -- so this is a
+/// frontend gap on top of a semantic one, and the semantic one is that a
+/// canonical command publishes *directly* where the legacy use case publishes
+/// through a transactional outbox.
+#[test]
+fn canonical_usecase_refuses_the_yields_flag_it_has_no_outbox_for() {
+    let root = temp_dir("canonical-usecase-yields");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+         platform spring\n  build maven\n  storage postgres\n}\n",
+    )
+    .unwrap();
+    for command in [
+        ["g", "scaffold", "Task", "id:uuid@pk", "title:string!"].as_slice(),
+        ["g", "event", "TaskCreated", "id", "title", "--on", "Task"].as_slice(),
+    ] {
+        let output = jails_cmd(&root, None).args(command).output().unwrap();
+        assert!(
+            output.status.success(),
+            "`jails {}`: {}",
+            command.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let refused = jails_cmd(&root, None)
+        .args([
+            "g",
+            "usecase",
+            "CreateTask",
+            "title",
+            "--on",
+            "Task",
+            "--yields",
+            "TaskCreated",
+        ])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr)
+            .contains("does not represent one or more supplied flags"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+}
