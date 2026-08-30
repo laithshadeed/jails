@@ -31,6 +31,7 @@ mod fetcher;
 mod handler;
 mod idempotency;
 mod job;
+mod presence;
 mod socket;
 mod webhook;
 
@@ -49,6 +50,7 @@ pub(crate) fn lower_and_emit(
             ComponentKind::Auth => auth::files(model, component)?,
             ComponentKind::Idempotency => idempotency::files(model, component)?,
             ComponentKind::Handler => handler::files(model, component)?,
+            ComponentKind::Presence => presence::files(model, component)?,
             ComponentKind::Socket => socket::files(model, component)?,
             ComponentKind::Webhook => webhook::files(model, component)?,
             _ => continue,
@@ -83,7 +85,17 @@ pub(crate) fn migrations(
     accepted: Option<&AppModel>,
     next: &AppModel,
 ) -> Vec<jails_contracts::RenderedMigration> {
-    idempotency::migrations(accepted, next)
+    let mut migrations = idempotency::migrations(accepted, next);
+    migrations.extend(presence::migrations(accepted, next));
+    migrations
+}
+
+/// Whether this model has SQL storage, which several components require.
+fn has_database(model: &AppModel) -> bool {
+    model
+        .capabilities
+        .values()
+        .any(|capability| capability.kind == "db")
 }
 
 /// The build dependencies this model's components need.

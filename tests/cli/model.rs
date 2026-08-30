@@ -883,7 +883,6 @@ app Notes {
         "http-workflow",
         "http-sink",
         "durable-job",
-        "presence",
     ];
     for command in commands {
         let output = jails_cmd(&root, None).args(&command).output().unwrap();
@@ -11229,4 +11228,92 @@ fn canonical_storage_postgres_writes_the_container_compose_and_datasource() {
             .unwrap(),
         before
     );
+}
+
+/// `g presence` on a canonical project.
+///
+/// Presence held in one process's memory is correct on one node and wrong on
+/// two, with nothing to say which — so PostgreSQL is a precondition, and the
+/// refusal is asserted before the artifacts are.
+///
+/// It also shares `SchedulingConfig` with `g job`, because its sweep is
+/// scheduled: without `@EnableScheduling` the annotation is inert and nothing
+/// says so, and the table just grows a row per crashed node forever.
+#[test]
+fn canonical_presence_refuses_without_storage_then_shares_the_scheduler() {
+    let root = temp_dir("canonical-presence");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+         platform spring\n  build maven\n  storage none\n}\n",
+    )
+    .unwrap();
+
+    let refused = jails_cmd(&root, None)
+        .args(["g", "presence", "Online"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("correct on one node and wrong on two"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+
+    for command in [
+        ["add", "db"].as_slice(),
+        ["g", "presence", "Online"].as_slice(),
+        ["g", "job", "Reconcile"].as_slice(),
+    ] {
+        let output = jails_cmd(&root, None).args(command).output().unwrap();
+        assert!(
+            output.status.success(),
+            "`jails {}`: {}",
+            command.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    for relative in [
+        ".jails/generated/main/java/com/example/demo/application/OnlinePresence.java",
+        ".jails/generated/main/java/com/example/demo/adapters/jdbc/JdbcOnlinePresence.java",
+        ".jails/generated/test/java/com/example/demo/adapters/jdbc/JdbcOnlinePresenceIT.java",
+        // One config, and presence declared it before the job did.
+        ".jails/generated/main/java/com/example/demo/jobs/SchedulingConfig.java",
+    ] {
+        assert!(root.join(relative).exists(), "`{relative}` was not written");
+    }
+
+    let store =
+        fs::read_to_string(root.join(
+            ".jails/generated/main/java/com/example/demo/adapters/jdbc/JdbcOnlinePresence.java",
+        ))
+        .unwrap();
+    assert!(store.contains("online_presence"), "{store}");
+    assert!(!store.contains("{{"), "{store}");
+
+    // The integration test imports the container the model already knows it
+    // has, rather than being `@Disabled` for want of reading the test tree.
+    let integration = fs::read_to_string(root.join(
+        ".jails/generated/test/java/com/example/demo/adapters/jdbc/JdbcOnlinePresenceIT.java",
+    ))
+    .unwrap();
+    assert!(
+        integration.contains("@Import(TestcontainersConfig.class)"),
+        "{integration}"
+    );
+    assert!(!integration.contains("@Disabled"), "{integration}");
+    assert!(!integration.contains("{{"), "{integration}");
+
+    // A departure is a delete, so a row exists only while somebody is there.
+    let migration = fs::read_dir(root.join("src/main/resources/db/migration"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.to_string_lossy().contains("create_online_presence"))
+        .expect("the presence table was not migrated");
+    let sql = fs::read_to_string(&migration).unwrap();
+    assert!(sql.contains("primary key (scope, member, node)"), "{sql}");
+    assert!(!sql.contains("left_at"), "{sql}");
 }

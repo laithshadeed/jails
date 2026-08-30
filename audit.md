@@ -88,14 +88,14 @@ looked and still worth removing.
 
 ## A1 — coverage
 
-### A1.1 Twenty-nine of thirty-nine generators
+### A1.1 Thirty of thirty-nine generators
 
 `src/canonical_support.rs` is the authority and is honest code: an exhaustive
 match that stops compiling when a clap variant is added. Its own test pins
-29/39. Capabilities are closed at 25/25.
+30/39. Capabilities are closed at 25/25.
 
 Still legacy: `migration`, `command`, `cli`, `http-workflow`, `association`,
-`http-sink`, `search`, `durable-job`, `presence`, `seed`.
+`http-sink`, `search`, `durable-job`, `seed`.
 
 **The table gates the `.jails/model.toml` route only.** A project on
 `.jails/model.jdl` goes straight to the JDL frontend, which refuses an
@@ -111,7 +111,7 @@ for yet.
 
 **Eight of the framework-shaped component kinds are through `emit_component`
 now** — `client`, `fetcher`, `job`, `socket`, `webhook`, `auth`,
-`idempotency` and `handler` — **and it is the pattern the rest follow.** `idempotency` added
+`idempotency`, `handler` and `presence` — **and it is the pattern the rest follow.** `idempotency` added
 the migration seam the four remaining storage-backed kinds need: a component's
 forward migration is emitted only for a component the accepted model does not
 have, because a migration is irreproducible and re-emitting it appends a

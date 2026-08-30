@@ -32,11 +32,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
     // the model rather than the build file, for the reason `auth` is: in one
     // transition the capability this same model declares has not been spliced
     // into the pom yet.
-    if !model
-        .capabilities
-        .values()
-        .any(|capability| capability.kind == "db")
-    {
+    if !super::has_database(model) {
         return Err(CompileError::new(format!(
             "component idempotency `{}` needs PostgreSQL/JDBC to keep receipts across restarts\n       fix: declare `storage postgres` in the model, or run `jails add db`",
             component.name

@@ -65,7 +65,16 @@ pub(super) fn scheduling(model: &AppModel) -> Result<Option<Emitted>, CompileErr
     let owners = model
         .components
         .values()
-        .filter(|component| component.kind == jails_model::ComponentKind::Job)
+        .filter(|component| {
+            // Presence sweeps a table on a schedule, so it needs the same
+            // config: without `@EnableScheduling` the sweep annotation is
+            // inert and nothing says so -- the table just grows a row per
+            // crashed node forever.
+            matches!(
+                component.kind,
+                jails_model::ComponentKind::Job | jails_model::ComponentKind::Presence
+            )
+        })
         .map(|component| component.id.as_str().to_string())
         .collect::<BTreeSet<_>>();
     if owners.is_empty() {
