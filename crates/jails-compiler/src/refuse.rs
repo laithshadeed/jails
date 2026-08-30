@@ -121,11 +121,34 @@ pub(crate) fn preflight(
         .capabilities
         .values()
         .any(|capability| capability.kind == "db")
-        && snapshot.project.spring_boot.is_none()
     {
-        return Err(CompileError::new(
-            "canonical `storage postgres` renders Spring JDBC adapters and requires a captured Spring Boot project\n       fix: add Spring Boot to the build, or choose `storage none` and write the persistence by hand",
-        ));
+        let Some(version) = snapshot.project.spring_boot.as_deref() else {
+            return Err(CompileError::new(
+                "canonical `storage postgres` renders Spring JDBC adapters and requires a captured Spring Boot project\n       fix: add Spring Boot to the build, or choose `storage none` and write the persistence by hand",
+            ));
+        };
+        // **The floor is 3.1, and below it the refusal has to name the
+        // module.** `spring-boot-testcontainers` and
+        // `spring-boot-docker-compose` arrived there; on an older project the
+        // coordinates this capability declares resolve to nothing and the
+        // build stops resolving at all -- worse than the state before the
+        // command ran. The legacy engine has said so by name since
+        // `add/database.rs`; a canonical project that merely said "requires a
+        // captured Spring Boot project" would be telling a Boot 2.7 reader to
+        // add the Spring Boot they already have.
+        if let Some((major, minor)) = boot_major_minor(version)
+            && (major, minor) < (3, 1)
+        {
+            return Err(CompileError::new(format!(
+                "`db` wires Testcontainers through `spring-boot-testcontainers`, and this project \
+                 is Spring Boot {major}.{minor}.\n       \
+                 That module and `spring-boot-docker-compose` arrived in Spring Boot 3.1; on this \
+                 project the spliced coordinates would resolve to nothing and the build would \
+                 stop resolving altogether -- a worse state than before the command ran.\n       \
+                 fix: `jails add sqlite`, `jails add h2`, `jails g migration` and `jails g repo` \
+                 work on this project. Raising the Boot version is the other way."
+            )));
+        }
     }
     if next_model
         .capabilities
@@ -138,4 +161,14 @@ pub(crate) fn preflight(
         ));
     }
     Ok(())
+}
+
+/// `"2.7.18"` as `(2, 7)`. `None` when the string is not a version, which the
+/// caller reads as "cannot tell" and lets through -- the same posture the
+/// capture takes when no build file names a Boot version at all.
+fn boot_major_minor(version: &str) -> Option<(u32, u32)> {
+    let mut parts = version.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next().unwrap_or("0").parse().ok()?;
+    Some((major, minor))
 }

@@ -167,7 +167,20 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // followed the same cure as the thirteen above: they take the
                 // `apply::Tree` they are writing into rather than the root of a
                 // project that does not exist yet. `pending.md` §7.7.
-                ceiling: 72,
+                //
+                // 72 -> 77 for the canonical commands' explicit root:
+                // `sync_at`, `compile_at`, `load_model_at`, `resolve_manifest_at`
+                // and `materialize_seed`. This is the containment boundary the
+                // withdrawal below describes, not the disease. Each one exists
+                // *because* `model_command::root()` walks up from the process
+                // directory, and `jails new` is standing in the parent of the
+                // project it just created -- the same edge `--app` hit, and the
+                // reason every legacy route already takes a resolved `Project`
+                // instead of calling `discover`. Everything below these five
+                // already took an explicit root (`capture_*`, `materialize*`,
+                // `execute`); the five stop the walk rather than threading a
+                // root further down.
+                ceiling: 77,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;

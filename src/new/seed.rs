@@ -159,3 +159,48 @@ pub(super) fn git_init(tree: &publish::Tree<'_>, debug: bool) {
         Err(e) => eprintln!("jails: failed to run git init: {e}"),
     }
 }
+
+/// The `.jails/model.jdl` a freshly created project starts with, and the first
+/// canonical plan applied to it.
+///
+/// **This is what makes `jails new` produce a canonical project.**
+/// `model_command::owns` is "does `.jails/model.jdl` exist", so before this
+/// every project jails created took the legacy path and the compiler could
+/// only be reached by a model somebody wrote by hand.
+///
+/// The plan is applied here, inside the scratch tree, rather than left for the
+/// reader's first command. The lock it writes is what records which property
+/// keys and dependency coordinates the model owns; without it the next command
+/// reads every one of them as reader-owned text and refuses to reconcile it.
+pub(super) fn seed_canonical_model(
+    tree: &publish::Tree<'_>,
+    app: Option<&Path>,
+    source: String,
+) -> Result<()> {
+    // **`--app` keeps the project legacy, because `.jails/app.toml` *is* the
+    // legacy manifest.** Seeding a model beside it would give the project two
+    // editable sources, and `app apply` refuses a canonical project by name
+    // for exactly that reason. Until `model import` reads a manifest, a
+    // project created from one stays where its manifest can be applied.
+    if app.is_some() {
+        return Ok(());
+    }
+    tree.put_named(".jails/model.jdl", source, ".jails/model.jdl")?;
+    crate::model_command::materialize_seed(tree.root())
+}
+
+/// One `app` node, with whatever declarations the caller appends after it.
+///
+/// `storage none` because a new project has no schema yet; `add db` is what
+/// changes that, and it is a model patch like any other.
+pub(super) fn app_node(
+    name: &str,
+    package: &str,
+    java: &str,
+    platform: &str,
+    build: &str,
+) -> String {
+    format!(
+        "jdl 1\n\napp {name} {{\n  pkg {package}\n  java {java}\n  platform {platform}\n  build {build}\n  storage none\n}}\n"
+    )
+}

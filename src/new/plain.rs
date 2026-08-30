@@ -99,11 +99,7 @@ pub fn new_cli(request: &Request<'_>) -> Result<()> {
     // exists, and without one every project jails created took the legacy
     // path -- so the compiler could only ever be reached by a model somebody
     // wrote by hand.
-    tree.put_named(
-        ".jails/model.jdl",
-        seed_model(name, &package, java),
-        ".jails/model.jdl",
-    )?;
+    seed::seed_canonical_model(&tree, app, seed_model(name, &package, java))?;
     // Through write_new_file, not fs::write, so the entry point and its test
     // get the same import ordering as everything jails generates later --
     // otherwise `add format` finds violations in files jails itself wrote.
@@ -228,10 +224,8 @@ pub(super) fn seed_model(name: &str, package: &str, java: &str) -> String {
     // project in `./demo3` links as `Demo3`, and the linker refuses the
     // lowercase spelling rather than silently accepting a name no generated
     // class could carry.
-    let name = camel_case(name);
-    let mut source = format!(
-        "jdl 1\n\napp {name} {{\n  pkg {package}\n  java {java}\n  platform plain\n  build maven\n  storage none\n}}\n\n"
-    );
+    let mut source = seed::app_node(&camel_case(name), package, java, "plain", "maven");
+    source.push('\n');
     for dependency in seed_dependencies() {
         let scope = match dependency.scope {
             jails_model::DependencyScope::Test => " @scope(test)",

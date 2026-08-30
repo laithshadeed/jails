@@ -41,12 +41,29 @@ pub(super) fn v1_declaration(
     // rather than defaulted downstream because `jdl-sol.md` §3.1 rule 4 makes
     // a convention part of the language, not something a compiler applies out
     // of sight.
-    let default_path = (args.kind == ArtifactKind::Client && args.path.is_none()).then(|| {
-        format!(
+    let default_path = if args.path.is_some() {
+        None
+    } else if args.kind == ArtifactKind::Client {
+        Some(format!(
             "/{}",
             jails_generate::sql::table_name(name).replace('_', "-")
-        )
-    });
+        ))
+    } else if args.method.is_some() || args.consumes.is_some() {
+        // **A method or request format without a path is not a missing path.**
+        // The convention already answers it: a component with no route lowers
+        // to `/{label}`, which is what both engines emit for
+        // `g controller Foo`. Refusing here made `--method post` demand a
+        // `--path` that only restated the default, and rejected a command
+        // every legacy project accepts.
+        //
+        // Materialized rather than left to the compiler for the same reason
+        // the client default is, one arm up: `jdl-sol.md` §3.1 rule 4 makes a
+        // convention part of the language rather than something applied out of
+        // sight, so the route the reader gets is the route their model states.
+        Some(format!("/{}", java_to_label(name).replace('_', "-")))
+    } else {
+        None
+    };
     if let Some(path) = args.path.as_ref().or(default_path.as_ref()) {
         let default_method = if args.kind == ArtifactKind::Webhook {
             "POST"
@@ -409,12 +426,6 @@ pub(super) fn reject_v1_options(args: &GenerateArgs, kind: ComponentKind) -> Res
             "component {} requires `--yields`.\n       fix: name its output semantic symbol",
             kind.label()
         )));
-    }
-    if (args.method.is_some() || args.consumes.is_some()) && args.path.is_none() {
-        return Err(Failure::Told(
-            "a component route method or request format needs an explicit `--path`.\n       fix: add the route path or remove the route override"
-                .to_string(),
-        ));
     }
     if !args.bind.is_empty() && args.consumes != Some(jails_spec::spec::kind::WireFormat::Form) {
         return Err(Failure::Told(

@@ -371,7 +371,35 @@ fn gradle_spring_boot_version(source: &str) -> Option<String> {
         let version = declaration.split_once("version")?.1.trim();
         return quoted(version);
     }
-    None
+    legacy_gradle_spring_boot_version(source)
+}
+
+/// The pre-`plugins {}` spelling, which is what a Boot 2 project has.
+///
+/// `buildscript { dependencies { classpath
+/// "org.springframework.boot:spring-boot-gradle-plugin:2.7.18" } }` plus
+/// `apply plugin: 'org.springframework.boot'`. **Both halves are required**,
+/// because the classpath entry alone says the plugin is resolvable and not
+/// that it is applied -- and this is the value that decides whether the
+/// compiler renders Spring adapters at all.
+///
+/// Reading it is not guessing: the coordinate states the version exactly, and
+/// without it a Boot 2 Gradle project looked to the compiler like no Spring
+/// project at all -- so `add db` refused with "requires a captured Spring Boot
+/// project" instead of naming the module the version is missing.
+fn legacy_gradle_spring_boot_version(source: &str) -> Option<String> {
+    const COORDINATE: &str = "org.springframework.boot:spring-boot-gradle-plugin:";
+    if !source.contains("apply plugin: 'org.springframework.boot'")
+        && !source.contains("apply plugin: \"org.springframework.boot\"")
+    {
+        return None;
+    }
+    let start = source.find(COORDINATE)? + COORDINATE.len();
+    let version: String = source[start..]
+        .chars()
+        .take_while(|character| character.is_ascii_digit() || *character == '.')
+        .collect();
+    (!version.is_empty()).then_some(version)
 }
 
 fn between<'a>(source: &'a str, start: &str, end: &str) -> Option<&'a str> {

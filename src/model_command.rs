@@ -86,11 +86,23 @@ pub(crate) fn sync(no_start: bool, invocation: Invocation) -> Result<()> {
                 .to_string(),
         ));
     }
-    let manifest = resolve_manifest(None)?;
-    let (source, model) = load_model(&manifest, invocation.output)?;
-    let bundle = compile(&manifest, source.as_bytes(), model)?;
-    let root = crate::model_command::root()?;
-    let execution = jails_workspace::execute(&root, &bundle).map_err(|error| {
+    sync_at(&root()?, invocation)
+}
+
+/// `jails sync` against a root the caller already holds.
+///
+/// **`root()` walks up from the process directory, and `jails new` is the one
+/// caller for which that is the wrong answer**: the project being created is a
+/// scratch tree, and the process is standing in its parent. That is the same
+/// edge `--app` hit, and the reason every legacy route already takes a
+/// resolved `Project` rather than calling `discover`. Everything below this
+/// wrapper already takes an explicit root -- `capture_*`, `materialize*` and
+/// `execute` all do -- so this only stops the walk from happening.
+pub(crate) fn sync_at(root: &Path, invocation: Invocation) -> Result<()> {
+    let manifest = resolve_manifest_at(root, None)?;
+    let (source, model) = load_model_at(root, &manifest, invocation.output)?;
+    let bundle = compile_at(root, &manifest, source.as_bytes(), model)?;
+    let execution = jails_workspace::execute(root, &bundle).map_err(|error| {
         Failure::Told(format!("could not synchronize canonical model: {error}"))
     })?;
     if invocation.output == Output::Human {
@@ -295,15 +307,39 @@ fn plan(manifest: &Path, bundle_path: Option<&Path>, output: Output) -> Result<(
     Ok(())
 }
 
+/// Compile and apply a freshly seeded model, printing nothing.
+///
+/// `jails new` needs the first canonical plan to *run* rather than to be
+/// reported: the project it creates has to arrive with its
+/// `application.properties` written and `.jails/compiler.lock.json` recording
+/// which keys the model owns. Without that lock the very next command sees
+/// every key `new` wrote as reader-owned text and refuses to touch it.
+pub(crate) fn materialize_seed(root: &Path) -> Result<()> {
+    let manifest = resolve_manifest_at(root, None)?;
+    let (source, model) = load_model_at(root, &manifest, Output::Human)?;
+    let bundle = compile_at(root, &manifest, source.as_bytes(), model)?;
+    jails_workspace::execute(root, &bundle)
+        .map_err(|error| Failure::Told(format!("could not apply the seeded model: {error}")))?;
+    Ok(())
+}
+
 fn compile(
     manifest: &Path,
     source: &[u8],
     model: jails_model::AppModel,
 ) -> Result<jails_contracts::PlanBundle> {
-    let root = crate::model_command::root()?;
+    compile_at(&root()?, manifest, source, model)
+}
+
+fn compile_at(
+    root: &Path,
+    manifest: &Path,
+    source: &[u8],
+    model: jails_model::AppModel,
+) -> Result<jails_contracts::PlanBundle> {
     let reader_paths = jails_compiler::external_project_paths(&model);
     let snapshot =
-        jails_workspace::capture_with_reader_paths(&root, manifest, source, model, &reader_paths)
+        jails_workspace::capture_with_reader_paths(root, manifest, source, model, &reader_paths)
             .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
     let draft = jails_compiler::Compiler::compile(&snapshot, None)
         .map_err(|error| Failure::Told(format!("could not compile application model: {error}")))?;
@@ -350,9 +386,17 @@ pub(crate) fn load_model(
     manifest: &Path,
     output: Output,
 ) -> Result<(String, jails_model::AppModel)> {
+    load_model_at(&root()?, manifest, output)
+}
+
+pub(crate) fn load_model_at(
+    root: &Path,
+    manifest: &Path,
+    output: Output,
+) -> Result<(String, jails_model::AppModel)> {
     // Joined to the project root, which is a no-op on the absolute path an
     // explicit `--manifest` resolves to. See `resolve_manifest`.
-    let source = match std::fs::read_to_string(root()?.join(manifest)) {
+    let source = match std::fs::read_to_string(root.join(manifest)) {
         Ok(source) => source,
         Err(error) => return io_failure(manifest, &error, output),
     };
@@ -389,7 +433,10 @@ pub(crate) fn load_model(
 /// from a subdirectory. `load_model` joins the root either way, which is a
 /// no-op on an absolute path.
 pub(crate) fn resolve_manifest(explicit: Option<&Path>) -> Result<PathBuf> {
-    let root = root()?;
+    resolve_manifest_at(&root()?, explicit)
+}
+
+pub(crate) fn resolve_manifest_at(root: &Path, explicit: Option<&Path>) -> Result<PathBuf> {
     let jdl_path = root.join(JDL_PATH);
     let toml_path = root.join(TOML_PATH);
     let (jdl, toml) = (jdl_path.as_path(), toml_path.as_path());

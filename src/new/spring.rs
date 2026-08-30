@@ -313,6 +313,13 @@ fn finish_spring_project(tree: &publish::Tree<'_>, requested_deps: &str) -> Resu
     let major = crate::pom::read(tree.root())
         .map(|pom| crate::pom::spring_boot_major_of(&pom))
         .unwrap_or(4);
+    // Not written here for a canonical project: the six defaults are `prop`
+    // declarations in the seeded model, and the compiler writes the file. A
+    // key written as reader-owned text *and* declared in the model is the
+    // collision `reconcile_properties` refuses -- which is exactly how
+    // `server.shutdown`, declared by both `new` and `add db`, made `jails set
+    // server.shutdown=graceful` refuse on a project jails created seconds
+    // earlier.
     write_default_properties(tree, major)?;
     write_devtools_defaults(tree)
 }
@@ -459,42 +466,7 @@ pub(super) fn write_default_properties(tree: &publish::Tree<'_>, boot_major: u32
         .root()
         .join("src/main/resources/application.properties");
     let existing = fs::read_to_string(&path).unwrap_or_default();
-    let modern = boot_major >= 3;
-    let defaults = [
-        (
-            "# Explicit by design: virtual threads move the concurrency bound to every\n\
-             # downstream dependency. Enable them only with measured pool and rate limits.",
-            "spring.threads.virtual.enabled=false",
-            // Boot 3.2. There is no 2.x spelling to fall back to; the feature
-            // is not there.
-            modern,
-        ),
-        (
-            "# RFC 9457 problem+json error bodies instead of Boot's default error map.",
-            "spring.mvc.problemdetails.enabled=true",
-            modern,
-        ),
-        (
-            "# Large signed tokens and tracing baggage can exceed the older 8KB default.",
-            "server.max-http-request-header-size=16KB",
-            modern,
-        ),
-        (
-            "# Large signed tokens and tracing baggage can exceed the older 8KB default.",
-            "server.max-http-header-size=16KB",
-            !modern,
-        ),
-        (
-            "# Stop accepting work, then give in-flight requests and transactions time to finish.",
-            "server.shutdown=graceful",
-            true,
-        ),
-        (
-            "# Bound graceful shutdown so an unhealthy instance cannot stall a rollout forever.",
-            "spring.lifecycle.timeout-per-shutdown-phase=30s",
-            true,
-        ),
-    ];
+    let defaults = default_properties(boot_major);
     let mut addition = String::new();
     for (comment, property, applies) in defaults {
         if !applies {
@@ -533,6 +505,53 @@ fn write_properties(tree: &publish::Tree<'_>, path: &Path, body: String) -> Resu
             .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
     }
     tree.put_at(path, body)
+}
+
+/// The six default settings, as one table.
+///
+/// **One owner, because they are now written two ways.** `new` still writes
+/// them into `application.properties` for a legacy project, and seeds them as
+/// `prop` declarations in `.jails/model.jdl` for a canonical one, where the
+/// compiler owns the key and `add db` can declare `server.shutdown` without
+/// colliding with a line `new` wrote. Two lists would drift on exactly the
+/// entries the Boot-major gate makes conditional.
+pub(super) fn default_properties(boot_major: u32) -> [(&'static str, &'static str, bool); 6] {
+    let modern = boot_major >= 3;
+    [
+        (
+            "# Explicit by design: virtual threads move the concurrency bound to every\n\
+             # downstream dependency. Enable them only with measured pool and rate limits.",
+            "spring.threads.virtual.enabled=false",
+            // Boot 3.2. There is no 2.x spelling to fall back to; the feature
+            // is not there.
+            modern,
+        ),
+        (
+            "# RFC 9457 problem+json error bodies instead of Boot's default error map.",
+            "spring.mvc.problemdetails.enabled=true",
+            modern,
+        ),
+        (
+            "# Large signed tokens and tracing baggage can exceed the older 8KB default.",
+            "server.max-http-request-header-size=16KB",
+            modern,
+        ),
+        (
+            "# Large signed tokens and tracing baggage can exceed the older 8KB default.",
+            "server.max-http-header-size=16KB",
+            !modern,
+        ),
+        (
+            "# Stop accepting work, then give in-flight requests and transactions time to finish.",
+            "server.shutdown=graceful",
+            true,
+        ),
+        (
+            "# Bound graceful shutdown so an unhealthy instance cannot stall a rollout forever.",
+            "spring.lifecycle.timeout-per-shutdown-phase=30s",
+            true,
+        ),
+    ]
 }
 
 pub(super) fn initializr_java(requested: &str) -> &str {
