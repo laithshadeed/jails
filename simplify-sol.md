@@ -51,9 +51,11 @@ machine.
 
 There used to be a second red mark, and it was **not** the machine: jails
 passed `--diff-algorithm` to `git merge-file`, a flag git 2.43 does not have,
-so 58 tests died on a usage error. Removing it was two lines and it un-hid 29
-tests that had never run here, six of which were failing for real. A gate that
-cannot run is worth less than no gate, because it reports the same green.
+so 58 tests died on a usage error. It is probed now, with
+`JAILS_GIT_DIFF_ALGORITHM` to pin one answer across machines, and closing it
+un-hid 29 tests that had never run here -- six of which were failing for real.
+A gate that cannot run is worth less than no gate, because it reports the same
+green.
 
 So the next change to this document is the single cutover commit it has been
 building toward.
@@ -2281,8 +2283,8 @@ survives.
   compile graph.
 - **G1** — `tests/differential.rs`, 44 scenarios across both implementations,
   plus five checked-in foreign projects under `tests/corpus/` run through both
-  binaries. Green here, which it was not until the `--diff-algorithm` flag came
-  off `git merge-file`.
+  binaries. Green here, which it was not until `--diff-algorithm` stopped being
+  passed to `git merge-file` unconditionally.
 - **G2** — the inventory half was already held
   (`feature_inventory_covers_the_live_clap_tree_exactly_once`); the journey
   half was not, and now is:
@@ -2399,10 +2401,11 @@ survives.
 
 **G1 and the engine suite are green here now.** They used to show 8 failures,
 all `git merge-file` exit 129 -- git 2.43 against the `--diff-algorithm` flag
-jails passed, which is a usage error rather than a merge outcome. The flag is
-gone: it bought a marginally different diff algorithm and cost the tool every
-distribution shipping git ≤ 2.43. What is still red here is the JDK, and any
-measurement taken here is a measurement of the other tiers.
+jails passed unconditionally, which is a usage error rather than a merge
+outcome. `jails_support::git` asks the machine instead, and
+`JAILS_GIT_DIFF_ALGORITHM` pins one answer for a team whose machines differ.
+What is still red here is the JDK, and any measurement taken here is a
+measurement of the other tiers.
 
 ### Where each fitness rule stands (2026-08-30)
 

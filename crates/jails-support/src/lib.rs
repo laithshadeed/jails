@@ -21,6 +21,7 @@
 
 pub mod apply;
 pub mod codec;
+pub mod git;
 pub mod hermetic;
 pub mod json;
 pub mod lock;

@@ -53,10 +53,10 @@ the binary in a way that does not depend on it.
 
 This note used to name a second cause -- `git merge-file --diff-algorithm`
 against git 2.43 -- which took out 58 tests here. That was **not** the machine:
-the flag bought a slightly different diff algorithm and cost the tool every
-Linux distribution shipping git ≤ 2.43, with no preflight and a `fix:` line
-that could not be acted on. It is gone (A5.7), and the 29 tests it had been
-silently hiding are running for the first time.
+the flag was passed unconditionally and reached `git merge-file` only after
+2.43, so it cost the tool every Linux distribution shipping that or older, with
+no preflight and a `fix:` line that could not be acted on. jails asks now
+(A5.7), and the 29 tests it had been silently hiding run for the first time.
 
 ---
 
@@ -843,7 +843,7 @@ A1.1), **A2.6** (pluralization), **A2.2b** (pre-v1 declaration order),
 **A5.3** (the G1 corpus on JDL v1), **A5.5** (G4 on the canonical executor),
 **A6.1** (module docs, now a ratchet at zero), **A3.11 / A3.12** (the §9.7
 divergence recorded, and §7.2's derived records) and **A5.7** (the
-`--diff-algorithm` flag, deleted rather than preflighted).
+`--diff-algorithm` flag, probed rather than assumed).
 
 **The ordered list is empty.** What is left in this file is measurement rather
 than work queued behind it: `A3.13`'s three diagnostic vocabularies, `A3.14`'s
@@ -853,12 +853,20 @@ typed artifact IR, `A4.x`, and the residue named inside each closed entry.
 "a one-line preflight in `doctor` whenever somebody wants it" -- and it was
 neither one line nor optional: `--diff-algorithm` bought a marginally different
 merge and cost the tool every Linux distribution shipping git ≤ 2.43, which is
-Ubuntu 24.04 LTS, Debian 12 and RHEL 9. Deleting the flag was two lines and it
-un-hid **29 tests** that had never run on this machine, six of which were
-failing for real reasons: four stale expectations, one `String::replace`
-silently matching nothing, and one refusal that contradicted a test written in
-the same commit. A defect that makes the suite unable to run is not a footnote;
-it is the thing hiding the next six.
+Ubuntu 24.04 LTS, Debian 12 and RHEL 9. Closing it un-hid **29 tests** that had
+never run on this machine, six of which were failing for real reasons: four
+stale expectations, one `String::replace` silently matching nothing, and one
+refusal that contradicted a test written in the same commit. A defect that
+makes the suite unable to run is not a footnote; it is the thing hiding the
+next six.
+
+`jails_support::git` probes the capability rather than parsing a version, and
+`JAILS_GIT_DIFF_ALGORITHM` pins it -- which is the part the footnote would have
+missed even if it had been written. A fallback means two machines can resolve
+one ambiguous merge two ways and record the difference in each accepted
+projection, so the override is not a convenience: it is what lets a team make
+the answer the same everywhere. `doctor` reports which one this machine
+landed on.
 
 `A3.14` (typed artifact IR) is the largest remaining piece of the design and
 was never on the list because it is a phase, not a fix.

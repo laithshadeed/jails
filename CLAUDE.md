@@ -1859,16 +1859,35 @@ jails knows nothing about.
   called from their own test modules back when one binary held everything. If
   a test helper has to cross a crate boundary, it is ordinary public API — or
   it should not exist, which was the answer there.
-- **Never pass a flag to a tool the reader's distribution might not have.**
-  `git merge-file --diff-algorithm=histogram` bought a marginally different
-  merge and cost the tool every Linux distribution shipping git <= 2.43 --
-  Ubuntu 24.04 LTS, Debian 12, RHEL 9 -- where it exits **129**, a usage error
-  rather than a merge outcome, so every regeneration over a file the reader had
-  edited failed. Nothing preflighted it and `doctor` did not check it. It also
-  killed 58 tests here, which is the worse half: a gate that cannot run reports
-  the same green as one that passed, and removing the flag un-hid 29 tests and
-  six real defects underneath them. `git merge-file` with no flag is what the
-  merge uses now.
+- **A flag the reader's distribution might not have is asked about, never
+  assumed.** `git merge-file --diff-algorithm=histogram` was passed
+  unconditionally, and it reached that command after 2.43 -- so on Ubuntu 24.04
+  LTS, Debian 12 and RHEL 9 it exits **129**, a usage error rather than a merge
+  outcome, and every regeneration over a file the reader had edited failed.
+  Nothing preflighted it and `doctor` did not check it. It also killed 58 tests
+  here, which is the worse half: a gate that cannot run reports the same green
+  as one that passed, and 29 tests and six real defects were hiding under it.
+
+  `jails_support::git` now **probes** -- it runs `git merge-file` on three
+  identical throwaway files and reads the exit status, because `git --version`
+  is a string distributions decorate (`2.39.3 (Apple Git-146)`) and the
+  question is which release added one flag to one command. Same reason
+  `maven::mvnd_can_start` exists.
+
+  **The fallback has a cost, and the cost is why there is an override.**
+  histogram and myers can resolve an ambiguous merge differently, so two
+  machines can turn one input into two managed trees -- recorded in each
+  project's accepted projection. `JAILS_GIT_DIFF_ALGORITHM` pins it for
+  everyone: a name to pin that algorithm, or empty to pin git's own default,
+  which every git supports. `jails doctor` reports which one this machine
+  landed on, because otherwise "why does my colleague's tree differ" has no
+  answer anywhere in the product.
+
+  Both merges go through `git::merge_file_argv`. They live in ladders that
+  cannot see each other -- `jails-workspace` canonical, `jails-prepare` legacy
+  -- which is exactly how they came to pass the flag unconditionally from both,
+  and a board row now fails the build on a `--diff-algorithm` literal outside
+  `jails-support::git`.
 - **`cargo clippy` works here now**, and a `.githooks/pre-commit` runs
   `cargo fmt --all --check` and `cargo clippy --workspace --all-targets` before every
   commit, so
@@ -2056,7 +2075,7 @@ other two are not, and each fails in a way that looks like a product bug:
 |---|---|
 | JDK matching `TARGET_RELEASE` | `release version 26 not supported`, ~50 tests red |
 | a running Docker daemon | Testcontainers and the OCI image gate skip |
-| a `git` on PATH | `git merge-file` is the three-way merge; any version works |
+| a `git` on PATH | `git merge-file` is the three-way merge. Any version works: which diff algorithm it gets is probed, and `JAILS_GIT_DIFF_ALGORITHM` pins one |
 
 None of them is optional for a measurement. A run without them exercises the
 first two tiers only, and any timing taken from it describes those two tiers

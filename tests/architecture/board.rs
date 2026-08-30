@@ -363,6 +363,30 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
         ),
         (
             Ratchet {
+                name: "`--diff-algorithm` sites outside `jails-support::git`",
+                rung: "one owner for what this machine's git can do",
+                // Zero from the day the row was added, and it is a fence
+                // rather than a ratchet: the flag was passed unconditionally
+                // from both merge implementations, which live in ladders that
+                // cannot see each other, so neither could learn what the other
+                // had found out. On git <= 2.43 `git merge-file` rejects it
+                // with exit 129 -- a usage error -- and every regeneration
+                // over an edited file failed on three of the most common Linux
+                // distributions.
+                ceiling: 0,
+                target: 0,
+                why: "A capability decision made in two places is one that eventually gets \
+                      made two ways. `jails_support::git` probes once and builds the argv for \
+                      both merges; a third site spelling the flag itself is how the first two \
+                      came to disagree with the machine they ran on.",
+            },
+            src.iter()
+                .filter(|file| !file.path.ends_with(GIT_RS))
+                .map(|file| file.literals.matches("--diff-algorithm").count())
+                .sum(),
+        ),
+        (
+            Ratchet {
                 name: "production files parsing Maven XML with their own scanner",
                 rung: "R3.8 — one document backend",
                 // `simplify-sol.md`'s deletion map: *duplicate Maven XML
@@ -851,7 +875,19 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // the one shape where length is not complexity -- and the rung
                 // it is held against is about `doctor` re-deriving what `add`
                 // owns, which this does not do.
-                ceiling: 1590,
+                //
+                // 1590 -> 1609: `git merge`, and the same argument. Whether
+                // this machine's `git merge-file` takes `--diff-algorithm`
+                // decides which algorithm a three-way merge uses, and
+                // histogram and myers can resolve an ambiguous one
+                // differently -- so two colleagues on different distributions
+                // can turn one input into two managed trees, with the result
+                // recorded in each accepted projection. Nothing else in the
+                // product would ever say so. It asks the *machine*, which is
+                // what `doctor/environment.rs` is for, rather than re-deriving
+                // a fact `add` owns; the rung this row is held against is
+                // about the second.
+                ceiling: 1609,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.

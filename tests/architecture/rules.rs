@@ -190,6 +190,7 @@ fn every_path_a_gate_names_is_a_file_the_scanner_found() {
         ("WIRE_RS", WIRE_RS),
         ("SPRING_RS", SPRING_RS),
         ("CODEMOD_RS", CODEMOD_RS),
+        ("GIT_RS", GIT_RS),
         ("DOCTOR_RS", DOCTOR_RS),
         ("SCRATCH_RS", SCRATCH_RS),
     ] {
@@ -340,6 +341,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-support", "hermetic", 0),
     ("jails-support", "scratch", 0),
     ("jails-support", "codec", 0),
+    ("jails-support", "git", 0),
     ("jails-support", "json", 0),
     ("jails-support", "lock", 0),
     // jails-java: reading Java and rendering templates into it.
@@ -620,6 +622,11 @@ const SUBPROCESS_CLASSIFICATION: &[(&str, &str)] = &[
     ("tool_command", "read-only client"),
     ("live_sql", "read-only probe"),
     ("doctor", "read-only probe"),
+    // Asks `git merge-file` what it can do, on three throwaway files in a
+    // scratch directory, and reads the exit status. It writes nothing the
+    // project can see and holds no lock -- the merge it informs is the
+    // `transaction input` row below.
+    ("git", "read-only probe"),
     // Bootstrap, outside any project transaction: these run before a project
     // exists (§R6.5), inside a scratch tree that is published atomically.
     ("new", "new-project bootstrap"),

@@ -1052,6 +1052,10 @@ pub(crate) const SPRING_RS: &str = "jails-generate/src/spring.rs";
 /// join or leave the set its gate measures, and the gate would report a number
 /// about a different file without saying so.
 pub(crate) const CODEMOD_RS: &str = "jails-codemod/src/marked.rs";
+
+/// The one module allowed to know that `git merge-file` takes a diff
+/// algorithm. See the board row that counts the literal elsewhere.
+pub(crate) const GIT_RS: &str = "jails-support/src/git.rs";
 pub(crate) const DOCTOR_RS: &str = "jails-report/src/doctor.rs";
 pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 

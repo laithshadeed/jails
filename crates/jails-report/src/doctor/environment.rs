@@ -108,6 +108,41 @@ pub(super) fn maven_check(project: &Project) -> Check {
 
 /// The mismatch that produces `invalid target release` or a compile that
 /// simply never happens: a JDK older than what the pom asks javac for.
+/// Which diff algorithm this machine's `git merge-file` will use.
+///
+/// **Reported because it can differ between two machines and nothing else
+/// would say so.** Regenerating over a file the reader has edited is a
+/// three-way merge, and histogram and myers can resolve an ambiguous one
+/// differently -- usually the same bytes, occasionally a different clean
+/// result, occasionally a conflict where the other had none. The merged bytes
+/// go into the managed tree and into the accepted projection, so two
+/// colleagues on different distributions can end up with two trees from one
+/// input.
+///
+/// Never a `Fail`: both algorithms merge correctly, and a project that never
+/// hits an ambiguous hunk -- which is nearly all of them -- sees no difference
+/// at all. What the row is for is making the divergence answerable when it
+/// does happen, and naming the setting that removes it.
+pub(super) fn git_merge_check() -> Check {
+    const KEY: &str = jails_support::git::DIFF_ALGORITHM_OVERRIDE;
+    let pinned = std::env::var(KEY).is_ok();
+    let chosen = jails_support::git::merge_diff_algorithm()
+        .and_then(|argument| argument.split_once('='))
+        .map_or("git's default", |(_, name)| name);
+    let how = if pinned {
+        format!("pinned by {KEY}")
+    } else {
+        "chosen by asking this machine's git merge-file".to_string()
+    };
+    let check = Check::new(Status::Ok, "git merge", format!("{chosen}, {how}"));
+    if pinned {
+        return check;
+    }
+    check.fix(format!(
+        "set {KEY}=<algorithm> so every machine merges the same way ({KEY}= alone pins git's default, which every version supports)"
+    ))
+}
+
 pub(super) fn jdk_check(project: &Project) -> Check {
     // Off the resolved project rather than re-read from text: `Project` already
     // asked the right reader for this build file, and a second parse here is a

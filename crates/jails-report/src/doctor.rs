@@ -153,6 +153,7 @@ fn run_checks(project: &Project) -> Vec<Check> {
     }
     checks.push(maven_check(project));
     checks.push(jdk_check(project));
+    checks.push(git_merge_check());
     checks.extend(compose_checks(project));
     checks.extend(compose_provider_check(pom_text));
     checks.extend(database_checks(project));

@@ -100,21 +100,20 @@ pub(crate) fn three_way(
     };
     let run = hermetic::run(&Invocation {
         program: "git".into(),
-        args: vec![
-            "merge-file".into(),
-            "-p".into(),
-            "--no-diff3".into(),
-            "--marker-size=7".into(),
-            "-L".into(),
-            "current".into(),
-            "-L".into(),
-            "base".into(),
-            "-L".into(),
-            label(&key),
-            "current".into(),
-            "base".into(),
-            "desired".into(),
-        ],
+        args: jails_support::git::merge_file_argv(
+            &["--no-diff3", "--marker-size=7"],
+            [
+                "-L".into(),
+                "current".into(),
+                "-L".into(),
+                "base".into(),
+                "-L".into(),
+                label(&key),
+                "current".into(),
+                "base".into(),
+                "desired".into(),
+            ],
+        ),
         working_directory: inputs.clone(),
         environment: Invocation::minimal_environment(
             std::env::var("PATH").as_deref().unwrap_or("/usr/bin:/bin"),
@@ -161,7 +160,8 @@ pub(crate) fn three_way(
         }
         other => Err(format!(
             "`{path}`: git merge-file ended as {other:?}, which is neither a clean merge nor \
-             conflict output"
+             conflict output{}",
+            jails_support::git::pinned_algorithm_hint().unwrap_or_default()
         )
         .into()),
     }

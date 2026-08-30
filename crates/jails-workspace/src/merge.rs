@@ -35,20 +35,20 @@ pub(crate) fn three_way(
     }
     let run = hermetic::run(&Invocation {
         program: "git".into(),
-        args: vec![
-            "merge-file".into(),
-            "-p".into(),
-            "--no-diff3".into(),
-            "-L".into(),
-            "current".into(),
-            "-L".into(),
-            "base".into(),
-            "-L".into(),
-            "jails-desired".into(),
-            "current".into(),
-            "base".into(),
-            "desired".into(),
-        ],
+        args: jails_support::git::merge_file_argv(
+            &["--no-diff3"],
+            [
+                "-L".into(),
+                "current".into(),
+                "-L".into(),
+                "base".into(),
+                "-L".into(),
+                "jails-desired".into(),
+                "current".into(),
+                "base".into(),
+                "desired".into(),
+            ],
+        ),
         working_directory: inputs,
         environment: Invocation::minimal_environment(
             std::env::var("PATH").as_deref().unwrap_or("/usr/bin:/bin"),
@@ -81,7 +81,8 @@ pub(crate) fn three_way(
             Ok(Merged::Conflicted { hunks })
         }
         other => Err(format!(
-            "`{path}`: git merge-file failed as {other:?}\n       fix: verify git merge-file works or resolve the file by hand"
+            "`{path}`: git merge-file failed as {other:?}\n       fix: verify git merge-file works or resolve the file by hand{}",
+            jails_support::git::pinned_algorithm_hint().unwrap_or_default()
         )),
     }
 }
