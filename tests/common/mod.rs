@@ -69,23 +69,12 @@ pub fn cached_toolchain_dir_with_salt(label: &str, salt: &str) -> (PathBuf, bool
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target/jails-e2e-cache")
         .join(label);
-    let executable = PathBuf::from(env!("CARGO_BIN_EXE_jails"));
-    let metadata = fs::metadata(executable).unwrap();
-    let modified = metadata
-        .modified()
-        .unwrap()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    let (length, fingerprint) = product_executable_fingerprint();
     let stamp = if salt.is_empty() {
-        // Preserve the existing stamp for callers which depend only on the
-        // product executable, so adding salted caches does not cold-rebuild
-        // every unrelated persistent fixture.
-        format!("{CACHE_SCHEMA}:{}:{modified}\n", metadata.len())
+        format!("{CACHE_SCHEMA}:{length}:{fingerprint:016x}\n")
     } else {
         format!(
-            "{CACHE_SCHEMA}:{}:{modified}:{:016x}\n",
-            metadata.len(),
+            "{CACHE_SCHEMA}:{length}:{fingerprint:016x}:{:016x}\n",
             stable_cache_salt(salt)
         )
     };
@@ -101,6 +90,38 @@ pub fn cached_toolchain_dir_with_salt(label: &str, salt: &str) -> (PathBuf, bool
     fs::create_dir_all(&root).unwrap();
     fs::write(marker, stamp).unwrap();
     (root, true)
+}
+
+/// The product executable's length and a hash of its **contents**.
+///
+/// This used to be its length and its **mtime**, and that made the cache
+/// unhittable on CI while looking perfectly healthy locally. Every CI run
+/// rebuilds `jails`, so its mtime is always new -- even for a commit that
+/// touches only tests, documentation or the workflow and produces a
+/// byte-identical binary. The stamp never matched, every persistent toolchain
+/// directory was rebuilt from scratch, and the ~276s of Maven work behind
+/// `proof-apps` and the Spring toolboxes was paid again every single run for a
+/// product that had not changed.
+///
+/// Hashing the bytes is also strictly *safer* than hashing the mtime, which is
+/// the part worth being sure of before trusting a cache: mtime changes when
+/// the content does not (a rebuild), but it can also fail to change when the
+/// content does, on a coarse filesystem clock. Content is the thing the cache
+/// is actually keyed on, so key on it.
+///
+/// Read once and memoised: the binary is tens of megabytes and every caller
+/// would otherwise re-read it.
+fn product_executable_fingerprint() -> (u64, u64) {
+    static FINGERPRINT: std::sync::OnceLock<(u64, u64)> = std::sync::OnceLock::new();
+    *FINGERPRINT.get_or_init(|| {
+        let executable = PathBuf::from(env!("CARGO_BIN_EXE_jails"));
+        let bytes = fs::read(&executable)
+            .unwrap_or_else(|error| panic!("reading {}: {error}", executable.display()));
+        let hash = bytes.iter().fold(0xcbf29ce484222325_u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+        });
+        (bytes.len() as u64, hash)
+    })
 }
 
 fn stable_cache_salt(value: &str) -> u64 {
