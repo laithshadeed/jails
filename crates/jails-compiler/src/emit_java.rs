@@ -33,6 +33,12 @@ pub(crate) fn lower_and_emit(
     }
     for entity in model.entities.values().filter(|entity| entity.active) {
         for facet in &entity.facets {
+            if *facet == Facet::Seed {
+                for (path, file) in crate::emit_seed::lower(model, entity)? {
+                    output.insert(path, file).map_err(CompileError::new)?;
+                }
+                continue;
+            }
             if *facet == Facet::Dto {
                 for unit in crate::emit_dto::lower(model, entity) {
                     let unit = unit?;
@@ -187,15 +193,12 @@ fn lower_facet(model: &AppModel, entity: &Entity, facet: Facet) -> Result<Unit, 
             );
             (package, type_name, body, imports)
         }
-        // Not silently the factory's arm, which is what it was: `use seed`
-        // linked, validated, and emitted `<Name>Factory.java` while reporting
-        // success (`bugs.md` B59). A wrong artifact reported as written is a
-        // worse failure than a missing one, because nothing looks wrong.
-        Facet::Seed => {
-            return Err(CompileError::new(
-                "the canonical compiler has no seed emitter yet: `use seed` would need the JSON row file, the `@Profile(\"seed\")` runner and its test, and the runner reads rows through the `json` capability.\n       fix: remove `use seed` and write the seed file and runner by hand, or keep seeding outside the canonical model",
-            ));
-        }
+        // Three files rather than one, so it never reaches here. It used to
+        // fall through to the *factory's* arm: `use seed` linked, validated,
+        // and emitted `<Name>Factory.java` while reporting success
+        // (`bugs.md` B59). A wrong artifact reported as written is a worse
+        // failure than a missing one, because nothing looks wrong.
+        Facet::Seed => unreachable!("seed has a multi-file backend"),
         Facet::Search => {
             let package = model.project.package_for(Package::PortsSearch);
             let type_name = format!("{}Search", entity.names.java_type);

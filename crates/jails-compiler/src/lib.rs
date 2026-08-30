@@ -11,6 +11,7 @@ mod emit_factory;
 mod emit_http;
 mod emit_java;
 mod emit_operation;
+mod emit_seed;
 mod emit_sql;
 mod emit_unit;
 mod refuse;
@@ -1102,7 +1103,81 @@ mod tests {
         );
     }
 
-    /// A projection that links must render something or say why.
+    /// `use seed` writes the data, the loader, and the test that reads it.
+    ///
+    /// The two guards on the loader are what this pins. `@Profile("seed")`
+    /// means it never runs where nobody asked, and the empty-table check means
+    /// it never runs twice -- an edited seed row cannot be told from a change
+    /// somebody made in the database, so re-applying one silently reverts
+    /// their work.
+    #[test]
+    fn a_seed_projection_writes_its_data_a_guarded_loader_and_the_test_that_reads_it() {
+        let model = jails_model::parse_jdl(SEED_MODEL).unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.1.0".to_string());
+        let plan = Compiler::compile(&snapshot, None).expect("`use seed` has a backend");
+        let file = |suffix: &str| {
+            let file = plan
+                .generated
+                .files
+                .iter()
+                .find(|(path, _)| path.as_str().ends_with(suffix))
+                .map(|(_, file)| file)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "no rendered file ends with `{suffix}`; emitted:\n{}",
+                        plan.generated
+                            .files
+                            .keys()
+                            .map(|path| path.as_str().to_string())
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    )
+                });
+            String::from_utf8(file.bytes.clone()).unwrap()
+        };
+        let data = file("/db/seeds/note.json");
+        assert!(data.contains("\"title\": \"sample\""), "{data}");
+        assert!(data.contains("\"id\": \"00000000-"), "{data}");
+        let seeder = file("/NoteSeeder.java");
+        assert!(seeder.contains("@Profile(\"seed\")"), "{seeder}");
+        assert!(
+            seeder.contains("if (!repository.findAll().isEmpty()) {"),
+            "{seeder}"
+        );
+        // Through the port, so a row the record rejects fails at start-up
+        // rather than sitting in the table.
+        assert!(seeder.contains("repository.save(row)"), "{seeder}");
+        let test = file("/NoteSeederTest.java");
+        assert!(!test.contains("@Disabled"), "{test}");
+        assert!(!test.contains("{{"), "{test}");
+    }
+
+    /// The loader reads through the `json` capability's class, so its absence
+    /// is a declaration to make rather than a symbol the reader never named.
+    #[test]
+    fn a_seed_without_the_json_capability_refuses_by_name() {
+        let model = jails_model::parse_jdl(&SEED_MODEL.replace("cap json\n", "")).unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.1.0".to_string());
+        let error =
+            Compiler::compile(&snapshot, None).expect_err("a seed with no reader must refuse");
+        assert!(
+            error.to_string().contains("fix: declare `cap json`"),
+            "{error}"
+        );
+    }
+
+    /// A stored entity with development data.
+    const SEED_MODEL: &str = "jdl 1\napp Demo {\n pkg com.example.demo\n java 26\n \
+         platform spring\n build maven\n storage postgres\n}\ncap json\n\
+         entity Note {\n id: uuid @pk\n title: string\n}\nuse repo for Note\n\
+         use seed for Note\n";
+
+    /// A projection that links must render *its own* artifact, not the
+    /// nearest one.
     ///
     /// `bugs.md` B59: `use seed` linked, validated against its prerequisites
     /// and emitted `<Name>Factory.java`, because `ProjectionKind::Seed` was
@@ -1110,28 +1185,28 @@ mod tests {
     /// The model reported success over a test fixture nobody asked for, which
     /// is a worse failure than a missing file: there is nothing to notice.
     ///
-    /// The emitter is still not written. What this pins is that the gap is
-    /// *named* rather than filled with the nearest arm.
+    /// The gap is filled now, and this is what stops it reopening the same
+    /// way -- seed emits three files and a factory is not among them.
     #[test]
-    fn a_seed_projection_refuses_by_name_rather_than_emitting_a_factory() {
-        let model = jails_model::parse_jdl(
-            "jdl 1\napp Demo {\n pkg com.example.demo\n java 26\n platform spring\n build maven\n storage postgres\n}\nentity Note {\n id: uuid @pk\n title: string\n}\nuse repo for Note\nuse seed for Note\n",
-        )
-        .expect("the grammar accepts `use seed`, which is how this defect arrived");
+    fn a_seed_projection_does_not_emit_a_factory() {
+        let model = jails_model::parse_jdl(SEED_MODEL)
+            .expect("the grammar accepts `use seed`, which is how this defect arrived");
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
-        // `storage postgres` is one of `use seed`'s own prerequisites, and it
-        // in turn wants Spring on the build -- the capture says so, not the
+        // `use seed` wants Spring on the build -- the capture says so, not the
         // model.
         snapshot.project.spring_boot = Some("4.1.0".to_string());
-        let error = Compiler::compile(&snapshot, None)
-            .expect_err("a projection with no emitter must refuse");
-        let message = error.to_string();
+        let plan = Compiler::compile(&snapshot, None).expect("`use seed` has a backend");
+        let paths = plan
+            .generated
+            .files
+            .keys()
+            .map(|path| path.as_str().to_string())
+            .collect::<Vec<_>>();
         assert!(
-            message.contains("no seed emitter yet"),
-            "the refusal does not name the gap: {message}"
+            !paths.iter().any(|path| path.ends_with("/NoteFactory.java")),
+            "seed emitted the factory's artifact: {paths:?}"
         );
-        assert!(message.contains("fix:"), "{message}");
     }
 
     fn component(kind: jails_model::ComponentKind) -> jails_model::Component {

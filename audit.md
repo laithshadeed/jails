@@ -88,15 +88,30 @@ looked and still worth removing.
 
 ## A1 — coverage
 
-### A1.1 Thirty-five of thirty-nine generators
+### A1.1 Thirty-six of thirty-nine generators
 
 `src/canonical_support.rs` is the authority and is honest code: an exhaustive
 match that stops compiling when a clap variant is added. Its own test pins
-35/39. Capabilities are closed at 25/25, and **every one of the 23 component
+36/39. Capabilities are closed at 25/25, and **every one of the 23 component
 kinds now has a backend** -- `every_component_kind_is_emitted_or_refused` no
 longer has a refusal to reach.
 
-Still legacy: `migration`, `association`, `search`, `seed`.
+Still legacy: `migration`, `association`, `search`.
+
+**`use seed` is emitted rather than refused**, which closes `bugs.md` B59 in
+the direction it should have gone. It is three artifacts: the JSON row file,
+a `@Profile("seed")` runner that loads it *through the repository port* -- so
+a row the record rejects fails at start-up instead of sitting in the table --
+and the test that reads it, which is the only thing that opens the file at all
+until somebody starts under that profile. The empty-table guard is the other
+half: an edited seed row cannot be told from a change somebody made in the
+database, so re-applying one would silently revert their work.
+
+`BuiltinSemantics` gained a `json` beside `sample` for the row. It is not
+derivable from the Java expression -- `UUID.fromString("…")` is a string on the
+wire and `1L` is a bare number -- and keeping it on the builtin's own row is
+what stops a type being accepted by a field parser no sample table knows about,
+which is `pending.md` §1.3's defect exactly.
 
 **`http-workflow` was never blocked on A1.7**, whatever this file said before:
 it fetches through a `fetcher` component and keeps its frontier in PostgreSQL,
