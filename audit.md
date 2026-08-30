@@ -163,11 +163,30 @@ link diagnostic, and the compiler refuses `outbox` outright until its emitter
 lands, so a model can state the stronger promise but never silently receive
 the weaker one.
 
-What is left is the emitter: an outbox table, an `Outbox<Name>UseCase`, a JDBC
-store, a sink port, a Kafka sink, a relay worker and its integration test. All
-six Java bodies are already templates on the legacy side, so it is a port
-rather than a design — and the arguments each event row carries are the ones
-`emit_operation::publications` already derives.
+What is left is the emitter — an outbox table, an `Outbox<Name>UseCase`, a
+JDBC store, a sink port, a Kafka sink, a relay worker and its integration test.
+All six Java bodies are already templates on the legacy side. But it is **not**
+a straight port, and the reason is one line of the legacy generator worth
+reading before anyone starts:
+
+> The event's own identity is **minted**, never mapped. Both the command and
+> the target usually carry an `id` of the same type, and taking it made the
+> event id equal the resource id — so the outbox's `on conflict (id) do
+> nothing` silently discarded the second event about that resource instead of
+> deduplicating a retried stage.
+
+Canonically, an event's `fields` are `FieldId`s **on the target entity**, so an
+event that declares `id` means the target's id — exactly the value that must
+not be used. `emit_operation::publications` renders it as `result.id()` today,
+which is correct for direct publication and wrong for an outbox row.
+
+So the model needs one more thing before the emitter: **an event must be able
+to carry its own identity, distinct from the row it describes.** The legacy
+resolves this by name at render time (`id` mints, `<target>Id` maps to
+`result.id()`) because it matches against Java it read off disk; the canonical
+model has no such component to point at. Until it does, an outbox emitter would
+either mint an id the model does not describe or reuse the row's and inherit
+the deduplication defect this comment records.
 
 ### A1.4 `jails new` still writes no model
 
