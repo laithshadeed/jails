@@ -115,17 +115,6 @@ fn compile_outputs(project: &Project, debug: bool) -> Result<()> {
     }
 }
 
-/// Whether a resolved classpath is still newer than the pom that produced it.
-fn classpath_is_fresh(cache: &std::path::Path, pom: &std::path::Path) -> bool {
-    let Ok(cached) = fs::metadata(cache).and_then(|meta| meta.modified()) else {
-        return false;
-    };
-    match fs::metadata(pom).and_then(|meta| meta.modified()) {
-        Ok(changed) => cached >= changed,
-        Err(_) => true,
-    }
-}
-
 fn resolve_dependencies(project: &Project, debug: bool) -> Result<Vec<PathBuf>> {
     match project.build() {
         crate::build::Build::Maven => {
@@ -146,7 +135,7 @@ fn resolve_dependencies(project: &Project, debug: bool) -> Result<Vec<PathBuf>> 
             // comparing its mtime against the cache's is the cheapest question
             // that answers correctly. A missing pom leaves the cache
             // authoritative; a foreign build never reaches here.
-            if !classpath_is_fresh(&target, &project.root().join("pom.xml")) {
+            if !crate::launcher::is_fresh(&target, &project.root().join("pom.xml")) {
                 let mut command = Command::new(crate::maven::binary(project.root()));
                 command
                     .arg("-q")
