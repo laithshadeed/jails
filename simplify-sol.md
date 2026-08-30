@@ -2236,10 +2236,18 @@ survives.
 - **G3** — `tests/common/scenarios.rs` is the map, held by
   `every_kind_and_capability_has_a_golden_scenario` against the binary's own
   help.
-- **G4** — `fault::POINTS` and the trip sites agree both ways, and
-  `a_capability_install_converges_from_every_failpoint` is the sweep. Still
-  open: G4 asks for the registry and the sites to be *generated from one
-  declaration* rather than checked against each other.
+- **G4** — **done.** `failpoints!` is the one declaration: it emits `POINTS`,
+  the list a crash test enumerates, and one constant per point, which is the
+  only thing `trip` accepts. Both silent failures the hand-written pair had
+  are now compile errors rather than a source-scanning test. A point nobody
+  trips has an unused constant, and `-D dead-code` fails the build -- that is
+  a fault which could never fire, proving a recovery path nothing exercises. A
+  point tripped but unadvertised cannot be written at all, because every
+  constant is in `POINTS` by construction.
+  `a_capability_install_converges_from_every_failpoint` is still the sweep,
+  and one property stays a test because a macro cannot state it: the wire
+  names must be distinct, since two points sharing a string would fire
+  together and prove a recovery path with the wrong fault.
 - **G5** — `examples/` carries the proof manifests and `ACCEPTANCE.md`. Still
   open: the sanitized adopted and reader-edited corpus.
 
@@ -2265,7 +2273,7 @@ they had none; three were genuinely unheld and now are.
 | managed output only below the managed root | structural: `RenderedTree::insert` refuses a path outside its root, so it cannot be violated |
 | reader-owned source only via typed patch/eject/adopt | `rules::canonical_workspace_has_one_mutation_owner`, plus `PatchReaderFile`'s captured before-image |
 | persisted tags and field numbers golden-tested | `every_protocol_fixture_is_read_by_something`, `tests/protocol-golden` |
-| every advertised failpoint fires in a test | `fault::every_advertised_failpoint_is_tripped_somewhere_and_the_reverse` holds `POINTS` and the trip sites in agreement *both ways* -- a name that fires nowhere proves a recovery path nothing exercises, and a site nothing names is a real path no enumeration reaches. `engine::a_capability_install_converges_from_every_failpoint` is the sweep. G4 still wants the two generated from one declaration rather than checked against each other |
+| every advertised failpoint fires in a test | the compiler, not a test: `failpoints!` emits both the registry and the constants, so an untripped point is unused (`-D dead-code`) and an unadvertised trip site cannot be written. `engine::a_capability_install_converges_from_every_failpoint` is the sweep |
 | every transaction state has a recovery transition | `recover.rs`'s own tests plus that sweep. **This one is not audited to the letter**: the coverage is by failpoint, and "every active transaction state" is a stronger claim than "every armed fault converges" |
 | planner read set complete by construction | `WorkspaceSnapshot` is the read set, and the purity rule above is what makes it complete |
 | tool crates cannot reach executor internals | Cargo, plus `no_module_depends_on_a_layer_above_its_own` for module edges |

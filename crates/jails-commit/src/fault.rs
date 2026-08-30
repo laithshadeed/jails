@@ -102,123 +102,108 @@ pub(crate) fn trip(_name: &str) -> crate::Result<()> {
     Ok(())
 }
 
-/// Every point the commit protocol names, so a test can enumerate them and a
-/// reader can see the set without reading the executor.
-#[cfg(any(test, feature = "fault-injection"))]
-pub const POINTS: &[&str] = &[
-    "after-lock",
-    "after-recheck",
-    "after-objects-sync",
-    "after-root-sync",
-    "after-journal-prepared",
-    "after-journal-active",
-    "before-directory",
-    "after-directory-sync",
-    "after-live-temp-sync",
-    "before-file",
-    "after-file-rename",
-    "after-file-dirsync",
-    "before-ledger",
-    "after-ledger-rename",
-    "after-ledger-dirsync",
-    "after-journal-ledger-committed",
-    "after-journal-complete",
-    "after-receipt-sync",
-    "before-receipt-move",
-    "after-receipt-move",
-    "after-transactions-parent-sync",
-    "after-receipts-parent-sync",
-];
+/// **One declaration, two products.** G4 of `simplify-sol.md` asks for the
+/// registry and the trip sites to come from one place, and this is it: the
+/// macro below emits [`POINTS`] -- the list a crash test enumerates -- and one
+/// constant per point, which is the only thing [`trip`] can be given.
+///
+/// That closes both silent failures the hand-written pair had, and closes them
+/// in the compiler rather than in a test.
+///
+/// A point advertised and tripped nowhere used to arm a fault that could never
+/// fire, so an enumeration reported a pass over a recovery path nothing
+/// exercised. Now its constant has no user and `-D dead-code` says so, because
+/// the executor is the only crate that names them.
+///
+/// A point tripped and advertised nowhere used to be unreachable by any
+/// enumeration. Now it cannot exist: a trip site takes a constant, and every
+/// constant is in `POINTS` by construction.
+///
+/// The names stay `&'static str` rather than becoming an enum because a
+/// failpoint's identity *is* its name -- it appears in the injected error and
+/// in test output -- and a second mapping from variant to string would be the
+/// duplication this removes.
+macro_rules! failpoints {
+    ($($name:ident = $wire:literal,)+) => {
+        /// Every point the commit protocol names, so a crash test can
+        /// enumerate them and a reader can see the set without reading the
+        /// executor.
+        #[cfg(any(test, feature = "fault-injection"))]
+        pub const POINTS: &[&str] = &[$($wire,)+];
+
+        /// The name of each point, and the only thing [`trip`] accepts.
+        ///
+        /// Deliberately **not** behind the injection `cfg`: the executor names
+        /// these unconditionally, and the mechanism rather than the vocabulary
+        /// is what a release build compiles out.
+        pub(crate) mod point {
+            $(pub(crate) const $name: &str = $wire;)+
+        }
+    };
+}
+
+failpoints! {
+    AFTER_LOCK = "after-lock",
+    AFTER_RECHECK = "after-recheck",
+    AFTER_OBJECTS_SYNC = "after-objects-sync",
+    AFTER_ROOT_SYNC = "after-root-sync",
+    AFTER_JOURNAL_PREPARED = "after-journal-prepared",
+    AFTER_JOURNAL_ACTIVE = "after-journal-active",
+    BEFORE_DIRECTORY = "before-directory",
+    AFTER_DIRECTORY_SYNC = "after-directory-sync",
+    AFTER_LIVE_TEMP_SYNC = "after-live-temp-sync",
+    BEFORE_FILE = "before-file",
+    AFTER_FILE_RENAME = "after-file-rename",
+    AFTER_FILE_DIRSYNC = "after-file-dirsync",
+    BEFORE_LEDGER = "before-ledger",
+    AFTER_LEDGER_RENAME = "after-ledger-rename",
+    AFTER_LEDGER_DIRSYNC = "after-ledger-dirsync",
+    AFTER_JOURNAL_LEDGER_COMMITTED = "after-journal-ledger-committed",
+    AFTER_JOURNAL_COMPLETE = "after-journal-complete",
+    AFTER_RECEIPT_SYNC = "after-receipt-sync",
+    BEFORE_RECEIPT_MOVE = "before-receipt-move",
+    AFTER_RECEIPT_MOVE = "after-receipt-move",
+    AFTER_TRANSACTIONS_PARENT_SYNC = "after-transactions-parent-sync",
+    AFTER_RECEIPTS_PARENT_SYNC = "after-receipts-parent-sync",
+}
 
 #[cfg(test)]
 mod registry_tests {
     use super::POINTS;
 
-    /// The advertised set and the tripped set are the same set.
+    /// **What is left to test, now that the compiler holds the rest.**
     ///
-    /// They were not. `before-directory` and `after-file-rename` were listed
-    /// here and tripped nowhere, so a crash test enumerating [`POINTS`] armed
-    /// a fault that could never fire and reported a pass. `after-root-sync`
-    /// was the mirror image: tripped in `execute.rs` and named by nothing, so
-    /// no enumeration reached it at all. Both directions are silent failures
-    /// -- one proves a recovery path that was never exercised, the other
-    /// leaves a real one unexercised.
+    /// This module used to scan the crate's own source for string literals
+    /// and check `POINTS` against them in both directions. That check existed
+    /// because the registry and the trip sites were two lists: `before-
+    /// directory` and `after-file-rename` were advertised and tripped
+    /// nowhere, so a crash test enumerating `POINTS` armed a fault that could
+    /// never fire and reported a pass; `after-root-sync` was the mirror
+    /// image, tripped in `execute.rs` and named by nothing, so no enumeration
+    /// reached it.
     ///
-    /// `simplify-sol.md`'s G4 asks for the registry and the trip sites to come
-    /// from one declaration. Until they do, this is the check that they agree.
+    /// `simplify-sol.md`'s G4 asks for one declaration, and `failpoints!` is
+    /// it. Both directions are now closed above a test: a point nobody trips
+    /// has an unused constant and `-D dead-code` fails the build, and a point
+    /// tripped but unadvertised cannot be written, because `trip` takes a
+    /// constant and every constant is in `POINTS`.
+    ///
+    /// So what remains is the property a macro cannot state: that the wire
+    /// names are distinct. Two points sharing one string would compile, and
+    /// arming either would fire both -- which is a recovery path proved by
+    /// the wrong fault.
     #[test]
-    fn every_advertised_failpoint_is_tripped_somewhere_and_the_reverse() {
-        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut files = Vec::new();
-        collect(&src, &mut files);
-        assert!(
-            files.len() >= 5,
-            "the scan found only {} source files -- it has lost the crate, and \
-             this gate would pass over any disagreement",
-            files.len()
+    fn every_failpoint_has_a_distinct_name() {
+        let unique = POINTS.iter().collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            unique.len(),
+            POINTS.len(),
+            "two failpoints share a wire name: arming either would fire both"
         );
-
-        // A point counts as tripped when its name is a string literal
-        // *somewhere other than this registry*. Matching `fault::trip("...")`
-        // alone was too narrow: `execute.rs` trips three points through a
-        // table of `(directory, point)` pairs, so the call site holds a
-        // variable and the name is a literal several lines above.
-        let mut tripped = std::collections::BTreeSet::new();
-        for source in &files {
-            for literal in string_literals(&without_comments(source)) {
-                tripped.insert(literal);
-            }
-        }
-        let advertised: std::collections::BTreeSet<String> =
-            POINTS.iter().map(|point| point.to_string()).collect();
-
-        let never_fires: Vec<&String> = advertised.difference(&tripped).collect();
         assert!(
-            never_fires.is_empty(),
-            "these failpoints are advertised in `POINTS` and named nowhere \
-             else: {never_fires:?}\n       fix: add the `fault::trip` call, or \
-             take the name out -- a fault that cannot fire is a recovery path \
-             nothing proves"
+            POINTS.len() > 20,
+            "only {} failpoints -- the registry has lost its declaration",
+            POINTS.len()
         );
-    }
-
-    /// String literals, so a name in prose cannot stand in for a trip site.
-    fn string_literals(source: &str) -> Vec<String> {
-        let mut out = Vec::new();
-        let mut rest = source;
-        while let Some(open) = rest.find('"') {
-            rest = &rest[open + 1..];
-            let Some(close) = rest.find('"') else { break };
-            out.push(rest[..close].to_string());
-            rest = &rest[close + 1..];
-        }
-        out
-    }
-
-    fn without_comments(source: &str) -> String {
-        source
-            .lines()
-            .map(|line| match line.find("//") {
-                Some(at) => &line[..at],
-                None => line,
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    fn collect(dir: &std::path::Path, out: &mut Vec<String>) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries {
-            let path = entry.expect("failed to read a directory entry").path();
-            if path.is_dir() {
-                collect(&path, out);
-            } else if path.extension().is_some_and(|ext| ext == "rs")
-                && path.file_name().is_some_and(|name| name != "fault.rs")
-            {
-                out.push(std::fs::read_to_string(&path).unwrap_or_default());
-            }
-        }
     }
 }

@@ -19,6 +19,7 @@ use jails_protocol::identity::{ObjectId, ObjectRef, ProjectPath};
 
 use crate::Result;
 use crate::execute::{Blocked, LockedProject};
+use crate::fault::point;
 use crate::journal::{ActualImage, BlockReason, ObservedImage};
 use crate::store;
 use jails_support::codec::sha256;
@@ -51,7 +52,7 @@ pub(crate) fn apply_operations(
                 });
             }
             Err(_) => {
-                crate::fault::trip("before-directory").map_err(|error| Blocked {
+                crate::fault::trip(point::BEFORE_DIRECTORY).map_err(|error| Blocked {
                     path: Some(path.clone()),
                     reason: BlockReason::Unreadable {
                         error_kind: error.to_string(),
@@ -66,7 +67,7 @@ pub(crate) fn apply_operations(
                 if let Some(parent) = at.parent() {
                     let _ = store::sync_dir(parent);
                 }
-                crate::fault::trip("after-directory-sync").map_err(|error| Blocked {
+                crate::fault::trip(point::AFTER_DIRECTORY_SYNC).map_err(|error| Blocked {
                     path: Some(path.clone()),
                     reason: BlockReason::Unreadable {
                         error_kind: error.to_string(),
@@ -78,7 +79,7 @@ pub(crate) fn apply_operations(
 
     let publish = directory.join("live-temp");
     store::create_private_dir(&publish)
-        .and_then(|()| crate::fault::trip("after-live-temp-sync"))
+        .and_then(|()| crate::fault::trip(point::AFTER_LIVE_TEMP_SYNC))
         .map_err(|error| Blocked {
             path: None,
             reason: BlockReason::Unreadable {
@@ -116,7 +117,7 @@ pub(crate) fn apply_operations(
                 reason: BlockReason::CorruptObject(after.id),
             });
         }
-        crate::fault::trip("before-file").map_err(|error| Blocked {
+        crate::fault::trip(point::BEFORE_FILE).map_err(|error| Blocked {
             path: Some(path.clone()),
             reason: BlockReason::Unreadable {
                 error_kind: error.to_string(),
@@ -128,7 +129,7 @@ pub(crate) fn apply_operations(
                 error_kind: error.to_string(),
             },
         })?;
-        crate::fault::trip("after-file-dirsync").map_err(|error| Blocked {
+        crate::fault::trip(point::AFTER_FILE_DIRSYNC).map_err(|error| Blocked {
             path: Some(path.clone()),
             reason: BlockReason::Unreadable {
                 error_kind: error.to_string(),
@@ -241,14 +242,14 @@ pub(crate) fn apply_one(
             // The entry is visible and its directory is not yet durable --
             // the state a crash here leaves behind, whichever of the three
             // ways the entry was published.
-            crate::fault::trip("after-file-rename")?;
+            crate::fault::trip(point::AFTER_FILE_RENAME)?;
             sync_parent(at)
         }
         FileOp::Replace { after, mode, .. } => {
             let staged = stage(publish, objects, after, *mode, index)?;
             std::fs::rename(&staged, at)
                 .map_err(|error| format!("could not replace {}: {error}", at.display()))?;
-            crate::fault::trip("after-file-rename")?;
+            crate::fault::trip(point::AFTER_FILE_RENAME)?;
             sync_parent(at)
         }
         FileOp::Delete { .. } => {
@@ -258,7 +259,7 @@ pub(crate) fn apply_one(
             std::fs::rename(at, &kept)
                 .map_err(|error| format!("could not remove {}: {error}", at.display()))?;
             let _ = store::sync_dir(publish);
-            crate::fault::trip("after-file-rename")?;
+            crate::fault::trip(point::AFTER_FILE_RENAME)?;
             sync_parent(at)
         }
     }
