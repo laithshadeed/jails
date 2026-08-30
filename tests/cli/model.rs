@@ -12338,13 +12338,7 @@ fn every_orthogonal_capability_pack_compiles_and_tests_in_one_project() {
     )
     .unwrap();
 
-    for capability in [
-        "actuator",
-        "cache",
-        "cors",
-        "observability",
-        "sse",
-    ] {
+    for capability in ["actuator", "cache", "cors", "observability", "sse"] {
         let added = jails_cmd(&root, None)
             .args(["add", capability])
             .output()
