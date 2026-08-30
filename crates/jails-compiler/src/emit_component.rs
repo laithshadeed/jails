@@ -25,6 +25,7 @@ use jails_model::{
 };
 use std::collections::BTreeSet;
 
+mod auth;
 mod client;
 mod fetcher;
 mod job;
@@ -43,6 +44,7 @@ pub(crate) fn lower_and_emit(
             ComponentKind::Client => client::files(model, component)?,
             ComponentKind::Fetcher => fetcher::files(model, component)?,
             ComponentKind::Job => job::files(model, component)?,
+            ComponentKind::Auth => auth::files(model, component)?,
             ComponentKind::Socket => socket::files(model, component)?,
             ComponentKind::Webhook => webhook::files(model, component)?,
             _ => continue,

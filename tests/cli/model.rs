@@ -838,6 +838,10 @@ app Notes {
             "TaskCreated",
         ],
         vec!["g", "idempotency", "Request"],
+        // The encoder, the decoder and the filter chain that reads the token
+        // are one story, so `g auth` refuses without the capability that
+        // carries the other two -- on the canonical path as on the legacy one.
+        vec!["add", "security"],
         vec!["g", "auth", "Api"],
         vec![
             "g",
@@ -880,7 +884,6 @@ app Notes {
         "http-workflow",
         "http-sink",
         "idempotency",
-        "auth",
         "durable-job",
         "presence",
     ];
@@ -10829,4 +10832,74 @@ fn canonical_socket_and_webhook_split_their_framework_half_from_their_testable_o
 
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
     assert!(pom.contains("spring-boot-starter-websocket"), "{pom}");
+}
+
+/// `g auth` on a canonical project, refused first and then served.
+///
+/// The refusal is half the feature: the encoder, the decoder and the filter
+/// chain that reads the token are one story, and two thirds of it live in
+/// `cap security`. It is checked against the model rather than the pom,
+/// because in one transition a capability this same model declares has not
+/// reached the build file yet.
+///
+/// The `exp` claim is the other half. `JwtTimestampValidator` accepts a token
+/// without one, so an issuer that forgets it mints credentials that never
+/// expire and the application works -- which is why the generated test is what
+/// keeps the fix in place.
+#[test]
+fn canonical_auth_refuses_without_security_then_pins_the_expiry_nothing_else_would() {
+    let root = temp_dir("canonical-auth");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+         platform spring\n  build maven\n  storage none\n}\n",
+    )
+    .unwrap();
+
+    let refused = jails_cmd(&root, None)
+        .args(["g", "auth", "Api"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("needs Spring Security"), "{stderr}");
+    assert!(stderr.contains("cap security"), "{stderr}");
+    assert!(
+        !root
+            .join(".jails/generated/main/java/com/example/demo/ApiTokens.java")
+            .exists(),
+        "the refusal wrote a file"
+    );
+
+    let secured = jails_cmd(&root, None)
+        .args(["add", "security"])
+        .output()
+        .unwrap();
+    assert!(
+        secured.status.success(),
+        "{}",
+        String::from_utf8_lossy(&secured.stderr)
+    );
+    let generated = jails_cmd(&root, None)
+        .args(["g", "auth", "Api"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+
+    let tokens =
+        fs::read_to_string(root.join(".jails/generated/main/java/com/example/demo/ApiTokens.java"))
+            .unwrap();
+    assert!(!tokens.contains("{{"), "{tokens}");
+    assert!(tokens.contains("urn:com.example.demo"), "{tokens}");
+    let test = fs::read_to_string(
+        root.join(".jails/generated/test/java/com/example/demo/ApiTokensTest.java"),
+    )
+    .unwrap();
+    assert!(test.contains("exp"), "{test}");
 }
