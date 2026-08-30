@@ -42,6 +42,38 @@ pub struct Scenario {
 /// capabilities out of the binary's own help and fails when one has no
 /// scenario here, so a kind can no longer be added without its snapshot.
 pub const SCENARIOS: &[Scenario] = &[
+    // ---- the canonical compiler ----
+    //
+    // **The one scenario whose output is `.jails/generated`.** Every other
+    // entry here drives the legacy generator, so before this existed
+    // `grep -rl "jails/generated" tests/golden` returned nothing: the product
+    // of the new architecture had no byte snapshot anywhere and nothing failed
+    // when a canonical emitter changed what it wrote (`audit.md` A5.1).
+    //
+    // Seeded with a model rather than driven by `g` commands, because the
+    // model *is* the input on this path -- and one model reaching many
+    // emitters is a better snapshot than many models reaching one each: it is
+    // where the packages, the imports and the shared files have to agree with
+    // each other.
+    Scenario {
+        name: "canonical-tree",
+        fixture: Fixture::Spring,
+        seed: &[(
+            ".jails/model.jdl",
+            "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+             platform spring\n  build maven\n  storage postgres\n}\n\ncap json\n\n\
+             entity Note @id(ent_note) {\n  use repo\n  use factory\n  \
+             id: uuid @id(fld_note_id) @pk\n  title: string @id(fld_note_title) @notBlank\n  \
+             status: string @id(fld_note_status)\n\n  index [status] @id(idx_note_status)\n\n  \
+             command Create(title, status) @id(op_note_create) {\n    emit Created\n  }\n\n  \
+             query Open(status) @id(op_note_open) {\n    limit 20\n  }\n\n  \
+             transition Rename(title) @id(op_note_rename) {\n    update [title]\n  }\n\n  \
+             event Created(id, title) @id(op_note_created)\n}\n\n\
+             component sealed Outcome @id(cmp_outcome) {\n  variant Accepted\n  \
+             variant Rejected\n}\n\ncomponent service Notifier @id(cmp_notifier) {\n}\n",
+        )],
+        steps: &[&["sync"]],
+    },
     // ---- generators, plain Maven ----
     Scenario {
         name: "record",

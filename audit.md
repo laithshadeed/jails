@@ -712,13 +712,37 @@ banked until two of the three front ends are gone.
 
 ## A5 — the proof
 
-### A5.1 Zero golden coverage for canonical output
+### A5.1 Zero golden coverage for canonical output — closed
 
-All 61 directories under `tests/golden/` snapshot legacy `src/main/java`
-trees; `grep -rl "jails/generated" tests/golden` returns nothing. The
-canonical `.jails/generated` tree — the product of the new architecture — has
-no byte snapshot anywhere, so nothing fails when a canonical emitter changes
-bytes.
+`tests/golden/canonical-tree/` is the first scenario whose output is
+`.jails/generated`, so `grep -rl "jails/generated" tests/golden` now returns
+something. Twenty-four files: the domain record, its factory and repository
+port, the JDBC command/query/transition adapters, the event payload, a sealed
+type, a service, the migration, the compose service, the property file and the
+`@Import` spliced into the reader's own test.
+
+**Seeded with a model rather than driven by `g` commands**, because the model
+*is* the input on this path — and one model reaching many emitters is a better
+snapshot than many models reaching one each: it is where the packages, the
+imports and the shared files have to agree with each other.
+
+The mechanism needed nothing new; `collect` already walked `.jails/`. What was
+missing was a scenario producing a canonical tree, and three rules that had
+only ever seen legacy output:
+
+- `.jails/generated/` is a **third category** beside the registry and the
+  executor's bookkeeping — the compiler's output, the canonical counterpart of
+  `src/main/java` — so the rung-8 gate names it as one rather than failing
+  every file in it.
+- the compiler lock and `apply.lock` are excluded. The lock is goldened as a
+  *format* in `tests/protocol-golden/`, and holding it here too would put a
+  second verbatim copy of the whole tree inside the snapshot of that tree.
+- a canonical file opens with its provenance banner, which is how a
+  merge-managed artifact says where it came from. The Java-shape property
+  accepts that spelling *and* requires the package declaration on the next
+  line, rather than being loosened to "starts with anything" — what it catches
+  is a stray blank line or leftover preamble, and both correct openings are
+  exact.
 
 ### A5.2 No golden for any canonical persisted format — closed for the lock
 
