@@ -887,7 +887,15 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // what `doctor/environment.rs` is for, rather than re-deriving
                 // a fact `add` owns; the rung this row is held against is
                 // about the second.
-                ceiling: 1609,
+                //
+                // 1609 -> 1611: the same row learned to `Fail` when there is no
+                // `git` at all. The capability probe answers `false` both for
+                // "this git rejects the flag" and for "there is no git", so
+                // reporting the algorithm alone said "all clear" on a machine
+                // where every regeneration over an edited file was about to
+                // refuse. Two lines for doctor's only git row being able to
+                // fail.
+                ceiling: 1611,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.

@@ -106,43 +106,52 @@ pub(super) fn maven_check(project: &Project) -> Check {
     .fix("install Maven, or run `mvn -N wrapper:wrapper` once in this project")
 }
 
-/// The mismatch that produces `invalid target release` or a compile that
-/// simply never happens: a JDK older than what the pom asks javac for.
-/// Which diff algorithm this machine's `git merge-file` will use.
+/// Whether `git` is here, and which diff algorithm its `merge-file` will use.
 ///
-/// **Reported because it can differ between two machines and nothing else
-/// would say so.** Regenerating over a file the reader has edited is a
-/// three-way merge, and histogram and myers can resolve an ambiguous one
-/// differently -- usually the same bytes, occasionally a different clean
-/// result, occasionally a conflict where the other had none. The merged bytes
-/// go into the managed tree and into the accepted projection, so two
-/// colleagues on different distributions can end up with two trees from one
-/// input.
+/// **A `Fail` when git is missing**, because regenerating over a file the
+/// reader has edited is a three-way merge and there is no fallback for not
+/// having git at all. The capability probe cannot answer this on its own: it
+/// returns `false` both for "this git rejects the flag" and for "there is no
+/// git", which is right for choosing an argument list and would be a lie here
+/// -- doctor's only git row would read "git's default, all clear" on a machine
+/// where every merge is about to refuse.
 ///
-/// Never a `Fail`: both algorithms merge correctly, and a project that never
-/// hits an ambiguous hunk -- which is nearly all of them -- sees no difference
-/// at all. What the row is for is making the divergence answerable when it
-/// does happen, and naming the setting that removes it.
+/// **Otherwise `Ok`, and the algorithm is reported because it can differ
+/// between two machines and nothing else would say so.** histogram and myers
+/// can resolve an ambiguous merge differently -- usually the same bytes,
+/// occasionally a different clean result, occasionally a conflict where the
+/// other had none -- and the merged bytes go into the managed tree and the
+/// accepted projection. So two colleagues on different distributions can end
+/// up with two trees from one input.
+///
+/// The way to remove that is named in the *detail*, not in a `fix:` line. A
+/// fix line under an `ok` row reads as a repair for something broken, and
+/// nothing here is broken: both algorithms merge correctly, and pinning is a
+/// choice a team makes rather than a defect. This is the only `Ok` check in
+/// `doctor` that ever carried one.
 pub(super) fn git_merge_check() -> Check {
     const KEY: &str = jails_support::git::DIFF_ALGORITHM_OVERRIDE;
-    let pinned = std::env::var(KEY).is_ok();
+    if !jails_support::git::available() {
+        return Check::new(
+            Status::Fail,
+            "git merge",
+            "no git on PATH, so a three-way merge cannot run",
+        )
+        .fix("install git; jails needs `git merge-file` to regenerate over an edited file");
+    }
     let chosen = jails_support::git::merge_diff_algorithm()
         .and_then(|argument| argument.split_once('='))
         .map_or("git's default", |(_, name)| name);
-    let how = if pinned {
+    let how = if std::env::var(KEY).is_ok() {
         format!("pinned by {KEY}")
     } else {
-        "chosen by asking this machine's git merge-file".to_string()
+        format!("asked of this machine's git merge-file; {KEY} pins one answer across machines")
     };
-    let check = Check::new(Status::Ok, "git merge", format!("{chosen}, {how}"));
-    if pinned {
-        return check;
-    }
-    check.fix(format!(
-        "set {KEY}=<algorithm> so every machine merges the same way ({KEY}= alone pins git's default, which every version supports)"
-    ))
+    Check::new(Status::Ok, "git merge", format!("{chosen}, {how}"))
 }
 
+/// The mismatch that produces `invalid target release` or a compile that
+/// simply never happens: a JDK older than what the pom asks javac for.
 pub(super) fn jdk_check(project: &Project) -> Check {
     // Off the resolved project rather than re-read from text: `Project` already
     // asked the right reader for this build file, and a second parse here is a

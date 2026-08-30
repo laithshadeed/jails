@@ -78,8 +78,26 @@ depends = ["lint"]
 # so the test runs inside the ordinary suite where its ~16s overlaps a ~300s
 # test phase rather than following it. Running it by hand under `mise x` still
 # works: the ambient pair is honoured first.
+# **`JAILS_GIT_DIFF_ALGORITHM=` pins the gate to git's own default**, and the
+# empty value is the point: it is the one setting every git ever shipped
+# supports, so the gate gives one answer on a runner with git 2.55 and on a
+# laptop with 2.43.
+#
+# Without it the gate is not deterministic. `git merge-file` grew
+# `--diff-algorithm` after 2.43, so jails asks the machine and uses histogram
+# where it can; histogram and myers can resolve an ambiguous three-way merge
+# differently, and the merged bytes go into the managed tree and the accepted
+# projection. `simplify-sol.md`'s G0 asks for one answer to "is this green",
+# and a gate whose merges depend on the distribution underneath it is two
+# answers wearing one name.
+#
+# What this costs is that the gate never exercises the histogram path. That is
+# the right trade: which hunks git picks is git's business and is covered by
+# its own suite, while the parts that are jails' -- that the probe matches a
+# direct invocation, and that the flag lands between the caller's flags and the
+# operands -- are unit-tested on whatever git the machine has.
 run = [
-  "JAILS_REQUIRE_TOOLCHAIN=1 ./scripts/run-tests.py",
+  "JAILS_GIT_DIFF_ALGORITHM= JAILS_REQUIRE_TOOLCHAIN=1 ./scripts/run-tests.py",
 ]
 
 [tasks.test]

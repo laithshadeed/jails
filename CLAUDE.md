@@ -1883,6 +1883,15 @@ jails knows nothing about.
   landed on, because otherwise "why does my colleague's tree differ" has no
   answer anywhere in the product.
 
+  **The gate pins it to the empty value**, in `mise.toml` and therefore in the
+  pre-push hook and CI, which invoke nothing else. G0 asks for one answer to
+  "is this green", and a gate whose merges depend on the distribution
+  underneath it is two answers wearing one name. The cost is that the gate
+  never exercises histogram; which hunks git picks is git's business, and the
+  halves that are jails' -- the probe matching a direct invocation, and the
+  flag landing between the caller's flags and the operands -- are unit-tested
+  on whatever git the machine has.
+
   Both merges go through `git::merge_file_argv`. They live in ladders that
   cannot see each other -- `jails-workspace` canonical, `jails-prepare` legacy
   -- which is exactly how they came to pass the flag unconditionally from both,

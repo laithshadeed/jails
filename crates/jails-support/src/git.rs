@@ -56,20 +56,66 @@ const PREFERRED: &str = "histogram";
 pub fn merge_diff_algorithm() -> Option<&'static str> {
     static ANSWER: OnceLock<Option<String>> = OnceLock::new();
     ANSWER
-        .get_or_init(|| match std::env::var(DIFF_ALGORITHM_OVERRIDE) {
-            // Pinned to git's default. The flag is not passed at all, so this
-            // is also the setting that works on every git ever shipped.
-            Ok(name) if name.trim().is_empty() => None,
-            // Pinned to a name. Not validated here: an operator who asks for
-            // an algorithm their git does not have should be told by git,
-            // naming the flag they set, rather than silently given another.
-            Ok(name) => Some(format!("--diff-algorithm={}", name.trim())),
-            Err(_) if merge_file_accepts_diff_algorithm() => {
-                Some(format!("--diff-algorithm={PREFERRED}"))
-            }
-            Err(_) => None,
+        .get_or_init(|| {
+            decide(
+                std::env::var(DIFF_ALGORITHM_OVERRIDE).ok(),
+                merge_file_accepts_diff_algorithm,
+            )
         })
         .as_deref()
+}
+
+/// The choice itself, with the environment and the probe passed in.
+///
+/// **Separated so the tests exercise this rather than a copy of it.** They
+/// cannot go through [`merge_diff_algorithm`]: it memoises for the life of the
+/// process, so the first test to call it would decide the answer for every
+/// other test in the binary. An earlier version answered that by restating the
+/// match in the test module, which is the shape where dropping the `.trim()`
+/// in production leaves every test green.
+///
+/// `probe` is a closure so no test has to spawn git to check the override
+/// arms, and so the probe stays unrun when an override already settles it.
+fn decide(override_value: Option<String>, probe: impl FnOnce() -> bool) -> Option<String> {
+    match override_value {
+        // Pinned to git's default. The flag is not passed at all, so this is
+        // also the setting that works on every git ever shipped.
+        Some(name) if name.trim().is_empty() => None,
+        // Pinned to a name. Not validated here: an operator who asks for an
+        // algorithm their git does not have should be told by git, naming the
+        // flag they set, rather than silently given another.
+        Some(name) => Some(format!("--diff-algorithm={}", name.trim())),
+        None if probe() => Some(format!("--diff-algorithm={PREFERRED}")),
+        None => None,
+    }
+}
+
+/// Whether `git` can be run at all.
+///
+/// **A different question from [`merge_diff_algorithm`], and the reason it is
+/// asked separately.** The capability probe answers `false` both for "this git
+/// rejects the flag" and for "there is no git", which is right for choosing an
+/// argument list and wrong for reporting: `doctor` would say "git's default"
+/// on a machine with no git, then every regeneration over an edited file would
+/// refuse.
+pub fn available() -> bool {
+    static ANSWER: OnceLock<bool> = OnceLock::new();
+    *ANSWER.get_or_init(|| {
+        let Ok(scratch) = crate::scratch::ScratchDir::in_temp("jails-git-present") else {
+            return false;
+        };
+        let invocation = crate::hermetic::Invocation {
+            program: "git".into(),
+            args: vec!["--version".into()],
+            working_directory: scratch.path().to_path_buf(),
+            environment: crate::hermetic::Invocation::minimal_environment(
+                std::env::var("PATH").as_deref().unwrap_or("/usr/bin:/bin"),
+                &[],
+            ),
+            timeout: std::time::Duration::from_secs(10),
+        };
+        crate::hermetic::run(&invocation).is_ok_and(|run| run.succeeded())
+    })
 }
 
 /// The complete argument list for a `git merge-file` run.
@@ -218,38 +264,42 @@ mod tests {
 
     /// An explicit empty override is "git's default", not "ask the machine".
     ///
-    /// Not exercised through [`merge_diff_algorithm`], which memoises for the
-    /// life of the process and would make one test decide the answer for
-    /// every other in the binary.
+    /// Through the production [`decide`], so removing the `.trim()` or the
+    /// empty-string arm fails here.
     #[test]
     fn an_empty_override_means_no_flag() {
-        assert_eq!(resolve(Ok(String::new())), None);
-        assert_eq!(resolve(Ok("   ".to_string())), None);
+        assert_eq!(decide(Some(String::new()), unreachable_probe), None);
+        assert_eq!(decide(Some("   ".to_string()), unreachable_probe), None);
     }
 
     /// A named override is passed through verbatim, on any git.
     #[test]
     fn a_named_override_is_passed_through() {
         assert_eq!(
-            resolve(Ok("patience".to_string())).as_deref(),
+            decide(Some("patience".to_string()), unreachable_probe).as_deref(),
             Some("--diff-algorithm=patience")
         );
         // Trimmed, because `JAILS_GIT_DIFF_ALGORITHM=" histogram"` is a typo
         // with an obvious meaning and git would reject the space.
         assert_eq!(
-            resolve(Ok(" histogram ".to_string())).as_deref(),
+            decide(Some(" histogram ".to_string()), unreachable_probe).as_deref(),
             Some("--diff-algorithm=histogram")
         );
     }
 
-    /// The decision, split out so it can be tested without the memo or the
-    /// environment. `merge_diff_algorithm` is this plus a probe and a
-    /// `OnceLock`.
-    fn resolve(override_value: Result<String, std::env::VarError>) -> Option<String> {
-        match override_value {
-            Ok(name) if name.trim().is_empty() => None,
-            Ok(name) => Some(format!("--diff-algorithm={}", name.trim())),
-            Err(_) => None,
-        }
+    /// With nothing pinned, the machine decides -- and only then.
+    #[test]
+    fn an_absent_override_asks_the_probe() {
+        assert_eq!(
+            decide(None, || true).as_deref(),
+            Some("--diff-algorithm=histogram")
+        );
+        assert_eq!(decide(None, || false), None);
+    }
+
+    /// An override settles it without spawning git, which is why `decide`
+    /// takes the probe lazily. This panics if that stops being true.
+    fn unreachable_probe() -> bool {
+        panic!("an explicit override must not need the probe")
     }
 }
