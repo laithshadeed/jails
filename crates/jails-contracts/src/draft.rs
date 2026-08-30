@@ -190,6 +190,27 @@ pub enum DocumentIntent {
         path: ProjectPath,
         source_set: JavaSourceSet,
     },
+    /// Put `@Import(<class>.class)` on every `@SpringBootTest` the project
+    /// already has.
+    ///
+    /// **The target set is not named here, deliberately.** The compiler cannot
+    /// enumerate `src/test/java`, and it must not: an observation belongs at
+    /// the capture boundary. So the snapshot carries those files and the
+    /// materializer picks the ones that are `@SpringBootTest` classes, which
+    /// makes the plan exact -- every file it touches has a captured
+    /// before-image, and a test edited after review makes the plan stale
+    /// rather than being overwritten.
+    ///
+    /// It exists because the moment `spring-boot-starter-jdbc` lands in the
+    /// build, JDBC auto-configuration demands a `DataSource` for *every*
+    /// `@SpringBootTest` -- including the `contextLoads` test that shipped
+    /// with the project and never touches a database.
+    EnsureSpringTestImport {
+        /// The `@TestConfiguration` class to import.
+        class: String,
+        /// Its package, so a test in another one gets the import statement.
+        package: String,
+    },
     ReconcileDependencies {
         dependencies: Vec<BuildDependency>,
     },

@@ -11192,4 +11192,41 @@ fn canonical_storage_postgres_writes_the_container_compose_and_datasource() {
     let compose = fs::read_to_string(root.join("compose.yaml")).unwrap();
     assert!(compose.contains("postgres:17-alpine"), "{compose}");
     assert!(compose.contains("pg_isready"), "{compose}");
+
+    // **The half that decides whether `mvn verify` passes.** The
+    // `contextLoads` test `jails new` wrote never touches a database, and
+    // without the container imported into it JDBC auto-configuration fails the
+    // context with "Failed to determine a suitable driver class".
+    let shipped =
+        fs::read_to_string(root.join("src/test/java/com/example/demo/DemoApplicationTests.java"))
+            .unwrap();
+    assert!(
+        shipped.contains("@Import(TestcontainersConfig.class)"),
+        "{shipped}"
+    );
+    assert!(
+        shipped.contains("import org.springframework.context.annotation.Import;"),
+        "{shipped}"
+    );
+    // Same package as the config, so there is no import statement for it --
+    // importing a sibling does not compile.
+    assert!(
+        !shipped.contains("import com.example.demo.TestcontainersConfig;"),
+        "{shipped}"
+    );
+
+    // Splicing twice must not stack: the annotation is rewritten member by
+    // member rather than appended.
+    let before = shipped.clone();
+    let resync = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        resync.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resync.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("src/test/java/com/example/demo/DemoApplicationTests.java"))
+            .unwrap(),
+        before
+    );
 }

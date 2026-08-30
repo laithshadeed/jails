@@ -11,6 +11,7 @@ use std::path::Path;
 
 const MANAGED_ROOT: &str = ".jails/generated";
 pub(crate) const MIGRATION_ROOT: &str = "src/main/resources/db/migration";
+const READER_TEST_ROOT: &str = "src/test/java";
 pub(crate) const COMPILER_LOCK: &str = ".jails/compiler.lock.json";
 const COMPILER_LOCK_SCHEMA_V1: &str = "jails.compiler-lock.v1";
 const COMPILER_LOCK_SCHEMA_V2: &str = "jails.compiler-lock.v2";
@@ -112,6 +113,27 @@ fn capture_model_state(
     let managed = root.join(MANAGED_ROOT);
     if managed.exists() {
         capture_tree(root, &managed, &mut files, &mut preconditions)?;
+    }
+    // **The reader's own tests, when the model has a database.**
+    //
+    // Their `@SpringBootTest` classes are the target set of the container
+    // `@Import`, and which files carry that annotation is an observation --
+    // the compiler cannot enumerate a directory and must not try. Capturing
+    // them here makes the plan exact: every test the plan edits has a
+    // before-image, so one edited after review makes the plan stale rather
+    // than being silently overwritten.
+    //
+    // Conditional because the cost is real. Every captured file is a
+    // precondition, so capturing the test tree unconditionally would make an
+    // edit to any unrelated test invalidate a reviewed plan.
+    let reader_tests = root.join(READER_TEST_ROOT);
+    if reader_tests.exists()
+        && model
+            .capabilities
+            .values()
+            .any(|capability| capability.kind == "db")
+    {
+        capture_tree(root, &reader_tests, &mut files, &mut preconditions)?;
     }
     for reader_file in [
         "jails.toml",

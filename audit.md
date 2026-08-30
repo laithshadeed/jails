@@ -177,21 +177,29 @@ vocabulary.
 | migration history | `PlannedOperation::AppendMigration` |
 | `MarkedBlock { path, marker }` | **none** — only compose is modelled |
 | `CommandRegistration { dispatcher, command }` | **none** |
-| `SpringTestImport { path, class }` | **none** |
+| `SpringTestImport { path, class }` | `DocumentIntent::EnsureSpringTestImport` |
 | `MavenMainClass(ProjectPath)` | **none** |
 | `Query(QueryId)` | **none** |
 
-The five missing ones are exactly the surgical edits into reader-owned files —
+The four missing ones are exactly the surgical edits into reader-owned files —
 the hardest category.
 
-**`storage postgres` now writes its test half**: `TestcontainersConfig`, the
-three Testcontainers dependencies, `spring.datasource.*`, the two settings
-that are not tuning, and the compose service. What is still missing is the
+**`storage postgres` is closed.** It writes `TestcontainersConfig`, the three
+Testcontainers dependencies, `spring.datasource.*`, the two settings that are
+not tuning, the compose service, *and* the
 `@Import(TestcontainersConfig.class)` splice into the `@SpringBootTest`
-classes already on disk, which is `SpringTestImport` in the table above — so
-the trap `CLAUDE.md` records at length ("`add db` on Spring must wire tests, or
-`mvn verify` goes red on a test nobody wrote") is closed for a project's *own*
-database tests and still open for the `contextLoads` test `jails new` wrote.
+classes already on disk. So the trap `CLAUDE.md` records at length ("`add db`
+on Spring must wire tests, or `mvn verify` goes red on a test nobody wrote")
+has a canonical answer.
+
+The splice is the first canonical edit into a file the reader owns and wrote,
+so it is worth saying how it stays exact. The intent names no paths: the
+compiler cannot enumerate `src/test/java` and must not, so capture takes that
+tree — only when the model has a database, because every captured file is a
+precondition and capturing it unconditionally would make an edit to any
+unrelated test invalidate a reviewed plan. The materializer then selects the
+files that carry the annotation, each with a before-image, so a test edited
+after review makes the plan stale rather than being silently overwritten.
 
 ### A1.6 Lifecycle commands with no canonical backend
 

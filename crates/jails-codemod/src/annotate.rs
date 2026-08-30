@@ -140,6 +140,25 @@ pub fn unsplice_import(source: &str, class: &str, extra: &str) -> Option<String>
     Some(crate::tidy::normalize_imports(&out))
 }
 
+/// Whether this source declares a `@SpringBootTest`.
+///
+/// **Read through [`crate::text::blanked`], which is the whole point.** A raw
+/// substring search finds `@SpringBootTest` inside a Javadoc example — and
+/// `TestcontainersConfig`'s own Javadoc contains exactly that, so a naive
+/// check made `add db` count its container config as a test needing the config
+/// imported into itself. `CLAUDE.md` records the same defect from the other
+/// direction: two of three walks of `src/test/java` matched a raw substring,
+/// which is how `doctor` came to name the wrong container config.
+///
+/// It answers a narrower question than `java::types_annotated_with`, which
+/// also checks that the annotation sits on the *top-level type*. Here the
+/// looser answer is the right one: `splice_import` anchors on the first
+/// `@SpringBootTest` it finds, so what matters is whether there is one to
+/// anchor to.
+pub fn is_spring_boot_test(source: &str) -> bool {
+    crate::text::blanked(source).contains("@SpringBootTest")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

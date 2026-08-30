@@ -566,6 +566,25 @@ impl Compiler {
                 desired,
             });
         }
+        // **Every `@SpringBootTest` already on disk needs the container
+        // imported into it.** Once `spring-boot-starter-jdbc` is in the build,
+        // JDBC auto-configuration demands a `DataSource` for all of them --
+        // including the `contextLoads` test that shipped with the project and
+        // never touches a database. The intent names no paths: the compiler
+        // cannot enumerate `src/test/java` and must not, so the snapshot
+        // carries those files and the materializer picks the ones that carry
+        // the annotation.
+        if snapshot.project.spring_boot.is_some()
+            && next_model
+                .capabilities
+                .values()
+                .any(|capability| capability.kind == "db")
+        {
+            reader_document_intents.push(DocumentIntent::EnsureSpringTestImport {
+                class: "TestcontainersConfig".to_string(),
+                package: next_model.project.package_for(jails_model::Package::Base),
+            });
+        }
         let summary = SemanticPlan {
             model_nodes: next_model.node_count(),
             managed_files: generated.files.len(),

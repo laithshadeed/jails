@@ -296,6 +296,19 @@ fn materialize_document_intents(
                     )
                 })?;
             }
+            DocumentIntent::EnsureSpringTestImport { class, package } => {
+                // Every captured `@SpringBootTest`, in path order so the plan
+                // is deterministic. `spring_boot_test_targets` reads the
+                // snapshot rather than the disk -- the whole point of the
+                // capture is that this set was observed once.
+                for path in crate::documents::spring_boot_test_targets(snapshot, class) {
+                    update_document(snapshot, &mut desired, path, |text| {
+                        Ok(crate::documents::ensure_spring_test_import(
+                            text, class, package,
+                        ))
+                    })?;
+                }
+            }
             DocumentIntent::ReconcileDependencies { dependencies } => {
                 match snapshot.project.build_system {
                     jails_contracts::BuildSystem::Maven => update_document(

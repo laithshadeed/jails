@@ -327,6 +327,7 @@ dependencies = [
 name = "jails-java"
 version = "0.1.0"
 dependencies = [
+ "jails-codemod",
  "jails-support",
 ]
 

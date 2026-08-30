@@ -325,7 +325,10 @@ const LAYERS: &[(&str, &str, usize)] = &[
     // the project layer it came from. It moved out of `jails-project` because
     // three more implementations of the marked block had appeared in crates
     // that could not depend on it.
+    ("jails-codemod", "annotate", 0),
     ("jails-codemod", "marked", 0),
+    ("jails-codemod", "text", 0),
+    ("jails-codemod", "tidy", 0),
     ("jails-support", "apply", 0),
     ("jails-support", "process", 0),
     ("jails-support", "hermetic", 0),
@@ -334,8 +337,6 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-support", "json", 0),
     ("jails-support", "lock", 0),
     // jails-java: reading Java and rendering templates into it.
-    ("jails-java", "annotate", 1),
-    ("jails-java", "tidy", 1),
     ("jails-java", "java", 1),
     ("jails-java", "dispatch", 1),
     ("jails-java", "classfile", 1),

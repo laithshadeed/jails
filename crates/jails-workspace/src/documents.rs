@@ -6,9 +6,11 @@
 
 mod build_feature;
 mod source_root;
+mod spring_test;
 
 pub(crate) use build_feature::{reconcile_gradle_build_features, reconcile_maven_build_features};
 pub(crate) use source_root::{ensure_gradle_source_root, ensure_maven_source_roots};
+pub(crate) use spring_test::{ensure_spring_test_import, spring_boot_test_targets};
 
 const DEPENDENCY_MARKER: &str = "jails:dependencies";
 
