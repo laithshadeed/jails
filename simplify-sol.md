@@ -2,6 +2,47 @@
 
 ---
 
+## Where this stands (2026-08-30)
+
+**The compiler is built and every advertised generator runs on it. The legacy
+path is still on disk, because this document gates deleting it on a condition
+that is not met yet.**
+
+| | |
+|---|---|
+| generators on the canonical path | **39 of 39**, held by `canonical_support::registry_classifies_every_advertised_word` |
+| capabilities | **25 of 25** |
+| component kinds with a backend | **23 of 23** -- `every_component_kind_is_emitted_or_refused` has no refusal left to reach |
+| architecture fitness rules | all thirteen held: nine by a test, four by a type or by Cargo. One added that the list did not have. See *Where each fitness rule stands* |
+| merge gates | G0, G2, G3, G4 green; G1 green apart from this machine's git; G5 partial. See *Where the gates stand* |
+| deletion map | **not started, and deliberately** |
+
+**Why the deletion has not happened.** The *Integration and one coordinated
+cutover* section makes it step 5 through 7, after "all gates pass", and two
+things block that honestly rather than incidentally:
+
+- **G1 is the oracle.** The differential suite compares the legacy binary
+  against the new one, scenario by scenario. Deleting the legacy path deletes
+  the thing the gate measures against, so the cutover is one irreversible
+  change that must land when the evidence is complete -- not incrementally as
+  each crate looks unused.
+- **G5 is incomplete.** The proof manifests are promoted and the workouts are
+  measured, but the sanitized adopted and reader-edited Spring/plain corpus
+  does not exist. That corpus is the one that would catch what the goldens
+  cannot: a real project somebody has edited.
+
+Two of the remaining red marks are **this machine, not the branch**: git 2.43
+against the 2.44+ `git merge-file --diff-algorithm` needs, and JDK 21 against
+`TARGET_RELEASE` 26. Both are recorded in `CLAUDE.md`. Any gate measured here
+without them is a measurement of the other tiers.
+
+So the next change to this document is not a further simplification. It is
+either the adopted-project corpus, or -- on a machine with the full toolchain,
+with G1 and G5 green -- the single cutover commit this file has been building
+toward.
+
+---
+
 ## Maintainer decisions (2026-08-27)
 
 **Added by the maintainer. These are decided requirements, not analysis. Where
