@@ -1762,6 +1762,22 @@ jails knows nothing about.
   `src/test/resources/config/application.properties` a durable job writes into:
   those are one *block* per owner in a file with several, which is a different
   shape from one setting per key.
+- **Both JDL dialects state field order, and `FieldPlacement` has to agree
+  with what re-parsing the source yields.** A record's positional constructor
+  is ABI, and one column list feeds the DDL, the select, the insert and the row
+  mapper -- so a lost order is a silently wrong argument list, not a formatting
+  difference. v1 walks a CST and always knew the order; the pre-v1 draft
+  reaches the linker by rendering intermediate TOML, whose tables are
+  unordered, so it sorted by label until `render.rs` started carrying
+  `field_order`. **`.jails/model.toml` deliberately still sorts**, because it
+  is the temporary compatibility input and teaching a format on the deletion
+  list to state an order is adding surface to something being removed. The
+  trap is that these are *two* decisions that must match: `g field` places the
+  new field in the patched model by `FieldPlacement`, and if that disagrees
+  with the frontend, the very next command re-renders a different record.
+  `patch.rs` records the heuristic this replaced -- "already sorted by label"
+  was read as "states no order", which is true until an entity is declared
+  alphabetically.
 - **clap `alias` vs `visible_alias`**: hidden `alias` is invisible to
   `clap_complete`'s bash generator — `jails g <TAB>` fell back to top-level
   subcommand names instead of `generate`'s completions. Always use

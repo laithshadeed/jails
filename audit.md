@@ -394,32 +394,6 @@ defects.
 
 ## A2 — correctness defects, each reproduced against the binary
 
-### A2.2b Pre-v1 JDL loses declaration order on the way in
-
-`jdl-sol.md` §20 asks the v1 frontend to replace "the current line parser and
-JDL-to-intermediate-TOML rendering", and v1 does: it walks a CST straight into
-the typed linker and records the order it walked. The pre-v1 draft still
-renders TOML text (`crates/jails-model/src/jdl/render.rs`) and hands it to
-`parse_toml`, and a TOML table has no order — so a pre-v1 entity declaring
-`zulu, id, alpha` links as `alpha, id, zulu` and emits a record in that order.
-
-Preserving order for v1 (A2.2) did not reach it. That matters more than the
-dialect's deprecation suggests: `jails model import` emits pre-v1, so every
-imported project has it, and ~47 of the canonical E2E blocks are written in
-it. The fix is small — `render.rs` emitting the `field_order` array
-`source::Entity` already accepts — but it puts order into the intermediate
-TOML, which then makes `.jails/model.toml` able to state an order it is
-documented as unable to state. That interaction is why this is its own entry
-rather than a line in A2.2: it wants deciding, not patching.
-
-**`jails model upgrade --to 1` is the answer, and it makes the decision
-smaller.** Upgrading moves the source onto the frontend that keeps order, and
-the command reports the reordering by name because it moves a record's
-positional constructor. So pre-v1 does not need to learn order; it needs a
-route off itself, and there is one. What is left of this entry is whether the
-~47 E2E blocks and `model import`'s output should be moved (**A5.3**, **A1.4**)
-or whether pre-v1 keeps the defect until it is deleted.
-
 ### A2.6 Tables are not pluralized — closed
 
 `jails_model::plural_snake_case` implements `jdl-sol.md` §9.7 in full: the
@@ -837,19 +811,16 @@ It is used only under `#[cfg(test)]` (`materialize.rs:673`), and
 Closed and deleted from this list: the original items 1–4 and 9, then **A1.1**
 (39/39 generators), **A3.11b** (layer renames), **A5.1** (canonical tree and
 exact-plan goldens), **A5.2** (compiler-lock golden), **A1.2b** (closed *by*
-A1.1), **A2.6** (pluralization), **A5.3** (the G1 corpus on JDL v1), **A5.5**
-(G4 on the canonical executor) and **A6.1** (module docs, now a ratchet at
-zero). What remains is ordered by consequence.
+A1.1), **A2.6** (pluralization), **A2.2b** (pre-v1 declaration order),
+**A5.3** (the G1 corpus on JDL v1), **A5.5** (G4 on the canonical executor)
+and **A6.1** (module docs, now a ratchet at zero). One item remains.
 
-1. **A3.11 / A3.12** — the registry is built and the source-unit half is
-   closed. What is left is the decision the registry made legible: reconcile
-   the six `Head::Facet` rows with §9.7 or record the divergence, and add the
-   `derived` records and `model explain` so a convention is inspectable rather
-   than implied. Every emitter added now picks a placement a later §9.7
-   reconciliation has to move.
-2. **A2.2b** — decide whether pre-v1 JDL should carry declaration order, given
-   that the mechanism would also give `.jails/model.toml` an ordering it is
-   documented as lacking.
+**A3.11 / A3.12** — the registry is built and the source-unit half is closed.
+What is left is the decision the registry made legible: reconcile the six
+`Head::Facet` rows with §9.7 or record the divergence, and add the `derived`
+records and `model explain` so a convention is inspectable rather than
+implied. Every emitter added now picks a placement a later §9.7 reconciliation
+has to move.
 
 `A3.14` (typed artifact IR) is the largest remaining piece of the design and
 is not on this list because it is a phase, not a fix. `A5.7` (git ≥ 2.47) is

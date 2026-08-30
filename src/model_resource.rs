@@ -313,12 +313,18 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
     };
     // Where re-parsing the source we are about to write will put this field.
     //
-    // Only JDL v1 states field order: its parser records the order its CST
-    // walked, so an appended declaration stays appended. A `.jails/model.toml`
-    // table states none, and the pre-v1 JDL draft reaches the linker by
-    // rendering that same TOML, so both re-parse sorted by label whatever
-    // order they were written in.
-    let placement = if jdl && crate::model_generate_jdl::is_v1_source(&current_source) {
+    // **Both JDL dialects state field order now.** v1 always did -- its parser
+    // records the order its CST walked. The pre-v1 draft did not, because it
+    // reaches the linker by rendering intermediate TOML and a TOML table is
+    // unordered; `audit.md` A2.2b fixed that by having the renderer carry
+    // `field_order`, so an appended declaration in either dialect stays
+    // appended.
+    //
+    // `.jails/model.toml` is what is left, and it keeps `ByLabel` deliberately:
+    // it is the temporary compatibility input, its writer states no order, and
+    // giving one to a format on the cutover's deletion list would be adding
+    // surface to something being removed.
+    let placement = if jdl {
         jails_model::FieldPlacement::Last
     } else {
         jails_model::FieldPlacement::ByLabel

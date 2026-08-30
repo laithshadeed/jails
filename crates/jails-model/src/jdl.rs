@@ -754,6 +754,48 @@ enum Status {
         assert_eq!(setting.target, crate::SettingTarget::Main);
     }
 
+    /// **A record's component order is ABI, in this dialect too.**
+    ///
+    /// `audit.md` A2.2b. The v1 frontend walks a CST and keeps the order; this
+    /// one renders intermediate TOML, and `parse_toml` reads fields back into
+    /// a `BTreeMap` -- so the order was sorted away between a draft that had
+    /// it and a model that did not. Declared `zulu, id, alpha`, linked
+    /// `alpha, id, zulu`, and a caller compiled against the positional
+    /// constructor kept compiling while passing the wrong arguments.
+    ///
+    /// Deliberately alphabetically hostile: with sorted labels the bug is
+    /// invisible, which is why it survived the dialect's other tests.
+    #[test]
+    fn pre_v1_keeps_the_order_the_author_declared() {
+        let model = parse(
+            r#"
+application Notes @id(project_notes)
+package com.example.notes
+java 26
+dialect postgresql
+
+entity Task @id(ent_task) @record {
+  zulu: string
+  id: uuid @id(fld_task_id) @pk
+  alpha: string
+}
+"#,
+        )
+        .unwrap();
+        let task = model
+            .entities
+            .values()
+            .find(|entity| entity.label == "task")
+            .unwrap();
+        assert_eq!(
+            task.fields
+                .iter()
+                .map(|field| field.label.as_str())
+                .collect::<Vec<_>>(),
+            ["zulu", "id", "alpha"]
+        );
+    }
+
     #[test]
     fn malformed_length_constraints_are_refused_not_discarded() {
         let error = parse(

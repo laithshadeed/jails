@@ -8206,9 +8206,15 @@ fn canonical_database_query_keeps_the_iterative_loop_and_ejects_only_its_adapter
     let adapter = managed.join("adapters/jdbc/JdbcOpenNotesQuery.java");
     let abi = managed.join("application/queries/OpenNotesQuery.java");
     let original = fs::read_to_string(&adapter).unwrap();
+    // **The column list is declaration order**, not alphabetical. Both were
+    // once true here: the pre-v1 path lost the author's order across its TOML
+    // hop (`audit.md` A2.2b), so `id, title, status` became `id, status,
+    // title` in the SQL as well as in the record. One column list feeds the
+    // DDL, the select, the insert and the row mapper, so this is the same
+    // property the record's positional constructor is.
     for contract in [
         "implements OpenNotesQuery",
-        "select id, status, title from note",
+        "select id, title, status from note",
         "new ArrayList<>(List.of(\"title = :title\"))",
         "if (input.status().isPresent())",
         "predicates.add(\"status = :status\")",
@@ -8399,7 +8405,7 @@ fn canonical_database_commands_and_transitions_are_independent_iterative_boundar
     let command_source = fs::read_to_string(&command).unwrap();
     for contract in [
         "implements CreateNoteCommand",
-        "insert into notes (id, status, title) values (:id, :status, :title)",
+        "insert into notes (id, title, status) values (:id, :title, :status)",
         "TimeOrderedUuid.next()",
         "statement.query(Note.class).single()",
     ] {
@@ -10360,22 +10366,26 @@ fn jdl_upgrade_moves_a_pre_v1_draft_onto_v1_without_re_identifying_anything() {
         let Some(upgraded) = after.get(path) else {
             panic!("`{path}` disappeared across the upgrade");
         };
-        if path.ends_with("domain/Task.java") {
-            continue;
-        }
         assert_eq!(upgraded, bytes, "`{path}` changed across the upgrade");
     }
 
-    // Two changes are intended, and the command says both out loud rather
-    // than leaving them for a reviewer to spot in the diff.
+    // **`domain/Task.java` used to be excluded from that comparison**, and is
+    // not any more. The pre-v1 path rendered intermediate TOML and lost
+    // declaration order, so upgrading re-ordered `Task(done, id, title)` into
+    // `Task(id, title, done)` -- a moved positional constructor, which the
+    // command had to report as a note. `audit.md` A2.2b fixed it at the
+    // source, so the two dialects now agree and the whole tree is
+    // byte-identical across the upgrade. An exclusion removed is worth more
+    // than the note it replaced: this is the property the test claims to be
+    // asserting, now asserted without a hole in it.
     let told = String::from_utf8_lossy(&upgrade.stdout);
     assert!(told.contains("note: the `db` capability"), "{told}");
-    assert!(told.contains("declaration order"), "{told}");
+    assert!(
+        !told.contains("declaration order"),
+        "the upgrade still moves a record's constructor: {told}"
+    );
 
-    // v1 keeps a record's fields in declaration order; the pre-v1 draft sorted
-    // them by label, so `Task(done, id, title)` becomes `Task(id, title,
-    // done)`. That moves the positional constructor, which is exactly why the
-    // upgrade is reviewed rather than applied silently.
+    // And the order itself is the declared one, on both sides of the upgrade.
     let record = after
         .get("main/java/com/example/demo/domain/Task.java")
         .unwrap();

@@ -147,12 +147,15 @@ pub enum FieldAddPolicy {
 /// this, so it is asked.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FieldPlacement {
-    /// The source states field order and the edit appended: JDL v1, whose
-    /// parser records the declaration order its CST walked.
+    /// The source states field order and the edit appended: either JDL
+    /// dialect. v1's parser records the order its CST walked, and the pre-v1
+    /// renderer carries `field_order` across its TOML hop.
     Last,
-    /// The source states no order, so re-parsing sorts by label: a
-    /// `.jails/model.toml` table, and the pre-v1 JDL draft, which reaches the
-    /// linker by rendering that same TOML.
+    /// The source states no order, so re-parsing sorts by label:
+    /// a `.jails/model.toml` table. It is the temporary compatibility input
+    /// and keeps this behaviour deliberately -- teaching a format on the
+    /// cutover's deletion list to state an order would be adding surface to
+    /// something being removed.
     ByLabel,
 }
 

@@ -110,13 +110,21 @@ pub fn upgrade(source: &str, axes: Axes) -> Result<Upgraded, Diagnostics> {
 /// The upgraded source, and what it changes about the model beyond spelling.
 ///
 /// **The notes are not decoration.** §22 has the upgrade "produce a diff and
-/// require normal review" precisely because two of the translations mean
+/// require normal review" precisely because one of the translations means
 /// something: `dialect postgresql` becomes `storage postgres`, and v1 reads a
 /// SQL storage axis as a `db` capability -- so a draft that declared a dialect
-/// without one gains a JDBC adapter. And v1 keeps a record's fields in
-/// declaration order where the pre-v1 draft sorted them by label, so the
-/// positional constructor moves. A reviewer reading a hundred-line diff should
-/// not have to notice either for themselves.
+/// without one gains a JDBC adapter. A reviewer reading a hundred-line diff
+/// should not have to notice that for themselves.
+///
+/// **A field-order note is also emitted, and is now unreachable in the
+/// ordinary case.** It existed because the pre-v1 path rendered intermediate
+/// TOML and lost declaration order, so upgrading moved a record's positional
+/// constructor -- an ABI change, silently. `audit.md` A2.2b fixed that at the
+/// source instead: the renderer carries `field_order`, so the two models agree
+/// and there is nothing to report. The note stays because it is the honest
+/// guard for the general case -- if the two frontends ever order an entity
+/// differently again, the upgrade says so rather than moving a constructor
+/// quietly.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Upgraded {
     pub source: String,
@@ -865,11 +873,19 @@ class Clock @id(unit_class_clock)
         );
     }
 
-    /// The two changes an upgrade makes that are not spelling, said out loud.
+    /// The one change an upgrade makes that is not spelling, said out loud.
     ///
-    /// Both are visible in the diff and neither is obvious in one: a reviewer
-    /// scanning a hundred lines should not have to notice for themselves that
-    /// a JDBC adapter appeared or that a record's constructor moved.
+    /// It is visible in the diff and not obvious in one: a reviewer scanning a
+    /// hundred lines should not have to notice for themselves that a JDBC
+    /// adapter appeared.
+    ///
+    /// **And the second note this used to assert is now the wrong outcome.**
+    /// It reported that the record's positional constructor had moved, which
+    /// it did -- because the pre-v1 path lost declaration order on its way
+    /// through intermediate TOML (`audit.md` A2.2b). Fixed at the source, the
+    /// two frontends agree, so the upgrade moves no constructor and has
+    /// nothing to say. `title, id` is deliberately reverse-alphabetical: with
+    /// sorted labels this assertion would pass either way.
     #[test]
     fn the_upgrade_reports_what_it_changes_beyond_spelling() {
         let draft = "application Demo @id(project_demo)\npackage com.example.demo\njava 26\n\
@@ -881,10 +897,8 @@ class Clock @id(unit_class_clock)
             "{notes:?}"
         );
         assert!(
-            notes
-                .iter()
-                .any(|note| note.contains("declaration order (title, id)")),
-            "{notes:?}"
+            !notes.iter().any(|note| note.contains("declaration order")),
+            "the upgrade still moves a record's constructor: {notes:?}"
         );
     }
 
