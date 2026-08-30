@@ -49,7 +49,7 @@ pub(crate) const MAX_RECORD: usize = codec::MAX_PROTOCOL_RECORD;
 /// A project moved or replaced under a running transaction is not the project
 /// the plan was made against, and a path comparison would not notice: the
 /// same path can name a different directory.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct RootIdentity {
     pub device: u64,
     pub inode: u64,
@@ -67,8 +67,6 @@ impl RootIdentity {
         })
     }
 }
-jails_support::codec!(struct RootIdentity { device, inode });
-
 /// How far a transaction got.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum JournalState {

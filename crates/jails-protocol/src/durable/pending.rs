@@ -82,54 +82,20 @@ pub enum DesiredInputGuard {
 }
 
 /// One frozen input and its guard.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, jails_codec_derive::Codec)]
 pub struct FrozenDesiredInput {
     pub id: DesiredInputId,
     pub guard: DesiredInputGuard,
 }
 
-impl Codec for FrozenDesiredInput {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.id.encode(encoder)?;
-        self.guard.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            id: DesiredInputId::decode(decoder)?,
-            guard: DesiredInputGuard::decode(decoder)?,
-        })
-    }
-}
-
 /// One output in the frozen candidate.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct PendingOutput {
     pub path: ProjectPath,
     pub contributors: BTreeSet<ResourceOwner>,
     pub current: crate::conflict::PendingCurrent,
     pub base: StoredFileImage,
     pub renderer: RendererStamp,
-}
-
-impl Codec for PendingOutput {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.path.encode(encoder)?;
-        encoder.set(&self.contributors)?;
-        self.current.encode(encoder)?;
-        self.base.encode(encoder)?;
-        self.renderer.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            path: ProjectPath::decode(decoder)?,
-            contributors: decoder.set()?,
-            current: crate::conflict::PendingCurrent::decode(decoder)?,
-            base: StoredFileImage::decode(decoder)?,
-            renderer: RendererStamp::decode(decoder)?,
-        })
-    }
 }
 
 /// One resource row in the frozen candidate.
@@ -158,30 +124,12 @@ impl Codec for PendingResource {
 }
 
 /// One one-shot receipt in the frozen candidate.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct PendingOneShot {
     pub id: OneShotId,
     pub spec: OneShotSpec,
     pub state: OneShotState,
     pub lifecycle: OneShotLifecycle,
-}
-
-impl Codec for PendingOneShot {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.id.encode(encoder)?;
-        self.spec.encode(encoder)?;
-        self.state.encode(encoder)?;
-        self.lifecycle.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            id: OneShotId::decode(decoder)?,
-            spec: OneShotSpec::decode(decoder)?,
-            state: OneShotState::decode(decoder)?,
-            lifecycle: OneShotLifecycle::decode(decoder)?,
-        })
-    }
 }
 
 /// The complete logical state a successful resolution promotes.

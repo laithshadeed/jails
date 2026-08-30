@@ -136,15 +136,13 @@ pub struct DesiredAppliedEntity {
 }
 
 /// A one-shot receipt as this plan wants it recorded.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct DesiredOneShotReceipt {
     pub id: OneShotId,
     pub spec: OneShotSpec,
     pub state: OneShotState,
     pub lifecycle: OneShotLifecycle,
 }
-
-jails_support::codec!(struct DesiredOneShotReceipt { id, spec, state, lifecycle });
 
 /// The ordered changes, what they are for, and what the store is to say.
 #[derive(Clone, Debug, Eq, PartialEq)]

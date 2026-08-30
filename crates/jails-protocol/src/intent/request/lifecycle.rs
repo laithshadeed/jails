@@ -521,13 +521,11 @@ impl Codec for DestroyResourceRequestV2 {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct ReviveResourceRequestV1 {
     pub entity: EntityId,
     pub expected_table: SqlName,
 }
-
-jails_support::codec!(struct ReviveResourceRequestV1 { entity, expected_table });
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RepairStrategy {

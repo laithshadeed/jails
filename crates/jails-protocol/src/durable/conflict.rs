@@ -51,7 +51,7 @@ use jails_support::codec::{self, Codec, Decoder, Encoder, ordered};
 /// Length and mode are not optional validation details. Commit, reconciliation
 /// and conflict finalisation compare the complete image, because a file with
 /// the right bytes and the wrong mode is not the file that was meant.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct LiveFileImage {
     pub sha256: ObjectId,
     pub len: u64,
@@ -59,7 +59,7 @@ pub struct LiveFileImage {
 }
 
 /// The desired bytes and their mode, by reference into the object store.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct StoredFileImage {
     pub object: ObjectRef,
     pub mode: FileMode,
@@ -126,27 +126,23 @@ impl std::fmt::Display for PendingIdentity {
 }
 
 /// One path a human resolved, and what they resolved it to.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct ResolutionIdentity {
     pub path: ProjectPath,
     pub resolved: FileImage,
 }
-
-jails_support::codec!(struct ResolutionIdentity { path, resolved });
 
 /// One path an abort puts back, with **both** images.
 ///
 /// `guarded_from` is what the abort expects to find. Restoring without
 /// checking it would overwrite an edit the user made after the conflict was
 /// frozen — the one thing an abort must never do.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct RestoreIdentity {
     pub path: ProjectPath,
     pub guarded_from: FileImage,
     pub restore_to: FileImage,
 }
-
-jails_support::codec!(struct RestoreIdentity { path, guarded_from, restore_to });
 
 /// A POSIX mode, restricted to the permission bits.
 ///
@@ -186,10 +182,6 @@ impl Codec for FileMode {
         Self::new(decoder.u32()?)
     }
 }
-
-jails_support::codec!(struct LiveFileImage { sha256, len, mode });
-
-jails_support::codec!(struct StoredFileImage { object, mode });
 
 /// What a pending output's final content will be.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]

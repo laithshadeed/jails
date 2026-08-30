@@ -644,7 +644,7 @@ impl std::fmt::Display for ProjectPath {
 /// consumer needs it before reading — to check a limit, to size a buffer, to
 /// tell a truncated object from a missing one — and a length recorded
 /// somewhere else is a length that can disagree with the bytes.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub struct ObjectRef {
     pub id: ObjectId,
     pub len: u64,
@@ -655,8 +655,6 @@ impl ObjectRef {
         Self { id, len }
     }
 }
-jails_support::codec!(struct ObjectRef { id, len });
-
 impl std::fmt::Display for ObjectRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}+{}", self.id, self.len)

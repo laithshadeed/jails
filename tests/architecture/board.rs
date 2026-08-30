@@ -501,6 +501,22 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // What the row is for is that the number cannot *rise*: a new
                 // persisted type derives its format, or says in the commit why
                 // it is one of the bespoke ones.
+                //
+                // 144 -> 133 by deleting two *more* mechanisms rather than by
+                // converting more types one at a time. `codec!(struct T { .. })`
+                // and `contract_field_codec!` both expanded to exactly what the
+                // derive emits -- `Codec::encode(&self.field, encoder)?` in
+                // order -- so three spellings of one rule were in the tree at
+                // once, and the two macro ones restated the field list beside
+                // the type, which is the defect the derive exists to remove.
+                // All 23 uses were checked against declaration order before
+                // conversion (all 23 agreed, so no wire moved) and both macros
+                // are gone; the `enum` arm of `codec!` had no users at all.
+                // Ten further hand impls converted where `encode` was a plain
+                // field sequence and `decode` mirrored it. `encoder.maybe` is
+                // `option(v, |e, x| x.encode(e))` and every primitive `Codec`
+                // delegates to the matching `Encoder` method, so each of those
+                // is byte-identical by construction as well as by golden.
                 ceiling: HAND_WRITTEN_CODECS,
                 target: HAND_WRITTEN_CODECS,
                 why: "A hand-written codec states the field list three times -- in the type, \
@@ -538,6 +554,10 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // refusal has to either carry a fix or lower something else.
                 // Separating the two kinds is per-message work, not a sweep,
                 // and it is what brings this down.
+                // 396 -> 395 as a consequence of the codec row above, not as
+                // work of its own: `codec!`'s `enum` arm carried an unknown-tag
+                // refusal with no `fix:`, and deleting the unused macro took
+                // its message with it.
                 ceiling: REFUSALS_WITHOUT_A_FIX,
                 target: REFUSALS_WITHOUT_A_FIX,
                 why: "A refusal that names no next step leaves the reader to guess, and jails' \

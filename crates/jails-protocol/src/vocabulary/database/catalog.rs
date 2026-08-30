@@ -182,15 +182,13 @@ fn encode_definition(encoder: &mut Encoder, tag: u8, definition: &str) -> Result
     encoder.string(definition)
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct OpaqueMigrationStatement {
     pub path: ProjectPath,
     pub span: ByteSpan,
     pub digest: ObjectId,
     pub reason: String,
 }
-
-jails_support::codec!(struct OpaqueMigrationStatement { path, span, digest, reason });
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CatalogSnapshot {
