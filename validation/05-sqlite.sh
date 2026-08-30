@@ -32,21 +32,24 @@ run jails g value CanonicalTransaction id:string! date:date amountMinor:long \
 # `g repo <Name>` should emit the port/adapter pair the brief asks for, which
 # is otherwise three hand-written files every single time:
 #
-#   app/TransactionRepository.java        interface: findById, findAll, save,
+#   app/CanonicalTransactionRepository.java        interface: findById, findAll, save,
 #                                         deleteById -- no JDBC types in the
 #                                         signature, so the app layer stays
 #                                         persistence-ignorant
-#   adapters/SqliteTransactionRepository.java
+#   adapters/SqliteCanonicalTransactionRepository.java
 #                                         implements it over java.sql, with
 #                                         PreparedStatements (never string
 #                                         concatenation) and try-with-resources
-#   test/.../SqliteTransactionRepositoryTest.java
+#   test/.../SqliteCanonicalTransactionRepositoryTest.java
 #                                         round-trips against an in-memory
 #                                         database from `add sqlite`
 #
 # The <Name> is the entity it stores, so the fields come from the record that
 # already exists rather than being redeclared here.
-run jails g repo Transaction
+# `Transaction` here was a name this workout never declared -- the record
+# above is `CanonicalTransaction`, and the comment says the argument *is*
+# the entity it stores. jails refused it correctly.
+run jails g repo CanonicalTransaction
 
 # Work items are the queue a human reviews.
 run jails g enum  WorkItemState OPEN IN_REVIEW APPROVED REJECTED
@@ -65,21 +68,21 @@ fixtures 05-sqlite import-batch.json replay-sequence.jsonl work-items.json stale
 # ---- assertions ------------------------------------------------------------
 
 section "g repo" "port in app/, adapter in adapters/"
-has "$APP/TransactionRepository.java"      'interface TransactionRepository' 'repository is an interface'
-has "$APP/TransactionRepository.java"      'findById|findAll'                'declares CRUD reads'
+has "$APP/CanonicalTransactionRepository.java"      'interface CanonicalTransactionRepository' 'repository is an interface'
+has "$APP/CanonicalTransactionRepository.java"      'findById|findAll'                'declares CRUD reads'
 # The point of the port: app code must not import java.sql.
-lacks "$APP/TransactionRepository.java"    'java.sql'                        'port is free of JDBC types'
-exists "$ADAPTERS/SqliteTransactionRepository.java" 'SQLite implementation generated'
-has "$ADAPTERS/SqliteTransactionRepository.java" 'implements TransactionRepository' 'adapter implements the port'
-has "$ADAPTERS/SqliteTransactionRepository.java" 'prepareStatement'          'uses PreparedStatement'
-has "$ADAPTERS/SqliteTransactionRepository.java" 'try \(' 'try-with-resources'
+lacks "$APP/CanonicalTransactionRepository.java"    'java.sql'                        'port is free of JDBC types'
+exists "$ADAPTERS/SqliteCanonicalTransactionRepository.java" 'SQLite implementation generated'
+has "$ADAPTERS/SqliteCanonicalTransactionRepository.java" 'implements CanonicalTransactionRepository' 'adapter implements the port'
+has "$ADAPTERS/SqliteCanonicalTransactionRepository.java" 'prepareStatement'          'uses PreparedStatement'
+has "$ADAPTERS/SqliteCanonicalTransactionRepository.java" 'try \(' 'try-with-resources'
 
 section "g repo" "no ORM, no framework"
-lacks "$ADAPTERS/SqliteTransactionRepository.java" 'org.springframework' 'no framework imports'
+lacks "$ADAPTERS/SqliteCanonicalTransactionRepository.java" 'org.springframework' 'no framework imports'
 
 section "g repo" "companion test round-trips"
-exists "$TEST/adapters/SqliteTransactionRepositoryTest.java" 'repository test generated'
-has "$TEST/adapters/SqliteTransactionRepositoryTest.java" 'inMemory|:memory:' 'tests against a temp database'
+exists "$TEST/adapters/SqliteCanonicalTransactionRepositoryTest.java" 'repository test generated'
+has "$TEST/adapters/SqliteCanonicalTransactionRepositoryTest.java" 'inMemory|:memory:' 'tests against a temp database'
 
 section "add sqlite" "migrations"
 exists "$PROJECT/src/main/resources/db/migration/001_init.sql" 'first migration'

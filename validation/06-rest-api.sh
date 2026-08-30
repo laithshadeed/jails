@@ -37,7 +37,10 @@ run jails g value WorkItem id:string! entityId:string! state:WorkItemState reaso
 
 # A page of results. List endpoints need pagination and deterministic
 # ordering, and every one of them wants this same envelope.
-run jails g value Page 'items:list<WorkItem>' total:int offset:int limit:int
+# `offset` and `limit` are both PostgreSQL reserved words, so they are
+# `skip` and `take` here. A page is still a window over a list; nothing
+# about the brief changes.
+run jails g value Page 'items:list<WorkItem>' total:int skip:int take:int
 
 # The headline feature.
 #

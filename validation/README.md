@@ -4,8 +4,9 @@ Ten scripts, one per stacks workout. Each runs a sequence of `jails` commands
 against a throwaway project and asserts on the Java that comes out.
 
 **These are a spec, not a test suite.** A failing script means jails does not
-have a feature yet — not that you did something wrong. As features land, more
-checks go green.
+have a feature yet — *or* that the script asks for something jails has since
+decided is wrong. Both happen now; the 2026-08-30 run below has four of the
+second kind. Read the refusal before changing jails.
 
 ```bash
 ./validation/01-normalise.sh          # one workout
@@ -19,20 +20,64 @@ up on exit. `lib.sh` holds the shared harness (`run`, `has`, `lacks`,
 
 ## Current state
 
-Run on 2026-08-14, after `g enum` / capitalized types / `!`/`?` landed:
+Run on 2026-08-30. **Failures are split by cause**, because the previous table
+counted them together and a reader could not tell a missing feature from a
+missing JDK:
 
-| Workout | Failures | Blocked on |
-| --- | ---: | --- |
-| 01 normalise | **0** | — |
-| 02 reconcile | 9 | `list<T>` |
-| 03 confidence | 6 | `list<T>` |
-| 04 cash application | 13 | `list<T>`, `instant`, `Json.readJsonl` |
-| 05 sqlite | 18 | `g repo` |
-| 06 rest api | 23 | `g handler`, `map<K,V>` |
-| 07 vat | 10 | `list<T>`, `instant` |
-| 08 intercompany | 11 | `list<T>`, `map<K,V>`, `instant` |
-| 09 variance agent | 25 | `g sealed`, `list<T>`, `map<K,V>` |
-| 10 orchestrator | 25 | all of the above |
+| Workout | Real | Environmental | Blocked on |
+| --- | ---: | ---: | --- |
+| 01 normalise | **0** | 2 | — |
+| 02 reconcile | **0** | 2 | — |
+| 03 confidence | **0** | 2 | — |
+| 04 cash application | **0** | 2 | — |
+| 05 sqlite | 8 | 2 | `g repo` names its adapter `Jdbc<Name>Repository`; these expect `Sqlite<Name>Repository` |
+| 06 rest api | **0** | 2 | — |
+| 07 vat | **0** | 2 | — |
+| 08 intercompany | **0** | 2 | — |
+| 09 variance agent | **0** | 2 | — |
+| 10 orchestrator | 1 | 2 | the same `g repo` naming |
+
+The two environmental failures in every workout are the same pair on any
+machine without the full toolchain: `mvn test` needs a JDK matching
+`pom::TARGET_RELEASE` (26; this run had 21, so every build stopped at
+`release version 26 not supported`), and `fixtures` reads `stacks/fixtures/`,
+which is an untracked sibling checkout like `deps/`. Neither says anything
+about jails. **Re-measure on a box with both**, or the "real" column is the
+only column that means anything.
+
+### What changed since 2026-08-14
+
+The old table read 9, 6, 13, 18, 23, 10, 11, 25, 25 failures against
+`list<T>`, `instant`, `map<K,V>`, `g sealed`, `g handler` and `Json.readJsonl`.
+**All of those shipped**, which is what the next section is about, and the
+count went to nine.
+
+Four of the remaining failures were **this directory being stale, not jails**,
+which inverts the assumption at the top of this file. Each was jails having
+grown a refusal these scripts predate, and each fix is the one jails' own
+`fix:` line names:
+
+- workout 04 declared `from` and `to`, and 06 declared `offset` and `limit`.
+  All four are PostgreSQL reserved words and would make the generated SQL
+  invalid; they are `movedFrom`/`movedTo` and `skip`/`take` now.
+- workout 10 declared a record called `Override`. Inside its own package that
+  shadows `java.lang.Override`, which every Java file imports implicitly, so
+  an `Override` component would be typed as the record being declared. It
+  compiles, which is why nothing downstream would report it. It is
+  `DecisionOverride` now.
+- workout 05 ran `g repo Transaction` against a record it had declared as
+  `CanonicalTransaction`, three lines under a comment saying the argument *is*
+  the entity it stores. jails refused a name that was never declared.
+
+**So "a failing script means jails does not have a feature yet" is no longer
+safe to assume** -- it can equally mean the script asks for something jails
+has since decided is wrong. Read the refusal before changing jails.
+
+The nine that remain are one gap, stated once: `g repo` emits a single JDBC
+adapter named `Jdbc<Name>Repository` whatever the dialect, and these workouts
+were written expecting the dialect in the name. That is a real product
+question -- one adapter or one per dialect -- not a stale expectation, so it
+is left failing rather than renamed away.
 
 ## The features these scripts assumed — all seven have shipped
 

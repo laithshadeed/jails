@@ -2248,8 +2248,30 @@ survives.
   and one property stays a test because a macro cannot state it: the wire
   names must be distinct, since two points sharing a string would fire
   together and prove a recovery path with the wrong fault.
-- **G5** — `examples/` carries the proof manifests and `ACCEPTANCE.md`. Still
-  open: the sanitized adopted and reader-edited corpus.
+- **G5** — the proof manifests are promoted: `examples/proof-policy.tsv` is
+  enforced by `tests/cli/examples.rs`, and
+  `example_manifest_policy_covers_every_checked_in_manifest` stops one being
+  added without a tier. The `validation/` workouts were *not* promoted and had
+  rotted: their state table was two weeks stale and the scripts had run
+  against no gate. Measured on 2026-08-30, **eight of ten now have zero real
+  failures**, against a table claiming 9/6/13/18/23/10/11/25/25.
+
+  Four of the failures were the *workouts* being stale rather than jails
+  missing anything -- each was a refusal jails has grown since they were
+  written: `from`, `to`, `offset` and `limit` are PostgreSQL reserved words; a
+  record called `Override` shadows `java.lang.Override` inside its own package
+  and compiles while meaning the wrong thing; and one workout ran `g repo` on
+  a name it had never declared. That inverts the README's own premise, which
+  now says so.
+
+  The nine that remain are one product question, not nine bugs: `g repo` emits
+  a single `Jdbc<Name>Repository` whatever the dialect, and these expect the
+  dialect in the name. Left failing rather than renamed away.
+
+  Still open: promoting the workouts to a *gate* needs a JDK matching
+  `TARGET_RELEASE` and the `stacks/fixtures/` checkout -- every workout's two
+  environmental failures are those two things -- and the sanitized adopted and
+  reader-edited corpus is not started.
 
 **On this machine G1 and the engine suite show 8 failures, all
 `git merge-file` exit 129.** That is git 2.43 against the 2.44+ that
