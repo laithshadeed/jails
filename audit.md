@@ -45,13 +45,18 @@ already paid for once.
 The "Implementation checkpoint" paragraphs in both documents are the
 implementer's own status. They were treated as claims to check, not as facts.
 
-**Environment note, because it changes what a test run means here.**
-`git merge-file --diff-algorithm=` needs git ≥ 2.47; this machine has 2.43,
-so the three-way merge exits 129 and the tests that exercise it fail for that
-reason alone -- 58 of them when counted at `5cec56b`.
-The mise toolchain (JDK 26) is not installed either. Those failures are the
-machine, not the branch; every defect recorded below was reproduced by
-running the binary in a way that does not depend on either.
+**Environment note, because it changes what a test run means here.** The mise
+toolchain (JDK 26) is not installed, so every tier-3 test that shells out to
+Maven fails on `release version 26 not supported`. Those failures are the
+machine, not the branch; every defect recorded below was reproduced by running
+the binary in a way that does not depend on it.
+
+This note used to name a second cause -- `git merge-file --diff-algorithm`
+against git 2.43 -- which took out 58 tests here. That was **not** the machine:
+the flag bought a slightly different diff algorithm and cost the tool every
+Linux distribution shipping git ≤ 2.43, with no preflight and a `fix:` line
+that could not be acted on. It is gone (A5.7), and the 29 tests it had been
+silently hiding are running for the first time.
 
 ---
 
@@ -777,15 +782,6 @@ it is the suite that has to keep testing the compatibility input — and
 `jails-compiler`'s unit tests author in TOML. Neither is a gate protecting the
 old front end, which is what this row was about.
 
-### A5.7 `git merge-file --diff-algorithm=` requires git ≥ 2.47
-
-`crates/jails-workspace/src/merge.rs:42` and legacy
-`crates/jails-prepare/src/merge.rs:108` both pass it. On git 2.43 — Ubuntu
-24.04 LTS, Debian 12, RHEL 9 — it exits 129 and **every regeneration touching
-an already-generated file fails**, which is the D1 loop the product is built
-around. It fails safe (a hard `Err`, no writes), nothing preflights the
-version, and `doctor` does not check it.
-
 ---
 
 ## A6 — craft
@@ -845,13 +841,24 @@ Closed and deleted from this list: the original items 1–4 and 9, then **A1.1**
 exact-plan goldens), **A5.2** (compiler-lock golden), **A1.2b** (closed *by*
 A1.1), **A2.6** (pluralization), **A2.2b** (pre-v1 declaration order),
 **A5.3** (the G1 corpus on JDL v1), **A5.5** (G4 on the canonical executor),
-**A6.1** (module docs, now a ratchet at zero) and **A3.11 / A3.12** (the §9.7
-divergence recorded, and §7.2's derived records).
+**A6.1** (module docs, now a ratchet at zero), **A3.11 / A3.12** (the §9.7
+divergence recorded, and §7.2's derived records) and **A5.7** (the
+`--diff-algorithm` flag, deleted rather than preflighted).
 
 **The ordered list is empty.** What is left in this file is measurement rather
 than work queued behind it: `A3.13`'s three diagnostic vocabularies, `A3.14`'s
 typed artifact IR, `A4.x`, and the residue named inside each closed entry.
 
+**A5.7 is the one that should have been first.** It was filed as a footnote --
+"a one-line preflight in `doctor` whenever somebody wants it" -- and it was
+neither one line nor optional: `--diff-algorithm` bought a marginally different
+merge and cost the tool every Linux distribution shipping git ≤ 2.43, which is
+Ubuntu 24.04 LTS, Debian 12 and RHEL 9. Deleting the flag was two lines and it
+un-hid **29 tests** that had never run on this machine, six of which were
+failing for real reasons: four stale expectations, one `String::replace`
+silently matching nothing, and one refusal that contradicted a test written in
+the same commit. A defect that makes the suite unable to run is not a footnote;
+it is the thing hiding the next six.
+
 `A3.14` (typed artifact IR) is the largest remaining piece of the design and
-was never on the list because it is a phase, not a fix. `A5.7` (git ≥ 2.47) is
-a one-line preflight in `doctor` whenever somebody wants it.
+was never on the list because it is a phase, not a fix.

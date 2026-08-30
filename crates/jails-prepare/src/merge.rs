@@ -105,7 +105,6 @@ pub(crate) fn three_way(
             "-p".into(),
             "--no-diff3".into(),
             "--marker-size=7".into(),
-            "--diff-algorithm=histogram".into(),
             "-L".into(),
             "current".into(),
             "-L".into(),

@@ -43,12 +43,17 @@ the legacy path either moves to the canonical one or goes. That is one
 deliberate commit on a machine with the full toolchain, not a step to slip into
 a session that was doing something else.
 
-Two of the remaining red marks are **this machine, not the branch**: git 2.43
-against the 2.44+ `git merge-file --diff-algorithm` needs, and JDK 21 against
-`TARGET_RELEASE` 26. Both are recorded in `CLAUDE.md`. Any gate measured here
-without them is a measurement of the other tiers -- which is exactly why the
-cutover is not a thing to do from here: the suite that would have to prove it
-cannot fully run on this machine.
+The one remaining red mark is **this machine, not the branch**: JDK 21 against
+`TARGET_RELEASE` 26, so 21 tier-3 tests cannot compile what they generate. It
+is recorded in `CLAUDE.md`. That is exactly why the cutover is not a thing to
+do from here -- the suite that would have to prove it cannot fully run on this
+machine.
+
+There used to be a second red mark, and it was **not** the machine: jails
+passed `--diff-algorithm` to `git merge-file`, a flag git 2.43 does not have,
+so 58 tests died on a usage error. Removing it was two lines and it un-hid 29
+tests that had never run here, six of which were failing for real. A gate that
+cannot run is worth less than no gate, because it reports the same green.
 
 So the next change to this document is the single cutover commit it has been
 building toward.
@@ -2276,9 +2281,8 @@ survives.
   compile graph.
 - **G1** — `tests/differential.rs`, 44 scenarios across both implementations,
   plus five checked-in foreign projects under `tests/corpus/` run through both
-  binaries. Red on this machine only: git 2.43 exits 129 on
-  `git merge-file --diff-algorithm`, which every regeneration over an edited
-  file goes through.
+  binaries. Green here, which it was not until the `--diff-algorithm` flag came
+  off `git merge-file`.
 - **G2** — the inventory half was already held
   (`feature_inventory_covers_the_live_clap_tree_exactly_once`); the journey
   half was not, and now is:
@@ -2393,11 +2397,12 @@ survives.
   entries, which is now somebody dropping a directory in rather than a change
   to this suite.
 
-**On this machine G1 and the engine suite show 8 failures, all
-`git merge-file` exit 129.** That is git 2.43 against the 2.44+ that
-`--diff-algorithm` needs, which `CLAUDE.md` records; 129 is a usage error
-rather than a merge outcome. Any measurement taken here is a measurement of
-the other tiers.
+**G1 and the engine suite are green here now.** They used to show 8 failures,
+all `git merge-file` exit 129 -- git 2.43 against the `--diff-algorithm` flag
+jails passed, which is a usage error rather than a merge outcome. The flag is
+gone: it bought a marginally different diff algorithm and cost the tool every
+distribution shipping git ≤ 2.43. What is still red here is the JDK, and any
+measurement taken here is a measurement of the other tiers.
 
 ### Where each fitness rule stands (2026-08-30)
 

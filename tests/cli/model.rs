@@ -8305,7 +8305,7 @@ fn canonical_database_query_keeps_the_iterative_loop_and_ejects_only_its_adapter
     // property the record's positional constructor is.
     for contract in [
         "implements OpenNotesQuery",
-        "select id, title, status from note",
+        "select id, title, status from notes",
         "new ArrayList<>(List.of(\"title = :title\"))",
         "if (input.status().isPresent())",
         "predicates.add(\"status = :status\")",

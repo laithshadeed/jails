@@ -945,10 +945,9 @@ its verdict meant nothing. It runs the gate now, with a timeout that fits.
 
 **Read the environment note first, because it is the whole reason the numbers
 below are split in two.** The tier-3 tests need a JDK that can compile
-`TARGET_RELEASE`, a Docker daemon, and a `git` new enough for
-`merge-file --diff-algorithm` (2.44+). On a machine missing any of those they
-skip or fail fast, the suite still says something, and **every measurement
-taken there is a measurement of the other two tiers**. Measure with
+`TARGET_RELEASE` and a Docker daemon. On a machine missing either they skip or
+fail fast, the suite still says something, and **every measurement taken there
+is a measurement of the other two tiers**. Measure with
 `JAILS_REQUIRE_TOOLCHAIN=1` or measure nothing.
 
 Measured on a four-core machine with the full toolchain present, so every
@@ -1860,6 +1859,16 @@ jails knows nothing about.
   called from their own test modules back when one binary held everything. If
   a test helper has to cross a crate boundary, it is ordinary public API — or
   it should not exist, which was the answer there.
+- **Never pass a flag to a tool the reader's distribution might not have.**
+  `git merge-file --diff-algorithm=histogram` bought a marginally different
+  merge and cost the tool every Linux distribution shipping git <= 2.43 --
+  Ubuntu 24.04 LTS, Debian 12, RHEL 9 -- where it exits **129**, a usage error
+  rather than a merge outcome, so every regeneration over a file the reader had
+  edited failed. Nothing preflighted it and `doctor` did not check it. It also
+  killed 58 tests here, which is the worse half: a gate that cannot run reports
+  the same green as one that passed, and removing the flag un-hid 29 tests and
+  six real defects underneath them. `git merge-file` with no flag is what the
+  merge uses now.
 - **`cargo clippy` works here now**, and a `.githooks/pre-commit` runs
   `cargo fmt --all --check` and `cargo clippy --workspace --all-targets` before every
   commit, so
@@ -2047,7 +2056,7 @@ other two are not, and each fails in a way that looks like a product bug:
 |---|---|
 | JDK matching `TARGET_RELEASE` | `release version 26 not supported`, ~50 tests red |
 | a running Docker daemon | Testcontainers and the OCI image gate skip |
-| `git` 2.44+ | `git merge-file ended as Exited { code: 129 }` on ~40 merge tests -- `--diff-algorithm` reached `merge-file` in 2.44, and 129 is a usage error, not a merge outcome |
+| a `git` on PATH | `git merge-file` is the three-way merge; any version works |
 
 None of them is optional for a measurement. A run without them exercises the
 first two tiers only, and any timing taken from it describes those two tiers

@@ -39,7 +39,6 @@ pub(crate) fn three_way(
             "merge-file".into(),
             "-p".into(),
             "--no-diff3".into(),
-            "--diff-algorithm=histogram".into(),
             "-L".into(),
             "current".into(),
             "-L".into(),
