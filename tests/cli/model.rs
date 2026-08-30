@@ -877,7 +877,6 @@ app Notes {
         "handler",
         "command",
         "cli",
-        "fetcher",
         "job",
         "http-workflow",
         "http-sink",
@@ -10639,4 +10638,64 @@ fn canonical_client_emits_its_registration_dependency_and_base_url() {
         .unwrap(),
         interface
     );
+}
+
+/// `g fetcher` on a canonical project.
+///
+/// The generated adapter is the whole artifact: fetching a URL a caller
+/// supplies is the one outbound call that can be aimed at the host it runs on,
+/// so every bound it pins is asserted here. A fetcher that lost its redirect
+/// limit or its content-type list would still compile and still pass a
+/// happy-path test.
+#[test]
+fn canonical_fetcher_emits_the_bounds_that_make_it_safe() {
+    let root = temp_dir("canonical-fetcher");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+         platform spring\n  build maven\n  storage none\n}\n",
+    )
+    .unwrap();
+
+    let generated = jails_cmd(&root, None)
+        .args(["g", "fetcher", "Page"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+
+    for relative in [
+        ".jails/generated/main/java/com/example/demo/clients/PageFetcher.java",
+        ".jails/generated/main/java/com/example/demo/clients/SafePageFetcher.java",
+        ".jails/generated/test/java/com/example/demo/clients/SafePageFetcherTest.java",
+    ] {
+        assert!(root.join(relative).exists(), "`{relative}` was not written");
+    }
+
+    let adapter = fs::read_to_string(
+        root.join(".jails/generated/main/java/com/example/demo/clients/SafePageFetcher.java"),
+    )
+    .unwrap();
+    assert!(!adapter.contains("{{"), "{adapter}");
+    for bound in [
+        "jails.fetchers.page.connect-timeout",
+        "jails.fetchers.page.response-timeout",
+        "jails.fetchers.page.max-response-size",
+        "jails.fetchers.page.max-redirects",
+        "jails.fetchers.page.allowed-content-types",
+    ] {
+        assert!(adapter.contains(bound), "`{bound}` is missing from\n{adapter}");
+    }
+
+    // Both dependencies are load-bearing: the JDK client follows a redirect to
+    // a private address without asking, and the adapter's counters need a
+    // registry to record into.
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("httpclient5"), "{pom}");
+    assert!(pom.contains("spring-boot-starter-actuator"), "{pom}");
 }

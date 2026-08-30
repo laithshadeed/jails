@@ -26,6 +26,7 @@ use jails_model::{
 use std::collections::BTreeSet;
 
 mod client;
+mod fetcher;
 
 const MAIN_ROOT: &str = ".jails/generated/main/java";
 const TEST_ROOT: &str = ".jails/generated/test/java";
@@ -37,6 +38,7 @@ pub(crate) fn lower_and_emit(
     for component in model.components.values() {
         let files = match component.kind {
             ComponentKind::Client => client::files(model, component)?,
+            ComponentKind::Fetcher => fetcher::files(model, component)?,
             _ => continue,
         };
         for file in files {
@@ -49,22 +51,28 @@ pub(crate) fn lower_and_emit(
 }
 
 /// The build dependencies this model's components need.
+///
+/// Every one is versionless, which is correct under
+/// `spring-boot-starter-parent` and required rather than merely tidy: a
+/// `<version>` invented here would pin a starter against the reader's Boot.
 pub(crate) fn dependencies(model: &AppModel) -> Vec<BuildDependency> {
     let mut dependencies = Vec::new();
-    if model
-        .components
-        .values()
-        .any(|component| component.kind == ComponentKind::Client)
-    {
-        dependencies.extend(client::DEPENDENCIES.iter().map(|(group, artifact)| {
-            BuildDependency {
-                group: (*group).to_string(),
-                artifact: (*artifact).to_string(),
-                // Managed by `spring-boot-starter-parent`, and a `<version>`
-                // this invented would pin a starter against the reader's Boot.
-                version: None,
-                scope: DependencyScope::Compile,
-            }
+    for (kind, required) in [
+        (ComponentKind::Client, client::DEPENDENCIES),
+        (ComponentKind::Fetcher, fetcher::DEPENDENCIES),
+    ] {
+        if !model
+            .components
+            .values()
+            .any(|component| component.kind == kind)
+        {
+            continue;
+        }
+        dependencies.extend(required.iter().map(|(group, artifact)| BuildDependency {
+            group: (*group).to_string(),
+            artifact: (*artifact).to_string(),
+            version: None,
+            scope: DependencyScope::Compile,
         }));
     }
     dependencies

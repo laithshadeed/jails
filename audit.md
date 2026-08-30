@@ -88,18 +88,18 @@ looked and still worth removing.
 
 ## A1 — coverage
 
-### A1.1 Twenty-one of thirty-nine generators
+### A1.1 Twenty-two of thirty-nine generators
 
 `src/canonical_support.rs` is the authority and is honest code: an exhaustive
 match that stops compiling when a clap variant is added. Its own test pins
-21/39. Capabilities are closed at 25/25.
+22/39. Capabilities are closed at 25/25.
 
-Still legacy: `migration`, `handler`, `command`, `cli`, `cases`, `fetcher`,
-`job`, `http-workflow`, `association`, `http-sink`, `idempotency`, `auth`,
-`webhook`, `search`, `durable-job`, `socket`, `presence`, `seed`.
+Still legacy: `migration`, `handler`, `command`, `cli`, `cases`, `job`,
+`http-workflow`, `association`, `http-sink`, `idempotency`, `auth`, `webhook`,
+`search`, `durable-job`, `socket`, `presence`, `seed`.
 
-**`client` was the first of the framework-shaped component kinds and its
-emitter is the pattern the rest follow.** They do not fit `SourceUnit` --
+**`client` and `fetcher` are the first of the framework-shaped component kinds
+and their emitter is the pattern the rest follow.** They do not fit `SourceUnit` --
 `linker::component` projects the eight unit-shaped kinds onto one and returns
 `None` for the rest -- because one declaration is several files plus a build
 dependency plus properties. `jails-compiler`'s `emit_component` reads
