@@ -1479,6 +1479,35 @@ Doing this properly means `cargo-sweep`, which reads `.fingerprint` rather
 than guessing, and paying to install and cache it. Until someone does, the
 stale 87% rides along, and that is the cheaper of the two.
 
+**Pruning superseded artifacts out of the cargo cache does not pay, and the
+number that makes it look like it should is real.** `cargo` never garbage-
+collects `target/`: each CI run restores the previous run's artifacts and adds
+its own, so a workspace crate accumulates one `.rlib` per historical build
+hash while only the newest is linked. Measured here: `target/debug/deps` at
+**9.68 GB across 2610 files, of which 8.44 GB -- 87% -- was superseded**, and
+deleting it took `target/debug` from 13 GB to 4.6 GB. Against 63s a run spent
+moving the entry (42s restore, 21s save), that looks like an easy ~48s.
+
+It is not, because cargo rebuilds whatever it cannot find, and finding the
+live set exactly is harder than it looks. Three rules were measured:
+
+| keep rule | rebuild cost |
+|---|---|
+| newest per (stem, extension) by mtime | 24s |
+| exactly the `filenames` cargo reports | **150s** |
+| every file sharing a reported artifact's stem | **126s** |
+
+The exact-filenames rule is the trap: `--message-format=json` names a fresh
+dependency's `.rlib` and not the `.rmeta` beside it that pipelined
+compilation reads, so cargo went off rebuilding `tempfile` and `serde_json`.
+Matching by stem fixes that specific case and still misses others -- proc-macro
+and build-script units among the likely candidates. Every rule costs more
+recompilation than the transfer it saves.
+
+Doing this properly means `cargo-sweep`, which reads `.fingerprint` rather
+than guessing, and paying to install and cache it. Until someone does, the
+stale 87% rides along, and that is the cheaper of the two.
+
 **`CARGO_INCREMENTAL=0` on CI is a smaller cache and a slower gate, and the
 gate is what is billed.** The cargo entry really is mostly incremental state --
 4.4 GB of a 13 GB `target/debug` -- and turning it off took the upload from
