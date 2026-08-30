@@ -1,0 +1,23 @@
+# Sanitized real-project corpus. Enforced by tests/differential.rs.
+#
+# `simplify-sol.md` G5 asks for "sanitized adopted and reader-edited
+# Spring/plain projects", each run through legacy and new plan/apply plus
+# semantic comparison and rerun. The synthetic fixture in tests/common/mod.rs
+# covers one adopted shape; this covers the ones that are easier to *check in*
+# than to escape into a Rust string literal, and it grows without touching
+# Rust.
+#
+# Every directory here needs a row and every row needs a directory.
+#
+# `adopt` is what the entry expects `jails adopt` to do, and it is declared
+# per entry because the same outcome is correct for one project and a bug for
+# another -- only the entry knows which:
+#
+#   records:<key>=<value>  one `[layout]` row adoption must write
+#   reports:<dir>          adoption must name <dir> as unrecognised and write
+#                          nothing -- "reported, never guessed at"
+#   nothing                adoption has nothing to learn and writes nothing
+#
+# name	flavour	adopt	what it exercises
+spring-nested-adapters	spring	reports:infra.jdbc	a layer nested two deep. `Config::layers()` honours `adapters = "infra.jdbc"` written by hand, but `adopt` cannot discover one: `jdbc` is a technology rather than a layer name, so it is reported and left alone. Before this entry existed, adopt recorded `adapters = "infra"` -- the grandparent, which holds no Java at all
+plain-flat-package	plain	nothing	a project with no layer directories at all, plus a hand-written record sitting where jails generates -- adoption has nothing to learn and must say so instead of inventing a layout

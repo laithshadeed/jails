@@ -8,7 +8,7 @@
 mod common;
 
 use common::{
-    Adopted, adopted_base, adopted_reader_bytes, temp_dir, write_adopted_fixture,
+    Adopted, TARGET_RELEASE, adopted_base, adopted_reader_bytes, temp_dir, write_adopted_fixture,
     write_plain_fixture, write_spring_fixture,
 };
 use std::collections::BTreeMap;
@@ -2756,5 +2756,323 @@ fn formatting_installs_identically_on_both_implementations() {
     );
     for subject in subjects {
         fs::remove_dir_all(subject.root).ok();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The sanitized real-project corpus — `simplify-sol.md` G5.
+// ---------------------------------------------------------------------------
+
+/// Where the checked-in projects live. See `tests/corpus/README.md`.
+fn corpus_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus")
+}
+
+/// One row of `tests/corpus/policy.tsv`.
+struct CorpusEntry {
+    name: String,
+    spring: bool,
+    adopt: Adoption,
+}
+
+/// What an entry expects `jails adopt` to discover.
+///
+/// Declared per entry rather than asserted uniformly, because "nothing to
+/// adopt" is a *correct* answer for a project whose directories jails would
+/// have chosen anyway and a bug for one whose layout it must learn. A single
+/// shape for both would have to be the weaker of the two.
+enum Adoption {
+    /// One `[layout]` row adoption must write.
+    Records { key: String, value: String },
+    /// Adoption must name this directory as unrecognised and write nothing.
+    ///
+    /// "An unrecognised directory is reported not guessed" is one of adopt's
+    /// three rules, and it is the one this distinguishes from [`Self::Nothing`]:
+    /// a project *with* a directory jails cannot classify must say which,
+    /// because silence there is indistinguishable from having looked and found
+    /// nothing to do.
+    Reports { directory: String },
+    /// Adoption has nothing to learn, and writes nothing.
+    Nothing,
+}
+
+/// The policy, parsed.
+///
+/// Four-column-ish rather than free text so a row cannot be added without
+/// saying which flavour it is and what it is for -- the same reason
+/// `examples/proof-policy.tsv` is a table.
+fn corpus_policy() -> Vec<CorpusEntry> {
+    let source = fs::read_to_string(corpus_root().join("policy.tsv"))
+        .expect("the corpus policy is checked in");
+    source
+        .lines()
+        .filter(|line| !line.trim().is_empty() && !line.starts_with('#'))
+        .map(|line| {
+            let mut fields = line.split('\t');
+            let name = fields.next().expect("a policy row starts with a name");
+            let flavour = fields
+                .next()
+                .unwrap_or_else(|| panic!("corpus row `{name}` has no flavour column"));
+            let adopt = fields
+                .next()
+                .unwrap_or_else(|| panic!("corpus row `{name}` has no adopt column"));
+            let exercises = fields.next().unwrap_or_default();
+            assert!(
+                !exercises.trim().is_empty(),
+                "corpus row `{name}` does not say what it exercises -- an entry \
+                 nobody can explain is one nobody can decide to delete"
+            );
+            assert!(
+                matches!(flavour, "spring" | "plain"),
+                "corpus row `{name}` has flavour `{flavour}`; use spring or plain"
+            );
+            let adopt = match adopt.strip_prefix("reports:") {
+                Some(directory) => Adoption::Reports {
+                    directory: directory.to_string(),
+                },
+                None => match adopt.strip_prefix("records:") {
+                Some(pair) => {
+                    let (key, value) = pair.split_once('=').unwrap_or_else(|| {
+                        panic!("corpus row `{name}` adopt expectation is not `key=value`")
+                    });
+                    Adoption::Records {
+                        key: key.to_string(),
+                        value: value.to_string(),
+                    }
+                }
+                None => {
+                    assert_eq!(
+                        adopt, "nothing",
+                        "corpus row `{name}` adopt column must be `records:k=v`, `reports:<dir>` or `nothing`"
+                    );
+                    Adoption::Nothing
+                }
+                },
+            };
+            CorpusEntry {
+                name: name.to_string(),
+                spring: flavour == "spring",
+                adopt,
+            }
+        })
+        .collect()
+}
+
+/// A directory with no row is a project nothing runs; a row with no directory
+/// is a claim about coverage that is not there.
+///
+/// Both silent, and the second is worse: the suite would report a corpus it
+/// does not have. Same rule as `example_manifest_policy_covers_every_checked_in_manifest`.
+#[test]
+fn the_corpus_policy_covers_every_checked_in_project() {
+    let root = corpus_root();
+    let mut on_disk: Vec<String> = fs::read_dir(&root)
+        .expect("tests/corpus exists")
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            entry
+                .path()
+                .is_dir()
+                .then(|| entry.file_name().to_string_lossy().into_owned())
+        })
+        .collect();
+    on_disk.sort();
+    let mut declared: Vec<String> = corpus_policy().into_iter().map(|row| row.name).collect();
+    declared.sort();
+    assert_eq!(
+        declared, on_disk,
+        "tests/corpus/policy.tsv and the directories beside it disagree"
+    );
+    assert!(
+        !on_disk.is_empty(),
+        "the corpus is empty -- G5 asks for sanitized adopted projects, and a \
+         harness with nothing in it reports exactly what a passing one does"
+    );
+}
+
+/// Every corpus project, through both implementations.
+///
+/// **The corpus is bytes rather than a Rust table, and that is the point.**
+/// `write_adopted_fixture` covers one adopted shape and cannot grow without
+/// somebody escaping a project into string literals; this grows by dropping a
+/// directory in. `simplify-sol.md` G5 asks for "sanitized adopted and
+/// reader-edited Spring/plain projects", and a corpus that only a Rust
+/// programmer can extend is not one.
+///
+/// What is compared is what the *reader* can see. The two implementations keep
+/// their generated Java in different places by design, so asserting on private
+/// state would compare the thing that is meant to differ; the questions are
+/// whether adoption left the reader's own bytes alone, whether it learned the
+/// layout they actually use, and whether a second run settles.
+#[test]
+fn every_corpus_project_is_treated_the_same_by_both_implementations() {
+    for entry in corpus_policy() {
+        let source = corpus_root().join(&entry.name);
+        let subjects = [
+            (
+                "legacy",
+                std::env::var_os("JAILS_LEGACY_BIN")
+                    .unwrap_or_else(|| OsString::from(env!("CARGO_BIN_EXE_jails"))),
+            ),
+            ("canonical", OsString::from(env!("CARGO_BIN_EXE_jails"))),
+        ]
+        .map(|(name, binary)| {
+            let root = temp_dir(&format!("corpus-{}-{name}", entry.name));
+            copy_corpus(&source, &root);
+            Subject {
+                name,
+                binary,
+                record: root.join("pom.xml"),
+                root,
+            }
+        });
+
+        for subject in &subjects {
+            let before = reader_tree(&subject.root);
+            let manifest = subject.root.join("jails.toml");
+
+            match &entry.adopt {
+                Adoption::Records { key, value } => {
+                    subject.succeeds(&["adopt"]);
+                    let recorded = fs::read_to_string(&manifest).unwrap_or_else(|error| {
+                        panic!(
+                            "{}: {} adopted without writing jails.toml: {error}",
+                            entry.name, subject.name
+                        )
+                    });
+                    assert!(
+                        recorded.contains(&format!("{key} = \"{value}\"")),
+                        "{}: {} did not record `{key} = {value}`:\n{recorded}",
+                        entry.name,
+                        subject.name
+                    );
+                }
+                Adoption::Reports { directory } => {
+                    // Reported *by name*. A refusal that does not say which
+                    // directory it could not classify leaves the reader
+                    // unable to tell "I looked and there was nothing" from "I
+                    // found something I do not understand" -- and the second
+                    // is the one they can act on.
+                    let output = subject.run(&["adopt"]);
+                    let said = String::from_utf8_lossy(&output.stdout).into_owned()
+                        + &String::from_utf8_lossy(&output.stderr);
+                    assert!(
+                        said.contains(directory.as_str()),
+                        "{}: {} did not name `{directory}` as unrecognised:\n{said}",
+                        entry.name,
+                        subject.name
+                    );
+                    assert!(
+                        !manifest.exists(),
+                        "{}: {} wrote a jails.toml for a directory it could not classify",
+                        entry.name,
+                        subject.name
+                    );
+                }
+                Adoption::Nothing => {
+                    // A refusal, and an *empty-handed* one: inventing a
+                    // `[layout]` for a project that does not need one would
+                    // pin a layout nobody chose, and every later command would
+                    // read it as the reader's decision.
+                    let output = subject.run(&["adopt"]);
+                    assert!(
+                        !output.status.success(),
+                        "{}: {} claimed to adopt a project with no layout to learn",
+                        entry.name,
+                        subject.name
+                    );
+                    assert!(
+                        !manifest.exists(),
+                        "{}: {} wrote a jails.toml while refusing to adopt",
+                        entry.name,
+                        subject.name
+                    );
+                }
+            }
+
+            // Adoption is a read of the project and at most one line of
+            // configuration -- never a rewrite of the reader's source.
+            let after_adopt = reader_tree(&subject.root);
+            assert_eq!(
+                before, after_adopt,
+                "{}: {} rewrote the reader's source while adopting",
+                entry.name, subject.name
+            );
+
+            // A read-only command has to work on a foreign tree at all, which
+            // is the cheapest proof that the layout was understood rather than
+            // merely tolerated. `beans` is Spring's question; `routes` reads
+            // source and answers on either.
+            subject.succeeds(&["routes"]);
+            if entry.spring {
+                subject.succeeds(&["beans"]);
+            }
+
+            // ... and running it again settles, rather than stacking a second
+            // `[layout]` or a second refusal that changes something.
+            let _ = subject.run(&["adopt"]);
+            assert_eq!(
+                reader_tree(&subject.root),
+                after_adopt,
+                "{}: {} did not settle on a second adopt",
+                entry.name,
+                subject.name
+            );
+        }
+    }
+}
+
+/// Every reader-owned file under the project, by relative path.
+///
+/// Deliberately excludes `.jails/` and `target/`: the first is each
+/// implementation's own bookkeeping, which is *meant* to differ between them,
+/// and comparing it would be comparing the thing under test with itself.
+fn reader_tree(root: &Path) -> BTreeMap<String, String> {
+    let mut files = BTreeMap::new();
+    collect_reader_files(root, root, &mut files);
+    files
+}
+
+fn collect_reader_files(root: &Path, dir: &Path, out: &mut BTreeMap<String, String>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        if name == ".jails" || name == "target" || name == "jails.toml" {
+            continue;
+        }
+        if path.is_dir() {
+            collect_reader_files(root, &path, out);
+        } else if let Ok(text) = fs::read_to_string(&path) {
+            let relative = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            out.insert(relative, text);
+        }
+    }
+}
+
+/// Copy one corpus project into a scratch root, substituting `{TARGET_RELEASE}`.
+///
+/// The substitution is why this is not a plain recursive copy: a pom pinning a
+/// release literal would go stale the next time the default moves, and a
+/// corpus that has to be edited when an unrelated constant changes is one
+/// nobody keeps.
+fn copy_corpus(source: &Path, destination: &Path) {
+    fs::create_dir_all(destination).unwrap();
+    for entry in fs::read_dir(source).unwrap().flatten() {
+        let from = entry.path();
+        let to = destination.join(entry.file_name());
+        if from.is_dir() {
+            copy_corpus(&from, &to);
+        } else {
+            let text = fs::read_to_string(&from)
+                .unwrap_or_else(|error| panic!("{}: {error}", from.display()));
+            fs::write(&to, text.replace("{TARGET_RELEASE}", TARGET_RELEASE)).unwrap();
+        }
     }
 }

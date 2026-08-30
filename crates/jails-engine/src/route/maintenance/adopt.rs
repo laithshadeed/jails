@@ -52,9 +52,21 @@ pub fn adopt_layout(run: &Run) -> Result<Outcome> {
         let relative = super::relative_path(project, &absolute)?;
         reads = reads.file(relative.clone());
         if let Some(rest) = relative.to_string().strip_prefix(&prefix)
-            && let Some((name, _)) = rest.split_once('/')
+            // **The whole package-relative directory, not its first segment.**
+            // `split_once` took the first, so a class in `infra/jdbc` was
+            // recorded as `adapters = "infra"` -- a package holding no Java at
+            // all, only the subpackage the class is really in. That is exactly
+            // what the comment above says this walk exists to prevent: every
+            // later command would have been pointed at an empty tree, and
+            // `Config::layers()` honours a nested layout perfectly well, so
+            // nothing downstream would have reported it.
+            //
+            // `rsplit_once` also keeps the file-at-the-base case out: a
+            // `.java` directly under the base package has no `/` and is in no
+            // subpackage.
+            && let Some((package, _)) = rest.rsplit_once('/')
         {
-            names.insert(name.to_string());
+            names.insert(package.replace('/', "."));
         }
     }
     let names: Vec<String> = names.into_iter().collect();

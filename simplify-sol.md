@@ -14,22 +14,27 @@ that is not met yet.**
 | capabilities | **25 of 25** |
 | component kinds with a backend | **23 of 23** -- `every_component_kind_is_emitted_or_refused` has no refusal left to reach |
 | architecture fitness rules | all thirteen held: nine by a test, four by a type or by Cargo. One added that the list did not have. See *Where each fitness rule stands* |
-| merge gates | G0, G2, G3, G4 green; G1 green apart from this machine's git; G5 partial. See *Where the gates stand* |
-| deletion map | **not started, and deliberately** |
+| merge gates | G0, G2, G3, G4 green; G1 green apart from this machine's git; G5 has its harness and wants entries. See *Where the gates stand* |
+| deletion map | **not started**, and blocked on one additive thing: more corpus entries |
 
 **Why the deletion has not happened.** The *Integration and one coordinated
 cutover* section makes it step 5 through 7, after "all gates pass", and two
 things block that honestly rather than incidentally:
 
-- **G1 is the oracle.** The differential suite compares the legacy binary
-  against the new one, scenario by scenario. Deleting the legacy path deletes
-  the thing the gate measures against, so the cutover is one irreversible
-  change that must land when the evidence is complete -- not incrementally as
-  each crate looks unused.
-- **G5 is incomplete.** The proof manifests are promoted and the workouts are
-  measured, but the sanitized adopted and reader-edited Spring/plain corpus
-  does not exist. That corpus is the one that would catch what the goldens
-  cannot: a real project somebody has edited.
+- **G1 survives the deletion, and this document said how.** Step 6 keeps "the
+  frozen old binary fixture needed by compatibility tests", and
+  `scripts/verify-rewrite-g1-canary.sh` is it: the legacy side is built from a
+  frozen git revision, and the script *refuses* when that revision resolves to
+  HEAD, because comparing the binary under test with itself passes every
+  assertion and means nothing. So the differential gate keeps working after
+  the legacy crates are gone. This was recorded here as a blocker on
+  2026-08-30 and it was wrong; checking beat asserting.
+- **G5 is incomplete.** The proof manifests are promoted, the workouts are
+  measured and the sanitized corpus now exists with two entries -- one of
+  which found an `adopt` defect the moment it was written. What it does not
+  have yet is *volume*: two shapes is a harness, not a corpus, and the value
+  is in the shapes nobody has thought to check in. That is the one thing left
+  between here and the cutover, and it is additive.
 
 Two of the remaining red marks are **this machine, not the branch**: git 2.43
 against the 2.44+ `git merge-file --diff-algorithm` needs, and JDK 21 against
@@ -2309,10 +2314,29 @@ survives.
   a single `Jdbc<Name>Repository` whatever the dialect, and these expect the
   dialect in the name. Left failing rather than renamed away.
 
+  **The sanitized corpus now exists**: `tests/corpus/` holds checked-in
+  project trees jails did not write, with `policy.tsv` accounting for every
+  one, and `every_corpus_project_is_treated_the_same_by_both_implementations`
+  runs each through both binaries. The point of bytes over the existing Rust
+  fixture is that it grows without a Rust change -- a corpus only a Rust
+  programmer can extend is not a corpus.
+
+  **It found a real defect on its second entry**, which is the argument for
+  having one. `jails adopt` read only the *first* package segment, so a class
+  in `infra/jdbc` was adopted as `adapters = "infra"` -- the grandparent,
+  which holds no Java at all. Every later command would have been pointed at
+  an empty tree and nothing would have said so, because `Config::layers()`
+  honours a nested layout perfectly well and had no way to know that one was
+  invented. It contradicted adopt's own comment, three lines above the bug,
+  saying the walk exists to stop exactly that. Fixed: the whole
+  package-relative directory is recorded, the synonym table reads its leaf,
+  and an unrecognised leaf is reported by name rather than guessed at.
+
   Still open: promoting the workouts to a *gate* needs a JDK matching
   `TARGET_RELEASE` and the `stacks/fixtures/` checkout -- every workout's two
-  environmental failures are those two things -- and the sanitized adopted and
-  reader-edited corpus is not started.
+  environmental failures are those two things -- and the corpus wants more
+  entries, which is now somebody dropping a directory in rather than a change
+  to this suite.
 
 **On this machine G1 and the engine suite show 8 failures, all
 `git merge-file` exit 129.** That is git 2.43 against the 2.44+ that
