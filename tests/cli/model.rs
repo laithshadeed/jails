@@ -11114,7 +11114,9 @@ fn canonical_handlers_share_one_error_envelope_without_a_framework() {
     )
     .unwrap();
     assert!(
-        envelope.contains("public record ApiError(String code, String message, Map<String, String> details)"),
+        envelope.contains(
+            "public record ApiError(String code, String message, Map<String, String> details)"
+        ),
         "{envelope}"
     );
 }
