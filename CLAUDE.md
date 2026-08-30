@@ -1145,6 +1145,24 @@ local repository:
 anything**. Sixteen of those runs finish under 8s and are almost nothing but
 that floor; nine runs of 20-45s carry 212s of genuine work.
 
+**That distribution is out of date, and re-profiling before acting on it is
+the difference between a 9s saving and a 100s one.** Re-measured 2026-08-30
+with the same `JAILS_TEST_PROFILE`: 37 Maven runs, **730.2s**, and only
+**seven runs under 9s totalling 39.3s**. The cheap-floor tail this paragraph
+sends you after has essentially gone; batching all of it would buy about nine
+seconds of wall. The cost had moved to a family the paragraph does not
+mention -- **13 `canonical_*_pack_*` tests at an average 20.4s, 265.5s
+together** -- each writing a Spring fixture, enabling one capability, and
+appending a whole `mvn test` to prove the result compiles. Grouping by family
+rather than by duration is what makes that visible:
+
+| family | total | n | avg |
+|---|---|---|---|
+| capability-pack | 265.5s | 13 | 20.4s |
+| canonical loops and others | 188.6s | 18 | 10.5s |
+| proof-app | 163.0s | 3 | 54.3s |
+| toolbox (already batched) | 113.1s | 3 | 37.7s |
+
 **And the second test class in a run is free.** The same project built with
 one, two, four and eight `@SpringBootTest` classes, one Maven invocation each:
 6.56s, 6.48s, 6.44s, 6.49s. Spring caches a context per configuration inside

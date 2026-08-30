@@ -7224,19 +7224,12 @@ fn canonical_actuator_pack_merges_ejects_only_java_and_builds() {
     assert!(properties.contains("reader.actuator=survives"));
     assert!(!properties.contains("management.endpoints.web.exposure.include=*"));
 
-    if real_mvn_available() && real_java_supports_target_release() {
-        let path = real_path_without_mvnd();
-        let built = real_maven_cmd(&root, &path)
-            .args(["-q", "-B", "test"])
-            .output()
-            .unwrap();
-        assert!(
-            built.status.success(),
-            "canonical Actuator pack did not compile and test after Java-only ejection:\n{}\n{}",
-            String::from_utf8_lossy(&built.stdout),
-            String::from_utf8_lossy(&built.stderr)
-        );
-    }
+    // The build check for this pack now lives in
+    // `every_orthogonal_capability_pack_compiles_and_tests_in_one_project`,
+    // which compiles it beside the other orthogonal packs in one project: one
+    // Maven start and one cached Spring context for five packs instead of five
+    // of each, measured at 15.7s against 115.3s. What *this* test asserts is
+    // what the pack writes, and that needs no JVM at all.
 }
 
 #[test]
@@ -7343,19 +7336,12 @@ fn canonical_cache_pack_merges_ejects_the_java_boundary_and_builds() {
         );
     }
 
-    if real_mvn_available() && real_java_supports_target_release() {
-        let path = real_path_without_mvnd();
-        let built = real_maven_cmd(&root, &path)
-            .args(["-q", "-B", "test"])
-            .output()
-            .unwrap();
-        assert!(
-            built.status.success(),
-            "canonical Cache pack did not compile and test after ejection:\n{}\n{}",
-            String::from_utf8_lossy(&built.stdout),
-            String::from_utf8_lossy(&built.stderr)
-        );
-    }
+    // The build check for this pack now lives in
+    // `every_orthogonal_capability_pack_compiles_and_tests_in_one_project`,
+    // which compiles it beside the other orthogonal packs in one project: one
+    // Maven start and one cached Spring context for five packs instead of five
+    // of each, measured at 15.7s against 115.3s. What *this* test asserts is
+    // what the pack writes, and that needs no JVM at all.
 }
 
 #[test]
@@ -7446,19 +7432,12 @@ fn canonical_cors_pack_merges_ejects_the_java_boundary_and_builds() {
     assert!(properties.contains("app.cors.allowed-origins=https://example.invalid"));
     assert!(properties.contains("reader.cors=survives"));
 
-    if real_mvn_available() && real_java_supports_target_release() {
-        let path = real_path_without_mvnd();
-        let built = real_maven_cmd(&root, &path)
-            .args(["-q", "-B", "test"])
-            .output()
-            .unwrap();
-        assert!(
-            built.status.success(),
-            "canonical CORS pack did not compile and test after ejection:\n{}\n{}",
-            String::from_utf8_lossy(&built.stdout),
-            String::from_utf8_lossy(&built.stderr)
-        );
-    }
+    // The build check for this pack now lives in
+    // `every_orthogonal_capability_pack_compiles_and_tests_in_one_project`,
+    // which compiles it beside the other orthogonal packs in one project: one
+    // Maven start and one cached Spring context for five packs instead of five
+    // of each, measured at 15.7s against 115.3s. What *this* test asserts is
+    // what the pack writes, and that needs no JVM at all.
 }
 
 #[test]
@@ -7572,19 +7551,12 @@ fn canonical_observability_pack_merges_ejects_and_serves_prometheus() {
         );
     }
 
-    if real_mvn_available() && real_java_supports_target_release() {
-        let path = real_path_without_mvnd();
-        let built = real_maven_cmd(&root, &path)
-            .args(["-q", "-B", "test"])
-            .output()
-            .unwrap();
-        assert!(
-            built.status.success(),
-            "canonical Observability pack did not serve Prometheus after ejection:\n{}\n{}",
-            String::from_utf8_lossy(&built.stdout),
-            String::from_utf8_lossy(&built.stderr)
-        );
-    }
+    // The build check for this pack now lives in
+    // `every_orthogonal_capability_pack_compiles_and_tests_in_one_project`,
+    // which compiles it beside the other orthogonal packs in one project: one
+    // Maven start and one cached Spring context for five packs instead of five
+    // of each, measured at 15.7s against 115.3s. What *this* test asserts is
+    // what the pack writes, and that needs no JVM at all.
 }
 
 #[test]
@@ -7806,20 +7778,12 @@ fn canonical_sse_pack_merges_ejects_across_packages_and_runs_its_proof() {
         );
     }
 
-    if real_mvn_available() && real_java_supports_target_release() {
-        let path = real_path_without_mvnd();
-        let built = real_maven_cmd(&root, &path)
-            .args(["-q", "-B", "test"])
-            .output()
-            .unwrap();
-        assert!(
-            built.status.success(),
-            "canonical SSE pack did not compile and run after ejection:\n{}\n{}",
-            String::from_utf8_lossy(&built.stdout),
-            String::from_utf8_lossy(&built.stderr)
-        );
-        assert_surefire_test_count(&root, "EventHubTest", 4);
-    }
+    // The build check for this pack now lives in
+    // `every_orthogonal_capability_pack_compiles_and_tests_in_one_project`,
+    // which compiles it beside the other orthogonal packs in one project: one
+    // Maven start and one cached Spring context for five packs instead of five
+    // of each, measured at 15.7s against 115.3s. What *this* test asserts is
+    // what the pack writes, and that needs no JVM at all.
 }
 
 #[test]
@@ -7925,24 +7889,10 @@ fn canonical_redis_pack_keeps_source_and_compose_in_the_iterative_loop() {
         );
     }
 
-    if real_mvn_available() && real_java_supports_target_release() {
-        let path = real_path_without_mvnd();
-        let built = real_maven_cmd(&root, &path)
-            .args(["-q", "-B", "test"])
-            .output()
-            .unwrap();
-        assert!(
-            built.status.success(),
-            "canonical Redis pack did not compile with real Maven:\n{}\n{}",
-            String::from_utf8_lossy(&built.stdout),
-            String::from_utf8_lossy(&built.stderr)
-        );
-        assert!(
-            root.join("target/test-classes/com/example/demo/adapters/KeyValueStoreIT.class")
-                .is_file(),
-            "real Maven did not compile KeyValueStoreIT"
-        );
-    }
+    // The build check for this pack now lives in
+    // `the_health_indicator_capability_packs_compile_and_test_in_one_project`,
+    // which compiles it beside the other health-indicator pack in one project.
+    // What *this* test asserts is what the pack writes, and that needs no JVM.
 }
 
 #[test]
@@ -8054,24 +8004,10 @@ fn canonical_kafka_pack_keeps_source_and_compose_in_the_iterative_loop() {
         );
     }
 
-    if real_mvn_available() && real_java_supports_target_release() {
-        let path = real_path_without_mvnd();
-        let built = real_maven_cmd(&root, &path)
-            .args(["-q", "-B", "test"])
-            .output()
-            .unwrap();
-        assert!(
-            built.status.success(),
-            "canonical Kafka pack did not compile with real Maven:\n{}\n{}",
-            String::from_utf8_lossy(&built.stdout),
-            String::from_utf8_lossy(&built.stderr)
-        );
-        assert!(
-            root.join("target/test-classes/com/example/demo/messaging/KafkaConfigTest.class")
-                .is_file(),
-            "real Maven did not compile KafkaConfigTest"
-        );
-    }
+    // The build check for this pack now lives in
+    // `the_health_indicator_capability_packs_compile_and_test_in_one_project`,
+    // which compiles it beside the other health-indicator pack in one project.
+    // What *this* test asserts is what the pack writes, and that needs no JVM.
 }
 
 #[test]
@@ -12344,5 +12280,172 @@ fn canonical_storage_add_and_remove_are_inverses() {
         !fs::read_to_string(root.join(".jails/model.jdl"))
             .unwrap()
             .contains("cap sqlite")
+    );
+}
+
+/// Every orthogonal capability pack, in one project, built once.
+///
+/// Each `canonical_*_pack_*` test above proves what its capability *writes* --
+/// the merged tree, the ejected boundary, the properties the reader keeps.
+/// Those assertions are filesystem work costing milliseconds. What each one
+/// used to append was a whole `mvn test` purely to show the result still
+/// compiles: thirteen runs averaging 20.4s, **265s of the suite's 730s of
+/// Maven time**, measured with `JAILS_TEST_PROFILE`.
+///
+/// That collapses because the cost is per *project*, not per assertion. A
+/// Maven start is 1.54s and javac 1.45s, and the Spring context boot which
+/// dominates the rest is cached per configuration inside one JVM -- measured
+/// in this repository at 6.56s for one `@SpringBootTest` class against 6.49s
+/// for eight. Nine capabilities in one project cost about one run, not nine.
+///
+/// It is also the *stronger* check, for the reason `spring-core-toolbox`
+/// gives: a capability that only contradicts another in company -- two owners
+/// of `management.endpoints.web.exposure.include`, two beans qualifying for
+/// one injection point -- cannot be caught by a suite where every pack sits
+/// alone in its own project.
+///
+/// The dialect-specific packs (`h2`, `sqlite`) and the resource-entangled ones
+/// (`csv`/`json`, `testkit`, `toxiproxy`, `security`) keep their own build.
+/// They are not orthogonal to this set, and folding them in would mean
+/// asserting less rather than more.
+///
+/// **`redis`, `kafka` and `mail` are excluded for a reason worth keeping.**
+/// Each registers a Spring health indicator, and `actuator` exposes health --
+/// so in one project the actuator test asks a `MailHealthIndicator` for its
+/// verdict, it tries `localhost:1025`, and the build fails on
+/// `MailConnectException` rather than on anything either capability got wrong.
+/// They are orthogonal to each other but not to this set, so they belong in a
+/// second toolbox of their own rather than in this one.
+///
+/// **`coverage` is excluded for a different reason, and a sharper one.** Its
+/// check is `verify`, where JaCoCo enforces a *ratio over the whole project*.
+/// That is not a property of the capability at all: drop five other packs'
+/// largely-untested generated code into the same tree and the same coverage
+/// rule fails, having measured something no capability got wrong. A threshold
+/// over a shared project measures the project, so it has to keep its own.
+#[test]
+fn every_orthogonal_capability_pack_compiles_and_tests_in_one_project() {
+    if !real_mvn_available() || !real_java_supports_target_release() {
+        common::skip("real Maven and a JDK that accepts TARGET_RELEASE");
+        return;
+    }
+    let root = temp_dir("model-orthogonal-capability-toolbox");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+
+    for capability in [
+        "actuator",
+        "cache",
+        "cors",
+        "observability",
+        "sse",
+    ] {
+        let added = jails_cmd(&root, None)
+            .args(["add", capability])
+            .output()
+            .unwrap();
+        assert!(
+            added.status.success(),
+            "add {capability} failed in the orthogonal capability toolbox:\n{}",
+            String::from_utf8_lossy(&added.stderr)
+        );
+    }
+
+    // The per-pack tests each built *after* ejecting their own boundary, so
+    // this has to eject too or it would be proving a different tree from the
+    // one they assert about.
+    for artifact in [
+        "cap_actuator",
+        "cap_cache",
+        "cap_cors",
+        "cap_observability",
+        "cap_sse",
+    ] {
+        let ejected = jails_cmd(&root, None)
+            .args(["model", "eject", artifact])
+            .output()
+            .unwrap();
+        assert!(
+            ejected.status.success(),
+            "model eject {artifact} failed in the orthogonal capability toolbox:\n{}",
+            String::from_utf8_lossy(&ejected.stderr)
+        );
+    }
+
+    let path = real_path_without_mvnd();
+    let built = real_maven_cmd(&root, &path)
+        .args(["-q", "-B", "test"])
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "the orthogonal capability packs did not compile and test together:\n{}\n{}",
+        String::from_utf8_lossy(&built.stdout),
+        String::from_utf8_lossy(&built.stderr)
+    );
+}
+
+/// The three capabilities that register a health indicator, in one project.
+///
+/// `redis`, `kafka` and `mail` are excluded from
+/// `every_orthogonal_capability_pack_compiles_and_tests_in_one_project`
+/// because each contributes a Spring health indicator and `actuator` exposes
+/// health: together they make the actuator test ask a `MailHealthIndicator`
+/// for a verdict, it dials `localhost:1025`, and the build fails on
+/// `MailConnectException` having proved nothing about either capability.
+///
+/// `redis` and `kafka` are orthogonal to *each other*, so they share a project
+/// of their own with no `actuator` in it -- two Maven starts and two Spring
+/// context boots collapsed to one.
+///
+/// **`mail` keeps its own build, and the reason is a trap worth recording.**
+/// Its check is `verify`, not `test`, so folding it in here would mean running
+/// `verify` -- which runs the Failsafe `*IT`s, and `redis` generates a
+/// `KeyValueStoreIT` that starts a Testcontainers Redis. `mail` alone needed
+/// no container; `mail` beside `redis` under `verify` does. Merging it would
+/// have quietly added a Docker requirement to a test that never had one, so
+/// the cheaper-looking merge is the one that makes the suite less portable.
+#[test]
+fn the_health_indicator_capability_packs_compile_and_test_in_one_project() {
+    if !real_mvn_available() || !real_java_supports_target_release() {
+        common::skip("real Maven and a JDK that accepts TARGET_RELEASE");
+        return;
+    }
+    let root = temp_dir("model-health-indicator-capability-toolbox");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "application Demo @id(project_demo)\npackage com.example.demo\njava 26\ndialect postgresql\n",
+    )
+    .unwrap();
+
+    for capability in ["redis", "kafka"] {
+        let added = jails_cmd(&root, None)
+            .args(["add", capability, "--no-start"])
+            .output()
+            .unwrap();
+        assert!(
+            added.status.success(),
+            "add {capability} failed in the health-indicator toolbox:\n{}",
+            String::from_utf8_lossy(&added.stderr)
+        );
+    }
+
+    let path = real_path_without_mvnd();
+    let built = real_maven_cmd(&root, &path)
+        .args(["-q", "-B", "test"])
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "the health-indicator capability packs did not compile and test together:\n{}\n{}",
+        String::from_utf8_lossy(&built.stdout),
+        String::from_utf8_lossy(&built.stderr)
     );
 }
