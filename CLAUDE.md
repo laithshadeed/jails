@@ -1366,6 +1366,17 @@ So the irreducible part of a 314s job is a 217s gate and 97s of overhead, of
 which 63s is moving the cargo entry on and off the runner. A commit that does
 change code adds its compile to the 217s and nothing else.
 
+**One run proves nothing about this job, and that is the trap most of this
+section's history was written by.** Two runs that compiled *nothing* -- both
+documentation-only commits against a warm cache -- measured the gate at 217s
+and 261s, restore at 42s and 52s, and the whole job at 316s and 343s. So the
+noise floor on a GitHub runner is about ±40s, or 13%, for byte-identical work.
+Any change smaller than that is invisible in a single pair of runs, and a
+threshold set without knowing this ("if the next run is over 316s, revert")
+will reverse a correct change about half the time. Verify a CI change by the
+*step it targets* -- `Save cargo` going 21s -> `skipped` is unambiguous --
+and only then ask whether the total moved, over several runs.
+
 **Read the gate's 217s against the concurrency numbers below before trying to
 cut it**: `tests/cli` is 81% utilised on four cores with zero permit queueing,
 so it is within a quarter of a perfect packing and there is no slack there to
