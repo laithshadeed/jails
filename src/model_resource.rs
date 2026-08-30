@@ -258,12 +258,21 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
                 request.entity
             ))
         })?;
-    if has_database && !entity.facets.contains(&Facet::Repository) {
-        return Err(Failure::Told(format!(
-            "canonical entity `{}` has no stored repository facet.\n       fix: evolve a stored entity, or edit a source-only record declaration directly",
-            entity.label
-        )));
-    }
+    // **Whether a field add touches SQL is a question about this entity, not
+    // about the project.** A source-only record has no table whatever else the
+    // project stores, so adding a field to one is a Java projection change with
+    // no migration and nothing to backfill -- which is exactly what the policy
+    // below already does for a project with no database at all, and what its
+    // "a source-only record has no rows to backfill" arm already says.
+    //
+    // `has_database` was standing in for that, and it is only equivalent while
+    // every entity in a stored project is itself stored. A refusal forced that
+    // assumption to hold, at the cost of making the same operation on the same
+    // kind of entity depend on an unrelated project property: `g record` then
+    // `g field` works in a project with no database and was refused in one that
+    // has a database elsewhere. Asking the entity removes the special case
+    // rather than moving it.
+    let stored = has_database && entity.facets.contains(&Facet::Repository);
     let entity_id = entity.id.clone();
     let entity_label = entity.label.clone();
     let entity_java_name = entity.names.java_type.clone();
@@ -278,7 +287,7 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
         &request.default_literal,
         request.backfill_file.as_deref(),
         parsed.required,
-        has_database,
+        stored,
     ) {
         (Some(value), None, true, true) => {
             (FieldAddPolicy::BackfillLiteral(value.clone()), Vec::new())
