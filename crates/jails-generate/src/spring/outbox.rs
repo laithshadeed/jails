@@ -401,26 +401,12 @@ fn outbox_it_java(
     )
 }
 
+/// **The DDL lives in `templates/sql/outbox.sql`, and both engines read it.**
+/// The canonical emitter renders the same table, and two copies of a
+/// schema drift on exactly the column nobody re-reads -- a `select`
+/// naming one the `create table` never had, found by `flyway migrate` in
+/// a project that was working yesterday. `CLAUDE.md` states the rule for
+/// the project files; it is the same rule.
 fn outbox_migration(table: &str) -> String {
-    format!(
-        "-- Transactional outbox: business writes and event staging share one commit.\n\
-         create table {table} (\n\
-           id uuid primary key,\n\
-           payload jsonb not null,\n\
-           state text not null check (state in ('PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED')),\n\
-           attempts integer not null check (attempts >= 0),\n\
-           max_attempts integer not null check (max_attempts > 0),\n\
-           next_attempt_at timestamptz not null,\n\
-           lease_until timestamptz,\n\
-           last_error text,\n\
-           created_at timestamptz not null,\n\
-           completed_at timestamptz,\n\
-           -- Which sinks have already accepted this event. A row is only as\n\
-           -- atomic as its worst sink, so a retry has to skip the ones that\n\
-           -- succeeded or they see the event once per attempt.\n\
-           delivered text[] not null default '{{}}'\n\
-         );\n\n\
-         create index {table}_runnable_idx on {table} (state, next_attempt_at)\n\
-           where state in ('PENDING', 'RUNNING');\n"
-    )
+    crate::template_here!("sql/outbox.sql").replace("{{table}}", table)
 }

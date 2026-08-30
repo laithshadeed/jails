@@ -72,7 +72,12 @@ pub(super) fn scheduling(model: &AppModel) -> Result<Option<Emitted>, CompileErr
             // crashed node forever.
             matches!(
                 component.kind,
-                jails_model::ComponentKind::Job | jails_model::ComponentKind::Presence
+                jails_model::ComponentKind::Job
+                    | jails_model::ComponentKind::Presence
+                    // A traversal claims its frontier on a schedule, and
+                    // without the config the claim never runs: the run sits
+                    // QUEUED forever and nothing says why.
+                    | jails_model::ComponentKind::HttpWorkflow
             )
         })
         .map(|component| component.id.as_str().to_string())

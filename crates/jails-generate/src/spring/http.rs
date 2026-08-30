@@ -401,49 +401,12 @@ pub(crate) fn http_workflow_files(
     ])
 }
 
+/// **The DDL lives in `templates/sql/http_workflow.sql`, and both engines read it.**
+/// The canonical emitter renders the same table, and two copies of a
+/// schema drift on exactly the column nobody re-reads -- a `select`
+/// naming one the `create table` never had, found by `flyway migrate` in
+/// a project that was working yesterday. `CLAUDE.md` states the rule for
+/// the project files; it is the same rule.
 fn http_workflow_migration(table: &str) -> String {
-    format!(
-        "create table {table}_runs (\n\
-           id uuid primary key,\n\
-           seed_url text not null,\n\
-           origin_scheme text not null,\n\
-           origin_host text not null,\n\
-           origin_port integer not null,\n\
-           status text not null check (status in ('QUEUED','RUNNING','SUCCEEDED','FAILED','CANCELLED')),\n\
-           max_pages integer not null check (max_pages > 0),\n\
-           max_depth integer not null check (max_depth >= 0),\n\
-           pages_visited integer not null default 0 check (pages_visited >= 0),\n\
-           robots_rules text,\n\
-           cancel_requested boolean not null default false,\n\
-           last_error text,\n\
-           created_at timestamptz not null,\n\
-           started_at timestamptz,\n\
-           finished_at timestamptz\n\
-         );\n\n\
-         create table {table}_frontier (\n\
-           run_id uuid not null references {table}_runs(id) on delete cascade,\n\
-           url text not null,\n\
-           depth integer not null check (depth >= -1),\n\
-           kind text not null check (kind in ('POLICY','PAGE')),\n\
-           state text not null check (state in ('PENDING','RUNNING','SUCCEEDED','FAILED','CANCELLED')),\n\
-           attempts integer not null default 0 check (attempts >= 0),\n\
-           max_attempts integer not null check (max_attempts > 0),\n\
-           next_attempt_at timestamptz not null,\n\
-           lease_until timestamptz,\n\
-           last_error text,\n\
-           primary key (run_id, url)\n\
-         );\n\n\
-         create index {table}_frontier_runnable_idx\n\
-           on {table}_frontier (state, next_attempt_at)\n\
-           where state in ('PENDING','RUNNING');\n\n\
-         create table {table}_pages (\n\
-           run_id uuid not null references {table}_runs(id) on delete cascade,\n\
-           url text not null,\n\
-           depth integer not null check (depth >= 0),\n\
-           status_code integer not null,\n\
-           content_type text not null,\n\
-           discovered_at timestamptz not null,\n\
-           primary key (run_id, url)\n\
-         );\n"
-    )
+    crate::template_here!("sql/http_workflow.sql").replace("{{table}}", table)
 }

@@ -1,5 +1,5 @@
 -- Transactional outbox: business writes and event staging share one commit.
-create table receive_message_outbox (
+create table {{table}} (
   id uuid primary key,
   payload jsonb not null,
   state text not null check (state in ('PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED')),
@@ -16,5 +16,5 @@ create table receive_message_outbox (
   delivered text[] not null default '{}'
 );
 
-create index receive_message_outbox_runnable_idx on receive_message_outbox (state, next_attempt_at)
+create index {{table}}_runnable_idx on {{table}} (state, next_attempt_at)
   where state in ('PENDING', 'RUNNING');

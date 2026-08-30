@@ -771,6 +771,22 @@ app Notes {
         ],
         vec!["set", "server.port=8080"],
         vec!["g", "event", "TaskCreated", "id", "title", "--on", "Task"],
+        // A *second* event, and the difference between the two is the point:
+        // `id:uuid` is a component the row does not carry, minted when the
+        // event is staged. `TaskCreated` projects the row's id and is
+        // published directly -- an event cannot be both, because a staged
+        // event keyed on the resource id deduplicates the wrong thing.
+        vec![
+            "g",
+            "event",
+            "TaskStaged",
+            "id:uuid",
+            "title",
+            "--on",
+            "Task",
+        ],
+        // The outbox store encodes the staged payload with `Json`.
+        vec!["add", "json"],
         vec![
             "g",
             "usecase",
@@ -825,6 +841,16 @@ app Notes {
             "--method",
             "post",
         ],
+        vec![
+            "g",
+            "usecase",
+            "StageTask",
+            "title",
+            "--on",
+            "Task",
+            "--yields",
+            "TaskStaged",
+        ],
         vec!["g", "fetcher", "Remote"],
         vec!["g", "job", "Sweep"],
         vec!["g", "http-workflow", "Crawl", "--on", "RemoteFetcher"],
@@ -833,9 +859,9 @@ app Notes {
             "http-sink",
             "Delivery",
             "--on",
-            "CreateTask",
+            "StageTask",
             "--yields",
-            "TaskCreated",
+            "TaskStaged",
         ],
         vec!["g", "idempotency", "Request"],
         // The encoder, the decoder and the filter chain that reads the token
@@ -877,7 +903,7 @@ app Notes {
     // that the CLI exited zero, which is exactly how `audit.md` A1.2 stayed
     // invisible: fourteen of these wrote a declaration, reported success, and
     // emitted nothing at all.
-    const UNSERVED: &[&str] = &["http-workflow", "http-sink", "durable-job"];
+    const UNSERVED: &[&str] = &["durable-job"];
     for command in commands {
         let output = jails_cmd(&root, None).args(&command).output().unwrap();
         if UNSERVED.contains(&command[1]) {
@@ -943,6 +969,8 @@ app Notes {
         "@version(\"1.18.3\") @scope(test)",
         "prop server.port = \"8080\" @id(set_",
         "event TaskCreated(id, title) @id(op_task_created)",
+        "event TaskStaged(id: uuid, title) @id(op_task_staged)",
+        "deliver outbox",
         "route POST \"/tasks\"",
         "limit 50",
         "emit task_created",

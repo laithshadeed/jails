@@ -604,8 +604,9 @@ const fn component_kind_is_emitted(kind: jails_model::ComponentKind) -> bool {
         | Kind::Presence
         | Kind::Socket
         | Kind::HttpSink
+        | Kind::HttpWorkflow
         | Kind::Webhook => true,
-        Kind::HttpWorkflow | Kind::DurableJob => false,
+        Kind::DurableJob => false,
     }
 }
 
@@ -660,8 +661,8 @@ mod tests {
             .count();
         assert_eq!(ComponentKind::ALL.len(), 23);
         assert_eq!(
-            emitted, 21,
-            "twenty-one kinds have a compiler backend today"
+            emitted, 22,
+            "twenty-two kinds have a compiler backend today"
         );
 
         // The refusal is reachable, not merely written down.
@@ -919,6 +920,75 @@ mod tests {
             "{error}"
         );
     }
+
+    /// A traversal reaches the network only through a bounded fetcher.
+    ///
+    /// Every URL after the seed came off a page somebody else wrote, so the
+    /// port is a security boundary rather than a convenience -- which is why
+    /// `on` pointing anywhere else refuses. The rest of what this pins is the
+    /// durability: the frontier is a table, and the claim that drains it is
+    /// scheduled, so the config that turns scheduling on has to be there.
+    #[test]
+    fn an_http_workflow_traverses_through_its_fetcher_and_keeps_its_frontier_in_sql() {
+        let model = jails_model::parse_jdl(WORKFLOW_MODEL).unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
+        let plan = Compiler::compile(&snapshot, None).expect("an http workflow has a backend");
+        let file = |suffix: &str| {
+            let file = plan
+                .generated
+                .files
+                .iter()
+                .find(|(path, _)| path.as_str().ends_with(suffix))
+                .map(|(_, file)| file)
+                .unwrap_or_else(|| panic!("no rendered file ends with `{suffix}`"));
+            String::from_utf8(file.bytes.clone()).unwrap()
+        };
+        let workflow = file("/CrawlWorkflow.java");
+        assert!(workflow.contains("SiteFetcher"), "{workflow}");
+        assert!(workflow.contains("crawl_frontier"), "{workflow}");
+        file("/CrawlWorkflowController.java");
+        file("/CrawlWorkflowIT.java");
+        // The claim runs on a schedule, and without this the run sits QUEUED
+        // forever with nothing to say why.
+        file("/SchedulingConfig.java");
+        let migration = plan
+            .migrations
+            .iter()
+            .find(|migration| migration.logical_name == "create_crawl_workflow")
+            .expect("the frontier needs its tables");
+        let sql = String::from_utf8(migration.bytes.clone()).unwrap();
+        for table in ["crawl_runs", "crawl_frontier", "crawl_pages"] {
+            assert!(sql.contains(&format!("create table {table}")), "{sql}");
+        }
+    }
+
+    /// The fetcher is the bound, so anything else in its place refuses.
+    #[test]
+    fn an_http_workflow_traversing_through_a_client_refuses_by_name() {
+        let model = jails_model::parse_jdl(&WORKFLOW_MODEL.replace(
+            "component fetcher Site {\n}",
+            "component client Site {\n  route GET \"/pages\"\n}",
+        ))
+        .unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
+        let error = Compiler::compile(&snapshot, None)
+            .expect_err("a traversal through an unbounded client must refuse");
+        assert!(
+            error
+                .to_string()
+                .contains("which is a client rather than a fetcher"),
+            "{error}"
+        );
+    }
+
+    /// A traversal and the fetcher it goes through.
+    const WORKFLOW_MODEL: &str = "jdl 1\napp Demo {\n  pkg com.example.demo\n  java 26\n  \
+         platform spring\n  build maven\n  storage postgres\n}\n\n\
+         component fetcher Site {\n}\n\ncomponent http-workflow Crawl {\n  on site\n}\n";
 
     /// One task, staged through an outbox: the model every test above varies.
     const OUTBOX_MODEL: &str = "jdl 1\napp Demo {\n  pkg com.example.demo\n  java 26\n  \

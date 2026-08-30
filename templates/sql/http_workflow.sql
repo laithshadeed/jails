@@ -1,4 +1,4 @@
-create table site_walk_runs (
+create table {{table}}_runs (
   id uuid primary key,
   seed_url text not null,
   origin_scheme text not null,
@@ -16,8 +16,8 @@ create table site_walk_runs (
   finished_at timestamptz
 );
 
-create table site_walk_frontier (
-  run_id uuid not null references site_walk_runs(id) on delete cascade,
+create table {{table}}_frontier (
+  run_id uuid not null references {{table}}_runs(id) on delete cascade,
   url text not null,
   depth integer not null check (depth >= -1),
   kind text not null check (kind in ('POLICY','PAGE')),
@@ -30,12 +30,12 @@ create table site_walk_frontier (
   primary key (run_id, url)
 );
 
-create index site_walk_frontier_runnable_idx
-  on site_walk_frontier (state, next_attempt_at)
+create index {{table}}_frontier_runnable_idx
+  on {{table}}_frontier (state, next_attempt_at)
   where state in ('PENDING','RUNNING');
 
-create table site_walk_pages (
-  run_id uuid not null references site_walk_runs(id) on delete cascade,
+create table {{table}}_pages (
+  run_id uuid not null references {{table}}_runs(id) on delete cascade,
   url text not null,
   depth integer not null check (depth >= 0),
   status_code integer not null,

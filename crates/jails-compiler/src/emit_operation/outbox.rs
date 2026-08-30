@@ -342,29 +342,11 @@ fn rendered(
 
 /// The table, and the partial index the relay claims through.
 ///
-/// The columns are the store's: it is one file, and a DDL written from memory
-/// beside a statement written from the template is how a `select` names a
-/// column the `create table` never had.
+/// **The DDL is `templates/sql/outbox.sql`, shared with the legacy engine.**
+/// It is one table and the store's statements are one file, so a second copy
+/// drifts on exactly the column nobody re-reads -- a `select` naming one the
+/// `create table` never had, found by `flyway migrate` in a project that was
+/// working yesterday.
 fn migration(table: &str) -> String {
-    format!(
-        "-- Transactional outbox: the business write and the event share one commit.\n\
-         create table {table} (\n\
-        \x20 id uuid primary key,\n\
-        \x20 payload jsonb not null,\n\
-        \x20 state text not null check (state in ('PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED')),\n\
-        \x20 attempts integer not null check (attempts >= 0),\n\
-        \x20 max_attempts integer not null check (max_attempts > 0),\n\
-        \x20 next_attempt_at timestamptz not null,\n\
-        \x20 lease_until timestamptz,\n\
-        \x20 last_error text,\n\
-        \x20 created_at timestamptz not null,\n\
-        \x20 completed_at timestamptz,\n\
-        \x20 -- Which sinks have already accepted this event. A row is only as\n\
-        \x20 -- atomic as its worst sink, so a retry has to skip the ones that\n\
-        \x20 -- succeeded or they see the event once per attempt.\n\
-        \x20 delivered text[] not null default '{{}}'\n\
-         );\n\n\
-         create index {table}_runnable_idx on {table} (state, next_attempt_at)\n\
-        \x20 where state in ('PENDING', 'RUNNING');\n"
-    )
+    include_str!("../../../../templates/sql/outbox.sql").replace("{{table}}", table)
 }

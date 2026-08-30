@@ -88,20 +88,29 @@ looked and still worth removing.
 
 ## A1 — coverage
 
-### A1.1 Thirty-three of thirty-nine generators
+### A1.1 Thirty-four of thirty-nine generators
 
 `src/canonical_support.rs` is the authority and is honest code: an exhaustive
 match that stops compiling when a clap variant is added. Its own test pins
-33/39. Capabilities are closed at 25/25.
+34/39. Capabilities are closed at 25/25.
 
-Still legacy: `migration`, `http-workflow`, `association`, `search`,
-`durable-job`, `seed`.
+Still legacy: `migration`, `association`, `search`, `durable-job`, `seed`.
 
-**Three of those were blocked on A1.7 rather than on an emitter.** A1.7 is
-closed, so `http-sink` went through immediately -- it is two files and a
-property against the `<Command>OutboxSink` port the outbox already renders --
-and `http-workflow` and `durable-job` are each an emitter away rather than a
-design away.
+**`http-workflow` was never blocked on A1.7**, whatever this file said before:
+it fetches through a `fetcher` component and keeps its frontier in PostgreSQL,
+and neither is the outbox. `http-sink` genuinely was, and went through
+immediately once there was a `<Command>OutboxSink` port to implement.
+`durable-job` is the one still waiting, and it is an emitter away rather than
+a design away.
+
+**Both migrations' DDL moved to `templates/sql/`**, read by `include_str!` from
+both engines. It is the rule `CLAUDE.md` gives for the project files, and the
+cost of ignoring it is worse for a schema than for a workflow file: a `select`
+naming a column the `create table` never had is found by `flyway migrate`, in
+a project that was working yesterday. The extraction also fixed the DDL's
+indentation, which was never a choice -- a Rust `\`-continued string literal
+swallows the newline *and* the next line's leading whitespace, so every column
+came out at column zero.
 
 **The table gates the `.jails/model.toml` route only.** A project on
 `.jails/model.jdl` goes straight to the JDL frontend, which refuses an

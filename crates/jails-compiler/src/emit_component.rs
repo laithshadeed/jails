@@ -32,6 +32,7 @@ mod command;
 mod fetcher;
 mod handler;
 mod http_sink;
+mod http_workflow;
 mod idempotency;
 mod job;
 mod presence;
@@ -59,6 +60,7 @@ pub(crate) fn lower_and_emit(
             ComponentKind::Socket => socket::files(model, component)?,
             ComponentKind::Webhook => webhook::files(model, component)?,
             ComponentKind::HttpSink => http_sink::files(model, component)?,
+            ComponentKind::HttpWorkflow => http_workflow::files(model, component)?,
             _ => continue,
         };
         for file in files {
@@ -93,6 +95,7 @@ pub(crate) fn migrations(
 ) -> Vec<jails_contracts::RenderedMigration> {
     let mut migrations = idempotency::migrations(accepted, next);
     migrations.extend(presence::migrations(accepted, next));
+    migrations.extend(http_workflow::migrations(accepted, next));
     migrations
 }
 
@@ -121,6 +124,7 @@ pub(crate) fn dependencies(model: &AppModel) -> Vec<BuildDependency> {
         (ComponentKind::Fetcher, fetcher::DEPENDENCIES),
         (ComponentKind::Socket, socket::DEPENDENCIES),
         (ComponentKind::HttpSink, http_sink::DEPENDENCIES),
+        (ComponentKind::HttpWorkflow, http_workflow::DEPENDENCIES),
     ] {
         if !model
             .components
