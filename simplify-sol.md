@@ -2245,6 +2245,53 @@ Parallel AI throughput handles the volume; the E2E firewall handles the risk.
 
 ## What `new` has to become first (2026-08-30, measured)
 
+**Spring and Gradle `new` are the half of that step still open**, and an
+attempt at them on 2026-08-30 is worth recording for what it measured rather
+than for what it landed.
+
+The two refusals below are not what blocks it. Both close the same way
+`new-cli`'s did: seed the model, render the pom's dependency block through
+`jails_workspace::maven_dependency_block` so the first canonical command is a
+no-op over the build file, and move the six default properties from
+`write_default_properties` into `prop` declarations so the compiler owns those
+keys. With that in place `add db`, `add fake`, `add csv`, `g record`,
+`g command`, `g cli` and `jails set server.shutdown` all ran the compiler on a
+freshly created Spring project and created no legacy ledger.
+
+What it cost was visible only under the full gate with a real toolchain --
+`JAILS_REQUIRE_TOOLCHAIN=1` on JDK 26 with Maven and Docker -- and three of the
+four things it found are fixed on the branch independently of the flip:
+
+1. **`ensure_command_registration` matched its own Javadoc.** The dispatcher
+   jails writes carries `commands.put(ImportCommand.NAME, ImportCommand::run);`
+   as an example, and the guard read raw source, so `g command Import`
+   registered nothing and `g cli` then moved `<mainClass>` out from under a
+   dispatcher it believed was in use.
+2. **A route method without a path was refused rather than derived**, though
+   both engines lower a route-less component to `/{label}`.
+3. **A Boot 2 Gradle project read as not Spring at all**, because the version
+   sniffer knew only `plugins { id ... version ... }`; with the version finally
+   visible, canonical `db` turned out to have no Boot 3.1 floor.
+4. **The canonical controller's companion test was weaker than the legacy
+   one** -- it read the route back off the handler by reflection, which holds
+   whenever the annotation is present, including when the application cannot
+   start or two controllers claim the path. It drives MockMvc now, in both the
+   `MockMvcTester` and classic shapes.
+
+**The rule is (4), not (1).** The first three were refusals and wrong answers
+and stopped the suite. The fourth was a *silently weaker generated test*: the
+reflection assertion passes, so a flip landed against a suite that only had to
+stay green would have shipped it. **Flipping a surface to the compiler means
+reading what it emits against what the legacy engine emitted**, not watching
+the tests go green.
+
+**What the Spring flip still needs**, beyond the above: `app apply` has no
+compiler backend, and `CLAUDE.md` makes every advertised follow-up workflow a
+precondition. A project driven by a manifest must therefore be created with
+`jails new --app`, which stays legacy on purpose -- `.jails/app.toml` *is* the
+legacy manifest and a project must never have two editable sources. That is
+what the shared test toolboxes do.
+
 **The cutover's first step is not deleting anything. It is `new`.**
 
 `model_command::owns` is the whole canonical switch -- a project is canonical

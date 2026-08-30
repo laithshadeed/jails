@@ -225,6 +225,21 @@ capability. Installation/removal reconciles the build through the exact
 document backend; never call the legacy fast-test precondition for a canonical
 project.
 
+**The controller's companion test drives MockMvc, not reflection.**
+`emit_unit::controller_test` issues a real request through the dispatcher, in
+the `MockMvcTester` shape on Boot 4 and the classic `perform(...)` shape below
+it -- sniffed on the Boot major, like `@AutoConfigureMockMvc`'s package, with
+`spring-boot-starter-webmvc-test` declared where Boot 4 split that slice out of
+`spring-boot-starter-test`. It replaced a test that read the route back off the
+handler's annotation, which holds whenever the annotation is present: when the
+application cannot start, when two controllers claim the path, and when the
+method is never dispatched. **That is the failure mode to look for when a
+surface moves to the compiler** -- the canonical backend's refusals and wrong
+answers are loud, and a weaker generated test is not. A route jails cannot
+drive (a declared return type, or a request body it cannot construct) is still
+emitted whole and `@Disabled`, asserting status only, because guessing a value
+would not compile and emitting nothing would drop the coverage silently.
+
 Linked `command`, `query`, `transition` and `event` operations already emit
 typed managed Java ABI. This proves operations are compiler nodes rather than
 dead manifest metadata. Familiar `g usecase|query|transition|event` frontends

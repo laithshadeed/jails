@@ -34,7 +34,7 @@ pub(crate) fn emit(
     observed: &Observed<'_>,
 ) -> Result<(), CompileError> {
     emit_capability::lower_and_emit(model, output, observed)?;
-    emit_java::lower_and_emit(model, output, observed.spring_boot.is_some())?;
+    emit_java::lower_and_emit(model, output, observed.spring_boot)?;
     emit_operation::lower_and_emit(model, output)?;
     emit_operation::outbox::lower_and_emit(model, output)?;
     emit_component::lower_and_emit(model, output)?;

@@ -350,6 +350,31 @@ impl Compiler {
                 dependencies.push(required);
             }
         }
+        // Boot 4 split the servlet test slice out of `spring-boot-starter-test`,
+        // so `@AutoConfigureMockMvc` and `MockMvcTester` are no longer on the
+        // test classpath by default -- and every controller jails emits comes
+        // with a companion test that uses both. Below Boot 4 the classes are in
+        // `spring-boot-test-autoconfigure`, already present, which is why this
+        // is keyed on the major rather than declared unconditionally.
+        if emit_capability::boot_major(snapshot.project.spring_boot.as_deref())
+            .is_some_and(|major| major >= 4)
+            && next_model
+                .units
+                .values()
+                .any(|unit| unit.kind == jails_model::UnitKind::Controller)
+        {
+            let required = BuildDependency {
+                group: "org.springframework.boot".to_string(),
+                artifact: "spring-boot-starter-webmvc-test".to_string(),
+                version: None,
+                scope: DependencyScope::Test,
+            };
+            if !dependencies.iter().any(|declared| {
+                declared.group == required.group && declared.artifact == required.artifact
+            }) {
+                dependencies.push(required);
+            }
+        }
         if next_model
             .capabilities
             .values()

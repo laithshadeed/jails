@@ -11,7 +11,7 @@ const JAVA_TEST_ROOT: &str = ".jails/generated/test/java";
 pub(crate) fn lower_and_emit(
     model: &AppModel,
     output: &mut RenderedTree,
-    spring_boot: bool,
+    spring_boot: Option<&str>,
 ) -> Result<(), CompileError> {
     for source in model.units.values() {
         for unit in lower(source, model, spring_boot)? {
@@ -43,7 +43,7 @@ struct Unit {
 fn lower(
     source: &SourceUnit,
     model: &AppModel,
-    spring_boot: bool,
+    spring_boot: Option<&str>,
 ) -> Result<Vec<Unit>, CompileError> {
     let id = source.id.as_str();
     let package = &placed(source, model);
@@ -66,10 +66,10 @@ fn lower(
         )?]);
     }
     if source.kind == UnitKind::Strategy {
-        return lower_strategy(source, model, spring_boot);
+        return lower_strategy(source, model, spring_boot.is_some());
     }
     if source.kind == UnitKind::Controller {
-        return lower_controller(source, model);
+        return lower_controller(source, model, spring_boot);
     }
     let main_body = match source.kind {
         UnitKind::Class => format!("public final class {type_name} {{\n}}"),
@@ -387,7 +387,145 @@ fn lower_strategy(
     Ok(units)
 }
 
-fn lower_controller(source: &SourceUnit, model: &AppModel) -> Result<Vec<Unit>, CompileError> {
+/// What the generated controller test needs to know about its endpoint.
+///
+/// A parameter object because six positional arguments of which four are
+/// `&str` is the shape this file already gets wrong elsewhere, and because
+/// `exercisable` and `spring_boot` are the two that decide everything.
+struct ControllerTest<'a> {
+    stem: &'a str,
+    handler: &'a str,
+    path: &'a str,
+    /// Whether the test can drive the route and assert its answer.
+    exercisable: bool,
+    /// The captured Spring Boot version, which picks the MockMvc entry point.
+    spring_boot: Option<&'a str>,
+}
+
+/// The Spring Boot major at which `MockMvcTester` can be relied on.
+///
+/// It arrived in Spring Framework 6.2, which is Boot 3.4 -- but the captured
+/// version is read as a major and nothing finer, so the threshold is drawn at
+/// 4 rather than guessed at 3-point-something. A Boot 3.4+ project therefore
+/// gets the classic entry point it does not strictly need, which costs a
+/// fluent chain; a Boot 2 project given the fluent one would not compile, and
+/// the error would name a package rather than a version.
+const MOCKMVC_TESTER_BOOT_MAJOR: u32 = 4;
+
+/// The controller's companion test: a request through the real dispatcher.
+///
+/// **This asserts the route answers, not that the annotation says so.** The
+/// test this replaced read the mapping back off the handler by reflection,
+/// which holds whenever the annotation is present -- including when the
+/// application cannot start, the path collides with another controller, or the
+/// method is never dispatched. The legacy engine has driven MockMvc here since
+/// controllers existed, and a canonical project must not be handed the weaker
+/// check for having moved engines.
+///
+/// Two shapes, because the entry point moved. `MockMvcTester` is Spring's
+/// AssertJ front end and needs no `throws Exception`; `perform(...)` has
+/// existed since Spring 3 and still does in 7, so it is the fallback rather
+/// than the other way round -- the shape that compiles everywhere is the one
+/// to reach for when the version cannot be established.
+fn controller_test(test: ControllerTest<'_>) -> (BTreeSet<String>, String) {
+    let ControllerTest {
+        stem,
+        handler,
+        path,
+        exercisable,
+        spring_boot,
+    } = test;
+    let boot_major = crate::emit_capability::boot_major(spring_boot);
+    let modern = boot_major.is_some_and(|major| major >= MOCKMVC_TESTER_BOOT_MAJOR);
+
+    let mut imports = BTreeSet::from([
+        "org.junit.jupiter.api.Test".to_string(),
+        "org.springframework.beans.factory.annotation.Autowired".to_string(),
+        "org.springframework.boot.test.context.SpringBootTest".to_string(),
+        mockmvc_autoconfigure_import(boot_major).to_string(),
+    ]);
+    if !exercisable {
+        imports.insert("org.junit.jupiter.api.Disabled".to_string());
+    }
+    let disabled = if exercisable {
+        String::new()
+    } else {
+        "    @Disabled(\"todo: implement the handler, then delete this @Disabled\")\n".to_string()
+    };
+
+    let (mvc_type, throws, invocation) = if modern {
+        imports.insert("static org.assertj.core.api.Assertions.assertThat".to_string());
+        imports.insert("org.springframework.test.web.servlet.assertj.MockMvcTester".to_string());
+        let assertion = if exercisable {
+            format!(
+                "                .hasStatusOk()\n                .bodyText()\n                .isEqualTo(\"{stem}\")"
+            )
+        } else {
+            // Status only. The body is whatever the reader writes, and
+            // asserting a shape jails invented would test jails' guess.
+            "                .hasStatus2xxSuccessful()".to_string()
+        };
+        (
+            "MockMvcTester",
+            "",
+            format!("        assertThat(mvc.{handler}().uri(\"{path}\"))\n{assertion};"),
+        )
+    } else {
+        imports.insert(format!(
+            "static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.{handler}"
+        ));
+        imports.insert(
+            "static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status"
+                .to_string(),
+        );
+        imports.insert("org.springframework.test.web.servlet.MockMvc".to_string());
+        let assertion = if exercisable {
+            // `content()` is a second static import, and only the exercisable
+            // shape asserts a body.
+            imports.insert(
+                "static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content"
+                    .to_string(),
+            );
+            format!(
+                "\n                .andExpect(status().isOk())\n                .andExpect(content().string(\"{stem}\"))"
+            )
+        } else {
+            "\n                .andExpect(status().is2xxSuccessful())".to_string()
+        };
+        (
+            "MockMvc",
+            // `perform` declares it, and that is the honest cost of the shape
+            // that compiles everywhere.
+            " throws Exception",
+            format!("        mvc.perform({handler}(\"{path}\")){assertion};"),
+        )
+    };
+
+    let body = format!(
+        "@SpringBootTest\n@AutoConfigureMockMvc\nclass {stem}ControllerTest {{\n\n    @Autowired private {mvc_type} mvc;\n\n    @Test\n{disabled}    void {handler}Answers(){throws} {{\n{invocation}\n    }}\n\n    // Reader-owned tests belong below this stable boundary.\n}}"
+    );
+    (imports, body)
+}
+
+/// `@AutoConfigureMockMvc`'s package, which Boot 4 moved with no shim.
+///
+/// The same sniff `emit_capability` does for its own templates. Below Boot 4
+/// -- and when the version cannot be read at all -- the legacy package is the
+/// safe answer: it is where the class has always been, and a project too old
+/// to have the new one is exactly the project that would fail to compile.
+fn mockmvc_autoconfigure_import(boot_major: Option<u32>) -> &'static str {
+    if boot_major.is_some_and(|major| major >= 4) {
+        "org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc"
+    } else {
+        "org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc"
+    }
+}
+
+fn lower_controller(
+    source: &SourceUnit,
+    model: &AppModel,
+    spring_boot: Option<&str>,
+) -> Result<Vec<Unit>, CompileError> {
     let endpoint = source.endpoint.as_ref().ok_or_else(|| {
         CompileError::new(format!(
             "controller `{}` has no HTTP endpoint",
@@ -470,23 +608,19 @@ fn lower_controller(source: &SourceUnit, model: &AppModel) -> Result<Vec<Unit>, 
     )?;
     controller.file.provenance.ejection_id = Some(ejection_id.clone());
 
-    let parameter_types = endpoint
-        .accepts
-        .as_ref()
-        .map(|request| format!(", {request}.class"))
-        .unwrap_or_default();
-    let mut test_imports = BTreeSet::from([
-        "org.junit.jupiter.api.Test".to_string(),
-        "static org.junit.jupiter.api.Assertions.assertEquals".to_string(),
-        format!("org.springframework.web.bind.annotation.{mapping}"),
-    ]);
-    if let Some(request) = endpoint.accepts.as_ref() {
-        test_imports.insert(format!("{domain}.{request}"));
-    }
-    let test_body = format!(
-        "class {stem}ControllerTest {{\n\n    @Test\n    void exposesTheDeclaredRoute() throws Exception {{\n        var handler = {type_name}.class.getDeclaredMethod(\"{handler}\"{parameter_types});\n        var mapping = handler.getAnnotation({mapping}.class);\n        assertEquals(\"{}\", mapping.path()[0]);\n    }}\n\n    // Reader-owned tests belong below this stable boundary.\n}}",
-        endpoint.path
-    );
+    let (test_imports, test_body) = controller_test(ControllerTest {
+        stem,
+        handler,
+        path: &endpoint.path,
+        // The endpoint is exercisable exactly when jails can build the
+        // request and predict the response: no declared return type, so the
+        // handler returns the stem it was generated with, and no request body,
+        // which jails has no way to construct. Either one present and the test
+        // is emitted whole and `@Disabled` -- a guessed `Verification` would
+        // not compile, and emitting nothing would drop the coverage silently.
+        exercisable: endpoint.returns.is_none() && endpoint.accepts.is_none(),
+        spring_boot,
+    });
     let test_artifact = format!("{ejection_id}_test");
     let mut test = file(
         JAVA_TEST_ROOT,
@@ -551,4 +685,112 @@ fn placed(source: &SourceUnit, model: &AppModel) -> String {
         || source.java_package.clone(),
         |layer| model.project.package_for(layer),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rendered(exercisable: bool, spring_boot: Option<&str>) -> (BTreeSet<String>, String) {
+        controller_test(ControllerTest {
+            stem: "Foo",
+            handler: "post",
+            path: "/foo",
+            exercisable,
+            spring_boot,
+        })
+    }
+
+    /// **The test drives the route; it does not read the annotation back.**
+    ///
+    /// This replaced a reflection check that asserted
+    /// `handler.getAnnotation(PostMapping.class).path()[0]`. That holds
+    /// whenever the annotation is present -- including when the application
+    /// cannot start, when two controllers claim the path, and when the method
+    /// is never dispatched. The legacy engine has driven MockMvc here since
+    /// controllers existed; a canonical project must not get the weaker check
+    /// for having moved engines.
+    #[test]
+    fn a_controller_test_issues_a_request_rather_than_reading_the_annotation() {
+        let (imports, body) = rendered(true, Some("4.0.0"));
+        assert!(body.contains("mvc.post().uri(\"/foo\")"), "{body}");
+        assert!(!body.contains("getAnnotation"), "{body}");
+        assert!(!body.contains("getDeclaredMethod"), "{body}");
+        assert!(imports.contains("org.springframework.test.web.servlet.assertj.MockMvcTester"));
+    }
+
+    /// Spring Framework 6.2 is where `MockMvcTester` arrived, so anything
+    /// older gets `perform(...)` -- the entry point that has existed since
+    /// Spring 3 and still does in 7. `throws Exception` comes with it, because
+    /// `perform` declares it.
+    #[test]
+    fn a_project_older_than_the_assertj_entry_point_gets_the_classic_one() {
+        let (imports, body) = rendered(true, Some("2.7.18"));
+        assert!(body.contains("mvc.perform(post(\"/foo\"))"), "{body}");
+        assert!(body.contains("throws Exception"), "{body}");
+        assert!(imports.contains("org.springframework.test.web.servlet.MockMvc"));
+        assert!(!imports.contains("org.springframework.test.web.servlet.assertj.MockMvcTester"));
+    }
+
+    /// **An unreadable version takes the shape that compiles everywhere.**
+    /// `MockMvcTester` in a project that does not have it fails with a missing
+    /// package, which names neither the version nor the cause.
+    #[test]
+    fn an_unknown_version_falls_back_to_the_classic_entry_point() {
+        let (_, body) = rendered(true, None);
+        assert!(body.contains("mvc.perform(post(\"/foo\"))"), "{body}");
+    }
+
+    /// Boot 4 moved `@AutoConfigureMockMvc` with no shim, so the import is
+    /// sniffed rather than fixed.
+    #[test]
+    fn the_autoconfigure_import_follows_the_boot_version() {
+        let (modern, _) = rendered(true, Some("4.0.0"));
+        assert!(
+            modern.contains(
+                "org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc"
+            )
+        );
+        let (classic, _) = rendered(true, Some("3.3.5"));
+        assert!(classic.contains(
+            "org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc"
+        ));
+    }
+
+    /// A route jails cannot drive is emitted whole and `@Disabled`, asserting
+    /// status only.
+    ///
+    /// The handler throws, or takes a body jails has no way to construct, so
+    /// the body is whatever the reader writes -- asserting a shape jails
+    /// invented would be a test of jails' guess. Emitting nothing would drop
+    /// the coverage silently, and guessing a value would not compile.
+    #[test]
+    fn a_route_jails_cannot_drive_is_disabled_and_asserts_status_only() {
+        for version in ["4.0.0", "2.7.18"] {
+            let (imports, body) = rendered(false, Some(version));
+            assert!(
+                body.contains("@Disabled(\"todo: implement the handler"),
+                "{body}"
+            );
+            assert!(
+                imports.contains("org.junit.jupiter.api.Disabled"),
+                "{version}"
+            );
+            assert!(!body.contains("isEqualTo(\"Foo\")"), "{body}");
+            assert!(!body.contains("content().string"), "{body}");
+            assert!(body.contains("2xxSuccessful"), "{body}");
+        }
+    }
+
+    /// `content()` is a second static import and only the exercisable shape
+    /// asserts a body, so it must not be imported unused.
+    #[test]
+    fn the_classic_body_matcher_is_imported_only_when_a_body_is_asserted() {
+        const CONTENT: &str =
+            "static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content";
+        let (exercisable, _) = rendered(true, Some("2.7.18"));
+        assert!(exercisable.contains(CONTENT));
+        let (disabled, _) = rendered(false, Some("2.7.18"));
+        assert!(!disabled.contains(CONTENT));
+    }
 }

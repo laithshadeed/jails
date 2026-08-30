@@ -836,6 +836,25 @@ const DEFAULT_BRANCH_IS_EXECUTED: &[(&str, &str)] = &[
         "crates/jails-compiler/src/refuse.rs",
         "canonical_security_pack_merges_ejects_and_keeps_cors_buildable",
     ),
+    // The controller's companion test picks `MockMvcTester` on Boot 4 and
+    // `perform(...)` below it, and `@AutoConfigureMockMvc`'s package moved in
+    // the same release. The named test drives a canonical controller through
+    // real `mvn test` on the 4.1.0 fixture, so the default branch is the one
+    // that compiles and runs.
+    (
+        "crates/jails-compiler/src/emit_unit.rs",
+        "canonical_controller_merges_both_files_and_refuses_overlapping_route_edits",
+    ),
+    // Same test, for the other half of that rendering: Boot 4 split the
+    // servlet test slice out of `spring-boot-starter-test`, so the controller
+    // test needs `spring-boot-starter-webmvc-test` declared. The fixture
+    // deliberately does not declare it -- see `SPRING_FIXTURE_POM` -- so a
+    // missing dependency fails there rather than being supplied by the
+    // fixture, which is the exact hole that note records.
+    (
+        "crates/jails-compiler/src/lib.rs",
+        "canonical_controller_merges_both_files_and_refuses_overlapping_route_edits",
+    ),
     (
         "crates/jails-generate/src/generate/recipes.rs",
         "generate_scaffold_produces_a_project_that_compiles_and_passes_tests",

@@ -18,7 +18,7 @@ pub(crate) const JAVA_ROOT: &str = ".jails/generated/main/java";
 pub(crate) fn lower_and_emit(
     model: &AppModel,
     output: &mut RenderedTree,
-    spring_boot: bool,
+    spring_boot: Option<&str>,
 ) -> Result<(), CompileError> {
     crate::emit_unit::lower_and_emit(model, output, spring_boot)?;
     if let Some(unit) = execution_context::lower(model)? {
@@ -64,7 +64,10 @@ pub(crate) fn lower_and_emit(
                     .insert(unit.path, unit.file)
                     .map_err(CompileError::new)?;
             }
-            if spring_boot && *facet == Facet::Enum && crate::emit_enum::has_wire_values(entity) {
+            if spring_boot.is_some()
+                && *facet == Facet::Enum
+                && crate::emit_enum::has_wire_values(entity)
+            {
                 let (path, file) = crate::emit_enum::lower_converter(model, entity)?;
                 output.insert(path, file).map_err(CompileError::new)?;
             }
