@@ -294,9 +294,9 @@ fn forced_color(cmd: &mut Command) {
 /// What `jails test` was asked for beyond the filter.
 #[derive(Clone, Debug)]
 pub struct TestOptions {
-    pub scope: jails_protocol::testing::TestScope,
-    pub compile: jails_protocol::testing::TestCompilePolicy,
-    pub engine: jails_protocol::testing::TestEnginePolicy,
+    pub scope: crate::testing::TestScope,
+    pub compile: crate::testing::TestCompilePolicy,
+    pub engine: crate::testing::TestEnginePolicy,
     pub watch: bool,
     pub affected: bool,
     pub failed: bool,
@@ -353,7 +353,7 @@ pub(super) fn test_report_once(
     requested: &[String],
     options: TestOptions,
     debug: bool,
-) -> Result<jails_protocol::testing::TestReportV1> {
+) -> Result<crate::testing::TestReportV1> {
     test_report_once_with_fallback(requested, options, debug, None)
 }
 
@@ -362,7 +362,7 @@ fn test_report_once_with_fallback(
     mut options: TestOptions,
     debug: bool,
     fallback_reason: Option<String>,
-) -> Result<jails_protocol::testing::TestReportV1> {
+) -> Result<crate::testing::TestReportV1> {
     let (root, build) = either_root("test")?;
     let mut execution_requested = requested.to_vec();
     if options.failed {
@@ -400,7 +400,7 @@ fn test_report_once_with_fallback(
     if options.explain_selection || options.fast {
         test_plan::explain(&plan);
     }
-    if options.affected && options.engine == jails_protocol::testing::TestEnginePolicy::Build {
+    if options.affected && options.engine == crate::testing::TestEnginePolicy::Build {
         println!(
             "test selection widened to the full {:?} scope: the build engine has no safe affected-test graph",
             options.scope
@@ -418,7 +418,7 @@ fn test_report_once_with_fallback(
             .reasons
             .iter()
             .filter_map(|reason| match reason {
-                jails_protocol::testing::SelectionReason::Widened(reason) => Some(reason.as_str()),
+                crate::testing::SelectionReason::Widened(reason) => Some(reason.as_str()),
                 _ => None,
             })
             .collect::<Vec<_>>()
@@ -429,10 +429,10 @@ fn test_report_once_with_fallback(
             Some(partition_reason)
         };
         let report = match partition.engine {
-            jails_protocol::testing::TestEngine::TestdV2 => {
+            crate::testing::TestEngine::TestdV2 => {
                 test_execution::warm_report(&selectors, &options, debug)?
             }
-            jails_protocol::testing::TestEngine::Maven => {
+            crate::testing::TestEngine::Maven => {
                 let context = test_execution::MavenTestContext {
                     project: &root,
                     options: &options,
@@ -441,7 +441,7 @@ fn test_report_once_with_fallback(
                 };
                 test_execution::maven_report(&context, &selectors)?
             }
-            jails_protocol::testing::TestEngine::Gradle => {
+            crate::testing::TestEngine::Gradle => {
                 gradlew::test_report(&root, &selectors, &options, reason, debug)?
             }
         };

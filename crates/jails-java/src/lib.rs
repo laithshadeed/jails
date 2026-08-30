@@ -19,7 +19,10 @@
 pub use jails_codemod::{annotate, dispatch, tidy};
 
 pub mod classfile;
-pub mod identifier;
+/// Identifier surgery lives in `jails-support`: `snake_case` and the bounded
+/// replacements are string operations that know nothing about Java, and
+/// `jails_support::identity` needs `snake_case`, so they must sit below it.
+pub use jails_support::identifier;
 pub mod java;
 
 pub mod template;

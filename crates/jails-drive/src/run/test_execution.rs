@@ -4,7 +4,7 @@ use super::{
     TestOptions, either_root, expand_filter, fingerprint, forced_color, is_maven_program,
     resolve_filter, run_inherited, split_method, test_plan,
 };
-use jails_protocol::testing::TestReportV1;
+use crate::testing::TestReportV1;
 use jails_support::Result;
 use std::path::Path;
 use std::process::Command;
@@ -231,13 +231,13 @@ pub(super) fn maven_report(
     if requested.is_empty() {
         let mut command = Command::new(crate::maven::binary(context.project));
         match context.options.scope {
-            jails_protocol::testing::TestScope::Unit => {
+            crate::testing::TestScope::Unit => {
                 command.arg("test");
             }
-            jails_protocol::testing::TestScope::Integration => {
+            crate::testing::TestScope::Integration => {
                 command.arg("verify").arg("-Dsurefire.skip=true");
             }
-            jails_protocol::testing::TestScope::All => {
+            crate::testing::TestScope::All => {
                 command.arg("verify");
             }
         }
@@ -375,7 +375,7 @@ fn finish_test_report(
     }
     crate::reports::normalized(
         context.project,
-        jails_protocol::testing::TestEngine::Maven,
+        crate::testing::TestEngine::Maven,
         context.options.scope,
         requested,
         passed,

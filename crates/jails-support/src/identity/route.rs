@@ -19,7 +19,7 @@
 //! grammar uses -- segments, path variables in braces, and the wildcards.
 
 use crate::Result;
-use jails_support::codec::{Codec, Decoder, Encoder};
+use crate::codec::{Codec, Decoder, Encoder};
 
 /// The longest path jails will record. Long enough for any real contract and
 /// short enough that a pasted document is refused rather than written into a

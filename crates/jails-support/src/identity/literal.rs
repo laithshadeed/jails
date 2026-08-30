@@ -23,7 +23,7 @@
 //! spaces.
 
 use crate::Result;
-use jails_support::codec::{Codec, Decoder, Encoder};
+use crate::codec::{Codec, Decoder, Encoder};
 
 /// The longest literal jails will record. Long enough for any constant, any
 /// number and a short label; short enough that a pasted document is refused

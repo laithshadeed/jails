@@ -348,12 +348,13 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-support", "scratch", 0),
     ("jails-support", "codec", 0),
     ("jails-support", "git", 0),
+    ("jails-support", "identifier", 0),
+    ("jails-support", "identity", 0),
     ("jails-support", "json", 0),
     ("jails-support", "lock", 0),
     // jails-java: reading Java and rendering templates into it.
     ("jails-java", "java", 1),
     ("jails-java", "classfile", 1),
-    ("jails-java", "identifier", 1),
     ("jails-java", "template", 1),
     // jails-spec: what a jails project is -- where it is, how it is laid out,
     // what a field means, and the closed CLI vocabularies.
@@ -506,6 +507,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-drive", "lint", 8),
     ("jails-drive", "datasource", 8),
     ("jails-drive", "live_sql", 8),
+    ("jails-drive", "testing", 8),
     // jails-cli: the binary and the whole-project lifecycle commands.
     ("jails", "new", 9),
     ("jails", "app", 9),

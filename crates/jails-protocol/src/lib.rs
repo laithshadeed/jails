@@ -42,7 +42,7 @@ mod vocabulary;
 // `jails_protocol::identity::Name` is what four hundred call sites say, and
 // renaming those would have made a filing decision look like an API change.
 pub use durable::{conflict, envelope, lifecycle, pending, record};
-pub use intent::{change, edit, effect, ownership, plan, render, request, testing, transition};
+pub use intent::{change, edit, effect, ownership, plan, render, request, transition};
 pub use observe::{bootstrap, context, fact, provenance, resource_status, snapshot};
 pub use vocabulary::{
     application, coordinate, database, declaration, editor, entity, feature, identity, recipe,

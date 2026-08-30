@@ -11,7 +11,7 @@
 
 use super::{Name, SqlName};
 use crate::Result;
-use jails_support::codec::{Codec, Decoder, Encoder};
+use crate::codec::{Codec, Decoder, Encoder};
 
 /// A declared field's name, holding **both** renderings a field has.
 ///
@@ -48,7 +48,7 @@ impl FieldName {
         let declared = Name::parse(text)?;
         let column = SqlName::conventional_column(&declared);
         let java = camel_case(column.as_str()).ok_or_else(|| {
-            jails_support::Failure::Told(format!(
+            crate::Failure::Told(format!(
                 "field name `{text}` has a word in it that does not start with a letter, so it \
                  has no conventional Java spelling.\n       fix: drop the leading, trailing or \
                  doubled `_`, and start each word with a letter -- `userId` and `user_id` are \

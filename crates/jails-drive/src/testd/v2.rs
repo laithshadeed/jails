@@ -3,15 +3,15 @@
 use crate::launcher;
 use crate::model::Project;
 use crate::process::CommandSpec;
-use jails_protocol::identity::ObjectId;
-use jails_protocol::testing::TestReportV1;
-use jails_protocol::testing::testd::{
+use crate::testing::TestReportV1;
+use crate::testing::testd::{
     OutputEntryV1, OutputPath, OutputSnapshotV1, RequestId, SecretBytes, TESTD_V2_MAX_PAYLOAD,
     TESTD_V2_PROTOCOL_MAX, TESTD_V2_PROTOCOL_MIN, TestIsolation, TestdRequestV2, TestdResponseV2,
     decode_frame, encode_frame,
 };
 use jails_support::Result;
 use jails_support::codec::{DIGEST_BYTES, domain_hash, hex, sha256, unhex};
+use jails_support::identity::ObjectId;
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -134,7 +134,7 @@ impl Client {
         let meta = self.metadata()?;
         let requested = selectors
             .iter()
-            .map(|selector| jails_protocol::testing::TestSelector::parse(selector))
+            .map(|selector| crate::testing::TestSelector::parse(selector))
             .collect::<Result<Vec<_>>>()?;
         let run_id = request_id()?;
         let request = TestdRequestV2::Run {

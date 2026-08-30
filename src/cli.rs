@@ -56,7 +56,7 @@ pub(crate) enum TestScopeArg {
     All,
 }
 
-impl From<TestScopeArg> for jails_protocol::testing::TestScope {
+impl From<TestScopeArg> for jails_drive::testing::TestScope {
     fn from(value: TestScopeArg) -> Self {
         match value {
             TestScopeArg::Unit => Self::Unit,
@@ -74,7 +74,7 @@ pub(crate) enum TestCompileArg {
     None,
 }
 
-impl From<TestCompileArg> for jails_protocol::testing::TestCompilePolicy {
+impl From<TestCompileArg> for jails_drive::testing::TestCompilePolicy {
     fn from(value: TestCompileArg) -> Self {
         match value {
             TestCompileArg::Auto => Self::Auto,
@@ -92,7 +92,7 @@ pub(crate) enum TestEngineArg {
     Warm,
 }
 
-impl From<TestEngineArg> for jails_protocol::testing::TestEnginePolicy {
+impl From<TestEngineArg> for jails_drive::testing::TestEnginePolicy {
     fn from(value: TestEngineArg) -> Self {
         match value {
             TestEngineArg::Auto => Self::Auto,

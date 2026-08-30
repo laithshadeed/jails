@@ -27,7 +27,7 @@
 //! between those two is exactly the kind of quiet wrong answer that makes a
 //! tool untrustworthy.
 
-use jails_protocol::testing::{
+use crate::testing::{
     SelectionReason, TestCaseResultV1, TestCompileOwner, TestEngine, TestOutcome, TestReportV1,
     TestScope, TestSelector,
 };

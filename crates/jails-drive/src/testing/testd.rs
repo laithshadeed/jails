@@ -5,9 +5,9 @@
 //! output, and make retries and stale-epoch rejection explicit.
 
 use super::{TestReportV1, TestSelector};
-use crate::Result;
-use crate::identity::{ObjectId, ProjectPath};
+use jails_support::Result;
 use jails_support::codec::{Codec, DIGEST_BYTES, Decoder, Encoder};
+use jails_support::identity::{ObjectId, ProjectPath};
 
 pub const TESTD_V2_PROTOCOL_MIN: u16 = 2;
 pub const TESTD_V2_PROTOCOL_MAX: u16 = 2;

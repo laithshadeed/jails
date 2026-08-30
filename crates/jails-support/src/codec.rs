@@ -502,6 +502,36 @@ impl<'a> Decoder<'a> {
 /// function of a *value*; if `{a,b}` and `{b,a}` both decoded, one set would
 /// have two encodings and therefore two hashes, and every comparison built on
 /// those hashes would be wrong in a way nothing reports.
+/// Encode a homogeneous sequence: its length, then each element.
+///
+/// Paired with [`decode_all`]. Every closed jails format that carries a list
+/// writes it this way, so the count and the elements cannot disagree about
+/// how many there are.
+pub fn encode_all<T>(
+    encoder: &mut Encoder,
+    values: &[T],
+    mut encode: impl FnMut(&T, &mut Encoder) -> Result<()>,
+) -> Result<()> {
+    encoder.count(values.len())?;
+    for value in values {
+        encode(value, encoder)?;
+    }
+    Ok(())
+}
+
+/// Decode a sequence written by [`encode_all`].
+pub fn decode_all<T>(
+    decoder: &mut Decoder<'_>,
+    mut decode: impl FnMut(&mut Decoder<'_>) -> Result<T>,
+) -> Result<Vec<T>> {
+    let count = decoder.count()?;
+    let mut values = Vec::new();
+    for _ in 0..count {
+        values.push(decode(decoder)?);
+    }
+    Ok(values)
+}
+
 pub fn ordered<K: Ord + std::fmt::Debug>(previous: Option<&K>, next: &K) -> Result<()> {
     match previous {
         None => Ok(()),

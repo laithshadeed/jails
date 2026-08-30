@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 clap.workspace = true
+jails-codec-derive.workspace = true
 jails-generate.workspace = true
 jails-commit.workspace = true
 jails-java.workspace = true

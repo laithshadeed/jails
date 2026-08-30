@@ -16,7 +16,7 @@
 //! `:` and no `+`.
 
 use crate::Result;
-use jails_support::codec::{Codec, Decoder, Encoder};
+use crate::codec::{Codec, Decoder, Encoder};
 
 /// Long enough for any real parameter, short enough that a pasted document is
 /// refused rather than written into an annotation.

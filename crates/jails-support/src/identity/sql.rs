@@ -11,8 +11,8 @@
 
 use super::Name;
 use crate::Result;
-use jails_java::identifier::snake_case;
-use jails_support::codec::{Codec, Decoder, Encoder};
+use crate::codec::{Codec, Decoder, Encoder};
+use crate::identifier::snake_case;
 
 /// A validated unquoted SQL identifier used at destructive lifecycle
 /// boundaries. Generated table names are lowercase snake case, so accepting a

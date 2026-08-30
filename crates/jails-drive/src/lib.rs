@@ -27,6 +27,7 @@ pub mod migrate;
 pub(crate) mod reports;
 pub mod run;
 pub mod testd;
+pub mod testing;
 
 // The lower crates, re-exported so every module in this one keeps saying
 // `crate::…` wherever it ships.

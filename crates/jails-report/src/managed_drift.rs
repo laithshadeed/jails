@@ -65,9 +65,9 @@ pub(crate) fn managed_output_checks(project: &Project) -> Vec<Check> {
                 .fix(fix),
             ),
             Ok(bytes)
-                if jails_protocol::identity::ObjectId::from_bytes(
-                    jails_support::codec::sha256(&bytes),
-                ) != output.current.sha256 =>
+                if jails_support::identity::ObjectId::from_bytes(jails_support::codec::sha256(
+                    &bytes,
+                )) != output.current.sha256 =>
             {
                 checks.push(
                     Check::new(
@@ -164,7 +164,7 @@ pub(crate) fn migration_seal_checks(project: &Project) -> Vec<Check> {
                     .fix("make the file readable and run `jails doctor` again"),
                 ),
                 Ok(bytes)
-                    if jails_protocol::identity::ObjectId::from_bytes(
+                    if jails_support::identity::ObjectId::from_bytes(
                         jails_support::codec::sha256(&bytes),
                     ) != seal.content_digest =>
                 {

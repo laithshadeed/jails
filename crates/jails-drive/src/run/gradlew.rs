@@ -55,7 +55,7 @@ pub(super) fn test_report(
     options: &TestOptions,
     fallback_reason: Option<String>,
     debug: bool,
-) -> Result<jails_protocol::testing::TestReportV1> {
+) -> Result<crate::testing::TestReportV1> {
     let build_script = std::fs::read_to_string(root.join("build.gradle")).unwrap_or_default();
     if (!options.tags.is_empty() || options.fail_fast) && !build_script.contains("jails.test.tags")
     {
@@ -73,9 +73,9 @@ pub(super) fn test_report(
 
     let execution_tasks: Vec<&str> = if patterns.is_empty() {
         match options.scope {
-            jails_protocol::testing::TestScope::Unit => vec!["test"],
-            jails_protocol::testing::TestScope::Integration => vec!["integrationTest"],
-            jails_protocol::testing::TestScope::All => vec!["test", "integrationTest"],
+            crate::testing::TestScope::Unit => vec!["test"],
+            crate::testing::TestScope::Integration => vec!["integrationTest"],
+            crate::testing::TestScope::All => vec!["test", "integrationTest"],
         }
     } else {
         let has_unit = patterns.iter().any(|pattern| {
@@ -148,7 +148,7 @@ pub(super) fn test_report(
     // status because its whole point is being the machine-readable answer.
     crate::reports::normalized(
         root,
-        jails_protocol::testing::TestEngine::Gradle,
+        crate::testing::TestEngine::Gradle,
         options.scope,
         requested,
         outcome.is_ok(),

@@ -5,10 +5,10 @@
 //! without changing which tests were requested or how their outcomes are
 //! reported.
 
-use crate::Result;
-use crate::change::{decode_all, encode_all};
-use crate::identity::ProjectPath;
+use jails_support::Result;
 use jails_support::codec::{Codec, Decoder, Encoder};
+use jails_support::codec::{decode_all, encode_all};
+use jails_support::identity::ProjectPath;
 use std::collections::BTreeSet;
 
 pub mod testd;

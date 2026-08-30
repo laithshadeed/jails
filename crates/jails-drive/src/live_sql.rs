@@ -9,10 +9,10 @@ use jails_protocol::database::{
     ResolvedDatasource, SchemaObject, SchemaObjectId, SchemaObjectKind, SchemaProvenance,
     SchemaSnapshot, SqlDialect, SqlTypeName,
 };
-use jails_protocol::identity::{ObjectId, SqlName};
 use jails_protocol::lifecycle::MigrationVersion;
 use jails_support::Result;
 use jails_support::codec::domain_hash;
+use jails_support::identity::{ObjectId, SqlName};
 use jails_support::process::{CommandSpec, Diagnostics, OutputMode};
 use std::collections::{BTreeMap, BTreeSet};
 

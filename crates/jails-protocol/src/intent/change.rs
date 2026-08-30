@@ -245,29 +245,11 @@ impl Codec for DesiredChange {
     }
 }
 
-pub(crate) fn encode_all<T>(
-    encoder: &mut Encoder,
-    values: &[T],
-    mut encode: impl FnMut(&T, &mut Encoder) -> Result<()>,
-) -> Result<()> {
-    encoder.count(values.len())?;
-    for value in values {
-        encode(value, encoder)?;
-    }
-    Ok(())
-}
-
-pub(crate) fn decode_all<T>(
-    decoder: &mut Decoder<'_>,
-    mut decode: impl FnMut(&mut Decoder<'_>) -> Result<T>,
-) -> Result<Vec<T>> {
-    let count = decoder.count()?;
-    let mut values = Vec::new();
-    for _ in 0..count {
-        values.push(decode(decoder)?);
-    }
-    Ok(values)
-}
+/// The sequence codec every closed jails format uses, re-exported so the
+/// modules beside this one keep their existing spelling. It lives in
+/// `jails-support` because it knows nothing about a plan: `testing` needs it
+/// and must outlive this crate.
+pub(crate) use jails_support::codec::{decode_all, encode_all};
 
 #[cfg(test)]
 pub(crate) mod tests {

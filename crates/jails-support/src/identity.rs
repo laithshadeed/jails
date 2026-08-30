@@ -27,7 +27,7 @@
 //! class of bug not worth accepting for a feature nobody has asked for.
 
 use crate::Result;
-use jails_support::codec::{self, Codec, DIGEST_BYTES, Decoder, Encoder};
+use crate::codec::{self, Codec, DIGEST_BYTES, Decoder, Encoder};
 
 mod component;
 mod literal;
@@ -534,7 +534,7 @@ pub(crate) const ARCHITECTURE_POLICY: &str = ".jails/architecture.toml";
 impl ProjectPath {
     pub fn parse(text: &str) -> Result<Self> {
         if text.is_empty() {
-            return Err(jails_support::Failure::Told("path is empty".to_string()));
+            return Err(crate::Failure::Told("path is empty".to_string()));
         }
         if text.len() > codec::MAX_PATH_BYTES {
             return Err(format!(

@@ -133,9 +133,9 @@ pub fn inspect(project: &Project, selector: &str, datasource: Option<&str>) -> R
                 ));
             }
             Ok(bytes)
-                if jails_protocol::identity::ObjectId::from_bytes(
-                    jails_support::codec::sha256(&bytes),
-                ) != seal.content_digest =>
+                if jails_support::identity::ObjectId::from_bytes(jails_support::codec::sha256(
+                    &bytes,
+                )) != seal.content_digest =>
             {
                 migration_history = AuthorityStatus::Diverged;
                 consistency = ResourceConsistency::MigrationEditedAfterSeal;

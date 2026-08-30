@@ -19,10 +19,17 @@
 //! [`Result`] and [`debug_cmd`] stay, because every crate above needs them and
 //! a type alias the whole workspace shares has to sit below all of it.
 
+// `#[derive(Codec)]` writes `jails_support::codec::...` into every impl it
+// generates, and that path does not resolve inside this crate. Naming ourselves
+// makes the macro's output compile here exactly as it does in a dependent.
+extern crate self as jails_support;
+
 pub mod apply;
 pub mod codec;
 pub mod git;
 pub mod hermetic;
+pub mod identifier;
+pub mod identity;
 pub mod json;
 pub mod lock;
 pub mod process;

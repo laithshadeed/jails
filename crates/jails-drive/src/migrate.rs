@@ -35,8 +35,8 @@ use crate::compose;
 use crate::generate::find_project_root;
 use jails_project::model::Project;
 use jails_protocol::database::MigrationInputV1;
-use jails_protocol::identity::ObjectId;
 use jails_support::codec::sha256;
+use jails_support::identity::ObjectId;
 
 /// Apply one receipt's frozen migration set to an already available
 /// datasource. No service is started, and every live migration path is checked
