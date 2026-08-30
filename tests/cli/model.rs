@@ -878,7 +878,6 @@ app Notes {
     // invisible: fourteen of these wrote a declaration, reported success, and
     // emitted nothing at all.
     const UNSERVED: &[&str] = &[
-        "handler",
         "command",
         "cli",
         "http-workflow",
@@ -11050,4 +11049,72 @@ fn add_db_on_a_v1_model_sets_the_storage_axis() {
     let source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(source.contains("cap sqlite"), "{source}");
     assert!(source.contains("storage postgres"), "{source}");
+}
+
+/// `g handler` on a canonical project, twice, and on a plain one.
+///
+/// It is the framework-free HTTP kind, so the test uses a `platform plain`
+/// project — the case it exists for. The second handler is the point again:
+/// `ApiError` belongs to every handler in the model, and a per-handler
+/// emitter would have compiled and then refused the second declaration.
+#[test]
+fn canonical_handlers_share_one_error_envelope_without_a_framework() {
+    let root = temp_dir("canonical-handler");
+    write_plain_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+         platform plain\n  build maven\n  storage none\n}\n",
+    )
+    .unwrap();
+
+    for name in ["WorkItem", "Note"] {
+        let generated = jails_cmd(&root, None)
+            .args(["g", "handler", name])
+            .output()
+            .unwrap();
+        assert!(
+            generated.status.success(),
+            "`g handler {name}`: {}",
+            String::from_utf8_lossy(&generated.stderr)
+        );
+    }
+
+    for relative in [
+        ".jails/generated/main/java/com/example/demo/api/WorkItemHandler.java",
+        ".jails/generated/main/java/com/example/demo/api/NoteHandler.java",
+        ".jails/generated/main/java/com/example/demo/domain/ApiError.java",
+        ".jails/generated/test/java/com/example/demo/domain/ApiErrorTest.java",
+        ".jails/generated/test/java/com/example/demo/api/WorkItemHandlerTest.java",
+    ] {
+        assert!(root.join(relative).exists(), "`{relative}` was not written");
+    }
+
+    let handler = fs::read_to_string(
+        root.join(".jails/generated/main/java/com/example/demo/api/WorkItemHandler.java"),
+    )
+    .unwrap();
+    assert!(!handler.contains("{{"), "{handler}");
+    // Nothing framework-shaped: the JDK's own handler is the whole surface.
+    assert!(
+        handler.contains("com.sun.net.httpserver.HttpHandler"),
+        "{handler}"
+    );
+    assert!(!handler.contains("org.springframework"), "{handler}");
+    assert!(
+        handler.contains("import com.example.demo.domain.ApiError;"),
+        "{handler}"
+    );
+
+    // The envelope is the same file the legacy engine renders, from the same
+    // template, so this is the shape the golden trees already pin.
+    let envelope = fs::read_to_string(
+        root.join(".jails/generated/main/java/com/example/demo/domain/ApiError.java"),
+    )
+    .unwrap();
+    assert!(
+        envelope.contains("public record ApiError(String code, String message, Map<String, String> details)"),
+        "{envelope}"
+    );
 }

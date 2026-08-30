@@ -638,21 +638,28 @@ pub(crate) fn artifacts_for(
 
             // Every handler renders failures through the same envelope, so the
             // first one lays it down and the rest reuse it.
+            // **Rendered from the same two templates the canonical emitter
+            // uses**, rather than derived from a field spec here. Its shape is
+            // fixed -- three components, always the same -- so a derivation
+            // bought nothing and cost a second owner: two renderings of one
+            // file drift on exactly the details nobody re-reads, and the
+            // golden suite is what holds them equal.
             if !main_dir(&root, &domain).join("ApiError.java").exists() {
-                let fields = parse_fields(&[
-                    "code:string!".to_string(),
-                    "message:string!".to_string(),
-                    "details:map<string,string>".to_string(),
-                ])?;
                 artifacts.push(Artifact {
                     kind: "error envelope",
                     path: main_dir(&root, &domain).join("ApiError.java"),
-                    contents: value_java(&domain, "ApiError", &fields),
+                    contents: crate::template::render(
+                        crate::template_here!("spring/api_error_java.java"),
+                        &[("domain", &*domain)],
+                    ),
                 });
                 artifacts.push(Artifact {
                     kind: "error envelope test",
                     path: test_dir(&root, &domain).join("ApiErrorTest.java"),
-                    contents: value_test(project, &domain, "ApiError", &fields),
+                    contents: crate::template::render(
+                        crate::template_here!("spring/api_error_test_java.java"),
+                        &[("domain", &*domain)],
+                    ),
                 });
             }
 

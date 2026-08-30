@@ -28,6 +28,7 @@ use std::collections::BTreeSet;
 mod auth;
 mod client;
 mod fetcher;
+mod handler;
 mod idempotency;
 mod job;
 mod socket;
@@ -47,6 +48,7 @@ pub(crate) fn lower_and_emit(
             ComponentKind::Job => job::files(model, component)?,
             ComponentKind::Auth => auth::files(model, component)?,
             ComponentKind::Idempotency => idempotency::files(model, component)?,
+            ComponentKind::Handler => handler::files(model, component)?,
             ComponentKind::Socket => socket::files(model, component)?,
             ComponentKind::Webhook => webhook::files(model, component)?,
             _ => continue,
@@ -61,6 +63,11 @@ pub(crate) fn lower_and_emit(
     // in the model rather than to one, and a managed tree refuses two units
     // writing the same path.
     if let Some(shared) = job::scheduling(model)? {
+        output
+            .insert(shared.path, shared.file)
+            .map_err(CompileError::new)?;
+    }
+    for shared in handler::envelope(model)? {
         output
             .insert(shared.path, shared.file)
             .map_err(CompileError::new)?;
