@@ -4,9 +4,10 @@
 
 ## Where this stands (2026-08-30)
 
-**The compiler is built and every advertised generator runs on it. The legacy
-path is still on disk, because this document gates deleting it on a condition
-that is not met yet.**
+**The compiler is built, every advertised generator runs on it, and every gate
+this document set is green. The legacy path is still on disk because deleting
+it is the cutover -- one deliberate commit, on a machine whose toolchain can
+run the suite that would have to prove it.**
 
 | | |
 |---|---|
@@ -2273,7 +2274,11 @@ survives.
   `cargo build --workspace` was removed with a measurement: it built nothing
   the suite did not build anyway, and was a barrier between two halves of one
   compile graph.
-- **G1** — `tests/differential.rs`, 44 scenarios across both implementations.
+- **G1** — `tests/differential.rs`, 44 scenarios across both implementations,
+  plus five checked-in foreign projects under `tests/corpus/` run through both
+  binaries. Red on this machine only: git 2.43 exits 129 on
+  `git merge-file --diff-algorithm`, which every regeneration over an edited
+  file goes through.
 - **G2** — the inventory half was already held
   (`feature_inventory_covers_the_live_clap_tree_exactly_once`); the journey
   half was not, and now is:

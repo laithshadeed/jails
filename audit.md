@@ -27,6 +27,11 @@ still resolve through git.
 
 # audit.md — the canonical cutover, measured
 
+**Every finding this audit queued for work is closed** (A7). What is left in
+this file is measurement rather than a backlog: `A3.13`'s three diagnostic
+vocabularies, `A3.14`'s typed artifact IR, `A4.x`, `A5.7`, and the residue each
+closed entry names inside itself. Nothing here is waiting on a decision.
+
 ## What was audited
 
 `new-world-compiler-jdl-v1`: fifteen commits of canonical-compiler work on
