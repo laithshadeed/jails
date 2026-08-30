@@ -378,6 +378,7 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
                 placement,
             },
             patch_bytes,
+            authored_migration: None,
         },
         &reader_paths,
     )

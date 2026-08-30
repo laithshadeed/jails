@@ -513,6 +513,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails", "model_rename", 9),
     ("jails", "model_resource", 9),
     ("jails", "model_setting", 9),
+    ("jails", "model_migration", 9),
     ("jails", "model_upgrade", 9),
     ("jails", "canonical_support", 9),
     ("jails", "parse_error", 9),

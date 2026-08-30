@@ -13,6 +13,10 @@
 //! the number is what the cutover is measured on. A kind marked
 //! `Compatibility` that the compiler actually emits under-reports coverage,
 //! which is how `cases` sat here for a while after its backend landed.
+//!
+//! **It is 39/39 as of this commit**, so every arm below is `Native` and the
+//! table's remaining job is the one it was built for: making the next clap
+//! variant a compile error until its ownership is decided.
 
 use crate::add::Capability;
 use crate::generate::ArtifactKind;
@@ -20,6 +24,16 @@ use crate::generate::ArtifactKind;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Support {
     Native,
+    /// **Nothing is classified this way any more**, and the variant stays
+    /// because the registry's whole purpose is that a new clap variant cannot
+    /// compile until somebody decides its ownership -- with the answer
+    /// deleted, "it has no backend yet" would have no spelling and the easy
+    /// thing would be to claim `Native`.
+    ///
+    /// `expect` rather than `allow` so the attribute is itself a ratchet: the
+    /// moment a kind is classified here the expectation is unfulfilled, the
+    /// build says so, and this line comes off in the same change.
+    #[expect(dead_code, reason = "39/39: no advertised kind is on the legacy route")]
     Compatibility,
 }
 
@@ -68,8 +82,8 @@ pub(crate) fn generator(kind: ArtifactKind) -> Support {
         | ArtifactKind::DurableJob
         | ArtifactKind::Seed
         | ArtifactKind::Search
-        | ArtifactKind::Association => Support::Native,
-        ArtifactKind::Migration => Support::Compatibility,
+        | ArtifactKind::Association
+        | ArtifactKind::Migration => Support::Native,
     }
 }
 
@@ -119,7 +133,7 @@ mod tests {
                 .iter()
                 .filter(|kind| generator(**kind).is_native())
                 .count(),
-            38
+            39
         );
         // All 25. `format`, `ci`, `docker` and `k8s` were the last four --
         // `plan.md` P13.8 measured them and this is where that number lives,

@@ -105,6 +105,7 @@ fn run_entity(
         next_source,
         patch: ModelPatch::AddEntity(entity),
         patch_bytes,
+        authored_migration: None,
     })
 }
 
@@ -153,6 +154,7 @@ fn run_operation(
         next_source,
         patch: ModelPatch::AddOperation(operation),
         patch_bytes,
+        authored_migration: None,
     })
 }
 
@@ -165,6 +167,17 @@ pub(crate) struct PreparedMutation {
     pub(crate) next_source: String,
     pub(crate) patch: ModelPatch,
     pub(crate) patch_bytes: Vec<u8>,
+    /// A migration the *reader* authored, rather than one the compiler
+    /// derived from a schema change.
+    ///
+    /// `jdl-sol.md` §2.1 is explicit that ordered migration files are not JDL
+    /// -- "immutable, append-only history" -- and §2 lists writing one among
+    /// the *non-model* actions a familiar command may map to. So this is not
+    /// smuggled into rendering: it joins `PlanDraft.migrations` beside the
+    /// derived ones, and the materializer turns it into an ordinary
+    /// `AppendMigration` operation with an allocated version and a `Missing`
+    /// precondition. It is as visible in the reviewed plan as any other.
+    pub(crate) authored_migration: Option<jails_contracts::RenderedMigration>,
 }
 
 pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
@@ -184,6 +197,7 @@ pub(crate) fn finish_generation_with_reader_paths(
         next_source,
         patch,
         patch_bytes,
+        authored_migration,
     } = prepared;
     let canonical_model_path = model_path.to_string_lossy().replace('\\', "/");
     let root = std::env::current_dir()
@@ -204,8 +218,13 @@ pub(crate) fn finish_generation_with_reader_paths(
         &capture_paths,
     )
     .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
-    let draft = jails_compiler::Compiler::compile(&snapshot, Some(patch))
+    let mut draft = jails_compiler::Compiler::compile(&snapshot, Some(patch))
         .map_err(|error| Failure::Told(format!("could not compile model patch: {error}")))?;
+    // After the compile, because it is not derived from the model: see
+    // `PreparedMutation::authored_migration`. It is still the plan's, not a
+    // side effect -- the materializer allocates its version from the observed
+    // history and refuses if the path it lands on already exists.
+    draft.migrations.extend(authored_migration);
     let bundle = jails_workspace::materialize_with_model(
         &snapshot,
         CanonicalModelPatch {

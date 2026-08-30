@@ -72,37 +72,8 @@ pub(crate) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         | ArtifactKind::Strategy
         | ArtifactKind::Controller => unit::run(args, invocation),
         ArtifactKind::Association => relation::run(args, invocation),
-        ArtifactKind::Migration => Err(Failure::Told(unsupported_kind(args.kind))),
+        ArtifactKind::Migration => crate::model_migration::run(args, invocation),
     }
-}
-
-/// What is actually missing for the one kind a canonical project refuses.
-///
-/// The generic refusal told the reader to edit `.jails/model.jdl` and run
-/// `jails sync`. That is false advice for every one of these: the model
-/// It was four kinds, and three of them had a complete compiler backend with
-/// no syntax editor in front of it -- so the refusal told the reader to
-/// hand-edit `.jails/model.jdl`, which was true and useless. `plan.md` P13.8
-/// has the measurement. `migration` is the one left, and its gap is genuinely
-/// in the plan rather than in an editor: a migration nobody derived is an
-/// irreproducible operation, and there is no seam for one. A `fix:` line naming a repair that does not
-/// repair is worse than no fix line, which is why
-/// `every_command_a_message_tells_the_reader_to_run_is_one_that_exists`
-/// exists.
-fn unsupported_kind(kind: ArtifactKind) -> String {
-    let (what, detail): (&str, String) = match kind {
-        ArtifactKind::Migration => (
-            "a hand-written migration",
-            "a migration nobody derived is an irreproducible operation, and the canonical plan has no seam for one yet -- only the schema diff appends migrations.\n       fix: write the file yourself under `src/main/resources/db/migration`; canonical capture reads what is there".to_string(),
-        ),
-        other => (
-            "this generator",
-            format!(
-                "`{other:?}` has no canonical backend.\n       fix: keep it outside the canonical model"
-            ),
-        ),
-    };
-    format!("canonical `generate` has no backend for {what}: {detail}")
 }
 
 fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
@@ -170,6 +141,7 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
             next_source: current_source,
             patch: ModelPatch::Batch(Vec::new()),
             patch_bytes: br#"{"kind":"batch","patches":[]}"#.to_vec(),
+            authored_migration: None,
         });
     }
     let next_source = insert_entity_member(&current_source, &entity_java_name, &declaration)?;
@@ -193,6 +165,7 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         next_source,
         patch: ModelPatch::AddOperation(operation),
         patch_bytes,
+        authored_migration: None,
     })
 }
 
@@ -347,6 +320,7 @@ fn run_entity(args: GenerateArgs, invocation: Invocation) -> Result<()> {
             next_source: current_source,
             patch: ModelPatch::Batch(Vec::new()),
             patch_bytes: br#"{"kind":"batch","patches":[]}"#.to_vec(),
+            authored_migration: None,
         });
     }
     let next_source = append_declaration(current_source.clone(), &declaration)?;
@@ -369,6 +343,7 @@ fn run_entity(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         next_source,
         patch: ModelPatch::AddEntity(entity),
         patch_bytes,
+        authored_migration: None,
     })
 }
 
@@ -428,7 +403,7 @@ fn same_entity_contribution(
             .all(|(id, index)| existing.indexes.get(id) == Some(index))
 }
 
-fn read_model() -> Result<String> {
+pub(crate) fn read_model() -> Result<String> {
     std::fs::read_to_string(MODEL_PATH).map_err(|error| {
         Failure::Told(format!(
             "could not read canonical model `{MODEL_PATH}`: {error}"
@@ -436,7 +411,7 @@ fn read_model() -> Result<String> {
     })
 }
 
-fn parse(source: &str) -> Result<jails_model::AppModel> {
+pub(crate) fn parse(source: &str) -> Result<jails_model::AppModel> {
     jails_model::parse_jdl(source)
         .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))
 }

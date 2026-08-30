@@ -38,6 +38,7 @@ pub(crate) fn set(key: String, value: String, tests: bool, invocation: Invocatio
             next_source: current_source,
             patch: ModelPatch::Batch(Vec::new()),
             patch_bytes: br#"{"kind":"batch","patches":[]}"#.to_vec(),
+            authored_migration: None,
         });
     }
 
@@ -85,6 +86,7 @@ pub(crate) fn set(key: String, value: String, tests: bool, invocation: Invocatio
         next_source,
         patch: ModelPatch::SetSetting(setting),
         patch_bytes,
+        authored_migration: None,
     })
 }
 
@@ -132,6 +134,7 @@ pub(crate) fn unset(key: String, tests: bool, invocation: Invocation) -> Result<
         next_source,
         patch: ModelPatch::RemoveSetting(setting.id),
         patch_bytes,
+        authored_migration: None,
     })
 }
 

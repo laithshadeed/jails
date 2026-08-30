@@ -140,6 +140,7 @@ fn format(check: bool, invocation: Invocation) -> Result<()> {
         next_source,
         patch: jails_model::ModelPatch::Batch(Vec::new()),
         patch_bytes: br#"{"kind":"format"}"#.to_vec(),
+        authored_migration: None,
     })
 }
 

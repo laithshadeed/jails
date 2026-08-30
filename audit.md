@@ -88,15 +88,18 @@ looked and still worth removing.
 
 ## A1 — coverage
 
-### A1.1 Thirty-eight of thirty-nine generators
+### A1.1 Thirty-nine of thirty-nine generators
 
 `src/canonical_support.rs` is the authority and is honest code: an exhaustive
 match that stops compiling when a clap variant is added. Its own test pins
-38/39. Capabilities are closed at 25/25, and **every one of the 23 component
+**39/39.** Capabilities are closed at 25/25, and **every one of the 23 component
 kinds now has a backend** -- `every_component_kind_is_emitted_or_refused` no
 longer has a refusal to reach.
 
-Still legacy: `migration`, alone.
+Nothing is left on the legacy route, and `Support::Compatibility` is now a
+variant nothing constructs -- kept, under an `#[expect(dead_code)]` that fails
+the moment a kind needs it again, because with the answer deleted "no backend
+yet" would have no spelling and the easy thing would be to claim `Native`.
 
 **`association` was the same shape as `search`**: `emit_sql::relation` derives
 the foreign key, its referential actions and its index from a declared

@@ -124,6 +124,7 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation, kind: Kind) -> Res
             next_source: current_source,
             patch: ModelPatch::Batch(Vec::new()),
             patch_bytes: br#"{"kind":"batch","patches":[]}"#.to_vec(),
+            authored_migration: None,
         });
     }
     let next_source = set_projection(
@@ -165,6 +166,7 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation, kind: Kind) -> Res
         next_source,
         patch,
         patch_bytes,
+        authored_migration: None,
     })
 }
 

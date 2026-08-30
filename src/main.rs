@@ -16,6 +16,7 @@ mod model_generate;
 mod model_generate_jdl;
 mod model_import;
 mod model_index;
+mod model_migration;
 mod model_rename;
 mod model_resource;
 mod model_setting;

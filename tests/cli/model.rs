@@ -11782,3 +11782,94 @@ fn canonical_association_writes_a_relation_and_its_foreign_key() {
         String::from_utf8_lossy(&refused.stderr)
     );
 }
+
+/// `g migration` allocates a file and writes no SQL into it.
+///
+/// **The one generator that is deliberately not a model declaration.**
+/// `jdl-sol.md` §2.1 puts ordered migration files outside JDL -- "immutable,
+/// append-only history" -- §12.6 says authors never name managed migrations in
+/// JDL, and §2 lists writing one among the *non-model* actions a familiar
+/// command may map to. So what this pins is that the model is untouched and
+/// the plan carries the file anyway: it is an ordinary `AppendMigration`, with
+/// its version allocated from the observed history, not a side effect.
+#[test]
+fn canonical_migration_allocates_a_file_without_declaring_anything() {
+    let root = temp_dir("canonical-migration");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    let source = "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+         platform spring\n  build maven\n  storage postgres\n}\n\n\
+         entity Note @id(ent_note) {\n  use repo\n  id: uuid @id(fld_note_id) @pk\n\
+         }\n";
+    fs::write(root.join(".jails/model.jdl"), source).unwrap();
+    let synced = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    let before = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+
+    let output = jails_cmd(&root, None)
+        .args(["g", "migration", "add_note_archived_at"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // Nothing was declared: history is not desired state.
+    assert_eq!(
+        before,
+        fs::read_to_string(root.join(".jails/model.jdl")).unwrap()
+    );
+
+    // The version comes after the one `use repo` already allocated.
+    let migration = root.join("src/main/resources/db/migration/V002__add_note_archived_at.sql");
+    let body = fs::read_to_string(&migration).unwrap();
+    assert_eq!(
+        body,
+        "-- Forward-only migration. Write explicit SQL below.\n"
+    );
+
+    // A reader's edit survives the next sync: an authored migration is not
+    // rendered from the model, so nothing recomputes it.
+    fs::write(
+        &migration,
+        "alter table note add column archived_at timestamptz;\n",
+    )
+    .unwrap();
+    let resynced = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        resynced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resynced.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(&migration).unwrap(),
+        "alter table note add column archived_at timestamptz;\n"
+    );
+
+    // A readable name is normalised into the Flyway description, and one that
+    // cannot be is refused *here* -- rather than shown back as a
+    // compiler-produced-invalid message about a name the reader chose.
+    let normalised = jails_cmd(&root, None)
+        .args(["g", "migration", "Add Note Body"])
+        .output()
+        .unwrap();
+    assert!(
+        normalised.status.success(),
+        "{}",
+        String::from_utf8_lossy(&normalised.stderr)
+    );
+    assert!(
+        root.join("src/main/resources/db/migration/V003__add_note_body.sql")
+            .is_file()
+    );
+    let refused = jails_cmd(&root, None)
+        .args(["g", "migration", "add/note"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+}

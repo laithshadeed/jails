@@ -91,6 +91,7 @@ pub(crate) fn run(to: u16, invocation: Invocation) -> Result<()> {
         next_source,
         patch: ModelPatch::ReplaceModel(Box::new(next_model)),
         patch_bytes: br#"{"kind":"upgrade","to":1}"#.to_vec(),
+        authored_migration: None,
     })
 }
 

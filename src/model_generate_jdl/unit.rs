@@ -69,6 +69,7 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
                 next_source: current_source,
                 patch: ModelPatch::Batch(Vec::new()),
                 patch_bytes: br#"{"kind":"batch","patches":[]}"#.to_vec(),
+                authored_migration: None,
             });
         }
         if matches!(
@@ -94,6 +95,7 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
                 next_source,
                 patch: ModelPatch::ReplaceUnit(requested),
                 patch_bytes,
+                authored_migration: None,
             });
         }
         return Err(Failure::Told(format!(
@@ -123,6 +125,7 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         next_source,
         patch: ModelPatch::AddUnit(unit),
         patch_bytes,
+        authored_migration: None,
     })
 }
 
@@ -198,6 +201,7 @@ fn run_v1(
             next_source: current_source,
             patch: ModelPatch::Batch(Vec::new()),
             patch_bytes: br#"{"kind":"batch","patches":[]}"#.to_vec(),
+            authored_migration: None,
         });
     }
     let mut patches = if existing.is_some() {
@@ -227,6 +231,7 @@ fn run_v1(
         next_source,
         patch: ModelPatch::Batch(patches),
         patch_bytes,
+        authored_migration: None,
     })
 }
 

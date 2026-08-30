@@ -141,6 +141,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         next_source,
         patch,
         patch_bytes,
+        authored_migration: None,
     })
 }
 

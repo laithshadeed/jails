@@ -109,6 +109,7 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         next_source,
         patch: ModelPatch::AddRelation(relation),
         patch_bytes,
+        authored_migration: None,
     })
 }
 

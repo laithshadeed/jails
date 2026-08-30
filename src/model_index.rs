@@ -154,6 +154,7 @@ pub(crate) fn add(
             index,
         },
         patch_bytes,
+        authored_migration: None,
     })
 }
 
@@ -296,6 +297,7 @@ pub(crate) fn remove(
             confirmed_name,
         },
         patch_bytes,
+        authored_migration: None,
     })
 }
 

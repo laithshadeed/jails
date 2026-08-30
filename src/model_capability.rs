@@ -165,6 +165,7 @@ pub(crate) fn add(
         next_source,
         patch: ModelPatch::Batch(patches),
         patch_bytes,
+        authored_migration: None,
     })
 }
 
@@ -244,6 +245,7 @@ pub(crate) fn remove(
         next_source,
         patch: ModelPatch::Batch(patches),
         patch_bytes,
+        authored_migration: None,
     })
 }
 
@@ -281,6 +283,7 @@ pub(crate) fn add_dependency(
             next_source: current_source,
             patch: ModelPatch::Batch(Vec::new()),
             patch_bytes: br#"{"kind":"batch","patches":[]}"#.to_vec(),
+            authored_migration: None,
         });
     }
 
@@ -354,6 +357,7 @@ pub(crate) fn add_dependency(
         next_source,
         patch: ModelPatch::AddDependency(dependency),
         patch_bytes,
+        authored_migration: None,
     })
 }
 
@@ -405,6 +409,7 @@ pub(crate) fn remove_dependency(
         next_source,
         patch: ModelPatch::RemoveDependency(dependency.id),
         patch_bytes,
+        authored_migration: None,
     })
 }
 
@@ -499,6 +504,7 @@ fn set_tool_capability(
         next_source,
         patch,
         patch_bytes,
+        authored_migration: None,
     })
 }
 

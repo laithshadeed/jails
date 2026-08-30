@@ -236,6 +236,7 @@ pub(crate) fn drop_field(request: DropRequest, invocation: Invocation) -> Result
         next_source,
         patch,
         patch_bytes,
+        authored_migration: None,
     })
 }
 
@@ -353,6 +354,7 @@ fn finish_replace(
             next_source: std::mem::take(next_source),
             patch,
             patch_bytes,
+            authored_migration: None,
         },
         reader_paths,
     )

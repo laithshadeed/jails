@@ -76,6 +76,7 @@ pub(crate) fn run(semantic_id: String, invocation: Invocation) -> Result<()> {
             next_source,
             patch: ModelPatch::AddEjection(ejection),
             patch_bytes,
+            authored_migration: None,
         },
         &reader_paths,
     )
