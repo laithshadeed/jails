@@ -672,10 +672,10 @@ fn main() -> std::process::ExitCode {
         }
         Command::Build => run::build(debug),
         Command::Clean => run::clean(debug),
-        Command::Fmt if model_command::owns() => model_command::refuse_legacy_mutation(
-            "fmt",
-            "run the project formatter directly; canonical formatter ownership is not modeled yet",
-        ),
+        // A canonical project's generated tree is compiler output, so the
+        // only thing left for a formatter to touch is the reader's own code.
+        // See `run::format_project`.
+        Command::Fmt if model_command::owns() => run::format_project(debug),
         Command::Fmt => dispatch::mutate(invocation, false, jails_engine::route::format),
         Command::Check => run::check(debug),
         Command::Mvn { args } => run::mvn(&args, debug),

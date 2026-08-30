@@ -2325,6 +2325,40 @@ generator, on each fixture shape, the *set* of artifacts both engines write
 should be compared before their bytes are. That is a cheaper thing to build
 than the deletion it protects.
 
+## What still reaches the legacy engine (2026-08-30, measured)
+
+`new-cli` seeds a model, so a project jails creates is canonical from its
+first command. That closes the largest source of legacy traffic and leaves the
+list below, which is the whole of it -- taken by running each command against a
+freshly created canonical project and reading which ones refuse.
+
+| still legacy | why, and what closing it needs |
+|---|---|
+| `fmt` | **closed.** The legacy route formats a scratch tree and commits the diff, because the legacy engine generates into `src/` and a half-finished Spotless run leaves jails' own output half-rewritten. A canonical project keeps its output under `.jails/generated`, so nothing jails owns is in the formatter's path and the plain goal is both simpler and more honest. |
+| `adopt`, `modernize` | **not gaps.** Both are pre-canonical by design and say so: `adopt` maps a foreign project's directories onto layers before a model exists, and `modernize` raises the build before capture. They are legacy *users*, though, so deleting the engine means giving each a reader-file path that does not need a compiled model. |
+| `app plan`, `app apply` | `.jails/app.toml` is the legacy manifest and a canonical project refuses it, because two editable sources is the thing the cutover forbids. Closing it means retiring the manifest, not porting it -- its rows are the same intents the JDL frontends already accept. |
+| `new --app` | Deliberately exempt from seeding, for the same reason: the manifest is applied through the legacy engine inside the publication, so a model as well would be the second source. Goes when `app.toml` goes. |
+| a foreign project | **the real gap.** A project jails never created has no model and no ledger, and there is no command that gives it one: `model import` is one-way from a *legacy ledger* and its supported boundary is record and enum intents. So every mutation in somebody else's repository is still legacy, which is the case `minicom-public/spring` exists to represent. |
+
+**The order that follows from this** is not the deletion map's order, because the
+map assumed the engine's callers were engine-shaped. They are not: three of the
+five are reader-file edits that never needed a transaction, and the fourth is a
+file format to retire rather than a subsystem to port.
+
+1. A canonical on-ramp for a project jails did not create -- capture it into a
+   model the way `adopt` captures its layout. Without this the legacy engine is
+   load-bearing for every foreign repository, and nothing else on this list
+   matters.
+2. Retire `.jails/app.toml`: `app plan`/`app apply`/`new --app` go with it, and
+   the proof applications under `examples/` move to JDL.
+3. `adopt` and `modernize` onto reader-file operations.
+4. `jails-drive` and `jails-report` off the legacy value types -- `Project`,
+   `TestScope`, `TestEngine`, `ObjectId`, `jails_spec::build`,
+   `jails_state::compat`. Thin, and the crates themselves stay.
+5. Then the deletion the map describes: `jails-engine`, `jails-commit`,
+   `jails-prepare`, `jails-generate`, `jails-protocol`, `jails-project`,
+   `jails-spec`, `jails-state`, `jails-java`.
+
 ## Concrete deletion map
 
 | Current area | Destination | Eventual deletion/simplification |

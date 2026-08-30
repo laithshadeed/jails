@@ -554,6 +554,54 @@ app Demo {
     }
 }
 
+/// A canonical project can run its own formatter.
+///
+/// `jails fmt` refused on one, telling the reader to run the formatter
+/// directly. The legacy route's ceremony -- format a scratch tree synthesised
+/// from the projection, commit the diff as file operations -- exists because
+/// the legacy engine generates into `src/`, so a half-finished Spotless run
+/// leaves jails' own output half-rewritten. A canonical project keeps its
+/// reproducible output under `.jails/generated`, rendered from the model, so
+/// the only thing in the formatter's path is the reader's own code, which is
+/// what the command is for.
+#[test]
+fn a_canonical_project_runs_its_own_formatter() {
+    if !real_mvn_available() {
+        skip("mvn not found on PATH");
+        return;
+    }
+    let root = jdl_project(
+        "jdl-v1-canonical-fmt",
+        r#"jdl 1
+app Demo {
+ pkg com.example.demo
+ java 26
+ platform plain
+ build maven
+ storage none
+}
+"#,
+    );
+    write_plain_fixture(&root);
+    let installed = jails_cmd(&root, None)
+        .args(["add", "format"])
+        .output()
+        .unwrap();
+    assert!(
+        installed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&installed.stderr)
+    );
+
+    let formatted = jails_cmd(&root, None).arg("fmt").output().unwrap();
+    let told = String::from_utf8_lossy(&formatted.stderr);
+    assert!(
+        !told.contains("does not route `fmt`"),
+        "a canonical project still refuses its own formatter: {told}"
+    );
+    assert!(formatted.status.success(), "{told}");
+}
+
 #[test]
 fn model_fmt_keeps_typed_field_semantics_and_refuses_invalid_rules_atomically() {
     let root = jdl_project(
@@ -4244,7 +4292,14 @@ fn canonical_projects_fail_closed_before_legacy_mutation_routes() {
         vec!["rename", "Note", "Memo"],
         vec!["adopt"],
         vec!["modernize"],
-        vec!["fmt"],
+        // `fmt` was here and is not any more: it does not reach the legacy
+        // engine at all now. The ceremony that put it there -- format a
+        // scratch tree, commit the diff -- exists because the legacy engine
+        // generates into `src/`, and a canonical project's output is under
+        // `.jails/generated`, so the only thing in the formatter's path is the
+        // reader's own code. `a_canonical_project_runs_its_own_formatter`
+        // holds the new behaviour.
+        //
         // The declarative manifest is a second desired-state authority, and
         // it was the one route into the legacy engine this table did not
         // cover: `app apply` planned `jails.toml`, a ledger and capability

@@ -504,6 +504,41 @@ pub fn check(debug: bool) -> Result<()> {
     run_inherited(cmd, debug)
 }
 
+/// Run the project's own formatter, for a project whose model owns its output.
+///
+/// **The legacy route's ceremony protects something a canonical project does
+/// not have.** §R6.4 forbids letting Spotless near the live tree, and it is
+/// right about the project it was written for: the legacy engine generates
+/// into `src/`, so a formatter that fails halfway leaves jails' own output
+/// half-rewritten with nothing to say which files moved. It therefore formats
+/// a scratch tree synthesised from the projection and commits the diff as file
+/// operations.
+///
+/// A canonical project keeps its reproducible output under `.jails/generated`,
+/// rendered from the model and merge-managed. What is left in `src/` is the
+/// reader's own code, and formatting that is what `jails fmt` is for. There is
+/// no jails-owned byte in the formatter's path to protect, so the transaction
+/// buys nothing and the plain goal is both simpler and more honest.
+///
+/// Gradle is refused by name for the reason canonical `format` is: Spotless
+/// needs its plugin inside `plugins { }`, which is only legal as the script's
+/// first statement, so a project that never installed it has no goal to run
+/// and guessing where the top of somebody's build file is produces a script
+/// that no longer evaluates.
+pub fn format_project(debug: bool) -> Result<()> {
+    let (root, build) = either_root("fmt")?;
+    if build == crate::build::Build::Gradle {
+        return Err(jails_support::Failure::Told(
+            "`jails fmt` needs a Maven project.\n       fix: run the Gradle formatting task \
+             directly -- jails does not model formatter ownership on Gradle."
+                .to_string(),
+        ));
+    }
+    let mut cmd = Command::new(crate::maven::binary(&root));
+    cmd.args(["spotless:apply"]).current_dir(&root);
+    run_inherited(cmd, debug)
+}
+
 /// Escape hatch for Maven features jails should not duplicate. Arguments are
 /// forwarded exactly; the project wrapper is still preferred.
 pub fn mvn(args: &[String], debug: bool) -> Result<()> {
