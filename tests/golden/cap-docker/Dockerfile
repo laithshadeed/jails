@@ -3,6 +3,9 @@ FROM maven:3.9.16-eclipse-temurin-26 AS build
 WORKDIR /build
 COPY pom.xml ./
 COPY src/ src/
+# The compiler's managed tree is a source root the build file declares, so a
+# build without it compiles a project missing half of what it wrote.
+COPY .jails/ .jails/
 RUN --mount=type=cache,id=jails-maven-repository,target=/root/.m2 \
     mvn -B -ntp -DskipTests package \
     && cp "$(find target -maxdepth 1 -type f -name '*.jar' ! -name '*.original' -print -quit)" /build/application.jar

@@ -814,8 +814,14 @@ fn validate_proof_app_shared_context(project: &Path) {
 }
 
 fn assert_proof_app_context_source(project: &Path, file: &str, class_name: &str) {
-    let test_dir = common::generated(project, "src/test/java/com/example/demo");
-    let source = fs::read_to_string(test_dir.join(file)).unwrap();
+    // Resolved per file, not per directory: `DemoApplicationTests` is the
+    // reader's own and stays under `src/`, while the capability tests beside
+    // it are the compiler's and live in the managed tree. Asking about the
+    // directory answers for whichever tree exists and then looks in the wrong
+    // one.
+    let path = common::generated(project, &format!("src/test/java/com/example/demo/{file}"));
+    let source =
+        fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
     let class_marker = format!("class {class_name}");
     let class_start = source
         .find(&class_marker)
@@ -940,8 +946,20 @@ fn verified_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::P
                 // 70 -> 72: `aSinkThatAlreadyAcceptedIsNotSentTheEventAgain`,
                 // one per outbox, proving the relay's per-sink record survives
                 // a failed attempt (plan.md P6.3).
-                reports: 47,
-                tests: 72,
+                //
+                // **72 -> 31 when the corpus moved to the compiler**, and the
+                // number to watch is `skipped`, which is still zero. The
+                // legacy engine wrote an integration test per generated Java
+                // class; the compiler writes one per *operation* -- the write
+                // adapter against a real database, the query against the row
+                // it stored -- so a scaffold that produced five classes and
+                // five near-identical ITs now produces one that proves the
+                // statement. Nine of the old ones were scoped and `@Disabled`,
+                // which counted as passing and proved nothing; those run now,
+                // because the test that stores the row is the caller that can
+                // prove its tenancy.
+                reports: 28,
+                tests: 31,
                 failures: 0,
                 errors: 0,
                 skipped: 0,

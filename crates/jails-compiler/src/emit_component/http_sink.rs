@@ -23,6 +23,7 @@ use jails_model::{
     AppModel, BuiltinType, Component, ComponentReference, Operation, OperationKind,
     ParameterSource, TypeRef,
 };
+use std::collections::BTreeSet;
 
 /// Micrometer for the delivery counters, and Jackson through the `json`
 /// capability -- which is a declaration rather than a dependency, so it is
@@ -96,18 +97,22 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
         .replace("{{usecase}}", usecase)
         .replace("{{event}}Event", &event_type);
 
-    let (arguments, disabled) = sample(model, event)?;
+    let (arguments, disabled, sample_imports) = sample(model, event)?;
+    // **What the sample expressions name.** Every one is a builtin literal,
+    // but a literal is not import-free: `UUID.fromString(..)` and
+    // `Instant.parse(..)` are types, and a payload carrying either compiled
+    // everywhere except here.
+    let sample_imports = sample_imports
+        .iter()
+        .map(|import| format!("import {import};\n"))
+        .collect::<String>();
     let test = TEST
         .replace("{{pkg}}", &pkg)
         .replace(
             "import {{messaging}}.{{event}}Event;\n",
             &import(&pkg, &events, &event_type),
         )
-        // Every sample this emitter can produce is a builtin literal, so the
-        // extra imports the legacy renderer computed have nowhere to come
-        // from: a component it cannot sample is refused above rather than
-        // rendered with a `null` the reader has to find.
-        .replace("{{imports}}", "")
+.replace("{{imports}}", &sample_imports)
         .replace(
             "{{disabled_import}}",
             if disabled {
@@ -186,12 +191,16 @@ fn staging_command<'a>(
 /// project-owned type is one jails cannot construct, and emitting a guess
 /// would produce a test that does not compile while emitting nothing would
 /// drop the coverage silently.
-fn sample(model: &AppModel, event: &Operation) -> Result<(String, bool), CompileError> {
+fn sample(
+    model: &AppModel,
+    event: &Operation,
+) -> Result<(String, bool, BTreeSet<String>), CompileError> {
     let OperationKind::Event(payload) = &event.kind else {
         unreachable!("`relayed` has already checked the kind");
     };
     let mut disabled = false;
     let mut arguments = Vec::new();
+    let mut imports = BTreeSet::new();
     for parameter in &payload.semantics.parameters {
         let ty = match &parameter.source {
             ParameterSource::Typed(ty) => ty.clone(),
@@ -211,14 +220,17 @@ fn sample(model: &AppModel, event: &Operation) -> Result<(String, bool), Compile
             }
         };
         match ty {
-            TypeRef::Builtin(builtin) => arguments.push(builtin_sample(builtin)),
+            TypeRef::Builtin(builtin) => {
+                imports.extend(builtin.semantics().java_import.map(str::to_string));
+                arguments.push(builtin_sample(builtin));
+            }
             TypeRef::External(_) => {
                 disabled = true;
                 arguments.push("null".to_string());
             }
         }
     }
-    Ok((arguments.join(",\n                "), disabled))
+    Ok((arguments.join(",\n                "), disabled, imports))
 }
 
 fn builtin_sample(builtin: BuiltinType) -> String {

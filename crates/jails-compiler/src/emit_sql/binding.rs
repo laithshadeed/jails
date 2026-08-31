@@ -38,6 +38,30 @@ pub(crate) fn database_assigned(field: &Field) -> Result<bool, CompileError> {
 /// timestamp could not insert a row. `timestamps = true` gives one to every
 /// scaffold, so that was very nearly every canonical project, and nothing
 /// caught it because no generated integration test had ever run.
+/// The same conversion for a component that may be absent.
+///
+/// **Unwrapped before converting and null after.** A conversion applied to the
+/// `Optional` would not compile, and one applied *after* `orElse(null)` calls
+/// a method on null -- which is how a scaffold with an optional `instant`
+/// bound `Timestamp.from(value.startedAt().orElse(null))` and threw a
+/// `NullPointerException` on every insert that left the column empty. Three
+/// emitters need this answer and each had its own; this is the one.
+pub(crate) fn optional_bound_value(
+    model: &AppModel,
+    field: &jails_model::Field,
+    accessor: &str,
+    imports: &mut BTreeSet<String>,
+) -> String {
+    // `present` rather than `value`: the repository's `save` already has a
+    // parameter called `value`, and a lambda that shadows it does not compile.
+    let converted = bound_value(model, field, "present", imports);
+    if converted == "present" {
+        format!("{accessor}.orElse(null)")
+    } else {
+        format!("{accessor}.map(present -> {converted}).orElse(null)")
+    }
+}
+
 pub(crate) fn bound_value(
     model: &AppModel,
     field: &Field,

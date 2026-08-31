@@ -330,7 +330,8 @@ pub(super) fn link(
                 }))
             }
         };
-        if let Some(kind) = kind {
+        if let Some(mut kind) = kind {
+            inherit_field_optionality(&mut kind, entities);
             if crate::operation::entity(&kind)
                 .and_then(|entity| entities.get(entity))
                 .is_some_and(|entity| !entity.active)
@@ -367,6 +368,43 @@ pub(super) fn link(
         }
     }
     operations
+}
+
+/// A shorthand parameter naming a field is as optional as that field.
+///
+/// **The declaration has no way to say otherwise**, which is what makes this a
+/// derivation rather than a default: `command CreateContact(display_name)`
+/// names a component, and `?` on a parameter already means a presence-
+/// sensitive *filter* and is legal only on a query. So `required` on a
+/// field-sourced parameter is not something an author states -- it is a fact
+/// about the field, and reading it from the declaration made
+/// `displayName:string?` render an `Input` with a plain `String` and a
+/// `requireNonNull`: a caller forced to supply a value for a column that
+/// permits none. A typed parameter has no field to read and keeps what it was
+/// given.
+fn inherit_field_optionality(kind: &mut OperationKind, entities: &BTreeMap<EntityId, Entity>) {
+    let parameters = match kind {
+        OperationKind::Command(command) => &mut command.semantics.parameters,
+        OperationKind::Query(query) => &mut query.semantics.parameters,
+        OperationKind::Transition(transition) => &mut transition.semantics.parameters,
+        OperationKind::Event(event) => &mut event.semantics.parameters,
+    };
+    for parameter in parameters {
+        let crate::operation::ParameterSource::Field(visible) = &parameter.source else {
+            continue;
+        };
+        // A presence-sensitive filter is already about absence and says so on
+        // its own axis; leaving it alone keeps the two from being read as one.
+        if parameter.optional_filter {
+            continue;
+        }
+        if let Some(field) = entities
+            .get(&visible.entity)
+            .and_then(|entity| entity.field(&visible.field))
+        {
+            parameter.required = field.required;
+        }
+    }
 }
 
 mod kinds;

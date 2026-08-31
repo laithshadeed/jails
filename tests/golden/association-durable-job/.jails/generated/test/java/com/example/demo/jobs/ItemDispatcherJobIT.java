@@ -4,6 +4,7 @@ package com.example.demo.jobs;
 import com.example.demo.application.commands.AddItemCommand;
 import com.example.demo.repository.ItemRepository;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -27,6 +28,20 @@ class ItemDispatcherJobIT {
     @Autowired ItemRepository results;
     @Autowired JdbcClient db;
 
+    /**
+     * Each case starts from an empty queue, because the worker claims the
+     * <em>oldest</em> runnable item rather than a named one.
+     *
+     * <p>Without this a case that enqueues its own work and then drains once
+     * drains somebody else's: the row it is asserting about is still PENDING
+     * with no attempts, and the failure reads as a queue that does not work.
+     * The table is this application's own bookkeeping and the test owns it.
+     */
+    @BeforeEach
+    void emptyTheQueue() {
+        db.sql("delete from item_dispatcher_jobs").update();
+    }
+
     @Test
     void acceptedWorkRunsOnceAndReportsItsOutcome() {
         var id = UUID.randomUUID();
@@ -35,7 +50,14 @@ class ItemDispatcherJobIT {
         assertThat(store.status(id).orElseThrow().state())
                 .isEqualTo(ItemDispatcherQueue.State.PENDING);
         worker.runOnce();
-        assertThat(store.status(id).orElseThrow().state())
+        // The recorded failure, not just the state: "expected SUCCEEDED but
+        // was PENDING" is what a retryable failure looks like from outside,
+        // and it names neither what failed nor why.
+        var after = store.status(id).orElseThrow();
+        assertThat(after.state())
+                .withFailMessage(
+                        "the queued work did not succeed: state=%s attempts=%d error=%s",
+                        after.state(), after.attempts(), after.lastError().orElse("none"))
                 .isEqualTo(ItemDispatcherQueue.State.SUCCEEDED);
 
         // Draining again must not run it a second time: a SUCCEEDED row is not

@@ -1,7 +1,10 @@
 .git
 .github
 .idea
-.jails/app-state-v1
+.jails/apply.lock
+.jails/ledger.toml
+.jails/objects
+.jails/receipts
 .vscode
 target
 *.iml

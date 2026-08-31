@@ -93,7 +93,7 @@ pub(super) fn lower(
                     &mut imports,
                 ))
             } else {
-                InsertValue::Parameter(optional_bound_value(
+                InsertValue::Parameter(crate::emit_sql::optional_bound_value(
                     model,
                     field,
                     &format!("input.{member}()"),
@@ -110,7 +110,7 @@ pub(super) fn lower(
                     &mut imports,
                 ))
             } else {
-                InsertValue::Parameter(optional_bound_value(
+                InsertValue::Parameter(crate::emit_sql::optional_bound_value(
                     model,
                     field,
                     &format!("input.{member}()"),
@@ -419,23 +419,4 @@ fn unique_lookup(entity: &Entity, field: &Field) -> bool {
                 ConstraintKind::PrimaryKey | ConstraintKind::Unique
             ) && constraint.fields.as_slice() == std::slice::from_ref(&field.id)
         })
-}
-
-/// The same conversion for a component that may be absent.
-///
-/// Unwrapped before converting and null after: a conversion applied to the
-/// `Optional` would not compile, and one applied after `orElse(null)` would
-/// call a method on null.
-fn optional_bound_value(
-    model: &AppModel,
-    field: &jails_model::Field,
-    accessor: &str,
-    imports: &mut std::collections::BTreeSet<String>,
-) -> String {
-    let converted = crate::emit_sql::bound_value(model, field, "value", imports);
-    if converted == "value" {
-        format!("{accessor}.orElse(null)")
-    } else {
-        format!("{accessor}.map(value -> {converted}).orElse(null)")
-    }
 }

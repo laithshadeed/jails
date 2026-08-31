@@ -182,14 +182,15 @@ pub(super) fn lower_db_repository(
             continue;
         }
         let member = &field.names.java_member;
-        let accessor = if field.required {
-            format!("value.{member}()")
-        } else {
-            format!("value.{member}().orElse(null)")
-        };
         // Through the one write expression, because the PostgreSQL driver
-        // cannot infer a type for every Java value the record can hold.
-        let value = crate::emit_sql::bound_value(model, field, &accessor, &mut imports);
+        // cannot infer a type for every Java value the record can hold -- and
+        // through the *optional* one when the component may be absent, because
+        // a conversion applied after `orElse(null)` calls a method on null.
+        let accessor = format!("value.{member}()");
+        let value = match field.required {
+            true => crate::emit_sql::bound_value(model, field, &accessor, &mut imports),
+            false => crate::emit_sql::optional_bound_value(model, field, &accessor, &mut imports),
+        };
         params.push_str(&format!(
             "\n                .param(\"{}\", {value})",
             field.names.sql_column

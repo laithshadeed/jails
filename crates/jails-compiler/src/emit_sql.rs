@@ -22,7 +22,7 @@ use jails_model::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(crate) use binding::{bound_value, database_assigned};
+pub(crate) use binding::{bound_value, database_assigned, optional_bound_value};
 use field_semantics::{SqlDefault, initial_column, length_check, numeric_check, sql_default};
 
 pub(crate) fn derive(

@@ -29,8 +29,8 @@ class JdbcAddItemCommandIT {
 
     @Test
     void writesThroughTheRealDatabase() {
-        Owner item_ownerRow = ownerRepository.save(new Owner(UUID.fromString("00000000-0000-0000-0000-000000000001"), "sample", Instant.parse("2026-01-01T00:00:00Z")));
-        Item answered = operation.execute(new AddItemCommand.Input(UUID.fromString("00000000-0000-0000-0000-000000000001"), item_ownerRow.id(), "sample"));
+        Owner ownerRow = ownerRepository.save(new Owner(UUID.fromString("00000000-0000-0000-0000-000000000001"), "sample", Instant.parse("2026-01-01T00:00:00Z")));
+        Item answered = operation.execute(new AddItemCommand.Input(UUID.fromString("00000000-0000-0000-0000-000000000001"), ownerRow.id(), "sample"));
 
         // `returning` answers with the row the statement wrote, so a null
         // here means it matched none -- which is the failure worth catching.

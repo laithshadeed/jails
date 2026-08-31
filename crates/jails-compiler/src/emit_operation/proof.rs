@@ -76,28 +76,44 @@ pub(super) fn query(
         return Ok(None);
     };
     // **A scoped query reads its tenant from the execution context**, whose
-    // claims are strings the caller proves -- so the value the filter needs is
-    // the string form of whatever the stored row carries, and jails has no way
-    // to spell that for every scopeable type. Emitted whole and `@Disabled`
-    // rather than omitted: the class still compiles, so it keeps working as
-    // the shape to fill in, and nothing is dropped in silence.
-    let scoped = !scopes(target).is_empty();
-    let (context_argument, disabled, class_disabled) = if scoped {
-        imports.insert("org.junit.jupiter.api.Disabled".to_string());
+    // claims are strings the caller proves -- and the test is the caller. It
+    // has just stored the row, so it knows exactly which tenant that row
+    // belongs to: the claim is the scoped component of the value it saved,
+    // as a string. This was `@Disabled` on the grounds that jails cannot spell
+    // the value for every scopeable type, which is true of the *type* and not
+    // of this test, where the row is in hand.
+    let scoped = scopes(target);
+    let (context_argument, disabled) = if scoped.is_empty() {
+        (String::new(), "")
+    } else {
         imports.insert("java.util.Map".to_string());
         imports.insert(format!(
             "{}.ExecutionContext",
             model.project.package_for(Package::Application)
         ));
+        let entries = scoped
+            .iter()
+            .map(|field| {
+                format!(
+                    "Map.entry(\"{}\", String.valueOf(stored.{}()))",
+                    field
+                        .semantics
+                        .scope
+                        .as_ref()
+                        .expect("scopes() filtered on Some")
+                        .claim,
+                    field.names.java_member
+                )
+            })
+            .collect::<Vec<_>>();
         (
-            "new ExecutionContext(Map.of()), ",
-            "    @Disabled(\"todo: supply the scope claims this query proves against, then delete this @Disabled\")\n",
+            format!(
+                "new ExecutionContext(Map.ofEntries({})), ",
+                entries.join(", ")
+            ),
             "",
         )
-    } else {
-        ("", "", "")
     };
-    let _ = class_disabled;
     let body = format!(
         "@SpringBootTest\n@Transactional\nclass {type_name} {{\n\n    @Autowired\n    private {}Repository repository;\n\n{autowired}    @Autowired\n    private {port_type} query;\n\n    @Test\n{disabled}    void answersFromTheRealDatabase() {{\n{setup}        // The *stored* row, not the argument: with a database-assigned key\n        // the two differ by exactly the column the query reads back.\n        {} stored = repository.save(new {}({stored}));\n\n        var found = query.execute({context_argument}new {port_type}.Input({input_arguments}));\n\n        assertThat(found).contains(stored);\n    }}\n\n    // Reader-owned cases belong below this stable boundary.\n}}",
         target.names.java_type, target.names.java_type, target.names.java_type
@@ -166,59 +182,54 @@ fn parent_fixtures(
     // sample the stored row carries, so the two cannot drift into a test that
     // stores one value and asks for another.
     let mut substitutions = BTreeMap::new();
-    // **Every parent row the database will insist on**, not only the ones the
-    // query joins: a declared relation is a foreign key, so storing the child
-    // without its parent fails on the constraint rather than on the query. A
-    // join and a relation can name the same parent, so the second is dropped.
-    let mut parents: Vec<ParentRow> = joins
-        .iter()
-        .map(|join| ParentRow {
-            entity: join.entity.clone(),
-            alias: join.alias.clone(),
-            mappings: join
-                .mappings
-                .iter()
-                .map(|mapping| (mapping.local.clone(), mapping.remote.clone()))
-                .collect(),
-        })
-        .collect();
-    for relation in model.relations.values() {
-        if relation.child != target.id
-            || parents
-                .iter()
-                .any(|parent| parent.entity == relation.parent)
-        {
-            continue;
-        }
-        parents.push(ParentRow {
-            entity: relation.parent.clone(),
-            alias: relation.label.clone(),
-            mappings: relation
-                .mappings
-                .iter()
-                .map(|mapping| (mapping.local.clone(), mapping.remote.clone()))
-                .collect(),
-        });
-    }
     let mut setup = String::new();
     let mut autowired = String::new();
-    for ParentRow {
-        entity: entity_id,
-        alias,
-        mappings,
-    } in &parents
-    {
-        let parent = model.entities.get(entity_id).ok_or_else(|| {
+    // **Every ancestor is stored once, deepest first, and shared.** Two things
+    // needed that. A parent has parents of its own -- storing a `Contact`
+    // without its `Workspace` fails on the constraint before the child is
+    // reached. And `Conversation` references `Contact` by
+    // `(workspace_id, contact_id)` and `Inbox` by `(workspace_id, inbox_id)`,
+    // so a workspace sampled separately per branch left the child carrying one
+    // parent's workspace and the other parent's id. Keyed by entity, the
+    // second reference to a workspace is the row the first one stored.
+    let mut stored: BTreeMap<jails_model::EntityId, String> = BTreeMap::new();
+    let direct = ancestry(model, target, joins);
+    for entity_id in store_order(model, &direct) {
+        if stored.contains_key(&entity_id) {
+            continue;
+        }
+        let parent = model.entities.get(&entity_id).ok_or_else(|| {
             CompileError::new(format!(
-                "linked query `{}` references missing entity `{}`",
-                operation.label, entity_id
+                "linked query `{}` references missing entity `{entity_id}`",
+                operation.label
             ))
         })?;
-        let Some(parent_arguments) = record_arguments(model, parent, &BTreeMap::new(), imports)
-        else {
+        let mut inherited = BTreeMap::new();
+        for ancestor in ancestry(model, parent, &[]) {
+            let (Some(row), Some(grandparent)) = (
+                stored.get(&ancestor.entity),
+                model.entities.get(&ancestor.entity),
+            ) else {
+                continue;
+            };
+            for (local, remote) in &ancestor.mappings {
+                let Some(remote) = grandparent.field(remote) else {
+                    return Ok(None);
+                };
+                inherited.insert(
+                    local.clone(),
+                    format!("{row}.{}()", remote.names.java_member),
+                );
+            }
+        }
+        let Some(arguments) = record_arguments(model, parent, &inherited, imports) else {
             return Ok(None);
         };
-        let variable = format!("{}Row", lower_first(alias));
+        // Named after the entity rather than the relation: one row per entity
+        // is the whole point, and two relations naming it would otherwise ask
+        // for two variables holding the same thing.
+        let variable = format!("{}Row", lower_first(&parent.names.java_type));
+        let repository = lower_first(&parent.names.java_type);
         imports.insert(domain_import(model, parent));
         imports.insert(format!(
             "{}.{}Repository",
@@ -226,21 +237,27 @@ fn parent_fixtures(
             parent.names.java_type
         ));
         autowired.push_str(&format!(
-            "    @Autowired\n    private {}Repository {}Repository;\n\n",
-            parent.names.java_type,
-            lower_first(&parent.names.java_type)
-        ));
-        setup.push_str(&format!(
-            "        {} {variable} = {}Repository.save(new {}({parent_arguments}));\n",
-            parent.names.java_type,
-            lower_first(&parent.names.java_type),
+            "    @Autowired\n    private {}Repository {repository}Repository;\n\n",
             parent.names.java_type
         ));
-        // **The assigned key, not a sample.** The child's foreign key has to
-        // be the value the database gave the parent, or the join finds nothing
-        // and the test proves the opposite of what it says.
-        for (local, remote) in mappings {
-            let Some(remote) = parent.field(remote) else {
+        setup.push_str(&format!(
+            "        {} {variable} = {repository}Repository.save(new {}({arguments}));\n",
+            parent.names.java_type, parent.names.java_type
+        ));
+        stored.insert(entity_id, variable);
+    }
+    // **The assigned key, not a sample.** The child's foreign key has to be
+    // the value the database gave the parent, or the join finds nothing and
+    // the test proves the opposite of what it says.
+    for parent in &direct {
+        let (Some(variable), Some(entity)) = (
+            stored.get(&parent.entity),
+            model.entities.get(&parent.entity),
+        ) else {
+            return Ok(None);
+        };
+        for (local, remote) in &parent.mappings {
+            let Some(remote) = entity.field(remote) else {
                 return Ok(None);
             };
             substitutions.insert(
@@ -255,6 +272,75 @@ fn parent_fixtures(
         autowired,
         substitutions,
     }))
+}
+
+/// The ancestor closure in the order rows have to be written.
+///
+/// Post-order depth-first, so a grandparent is stored before the parent that
+/// references it. The visited set is what makes a diamond -- two parents
+/// sharing one grandparent -- one row rather than two, and what stops a
+/// relation cycle from recursing forever.
+fn store_order(model: &AppModel, direct: &[ParentRow]) -> Vec<jails_model::EntityId> {
+    fn visit(
+        model: &AppModel,
+        entity_id: &jails_model::EntityId,
+        seen: &mut BTreeSet<jails_model::EntityId>,
+        order: &mut Vec<jails_model::EntityId>,
+    ) {
+        if !seen.insert(entity_id.clone()) {
+            return;
+        }
+        if let Some(entity) = model.entities.get(entity_id) {
+            for parent in ancestry(model, entity, &[]) {
+                visit(model, &parent.entity, seen, order);
+            }
+        }
+        order.push(entity_id.clone());
+    }
+    let mut seen = BTreeSet::new();
+    let mut order = Vec::new();
+    for parent in direct {
+        visit(model, &parent.entity, &mut seen, &mut order);
+    }
+    order
+}
+
+/// Every parent row the database will insist on, joins first.
+///
+/// Not only the ones a query joins: a declared relation is a foreign key, so
+/// storing the child without its parent fails on the constraint rather than on
+/// the query. A join and a relation can name the same parent, and the join's
+/// alias is the one the test reads, so the relation is dropped.
+fn ancestry(model: &AppModel, child: &Entity, joins: &[Join]) -> Vec<ParentRow> {
+    let mut parents: Vec<ParentRow> = joins
+        .iter()
+        .map(|join| ParentRow {
+            entity: join.entity.clone(),
+            mappings: join
+                .mappings
+                .iter()
+                .map(|mapping| (mapping.local.clone(), mapping.remote.clone()))
+                .collect(),
+        })
+        .collect();
+    for relation in model.relations.values() {
+        if relation.child != child.id
+            || parents
+                .iter()
+                .any(|parent| parent.entity == relation.parent)
+        {
+            continue;
+        }
+        parents.push(ParentRow {
+            entity: relation.parent.clone(),
+            mappings: relation
+                .mappings
+                .iter()
+                .map(|mapping| (mapping.local.clone(), mapping.remote.clone()))
+                .collect(),
+        });
+    }
+    parents
 }
 
 /// The integration test beside a command's or transition's JDBC adapter.
@@ -300,13 +386,6 @@ pub(super) fn write(
         format!("{}.{port_type}", model.project.package_for(port_package)),
     ]);
 
-    // A scoped operation reads its tenant from the execution context, whose
-    // claims are strings the caller proves. jails cannot spell that for every
-    // scopeable type, so there is no honest test to write here.
-    if !scopes(target).is_empty() {
-        return Ok(None);
-    }
-
     let Some(fixtures) = parent_fixtures(model, operation, target, &[], &mut imports)? else {
         return Ok(None);
     };
@@ -317,6 +396,22 @@ pub(super) fn write(
     } = fixtures;
 
     let record = &target.names.java_type;
+    // **The claims this operation proves against, spelled by the test.** The
+    // context is a map of claim to string, and the caller is what proves it --
+    // here that caller is the test, which either stored the row (so it knows
+    // the tenant) or is about to create one (so it chooses the tenant). This
+    // was skipped entirely on the grounds that jails cannot spell the value
+    // for every scopeable type, which is true of the *type* and not of a test
+    // that has the value in hand.
+    let scoped = scopes(target);
+    let context_argument;
+    if !scoped.is_empty() {
+        imports.insert("java.util.Map".to_string());
+        imports.insert(format!(
+            "{}.ExecutionContext",
+            model.project.package_for(Package::Application)
+        ));
+    }
     // A transition changes a row that has to be there; a command makes its own.
     let invocation = if let Some(key) = keyed {
         let Some(stored) = record_arguments(model, target, &substitutions, &mut imports) else {
@@ -332,12 +427,30 @@ pub(super) fn write(
         setup.push_str(&format!(
             "        {record} stored = repository.save(new {record}({stored}));\n"
         ));
+        context_argument = claims(&scoped, |field| {
+            format!("String.valueOf(stored.{}())", field.names.java_member)
+        });
         format!(
-            "operation.execute(stored.{}(), new {port_type}.Input({{arguments}}))",
+            "operation.execute({context_argument}stored.{}(), new {port_type}.Input({{arguments}}))",
             key.names.java_member
         )
     } else {
-        format!("operation.execute(new {port_type}.Input({{arguments}}))")
+        let mut chosen = Vec::new();
+        for field in &scoped {
+            let Some(value) = crate::emit_companion_test::sample(model, field, &mut imports) else {
+                return Ok(None);
+            };
+            chosen.push((field.names.java_member.clone(), value));
+        }
+        context_argument = claims(&scoped, |field| {
+            let value = chosen
+                .iter()
+                .find(|(member, _)| member == &field.names.java_member)
+                .map(|(_, value)| value.clone())
+                .expect("every scoped field was sampled above");
+            format!("String.valueOf({value})")
+        });
+        format!("operation.execute({context_argument}new {port_type}.Input({{arguments}}))")
     };
     let Some(arguments) = input_arguments(model, target, inputs, &substitutions, &mut imports)
     else {
@@ -378,6 +491,36 @@ pub(super) fn write(
             },
         },
     )))
+}
+
+/// The `ExecutionContext` argument, built from a value the test can name.
+///
+/// One helper because both halves of the write proof need it and they name the
+/// value differently: a transition reads it off the row it stored, a command
+/// chooses it and the insert writes it.
+fn claims(scoped: &[&jails_model::Field], value: impl Fn(&jails_model::Field) -> String) -> String {
+    let entries = scoped
+        .iter()
+        .map(|field| {
+            format!(
+                "Map.entry(\"{}\", {})",
+                field
+                    .semantics
+                    .scope
+                    .as_ref()
+                    .expect("scopes() filtered on Some")
+                    .claim,
+                value(field)
+            )
+        })
+        .collect::<Vec<_>>();
+    match entries.is_empty() {
+        true => String::new(),
+        false => format!(
+            "new ExecutionContext(Map.ofEntries({})), ",
+            entries.join(", ")
+        ),
+    }
 }
 
 /// The fields this operation's `Input` declares, or `None` when the test
@@ -452,7 +595,6 @@ fn input_arguments(
 struct ParentRow {
     entity: jails_model::EntityId,
     /// What the local variable holding the saved row is named after.
-    alias: String,
     /// Child field to parent field, so the child can carry the key the
     /// database assigned rather than a sample.
     mappings: Vec<(FieldId, FieldId)>,

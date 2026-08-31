@@ -85,7 +85,12 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             &format!("{}Repository", target.names.java_type),
         )
     };
-    let (arguments, conflict) = sample(model, command)?;
+    let (arguments, conflict, sample_imports) = sample(model, command)?;
+    let sample_imports = sample_imports
+        .iter()
+        .filter(|import| *import != "java.util.UUID")
+        .map(|import| format!("import {import};\n"))
+        .collect::<String>();
 
     let queue = QUEUE
         .replace("{{pkg}}", &jobs)
@@ -100,10 +105,20 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
         .replace("{{usecase}}Command", &port)
         .replace("{{property}}", &property)
         .replace("{{table}}", &table);
+    // **The tenancy the enqueue proved, replayed from the payload it stored.**
+    // A scoped command reads its claims from an `ExecutionContext` the request
+    // boundary built after `ScopeAuthorizer` proved them; a worker running out
+    // of band has nobody to prove anything, but the values it needs were
+    // proven when the work was enqueued and are in the row. Rebuilding the
+    // context from them is what replaying the command means -- calling it
+    // without one did not compile at all.
+    let (context, context_import) = worker_context(model, command, target)?;
     let worker = WORKER
         .replace("{{pkg}}", &jobs)
         .replace("{{input_import}}", &input(&jobs))
         .replace("{{repository_import}}", &repository_import(&jobs))
+        .replace("{{context_import}}", &context_import)
+        .replace("{{context}}", &context)
         .replace("{{name}}", name)
         .replace("{{usecase}}Command", &port)
         .replace("{{target}}", &target.names.java_type)
@@ -122,11 +137,13 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
         .replace("{{pkg}}", &jobs)
         .replace("{{input_import}}", &input(&jobs))
         .replace("{{repository_import}}", &repository_import(&jobs))
+        .replace("{{sample_imports}}", &sample_imports)
         // Before `{{name}}` and `{{usecase}}Command`: the conflict block
         // carries both, and substituting them first would leave a rendered
         // test naming `{{usecase}}Command` literally.
         .replace("{{conflict_test}}", &conflict)
         .replace("{{args}}", &arguments)
+        .replace("{{table}}", &table)
         .replace("{{name}}", name)
         .replace("{{target}}", &target.names.java_type)
         .replace("{{usecase}}Command", &port);
@@ -265,12 +282,20 @@ fn produced<'a>(model: &'a AppModel, component: &Component) -> Result<&'a Entity
 /// there is nothing to vary -- so rather than assert a conflict that cannot
 /// happen, it is omitted with the reason in its place. A command with no input
 /// is unusual but legal.
-fn sample(model: &AppModel, command: &Operation) -> Result<(String, String), CompileError> {
+fn sample(
+    model: &AppModel,
+    command: &Operation,
+) -> Result<(String, String, BTreeSet<String>), CompileError> {
     let OperationKind::Command(spec) = &command.kind else {
         unreachable!("`queued` has already checked the kind");
     };
     let mut arguments = Vec::new();
     let mut alternates = Vec::new();
+    // **What the sample expressions name.** `URI.create(...)` and
+    // `Instant.parse(...)` are Java types, and this template's import list is
+    // otherwise fixed -- so a payload carrying a `uri` compiled everywhere
+    // except here, where the symbol was simply undefined.
+    let mut imports = BTreeSet::new();
     for parameter in &spec.semantics.parameters {
         if !parameter.required || parameter.optional_filter {
             arguments.push("java.util.Optional.empty()".to_string());
@@ -295,6 +320,7 @@ fn sample(model: &AppModel, command: &Operation) -> Result<(String, String), Com
         };
         match ty {
             TypeRef::Builtin(builtin) => {
+                imports.extend(builtin.semantics().java_import.map(str::to_string));
                 arguments.push(builtin.semantics().sample.to_string());
                 alternates.push(builtin.semantics().alternate.map(str::to_string));
             }
@@ -328,7 +354,41 @@ fn sample(model: &AppModel, command: &Operation) -> Result<(String, String), Com
         }
     }
     let conflict = conflict_test(&arguments, &alternates);
-    Ok((arguments.join(", "), conflict))
+    Ok((arguments.join(", "), conflict, imports))
+}
+
+/// The `ExecutionContext` argument a scoped command needs, and its import.
+///
+/// Empty when the target carries no `@scope` field, which is the ordinary case
+/// and the only one this can emit.
+///
+/// **A scoped command is refused rather than replayed**, and that is a
+/// decision rather than a gap. `@scope` means the value is proved at the
+/// request boundary by `ScopeAuthorizer` and read from the context, never from
+/// the caller's input -- so the tenancy is exactly what the queue row does not
+/// hold. A worker that manufactured a context from the payload would be
+/// asserting a claim nobody proved, which is the privilege escalation the
+/// marker exists to prevent; one that stored the proven claims would be a
+/// different queue, with a column and a contract this has not been given.
+/// Saying so is the honest answer until somebody designs that queue.
+fn worker_context(
+    model: &AppModel,
+    command: &Operation,
+    target: &jails_model::Entity,
+) -> Result<(String, String), CompileError> {
+    let scoped = target
+        .fields
+        .iter()
+        .filter(|field| field.semantics.scope.is_some())
+        .collect::<Vec<_>>();
+    if scoped.is_empty() {
+        return Ok((String::new(), String::new()));
+    }
+    let _ = model;
+    Err(CompileError::new(format!(
+        "durable job cannot replay `{}`: `{}` is scoped by `{}`, and a worker running out of band has nobody to prove a claim to\n       fix: enqueue an unscoped command, or write the worker by hand and decide there how the proven tenancy is carried",
+        command.label, target.label, scoped[0].label
+    )))
 }
 
 /// The constants of a declared enum, or `None` when this names something else.

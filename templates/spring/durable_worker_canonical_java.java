@@ -1,6 +1,6 @@
 package {{pkg}};
 
-{{input_import}}{{repository_import}}import org.slf4j.Logger;
+{{input_import}}{{repository_import}}{{context_import}}import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -52,7 +52,7 @@ public final class {{name}}Worker {
     private void execute(Jdbc{{name}}Store.Claimed claimed) {
         try {
             if (results.findById(claimed.id()).isEmpty()) {
-                command.execute(claimed.work());
+                command.execute({{context}}claimed.work());
             }
             store.succeed(claimed.id());
         } catch (RuntimeException failure) {
