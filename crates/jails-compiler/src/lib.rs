@@ -370,10 +370,20 @@ impl Compiler {
             .values()
             .any(|capability| capability.kind == "fast-test")
         {
+            // **Versionless under a Boot parent, pinned without one.** A
+            // `<dependency>` with no version is correct where something
+            // manages it and *fatal* where nothing does: Maven refuses to
+            // read the pom at all, `validate` included. The pin is the
+            // project's own JUnit, because the console launcher and the tests
+            // have to be one version -- a mismatch resolves and then dies at
+            // run time with `NoSuchMethodError`.
             let required = BuildDependency {
                 group: "org.junit.platform".to_string(),
                 artifact: "junit-platform-console".to_string(),
-                version: None,
+                version: match snapshot.project.spring_boot {
+                    Some(_) => None,
+                    None => snapshot.project.junit.clone(),
+                },
                 scope: DependencyScope::Test,
             };
             if !dependencies.iter().any(|declared| {

@@ -136,14 +136,14 @@ pub(crate) fn ensure_owned(invocation: Invocation) -> Result<()> {
     // half of the transition the reader has not seen yet.
     if invocation.pretend {
         if invocation.output == Output::Human {
-            println!("--pretend: would create {JDL_PATH}");
+            eprintln!("--pretend: would create {JDL_PATH}");
         }
         return Ok(());
     }
     // `model_init` prints what it did and what changes for the reader; saying
     // it twice would be noise, and saying it here as well as there is how the
     // two go out of step.
-    crate::model_init::run(invocation)
+    crate::model_init::run_as(invocation, crate::model_init::Announce::OnRamp)
 }
 
 /// Does this project author its model in JDL?

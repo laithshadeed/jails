@@ -311,6 +311,7 @@ fn capture_model_state(
         dependencies: BTreeSet::new(),
         maven_wrapper: root.join("mvnw").is_file(),
         layout,
+        junit: junit_version(root, build_system),
     };
     let accepted = accepted_compiler_state(&files)?;
     let accepted_reader_paths = accepted
@@ -483,6 +484,48 @@ fn spring_boot_version(root: &Path, build_system: BuildSystem) -> Option<String>
                 .map(str::to_string)
         }
         BuildSystem::Gradle => gradle_spring_boot_version(&source),
+        BuildSystem::Unknown => None,
+    }
+}
+
+/// The JUnit version this project declares, read off its build.
+///
+/// **One number, and it is the project's rather than jails'.** `test --fast`
+/// runs the console launcher against the already-compiled classes, and the
+/// launcher has to be the same JUnit as the tests: JUnit 6's BOM constrains
+/// every artifact to one version, while JUnit 5 paired jupiter `5.y.z` with
+/// platform `1.y.z`. Under a Spring Boot parent the version is managed and
+/// nothing here needs to answer; on a plain build this is what makes the
+/// capability declarable instead of refused.
+fn junit_version(root: &Path, build_system: BuildSystem) -> Option<String> {
+    let path = match build_system {
+        BuildSystem::Maven => root.join("pom.xml"),
+        BuildSystem::Gradle if root.join("build.gradle.kts").is_file() => {
+            root.join("build.gradle.kts")
+        }
+        BuildSystem::Gradle => root.join("build.gradle"),
+        BuildSystem::Unknown => return None,
+    };
+    let source = std::fs::read_to_string(path).ok()?;
+    match build_system {
+        BuildSystem::Maven => {
+            let mut rest = source.as_str();
+            while let Some(at) = rest.find("<artifactId>junit-") {
+                let block_start = rest[..at].rfind("<dependency>")?;
+                let block = between(&rest[block_start..], "<dependency>", "</dependency>")?;
+                if let Some(version) = between(block, "<version>", "</version>") {
+                    return Some(version.trim().to_string());
+                }
+                rest = &rest[at + 1..];
+            }
+            None
+        }
+        // A Gradle project states it as a coordinate on one line.
+        BuildSystem::Gradle => source
+            .lines()
+            .find(|line| line.contains("org.junit.jupiter:junit-jupiter"))
+            .and_then(|line| line.rsplit_once(':'))
+            .and_then(|(_, version)| quoted(version.trim())),
         BuildSystem::Unknown => None,
     }
 }

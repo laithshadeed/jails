@@ -85,6 +85,16 @@ pub struct ProjectFacts {
     /// as it did -- the defaults are the names the compiler already used.
     #[serde(default)]
     pub layout: Layout,
+    /// The JUnit version this project declares, if it declares one.
+    ///
+    /// **`test --fast` needs it and cannot guess it.** The console launcher's
+    /// artifact must be the same version as the project's own JUnit: a
+    /// mismatch resolves fine and dies at run time with `NoSuchMethodError`
+    /// wrapped in "versions not properly aligned". Under a Spring Boot parent
+    /// the version is managed and this stays `None`; on a plain build it is
+    /// the only thing that makes the capability declarable at all.
+    #[serde(default)]
+    pub junit: Option<String>,
 }
 
 impl ProjectFacts {
@@ -97,6 +107,7 @@ impl ProjectFacts {
             dependencies: BTreeSet::new(),
             maven_wrapper: false,
             layout: Layout::default(),
+            junit: None,
         }
     }
 }

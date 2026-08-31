@@ -182,9 +182,10 @@ pub(crate) fn preflight(
         .values()
         .any(|capability| capability.kind == "fast-test")
         && snapshot.project.spring_boot.is_none()
+        && snapshot.project.junit.is_none()
     {
         return Err(CompileError::new(
-            "canonical fast-test ownership currently requires captured Spring Boot dependency management\n       fix: import a Spring Boot or JUnit BOM project before using `test --fast`",
+            "`test --fast` runs JUnit's console launcher, and this project declares no JUnit version for it to match\n       fix: declare a JUnit dependency with an explicit version, or a Spring Boot parent that manages one",
         ));
     }
     Ok(())

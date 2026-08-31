@@ -1337,6 +1337,7 @@ fn a_gradle_project_gets_the_commands_that_do_not_need_maven() {
     fs::create_dir_all(&main).unwrap();
     // A multi-module Gradle build: only `settings.gradle` at the top.
     fs::write(root.join("settings.gradle"), "rootProject.name = 'shop'\n").unwrap();
+
     fs::write(
         main.join("ShopApplication.java"),
         "package com.acme.shop;\n\npublic class ShopApplication {}\n",
@@ -1352,20 +1353,23 @@ fn a_gradle_project_gets_the_commands_that_do_not_need_maven() {
         String::from_utf8_lossy(&stats.stderr)
     );
 
-    // Generating works, and says what the missing pom cost this output.
+    // Generating refuses, and names the one thing this build never said:
+    // which Java release the code jails writes has to compile against. A
+    // multi-module root declares it per module, so there is no answer here
+    // and no defensible default -- jails' own target on a project whose
+    // modules build with 17 is code that does not compile.
     let generated = jails_cmd(&root, None)
         .args(["generate", "record", "Order", "id:uuid@pk", "total:long"])
         .output()
         .unwrap();
-    let report = String::from_utf8_lossy(&generated.stdout);
+    assert!(!generated.status.success());
+    let refusal = String::from_utf8_lossy(&generated.stderr);
+    assert!(refusal.contains("Java release"), "{refusal}");
+    assert!(refusal.contains("Gradle toolchain"), "{refusal}");
     assert!(
-        generated.status.success(),
-        "{report}{}",
-        String::from_utf8_lossy(&generated.stderr)
+        !common::generated(&root, "src/main/java/com/acme/shop/domain/Order.java").is_file(),
+        "the refusal still wrote the record"
     );
-    assert!(common::generated(&root, "src/main/java/com/acme/shop/domain/Order.java").is_file());
-    assert!(report.contains("Gradle project"), "{report}");
-    assert!(report.contains("plain JDBC"), "{report}");
 
     // The Maven-inherent ones refuse, and the refusal names a way forward.
     for command in ["test", "build", "check", "clean"] {
