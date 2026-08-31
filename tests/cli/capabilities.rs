@@ -5,7 +5,7 @@ use super::*;
 #[test]
 fn add_db_no_start_skips_docker_compose_up() {
     let root = temp_dir("add-db-no-start");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     let fake = temp_dir("add-db-no-start-bin");
     let log = fake.join("log.txt");
     write_fake_maven(&fake, &["docker"], &log);
@@ -41,7 +41,7 @@ fn add_db_no_start_skips_docker_compose_up() {
 #[test]
 fn an_effect_that_failed_names_the_flag_that_avoids_it() {
     let root = temp_dir("effect-failed-fix");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     let fake = temp_dir("effect-failed-fix-bin");
     let log = fake.join("log.txt");
     // No `docker` on PATH at all, which is the machine this was reported from.
@@ -62,7 +62,7 @@ fn an_effect_that_failed_names_the_flag_that_avoids_it() {
 
     // And the flag it names really does make the same command succeed.
     let root = temp_dir("effect-failed-fix-ok");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     let output = jails_cmd(&root, Some(&fake))
         .args(["add", "db", "--no-start"])
         .output()
@@ -257,7 +257,7 @@ fn generating_an_event_without_kafka_refuses_and_names_the_capability() {
 #[test]
 fn add_dry_run_changes_nothing() {
     let root = temp_dir("add-dry-run");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     let before = fs::read_to_string(root.join("pom.xml")).unwrap();
 
     let output = jails_cmd(&root, None)
@@ -288,7 +288,7 @@ fn add_dry_run_changes_nothing() {
 #[test]
 fn add_is_idempotent() {
     let root = temp_dir("add-idempotent");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
 
     assert!(
         jails_cmd(&root, None)
@@ -328,7 +328,7 @@ fn add_is_idempotent() {
 #[test]
 fn add_name_override_renames_the_generated_class() {
     let root = temp_dir("add-named");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
 
     assert!(
         jails_cmd(&root, None)
@@ -393,7 +393,7 @@ fn add_csv_produces_a_project_that_compiles_and_passes_tests() {
 #[test]
 fn add_sqlite_writes_a_first_migration_and_both_classes() {
     let root = temp_dir("add-sqlite-files");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
 
     assert!(
         jails_cmd(&root, None)
@@ -432,7 +432,7 @@ fn add_sqlite_writes_a_first_migration_and_both_classes() {
 #[test]
 fn add_db_installs_postgres_flyway_and_testcontainers_without_an_orm() {
     let root = temp_dir("add-db-files");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     let fake = temp_dir("add-db-bin");
     let log = fake.join("log.txt");
     write_fake_maven(&fake, &["docker"], &log);
@@ -849,7 +849,7 @@ class ExtraSliceTest {
 #[test]
 fn add_kafka_stacks_onto_db_compose_and_remove_undoes_one_side() {
     let root = temp_dir("add-kafka-stack");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     let fake = temp_dir("add-kafka-bin");
     let log = fake.join("log.txt");
     write_fake_maven(&fake, &["docker"], &log);
@@ -902,7 +902,7 @@ fn add_kafka_stacks_onto_db_compose_and_remove_undoes_one_side() {
 #[test]
 fn remove_is_the_inverse_of_add_csv() {
     let root = temp_dir("remove-csv");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     assert!(
         jails_cmd(&root, None)
             .args(["add", "csv"])
@@ -935,7 +935,7 @@ fn remove_is_the_inverse_of_add_csv() {
 #[test]
 fn remove_without_force_prompts_and_aborts_on_no() {
     let root = temp_dir("remove-prompt");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     assert!(
         jails_cmd(&root, None)
             .args(["add", "csv"])
@@ -1832,7 +1832,7 @@ fn add_preflight_holds_when_the_refused_capability_is_named_first() {
 #[test]
 fn add_records_what_it_applied_and_remove_takes_it_back_out() {
     let root = temp_dir("manifest-round-trip");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
 
     assert!(
         jails_cmd(&root, None)
@@ -1867,7 +1867,7 @@ fn add_records_what_it_applied_and_remove_takes_it_back_out() {
 #[test]
 fn sync_applies_what_the_manifest_declares() {
     let root = temp_dir("manifest-sync");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     fs::write(
         root.join("jails.toml"),
         "[layout]\nadapters = \"persistence\"\n\n[project]\ncapabilities = [\"csv\"]\n",
@@ -1912,7 +1912,7 @@ fn sync_applies_what_the_manifest_declares() {
 #[test]
 fn sync_over_a_correct_project_changes_nothing() {
     let root = temp_dir("manifest-sync-idempotent");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     jails_cmd(&root, None)
         .args(["add", "csv"])
         .status()
@@ -1934,7 +1934,7 @@ fn sync_over_a_correct_project_changes_nothing() {
 #[test]
 fn sync_without_a_manifest_explains_rather_than_fails() {
     let root = temp_dir("manifest-sync-absent");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
 
     let output = jails_cmd(&root, None).args(["sync"]).output().unwrap();
     assert!(output.status.success());
@@ -1978,7 +1978,7 @@ fn sync_refuses_a_manifest_naming_a_capability_that_does_not_exist() {
 #[test]
 fn remove_names_generated_files_that_were_edited_before_deleting_them() {
     let root = temp_dir("remove-edited-files");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     jails_cmd(&root, None)
         .args(["add", "csv"])
         .status()
@@ -2035,7 +2035,7 @@ fn remove_says_nothing_about_files_that_were_not_edited() {
 #[test]
 fn dry_run_remove_names_edited_files() {
     let root = temp_dir("remove-edited-dry-run");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     jails_cmd(&root, None)
         .args(["add", "csv"])
         .status()
@@ -2130,7 +2130,7 @@ fn add_mail_produces_a_project_that_compiles() {
 #[test]
 fn a_declared_dependency_is_spliced_and_can_be_taken_back_out() {
     let root = temp_dir("declare-dependency");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     let before = fs::read_to_string(root.join("pom.xml")).unwrap();
 
     let output = jails_cmd(&root, None)
