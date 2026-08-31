@@ -18,4 +18,4 @@ pub use capture::{
 };
 pub use documents::maven_dependency_block;
 pub use execute::{Execution, execute};
-pub use materialize::{materialize, materialize_with_model, verify_bundle};
+pub use materialize::{Restore, materialize, materialize_with_model, verify_bundle};

@@ -243,6 +243,7 @@ pub(crate) fn finish_generation_with_reader_paths(
             bytes: next_source.into_bytes(),
         }),
         jails_compiler::COMPILER_VERSION,
+        jails_workspace::Restore::Refuse,
     )
     .map_err(|error| Failure::Told(format!("could not materialize exact plan: {error}")))?;
 

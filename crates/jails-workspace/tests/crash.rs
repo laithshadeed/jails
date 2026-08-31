@@ -118,6 +118,7 @@ fn bundle_for(root: &Path, current: &str, next: &str) -> PlanBundle {
             bytes: next.as_bytes().to_vec(),
         }),
         jails_compiler::COMPILER_VERSION,
+        jails_workspace::Restore::Refuse,
     )
     .expect("the draft materializes")
 }

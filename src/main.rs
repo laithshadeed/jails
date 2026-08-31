@@ -475,19 +475,48 @@ fn main() -> std::process::ExitCode {
                     })
                 }
             }
-            ResourceCommand::Repair { .. } if model_command::owns() => {
-                model_command::refuse_legacy_mutation(
-                    "resource repair",
-                    "run `jails sync`; overlapping or deleted managed files require an explicit reader decision",
-                )
-            }
+            // Canonical repair is `sync` with the deleted-managed-file guard
+            // waived, so it takes no `--strategy`: managed output is
+            // reproducible from the model, and the model is the only strategy
+            // there is. A caller who passed one is told that rather than
+            // having it silently ignored.
             ResourceCommand::Repair {
                 selector,
                 strategy: _,
                 datasource,
-            } => dispatch::mutate(invocation, false, |run| {
-                jails_engine::route::repair(run, &selector, datasource.as_deref())
-            }),
+            } if model_command::owns() => {
+                // `--strategy roll-forward` is accepted and is what canonical
+                // repair does. A selector or a datasource is refused rather
+                // than ignored: compilation is whole-model, so scoping it to
+                // one resource is not something this can honour, and evidence
+                // from a live database answers a question about recorded
+                // state a canonical project does not keep.
+                if selector.is_some() || datasource.is_some() {
+                    Err(jails_support::Failure::Told(
+                        "canonical `resource repair` repairs the whole managed tree and takes no selector or `--datasource`: it renders `.jails/generated` from the model.\n       fix: run `jails resource repair` with no arguments".to_string(),
+                    ))
+                } else {
+                    model_command::repair(invocation)
+                }
+            }
+            // The legacy engine repairs one recorded resource, so both stay
+            // required here. They are `Option` in the parser only because the
+            // canonical arm above takes neither, and clap cannot make an
+            // argument's necessity depend on a file in the project.
+            ResourceCommand::Repair {
+                selector,
+                strategy,
+                datasource,
+            } => {
+                match (selector, strategy) {
+                    (Some(selector), Some(_)) => dispatch::mutate(invocation, false, |run| {
+                        jails_engine::route::repair(run, &selector, datasource.as_deref())
+                    }),
+                    _ => Err(jails_support::Failure::Told(
+                        "`jails resource repair` on a project with no application model needs the resource to repair and a policy.\n       fix: jails resource repair <Name> --strategy roll-forward".to_string(),
+                    )),
+                }
+            }
             ResourceCommand::Index { command } => model_index::run(command, invocation),
             ResourceCommand::Field { command } => model_resource::run(command, invocation),
         },

@@ -109,7 +109,7 @@ pub(crate) fn sync(no_start: bool, invocation: Invocation) -> Result<()> {
 pub(crate) fn sync_at(root: &Path, invocation: Invocation) -> Result<()> {
     let manifest = resolve_manifest_at(root, None)?;
     let (source, model) = load_model_at(root, &manifest, invocation.output)?;
-    let bundle = compile_at(root, &manifest, source.as_bytes(), model)?;
+    let bundle = compile_at(root, &manifest, source.as_bytes(), model, Repair::No)?;
     let execution = jails_workspace::execute(root, &bundle).map_err(|error| {
         Failure::Told(format!("could not synchronize canonical model: {error}"))
     })?;
@@ -326,7 +326,7 @@ fn plan(manifest: &Path, bundle_path: Option<&Path>, output: Output) -> Result<(
 pub(crate) fn materialize_seed(root: &Path) -> Result<()> {
     let manifest = resolve_manifest_at(root, None)?;
     let (source, model) = load_model_at(root, &manifest, Output::Human)?;
-    let bundle = compile_at(root, &manifest, source.as_bytes(), model)?;
+    let bundle = compile_at(root, &manifest, source.as_bytes(), model, Repair::No)?;
     jails_workspace::execute(root, &bundle)
         .map_err(|error| Failure::Told(format!("could not apply the seeded model: {error}")))?;
     Ok(())
@@ -337,7 +337,19 @@ fn compile(
     source: &[u8],
     model: jails_model::AppModel,
 ) -> Result<jails_contracts::PlanBundle> {
-    compile_at(&root()?, manifest, source, model)
+    compile_at(&root()?, manifest, source, model, Repair::No)
+}
+
+/// Whether this compilation is `jails resource repair`.
+///
+/// It rides on `compile_at` rather than on a wrapper beside it because the
+/// `root: &Path` ladder gate counts functions, not parameters: a second
+/// root-taking entry point is exactly the proliferation §8.0 is watching for,
+/// and this is one more value the existing one decides with.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum Repair {
+    No,
+    DeletedManagedFiles,
 }
 
 fn compile_at(
@@ -345,6 +357,7 @@ fn compile_at(
     manifest: &Path,
     source: &[u8],
     model: jails_model::AppModel,
+    repair: Repair,
 ) -> Result<jails_contracts::PlanBundle> {
     let reader_paths = jails_compiler::external_project_paths(&model);
     let snapshot =
@@ -352,13 +365,62 @@ fn compile_at(
             .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
     let draft = jails_compiler::Compiler::compile(&snapshot, None)
         .map_err(|error| Failure::Told(format!("could not compile application model: {error}")))?;
+    // Same capture, same model, same compiler: repair differs only in what
+    // materialization does about a managed file that is no longer on disk.
     jails_workspace::materialize(
         &snapshot,
         jails_contracts::CanonicalModelPatch::reconcile(),
         draft,
         jails_compiler::COMPILER_VERSION,
+        match repair {
+            Repair::No => jails_workspace::Restore::Refuse,
+            Repair::DeletedManagedFiles => jails_workspace::Restore::Deleted,
+        },
     )
     .map_err(|error| Failure::Told(format!("could not materialize exact plan: {error}")))
+}
+
+/// `jails resource repair` on a canonical project.
+///
+/// **Ordinary compilation with one guard waived**, which is the whole of it:
+/// managed output below `.jails/generated` is reproducible from the model, so
+/// a file the reader deleted has an exact answer and repair is writing it.
+///
+/// The legacy engine repairs by re-deriving files from its ledger, and this
+/// command refused on a canonical project with a fix line naming `jails sync`.
+/// That was a dead end -- `sync` refuses on the same deleted file, so the two
+/// commands pointed at each other and neither wrote anything. It takes no
+/// `--strategy`: there is one strategy, and it is the model.
+pub(crate) fn repair(invocation: Invocation) -> Result<()> {
+    let root = root()?;
+    let manifest = resolve_manifest_at(&root, None)?;
+    let (source, model) = load_model_at(&root, &manifest, invocation.output)?;
+    let bundle = compile_at(
+        &root,
+        &manifest,
+        source.as_bytes(),
+        model,
+        Repair::DeletedManagedFiles,
+    )?;
+    let execution = jails_workspace::execute(&root, &bundle)
+        .map_err(|error| Failure::Told(format!("could not repair managed output: {error}")))?;
+    if invocation.output == Output::Human {
+        if execution.files_written == 0 && execution.files_deleted == 0 {
+            println!("managed output already matches the model: nothing to repair");
+        } else {
+            println!(
+                "repaired {}: {} files written, {} files deleted",
+                execution.plan_digest.as_str(),
+                execution.files_written,
+                execution.files_deleted
+            );
+        }
+        return Ok(());
+    }
+    let value = serde_json::to_value(execution)
+        .map_err(|error| Failure::Told(format!("could not encode execution: {error}")))?;
+    print_json(&value)?;
+    Ok(())
 }
 
 fn frozen_failure(

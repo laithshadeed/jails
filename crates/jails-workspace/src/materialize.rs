@@ -52,13 +52,37 @@ struct CompilerLock<'a> {
 const PLAN_SCHEMA: &str = "jails.plan.v1";
 const BUNDLE_SCHEMA: &str = "jails.plan-bundle.v1";
 
+/// What materialization does about a managed file the reader deleted.
+///
+/// **The desired tree is the same under both**, which is what makes this a
+/// materialization policy rather than a compiler input: repair does not render
+/// anything the model does not already imply, it waives one guard about how the
+/// live tree got into its current state. Keeping it off `PlanDraft` keeps the
+/// compiler's purity contract exactly where it was.
+///
+/// The guard is [`Restore::Refuse`] everywhere but `jails resource repair`,
+/// because a managed file that vanished is usually the reader saying something
+/// -- a half-finished `git checkout`, a deletion meant as "stop generating
+/// this" -- and silently writing it back answers a question nobody asked. What
+/// was missing is any command that *could* answer it: the refusal's fix line
+/// said to restore the file by hand, which is advice a reader who deleted it
+/// cannot take.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Restore {
+    /// Refuse, naming the file. Every ordinary plan.
+    Refuse,
+    /// Write the desired bytes back. `jails resource repair` only.
+    Deleted,
+}
+
 pub fn materialize(
     snapshot: &WorkspaceSnapshot,
     input: CanonicalModelPatch,
     draft: PlanDraft,
     compiler_version: &str,
+    restore: Restore,
 ) -> Result<PlanBundle, String> {
-    materialize_with_model(snapshot, input, draft, None, compiler_version)
+    materialize_with_model(snapshot, input, draft, None, compiler_version, restore)
 }
 
 pub fn materialize_with_model(
@@ -67,10 +91,11 @@ pub fn materialize_with_model(
     draft: PlanDraft,
     model_update: Option<ModelFileUpdate>,
     compiler_version: &str,
+    restore: Restore,
 ) -> Result<PlanBundle, String> {
     let mut blobs = BTreeMap::new();
     let before = captured_tree(snapshot, &draft.generated.root, &mut blobs)?;
-    let after = crate::reconcile::tree(snapshot, &draft, &mut blobs)?;
+    let after = crate::reconcile::tree(snapshot, &draft, &mut blobs, restore)?;
     let managed_tree_changed = before != after;
     let before_id = if before.entries.is_empty() {
         None
@@ -106,6 +131,7 @@ pub fn materialize_with_model(
         &draft.generated.reader_facets,
         &mut blobs,
         &mut operations,
+        restore,
     )?;
     materialize_document_intents(
         snapshot,
@@ -764,6 +790,7 @@ primary_key = true
             CanonicalModelPatch::reconcile(),
             draft,
             jails_compiler::COMPILER_VERSION,
+            Restore::Refuse,
         )
         .unwrap();
         assert_eq!(bundle.plan.operations.len(), 2);
@@ -806,6 +833,7 @@ primary_key = true
                 CanonicalModelPatch::reconcile(),
                 draft,
                 jails_compiler::COMPILER_VERSION,
+                Restore::Refuse,
             )
             .unwrap()
             .plan
@@ -827,10 +855,16 @@ primary_key = true
         let snapshot = WorkspaceSnapshot::detached(model);
         let digest = |version: &str| {
             let draft = Compiler::compile(&snapshot, None).unwrap();
-            materialize(&snapshot, CanonicalModelPatch::reconcile(), draft, version)
-                .unwrap()
-                .plan
-                .digest
+            materialize(
+                &snapshot,
+                CanonicalModelPatch::reconcile(),
+                draft,
+                version,
+                Restore::Refuse,
+            )
+            .unwrap()
+            .plan
+            .digest
         };
         assert_ne!(
             digest(jails_compiler::COMPILER_VERSION),
@@ -989,6 +1023,7 @@ primary_key = true
             // move, and a golden that churned on every bump would be refreshed
             // without being read, which is how a golden stops being one.
             "jails.compiler.golden",
+            Restore::Refuse,
         )
         .unwrap()
     }
@@ -1092,10 +1127,16 @@ primary_key = true
         let snapshot = WorkspaceSnapshot::detached(model);
         let digest = |input: CanonicalModelPatch| {
             let draft = Compiler::compile(&snapshot, None).unwrap();
-            materialize(&snapshot, input, draft, jails_compiler::COMPILER_VERSION)
-                .unwrap()
-                .plan
-                .digest
+            materialize(
+                &snapshot,
+                input,
+                draft,
+                jails_compiler::COMPILER_VERSION,
+                Restore::Refuse,
+            )
+            .unwrap()
+            .plan
+            .digest
         };
         assert_ne!(
             digest(CanonicalModelPatch::reconcile()),
@@ -1117,6 +1158,7 @@ primary_key = true
             CanonicalModelPatch::reconcile(),
             draft,
             jails_compiler::COMPILER_VERSION,
+            Restore::Refuse,
         )
         .unwrap();
         assert!(matches!(
@@ -1136,6 +1178,7 @@ primary_key = true
             CanonicalModelPatch::reconcile(),
             draft,
             jails_compiler::COMPILER_VERSION,
+            Restore::Refuse,
         )
         .unwrap();
         let tree = bundle

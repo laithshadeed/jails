@@ -17,6 +17,7 @@ pub(crate) fn tree(
     snapshot: &WorkspaceSnapshot,
     draft: &PlanDraft,
     blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
+    restore: crate::materialize::Restore,
 ) -> Result<TreeManifest, String> {
     let mut tree = TreeManifest::default();
     let baseline = artifact_index(&draft.baseline)?;
@@ -59,8 +60,11 @@ pub(crate) fn tree(
             snapshot,
             base,
             theirs,
-            ejected_sources.contains(live_path(base, theirs)),
-            theirs.and_then(|(path, _)| adopted_sources.get(path)),
+            Ownership {
+                ejected: ejected_sources.contains(live_path(base, theirs)),
+                adoption: theirs.and_then(|(path, _)| adopted_sources.get(path)),
+                restore,
+            },
             &mut tree,
             blobs,
         )?;
@@ -142,15 +146,31 @@ fn artifact_index(tree: &RenderedTree) -> Result<BTreeMap<String, ArtifactFile<'
     Ok(artifacts)
 }
 
+/// How one artifact is reconciled, as against what it renders to.
+///
+/// The three travel together because each is a claim about *this path's*
+/// ownership rather than about its content: whether the reader has taken the
+/// implementation (`ejected`), whether a legacy file is being imported into it
+/// (`adoption`), and what a deletion of it means (`restore`).
+struct Ownership<'a> {
+    ejected: bool,
+    adoption: Option<&'a Adoption>,
+    restore: crate::materialize::Restore,
+}
+
 fn reconcile_artifact(
     snapshot: &WorkspaceSnapshot,
     base: Option<ArtifactFile<'_>>,
     desired: Option<ArtifactFile<'_>>,
-    ejected: bool,
-    adoption: Option<&Adoption>,
+    ownership: Ownership<'_>,
     tree: &mut TreeManifest,
     blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
 ) -> Result<(), String> {
+    let Ownership {
+        ejected,
+        adoption,
+        restore,
+    } = ownership;
     let live_path = live_path(base, desired);
     let output_path = desired.map(|(path, _)| path).unwrap_or(live_path);
     let live = snapshot.files.get(live_path);
@@ -223,9 +243,17 @@ fn reconcile_artifact(
                     "`{live_path}` was edited by you but removed by the generator\n       fix: move the custom code to reader source or keep the model component; nothing was written"
                 ));
             }
+            // `resource repair` is the one plan that writes it back. A
+            // managed file is reproducible by definition -- the model renders
+            // it -- so there is nothing of the reader's left to lose once the
+            // bytes are gone, and refusing forever is what left a canonical
+            // project with no way out of a deletion.
+            (Some(_), None, Some(theirs)) if restore == crate::materialize::Restore::Deleted => {
+                Some((theirs.bytes.clone(), theirs.kind, theirs.mode))
+            }
             (Some(_), None, Some(_)) => {
                 return Err(format!(
-                    "managed file `{live_path}` was deleted by you while the generator still needs it\n       fix: restore it or eject its implementation boundary; nothing was written"
+                    "managed file `{live_path}` was deleted by you while the generator still needs it\n       fix: `jails resource repair` writes it back from the model, or eject its implementation boundary; nothing was written"
                 ));
             }
             (Some(_), None, None) => None,

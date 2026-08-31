@@ -206,12 +206,18 @@ pub(crate) enum ResourceCommand {
         table: String,
     },
     /// Restore sealed history and reconcile owned projections
+    ///
+    /// On a canonical project this takes no arguments: managed output under
+    /// `.jails/generated` is rendered from the model, so repair is ordinary
+    /// compilation with the deleted-managed-file guard waived, and there is
+    /// nothing to select or to choose a strategy between. The legacy engine
+    /// repairs one resource out of its ledger and needs both.
     Repair {
         /// Simple entity name or fully qualified generated Java type
-        selector: String,
+        selector: Option<String>,
         /// The only automatic repair policy: preserve history and move forward
         #[arg(long, value_enum)]
-        strategy: RepairStrategy,
+        strategy: Option<RepairStrategy>,
         /// Include evidence from this datasource when available
         #[arg(long)]
         datasource: Option<String>,

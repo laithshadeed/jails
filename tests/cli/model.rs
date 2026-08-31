@@ -14060,6 +14060,104 @@ app Demo {
 /// project rather than two, and `scaffold` stays the four-facet profile it is
 /// documented to be.
 #[test]
+fn a_deleted_managed_file_is_repaired_from_the_model() {
+    let root = jdl_project(
+        "jdl-v1-repair-deleted",
+        r#"jdl 1
+app Demo {
+  pkg com.example.demo
+  java 26
+  platform plain
+  build maven
+  storage none
+}
+
+entity Widget {
+ id: long @pk
+ title: string
+}
+"#,
+    );
+    let sync = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        sync.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sync.stderr)
+    );
+    let widget = root.join(".jails/generated/main/java/com/example/demo/domain/Widget.java");
+    let rendered = fs::read_to_string(&widget).unwrap();
+
+    // A reader deletes a managed file -- a half-finished `git checkout`, or a
+    // deletion meant as "stop generating this". Every ordinary plan refuses,
+    // and that is the guard working.
+    fs::remove_file(&widget).unwrap();
+    let refused = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(!refused.status.success());
+    let message = String::from_utf8_lossy(&refused.stderr);
+    assert!(message.contains("was deleted by you"), "{message}");
+    // The fix line has to name a command that writes it back. It used to say
+    // `jails sync`, which is the command that just refused.
+    assert!(message.contains("jails resource repair"), "{message}");
+
+    let repaired = jails_cmd(&root, None)
+        .args(["resource", "repair"])
+        .output()
+        .unwrap();
+    assert!(
+        repaired.status.success(),
+        "{}",
+        String::from_utf8_lossy(&repaired.stderr)
+    );
+    assert_eq!(fs::read_to_string(&widget).unwrap(), rendered);
+
+    // Repaired means converged, not merely present: the next ordinary plan is
+    // empty and the project is frozen against its own model again.
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+
+    // Repair waives one guard and no others. A hand edit is still merged, not
+    // overwritten -- a repair that reverted the reader's work would be a worse
+    // answer than the refusal it replaces.
+    let edited = format!(
+        "{}\n    // reader's own note\n",
+        rendered.trim_end().trim_end_matches('}').trim_end()
+    );
+    fs::write(&widget, format!("{edited}}}\n")).unwrap();
+    let again = jails_cmd(&root, None)
+        .args(["resource", "repair"])
+        .output()
+        .unwrap();
+    assert!(
+        again.status.success(),
+        "{}",
+        String::from_utf8_lossy(&again.stderr)
+    );
+    assert!(
+        fs::read_to_string(&widget)
+            .unwrap()
+            .contains("reader's own note"),
+        "repair overwrote a hand edit"
+    );
+
+    // Compilation is whole-model, so a selector is refused rather than
+    // silently ignored.
+    let scoped = jails_cmd(&root, None)
+        .args(["resource", "repair", "Widget", "--strategy", "roll-forward"])
+        .output()
+        .unwrap();
+    assert!(!scoped.status.success());
+    let scoped = String::from_utf8_lossy(&scoped.stderr);
+    assert!(scoped.contains("takes no selector"), "{scoped}");
+}
+
+#[test]
 fn a_canonical_scaffold_serves_its_resource_over_http() {
     let root = jdl_project(
         "jdl-v1-scaffold-http",

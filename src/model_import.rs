@@ -109,6 +109,7 @@ pub(crate) fn run(invocation: Invocation) -> Result<()> {
             bytes: source.into_bytes(),
         }),
         jails_compiler::COMPILER_VERSION,
+        jails_workspace::Restore::Refuse,
     )
     .map_err(|error| Failure::Told(format!("could not materialize legacy import: {error}")))?;
 

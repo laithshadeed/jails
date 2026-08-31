@@ -22,6 +22,7 @@ pub(crate) fn materialize(
     generated: &BTreeMap<String, RenderedReaderFacet>,
     blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
     operations: &mut Vec<PlannedOperation>,
+    restore: crate::materialize::Restore,
 ) -> Result<(), String> {
     let ids = baseline
         .keys()
@@ -91,6 +92,7 @@ pub(crate) fn materialize(
                     base.map(|facet| facet.bytes.as_slice()),
                     current.map(|file| file.bytes.as_slice()),
                     desired.map(|facet| facet.bytes.as_slice()),
+                    restore,
                 )? {
                     ManagedFileMerge::Unchanged => {}
                     ManagedFileMerge::Write(bytes) => {
@@ -153,6 +155,7 @@ fn reconcile_managed_file(
     base: Option<&[u8]>,
     current: Option<&[u8]>,
     desired: Option<&[u8]>,
+    restore: crate::materialize::Restore,
 ) -> Result<ManagedFileMerge, String> {
     match (base, current, desired) {
         (None, None, Some(desired)) => Ok(ManagedFileMerge::Write(desired.to_vec())),
@@ -179,8 +182,12 @@ fn reconcile_managed_file(
                 Ok(ManagedFileMerge::Write(merged))
             }
         }
+        // See `reconcile.rs`: `resource repair` writes it back.
+        (Some(_), None, Some(desired)) if restore == crate::materialize::Restore::Deleted => {
+            Ok(ManagedFileMerge::Write(desired.to_vec()))
+        }
         (Some(_), None, Some(_)) => Err(format!(
-            "managed project file `{path}` was deleted by you while the generator still needs it\n       fix: restore it or remove the owning model component; nothing was written"
+            "managed project file `{path}` was deleted by you while the generator still needs it\n       fix: `jails resource repair` writes it back from the model, or remove the owning model component; nothing was written"
         )),
         (Some(base), Some(current), None) if current == base => Ok(ManagedFileMerge::Remove),
         (Some(_), Some(_), None) => Err(format!(
@@ -235,9 +242,14 @@ mod tests {
         let base = b"const routes = [];\n// reader area\n";
         let current = b"const routes = [];\n// reader area\nexport const token = 'mine';\n";
         let desired = b"const routes = ['GET /tasks'];\n// reader area\n";
-        let ManagedFileMerge::Write(merged) =
-            reconcile_managed_file(&path(), Some(base), Some(current), Some(desired)).unwrap()
-        else {
+        let ManagedFileMerge::Write(merged) = reconcile_managed_file(
+            &path(),
+            Some(base),
+            Some(current),
+            Some(desired),
+            crate::materialize::Restore::Refuse,
+        )
+        .unwrap() else {
             panic!("expected a merged write")
         };
         let merged = String::from_utf8(merged).unwrap();
@@ -252,26 +264,44 @@ mod tests {
             Some(b"const route = 'old';\n"),
             Some(b"const route = 'reader';\n"),
             Some(b"const route = 'generator';\n"),
+            crate::materialize::Restore::Refuse,
         )
         .err()
         .unwrap();
         assert!(error.contains("overlapping"), "{error}");
         assert!(error.contains("nothing was written"), "{error}");
 
-        let collision = reconcile_managed_file(&path(), None, Some(b"mine\n"), Some(b"theirs\n"))
-            .err()
-            .unwrap();
+        let collision = reconcile_managed_file(
+            &path(),
+            None,
+            Some(b"mine\n"),
+            Some(b"theirs\n"),
+            crate::materialize::Restore::Refuse,
+        )
+        .err()
+        .unwrap();
         assert!(collision.contains("reader-owned"), "{collision}");
 
-        let deletion = reconcile_managed_file(&path(), Some(b"base\n"), None, Some(b"next\n"))
-            .err()
-            .unwrap();
+        let deletion = reconcile_managed_file(
+            &path(),
+            Some(b"base\n"),
+            None,
+            Some(b"next\n"),
+            crate::materialize::Restore::Refuse,
+        )
+        .err()
+        .unwrap();
         assert!(deletion.contains("deleted by you"), "{deletion}");
 
-        let removal =
-            reconcile_managed_file(&path(), Some(b"base\n"), Some(b"reader edit\n"), None)
-                .err()
-                .unwrap();
+        let removal = reconcile_managed_file(
+            &path(),
+            Some(b"base\n"),
+            Some(b"reader edit\n"),
+            None,
+            crate::materialize::Restore::Refuse,
+        )
+        .err()
+        .unwrap();
         assert!(removal.contains("edited by you"), "{removal}");
     }
 }
