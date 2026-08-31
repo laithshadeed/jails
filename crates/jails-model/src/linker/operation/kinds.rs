@@ -20,6 +20,9 @@ use super::*;
 pub(super) struct Declaration<'a> {
     pub(super) label: &'a str,
     pub(super) path: &'a str,
+    /// The flat `METHOD /path` spelling, which is the *only* place a
+    /// `.jails/model.toml` project states its route.
+    pub(super) route: Option<&'a str>,
 }
 
 /// The delivery policy, or a diagnostic naming the two that exist.
@@ -52,7 +55,7 @@ pub(super) fn link_command_semantics(
     events: &EventRegistry<'_>,
     linker: &mut Linker,
 ) -> linked::CommandSemantics {
-    let Declaration { label, path } = declaration;
+    let Declaration { label, path, route } = declaration;
     let semantics = linked::CommandSemantics {
         parameters: link_parameters(
             source.parameters,
@@ -101,6 +104,7 @@ pub(super) fn link_command_semantics(
         route: source
             .route
             .map(link_route)
+            .or_else(|| flat_route(route))
             .or_else(|| (!source.internal).then(|| derived_route(RoutedKind::Command, label))),
         internal: source.internal,
     };
@@ -153,7 +157,7 @@ pub(super) fn link_query_semantics(
     entity_fields: &BTreeMap<EntityId, BTreeMap<String, FieldId>>,
     linker: &mut Linker,
 ) -> linked::QuerySemantics {
-    let Declaration { label, path } = declaration;
+    let Declaration { label, path, route } = declaration;
     let mut aliases = BTreeMap::new();
     let joins = source
         .joins
@@ -212,6 +216,7 @@ pub(super) fn link_query_semantics(
         route: source
             .route
             .map(link_route)
+            .or_else(|| flat_route(route))
             .or_else(|| (!source.internal).then(|| derived_route(RoutedKind::Query, label))),
         internal: source.internal,
     };
@@ -236,7 +241,7 @@ pub(super) fn link_transition_semantics(
     events: &EventRegistry<'_>,
     linker: &mut Linker,
 ) -> linked::TransitionSemantics {
-    let Declaration { label, path } = declaration;
+    let Declaration { label, path, route } = declaration;
     let semantics = linked::TransitionSemantics {
         parameters: link_parameters(
             source.parameters,
@@ -282,6 +287,7 @@ pub(super) fn link_transition_semantics(
         route: source
             .route
             .map(link_route)
+            .or_else(|| flat_route(route))
             .or_else(|| (!source.internal).then(|| derived_route(RoutedKind::Transition, label))),
         internal: source.internal,
     };
@@ -449,6 +455,27 @@ pub(super) fn link_event_semantics(
         parameters,
         partition_by: source.partition_by,
     }
+}
+
+/// The flat `METHOD /path` spelling, as the typed route the rest of the
+/// compiler reads.
+///
+/// **`.jails/model.toml` has no rich route to link**, so this is the whole
+/// declaration for a project on the compatibility input -- and reading only
+/// the rich one turned a declared `GET /notes/search` into the derived
+/// `POST /queries/open-notes`, which is the "flat spelling folds into the rich
+/// one, here" rule this linker already applies to `sets`, `yields` and
+/// `fields`.
+///
+/// A malformed string yields `None` rather than a second diagnostic:
+/// `Linker::route` has already refused it by name.
+fn flat_route(route: Option<&str>) -> Option<linked::OperationRoute> {
+    let (method, path) = route?.split_once(' ')?;
+    Some(linked::OperationRoute {
+        method: crate::EndpointMethod::parse(&method.to_ascii_lowercase()).ok()?,
+        path: path.to_string(),
+        consumes: None,
+    })
 }
 
 /// The route an operation answers on when its author declared none.

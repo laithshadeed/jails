@@ -245,6 +245,21 @@ fn lower(
             many: matches!(operation.kind, OperationKind::Query(_)),
             components: &components,
             key_json: key_sample,
+            scopes: (!scope_fields.is_empty()).then(|| proof::Scopes {
+                base_package: model.project.package_for(Package::Base),
+                claims: scope_fields
+                    .iter()
+                    .map(|field| {
+                        field
+                            .semantics
+                            .scope
+                            .as_ref()
+                            .expect("selected scope field")
+                            .claim
+                            .as_str()
+                    })
+                    .collect(),
+            }),
             spring_boot,
         },
     )?;

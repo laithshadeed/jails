@@ -106,6 +106,7 @@ pub(super) fn link(
                         Declaration {
                             label: &label,
                             path: &path,
+                            route: route.as_deref(),
                         },
                         semantics,
                         &entity,
@@ -157,6 +158,7 @@ pub(super) fn link(
                         Declaration {
                             label: &label,
                             path: &path,
+                            route: route.as_deref(),
                         },
                         semantics,
                         &entity,
@@ -227,6 +229,7 @@ pub(super) fn link(
                         Declaration {
                             label: &label,
                             path: &path,
+                            route: route.as_deref(),
                         },
                         semantics,
                         &entity,

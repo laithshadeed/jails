@@ -863,6 +863,15 @@ const DEFAULT_BRANCH_IS_EXECUTED: &[(&str, &str)] = &[
         "crates/jails-compiler/src/lib.rs",
         "canonical_controller_merges_both_files_and_refuses_overlapping_route_edits",
     ),
+    // The operation controller's companion test, which renders `MockMvcTester`
+    // on Boot 4 and standalone `MockMvcBuilders` below it. The named test
+    // drives a canonical `api` project -- a command, a query and a transition,
+    // one of them scoped -- through real `mvn test` on the 4.1.0 fixture, so
+    // the default branch is the one that compiles and answers a request.
+    (
+        "crates/jails-compiler/src/emit_http/proof.rs",
+        "scoped_execution_context_survives_evolution_and_binds_tenant_at_runtime",
+    ),
     (
         "crates/jails-generate/src/generate/recipes.rs",
         "generate_scaffold_produces_a_project_that_compiles_and_passes_tests",

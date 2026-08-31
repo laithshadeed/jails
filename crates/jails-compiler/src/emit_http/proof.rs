@@ -39,7 +39,20 @@ pub(super) struct ControllerProof<'a> {
     pub(super) components: &'a [RecordComponent<'a>],
     /// The Java type of the transition's key parameter, when there is one.
     pub(super) key_json: Option<String>,
+    /// The JWT claims this controller proves the request against, and the
+    /// base package its `ScopeAuthorizer` lives in.
+    ///
+    /// Read from the same `scope_fields` the controller's own constructor was
+    /// built from: a scoped controller takes a second argument, and a test
+    /// that passed only the port did not compile.
+    pub(super) scopes: Option<Scopes<'a>>,
     pub(super) spring_boot: Option<&'a str>,
+}
+
+/// What a scoped controller needs beyond its port.
+pub(super) struct Scopes<'a> {
+    pub(super) base_package: String,
+    pub(super) claims: Vec<&'a str>,
 }
 
 /// The Boot major at which `MockMvcTester` is the shape to render.
@@ -63,6 +76,7 @@ pub(super) fn controller_test(
         many,
         components,
         key_json,
+        scopes,
         spring_boot,
     } = proof;
     let mut imports = BTreeSet::from([
@@ -74,12 +88,32 @@ pub(super) fn controller_test(
     // because each declares exactly one method. A transition takes the row key
     // as well, so its lambda takes two.
     let answer = sample_answer(model, returns, many, &mut imports);
-    let stub = match (&answer, binding) {
-        (Some(answer), Binding::Path) => format!("(id, input) -> {answer}"),
-        (Some(answer), _) => format!("input -> {answer}"),
-        (None, Binding::Path) => "(id, input) -> null".to_string(),
-        (None, _) => "input -> null".to_string(),
+    // A scoped operation's port takes the `ExecutionContext` the controller
+    // built, so its lambda has one more parameter -- the same `scope_fields`
+    // answer the constructor above was rendered from.
+    let context = if scopes.is_some() { "context, " } else { "" };
+    let answered = answer.as_deref().unwrap_or("null");
+    let stub = match binding {
+        Binding::Path => format!("({context}id, input) -> {answered}"),
+        _ => format!("({context}input) -> {answered}"),
     };
+    // `ScopeAuthorizer` is a final class over `Environment`, not an interface,
+    // so the stub is a real one reading a `MockEnvironment`. Outside the `prod`
+    // profile it answers from `app.security.dev.scopes.<claim>`, and its `*`
+    // default is the one value `claim` refuses -- so each claim is stated.
+    let authorizer = scopes.as_ref().map(|scopes| {
+        imports.insert(format!("{}.ScopeAuthorizer", scopes.base_package));
+        imports.insert("org.springframework.mock.env.MockEnvironment".to_string());
+        let properties = scopes
+            .claims
+            .iter()
+            .map(|claim| {
+                format!("\n                    .withProperty(\"app.security.dev.scopes.{claim}\", \"sample\")")
+            })
+            .collect::<String>();
+        format!(",\n            new ScopeAuthorizer(new MockEnvironment(){properties})")
+    });
+    let stub = format!("{stub}{}", authorizer.unwrap_or_default());
 
     let request = request_shape(model, binding, components, key_json.as_deref())?;
     // Emitted whole and disabled rather than omitted: a test that cannot be
