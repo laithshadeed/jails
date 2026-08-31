@@ -98,11 +98,30 @@ pub(super) fn lower_db_repository(
         .map(|field| field.names.sql_column.as_str())
         .collect::<Vec<_>>();
     let column_list = columns.join(", ");
-    let values = columns
+    // **A `generated always as identity` key is not writable, so `save` must
+    // not name it.** PostgreSQL answers an insert that does with *"cannot
+    // insert a non-DEFAULT value into column \"id\""*, which made `save`
+    // impossible on every canonical entity whose key jails assigns -- the
+    // default shape for `id:long@pk`. Nothing caught it because the generated
+    // integration tests had never been run: Failsafe was not configured.
+    //
+    // Insert-only in that case, rather than an upsert on a key the caller
+    // cannot have. That is what the row coming back is *for*: the stored row
+    // and the argument differ by exactly the key the database assigned.
+    let generated_key = crate::emit_sql::database_assigned(primary_key)?;
+    let written = entity
+        .fields
+        .iter()
+        .filter(|field| !(generated_key && field.id == primary_key.id))
+        .map(|field| field.names.sql_column.as_str())
+        .collect::<Vec<_>>();
+    let written_list = written.join(", ");
+    let values = written
         .iter()
         .map(|column| format!(":{column}"))
         .collect::<Vec<_>>()
         .join(", ");
+
     let updates = entity
         .fields
         .iter()
@@ -119,24 +138,35 @@ pub(super) fn lower_db_repository(
     } else {
         updates.join(", ")
     };
-    let params = entity
-        .fields
-        .iter()
-        .map(|field| {
-            let member = &field.names.java_member;
-            let value = if field.required {
-                format!("value.{member}()")
-            } else {
-                format!("value.{member}().orElse(null)")
-            };
-            format!(
-                "\n                .param(\"{}\", {value})",
-                field.names.sql_column
-            )
-        })
-        .collect::<String>();
+    let conflict = if generated_key {
+        String::new()
+    } else {
+        format!(" on conflict ({key_column}) do update set {updates}")
+    };
+    // A loop rather than a `map`, because the write expression may need an
+    // import of its own and a closure cannot borrow the set the surrounding
+    // function is still filling.
+    let mut params = String::new();
+    for field in &entity.fields {
+        if generated_key && field.id == primary_key.id {
+            continue;
+        }
+        let member = &field.names.java_member;
+        let accessor = if field.required {
+            format!("value.{member}()")
+        } else {
+            format!("value.{member}().orElse(null)")
+        };
+        // Through the one write expression, because the PostgreSQL driver
+        // cannot infer a type for every Java value the record can hold.
+        let value = crate::emit_sql::bound_value(model, field, &accessor, &mut imports);
+        params.push_str(&format!(
+            "\n                .param(\"{}\", {value})",
+            field.names.sql_column
+        ));
+    }
     let body = format!(
-        "@Repository\npublic final class {type_name} implements {record}Repository {{\n\n    private final JdbcClient jdbc;\n\n    public {type_name}(JdbcClient jdbc) {{\n        this.jdbc = jdbc;\n    }}\n\n    @Override\n    public Optional<{record}> findById({key_type} id) {{\n        return jdbc.sql(\"select {column_list} from {table} where {key_column} = :id\")\n                .param(\"id\", id)\n                .query({record}.class)\n                .optional();\n    }}\n\n    @Override\n    public List<{record}> findAll() {{\n        return jdbc.sql(\"select {column_list} from {table} order by {key_column}\")\n                .query({record}.class)\n                .list();\n    }}\n\n    @Override\n    public {record} save({record} value) {{\n        return jdbc.sql(\"insert into {table} ({column_list}) values ({values}) on conflict ({key_column}) do update set {updates} returning {column_list}\"){params}\n                .query({record}.class)\n                .single();\n    }}\n\n    @Override\n    public boolean deleteById({key_type} id) {{\n        return jdbc.sql(\"delete from {table} where {key_column} = :id\")\n                .param(\"id\", id)\n                .update() > 0;\n    }}\n}}",
+        "@Repository\npublic final class {type_name} implements {record}Repository {{\n\n    private final JdbcClient jdbc;\n\n    public {type_name}(JdbcClient jdbc) {{\n        this.jdbc = jdbc;\n    }}\n\n    @Override\n    public Optional<{record}> findById({key_type} id) {{\n        return jdbc.sql(\"select {column_list} from {table} where {key_column} = :id\")\n                .param(\"id\", id)\n                .query({record}.class)\n                .optional();\n    }}\n\n    @Override\n    public List<{record}> findAll() {{\n        return jdbc.sql(\"select {column_list} from {table} order by {key_column}\")\n                .query({record}.class)\n                .list();\n    }}\n\n    @Override\n    public {record} save({record} value) {{\n        return jdbc.sql(\"insert into {table} ({written_list}) values ({values}){conflict} returning {column_list}\"){params}\n                .query({record}.class)\n                .single();\n    }}\n\n    @Override\n    public boolean deleteById({key_type} id) {{\n        return jdbc.sql(\"delete from {table} where {key_column} = :id\")\n                .param(\"id\", id)\n                .update() > 0;\n    }}\n}}",
         key_type = key_type,
     );
     let artifact_id = format!("art_{capability_id}_{}_repository", entity.id.as_str());

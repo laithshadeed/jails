@@ -5,12 +5,11 @@
 //! them in one plan. DTOs are managed ABI: reader edits merge, but ownership
 //! cannot be transferred away from the compiler.
 
+use crate::emit_companion_test::JAVA_TEST_ROOT;
 use crate::{CompileError, emit_java};
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
 use jails_model::{AppModel, Entity, Field, Package, StableId};
 use std::collections::BTreeSet;
-
-const JAVA_TEST_ROOT: &str = ".jails/generated/test/java";
 
 pub(crate) fn lower(
     model: &AppModel,

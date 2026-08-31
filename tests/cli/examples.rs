@@ -100,17 +100,22 @@ fn example_manifest_policy_covers_every_checked_in_manifest() {
     }
 }
 
-/// A post-commit effect that fails must not unmake the project.
+/// A broken container engine cannot touch what `jails new --app` produces.
 ///
+/// **The original property was weaker, and it is worth keeping the history.**
 /// `jails new --app` publishes by rename, so an error thrown out of the
 /// manifest apply discarded the whole scratch tree. A compose service that
 /// would not start -- an ordinary state on a machine where something else
-/// already holds `:5432` -- therefore printed `ledger create`, exited 1, and
-/// left no directory: no `jails:` line, no project, and no way to tell which
-/// of the two had happened.
+/// already holds `:5432` -- printed `ledger create`, exited 1, and left no
+/// directory: no `jails:` line, no project, and no way to tell which of the
+/// two had happened. The fix made the effect report *against a project that
+/// exists*, so this test asserted an exit of 1 beside a complete tree.
 ///
-/// The effect is explicitly post-*commit*. It must be reported against a
-/// project that exists.
+/// A canonical project has no post-commit effects at all -- the model is
+/// compiled and its exact plan executed, and nothing external is started, which
+/// is the same reason `sync` refuses `--no-start` by name. So the failure this
+/// was written for cannot occur, and the guarantee is now the stronger one:
+/// the engine being unusable changes nothing about what is generated.
 #[test]
 fn a_failed_post_commit_effect_reports_against_a_project_that_exists() {
     let parent = temp_dir("new-app-effect-failure");
@@ -156,15 +161,21 @@ fn a_failed_post_commit_effect_reports_against_a_project_that_exists() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(output.status.code(), Some(1), "{rendered}");
-    assert!(rendered.contains("effect"), "{rendered}");
+    assert_eq!(output.status.code(), Some(0), "{rendered}");
     let project = parent.join("effectapp");
     assert!(project.is_dir(), "the project was discarded:\n{rendered}");
+    // Into the managed tree, because the project is canonical from its first
+    // command: `jails new` seeds `.jails/model.jdl`, and the manifest replays
+    // into it through the same frontends `jails g` uses.
     assert!(
         project
-            .join("src/main/java/com/example/effectapp/domain/Deal.java")
+            .join(".jails/generated/main/java/com/example/effectapp/domain/Deal.java")
             .is_file(),
         "the manifest's own output is missing:\n{rendered}"
+    );
+    assert!(
+        project.join(".jails/model.jdl").is_file(),
+        "the project is not canonical:\n{rendered}"
     );
 }
 
@@ -310,25 +321,23 @@ fn unheld_maven_example_manifest_passes_real_verification() {
     assert_eq!(
         maven_report_summary(root, "surefire-reports"),
         MavenReportSummary {
-            // 17 -> 18 reports, 53 -> 54 tests: `UnreadForEmailQueryController
-            // Test`, from the `--via User` query that is the Django original's
-            // whole customer-facing surface (missing.md M5, plan.md P8.1).
-            // 18 -> 19, 54 -> 55: `EnsureUserControllerTest`, from the
-            // get-or-create the Django ping handler opens with (M6, P8.3).
-            // 19 -> 20: `UserSeederTest`, which binds the shipped
-            // `db/seeds/users.json` to the record on every build -- the file
-            // is otherwise read only under the seed profile (M10, P8.9).
-            // 20 -> 21: `MessagesByDirectionQueryControllerTest`, from the
-            // optional filter M16 asked for -- the admin list's three
-            // independent filters, any subset (P10.5).
-            reports: 21,
-            // 51 -> 52: `SendMessageUseCaseTest` gained the case missing.md
-            // M3 says would have caught a create that never assigns a key.
-            // 52 -> 53: `MarkAsReadControllerTest` gained the case for a
-            // request with no `If-Match`, which used to apply blind.
-            // 55 -> 56 with `UserSeederTest`'s one case.
-            // 56 -> 57 with the optional-filter query's controller test.
-            tests: 57,
+            // **These are the canonical compiler's numbers, and they are
+            // lower than the legacy engine's 21 and 57.** The difference is
+            // not lost checks but a different shape: canonical emits an
+            // `HttpPort` for an entity where legacy emitted a controller and
+            // its test, and it has no per-operation use-case unit test because
+            // an operation *is* its port plus a JDBC adapter, and the adapter
+            // is proved against a real database below rather than against a
+            // mock here.
+            //
+            // What is pinned here is one controller test per routed operation
+            // -- `SendMessage`, `MarkAsRead`, `Conversation`, `UnreadForEmail`
+            // and `EnsureUser` -- each issuing a real request through the
+            // dispatcher with a body built from the model's own JSON samples.
+            // Canonical emitted the adapters and nothing that proved them
+            // until this pin was written.
+            reports: 15,
+            tests: 33,
             failures: 0,
             errors: 0,
             skipped: 0,
@@ -337,22 +346,23 @@ fn unheld_maven_example_manifest_passes_real_verification() {
     assert_eq!(
         maven_report_summary(root, "failsafe-reports"),
         MavenReportSummary {
-            // 5 -> 6 reports, 6 -> 7 tests: `JdbcUnreadForEmailQueryIT` runs
-            // the join against real PostgreSQL.
-            // 6 -> 7, 7 -> 8: `EnsuringEnsureUserUseCaseIT`, which is the only
-            // place `on conflict` means anything -- and the only check that
-            // the column it names actually carries a unique index.
-            // 7 -> 8, 8 -> 11: `JdbcAdminPresenceIT`'s three cases, which
-            // are the ones a module-level dict cannot pass -- a second node
-            // sees the join, one node leaving does not evict the other, and a
-            // claim nobody refreshed stops counting (M4b, P8.5).
-            // 8 -> 9, 11 -> 12: `JdbcMessagesByDirectionQueryIT`. This is the
-            // one that matters for P10.5 -- it runs
-            // `cast(:direction as text) is null or ...` against a real
-            // PostgreSQL, which is the form the database needs and the reason
-            // the cast is there rather than a bare `:x is null`.
-            reports: 9,
-            tests: 12,
+            // **Failsafe ran nothing at all before this.** The canonical
+            // path never added the plugin, so every `*IT` it emitted -- the
+            // presence adapter's included -- sat in a project that could not
+            // run it while `mvn verify` reported success. That is the exact
+            // failure `CLAUDE.md` records for the legacy engine, reintroduced.
+            //
+            // The four here are one per JDBC query adapter plus the presence
+            // adapter's three cases. They store a row through the entity's own
+            // repository and read it back through the operation, against the
+            // real PostgreSQL `add db` wires -- which is the only place a
+            // quoted join alias, a foreign key, a `timestamptz` bind and
+            // `cast(:x as text) is null` mean anything. Writing them found
+            // three defects nothing else could: a `--via` join that reached no
+            // emitter, an `Instant` the driver cannot infer a type for, and a
+            // `generated always as identity` key that made `save` impossible.
+            reports: 4,
+            tests: 6,
             failures: 0,
             errors: 0,
             skipped: 0,

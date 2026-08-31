@@ -462,7 +462,7 @@ pub(crate) fn input_components<'a>(
                 fields
                     .into_iter()
                     .map(|field| RecordComponent {
-                        name: &field.names.java_member,
+                        name: field.names.java_member.clone(),
                         ty: &field.ty,
                         required: field.required,
                         non_blank: field.non_blank,
@@ -481,7 +481,20 @@ pub(crate) fn input_components<'a>(
                 parameter_components(model, &command.semantics.parameters, imports)
             }
         }
-        OperationKind::Query(query) => from_fields(&query.on, &query.filters, imports),
+        // **The linked parameters, not the flat `filters`.** A `--via` query
+        // filters on a column of the *joined* entity, and the target's own
+        // field list cannot hold one -- so reading the flat list emitted an
+        // `Input` missing that component while the adapter bound it, and the
+        // endpoint answered over every row. Same choice the command arm above
+        // already makes, and the same shape `Transition`'s own documentation
+        // records for `sets`.
+        OperationKind::Query(query) => {
+            if query.semantics.parameters.is_empty() {
+                from_fields(&query.on, &query.filters, imports)
+            } else {
+                parameter_components(model, &query.semantics.parameters, imports)
+            }
+        }
         OperationKind::Transition(transition) => {
             from_fields(&transition.on, &transition.fields, imports)
         }
@@ -493,7 +506,7 @@ fn record_shape(type_name: &str, fields: &[&Field], imports: &mut BTreeSet<Strin
     let components = fields
         .iter()
         .map(|field| RecordComponent {
-            name: &field.names.java_member,
+            name: field.names.java_member.clone(),
             ty: &field.ty,
             required: field.required,
             non_blank: field.non_blank,
@@ -515,7 +528,7 @@ fn record_shape(type_name: &str, fields: &[&Field], imports: &mut BTreeSet<Strin
 ///
 /// Called from every shape that can carry one rather than from `record_shape`,
 /// which has no model to ask.
-fn import_declared_type(model: &AppModel, ty: &TypeRef, imports: &mut BTreeSet<String>) {
+pub(crate) fn import_declared_type(model: &AppModel, ty: &TypeRef, imports: &mut BTreeSet<String>) {
     let TypeRef::External(name) = ty else {
         return;
     };
@@ -583,8 +596,15 @@ fn parameter_components<'a>(
                 )
             };
             import_declared_type(model, ty, imports);
+            // **camelCase, like every other record component.** A parameter's
+            // name is its stable label, which is snake -- so a command's
+            // `Input` shipped `user_id` and `is_read` while a query's, built
+            // from the field list, shipped `userId`. Two operation kinds
+            // disagreeing about the JSON wire format of the same column is not
+            // a formatting difference.
+            let member = parameter_member(parameter);
             Ok(RecordComponent {
-                name: &parameter.name,
+                name: member,
                 ty,
                 required: parameter.required && !parameter.optional_filter,
                 non_blank,
@@ -595,6 +615,15 @@ fn parameter_components<'a>(
         })
         .collect::<Result<Vec<_>, CompileError>>()?;
     Ok(components)
+}
+
+/// The Java member an operation parameter is read through.
+///
+/// One owner: the `Input` record declares the component and three adapters
+/// call the accessor, and a projection applied at one of those four is a
+/// generated file that does not compile.
+pub(crate) fn parameter_member(parameter: &OperationParameter) -> String {
+    jails_model::lower_camel_case(&parameter.name)
 }
 
 fn record_shape_from_components(
@@ -710,7 +739,7 @@ pub(crate) fn primitive(ty: &TypeRef, required: bool) -> bool {
 }
 
 pub(crate) struct RecordComponent<'a> {
-    pub(crate) name: &'a str,
+    pub(crate) name: String,
     pub(crate) ty: &'a TypeRef,
     pub(crate) required: bool,
     non_blank: bool,

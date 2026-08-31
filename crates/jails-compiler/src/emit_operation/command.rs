@@ -84,7 +84,7 @@ pub(super) fn lower(
     let mut values = Vec::new();
     for field in target.fields.iter() {
         let value = if let Some(parameter) = rich_inputs.get(&field.id) {
-            let member = &parameter.name;
+            let member = crate::emit_java::parameter_member(parameter);
             if parameter.required && !parameter.optional_filter {
                 InsertValue::Parameter(format!("input.{member}()"))
             } else {
@@ -358,7 +358,7 @@ fn lower_resolutions(
             remote_value.names.sql_column,
             remote.names.sql_table,
             remote_lookup.names.sql_column,
-            parameter.name,
+            crate::emit_java::parameter_member(parameter),
         ));
         if values.insert(resolution.target.clone(), variable).is_some() {
             return Err(CompileError::new(format!(

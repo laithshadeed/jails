@@ -70,7 +70,16 @@ pub fn new(request: Request<'_>) -> Result<()> {
         set_java_release(&tree, initializr_java(java), java)?;
     }
     write_fixtures_dir(&tree)?;
-    finish_spring_project(&tree, deps)?;
+    finish_spring_project(
+        &tree,
+        deps,
+        Seed {
+            name,
+            package: &resolved_package(name, group, package),
+            java,
+            app,
+        },
+    )?;
     ensure_enforcer(&tree, java)?;
     write_mise(&tree, java)?;
     write_agents(&tree, java)?;
@@ -251,7 +260,16 @@ fn new_offline(request: &Request<'_>, deps: &str) -> Result<()> {
         ),
     )?;
     write_fixtures_dir(&tree)?;
-    finish_spring_project(&tree, deps)?;
+    finish_spring_project(
+        &tree,
+        deps,
+        Seed {
+            name,
+            package: &package,
+            java,
+            app,
+        },
+    )?;
     ensure_enforcer(&tree, java)?;
     write_mise(&tree, java)?;
     write_agents(&tree, java)?;
@@ -303,25 +321,75 @@ pub(super) fn offline_dependencies(deps: &str) -> Result<String> {
 ///
 /// Run once, after the zip is extracted and before git init, so the initial
 /// commit is of a project that is already in the shape jails maintains.
-fn finish_spring_project(tree: &publish::Tree<'_>, requested_deps: &str) -> Result<()> {
+fn finish_spring_project(
+    tree: &publish::Tree<'_>,
+    requested_deps: &str,
+    seed: Seed<'_>,
+) -> Result<()> {
     verify_requested_deps(tree, requested_deps);
     drop_initializr_help(tree);
     add_jspecify(tree)?;
     // Read rather than assumed: the online path takes whatever Boot line
-    // start.spring.io is currently serving, and the properties written below
-    // are the ones that line actually has.
+    // start.spring.io is currently serving, and which of the six defaults
+    // apply is decided by that line rather than by the one this binary pins.
     let major = crate::pom::read(tree.root())
         .map(|pom| crate::pom::spring_boot_major_of(&pom))
         .unwrap_or(4);
-    // Not written here for a canonical project: the six defaults are `prop`
-    // declarations in the seeded model, and the compiler writes the file. A
-    // key written as reader-owned text *and* declared in the model is the
-    // collision `reconcile_properties` refuses -- which is exactly how
-    // `server.shutdown`, declared by both `new` and `add db`, made `jails set
+    // **This is what makes `jails new` produce a canonical project**, and the
+    // six defaults move with it. They are `prop` declarations in the model
+    // rather than text this function writes, because a key written as
+    // reader-owned bytes *and* declared in the model is the collision
+    // `reconcile_properties` refuses -- which is exactly how `server.shutdown`,
+    // declared by both `new` and `add db`, made `jails set
     // server.shutdown=graceful` refuse on a project jails created seconds
-    // earlier.
-    write_default_properties(tree, major)?;
+    // earlier. The compiler writes `application.properties` from the model.
+    super::seed::seed_canonical_model(
+        tree,
+        seed.app,
+        seed_model(seed.name, seed.package, seed.java, major),
+    )?;
     write_devtools_defaults(tree)
+}
+
+/// What a new Spring project's model needs to know about itself.
+///
+/// A parameter object for the same reason [`Request`] is one: these four are
+/// resolved together at the call site and consumed together here, and
+/// `finish_spring_project` already took two arguments that are not about them.
+pub(super) struct Seed<'a> {
+    pub name: &'a str,
+    pub package: &'a str,
+    pub java: &'a str,
+    pub app: Option<&'a Path>,
+}
+
+/// The `.jails/model.jdl` a new Spring project starts with.
+///
+/// The app node plus the six default settings, which are model nodes here
+/// rather than lines in a properties file. **The explanatory comment above
+/// each one is the cost**, and it is paid deliberately: JDL has nowhere to put
+/// prose, and a default the reader cannot see the reason for is worth less
+/// than a default the compiler owns. `jails model explain` is where the
+/// reasoning has to go if it is wanted back.
+pub(super) fn seed_model(name: &str, package: &str, java: &str, boot_major: u32) -> String {
+    let mut source = super::seed::app_node(
+        &crate::new::camel_case(name),
+        package,
+        java,
+        "spring",
+        "maven",
+    );
+    source.push('\n');
+    for (_, property, applies) in default_properties(boot_major) {
+        if !applies {
+            continue;
+        }
+        let Some((key, value)) = property.split_once('=') else {
+            continue;
+        };
+        source.push_str(&format!("prop {key} = \"{value}\"\n"));
+    }
+    source
 }
 
 /// Remove the `HELP.md` start.spring.io ships.

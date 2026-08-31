@@ -275,6 +275,21 @@ impl Compiler {
             })
             .collect::<BTreeSet<_>>();
         build_features.extend(emit_capability::build_features(&next_model));
+        // **Keyed off the emitted bytes, not off the model.** Surefire runs
+        // `*Test`; `*IT` is Failsafe's, and Failsafe is not in the Spring Boot
+        // parent's default build -- so an `*IT` in a project without the plugin
+        // is a test that never runs while `mvn verify` reports success, which
+        // is worse than having no test at all. The declaration-derived features
+        // above only see a capability pack's own files, so every `*IT` an
+        // operation or component emitter writes -- a presence adapter's, a
+        // query adapter's -- was written into a project that could not run it.
+        if generated
+            .files
+            .keys()
+            .any(|path| path.as_str().ends_with("IT.java"))
+        {
+            build_features.insert(BuildFeature::IntegrationTests);
+        }
         let mut dependencies = next_model
             .dependencies
             .values()

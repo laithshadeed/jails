@@ -2,6 +2,7 @@
 
 mod command;
 pub(crate) mod outbox;
+mod proof;
 mod query;
 mod transition;
 
@@ -32,16 +33,29 @@ pub(crate) fn lower_and_emit(
             }
             OperationKind::Query(spec) => {
                 let target = stored_entity(model, operation, &spec.on, "query")?;
-                let filters = resolve_fields(operation, target, &spec.filters, "filters")?;
+                let filters = query_filters(model, operation, target, spec)?;
                 let ordering = ordering(operation, target, spec)?;
-                query::lower(
+                if let Some(proof) = proof::query(
                     model,
                     capability.id.as_str(),
                     operation,
                     target,
                     &filters,
-                    &ordering,
-                    spec.semantics.limit.unwrap_or(query::DEFAULT_LIMIT),
+                    &spec.semantics.joins,
+                )? {
+                    output.insert(proof.0, proof.1).map_err(CompileError::new)?;
+                }
+                query::lower(
+                    model,
+                    capability.id.as_str(),
+                    operation,
+                    target,
+                    query::Shape {
+                        filters: &filters,
+                        ordering: &ordering,
+                        joins: &spec.semantics.joins,
+                        limit: spec.semantics.limit.unwrap_or(query::DEFAULT_LIMIT),
+                    },
                 )?
             }
             OperationKind::Transition(spec) => {
@@ -54,6 +68,110 @@ pub(crate) fn lower_and_emit(
             .map_err(CompileError::new)?;
     }
     Ok(())
+}
+
+/// One filter of a query, resolved to the column it reads and the table that
+/// column is in.
+///
+/// **The flat `Query.filters` cannot express a joined filter**, which is the
+/// same shape [`jails_model::Transition`]'s own documentation records for
+/// `sets`: a compatibility projection that emitters read in preference to the
+/// linked semantics beside it. A `--via` query put `user.email` in
+/// `semantics.parameters` and the target's field list could not hold it, so
+/// the filter was dropped without a word -- an endpoint that answered, and
+/// answered over every row.
+pub(super) struct QueryFilter<'a> {
+    /// The field the column belongs to.
+    pub field: &'a Field,
+    /// The `Input` record component this filter binds from.
+    pub member: String,
+    /// The bind parameter and predicate name. Unique across joined entities,
+    /// where two tables can each have a `name`.
+    pub label: String,
+    /// The join alias qualifying this column, or `None` when the column is
+    /// the target's own. `None` renders unqualified unless the query joins,
+    /// so a query without one keeps the SQL it always had.
+    pub alias: Option<String>,
+    /// Whether the filter is always applied.
+    pub required: bool,
+}
+
+/// Resolve a query's filters against the target and every joined entity.
+///
+/// The linked parameters when there are any -- they are the only shape that
+/// can name a column of a joined table -- and the flat field list otherwise,
+/// which is what `.jails/model.toml` and an unjoined query still produce.
+fn query_filters<'a>(
+    model: &'a AppModel,
+    operation: &Operation,
+    target: &'a Entity,
+    spec: &'a jails_model::Query,
+) -> Result<Vec<QueryFilter<'a>>, CompileError> {
+    if spec.semantics.parameters.is_empty() {
+        return Ok(resolve_fields(operation, target, &spec.filters, "filters")?
+            .into_iter()
+            .map(|field| QueryFilter {
+                field,
+                member: field.names.java_member.clone(),
+                label: field.label.clone(),
+                alias: None,
+                required: field.required,
+            })
+            .collect());
+    }
+    spec.semantics
+        .parameters
+        .iter()
+        .map(|parameter| {
+            let jails_model::ParameterSource::Field(visible) = &parameter.source else {
+                return Err(CompileError::new(format!(
+                    "canonical query `{}` declares parameter `{}` with no source column\n       fix: filter on a declared field of the query's entity or one it joins",
+                    operation.label, parameter.name
+                )));
+            };
+            let owner = model.entities.get(&visible.entity).ok_or_else(|| {
+                CompileError::new(format!(
+                    "linked query `{}` references missing entity `{}`",
+                    operation.label, visible.entity
+                ))
+            })?;
+            let field = owner.field(&visible.field).ok_or_else(|| {
+                CompileError::new(format!(
+                    "linked query `{}` references missing filter field `{}`",
+                    operation.label, visible.field
+                ))
+            })?;
+            // The target's own columns keep the table as qualifier; a joined
+            // entity's take the alias the model states, quoted because a
+            // natural alias is often a reserved word -- `join User as user`
+            // renders `user`, and unquoted that is PostgreSQL's own function.
+            let alias = if owner.id == target.id {
+                None
+            } else {
+                let join = spec
+                    .semantics
+                    .joins
+                    .iter()
+                    .find(|join| join.entity == owner.id)
+                    .ok_or_else(|| {
+                        CompileError::new(format!(
+                            "canonical query `{}` filters on `{}`, which is not the query's entity and is not joined\n       fix: add a `join {} as <alias> on <local> -> <alias>.<remote>` to the query",
+                            operation.label, parameter.name, owner.names.java_type
+                        ))
+                    })?;
+                Some(format!("\"{}\"", join.alias))
+            };
+            Ok(QueryFilter {
+                field,
+                member: crate::emit_java::parameter_member(parameter),
+                // Two joined tables can both carry `name`, so the bind label
+                // is the parameter's rather than the column's.
+                label: parameter.name.clone(),
+                alias,
+                required: parameter.required && !parameter.optional_filter,
+            })
+        })
+        .collect()
 }
 
 fn stored_entity<'a>(

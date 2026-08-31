@@ -1,5 +1,6 @@
 //! Stable-ID schema diffing and conservative PostgreSQL migration lowering.
 
+mod binding;
 mod field_semantics;
 mod index;
 mod relation;
@@ -18,6 +19,7 @@ use jails_model::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
+pub(crate) use binding::{bound_value, database_assigned};
 use field_semantics::{SqlDefault, initial_column, length_check, numeric_check, sql_default};
 
 pub(crate) fn derive(
@@ -683,7 +685,7 @@ fn sql_type(model: &AppModel, field: &Field) -> Result<&'static str, CompileErro
 /// Does the model declare `name` as an enum?
 ///
 /// By Java type, because that is what a field's `External` type names.
-fn declares_enum(model: &AppModel, name: &str) -> bool {
+pub(super) fn declares_enum(model: &AppModel, name: &str) -> bool {
     model.entities.values().any(|entity| {
         entity.names.java_type == name && entity.facets.contains(&jails_model::Facet::Enum)
     })

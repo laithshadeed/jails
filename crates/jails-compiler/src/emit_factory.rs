@@ -1,11 +1,10 @@
 //! Entity-derived mutable test-data builders.
 
+use crate::emit_companion_test::JAVA_TEST_ROOT;
 use crate::{CompileError, emit_java};
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
 use jails_model::{AppModel, BuiltinType, Entity, Field, Package, StableId, TypeRef};
 use std::collections::BTreeSet;
-
-const JAVA_TEST_ROOT: &str = ".jails/generated/test/java";
 
 pub(crate) fn lower(
     model: &AppModel,

@@ -14,24 +14,48 @@
 //! from text, so a column name can never reach SQL as an ordering clause — the
 //! `created_at desc` trap the legacy index validator had to split on.
 
-use super::{context_parameter, context_value, java_string, operation_file, scopes};
+use super::{QueryFilter, context_parameter, context_value, java_string, operation_file, scopes};
 use crate::CompileError;
 use crate::emit_java::{domain_import, java_type, with_suffix};
 use jails_contracts::{ProjectPath, RenderedFile};
-use jails_model::{AppModel, Entity, Field, Operation, Package, SortDirection};
+use jails_model::{AppModel, Entity, Field, Join, Operation, Package, SortDirection};
 use std::collections::BTreeSet;
 
 pub(super) const DEFAULT_LIMIT: u32 = 100;
+
+/// One filter's column, qualified the way the query needs it.
+fn column(qualify: &impl Fn(&str) -> String, filter: &QueryFilter<'_>) -> String {
+    match &filter.alias {
+        Some(alias) => format!("{alias}.{}", filter.field.names.sql_column),
+        None => qualify(&filter.field.names.sql_column),
+    }
+}
+
+/// Everything the `select` is shaped by, resolved together by the caller.
+///
+/// A parameter object rather than four more positional arguments: these are
+/// read off one linked `Query` in one place and consumed together here, which
+/// is the same cut every other multi-value argument in this crate takes.
+pub(super) struct Shape<'a> {
+    pub filters: &'a [QueryFilter<'a>],
+    pub ordering: &'a [(&'a Field, SortDirection)],
+    pub joins: &'a [Join],
+    pub limit: u32,
+}
 
 pub(super) fn lower(
     model: &AppModel,
     capability_id: &str,
     operation: &Operation,
     target: &Entity,
-    filters: &[&Field],
-    ordering: &[(&Field, SortDirection)],
-    limit: u32,
+    shape: Shape<'_>,
 ) -> Result<(ProjectPath, RenderedFile), CompileError> {
+    let Shape {
+        filters,
+        ordering,
+        joins,
+        limit,
+    } = shape;
     if limit == 0 {
         return Err(CompileError::new(format!(
             "canonical query `{}` has a zero row limit\n       fix: set a positive limit or omit it for the bounded default of {DEFAULT_LIMIT}",
@@ -51,25 +75,81 @@ pub(super) fn lower(
         "org.springframework.jdbc.core.simple.JdbcClient".to_string(),
         "org.springframework.stereotype.Repository".to_string(),
     ]);
-    for field in filters {
-        let _ = java_type(field, &mut imports);
+    for filter in filters {
+        let _ = java_type(filter.field, &mut imports);
     }
     let context = context_parameter(model, target, &mut imports);
     let scope_fields = scopes(target);
+    // Qualified only when something is joined: an unqualified `id` is
+    // ambiguous across two tables, and qualifying unconditionally would
+    // rewrite the SQL of every query that has no join.
+    let qualify = |column: &str| {
+        if joins.is_empty() {
+            column.to_string()
+        } else {
+            format!("{}.{column}", target.names.sql_table)
+        }
+    };
     let columns = target
         .fields
         .iter()
-        .map(|field| field.names.sql_column.as_str())
+        .map(|field| qualify(&field.names.sql_column))
         .collect::<Vec<_>>()
         .join(", ");
+    // `join users "user" on messages.user_id = "user".id`. The alias is quoted
+    // because the natural one is often a reserved word -- `join User as user`
+    // renders `user`, which unquoted is PostgreSQL's own function.
+    let join_clauses = joins
+        .iter()
+        .map(|join| {
+            let remote = model.entities.get(&join.entity).ok_or_else(|| {
+                CompileError::new(format!(
+                    "linked query `{}` joins missing entity `{}`",
+                    operation.label, join.entity
+                ))
+            })?;
+            let on = join
+                .mappings
+                .iter()
+                .map(|mapping| {
+                    let local = target.field(&mapping.local).ok_or_else(|| {
+                        CompileError::new(format!(
+                            "linked query `{}` joins on missing local field `{}`",
+                            operation.label, mapping.local
+                        ))
+                    })?;
+                    let remote_field = remote.field(&mapping.remote).ok_or_else(|| {
+                        CompileError::new(format!(
+                            "linked query `{}` joins on missing remote field `{}`",
+                            operation.label, mapping.remote
+                        ))
+                    })?;
+                    Ok(format!(
+                        "{}.{} = \"{}\".{}",
+                        target.names.sql_table,
+                        local.names.sql_column,
+                        join.alias,
+                        remote_field.names.sql_column
+                    ))
+                })
+                .collect::<Result<Vec<_>, CompileError>>()?
+                .join(" and ");
+            Ok(format!(
+                " join {} \"{}\" on {on}",
+                remote.names.sql_table, join.alias
+            ))
+        })
+        .collect::<Result<Vec<_>, CompileError>>()?
+        .join("");
     let predicates = filters
         .iter()
-        .filter(|field| field.required)
-        .map(|field| format!("{} = :{}", field.names.sql_column, field.label))
+        .filter(|filter| filter.required)
+        .map(|filter| format!("{} = :{}", column(&qualify, filter), filter.label))
         .chain(scope_fields.iter().map(|field| {
             format!(
                 "{} = :scope_{}",
-                field.names.sql_column, field.names.sql_column
+                qualify(&field.names.sql_column),
+                field.names.sql_column
             )
         }))
         .collect::<Vec<_>>();
@@ -87,11 +167,12 @@ pub(super) fn lower(
     };
     let optional_predicates = filters
         .iter()
-        .filter(|field| !field.required)
-        .map(|field| {
+        .filter(|filter| !filter.required)
+        .map(|filter| {
             format!(
-                "        if (input.{}().isPresent()) {{\n            predicates.add(\"{} = :{}\");\n        }}\n",
-                field.names.java_member, field.names.sql_column, field.label
+                "        if (input.{}().isPresent()) {{\n            predicates.add({});\n        }}\n",
+                filter.member,
+                java_string(&format!("{} = :{}", column(&qualify, filter), filter.label))
             )
         })
         .collect::<String>();
@@ -106,8 +187,8 @@ pub(super) fn lower(
             ordering
                 .iter()
                 .map(|(field, direction)| match direction {
-                    SortDirection::Asc => field.names.sql_column.clone(),
-                    SortDirection::Desc => format!("{} desc", field.names.sql_column),
+                    SortDirection::Asc => qualify(&field.names.sql_column),
+                    SortDirection::Desc => format!("{} desc", qualify(&field.names.sql_column)),
                 })
                 .collect::<Vec<_>>()
                 .join(", ")
@@ -115,21 +196,21 @@ pub(super) fn lower(
     };
     let required_params = filters
         .iter()
-        .filter(|field| field.required)
-        .map(|field| {
+        .filter(|filter| filter.required)
+        .map(|filter| {
             format!(
                 "        statement = statement.param(\"{}\", input.{}());\n",
-                field.label, field.names.java_member
+                filter.label, filter.member
             )
         })
         .collect::<String>();
     let optional_params = filters
         .iter()
-        .filter(|field| !field.required)
-        .map(|field| {
+        .filter(|filter| !filter.required)
+        .map(|filter| {
             format!(
                 "        if (input.{}().isPresent()) {{\n            statement = statement.param(\"{}\", input.{}().orElseThrow());\n        }}\n",
-                field.names.java_member, field.label, field.names.java_member
+                filter.member, filter.label, filter.member
             )
         })
         .collect::<String>();
@@ -143,9 +224,16 @@ pub(super) fn lower(
             )
         })
         .collect::<String>();
+    // Escaped once, here, rather than by each site that splices a fragment in:
+    // a quoted join alias inside a Java string literal is a syntax error, and
+    // the failure is in generated code rather than in this file.
+    let select = java_string(&format!(
+        "select {columns} from {}{join_clauses}",
+        target.names.sql_table
+    ));
     let body = format!(
-        "@Repository\npublic final class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;\n\n    public {type_name}(JdbcClient jdbc) {{\n        this.jdbc = jdbc;\n    }}\n\n    @Override\n    public List<{}> execute({context}{port_type}.Input input) {{\n        var sql = new StringBuilder(\"select {columns} from {}\");\n        var predicates = {predicate_seed};\n{optional_predicates}        if (!predicates.isEmpty()) {{\n            sql.append(\" where \").append(String.join(\" and \", predicates));\n        }}\n{ordering}        sql.append(\" limit {limit}\");\n        JdbcClient.StatementSpec statement = jdbc.sql(sql.toString());\n{required_params}{optional_params}{scope_params}        return statement.query({}.class).list();\n    }}\n}}",
-        target.names.java_type, target.names.sql_table, target.names.java_type
+        "@Repository\npublic final class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;\n\n    public {type_name}(JdbcClient jdbc) {{\n        this.jdbc = jdbc;\n    }}\n\n    @Override\n    public List<{}> execute({context}{port_type}.Input input) {{\n        var sql = new StringBuilder({select});\n        var predicates = {predicate_seed};\n{optional_predicates}        if (!predicates.isEmpty()) {{\n            sql.append(\" where \").append(String.join(\" and \", predicates));\n        }}\n{ordering}        sql.append(\" limit {limit}\");\n        JdbcClient.StatementSpec statement = jdbc.sql(sql.toString());\n{required_params}{optional_params}{scope_params}        return statement.query({}.class).list();\n    }}\n}}",
+        target.names.java_type, target.names.java_type
     );
     operation_file(
         model,

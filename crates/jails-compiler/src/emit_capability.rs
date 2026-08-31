@@ -439,6 +439,18 @@ fn with_test_container(
     if !matches!(source_set, SourceSet::Test) {
         return body;
     }
+    imported_test_container(model, package, body)
+}
+
+/// Splice `@Import(TestcontainersConfig.class)` into a generated test.
+///
+/// Separate from the source-set gate above because an emitter outside the
+/// capability packs -- an operation's proof, say -- knows perfectly well that
+/// its file is a test and needs this, and would otherwise reimplement the
+/// splice. Without it a generated `@SpringBootTest` has no DataSource: JDBC
+/// auto-config demands one the moment the starter is present, so the context
+/// fails to start and every case in the class errors.
+pub(crate) fn imported_test_container(model: &AppModel, package: &str, body: String) -> String {
     if !model
         .capabilities
         .values()

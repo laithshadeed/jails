@@ -845,6 +845,21 @@
           ]
         }
       },
+      ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcOpenQueryIT.java": {
+        "bytes": "<1385 bytes elided>",
+        "kind": "java-test",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_op_note_open_query_it",
+          "compiler_pass": "capability-db-query",
+          "ejectable": true,
+          "semantic_ids": [
+            "cap_db",
+            "ent_note",
+            "op_note_open"
+          ]
+        }
+      },
       ".jails/generated/test/java/com/example/notes/domain/NoteTest.java": {
         "bytes": "<541 bytes elided>",
         "kind": "java-test",
@@ -1241,6 +1256,6 @@
     },
     "root": ".jails/generated"
   },
-  "projection_digest": "sha256:34331ec7f8ad7ff806b0e8cb884d79d0962d1d0ec9b5b65f7c9e737483f1ee3a",
+  "projection_digest": "sha256:d0c3b0974be30dda1bf9ac4078375616ba08f23f9d44e91ffb9804647c1d13f4",
   "schema": "jails.compiler-lock.v2"
 }

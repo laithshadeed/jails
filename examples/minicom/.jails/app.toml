@@ -44,23 +44,39 @@ yields = "User"
 # No `id`: `Message.id` is `long@pk`, so PostgreSQL assigns it and the create
 # returns the row it wrote. Naming it here used to be accepted and then
 # silently dropped by the insert.
+#
+# `isRead`, `timeStamp` and `version` are carried for the opposite reason: the
+# canonical compiler refuses to construct a required field it was not given,
+# where the legacy engine inserted whatever the column defaulted to and said
+# nothing. Carrying them is the honest shape until a manifest can declare a
+# typed field default -- JDL has `@default(...)` and this file cannot reach it.
 [[generate]]
 kind = "usecase"
 name = "SendMessage"
-fields = ["userId:long", "body:string!", "direction:MessageDirection"]
+fields = ["userId:long", "body:string!", "direction:MessageDirection", "isRead:boolean", "timeStamp:instant", "version:long@nonnegative"]
 on = "Message"
+path = "/api/send"
 
-# POST /api/read  ->  Message.mark_read()
+# POST /api/read/{id}  ->  Message.mark_read()
+#
+# The key is in the URL, not the body. Django's handler read `message_id` out
+# of the posted JSON; a canonical transition refuses a route without `{id}`,
+# because the thing being transitioned is what the URL names.
 #
 # `version` is jails asking for something neither framework had: Django's
 # `save()` and Rails' `update` last-write-wins, so two readers marking the
 # same message read at once silently lose one update. A transition refuses
 # without it.
+#
+# `id` is not in the list because a transition does not *set* the key it
+# selects by -- it arrives from the URL. Naming it here asked the compiler to
+# rewrite a primary key, which it refuses by name.
 [[generate]]
 kind = "transition"
 name = "MarkAsRead"
-fields = ["id:long", "isRead:boolean", "version:long@nonnegative"]
+fields = ["isRead:boolean", "version:long@nonnegative"]
 on = "Message"
+path = "/api/read/{id}"
 
 # POST /api/conversation  ->  User.all_messages()
 [[generate]]
@@ -68,6 +84,7 @@ kind = "query"
 name = "Conversation"
 fields = ["userId:long"]
 on = "Message"
+path = "/api/conversation"
 
 # POST /customer_api/ping {email} — the whole customer-facing surface of the
 # Django original, and the one endpoint jails could not express: `Message` has

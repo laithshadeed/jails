@@ -130,7 +130,7 @@ pub(crate) fn upper_camel_case(label: &str) -> String {
         .collect()
 }
 
-pub(crate) fn lower_camel_case(label: &str) -> String {
+pub fn lower_camel_case(label: &str) -> String {
     let upper = upper_camel_case(label);
     let mut chars = upper.chars();
     chars.next().map_or_else(String::new, |first| {

@@ -250,7 +250,11 @@ fn declared_sample(
 /// and a test that only constructs a record never mentions the type anywhere
 /// else. Left out, the file compiles everywhere the sample happens to be a
 /// literal and fails on the first `uuid`, `instant` or `date`.
-fn sample(model: &AppModel, field: &Field, imports: &mut BTreeSet<String>) -> Option<String> {
+pub(crate) fn sample(
+    model: &AppModel,
+    field: &Field,
+    imports: &mut BTreeSet<String>,
+) -> Option<String> {
     sample_with(model, field, imports, &mut BTreeSet::new())
 }
 
