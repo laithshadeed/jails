@@ -36,8 +36,6 @@ mod sql;
 pub(crate) use sql::*;
 mod rename;
 pub(crate) use rename::*;
-mod history;
-pub(crate) use history::*;
 mod testing;
 pub(crate) use testing::*;
 mod command_path;
@@ -472,12 +470,6 @@ pub(crate) enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// List committed project transactions from authenticated receipts
-    History(HistoryArgs),
-    /// Inspect one committed transaction and its exact before/after images
-    Show(ShowArgs),
-    /// Restore an eligible receipt's file preimages as a new forward transaction
-    Undo(UndoArgs),
     /// Create a new Spring Boot project via start.spring.io
     New(NewArgs),
     /// Create a new plain Maven CLI project

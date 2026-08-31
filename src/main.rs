@@ -25,7 +25,6 @@ mod contract_command;
 mod dispatch;
 mod editor_command;
 mod facade;
-mod history_command;
 mod model_capability;
 mod model_command;
 mod model_destroy;
@@ -115,17 +114,6 @@ fn main() -> std::process::ExitCode {
         Command::Schema { command } => schema_command::schema(command, invocation),
         Command::Editor { command } => editor_command::run(command, invocation),
         Command::Contract { command } => contract_command::run(command, invocation),
-        Command::History(history) => history_command::history(history.limit, invocation.output),
-        Command::Show(show) => history_command::show(
-            &show.transaction,
-            invocation.diff,
-            show.why,
-            invocation.output,
-        ),
-        Command::Undo(_) => model_command::refuse_legacy_mutation(
-            "undo",
-            "restore from version control or apply a reviewed forward model patch",
-        ),
         Command::Request { request } => tool_command::request(
             tool_command::HttpRequest {
                 method: request.method,

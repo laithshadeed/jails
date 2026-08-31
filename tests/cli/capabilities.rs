@@ -910,10 +910,7 @@ fn remove_is_the_inverse_of_add_csv() {
             .unwrap()
             .success()
     );
-    let reader = common::generated(
-        &root,
-        "src/main/java/com/example/demo/adapters/CsvReader.java",
-    );
+    let reader = root.join("src/main/java/com/example/demo/adapters/CsvReader.java");
     assert!(reader.is_file());
 
     let output = jails_cmd(&root, None)

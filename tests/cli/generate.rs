@@ -1374,9 +1374,10 @@ fn a_second_client_keeps_the_first_one_registered() {
         "the shared registration is what made this break"
     );
     for (name, group) in [("Alpha", "alpha"), ("Beta", "beta")] {
-        let config = fs::read_to_string(root.join(format!(
-            "src/main/java/com/example/demo/clients/{name}ClientConfig.java"
-        )))
+        let config = fs::read_to_string(common::generated(
+            &root,
+            &format!("src/main/java/com/example/demo/clients/{name}ClientConfig.java"),
+        ))
         .unwrap();
         assert!(config.contains(&format!("group = \"{group}\"")), "{config}");
         assert!(

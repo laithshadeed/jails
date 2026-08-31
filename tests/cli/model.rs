@@ -618,7 +618,7 @@ app Demo {
 fn model_init_makes_a_foreign_project_canonical_without_touching_its_sources() {
     let root = temp_dir("model-init-foreign");
     write_plain_fixture(&root);
-    let reader = common::generated(&root, "src/main/java/com/example/demo/Existing.java");
+    let reader = root.join("src/main/java/com/example/demo/Existing.java");
     fs::create_dir_all(reader.parent().unwrap()).unwrap();
     let untouched = "package com.example.demo;\n\npublic class Existing {\n}\n";
     fs::write(&reader, untouched).unwrap();
@@ -3470,7 +3470,7 @@ fn legacy_record_import_adopts_live_bytes_then_joins_the_iterative_merge_loop() 
         "{}",
         String::from_utf8_lossy(&generated.stderr)
     );
-    let reader = common::generated(&root, "src/main/java/com/example/demo/domain/Task.java");
+    let reader = root.join("src/main/java/com/example/demo/domain/Task.java");
     let original = fs::read_to_string(&reader).unwrap();
     let split = original.rfind("\n}").unwrap();
     let edited = format!(
@@ -3637,7 +3637,7 @@ fn legacy_import_plan_refuses_a_later_reader_edit_before_any_cutover_write() {
         .output()
         .unwrap();
     assert!(generated.status.success());
-    let reader = common::generated(&root, "src/main/java/com/example/demo/domain/Task.java");
+    let reader = root.join("src/main/java/com/example/demo/domain/Task.java");
     let bundle = root.join("import-plan.json");
     let planned = jails_cmd(&root, None)
         .args(["model", "import", "--plan-out"])
@@ -4407,10 +4407,13 @@ fn canonical_projects_fail_closed_before_legacy_mutation_routes() {
     let root = model_project("model-no-legacy-routes", MODEL);
     apply_canonical_model(&root, "initial-no-legacy-routes");
     for arguments in [
-        vec!["undo", "00000000000000000000000000000000"],
+        // `undo`, `history` and `show` were here and are gone entirely: they
+        // read an authenticated receipt store, and a canonical project keeps
+        // none. There is nothing to unwind because the plan is
+        // content-addressed and re-running converges, which is what `undo`'s
+        // own refusal already said -- so the honest form is not a command that
+        // reports an empty list forever.
         vec!["rename", "Note", "Memo"],
-        vec!["adopt"],
-        vec!["modernize"],
         // `fmt` was here and is not any more: it does not reach the legacy
         // engine at all now. The ceremony that put it there -- format a
         // scratch tree, commit the diff -- exists because the legacy engine
@@ -4432,6 +4435,10 @@ fn canonical_projects_fail_closed_before_legacy_mutation_routes() {
         // second editable source the cutover forbids.
         vec!["app", "init"],
     ] {
+        // `adopt` and `modernize` were here and are not: both run *before* a
+        // project has a model and neither claims anything a later command
+        // reconciles, so they write directly and are the two commands a
+        // canonical project may still run.
         let before = snapshot_tree(&root);
         let output = jails_cmd(&root, None).args(&arguments).output().unwrap();
         assert!(
@@ -4623,10 +4630,8 @@ fn model_eject_transfers_generated_java_once_and_reader_edits_survive() {
     let generated = root.join(
         ".jails/generated/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
     );
-    let reader = common::generated(
-        &root,
-        "src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
-    );
+    let reader =
+        root.join("src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java");
     let generated_bytes = fs::read(&generated).unwrap();
     let model_before = fs::read(root.join(".jails/model.toml")).unwrap();
 
@@ -4634,7 +4639,7 @@ fn model_eject_transfers_generated_java_once_and_reader_edits_survive() {
         .args([
             "model",
             "eject",
-            "art_cap_fake_ent_note_repository",
+            "art_ent_note_repository_memory",
             "--pretend",
             "--diff",
         ])
@@ -4653,7 +4658,7 @@ fn model_eject_transfers_generated_java_once_and_reader_edits_survive() {
     assert!(!reader.exists());
 
     let applied = jails_cmd(&root, None)
-        .args(["model", "eject", "art_cap_fake_ent_note_repository"])
+        .args(["model", "eject", "art_ent_note_repository_memory"])
         .output()
         .unwrap();
     assert!(
@@ -4666,7 +4671,7 @@ fn model_eject_transfers_generated_java_once_and_reader_edits_survive() {
     let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
     assert!(model.contains("[ejections.eject_"), "{model}");
     assert!(
-        model.contains("target = \"art_cap_fake_ent_note_repository\""),
+        model.contains("target = \"art_ent_note_repository_memory\""),
         "{model}"
     );
     assert!(
@@ -4694,7 +4699,7 @@ fn model_eject_transfers_generated_java_once_and_reader_edits_survive() {
 
     let before_retry = snapshot_tree(&root);
     let retried = jails_cmd(&root, None)
-        .args(["model", "eject", "art_cap_fake_ent_note_repository"])
+        .args(["model", "eject", "art_ent_note_repository_memory"])
         .output()
         .unwrap();
     assert!(!retried.status.success());
@@ -4723,13 +4728,11 @@ fn jdl_ejection_transfers_only_one_artifact_and_records_inline_ownership() {
     let generated = root.join(
         ".jails/generated/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
     );
-    let reader = common::generated(
-        &root,
-        "src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
-    );
+    let reader =
+        root.join("src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java");
     let generated_bytes = fs::read(&generated).unwrap();
     let ejected = jails_cmd(&root, None)
-        .args(["model", "eject", "art_cap_fake_ent_note_repository"])
+        .args(["model", "eject", "art_ent_note_repository_memory"])
         .output()
         .unwrap();
     assert!(
@@ -4741,7 +4744,7 @@ fn jdl_ejection_transfers_only_one_artifact_and_records_inline_ownership() {
     assert_eq!(fs::read(&reader).unwrap(), generated_bytes);
     let jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(
-        jdl.contains("eject art_cap_fake_ent_note_repository @id(eject_"),
+        jdl.contains("eject art_ent_note_repository_memory @id(eject_"),
         "{jdl}"
     );
     assert!(
@@ -4783,10 +4786,7 @@ fn factory_ejection_transfers_only_the_testkit_implementation_boundary() {
     }
     let generated =
         root.join(".jails/generated/test/java/com/example/notes/testkit/NoteFactory.java");
-    let reader = common::generated(
-        &root,
-        "src/test/java/com/example/notes/testkit/NoteFactory.java",
-    );
+    let reader = root.join("src/test/java/com/example/notes/testkit/NoteFactory.java");
     let record = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
     let ejected = jails_cmd(&root, None)
         .args(["model", "eject", "art_ent_note_factory"])
@@ -4839,16 +4839,14 @@ fn factory_ejection_transfers_only_the_testkit_implementation_boundary() {
 fn model_eject_refuses_a_reader_destination_collision_without_writing() {
     let root = eject_model_project("model-eject-collision");
     apply_canonical_model(&root, "initial-plan");
-    let reader = common::generated(
-        &root,
-        "src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
-    );
+    let reader =
+        root.join("src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java");
     fs::create_dir_all(reader.parent().unwrap()).unwrap();
     fs::write(&reader, "package com.example.notes.domain;\n// mine\n").unwrap();
     let before = snapshot_tree(&root);
 
     let output = jails_cmd(&root, None)
-        .args(["model", "eject", "art_cap_fake_ent_note_repository"])
+        .args(["model", "eject", "art_ent_note_repository_memory"])
         .output()
         .unwrap();
     assert!(!output.status.success());
@@ -4867,7 +4865,7 @@ fn model_eject_plan_refuses_a_destination_created_after_review() {
         .args([
             "model",
             "eject",
-            "art_cap_fake_ent_note_repository",
+            "art_ent_note_repository_memory",
             "--plan-out",
         ])
         .arg(&plan)
@@ -4882,10 +4880,8 @@ fn model_eject_plan_refuses_a_destination_created_after_review() {
     let generated = root.join(
         ".jails/generated/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
     );
-    let reader = common::generated(
-        &root,
-        "src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
-    );
+    let reader =
+        root.join("src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java");
     fs::create_dir_all(reader.parent().unwrap()).unwrap();
     fs::write(
         &reader,
@@ -5726,10 +5722,8 @@ fn canonical_api_adapters_merge_then_eject_at_the_operation_boundary() {
         "{}",
         String::from_utf8_lossy(&ejected.stderr)
     );
-    let reader = common::generated(
-        &root,
-        "src/main/java/com/example/notes/adapters/http/CreateNoteController.java",
-    );
+    let reader =
+        root.join("src/main/java/com/example/notes/adapters/http/CreateNoteController.java");
     assert!(!command.exists());
     assert!(fs::read_to_string(&reader).unwrap().contains("handWritten"));
     assert!(
@@ -7450,10 +7444,7 @@ fn canonical_h2_pack_merges_ejects_and_builds() {
         "{}",
         String::from_utf8_lossy(&ejected.stderr)
     );
-    let reader = common::generated(
-        &root,
-        "src/test/java/com/example/demo/adapters/H2DatabaseTest.java",
-    );
+    let reader = root.join("src/test/java/com/example/demo/adapters/H2DatabaseTest.java");
     assert!(!managed.exists());
     assert_eq!(fs::read(&reader).unwrap(), live_bytes);
 
@@ -7552,10 +7543,7 @@ fn canonical_actuator_pack_merges_ejects_only_java_and_builds() {
         "{}",
         String::from_utf8_lossy(&ejected.stderr)
     );
-    let reader = common::generated(
-        &root,
-        "src/test/java/com/example/demo/ActuatorEndpointsTest.java",
-    );
+    let reader = root.join("src/test/java/com/example/demo/ActuatorEndpointsTest.java");
     assert!(!managed.exists());
     assert_eq!(fs::read(&reader).unwrap(), live_bytes);
 
@@ -8880,10 +8868,7 @@ fn canonical_database_query_keeps_the_iterative_loop_and_ejects_only_its_adapter
         "{}",
         String::from_utf8_lossy(&ejected.stderr)
     );
-    let reader = common::generated(
-        &root,
-        "src/main/java/com/example/notes/adapters/jdbc/JdbcOpenNotesQuery.java",
-    );
+    let reader = root.join("src/main/java/com/example/notes/adapters/jdbc/JdbcOpenNotesQuery.java");
     assert!(!adapter.exists(), "ejected query adapter stayed managed");
     assert_eq!(fs::read(&reader).unwrap(), before_ejection);
     assert!(abi.is_file(), "ejecting an adapter removed its managed ABI");

@@ -852,9 +852,10 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         "AssignmentMember",
     ] {
         assert!(
-            root.join(format!(
-                "src/test/java/com/example/demo/adapters/{name}AssociationIT.java"
-            ))
+            common::generated(
+                &root,
+                &format!("src/test/java/com/example/demo/adapters/{name}AssociationIT.java")
+            )
             .is_file(),
             "{name} association test"
         );
