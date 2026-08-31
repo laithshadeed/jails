@@ -76,12 +76,14 @@ pub(crate) fn read_source_at(root: &Path, model_path: &Path) -> Result<String> {
         // the model `model init` would write, so the first mutation patches a
         // real seed rather than refusing over the file it is about to create.
         Err(error) if error.kind() == std::io::ErrorKind::NotFound && !owns_at(root) => {
-            crate::model_init::derive(&jails_project::model::Project::load(root)?).map_err(|_| {
-                Failure::Told(format!(
-                    "could not read canonical model `{}`: {error}",
-                    model_path.display()
-                ))
-            })
+            jails_project::model::Project::load(root)
+                .and_then(|project| crate::model_init::derive(&project))
+                .map_err(|_| {
+                    Failure::Told(format!(
+                        "could not read canonical model `{}`: {error}",
+                        model_path.display()
+                    ))
+                })
         }
         Err(error) => Err(Failure::Told(format!(
             "could not read canonical model `{}`: {error}",
@@ -680,7 +682,16 @@ pub(crate) fn load_model_at(
         Err(error)
             if error.kind() == std::io::ErrorKind::NotFound && manifest == Path::new(JDL_PATH) =>
         {
-            crate::model_init::derive(&jails_project::model::Project::load(root)?)?
+            // A project jails cannot read has no seed to derive, and the
+            // honest answer there is still that the model is missing --
+            // reporting why the *derivation* failed would answer a question
+            // the reader did not ask.
+            let derived = jails_project::model::Project::load(root)
+                .and_then(|project| crate::model_init::derive(&project));
+            match derived {
+                Ok(source) => source,
+                Err(_) => return io_failure(manifest, &error, output),
+            }
         }
         Err(error) => return io_failure(manifest, &error, output),
     };

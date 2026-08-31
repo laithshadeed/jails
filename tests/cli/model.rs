@@ -11807,7 +11807,7 @@ fn canonical_presence_refuses_without_storage_then_shares_the_scheduler() {
     );
 
     for command in [
-        ["add", "db"].as_slice(),
+        ["add", "db", "--no-start"].as_slice(),
         ["g", "presence", "Online"].as_slice(),
         ["g", "job", "Reconcile"].as_slice(),
     ] {

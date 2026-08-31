@@ -134,7 +134,15 @@ pub(super) fn lower_and_emit(
         "docker" => lower_docker(model, capability, output, observed),
         "k8s" => lower_k8s(model, capability, output),
         "format" => lower_format(capability, output),
-        "db" | "sqlite" => lower_migration_directory(capability, output),
+        // **One keep file, whichever storage declared it.** Both storage
+        // capabilities fill the same directory, and two facets targeting one
+        // path is a collision the executor refuses -- correctly, since it
+        // cannot know which owner's bytes win. `db` claims it when both are
+        // present, because it is the one whose migrations Flyway runs.
+        "db" => lower_migration_directory(capability, output),
+        "sqlite" if !model.capabilities.values().any(|other| other.kind == "db") => {
+            lower_migration_directory(capability, output)
+        }
         _ => Ok(()),
     }
 }
