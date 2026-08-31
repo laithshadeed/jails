@@ -71,7 +71,9 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation, kind: Kind) -> Res
         .map_err(|error| Failure::Told(format!("could not assign entity identity: {error}")))?;
     let entity = current_model.entity(&entity_id).ok_or_else(|| {
         Failure::Told(format!(
-            "no canonical `{}` record exists\n       fix: generate the record or scaffold first, then run `jails g {} {}`",
+            "no canonical `{}` record exists\n       fix: `jails g record {} <field>:<type>` (or `jails g scaffold {}`) first, then `jails g {} {}`",
+            args.name,
+            args.name,
             args.name,
             kind.name(),
             args.name

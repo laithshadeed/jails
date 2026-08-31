@@ -428,11 +428,22 @@ impl Parser<'_> {
         };
         self.end_line()?;
         entity.field_order.push(field_label.clone());
+        let derived_member = crate::naming::lower_camel_case(&field_label);
+        let field_label_text = field_label.clone();
         entity.fields.insert(
             field_label,
             source::Field {
                 id,
-                java_name: Some(name.clone()),
+                // **Pinned only when it is not the derived name.** A field
+                // written `user_id` and one written `userId` are the same
+                // field -- they share a label -- and both project to the Java
+                // component `userId`, because a record component named
+                // `user_id` is not Java anybody writes. Recording the written
+                // spelling as a pin made the snake-case half emit
+                // `UUID user_id`, and made a convention that is supposed to
+                // converge depend on which spelling was typed.
+                java_name: (name != derived_member && name != field_label_text)
+                    .then(|| name.clone()),
                 column,
                 type_name,
                 required,

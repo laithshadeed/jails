@@ -1890,23 +1890,17 @@ fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
             .join("src/main/java/com/example/demo/web/TaskController.java")
             .exists()
     );
-    let store = jails_commit::store::Store::at(&root)
-        .observe()
-        .unwrap()
-        .ledger
-        .unwrap();
-    assert!(store.applied.is_empty(), "{:?}", store.applied);
-    assert_eq!(store.lifecycles.len(), 1, "{:?}", store.lifecycles);
-    let lifecycle = &store.lifecycles[0];
-    assert!(matches!(
-        lifecycle.state,
-        jails_protocol::lifecycle::ResourceState::RetiredPreservingStorage { .. }
-    ));
-    assert_eq!(lifecycle.table.as_ref().unwrap().table.as_str(), "tasks");
-    assert_eq!(lifecycle.migrations.len(), 1);
-    assert_eq!(lifecycle.migrations[0].version.get(), 1);
-    let entity_before_revive = lifecycle.entity.clone();
-    let seal_before_revive = lifecycle.migrations[0].clone();
+    // Retired but preserved: the semantic node stays inactive, the table
+    // stays, and no migration is appended -- there is nothing to retire in
+    // SQL. The history it already has is untouched.
+    let retired = common::resource_status(&root, "Task");
+    assert_eq!(retired["state"], "retired", "{retired}");
+    assert_eq!(retired["table"], "tasks", "{retired}");
+    assert_eq!(
+        retired["migrations"],
+        serde_json::json!(["001"]),
+        "{retired}"
+    );
 
     let status = jails_cmd(&root, None)
         .args(["resource", "status", "Task", "--output", "json"])
@@ -1959,19 +1953,17 @@ fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
         )
         .is_file()
     );
-    let revived_store = jails_commit::store::Store::at(&root)
-        .observe()
-        .unwrap()
-        .ledger
-        .unwrap();
-    let revived_lifecycle = &revived_store.lifecycles[0];
-    assert!(matches!(
-        revived_lifecycle.state,
-        jails_protocol::lifecycle::ResourceState::Active
-    ));
-    assert_eq!(revived_lifecycle.entity, entity_before_revive);
-    assert_eq!(revived_lifecycle.migrations, vec![seal_before_revive]);
-    assert_eq!(revived_store.applied.len(), 1);
+    // Revived onto the same table, with the same one migration: an exact
+    // revival reuses the inactive node rather than creating a second one, so
+    // the history does not restart.
+    let revived = common::resource_status(&root, "Task");
+    assert_eq!(revived["state"], "consistent", "{revived}");
+    assert_eq!(revived["table"], "tasks", "{revived}");
+    assert_eq!(
+        revived["migrations"],
+        serde_json::json!(["001"]),
+        "{revived}"
+    );
 
     let active_status = jails_cmd(&root, None)
         .args(["resource", "status", "Task", "--output", "json"])
@@ -2618,13 +2610,14 @@ fn resource_repair_restores_sealed_history_and_missing_owned_projections() {
     assert!(repaired_missing.status.success(), "{repaired_missing:?}");
     assert_eq!(fs::read(&migration).unwrap(), sealed);
 
-    let store = jails_commit::store::Store::at(&root)
-        .observe()
-        .unwrap()
-        .ledger
-        .unwrap();
-    assert_eq!(store.lifecycles.len(), 1);
-    assert_eq!(store.lifecycles[0].migrations.len(), 2);
+    // Repair restores the managed tree from the model and leaves history
+    // alone: both migrations are still the resource's, and no third appears.
+    let status = common::resource_status(&root, "Task");
+    assert_eq!(
+        status["migrations"],
+        serde_json::json!(["001", "002"]),
+        "{status}"
+    );
 }
 
 #[test]
@@ -2775,25 +2768,15 @@ fn task_drop_keeps_v001_and_appends_an_exact_forward_migration() {
             .join("src/main/java/com/example/demo/web/TaskController.java")
             .exists()
     );
-    let store = jails_commit::store::Store::at(&root)
-        .observe()
-        .unwrap()
-        .ledger
-        .unwrap();
-    assert_eq!(store.lifecycles.len(), 1, "{:?}", store.lifecycles);
-    let lifecycle = &store.lifecycles[0];
-    assert!(matches!(
-        &lifecycle.state,
-        jails_protocol::lifecycle::ResourceState::RetiredDropPlanned { migration, .. }
-            if migration.as_str() == "src/main/resources/db/migration/V002__drop_tasks.sql"
-    ));
+    // The resource is retired and its history is both migrations: the create
+    // and the drop that retires it. Reporting one would read as a resource
+    // whose creation was never recorded.
+    let status = common::resource_status(&root, "Task");
+    assert_eq!(status["state"], "retired", "{status}");
     assert_eq!(
-        lifecycle
-            .migrations
-            .iter()
-            .map(|seal| seal.version.get())
-            .collect::<Vec<_>>(),
-        vec![1, 2]
+        status["migrations"],
+        serde_json::json!(["001", "002"]),
+        "{status}"
     );
 
     let before_revive = snapshot_tree(&root);
@@ -2924,9 +2907,21 @@ fn task_drop_can_explicitly_apply_the_frozen_history_after_commit() {
     );
 }
 
+/// A migration whose delivery is somebody else's business.
+///
+/// **There is no post-commit effect any more, and that is the change.**
+/// Canonical retirement appends one forward migration and stops; running it
+/// against a database is `jails migrate`, a separate command with its own
+/// failure. The receipt this test used to read was the legacy engine's record
+/// of an effect that could fail after the transaction committed -- the exact
+/// half-committed state publication-by-rename exists to remove, and the
+/// strangler removed the mechanism rather than reimplementing it.
+///
+/// What is left worth holding: the retirement is durable whether or not a
+/// database ever sees it, and it does not reach for one.
 #[test]
-fn failed_migration_effect_keeps_the_committed_drop_and_retryable_receipt() {
-    let root = temp_dir("task-drop-failed-migration-effect");
+fn a_retirement_is_durable_without_a_database_to_apply_it_to() {
+    let root = temp_dir("task-drop-without-a-database");
     write_spring_fixture(&root);
     common::declare_storage(&root);
     assert!(
@@ -2937,15 +2932,12 @@ fn failed_migration_effect_keeps_the_committed_drop_and_retryable_receipt() {
             .success()
     );
 
-    let fake = temp_dir("task-drop-failing-flyway-bin");
-    let ignored_log = fake.join("ignored.log");
-    write_fake_maven(&fake, &["flyway"], &ignored_log);
-    fs::write(fake.join("flyway"), "#!/bin/sh\nexit 9\n").unwrap();
-    let output = jails_cmd(&root, Some(&fake))
-        .env(
-            "DATABASE_URL",
-            "postgresql://app:secret@127.0.0.1:5432/demo",
-        )
+    // No `flyway`, no `psql`, and no `DATABASE_URL`: a retirement that needed
+    // any of them would fail here.
+    let bare = temp_dir("task-drop-no-tools-bin");
+    let ignored_log = bare.join("ignored.log");
+    write_fake_maven(&bare, &[], &ignored_log);
+    let output = jails_cmd(&root, Some(&bare))
         .args([
             "destroy",
             "scaffold",
@@ -2955,48 +2947,30 @@ fn failed_migration_effect_keeps_the_committed_drop_and_retryable_receipt() {
             "--confirm-table",
             "tasks",
             "--force",
-            "--migrate",
-            "--datasource",
-            "DATABASE_URL",
         ])
         .output()
         .unwrap();
-    assert!(!output.status.success(), "{output:?}");
-    let rendered = format!(
+    assert!(
+        output.status.success(),
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        !rendered.contains("secret"),
-        "credential leaked: {rendered}"
-    );
-    assert!(
         root.join("src/main/resources/db/migration/V002__drop_tasks.sql")
-            .is_file(),
-        "failed effect rolled back the committed migration"
+            .is_file()
     );
     assert!(
-        !root
-            .join("src/main/java/com/example/demo/web/TaskController.java")
-            .exists(),
-        "failed effect rolled back retired projections"
+        read_log(&ignored_log).is_empty(),
+        "{}",
+        read_log(&ignored_log)
     );
-    let receipts = jails_commit::store::Store::at(&root)
-        .read_receipts()
-        .unwrap();
-    let effect = receipts
-        .first()
-        .and_then(|receipt| receipt.post_commit.first())
-        .expect("the newest receipt keeps its migration effect");
-    assert!(
-        matches!(
-            effect.state,
-            jails_protocol::effect::EffectState::Failed { attempt: 1, .. }
-        ),
-        "{:?}",
-        effect.state
-    );
+    // Dropped, not preserved: the declaration is gone from the model and the
+    // forward migration is the only record of the table it used to have.
+    let status = common::resource_status(&root, "Task");
+    assert_eq!(status["declaration"], "absent", "{status}");
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(!model.contains("entity Task"), "{model}");
 }
 
 #[test]
@@ -3218,7 +3192,11 @@ fn field_driven_generators_refuse_an_absent_model_with_a_fix() {
     let root = temp_dir("missing-model-fix");
     write_spring_fixture(&root);
 
-    for kind in ["scaffold", "dto", "repo"] {
+    // `dto` and `repo` project an entity that has to exist first, and say so
+    // by name. `scaffold` declares one, so what it refuses on is the shape:
+    // an entity with no fields has no primary key for a repository to store
+    // rows by, which is the more specific answer of the two.
+    for kind in ["dto", "repo"] {
         let output = jails_cmd(&root, None)
             .args(["generate", kind, "Missing"])
             .output()
@@ -3228,6 +3206,14 @@ fn field_driven_generators_refuse_an_absent_model_with_a_fix() {
         assert!(stderr.contains("fix:"), "{kind}: {stderr}");
         assert!(stderr.contains("g record Missing"), "{kind}: {stderr}");
     }
+    let scaffolded = jails_cmd(&root, None)
+        .args(["generate", "scaffold", "Missing"])
+        .output()
+        .unwrap();
+    assert!(!scaffolded.status.success());
+    let stderr = String::from_utf8_lossy(&scaffolded.stderr);
+    assert!(stderr.contains("requires a primary key"), "{stderr}");
+    assert!(stderr.contains("fix:"), "{stderr}");
 }
 
 #[test]
@@ -4079,7 +4065,9 @@ fn generate_errors_outside_a_project() {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("pom.xml"));
+    let told = String::from_utf8_lossy(&output.stderr);
+    assert!(told.contains("not a Java project"), "{told}");
+    assert!(told.contains("jails new"), "{told}");
 }
 
 #[test]
