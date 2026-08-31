@@ -88,16 +88,28 @@ pub(super) fn lower(
             // adapter cannot name an accessor the record does not declare.
             let member = crate::emit_java::parameter_member(model, parameter);
             if parameter.required && !parameter.optional_filter {
-                InsertValue::Parameter(format!("input.{member}()"))
+                InsertValue::Parameter(crate::emit_java::jdbc_param(
+                    field,
+                    &format!("input.{member}()"),
+                ))
             } else {
-                InsertValue::Parameter(format!("input.{member}().orElse(null)"))
+                InsertValue::Parameter(crate::emit_java::optional_jdbc_param(
+                    field,
+                    &format!("input.{member}()"),
+                ))
             }
         } else if inputs.iter().any(|input| input.id == field.id) {
             let member = &field.names.java_member;
             if field.required {
-                InsertValue::Parameter(format!("input.{member}()"))
+                InsertValue::Parameter(crate::emit_java::jdbc_param(
+                    field,
+                    &format!("input.{member}()"),
+                ))
             } else {
-                InsertValue::Parameter(format!("input.{member}().orElse(null)"))
+                InsertValue::Parameter(crate::emit_java::optional_jdbc_param(
+                    field,
+                    &format!("input.{member}()"),
+                ))
             }
         } else if let Some(value) = resolved_values.get(&field.id) {
             InsertValue::Parameter(value.clone())

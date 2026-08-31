@@ -118,8 +118,12 @@ pub(super) fn lower(
         .filter(|field| field.required)
         .map(|field| {
             format!(
-                "        statement = statement.param(\"{}\", input.{}());\n",
-                field.label, field.names.java_member
+                "        statement = statement.param(\"{}\", {});\n",
+                field.label,
+                crate::emit_java::jdbc_param(
+                    field,
+                    &format!("input.{}()", field.names.java_member)
+                )
             )
         })
         .collect::<String>();
@@ -128,8 +132,13 @@ pub(super) fn lower(
         .filter(|field| !field.required)
         .map(|field| {
             format!(
-                "        if (input.{}().isPresent()) {{\n            statement = statement.param(\"{}\", input.{}().orElseThrow());\n        }}\n",
-                field.names.java_member, field.label, field.names.java_member
+                "        if (input.{}().isPresent()) {{\n            statement = statement.param(\"{}\", {});\n        }}\n",
+                field.names.java_member,
+                field.label,
+                crate::emit_java::jdbc_param(
+                    field,
+                    &format!("input.{}().orElseThrow()", field.names.java_member)
+                )
             )
         })
         .collect::<String>();

@@ -9,6 +9,7 @@ mod emit_component;
 mod emit_dto;
 mod emit_enum;
 mod emit_factory;
+mod emit_fixture;
 mod emit_http;
 mod emit_java;
 mod emit_operation;

@@ -217,13 +217,22 @@ pub(super) fn lower(
         .map(|field| {
             if field.required {
                 format!(
-                    "        statement = statement.param(\"guard_{}\", input.{}());\n",
-                    field.names.sql_column, field.names.java_member
+                    "        statement = statement.param(\"guard_{}\", {});\n",
+                    field.names.sql_column,
+                    crate::emit_java::jdbc_param(
+                        field,
+                        &format!("input.{}()", field.names.java_member)
+                    )
                 )
             } else {
                 format!(
-                    "        if (input.{}().isPresent()) {{\n            statement = statement.param(\"guard_{}\", input.{}().orElseThrow());\n        }}\n",
-                    field.names.java_member, field.names.sql_column, field.names.java_member
+                    "        if (input.{}().isPresent()) {{\n            statement = statement.param(\"guard_{}\", {});\n        }}\n",
+                    field.names.java_member,
+                    field.names.sql_column,
+                    crate::emit_java::jdbc_param(
+                        field,
+                        &format!("input.{}().orElseThrow()", field.names.java_member)
+                    )
                 )
             }
         })

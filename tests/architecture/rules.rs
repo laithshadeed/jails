@@ -398,6 +398,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-compiler", "emit_enum", 4),
     ("jails-compiler", "emit_companion_test", 4),
     ("jails-compiler", "emit_factory", 4),
+    ("jails-compiler", "emit_fixture", 4),
     ("jails-compiler", "emit_http", 4),
     ("jails-compiler", "emit_java", 4),
     ("jails-compiler", "emit_operation", 4),

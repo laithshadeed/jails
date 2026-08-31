@@ -37,6 +37,7 @@ pub(crate) fn emit(
     emit_java::lower_and_emit(model, output, observed.spring_boot)?;
     emit_operation::lower_and_emit(model, output)?;
     emit_operation::outbox::lower_and_emit(model, output)?;
+    emit_operation::integration::lower_and_emit(model, output)?;
     emit_component::lower_and_emit(model, output)?;
     emit_http::lower_and_emit(model, observed.spring_boot, output)
 }

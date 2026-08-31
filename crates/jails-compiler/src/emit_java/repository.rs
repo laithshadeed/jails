@@ -225,88 +225,36 @@ pub(super) fn lower_db_repository_test(
     let package = model.project.package_for(Package::AdaptersJdbc);
     let type_name = format!("Jdbc{}RepositoryIT", entity.names.java_type);
     let record = &entity.names.java_type;
-    let mut imports = BTreeSet::from([
+    let mut imports = crate::emit_fixture::integration_imports(model);
+    imports.extend([
         format!(
             "{}.{record}Repository",
             model.project.package_for(Package::Repository)
         ),
         domain_import(model, entity),
-        format!(
-            "{}.TestcontainersConfig",
-            model.project.package_for(Package::Base)
-        ),
-        "org.junit.jupiter.api.Test".to_string(),
-        "org.springframework.beans.factory.annotation.Autowired".to_string(),
-        "org.springframework.boot.test.context.SpringBootTest".to_string(),
-        "org.springframework.context.annotation.Import".to_string(),
-        "org.springframework.transaction.annotation.Transactional".to_string(),
-        "static org.assertj.core.api.Assertions.assertThat".to_string(),
     ]);
     // **A foreign key needs its row to exist.** A sampled `1` for
     // `Message.userId` names a `User` that was never inserted, and PostgreSQL
-    // rejects the whole statement -- so the parent is saved through its own
-    // repository first and its assigned key is what the child carries.
-    //
-    // One level, and a parent that is itself a child gets no test rather than
-    // a wrong one: the chain would need ordering and cycle detection, and a
-    // test that cannot be built correctly must not be guessed at.
-    let mut overrides = std::collections::BTreeMap::new();
-    let mut fixtures = String::new();
-    let mut autowired = String::new();
-    for relation in model
-        .relations
-        .values()
-        .filter(|relation| relation.child == entity.id)
-    {
-        let Some(parent) = model.entities.get(&relation.parent) else {
-            return Ok(None);
-        };
-        if model
-            .relations
-            .values()
-            .any(|other| other.child == parent.id)
-        {
-            return Ok(None);
-        }
-        let Some(parent_row) =
-            crate::emit_companion_test::constructor_call(model, parent, &mut imports)
-        else {
-            return Ok(None);
-        };
-        let parent_type = &parent.names.java_type;
-        let variable = format!("saved{parent_type}");
-        imports.insert(format!(
-            "{}.{parent_type}Repository",
-            model.project.package_for(Package::Repository)
-        ));
-        imports.insert(domain_import(model, parent));
-        autowired.push_str(&format!(
-            "\n    @Autowired\n    private {parent_type}Repository {}Repository;\n",
-            lower_first(parent_type)
-        ));
-        fixtures.push_str(&format!(
-            "        {parent_type} {variable} = {}Repository.save({parent_row});\n",
-            lower_first(parent_type)
-        ));
-        for mapping in &relation.mappings {
-            let Some(remote) = parent.field(&mapping.remote) else {
-                return Ok(None);
-            };
-            overrides.insert(
-                mapping.local.clone(),
-                format!("{variable}.{}()", remote.names.java_member),
-            );
-        }
-    }
-    let Some(row) =
-        crate::emit_companion_test::constructor_call_with(model, entity, &mut imports, &overrides)
-    else {
+    // rejects the whole statement, so the parent is stored first and its
+    // assigned key is what the child carries. `emit_fixture` owns that,
+    // because every adapter integration test needs the same rows.
+    let Some(parents) = crate::emit_fixture::parents(model, entity, &mut imports) else {
+        return Ok(None);
+    };
+    let (autowired, fixtures) = (&parents.autowired, &parents.fixtures);
+    let Some(row) = crate::emit_companion_test::constructor_call_with(
+        model,
+        entity,
+        &mut imports,
+        &parents.overrides,
+    ) else {
         return Ok(None);
     };
     let _ = spring_boot;
     let key = &primary_key.names.java_member;
+    let annotations = crate::emit_fixture::ANNOTATIONS;
     let body = format!(
-        "@Import(TestcontainersConfig.class)\n@SpringBootTest\n@Transactional\nclass {type_name} {{\n\n    @Autowired\n    private {record}Repository repository;\n{autowired}\n    @Test\n    void storesAndReadsBackTheSameRow() {{\n{fixtures}        {record} stored = repository.save({row});\n\n        // The stored row rather than the argument: with a database-assigned\n        // key or a compiler-managed audit column the two differ, and the\n        // round trip is what this test is for.\n        assertThat(repository.findById(stored.{key}())).contains(stored);\n    }}\n\n    // Reader-owned tests belong below this stable boundary.\n}}"
+        "{annotations}class {type_name} {{\n\n    @Autowired\n    private {record}Repository repository;\n{autowired}\n    @Test\n    void storesAndReadsBackTheSameRow() {{\n{fixtures}        {record} stored = repository.save({row});\n\n        // The stored row rather than the argument: with a database-assigned\n        // key or a compiler-managed audit column the two differ, and the\n        // round trip is what this test is for.\n        assertThat(repository.findById(stored.{key}())).contains(stored);\n    }}\n\n    // Reader-owned tests belong below this stable boundary.\n}}"
     );
     let artifact_id = format!("art_{capability_id}_{}_repository_test", entity.id.as_str());
     let rendered = render(&package, &imports, &body, &artifact_id);

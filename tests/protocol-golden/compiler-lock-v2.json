@@ -845,6 +845,20 @@
           ]
         }
       },
+      ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcCreateCommandIT.java": {
+        "bytes": "<1024 bytes elided>",
+        "kind": "java-test",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_op_note_create_adapter_test",
+          "compiler_pass": "capability-db-operation-test",
+          "ejectable": true,
+          "semantic_ids": [
+            "cap_db",
+            "op_note_create"
+          ]
+        }
+      },
       ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcNoteRepositoryIT.java": {
         "bytes": "<1313 bytes elided>",
         "kind": "java-test",
@@ -856,6 +870,34 @@
           "semantic_ids": [
             "cap_db",
             "ent_note"
+          ]
+        }
+      },
+      ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcOpenQueryIT.java": {
+        "bytes": "<1288 bytes elided>",
+        "kind": "java-test",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_op_note_open_adapter_test",
+          "compiler_pass": "capability-db-operation-test",
+          "ejectable": true,
+          "semantic_ids": [
+            "cap_db",
+            "op_note_open"
+          ]
+        }
+      },
+      ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcRenameTransitionIT.java": {
+        "bytes": "<1306 bytes elided>",
+        "kind": "java-test",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_op_note_rename_adapter_test",
+          "compiler_pass": "capability-db-operation-test",
+          "ejectable": true,
+          "semantic_ids": [
+            "cap_db",
+            "op_note_rename"
           ]
         }
       },
@@ -1255,6 +1297,6 @@
     },
     "root": ".jails/generated"
   },
-  "projection_digest": "sha256:d660d8ac62cbe7e5267a0eb7fe7a3bfd5faf84d1a3be39bab1d9ef7c0d82ec77",
+  "projection_digest": "sha256:77ddc6594f72c0945efaabc79e792be9d5b4df8d932bfaf00e3ba8c9663f1c03",
   "schema": "jails.compiler-lock.v2"
 }

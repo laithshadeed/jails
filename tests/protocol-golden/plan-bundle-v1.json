@@ -1,12 +1,13 @@
 {
   "blobs": {
+    "sha256:1340cda6e7f66acb4d35defc970a9e3e193fab40774c2573622df55db9b5ab52": "<1024 bytes elided>",
     "sha256:18ea34aa716b8eb7bb5241cb3ec5741dec6ccc898e93fb13f6c20515e9107169": "<4356 bytes elided>",
     "sha256:1deb408b917ef4203507065a16b15a02c4dc609e1e58c88a8d35958ef8aa7719": "<212 bytes elided>",
     "sha256:2267fb068f044866204221f97e31d665c06256a60b22e72766889a9a0be7916d": "<541 bytes elided>",
     "sha256:2f032afed41e58c6ba07d22756bd52744826cb7d173aeb959701c418e89c1856": "<4104 bytes elided>",
     "sha256:3f80839cbe1efb19fbac038cc86454ec7f6f1f22feb5a92f4fd93e4c490ed786": "<408 bytes elided>",
-    "sha256:47b0f9c38980f30f9ede7090aba45479fa1197db754e05b6f43b3e9a40b3f94c": "<417475 bytes elided>",
     "sha256:4e36d12f5350523b6c055fdd2c3dd0b178f849bfea224aadc931b669598cb4a7": "<466 bytes elided>",
+    "sha256:70e5121d8af883b2206e76317b4435d3f789ba4d49f16ad744c5036e4132c7a0": "<471816 bytes elided>",
     "sha256:90003ea7c42be4787f2995ec883766f47af8d39e730368aa3faadbd99d1c375a": "<450 bytes elided>",
     "sha256:919e11accfaff23041309718f1e819c27d4e14bae0496d5c289890e61acd0031": "<1199 bytes elided>",
     "sha256:96eec25c3515d3f45aebf6ea77cb6b389bb76c42918e7f59f33af8321bfb1b2e": "<1395 bytes elided>",
@@ -16,6 +17,7 @@
     "sha256:ab53f9867ee162cc9dbb500408f9316629f8bd4c9f83c728aaa527b60b82e4cb": "<518 bytes elided>",
     "sha256:adcc82600e45bffc960f63aab205e2b0cd0e3a92f4449ea7572d6c2596f345cd": "<684 bytes elided>",
     "sha256:b8a6028aa511ad63378e73d28cca5747b5ecbbe0e97bb9c2553702cf2d3b7c53": "<3651 bytes elided>",
+    "sha256:be6e4fa41948c8840a8b656fc5b75b4013756d23d81390a59e98b1233615d37e": "<1306 bytes elided>",
     "sha256:c32c3fdbe331d876055427a73bc08e9b59164737621f748c8ed793e8bafd36b1": "<1138 bytes elided>",
     "sha256:c76c810a1c14723da2dedfd452cc6f3688819f86a9c167cfc1f2f80538f3f112": "<1313 bytes elided>",
     "sha256:c84a4e2549c20499ddd448fb86913ede0e61d11ae623b80e44a434b4915710ba": "<247 bytes elided>",
@@ -26,7 +28,8 @@
     "sha256:e41afd62a4525e54bf7e283c829866143d0f41a7eb66e733be6573cbd25c12ce": "<708 bytes elided>",
     "sha256:e5ec93ae4bb54d70ee231e90a73890dd54f4bce70ed34b95e65525964b5174a4": "<452 bytes elided>",
     "sha256:ec0e992e5c1afeaeeffb98fa93b203d73f4bbc037d68096a64eeb381849ae88d": "<651 bytes elided>",
-    "sha256:ec4af4c85801514e979baaa25ed63d175552f8290f71d3d923366cd43ffb6ebb": "<3825 bytes elided>"
+    "sha256:ec4af4c85801514e979baaa25ed63d175552f8290f71d3d923366cd43ffb6ebb": "<3825 bytes elided>",
+    "sha256:ff415ec072f6c070b1e702ab02b3d0077301ed79cf99ba13399e9294966c7898": "<1288 bytes elided>"
   },
   "plan": {
     "base": {
@@ -48,7 +51,10 @@
         ".jails/generated/main/java/com/example/notes/service/NotifierService.java": "Missing",
         ".jails/generated/test/java/com/example/notes/TestcontainersConfig.java": "Missing",
         ".jails/generated/test/java/com/example/notes/adapters/JsonTest.java": "Missing",
+        ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcCreateCommandIT.java": "Missing",
         ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcNoteRepositoryIT.java": "Missing",
+        ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcOpenQueryIT.java": "Missing",
+        ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcRenameTransitionIT.java": "Missing",
         ".jails/generated/test/java/com/example/notes/domain/NoteTest.java": "Missing",
         ".jails/generated/test/java/com/example/notes/domain/OutcomeTest.java": "Missing",
         ".jails/generated/test/java/com/example/notes/service/NotifierServiceTest.java": "Missing",
@@ -57,9 +63,9 @@
       }
     },
     "compiler": "jails.compiler.golden",
-    "digest": "sha256:fe79e1afe5c9e34eaa35babebad01b9292ee8ede847caee43c311d0d33773fb1",
+    "digest": "sha256:8588978fd766c7ce8ee939f371e6a86dd5bbab03fc3f97927034f108a94db405",
     "follow_up_effects": [],
-    "id": "sha256:fe79e1afe5c9e34eaa35babebad01b9292ee8ede847caee43c311d0d33773fb1",
+    "id": "sha256:8588978fd766c7ce8ee939f371e6a86dd5bbab03fc3f97927034f108a94db405",
     "input": {
       "bytes": [
         123,
@@ -87,7 +93,7 @@
     },
     "operations": [
       {
-        "after": "sha256:6b7031edbee15f5ea26127c66bcc2daa55f8af3cac7dbc2070621143a8665d50",
+        "after": "sha256:87a1a411b3ed194e18d78e49fdab467668934dedb009a49e17bd79a6f50874f5",
         "before": null,
         "kind": "publish-merged-tree",
         "root": ".jails/generated"
@@ -137,8 +143,8 @@
       },
       {
         "after": {
-          "blob": "sha256:47b0f9c38980f30f9ede7090aba45479fa1197db754e05b6f43b3e9a40b3f94c",
-          "len": 417475,
+          "blob": "sha256:70e5121d8af883b2206e76317b4435d3f789ba4d49f16ad744c5036e4132c7a0",
+          "len": 471816,
           "mode": "regular"
         },
         "before": null,
@@ -149,7 +155,7 @@
     "schema": "jails.plan.v1",
     "summary": {
       "effects": 0,
-      "managed_files": 21,
+      "managed_files": 24,
       "migrations": 1,
       "model_nodes": 20,
       "reader_document_intents": 6
@@ -157,7 +163,7 @@
   },
   "schema": "jails.plan-bundle.v1",
   "trees": {
-    "sha256:6b7031edbee15f5ea26127c66bcc2daa55f8af3cac7dbc2070621143a8665d50": {
+    "sha256:87a1a411b3ed194e18d78e49fdab467668934dedb009a49e17bd79a6f50874f5": {
       "entries": {
         ".jails/generated/main/java/com/example/notes/adapters/Json.java": {
           "blob": "sha256:18ea34aa716b8eb7bb5241cb3ec5741dec6ccc898e93fb13f6c20515e9107169",
@@ -239,8 +245,23 @@
           "kind": "java-test",
           "mode": "regular"
         },
+        ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcCreateCommandIT.java": {
+          "blob": "sha256:1340cda6e7f66acb4d35defc970a9e3e193fab40774c2573622df55db9b5ab52",
+          "kind": "java-test",
+          "mode": "regular"
+        },
         ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcNoteRepositoryIT.java": {
           "blob": "sha256:c76c810a1c14723da2dedfd452cc6f3688819f86a9c167cfc1f2f80538f3f112",
+          "kind": "java-test",
+          "mode": "regular"
+        },
+        ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcOpenQueryIT.java": {
+          "blob": "sha256:ff415ec072f6c070b1e702ab02b3d0077301ed79cf99ba13399e9294966c7898",
+          "kind": "java-test",
+          "mode": "regular"
+        },
+        ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcRenameTransitionIT.java": {
+          "blob": "sha256:be6e4fa41948c8840a8b656fc5b75b4013756d23d81390a59e98b1233615d37e",
           "kind": "java-test",
           "mode": "regular"
         },

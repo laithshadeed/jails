@@ -1,6 +1,7 @@
 //! Executable JDBC adapters for canonical operations.
 
 mod command;
+pub(crate) mod integration;
 pub(crate) mod outbox;
 mod query;
 mod transition;

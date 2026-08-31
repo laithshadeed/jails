@@ -1,6 +1,8 @@
 //! Lower semantic facets into deterministic Java source units.
 
 mod execution_context;
+mod jdbc;
+pub(crate) use jdbc::{jdbc_param, optional_jdbc_param, parameter_member};
 mod record_validation;
 mod repository;
 mod time_ordered_uuid;
@@ -268,17 +270,55 @@ fn lower_facet(model: &AppModel, entity: &Entity, facet: Facet) -> Result<Unit, 
     })
 }
 
+/// Where one operation's `Input` record gets its components.
+///
+/// **One owner, because two renderers have to agree about it.** The port
+/// declares the record and a generated test constructs it, and the rule is not
+/// uniform: a command prefers its linked parameters and falls back to its flat
+/// field list, a query reads its filters, a transition its fields. A test that
+/// guessed "the linked parameters" built
+/// `new UnreadForEmailQuery.Input("sample", false)` against a record declaring
+/// one component, because a joined query's far-side filter is a parameter and
+/// not a field of the entity the record is about.
+pub(crate) enum InputSource<'a> {
+    Fields(Vec<&'a Field>),
+    Parameters(&'a [OperationParameter]),
+}
+
+pub(crate) fn operation_input<'a>(
+    model: &'a AppModel,
+    operation: &'a Operation,
+) -> Result<InputSource<'a>, CompileError> {
+    Ok(match &operation.kind {
+        OperationKind::Command(command) if !command.semantics.parameters.is_empty() => {
+            InputSource::Parameters(&command.semantics.parameters)
+        }
+        OperationKind::Command(command) => {
+            InputSource::Fields(fields(entity(model, &command.on)?, &command.fields)?)
+        }
+        OperationKind::Query(query) => {
+            InputSource::Fields(fields(entity(model, &query.on)?, &query.filters)?)
+        }
+        OperationKind::Transition(transition) => {
+            InputSource::Fields(fields(entity(model, &transition.on)?, &transition.fields)?)
+        }
+        OperationKind::Event(_) => InputSource::Fields(Vec::new()),
+    })
+}
+
 fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, CompileError> {
     let (package, type_name, body, imports) = match &operation.kind {
         OperationKind::Command(command) => {
             let entity = entity(model, &command.on)?;
             let mut imports = BTreeSet::from([domain_import(model, entity)]);
-            let input = if command.semantics.parameters.is_empty() {
-                let fields = fields(entity, &command.fields)?;
-                import_declared_types(model, &fields, &mut imports);
-                record_shape("Input", &fields, &mut imports)
-            } else {
-                operation_record_shape(model, "Input", &command.semantics.parameters, &mut imports)?
+            let input = match operation_input(model, operation)? {
+                InputSource::Fields(fields) => {
+                    import_declared_types(model, &fields, &mut imports);
+                    record_shape("Input", &fields, &mut imports)
+                }
+                InputSource::Parameters(parameters) => {
+                    operation_record_shape(model, "Input", parameters, &mut imports)?
+                }
             };
             let input = indent(&input, 4);
             let context = operation_context(model, entity, &mut imports);
@@ -503,57 +543,6 @@ fn import_declared_type(model: &AppModel, ty: &TypeRef, imports: &mut BTreeSet<S
 fn import_declared_types(model: &AppModel, fields: &[&Field], imports: &mut BTreeSet<String>) {
     for field in fields {
         import_declared_type(model, &field.ty, imports);
-    }
-}
-
-/// One field's value, converted for binding as a JDBC parameter.
-///
-/// **One owner, because every adapter binds and none of them converted.**
-/// pgjdbc refuses a value it has no type code for, at runtime, with a message
-/// naming neither the column nor the statement -- so `save` failed on any
-/// entity carrying an `instant`, which is every entity with `timestamps`.
-/// The conversion is a fact about the builtin and lives on its row beside
-/// `sql_postgres`; this applies it.
-///
-/// An optional component is unwrapped first, so the conversion sees the value
-/// rather than the `Optional` -- and a null one stays null, which is what the
-/// column takes.
-pub(crate) fn jdbc_param(field: &Field, accessor: &str) -> String {
-    let template = match &field.ty {
-        TypeRef::Builtin(builtin) => builtin.semantics().jdbc_write,
-        // A model-declared type reaches the column as `text`, and the only
-        // one `emit_sql` will render a column for is an enum -- anything else
-        // is refused there with "no declared SQL representation", so nothing
-        // else can reach a binding site. `name()` is the spelling the column
-        // holds and the row mapper reads back.
-        TypeRef::External(_) => Some("{}.name()"),
-    };
-    match template {
-        None => accessor.to_string(),
-        Some(template) => template.replace("{}", accessor),
-    }
-}
-
-/// The Java member an operation parameter becomes.
-///
-/// **One owner, because three renderers name the same accessor.** A parameter
-/// is a reference to a field, spelled in the model's label alphabet, so
-/// `user_id` must reach Java as `userId` -- and the record shape, the insert
-/// adapter and the resolve lookup all have to agree or the generated class
-/// calls an accessor its own record does not declare. They did not: the
-/// transition and query adapters projected the field, the command adapter and
-/// the record shape read the label back, and `record Input(long user_id)` met
-/// a request body binding `userId`, which Jackson resolved to `null` and
-/// mapped into a primitive.
-pub(crate) fn parameter_member(model: &AppModel, parameter: &OperationParameter) -> String {
-    match &parameter.source {
-        ParameterSource::Field(visible) => model
-            .entities
-            .get(&visible.entity)
-            .and_then(|owner| owner.field(&visible.field))
-            .map(|field| field.names.java_member.clone())
-            .unwrap_or_else(|| jails_model::lower_camel_case(&parameter.name)),
-        ParameterSource::Typed(_) => jails_model::lower_camel_case(&parameter.name),
     }
 }
 
