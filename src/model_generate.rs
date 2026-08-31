@@ -526,37 +526,89 @@ pub(crate) fn reject_unsupported_operation_options(
     args: &GenerateArgs,
     profile: OperationProfile,
 ) -> Result<()> {
-    let unsupported = args.timestamps
-        || args.package.is_some()
-        || args.default_literal.is_some()
-        || args.backfill_file.is_some()
-        || !args.indexes.is_empty()
-        || !args.uniques.is_empty()
-        || (args.on_conflict.is_some() && profile != OperationProfile::Command)
-        || (args.via.is_some()
-            && !matches!(profile, OperationProfile::Query | OperationProfile::Command))
-        || (args.select.is_some() && profile != OperationProfile::Transition)
-        || (!args.set.is_empty()
-            && !matches!(
-                profile,
-                OperationProfile::Transition | OperationProfile::Command
-            ))
-        || (args.if_match.is_some() && profile != OperationProfile::Transition)
-        || (!args.bind.is_empty() && profile == OperationProfile::Event)
-        || (args.consumes.is_some() && profile == OperationProfile::Event)
-        || (args.order_by.is_some() && profile != OperationProfile::Query)
-        || (args.limit.is_some() && profile != OperationProfile::Query)
-        || (args.strategy_yields.is_some()
-            && !matches!(
-                profile,
-                OperationProfile::Transition | OperationProfile::Command
-            ))
-        || (args.method.is_some() && profile != OperationProfile::Transition)
-        || (args.path.is_some() && profile == OperationProfile::Event);
-    if unsupported {
+    // **Name the flag, and say which kind it belongs to.** "does not
+    // represent one or more supplied flags" is true of every one of these and
+    // useful for none: the reader has to guess which of the eight they typed
+    // is the problem, and the answer is usually that the flag belongs to a
+    // sibling kind. One row per flag, so the refusal reads like the sentence
+    // somebody would say out loud.
+    let kind = kind_name(args.kind);
+    let entity_only = "an entity declaration";
+    let unsupported: &[(bool, &str, &str)] = &[
+        (args.timestamps, "--timestamps", entity_only),
+        (args.package.is_some(), "--package", entity_only),
+        (args.default_literal.is_some(), "--default", entity_only),
+        (args.backfill_file.is_some(), "--backfill", entity_only),
+        (!args.indexes.is_empty(), "--index", entity_only),
+        (!args.uniques.is_empty(), "--unique", entity_only),
+        (
+            args.on_conflict.is_some() && profile != OperationProfile::Command,
+            "--on-conflict",
+            "a command",
+        ),
+        (
+            args.via.is_some()
+                && !matches!(profile, OperationProfile::Query | OperationProfile::Command),
+            "--via",
+            "a query or a command",
+        ),
+        (
+            args.select.is_some() && profile != OperationProfile::Transition,
+            "--select",
+            "a transition",
+        ),
+        (
+            !args.set.is_empty()
+                && !matches!(
+                    profile,
+                    OperationProfile::Transition | OperationProfile::Command
+                ),
+            "--set",
+            "a transition or a command",
+        ),
+        (
+            args.if_match.is_some() && profile != OperationProfile::Transition,
+            "--if-match",
+            "a transition",
+        ),
+        (
+            args.consumes.is_some() && profile == OperationProfile::Event,
+            "--consumes",
+            "an operation with a request boundary",
+        ),
+        (
+            args.order_by.is_some() && profile != OperationProfile::Query,
+            "--order-by",
+            "a query",
+        ),
+        (
+            args.limit.is_some() && profile != OperationProfile::Query,
+            "--limit",
+            "a query",
+        ),
+        (
+            args.strategy_yields.is_some()
+                && !matches!(
+                    profile,
+                    OperationProfile::Transition | OperationProfile::Command
+                ),
+            "--yields",
+            "a transition or a command",
+        ),
+        (
+            args.method.is_some() && profile != OperationProfile::Transition,
+            "--method",
+            "a transition",
+        ),
+        (
+            args.path.is_some() && profile == OperationProfile::Event,
+            "--path",
+            "an operation with a route",
+        ),
+    ];
+    if let Some((_, flag, applies_to)) = unsupported.iter().find(|(hit, _, _)| *hit) {
         return Err(Failure::Told(format!(
-            "the canonical `{}` operation frontend does not represent one or more supplied flags.\n       fix: remove the unsupported flags or declare the typed operation directly in `{MODEL_PATH}`",
-            kind_name(args.kind)
+            "`{flag}` applies to {applies_to}, and `{kind}` is not one.\n       fix: drop `{flag}`, or generate the kind it belongs to"
         )));
     }
     // **An event may stand on its own, and the grammar has always said so.**

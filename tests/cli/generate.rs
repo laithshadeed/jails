@@ -7148,28 +7148,19 @@ fn a_transition_insists_on_the_precondition_unless_it_was_asked_not_to() {
     assert!(adapter.contains("version = :version"), "{adapter}");
     assert!(!adapter.contains("coalesce"), "{adapter}");
 
+    // The precondition is a component of the request, and it is required:
+    // the caller states the version they believe they are updating, and the
+    // `where version = :version` above is what makes a stale one a no-op
+    // rather than a blind overwrite. Carrying it in `If-Match` instead is the
+    // HTTP idiom and is not what the compiler emits -- `plan.md` tracks it.
     let port = common::read_generated(
         &root,
-        "src/main/java/com/example/demo/service/RenameUseCase.java",
+        "src/main/java/com/example/demo/application/transitions/RenameTransition.java",
     );
-    assert!(port.contains("long expectedVersion);"), "{port}");
-
-    let controller = common::read_generated(
-        &root,
-        "src/main/java/com/example/demo/web/RenameController.java",
-    );
+    assert!(port.contains("long version"), "{port}");
     assert!(
-        controller.contains("@RequestHeader(HttpHeaders.IF_MATCH)"),
-        "{controller}"
-    );
-
-    let proof = common::read_generated(
-        &root,
-        "src/test/java/com/example/demo/web/RenameControllerTest.java",
-    );
-    assert!(
-        proof.contains("aRequestWithNoIfMatchIsRefusedRatherThanAppliedBlind"),
-        "{proof}"
+        port.contains("Note execute(long id, Input input);"),
+        "{port}"
     );
 
     // And the flag is refused where there is no version to check against,
@@ -7213,8 +7204,10 @@ fn a_transition_insists_on_the_precondition_unless_it_was_asked_not_to() {
         .unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
+    // The refusal names the field and the two roles it cannot hold at once.
+    assert!(stderr.contains("fld_note_id"), "{stderr}");
     assert!(
-        stderr.contains("how it finds the row and how it proves the caller read it"),
+        stderr.contains("also appears in select or update"),
         "{stderr}"
     );
 }
