@@ -118,6 +118,24 @@ fn db_testcontainers_config_class(_: &Capability) -> String {
 }
 
 const DB_DEPENDENCIES: &[DependencySpec] = &[
+    // **The module that reads `compose.yaml` at startup.** `storage postgres`
+    // writes the compose service the application connects to, and without
+    // this Boot never looks at it: on a machine whose engine Spring *can*
+    // drive, the connection details it supplies are what makes `jails run`
+    // work with no properties at all. The properties beside it stay, because
+    // they are what carries the machines where it cannot -- see
+    // `DB_PROPERTIES`, and note it is switched off there by default for
+    // exactly that reason. Declaring it anyway is what lets a reader turn it
+    // back on without also having to know which artifact to add.
+    DependencySpec {
+        group: "org.springframework.boot",
+        artifact: "spring-boot-docker-compose",
+        version: None,
+        scope: DependencyScope::Runtime,
+        spring_managed_version: true,
+        only_when_build_exists: false,
+        boot: BootCondition::Spring,
+    },
     // Contributes `TestcontainersLifecycleApplicationContextInitializer` from
     // its own `spring.factories`, which is why nothing calls `start()`.
     DependencySpec {

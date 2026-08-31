@@ -134,8 +134,33 @@ pub(super) fn lower_and_emit(
         "docker" => lower_docker(model, capability, output, observed),
         "k8s" => lower_k8s(model, capability, output),
         "format" => lower_format(capability, output),
+        "db" | "sqlite" => lower_migration_directory(capability, output),
         _ => Ok(()),
     }
+}
+
+/// The migration directory, established by the capability that will fill it.
+///
+/// **A directory git does not track is a directory a colleague does not get.**
+/// Forward migrations are the reader's own history -- they land in
+/// `src/main/resources/db/migration` and are never rewritten -- so the
+/// location has to exist before the first one is appended, and an empty
+/// directory does not survive a clone. It is one keep file rather than
+/// anything the schema depends on: Flyway is content with a location holding
+/// nothing, and the first `g scaffold` writes the migration beside it.
+fn lower_migration_directory(
+    capability: &Capability,
+    output: &mut RenderedTree,
+) -> Result<(), CompileError> {
+    reader_facet::emit_managed_file(
+        output,
+        capability,
+        "migration-directory",
+        ProjectPath::parse("src/main/resources/db/migration/.gitkeep")
+            .map_err(CompileError::new)?,
+        Vec::new(),
+        FileMode::Regular,
+    )
 }
 
 /// The verify workflow, from the template `add/tooling.rs` also reads.

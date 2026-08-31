@@ -618,8 +618,11 @@ fn remove_db_refuses_while_a_scaffold_still_needs_it() {
 
     assert!(!refused.status.success(), "{refused:?}");
     let stderr = String::from_utf8_lossy(&refused.stderr);
-    assert!(stderr.contains("pointing at nothing"), "{stderr}");
-    assert!(stderr.contains("scaffold Article"), "{stderr}");
+    // The canonical refusal names the accepted storage rather than the
+    // declaration that still wants it: retiring a table is a schema-evolution
+    // step with a forward migration, and that is the fix it points at.
+    assert!(stderr.contains("abandon accepted storage"), "{stderr}");
+    assert!(stderr.contains("fix: "), "{stderr}");
     assert_eq!(snapshot_tree(&root), before, "refusal mutated the project");
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
     assert!(pom.contains("spring-boot-starter-jdbc"), "{pom}");
@@ -906,8 +909,8 @@ fn remove_is_the_inverse_of_add_csv() {
             .unwrap()
             .success()
     );
-    let reader = root.join("src/main/java/com/example/demo/adapters/CsvReader.java");
-    assert!(reader.is_file());
+    let reader = common::generated(&root, "src/main/java/com/example/demo/adapters/CsvReader.java");
+    assert!(reader.is_file(), "{}", common::managed_listing(&root));
 
     let output = jails_cmd(&root, None)
         .args(["remove", "csv", "--force"])
