@@ -342,19 +342,28 @@ pub fn records(model: &crate::AppModel) -> BTreeMap<DerivedRoleKey, DerivedValue
                 crate::naming::upper_camel_case(&operation.label),
             ),
         );
-        let (declared, resolved) = operation_route(operation);
+        let (_, resolved) = operation_route(operation);
         if let Some(resolved) = resolved {
+            // **Compared with the convention, not read off a flag.** This
+            // asked whether the *source* spelled a route, which stopped being
+            // an answer the moment the linker started deriving one: it fills
+            // the declared field in too, so every route reported as pinned and
+            // a convention could move without this row saying so. §3.1 rule 4
+            // is that a compiler may not change a convention silently, and
+            // `pinned` is how this file keeps that promise -- so it has to be
+            // a function of the model, exactly like every other row here.
+            let conventional =
+                crate::operation::conventional_route(&operation.label, &operation.kind);
             into.insert(
                 DerivedRoleKey::new(operation.id.as_str(), DerivedRole::HttpRoute),
                 DerivedValue {
                     value: format!("{:?} {}", resolved.method, resolved.path),
                     rule_id: "convention.http-route".to_string(),
                     inputs: Vec::new(),
-                    // The one row where a pin *is* recoverable: the
-                    // declaration keeps the author's path beside the linked
-                    // route, because §12.6 makes an external contract pin
-                    // something a project promises rather than a spelling.
-                    pinned: declared.is_some(),
+                    // §12.6 makes an external contract a promise rather than a
+                    // spelling, so a route that is not the conventional one is
+                    // one the project has undertaken to keep.
+                    pinned: conventional.as_ref() != Some(resolved),
                     replaces: None,
                 },
             );

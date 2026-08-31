@@ -438,3 +438,76 @@ pub(crate) fn emits(kind: &OperationKind) -> Vec<&OperationId> {
         OperationKind::Transition(transition) => transition.semantics.emits.iter().collect(),
     }
 }
+
+/// The route an operation's declaration spells, if it spells one.
+///
+/// The flat `route` is the *declared* spelling and stays empty for an
+/// operation whose route the compiler derived, which is what lets
+/// `derived.rs` tell an author's promise from a convention.
+pub fn declared_route(kind: &OperationKind) -> Option<&String> {
+    match kind {
+        OperationKind::Command(spec) => spec.route.as_ref(),
+        OperationKind::Query(spec) => spec.route.as_ref(),
+        OperationKind::Transition(spec) => spec.route.as_ref(),
+        OperationKind::Event(_) => None,
+    }
+}
+
+/// The route this operation gets when nobody spells one.
+///
+/// **One owner, because two callers ask two different questions of it.** The
+/// linker asks "what should this operation's route be" and fills it in;
+/// `derived.rs` asks "is the route this operation has the one the convention
+/// would give it" and reports `pinned` from the answer. Written twice they
+/// drift, and the drift is silent in the worst direction: every route would
+/// report as author-pinned, so a convention could move without
+/// `jails model explain` showing it -- which is the whole reason §7.2 puts
+/// derived names in the model.
+///
+/// `None` for an event, which has no endpoint, and for an operation marked
+/// `internal`, which is the declaration's way of saying it must not have one.
+pub fn conventional_route(label: &str, kind: &OperationKind) -> Option<OperationRoute> {
+    let slug = label.replace('_', "-");
+    let (method, path) = match kind {
+        OperationKind::Command(spec) if !spec.semantics.internal => {
+            (EndpointMethod::Post, format!("/actions/{slug}"))
+        }
+        OperationKind::Query(spec) if !spec.semantics.internal => {
+            // A query with nothing to filter on is a plain read, so it gets
+            // the method a browser and a cache understand. One that takes
+            // filters carries them in a body rather than smuggling a typed
+            // record through the query string.
+            let method = if spec.semantics.parameters.is_empty() {
+                EndpointMethod::Get
+            } else {
+                EndpointMethod::Post
+            };
+            (method, format!("/queries/{slug}"))
+        }
+        OperationKind::Transition(spec) if !spec.semantics.internal => {
+            // `/{id}` because the canonical transition controller binds
+            // `@PathVariable("id")` and refuses a route without it. The legacy
+            // shape carried the key in the body, which is why this path has
+            // one segment its predecessor did not.
+            (EndpointMethod::Patch, format!("/actions/{slug}/{{id}}"))
+        }
+        _ => return None,
+    };
+    Some(OperationRoute {
+        method,
+        path,
+        consumes: None,
+    })
+}
+
+/// `METHOD /path`, the one spelling the collision map and the flat field use.
+pub fn spell_route(route: &OperationRoute) -> String {
+    let method = match route.method {
+        EndpointMethod::Get => "GET",
+        EndpointMethod::Post => "POST",
+        EndpointMethod::Put => "PUT",
+        EndpointMethod::Patch => "PATCH",
+        EndpointMethod::Delete => "DELETE",
+    };
+    format!("{method} {}", route.path)
+}

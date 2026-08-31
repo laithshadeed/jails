@@ -345,7 +345,92 @@ pub(super) fn link(
             );
         }
     }
+    derive_missing_routes(&mut operations, routes, linker);
     operations
+}
+
+/// The HTTP route an operation gets when its declaration names none.
+///
+/// **Without this the `api` capability serves whichever operations happened to
+/// spell a path.** Replaying the minicom manifest canonically emitted two
+/// controllers where the legacy engine emitted six, because `emit_http` returns
+/// `None` for an operation with no route and only two of the six declared one.
+/// The legacy engine derived `/actions/send-message` and
+/// `/queries/conversation` for the rest, so moving engines silently withdrew
+/// four endpoints -- and nothing failed, because a controller only one side
+/// writes is not a difference any differential suite can see.
+///
+/// Derived rather than required, because a route is a *name* and `jdl-sol.md`
+/// §7.2 puts every derived name in `AppModel.derived` with the rule that
+/// produced it. `derived.rs` already reads this field and already sets
+/// `pinned` from whether the author spelled one, so a convention that moves
+/// cannot move silently and `jails model explain` shows which routes are the
+/// compiler's.
+///
+/// **`internal` is what says "no endpoint", and this is what makes it mean
+/// something.** The flag has been parsed off `@internal` since the grammar had
+/// it and no emitter read it; an operation that must not be exposed said so
+/// and was exposed anyway the moment a route appeared. It is the guard here.
+///
+/// Both spellings are set. The flat `route: String` is what `emit_http` reads
+/// and the rich `semantics.route` is what `derived.rs` reads, so setting one
+/// gives either a controller nobody recorded or a record of a controller
+/// nobody wrote.
+///
+/// The prefixes are the legacy engine's, so a project moving between them
+/// keeps its URLs. A transition takes `/{id}` on the end because the canonical
+/// transition controller binds `@PathVariable("id")` and refuses a route
+/// without it -- the legacy shape carried the key in the body instead.
+fn derive_missing_routes(
+    operations: &mut BTreeMap<OperationId, Operation>,
+    routes: &mut BTreeMap<String, String>,
+    linker: &mut Linker,
+) {
+    for operation in operations.values_mut() {
+        let path = format!("$.operations.{}", operation.label);
+        if crate::operation::declared_route(&operation.kind).is_some() {
+            continue;
+        }
+        let Some(route) = crate::operation::conventional_route(&operation.label, &operation.kind)
+        else {
+            continue;
+        };
+        let (method, route_path) = (route.method, route.path.clone());
+        let spelled = crate::operation::spell_route(&route);
+        // Registered in the same map the declared routes went into, so a
+        // derived route landing on a declared one is the ordinary collision
+        // rather than two controllers claiming one path at runtime.
+        if let Some(first) = routes.insert(spelled.clone(), path.clone()) {
+            linker.problem(
+                "model-route-collision",
+                format!("{path}.route"),
+                format!("derived HTTP route `{spelled}` is already declared at {first}"),
+                "give one of them an explicit `route`, or mark this operation `internal`",
+            );
+            continue;
+        }
+        let route = crate::operation::OperationRoute {
+            method,
+            path: route_path,
+            consumes: None,
+        };
+        let flat = spelled;
+        match &mut operation.kind {
+            OperationKind::Command(spec) => {
+                spec.route = Some(flat);
+                spec.semantics.route = Some(route);
+            }
+            OperationKind::Query(spec) => {
+                spec.route = Some(flat);
+                spec.semantics.route = Some(route);
+            }
+            OperationKind::Transition(spec) => {
+                spec.route = Some(flat);
+                spec.semantics.route = Some(route);
+            }
+            OperationKind::Event(_) => {}
+        }
+    }
 }
 
 mod kinds;

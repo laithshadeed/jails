@@ -6,6 +6,7 @@ import java.util.Objects;
 import java.util.UUID;
 
 public interface RenameTransition {
+    String ROUTE = "PATCH /actions/rename/{id}";
 
     Note execute(UUID id, Input input);
 

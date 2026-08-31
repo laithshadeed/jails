@@ -6,6 +6,8 @@ import java.util.List;
 import java.util.Objects;
 
 public interface OpenQuery {
+    String ROUTE = "POST /queries/open";
+
     int DEFAULT_LIMIT = 20;
 
     List<Note> execute(Input input);

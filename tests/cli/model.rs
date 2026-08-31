@@ -13935,3 +13935,182 @@ app Notes {
     assert!(adapter.contains("version = version + 1"), "{adapter}");
     assert!(adapter.contains("id = :id"), "{adapter}");
 }
+
+/// An operation with no declared route still gets an endpoint.
+///
+/// `emit_http` returns `None` for an operation whose declaration names no
+/// route, so the `api` capability served only the operations that happened to
+/// spell a path: replaying the minicom manifest canonically produced two
+/// controllers where the legacy engine produced six. Nothing failed, because a
+/// controller only one engine writes is not a difference a differential suite
+/// can see.
+///
+/// The convention is the legacy engine's prefixes, so a project moving between
+/// them keeps its URLs, with `/{id}` added for a transition because the
+/// canonical controller binds `@PathVariable("id")`.
+#[test]
+fn an_operation_without_a_declared_route_is_given_the_conventional_one() {
+    let root = jdl_project(
+        "jdl-v1-derived-routes",
+        r#"jdl 1
+app Notes {
+  pkg com.example.notes
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    for arguments in [
+        vec!["add", "api"],
+        vec![
+            "g",
+            "scaffold",
+            "Note",
+            "id:long@pk",
+            "title:string!",
+            "archived:boolean@default(false)",
+        ],
+        vec![
+            "g",
+            "usecase",
+            "PublishNote",
+            "title:string!",
+            "--on",
+            "Note",
+        ],
+        vec!["g", "query", "AllNotes", "--on", "Note"],
+        vec![
+            "g",
+            "query",
+            "NotesByTitle",
+            "title:string!",
+            "--on",
+            "Note",
+        ],
+        vec![
+            "g",
+            "transition",
+            "ArchiveNote",
+            "id:long",
+            "archived:boolean",
+            "--on",
+            "Note",
+        ],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let http = root.join(".jails/generated/main/java/com/example/notes/adapters/http");
+    for (file, mapping) in [
+        (
+            "PublishNoteController.java",
+            "path = \"/actions/publish-note\", method = RequestMethod.POST",
+        ),
+        // No filters, so the plain read gets the method a browser and a cache
+        // understand; one that takes filters carries them in a body.
+        (
+            "AllNotesController.java",
+            "path = \"/queries/all-notes\", method = RequestMethod.GET",
+        ),
+        (
+            "NotesByTitleController.java",
+            "path = \"/queries/notes-by-title\", method = RequestMethod.POST",
+        ),
+        (
+            "ArchiveNoteController.java",
+            "path = \"/actions/archive-note/{id}\", method = RequestMethod.PATCH",
+        ),
+    ] {
+        let source = fs::read_to_string(http.join(file))
+            .unwrap_or_else(|error| panic!("{file} was not emitted: {error}"));
+        assert!(source.contains(mapping), "{file}:\n{source}");
+    }
+
+    // **The convention is recorded, and recorded as a convention.** `pinned`
+    // is computed by comparing the route with what the rule would produce, so
+    // a derived one reports unpinned however the linker filled it in -- the
+    // property that lets `jails model explain` show a convention moving.
+    let explained = jails_cmd(&root, None)
+        .args(["model", "explain"])
+        .output()
+        .unwrap();
+    let explained = String::from_utf8_lossy(&explained.stdout);
+    for label in [
+        "op_publish_note",
+        "op_all_notes",
+        "op_notes_by_title",
+        "op_archive_note",
+    ] {
+        let line = explained
+            .lines()
+            .find(|line| line.starts_with(label) && line.contains("http-route"))
+            .unwrap_or_else(|| panic!("no http-route row for {label}:\n{explained}"));
+        assert!(!line.contains("pinned"), "{line}");
+    }
+}
+
+/// A route the author spelled is a promise, and stays pinned.
+#[test]
+fn a_declared_route_stays_pinned_beside_derived_ones() {
+    let root = jdl_project(
+        "jdl-v1-pinned-route",
+        r#"jdl 1
+app Notes {
+  pkg com.example.notes
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    for arguments in [
+        vec!["add", "api"],
+        vec!["g", "scaffold", "Note", "id:long@pk", "title:string!"],
+        vec![
+            "g",
+            "usecase",
+            "PublishNote",
+            "title:string!",
+            "--on",
+            "Note",
+            "--path",
+            "/customer_api/publish",
+        ],
+        vec!["g", "usecase", "DraftNote", "title:string!", "--on", "Note"],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let explained = jails_cmd(&root, None)
+        .args(["model", "explain"])
+        .output()
+        .unwrap();
+    let explained = String::from_utf8_lossy(&explained.stdout);
+    let declared = explained
+        .lines()
+        .find(|line| line.starts_with("op_publish_note") && line.contains("http-route"))
+        .unwrap();
+    assert!(declared.contains("/customer_api/publish"), "{declared}");
+    assert!(declared.contains("pinned"), "{declared}");
+    let derived = explained
+        .lines()
+        .find(|line| line.starts_with("op_draft_note") && line.contains("http-route"))
+        .unwrap();
+    assert!(derived.contains("/actions/draft-note"), "{derived}");
+    assert!(!derived.contains("pinned"), "{derived}");
+}

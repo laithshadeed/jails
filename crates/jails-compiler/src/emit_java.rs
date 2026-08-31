@@ -268,7 +268,8 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
             let type_name = with_suffix(&operation.names.java_type, "Command");
             let route = route_constant(command.route.as_deref());
             let body = format!(
-                "public interface {type_name} {{\n{route}\n    {} execute({context}Input input);\n\n{input}\n}}",
+                "public interface {type_name} {{\n{route}{}    {} execute({context}Input input);\n\n{input}\n}}",
+                blank_unless(&route),
                 entity.names.java_type
             );
             (Package::ApplicationCommands, type_name, body, imports)
@@ -304,7 +305,8 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
             let type_name = with_suffix(&operation.names.java_type, "Transition");
             let route = route_constant(transition.route.as_deref());
             let body = format!(
-                "public interface {type_name} {{\n{route}\n    {} execute({context}{key_type} id, Input input);\n\n{input}\n}}",
+                "public interface {type_name} {{\n{route}{}    {} execute({context}{key_type} id, Input input);\n\n{input}\n}}",
+                blank_unless(&route),
                 entity.names.java_type
             );
             (Package::ApplicationTransitions, type_name, body, imports)
@@ -582,6 +584,17 @@ fn record_shape_from_components(
         )
     };
     format!("public record {type_name}(\n{declarations}\n) {{{constructor}\n}}")
+}
+
+/// The blank line that separates the interface brace from its first member.
+///
+/// `route_constant` already ends in one, so a template supplying its own as
+/// well opened every routed port with *two* -- which nothing caught until
+/// operations started carrying a derived route and the ports that previously
+/// had none grew one. The query template never had this, because its `limit`
+/// constant sits between the two.
+fn blank_unless(route: &str) -> &'static str {
+    if route.is_empty() { "\n" } else { "" }
 }
 
 fn route_constant(route: Option<&str>) -> String {

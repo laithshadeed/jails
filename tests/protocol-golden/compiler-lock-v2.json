@@ -68,6 +68,18 @@
       }
     },
     "derived": {
+      "http-route:op_note_create": {
+        "rule_id": "convention.http-route",
+        "value": "Post /actions/create"
+      },
+      "http-route:op_note_open": {
+        "rule_id": "convention.http-route",
+        "value": "Post /queries/open"
+      },
+      "http-route:op_note_rename": {
+        "rule_id": "convention.http-route",
+        "value": "Patch /actions/rename/{id}"
+      },
       "java-package:project_notes": {
         "rule_id": "convention.base-package",
         "value": "com.example.notes"
@@ -325,7 +337,7 @@
               "fld_note_status"
             ],
             "on": "ent_note",
-            "route": null,
+            "route": "POST /actions/create",
             "semantics": {
               "assignments": [],
               "bindings": [],
@@ -375,7 +387,11 @@
                 }
               ],
               "resolutions": [],
-              "route": null
+              "route": {
+                "consumes": null,
+                "method": "post",
+                "path": "/actions/create"
+              }
             }
           }
         },
@@ -451,7 +467,7 @@
               "fld_note_status"
             ],
             "on": "ent_note",
-            "route": null,
+            "route": "POST /queries/open",
             "semantics": {
               "bindings": [],
               "internal": false,
@@ -479,7 +495,11 @@
                   }
                 }
               ],
-              "route": null
+              "route": {
+                "consumes": null,
+                "method": "post",
+                "path": "/queries/open"
+              }
             }
           }
         },
@@ -496,7 +516,7 @@
               "fld_note_title"
             ],
             "on": "ent_note",
-            "route": null,
+            "route": "PATCH /actions/rename/{id}",
             "semantics": {
               "assignments": [],
               "bindings": [],
@@ -524,7 +544,11 @@
                 }
               ],
               "precondition": null,
-              "route": null,
+              "route": {
+                "consumes": null,
+                "method": "patch",
+                "path": "/actions/rename/{id}"
+              },
               "select": [],
               "update": [
                 "fld_note_title"
@@ -600,7 +624,7 @@
       }
     }
   },
-  "model_digest": "sha256:0997b23a62d9d929023e01a7f5a1d09502d79980ec0f20e9694851db410c4cb5",
+  "model_digest": "sha256:4ea32d57d936e7d6c2bcf450e674c0148f23c72d19af364d420719860596c159",
   "projection": {
     "files": {
       ".jails/generated/main/java/com/example/notes/adapters/Json.java": {
@@ -677,7 +701,7 @@
         }
       },
       ".jails/generated/main/java/com/example/notes/application/commands/CreateCommand.java": {
-        "bytes": "<665 bytes elided>",
+        "bytes": "<708 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -690,7 +714,7 @@
         }
       },
       ".jails/generated/main/java/com/example/notes/application/queries/OpenQuery.java": {
-        "bytes": "<477 bytes elided>",
+        "bytes": "<519 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -703,7 +727,7 @@
         }
       },
       ".jails/generated/main/java/com/example/notes/application/transitions/RenameTransition.java": {
-        "bytes": "<629 bytes elided>",
+        "bytes": "<678 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -1217,6 +1241,6 @@
     },
     "root": ".jails/generated"
   },
-  "projection_digest": "sha256:34331ec7f8ad7ff806b0e8cb884d79d0962d1d0ec9b5b65f7c9e737483f1ee3a",
+  "projection_digest": "sha256:89b9b74042dee5bc929141cfe7861a28d1388d08cb07ed9994058863901cbede",
   "schema": "jails.compiler-lock.v2"
 }

@@ -5,6 +5,7 @@ import com.example.demo.domain.Note;
 import java.util.Objects;
 
 public interface CreateCommand {
+    String ROUTE = "POST /actions/create";
 
     Note execute(Input input);
 
