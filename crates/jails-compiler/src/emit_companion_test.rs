@@ -190,6 +190,50 @@ fn record_body(model: &AppModel, entity: &Entity, imports: &mut BTreeSet<String>
     }
 }
 
+/// A constructor call for one entity, every component sampled.
+///
+/// `None` when any component has a type jails cannot build a value of -- the
+/// same trade the record test makes, and the reason the caller disables the
+/// class rather than emitting a call that would not compile.
+pub(crate) fn constructor_call(
+    model: &AppModel,
+    entity: &Entity,
+    imports: &mut BTreeSet<String>,
+) -> Option<String> {
+    let arguments = entity
+        .fields
+        .iter()
+        .map(|field| sample(model, field, imports))
+        .collect::<Option<Vec<_>>>()?;
+    Some(format!(
+        "new {}({})",
+        entity.names.java_type,
+        arguments.join(", ")
+    ))
+}
+
+/// One field's value spelled as JSON, for a generated request body.
+///
+/// The builtin table already carries `json` beside `sample` so the two
+/// spellings of one value cannot drift. An enum is one of its own constants by
+/// name, matching `declared_sample`; anything else is a type jails cannot
+/// invent, so the caller disables the test rather than guessing.
+pub(crate) fn json_sample(model: &AppModel, field: &Field) -> Option<String> {
+    match &field.ty {
+        TypeRef::Builtin(builtin) => Some(builtin.semantics().json.to_string()),
+        TypeRef::External(external) => {
+            let entity = model
+                .entities
+                .values()
+                .find(|candidate| candidate.active && candidate.names.java_type == *external)?;
+            entity
+                .enum_constants
+                .first()
+                .map(|constant| format!("\"{}\"", constant.java_name))
+        }
+    }
+}
+
 /// A model-declared type, sampled from what the model already knows.
 ///
 /// An enum is one of its own constants -- **by name, not `values()[0]`**,
@@ -225,17 +269,31 @@ fn declared_sample(
         return None;
     }
     let rendered = if entity.facets.contains(&jails_model::Facet::Enum) {
-        entity
-            .enum_constants
-            .first()
-            .map(|constant| format!("{java_type}.{}", constant.java_name))
+        entity.enum_constants.first().map(|constant| {
+            // The type's own import travels with the sample, exactly as a
+            // builtin's does. `render` drops it again when the destination is
+            // the domain package itself, so the domain tests are unchanged and
+            // an emitter rendering elsewhere stops naming a type it never
+            // imported.
+            imports.insert(format!(
+                "{}.{java_type}",
+                model.project.package_for(Package::Domain)
+            ));
+            format!("{java_type}.{}", constant.java_name)
+        })
     } else if entity.facets.contains(&jails_model::Facet::Record) {
         entity
             .fields
             .iter()
             .map(|field| sample_with(model, field, imports, seen))
             .collect::<Option<Vec<_>>>()
-            .map(|arguments| format!("new {java_type}({})", arguments.join(", ")))
+            .map(|arguments| {
+                imports.insert(format!(
+                    "{}.{java_type}",
+                    model.project.package_for(Package::Domain)
+                ));
+                format!("new {java_type}({})", arguments.join(", "))
+            })
     } else {
         None
     };

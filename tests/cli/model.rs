@@ -14114,3 +14114,322 @@ app Notes {
     assert!(derived.contains("/actions/draft-note"), "{derived}");
     assert!(!derived.contains("pinned"), "{derived}");
 }
+
+/// Every operation controller ships a test that drives its route.
+///
+/// The canonical `api` capability emitted the controller and no companion
+/// test, which is the failure `emit_unit::controller_test` was written to warn
+/// about: a canonical backend's refusals are loud and a missing test is not.
+/// The legacy engine has shipped one per operation since operations existed.
+///
+/// Standalone rather than `@SpringBootTest`: the dispatcher is built around
+/// one controller with a lambda for the port, so the test needs no context, no
+/// database and no container -- which is what makes one per operation
+/// affordable.
+///
+/// The two request shapes are the point of the last two assertions. A command
+/// takes `@RequestBody` and a query takes `@ModelAttribute`, so a query given
+/// a JSON body binds nothing and is rejected before the port is called.
+#[test]
+fn every_operation_controller_ships_a_test_that_drives_its_route() {
+    let root = jdl_project(
+        "jdl-v1-operation-controller-tests",
+        r#"jdl 1
+app Notes {
+  pkg com.example.notes
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    for arguments in [
+        vec!["add", "api"],
+        vec![
+            "g",
+            "scaffold",
+            "Note",
+            "id:long@pk",
+            "title:string!",
+            "archived:boolean@default(false)",
+        ],
+        vec![
+            "g",
+            "usecase",
+            "PublishNote",
+            "title:string!",
+            "--on",
+            "Note",
+        ],
+        vec![
+            "g",
+            "query",
+            "NotesByTitle",
+            "title:string!",
+            "--on",
+            "Note",
+        ],
+        vec![
+            "g",
+            "transition",
+            "ArchiveNote",
+            "id:long",
+            "archived:boolean",
+            "--on",
+            "Note",
+        ],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let tests = root.join(".jails/generated/test/java/com/example/notes/adapters/http");
+    for name in [
+        "PublishNoteControllerTest.java",
+        "NotesByTitleControllerTest.java",
+        "ArchiveNoteControllerTest.java",
+    ] {
+        assert!(tests.join(name).is_file(), "{name} was not emitted");
+    }
+
+    let command = fs::read_to_string(tests.join("PublishNoteControllerTest.java")).unwrap();
+    // Standalone: the port is a lambda, so nothing starts.
+    assert!(
+        command.contains("MockMvcTester.of(new PublishNoteController(input ->"),
+        "{command}"
+    );
+    assert!(command.contains("new Note("), "{command}");
+    assert!(
+        command.contains(".uri(\"/actions/publish-note\")"),
+        "{command}"
+    );
+    // A command binds `@RequestBody`, so it gets one -- keyed by the record
+    // component's name, not the model label.
+    assert!(command.contains("APPLICATION_JSON"), "{command}");
+    assert!(command.contains("\"title\": \"sample\""), "{command}");
+    assert!(!command.contains("@Disabled"), "{command}");
+
+    // A query binds `@ModelAttribute`. A JSON body would leave every component
+    // null and the request would be rejected before the port was called.
+    let query = fs::read_to_string(tests.join("NotesByTitleControllerTest.java")).unwrap();
+    assert!(query.contains(".param(\"title\", \"sample\")"), "{query}");
+    assert!(!query.contains("APPLICATION_JSON"), "{query}");
+    assert!(query.contains("List.of(new Note("), "{query}");
+
+    // A transition's route carries the row it changes, so the request does too.
+    let transition = fs::read_to_string(tests.join("ArchiveNoteControllerTest.java")).unwrap();
+    assert!(
+        transition.contains(".uri(\"/actions/archive-note/1\")"),
+        "{transition}"
+    );
+    assert!(
+        transition.contains("ArchiveNoteController((id, input) ->"),
+        "{transition}"
+    );
+}
+
+/// An operation parameter reaches Java as a member name, not as a label.
+///
+/// A parameter is a *reference* to a field, spelled in the model's label
+/// alphabet, and three renderers name the accessor it becomes. Two projected
+/// the field and two read the label straight back, so `command
+/// SendMessage(user_id, ...)` produced `record Input(long user_id)` beside
+/// `Message.userId()` -- and the generated request body, which used the field's
+/// name, bound nothing. Jackson reported it as `Cannot map null into type
+/// long`, which names neither the parameter nor the operation.
+#[test]
+fn an_operation_parameter_is_projected_to_a_java_member_everywhere() {
+    let root = jdl_project(
+        "jdl-v1-parameter-projection",
+        r#"jdl 1
+app Notes {
+  pkg com.example.notes
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    for arguments in [
+        vec!["add", "api"],
+        vec![
+            "g",
+            "scaffold",
+            "Note",
+            "id:long@pk",
+            "authorId:long",
+            "title:string!",
+        ],
+        vec![
+            "g",
+            "usecase",
+            "PublishNote",
+            "authorId:long",
+            "title:string!",
+            "--on",
+            "Note",
+        ],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let generated = root.join(".jails/generated/main/java/com/example/notes");
+    let port =
+        fs::read_to_string(generated.join("application/commands/PublishNoteCommand.java")).unwrap();
+    assert!(port.contains("long authorId"), "{port}");
+    assert!(
+        !port.contains("author_id"),
+        "the label reached Java:\n{port}"
+    );
+
+    // The adapter reads the record it was handed, so it must spell the
+    // accessor the same way.
+    let adapter =
+        fs::read_to_string(generated.join("adapters/jdbc/JdbcPublishNoteCommand.java")).unwrap();
+    assert!(adapter.contains("input.authorId()"), "{adapter}");
+    assert!(!adapter.contains("input.author_id()"), "{adapter}");
+    // The SQL column keeps the snake_case projection; only Java changes.
+    assert!(adapter.contains("author_id"), "{adapter}");
+
+    let test = fs::read_to_string(root.join(
+        ".jails/generated/test/java/com/example/notes/adapters/http/PublishNoteControllerTest.java",
+    ))
+    .unwrap();
+    assert!(test.contains("\"authorId\": 1"), "{test}");
+}
+
+/// The generated operation controller tests compile and pass against real
+/// Maven on the default Boot version.
+///
+/// **This is what makes the emitted test worth emitting.** The shape is
+/// version-sniffed -- `MockMvcTester` on Boot 4, `perform(...)` below it -- so
+/// the branch the current default takes has to be one something actually runs,
+/// which is the rule `every_version_sniffed_rendering_names_where_its_default
+/// _branch_runs` enforces.
+///
+/// It is also the check that found the two defects the file-level assertions
+/// could not: a command's `record Input(long user_id)` meeting a body keyed
+/// `userId`, which Jackson reported as `Cannot map null into type long`; and a
+/// query given a JSON body when its controller binds `@ModelAttribute`, which
+/// leaves every component null and is rejected before the port is called.
+/// Both produced files that compiled.
+#[test]
+fn canonical_api_pack_controller_tests_compile_and_pass_on_real_maven() {
+    if !real_mvn_available() || !real_java_supports_target_release() {
+        common::skip("real Maven and a JDK that accepts TARGET_RELEASE");
+        return;
+    }
+    // JDL v1, because `@default` is a v1 field marker and the archived flag
+    // needs one: a command that cannot construct a required field refuses.
+    let root = jdl_project(
+        "model-api-controller-toolbox",
+        r#"jdl 1
+app Demo {
+  pkg com.example.demo
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+"#,
+    );
+    write_spring_fixture(&root);
+
+    for arguments in [
+        vec!["add", "db"],
+        vec!["add", "api"],
+        vec![
+            "g",
+            "scaffold",
+            "Note",
+            "id:long@pk",
+            "authorId:long",
+            "title:string!",
+            "archived:boolean@default(false)",
+        ],
+        vec![
+            "g",
+            "usecase",
+            "PublishNote",
+            "authorId:long",
+            "title:string!",
+            "--on",
+            "Note",
+        ],
+        vec![
+            "g",
+            "query",
+            "NotesByTitle",
+            "title:string!",
+            "--on",
+            "Note",
+        ],
+        vec![
+            "g",
+            "transition",
+            "ArchiveNote",
+            "id:long",
+            "archived:boolean",
+            "--on",
+            "Note",
+        ],
+    ] {
+        let output = jails_cmd(&root, None).args(&arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{arguments:?} failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // The Boot 4 fixture must take the modern branch, or this test would be
+    // proving the fallback compiles and saying nothing about the default.
+    let command = fs::read_to_string(root.join(
+        ".jails/generated/test/java/com/example/demo/adapters/http/PublishNoteControllerTest.java",
+    ))
+    .unwrap();
+    assert!(
+        command.contains("servlet.assertj.MockMvcTester"),
+        "the default Boot project did not render the modern branch:\n{command}"
+    );
+
+    let tested = real_maven_cmd(&root, &real_path_without_mvnd())
+        .args(["-q", "-B", "-Dtest=*ControllerTest", "test"])
+        .output()
+        .unwrap();
+    assert!(
+        tested.status.success(),
+        "the generated operation controller tests failed real Maven:\n{}\n{}",
+        String::from_utf8_lossy(&tested.stdout),
+        String::from_utf8_lossy(&tested.stderr)
+    );
+
+    // `skipped: 0` is the half that matters. A test emitted `@Disabled` for a
+    // sample jails could have built would pass this run while asserting
+    // nothing, which is the failure the whole companion-test rule exists to
+    // prevent.
+    let summary = maven_report_summary(&root, "surefire-reports");
+    assert_eq!(
+        summary,
+        MavenReportSummary {
+            reports: 3,
+            tests: 3,
+            failures: 0,
+            errors: 0,
+            skipped: 0,
+        }
+    );
+}

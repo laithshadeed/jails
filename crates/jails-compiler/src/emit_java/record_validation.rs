@@ -8,7 +8,7 @@ pub(super) fn record_checks(
     component: &RecordComponent<'_>,
     imports: &mut BTreeSet<String>,
 ) -> Vec<String> {
-    let name = component.name;
+    let name = component.name.as_str();
     if !component.required {
         imports.insert("java.util.Objects".to_string());
         let mut statements = vec![format!(
@@ -57,7 +57,7 @@ pub(super) fn record_checks(
 
 fn length_check(component: &RecordComponent<'_>, value: &str) -> Option<(String, String)> {
     let length = component.length?;
-    let name = component.name;
+    let name = component.name.as_str();
     Some(match (length.min, length.max) {
         (Some(min), Some(max)) => (
             format!("{value}.length() < {min} || {value}.length() > {max}"),

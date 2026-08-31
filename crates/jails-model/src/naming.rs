@@ -130,7 +130,13 @@ pub(crate) fn upper_camel_case(label: &str) -> String {
         .collect()
 }
 
-pub(crate) fn lower_camel_case(label: &str) -> String {
+/// A model label as a Java member name.
+///
+/// Public because the compiler projects operation parameter names with it: a
+/// parameter is a *reference* to a field, spelled in the model's label
+/// alphabet, and rendering that label straight into Java gives a record
+/// component called `user_id` beside an entity accessor called `userId`.
+pub fn lower_camel_case(label: &str) -> String {
     let upper = upper_camel_case(label);
     let mut chars = upper.chars();
     chars.next().map_or_else(String::new, |first| {
