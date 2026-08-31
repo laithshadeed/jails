@@ -948,16 +948,23 @@ fn verified_app_images(fixtures: &'static Vec<(&'static str, std::path::PathBuf)
                 }
             }
         }
-        for image in base_images {
+        // A substituted base is supplied by the machine rather than pulled --
+        // see `oci_base_substitutions`. Pulling it would fetch the upstream
+        // image the substitution exists to replace.
+        let substitutions = common::oci_base_substitutions();
+        for image in base_images
+            .iter()
+            .filter(|image| !substitutions.iter().any(|(from, _)| from == *image))
+        {
             let present = std::process::Command::new("docker")
-                .args(["image", "inspect", &image])
+                .args(["image", "inspect", image])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status()
                 .is_ok_and(|status| status.success());
             if !present {
                 let status = real_docker_cmd(Path::new("."))
-                    .args(["pull", &image])
+                    .args(["pull", image])
                     .status()
                     .unwrap();
                 assert!(
@@ -973,7 +980,8 @@ fn verified_app_images(fixtures: &'static Vec<(&'static str, std::path::PathBuf)
         // phase remains overlapped with the Maven application gate.
         for (name, root) in fixtures {
             let image = format!("jails-dogfood-{name}:test");
-            let status = real_docker_cmd(root)
+            let mut command = real_docker_cmd(root);
+            let command = command
                 // Required FROM images were inspected/pulled above. Podman's
                 // default `--pull=missing` can still wait for registry
                 // resolution before accepting its local copy; make this
@@ -990,9 +998,11 @@ fn verified_app_images(fixtures: &'static Vec<(&'static str, std::path::PathBuf)
                 // The same trap as the `docker info --format` one CLAUDE.md
                 // records, in the other direction: this machine's `docker` is
                 // podman's shim, so a podman-only flag looks portable here.
-                .args(["build", "--pull=false", "--tag", &image, "."])
-                .status()
-                .unwrap();
+                .args(["build", "--pull=false", "--tag", &image]);
+            for (from, to) in &substitutions {
+                command.args(["--build-context", &format!("{from}=docker-image://{to}")]);
+            }
+            let status = command.arg(".").status().unwrap();
             assert!(
                 status.success(),
                 "{name} failed its generated OCI image build"

@@ -574,6 +574,32 @@ pub fn real_docker_cmd(cwd: &Path) -> ToolchainCommand {
     ToolchainCommand::new(cmd)
 }
 
+/// Substitutions for the base images a generated `Dockerfile` names, as
+/// `from=replacement` pairs separated by commas.
+///
+/// **This exists for a sandbox that re-terminates TLS, and it is the only
+/// shape that reaches BuildKit.** A generated Dockerfile opens with `# syntax=
+/// docker/dockerfile:1`, and that external frontend resolves every `FROM`
+/// against the *registry* -- so a locally retagged image is invisible to it,
+/// however the tag is arranged. Measured directly: the same build reports 154
+/// imported CA certificates in its base with the directive removed and zero
+/// with it present. `--build-context <name>=docker-image://<image>` is what
+/// the frontend does honour.
+///
+/// Empty for everybody else, so the gate builds exactly what jails wrote. The
+/// substitution is deliberately not derived from anything jails knows: an
+/// image that trusts a proxy CA is a fact about the machine, and inferring one
+/// would let the gate quietly stop testing the base image the template names.
+pub fn oci_base_substitutions() -> Vec<(String, String)> {
+    std::env::var("JAILS_OCI_BASE_IMAGES")
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|pair| pair.split_once('='))
+        .map(|(from, to)| (from.trim().to_string(), to.trim().to_string()))
+        .filter(|(from, to)| !from.is_empty() && !to.is_empty())
+        .collect()
+}
+
 /// PostgreSQL and Kafka shared by the complete generated-application gate.
 ///
 /// The generated Testcontainers beans remain enabled by default. This harness

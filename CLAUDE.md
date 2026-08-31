@@ -1037,6 +1037,39 @@ diffed by SHA-256 fingerprint, naming no issuer. It cannot merely point the
 JDK at the bundle: `real_maven_cmd` *replaces* `JAVA_TOOL_OPTIONS` with its
 own GC flags, which is where the environment had put the truststore.
 
+**Inside a container it is a different CA again, and a retagged image cannot
+carry it.** Three findings, each of which cost a wrong fix first:
+
+- **`/root/.ccr/java-truststore.p12` is not the bundle.** It holds 152 of the
+  bundle's 154 certificates and the two it omits are the
+  `CCR agent-proxy interception CA` -- the one actually signing. Pointing a
+  build at it with `-Djavax.net.ssl.trustStore` *replaces* the JDK's own store,
+  so it is strictly worse than doing nothing. An earlier hook did exactly that
+  and turned a fixable image into a permanently broken one.
+- **A BuildKit `RUN` is signed by a different CA than the host is** --
+  `sandbox-egress-gateway-production Egress Gateway CA`, not the interception
+  CA. Both are in `ca-bundle.crt`; neither subset of it has both. Import the
+  whole bundle into the image's own `cacerts`.
+- **`# syntax=docker/dockerfile:1` makes the local image store irrelevant.**
+  That external frontend resolves every `FROM` against the registry, so no
+  arrangement of tags reaches it -- measured as 154 imported CA certificates
+  with the directive removed and **zero** with it present, unchanged by
+  `--pull=false`, `docker rmi`, `buildx prune` or a daemon restart. The one
+  mechanism it honours is `--build-context <name>=docker-image://<image>`,
+  which is why `JAILS_OCI_BASE_IMAGES` exists: the hook publishes a trusted
+  base under a name of its own and `verified_app_images` substitutes it. Empty
+  everywhere else, so the gate builds exactly what jails wrote.
+
+The trusted image is keyed on a hash of the bundle, because the CA rotates --
+its common name carries a month and `/root/.ccr` is regenerated per session,
+while the image store survives into the next one. A guard that asked "does the
+trusted image exist" answered yes about an image built against a CA that no
+longer signs anything.
+
+**A dead `dockerd` leaves a pid file that blocks its own restart** ("process
+with PID N is still running", about a process that is not), and the session
+then looks like one that never had a container engine.
+
 Before it existed a web session ran two of the three tiers and said so
 nowhere: `javac` rejected `--release 26`, ~50 tier-3 tests went red, and the
 Stop hook ran `mise run verify-rewrite` into a command that was not installed.

@@ -95,7 +95,17 @@ fi
 #
 # Best-effort: a session with no daemon is still worth starting, and every test
 # that needs one already reports itself skipped.
+#
+# **The stale pid file is why this is not just `dockerd &`.** A daemon that
+# died leaves `/var/run/docker.pid` behind, and dockerd refuses to start over
+# it -- "process with PID N is still running", about a process that is not.
+# The session then looks like one that never had a container engine, which is
+# a quieter and more misleading failure than the one that actually happened.
 if ! docker info >/dev/null 2>&1 && command -v dockerd >/dev/null 2>&1; then
+  if [ -f /var/run/docker.pid ] && ! kill -0 "$(cat /var/run/docker.pid)" 2>/dev/null; then
+    log "removing a pid file left by a dead dockerd"
+    rm -f /var/run/docker.pid
+  fi
   log "starting dockerd"
   (dockerd >/tmp/dockerd.log 2>&1 &)
   for _ in $(seq 1 30); do
@@ -109,41 +119,91 @@ fi
 #
 # `templates/add/dockerfile_build_maven` runs `mvn package` *inside* a
 # container, which meets the same intercepting proxy and trusts it no more than
-# the host JDK did. The image gate builds with `--pull=false` (a deliberate
-# choice -- see `verified_app_images`), so a locally retagged copy of the base
-# image is what its `FROM` resolves to.
+# the host JDK did.
 #
-# The environment already ships the bundle as a Java truststore, and the build
-# stage runs `mvn -DskipTests`, so `MAVEN_OPTS` reaches the only JVM involved.
-# No `keytool` loop is needed here, and none should be added: this is a builder
-# stage that never enters the published image.
+# **A retagged local image does not reach it, and cannot be made to.** The
+# generated Dockerfile opens with `# syntax=docker/dockerfile:1`, and that
+# external frontend resolves every `FROM` against the registry -- so whatever
+# `maven:...` points to locally is simply not consulted. Measured on this
+# machine: the identical build reports 154 imported CA certificates in its base
+# with the directive removed and **zero** with it present, and no arrangement
+# of tags, `--pull=false`, `docker rmi`, `buildx prune` or a daemon restart
+# moves that number. So the image is published under a name of its own and the
+# gate is told to substitute it, through `JAILS_OCI_BASE_IMAGES` and
+# `--build-context`, which is the one mechanism the frontend does honour.
+#
+# **Import the bundle into the image's own `cacerts`; never point the JVM at
+# `java-truststore.p12`.** The environment builds that store for the host and
+# it is missing exactly the certificates that matter -- 152 of the bundle's
+# 154, and the two it leaves out are the `CCR agent-proxy interception CA`,
+# which is what actually signs the connection. Setting
+# `-Djavax.net.ssl.trustStore` at it does not merely fail to help: it
+# *replaces* the JDK's own store, so it is strictly worse than doing nothing.
+# An earlier version of this hook set it, which is how a fixable image became
+# a permanently broken one. `mvn -B -ntp validate` inside the container
+# reproduces both answers in about four seconds if this is ever in doubt.
+#
+# **The image is keyed on the bundle's content, because the CA rotates.** Its
+# common name carries a month (`... (production) 2026-08`) and `/root/.ccr` is
+# regenerated per session, while the container image store survives into the
+# next one. A guard that asked "does the trusted image exist" answered yes
+# about an image built against a CA that no longer signs anything.
+#
+# **Two CAs sign here, not one, which is why the whole bundle goes in.** The
+# host's own traffic is signed by the `CCR agent-proxy interception CA`; a
+# BuildKit `RUN` is signed by `sandbox-egress-gateway-production Egress Gateway
+# CA` instead. Both are in `ca-bundle.crt` and only one is in any subset of
+# it.
 #
 # The tag is read out of the template and `TARGET_RELEASE` rather than written
 # here, because a second copy of it would drift the moment either moves.
-truststore=/root/.ccr/java-truststore.p12
-if [ -f "$truststore" ] && docker info >/dev/null 2>&1; then
+ca_bundle="${SSL_CERT_FILE:-/root/.ccr/ca-bundle.crt}"
+if [ -f "$ca_bundle" ] && docker info >/dev/null 2>&1; then
   release=$(sed -n 's/.*TARGET_RELEASE: &str = "\([0-9]*\)".*/\1/p' \
     "$project/crates/jails-project/src/pom.rs" | head -1)
   base=$(sed -n 's/^FROM \([^ ]*\) AS build/\1/p' \
     "$project/templates/add/dockerfile_build_maven" | head -1)
   base="${base//\{\{RELEASE\}\}/$release}"
+  stamp=$(sha256sum "$ca_bundle" | cut -c1-12)
+  trusted="jails-ca-trusted:$release-$stamp"
   if [ -n "$release" ] && [ -n "$base" ] && \
-     ! docker image inspect "jails-ca-trusted:$release" >/dev/null 2>&1; then
-    log "trusting the proxy CA in $base"
+     ! docker image inspect "$trusted" >/dev/null 2>&1; then
+    log "trusting the proxy CA for $base"
     build_dir="$(mktemp -d)"
-    cp "$truststore" "$build_dir/ccr-truststore.p12"
+    cp "$ca_bundle" "$build_dir/ccr-ca-bundle.crt"
     cat > "$build_dir/Dockerfile" <<DOCKERFILE
 FROM $base
-COPY ccr-truststore.p12 /etc/ccr-truststore.p12
-ENV MAVEN_OPTS="-Djavax.net.ssl.trustStore=/etc/ccr-truststore.p12 -Djavax.net.ssl.trustStorePassword=changeit -Djavax.net.ssl.trustStoreType=PKCS12"
+COPY ccr-ca-bundle.crt /usr/local/share/ca-certificates/ccr-ca-bundle.crt
+# Split and import one at a time: keytool takes a single certificate per
+# -importcert, and a bundle handed to it whole becomes one entry that nothing
+# validates a chain against.
+RUN set -eu; \\
+    csplit -z -s -f /tmp/ccr- -b '%03d.pem' \\
+      /usr/local/share/ca-certificates/ccr-ca-bundle.crt '/BEGIN CERTIFICATE/' '{*}'; \\
+    for pem in /tmp/ccr-*.pem; do \\
+      keytool -importcert -noprompt -trustcacerts \\
+        -keystore "\$JAVA_HOME/lib/security/cacerts" -storepass changeit \\
+        -alias "ccr-\$(basename "\$pem" .pem)" -file "\$pem" >/dev/null 2>&1 || true; \\
+    done; \\
+    rm -f /tmp/ccr-*.pem; \\
+    if command -v update-ca-certificates >/dev/null 2>&1; then \\
+      update-ca-certificates >/dev/null 2>&1 || true; \\
+    fi
+# Explicitly empty, not absent: an inherited -Djavax.net.ssl.trustStore would
+# override the cacerts imported above with a store that does not carry the
+# interception CA.
+ENV MAVEN_OPTS=""
 DOCKERFILE
-    # Tagged as the base image so the generated `FROM` finds it, and again
-    # under a name of our own so the check above can tell "already done" from
-    # "somebody pulled the real one".
-    docker build --tag "$base" --tag "jails-ca-trusted:$release" "$build_dir" >/dev/null 2>&1 \
-      || log "could not pre-trust $base; the OCI image gate will fail"
+    if docker build --tag "$trusted" "$build_dir" >/dev/null 2>&1; then
+      log "trusted $(grep -c 'BEGIN CERTIFICATE' "$ca_bundle") CA(s) for $base"
+    else
+      log "could not pre-trust $base; the OCI image gate will fail"
+    fi
     rm -rf "$build_dir"
   fi
+  # Asked of the daemon rather than tracked through the branches above, so
+  # "already built", "built now" and "failed" reach the export as one answer.
+  docker image inspect "$trusted" >/dev/null 2>&1 || trusted=
 fi
 
 # --- what the session inherits ----------------------------------------------
@@ -158,6 +218,12 @@ fi
   # ships 2.43. jails probes for it, but the gate pins the empty value so one
   # answer to "is this green" cannot depend on the distribution underneath it.
   echo "export JAILS_GIT_DIFF_ALGORITHM="
+  # What the OCI image gate should build a generated `FROM` against. Empty on
+  # any machine where the trusted image could not be built, so the gate falls
+  # back to building exactly what jails wrote and fails honestly rather than
+  # against a substitution that is not there.
+  [ -n "${trusted:-}" ] && [ -n "${base:-}" ] \
+    && echo "export JAILS_OCI_BASE_IMAGES=\"$base=$trusted\""
 } >> "$env_file"
 
 log "ready"
