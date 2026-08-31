@@ -1329,6 +1329,30 @@ struct ProcessPermit {
 /// 26) -- deliberately not fetched from start.spring.io, so the
 /// "does scaffold produce a project that compiles" check never depends on
 /// that external service.
+/// Where the compiler puts a file the engine it replaces put somewhere else.
+///
+/// **A closed list, `CLAUDE.md`'s "Package layout" section as data.** Each row
+/// is a documented divergence: ports moved out of `app` into `repository`, an
+/// operation's typed command out of `service` into `application/commands`, and
+/// the two repository adapters out of `adapters` into the sub-packages that
+/// say which one they are. Exact paths are pinned by the golden trees; this
+/// exists so a test about a file's *contents* is not also a second, weaker
+/// assertion about its package.
+const MOVED_PACKAGES: &[(&str, &str)] = &[
+    (
+        "src/main/java/com/example/demo/app/",
+        "com/example/demo/repository/",
+    ),
+    (
+        "src/main/java/com/example/demo/adapters/InMemory",
+        "com/example/demo/adapters/memory/InMemory",
+    ),
+    (
+        "src/main/java/com/example/demo/adapters/Jdbc",
+        "com/example/demo/adapters/jdbc/Jdbc",
+    ),
+];
+
 /// A generated source path, in whichever tree this project keeps it.
 ///
 /// **One helper rather than a sweep through three hundred assertions.** The
@@ -1347,36 +1371,49 @@ pub fn generated(root: &Path, relative: &str) -> PathBuf {
     if managed.exists() {
         return managed;
     }
-    // **The package may have moved, and that is not what these assertions are
-    // about.** The canonical layout puts an operation's command under
-    // `application/commands` where the engine it replaces used `service`, and
-    // a JDBC adapter under `adapters/jdbc` where that one used `adapters`.
-    // Which package a file lands in is pinned exactly by the golden trees;
-    // what a test reaching for it wants is the file jails wrote. Only an
-    // unambiguous match counts -- two files of one name is a question this
-    // cannot answer, so it declines rather than picking.
-    if let Some(name) = Path::new(relative).file_name() {
-        let mut found = Vec::new();
-        collect_named(&root.join(".jails/generated"), name, &mut found);
-        if let [only] = found.as_slice() {
-            return only.clone();
+    // **The package may have moved, and only these moves count.** The
+    // canonical layout differs from the engine it replaces in a closed set of
+    // places, listed here so the divergence is written down once rather than
+    // rediscovered at three hundred assertions -- and so a file that turns up
+    // somewhere *unexpected* is still a failure. A basename search would have
+    // accepted any location, which is exactly the check these tests are for.
+    for (from, to) in MOVED_PACKAGES {
+        if let Some(rest) = relative.strip_prefix(from) {
+            let moved = root
+                .join(".jails/generated/main/java")
+                .join(format!("{to}{rest}"));
+            if moved.exists() {
+                return moved;
+            }
         }
     }
     root.join(relative)
 }
 
-fn collect_named(dir: &Path, name: &std::ffi::OsStr, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_named(&path, name, out);
-        } else if path.file_name() == Some(name) {
-            out.push(path);
-        }
-    }
+/// Declare PostgreSQL storage, the way a reader would.
+///
+/// **Replaces `create_dir_all("src/main/resources/db/migration")`.** Creating
+/// the directory was how a test told the legacy engine "there is somewhere to
+/// put a migration"; the compiler asks the *model* whether the project has
+/// storage, so an empty directory says nothing and no DDL is emitted. This is
+/// the declaration those tests were standing in for, and it also brings the
+/// JDBC adapters and the Testcontainers wiring they go on to assert about.
+///
+/// `--no-start` throughout: nothing here wants a container, and starting one
+/// per test would put a docker invocation on the critical path of a suite that
+/// spends 3% of its time on containers already.
+pub fn declare_storage(root: &Path) {
+    let output = Command::new(bin())
+        .current_dir(root)
+        .args(["add", "db", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "could not declare storage: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 pub fn write_spring_fixture(root: &Path) {

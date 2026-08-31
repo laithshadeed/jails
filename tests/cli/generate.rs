@@ -43,7 +43,7 @@ fn generate_standalone_and_destroy_roundtrip() {
 fn scaffold_refuses_invalid_or_reserved_derived_names_before_projection() {
     let root = temp_dir("scaffold-name-validation");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     let before = snapshot_tree(&root);
 
     for (name, expected) in [
@@ -87,7 +87,7 @@ fn scaffold_refuses_invalid_or_reserved_derived_names_before_projection() {
 fn machine_output_carries_failures_that_stop_before_an_outcome() {
     let root = temp_dir("machine-readable-refusals");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     let generated = jails_cmd(&root, None)
         .args(["g", "scaffold", "Task", "id:uuid@pk", "value:int"])
         .output()
@@ -416,7 +416,7 @@ fn resource_field_uses_scaffold_storage_identity_and_leaves_plain_records_source
 fn package_overrides_normalize_the_base_and_unique_names_resolve_without_the_flag() {
     let root = temp_dir("package-override-resolution");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     let generated = jails_cmd(&root, None)
         .args([
             "g",
@@ -466,7 +466,7 @@ fn package_overrides_normalize_the_base_and_unique_names_resolve_without_the_fla
 fn a_field_regenerates_the_companions_that_construct_the_resource() {
     let root = temp_dir("field-stale-strategy-companions");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     for command in [
         vec![
             "g",
@@ -553,7 +553,7 @@ fn a_field_regenerates_the_companions_that_construct_the_resource() {
 fn a_field_reaches_the_companions_named_by_yields_as_well_as_on() {
     let root = temp_dir("field-stale-yields-companions");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     for command in [
         vec!["add", "db", "--no-start"],
         vec![
@@ -678,7 +678,7 @@ fn a_field_reaches_the_companions_named_by_yields_as_well_as_on() {
 fn an_index_can_be_added_to_a_table_that_already_exists() {
     let root = temp_dir("resource-index-add");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     let scaffold = jails_cmd(&root, None)
         .args([
             "g",
@@ -766,7 +766,7 @@ fn an_index_can_be_added_to_a_table_that_already_exists() {
 fn a_named_route_replaces_the_derived_one_everywhere_it_appears() {
     let root = temp_dir("named-route");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     for command in [
         vec!["add", "db", "--no-start"],
         vec![
@@ -875,7 +875,7 @@ fn a_named_route_replaces_the_derived_one_everywhere_it_appears() {
 fn a_transition_can_select_by_a_component_other_than_id() {
     let root = temp_dir("transition-select");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
 
     assert!(
         jails_cmd(&root, None)
@@ -1014,7 +1014,7 @@ fn a_transition_can_select_by_a_component_other_than_id() {
 fn a_transition_can_take_its_key_from_the_url() {
     let root = temp_dir("transition-path-bound");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
 
     assert!(
         jails_cmd(&root, None)
@@ -1152,7 +1152,7 @@ fn a_transition_can_take_its_key_from_the_url() {
 fn a_resource_can_be_dropped_and_recreated_more_than_once() {
     let root = temp_dir("drop-recreate-cycle");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
 
     let scaffold = || {
         jails_cmd(&root, None)
@@ -1226,7 +1226,7 @@ fn a_resource_can_be_dropped_and_recreated_more_than_once() {
 fn what_explain_says_about_a_query_is_what_a_query_does() {
     let root = temp_dir("explain-agrees-with-query");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
 
     let explained = jails_cmd(&root, None)
         .args(["explain", "query"])
@@ -1842,7 +1842,7 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
 fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
     let root = temp_dir("task-migration-seal");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
 
     let generated = jails_cmd(&root, None)
         .args([
@@ -2030,7 +2030,7 @@ fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
 fn regenerating_a_dropped_resource_returns_it_to_a_consistent_lifecycle() {
     let root = temp_dir("recreate-revives-lifecycle");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
 
     for command in [
         vec!["g", "scaffold", "Book", "id:uuid@pk", "title:string"],
@@ -2107,7 +2107,7 @@ fn regenerating_a_dropped_resource_returns_it_to_a_consistent_lifecycle() {
 fn renaming_a_storage_backed_resource_keeps_its_table_or_refuses() {
     let root = temp_dir("legacy-rename-recorded-bases");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
 
     let scaffold = jails_cmd(&root, None)
         .args(["g", "scaffold", "Member", "id:uuid@pk", "name:string!"])
@@ -2219,7 +2219,7 @@ fn renaming_a_storage_backed_resource_keeps_its_table_or_refuses() {
 fn coordinated_preserve_table_rename_keeps_storage_and_moves_lifecycle_lineage() {
     let root = temp_dir("resource-rename-preserve-table");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
 
     let generated = jails_cmd(&root, None)
         .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
@@ -2289,7 +2289,7 @@ fn coordinated_preserve_table_rename_keeps_storage_and_moves_lifecycle_lineage()
 fn coordinated_single_cutover_appends_one_migration_and_switches_the_binding() {
     let root = temp_dir("resource-rename-single-cutover");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
 
     let generated = jails_cmd(&root, None)
         .args([
@@ -2376,7 +2376,7 @@ fn coordinated_single_cutover_appends_one_migration_and_switches_the_binding() {
 fn single_cutover_reports_reader_owned_storage_object_names_without_writing() {
     let root = temp_dir("resource-rename-reader-owned-object");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     let generated = jails_cmd(&root, None)
         .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
         .output()
@@ -2412,7 +2412,7 @@ fn single_cutover_reports_reader_owned_storage_object_names_without_writing() {
 fn single_cutover_reports_reader_owned_sql_without_writing() {
     let root = temp_dir("resource-rename-manual-sql");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     let generated = jails_cmd(&root, None)
         .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
         .output()
@@ -2446,7 +2446,7 @@ fn single_cutover_reports_reader_owned_sql_without_writing() {
 fn single_cutover_refuses_opaque_database_dependencies_without_writing() {
     let root = temp_dir("resource-rename-opaque-database-dependency");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     let generated = jails_cmd(&root, None)
         .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
         .output()
@@ -2482,7 +2482,7 @@ fn single_cutover_refuses_opaque_database_dependencies_without_writing() {
 fn rolling_rename_waits_for_attestation_then_completes_storage_forward() {
     let root = temp_dir("resource-rename-rolling");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     let generated = jails_cmd(&root, None)
         .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
         .output()
@@ -2600,7 +2600,7 @@ fn rolling_rename_waits_for_attestation_then_completes_storage_forward() {
 fn coordinated_resource_rename_reports_reader_owned_java_without_rewriting_it() {
     let root = temp_dir("resource-rename-manual-java");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     let generated = jails_cmd(&root, None)
         .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
         .output()
@@ -2638,7 +2638,7 @@ fn coordinated_resource_rename_reports_reader_owned_java_without_rewriting_it() 
 fn resource_repair_restores_sealed_history_and_missing_owned_projections() {
     let root = temp_dir("resource-repair");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     let generated = jails_cmd(&root, None)
         .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
         .output()
@@ -2708,7 +2708,7 @@ fn live_resource_repair_requires_the_applied_flyway_checksum_to_match_the_seal()
 
     let root = temp_dir("live-repair-flyway-checksum");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     assert!(
         jails_cmd(&root, None)
             .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
@@ -2781,7 +2781,7 @@ fn live_resource_repair_requires_the_applied_flyway_checksum_to_match_the_seal()
 fn task_drop_keeps_v001_and_appends_an_exact_forward_migration() {
     let root = temp_dir("task-drop-migration");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     assert!(
         jails_cmd(&root, None)
             .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
@@ -2902,7 +2902,7 @@ fn task_drop_keeps_v001_and_appends_an_exact_forward_migration() {
 fn task_drop_can_explicitly_apply_the_frozen_history_after_commit() {
     let root = temp_dir("task-drop-apply-migrations");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     assert!(
         jails_cmd(&root, None)
             .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
@@ -2993,7 +2993,7 @@ fn task_drop_can_explicitly_apply_the_frozen_history_after_commit() {
 fn failed_migration_effect_keeps_the_committed_drop_and_retryable_receipt() {
     let root = temp_dir("task-drop-failed-migration-effect");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     assert!(
         jails_cmd(&root, None)
             .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
@@ -3300,7 +3300,7 @@ fn field_driven_generators_refuse_an_absent_model_with_a_fix() {
 fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migration() {
     let root = temp_dir("generate-field");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
 
     let scaffold = jails_cmd(&root, None)
         .args(["g", "scaffold", "Note", "id:uuid@pk", "title:string!"])
@@ -3446,7 +3446,7 @@ fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migra
 fn resource_field_commands_use_the_risk_specific_cli_contracts() {
     let root = temp_dir("resource-field-commands");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     // A scaffold: these are column operations, and the kind that owns a table
     // is the kind they apply to. `V001` is its own `create table`, so the
     // evolutions below start at `V002`.
@@ -3609,7 +3609,7 @@ fn scaffold_refuses_to_silently_flatten_a_project_record_component() {
 fn scaffold_timestamps_flow_through_ddl_create_and_optimistic_updates() {
     let root = temp_dir("scaffold-timestamps");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
 
     let scaffold = jails_cmd(&root, None)
         .args([
@@ -3742,7 +3742,7 @@ fn generate_idempotency_produces_tests_that_run_and_pass() {
     }
     let root = temp_dir("idempotency-real");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
 
     assert!(
         jails_cmd(&root, None)
@@ -4649,7 +4649,7 @@ fn a_scaffold_emits_a_migration_whose_columns_match_the_adapter() {
     write_spring_fixture(&root);
     // `add db` is what creates this directory; jails emits a migration only
     // when the project has somewhere to put one.
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
 
     let output = jails_cmd(&root, None)
         .args([

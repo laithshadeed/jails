@@ -1044,7 +1044,7 @@ fn verified_app_images(fixtures: &'static Vec<(&'static str, std::path::PathBuf)
 /// for generate/destroy's path resolution -- not a real, resolvable Maven
 /// project, since these tests never invoke Maven.
 fn write_project_skeleton(root: &std::path::Path) {
-    let pkg_dir = common::generated(root, "src/main/java/com/example/demo");
+    let pkg_dir = root.join("src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
     fs::write(root.join("pom.xml"), "<project></project>").unwrap();
     fs::write(
@@ -1066,7 +1066,7 @@ fn write_project_skeleton(root: &std::path::Path) {
 // ---- add ----
 
 fn write_release_fixture(root: &std::path::Path, release: &str) {
-    let pkg_dir = common::generated(root, "src/main/java/com/example/demo");
+    let pkg_dir = root.join("src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
     fs::write(
         root.join("pom.xml"),

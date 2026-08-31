@@ -379,7 +379,7 @@ fn doctor_reports_missing_and_changed_managed_outputs_with_repair_guidance() {
 fn doctor_reports_a_sealed_migration_that_was_deleted_or_edited() {
     let root = temp_dir("doctor-migration-seals");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     assert!(
         jails_cmd(&root, None)
             .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
@@ -597,7 +597,7 @@ fn a_generated_disabled_test_is_named_when_it_is_written_and_afterwards() {
 fn doctor_names_a_migration_that_was_written_and_never_filled_in() {
     let root = temp_dir("doctor-empty-migration");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     assert!(
         jails_cmd(&root, None)
             .args(["g", "migration", "add_customer_id_index"])

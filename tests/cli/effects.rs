@@ -20,7 +20,7 @@ fn drop_with_migration(command: &mut std::process::Command) -> &mut std::process
 fn rerunning_the_same_destroy_retries_only_its_failed_migration_effect() {
     let root = temp_dir("task-drop-effect-retry");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     assert!(
         jails_cmd(&root, None)
             .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
@@ -195,7 +195,7 @@ fn postgres_17_observes_the_explicit_drop_effect_as_applied() {
 
     let root = temp_dir("task-drop-postgres-17");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     assert!(
         jails_cmd(&root, None)
             .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
