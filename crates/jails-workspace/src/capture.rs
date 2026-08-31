@@ -167,7 +167,21 @@ impl ReaderTrees {
                     component.kind,
                     jails_model::ComponentKind::Command | jails_model::ComponentKind::Cli
                 )
-            }),
+            })
+            // **A field naming a type the reader owns is a question only
+            // their sources can answer**, and the compiler refuses when
+            // nothing declares it -- so the tree has to be read before that
+            // refusal can be right. Only when there is such a field: reading
+            // every Java file on every `g enum` would be a cost paid for a
+            // question nobody asked. A qualified name is somebody else's
+            // package and is not this project's to declare.
+                || model.entities.values().any(|entity| {
+                    entity.active
+                        && entity.fields.iter().any(|field| {
+                            matches!(&field.ty, jails_model::TypeRef::External(name)
+                                if !name.contains('.'))
+                        })
+                }),
             test: model
                 .capabilities
                 .values()
@@ -320,8 +334,103 @@ fn capture_model_state(
     snapshot.project = project;
     snapshot.migration_history = capture_migration_history(root, &mut files, &mut preconditions)?;
     snapshot.preconditions = preconditions;
+    snapshot.external_types = index_reader_types(&files);
     snapshot.files = files;
     Ok(snapshot)
+}
+
+/// Every Java type the reader's own sources declare, by simple name.
+///
+/// **A capitalised field type is a type this project owns, and until now
+/// nothing checked that it does.** `g scaffold Book author:Author` emitted a
+/// record naming `Author`, and the project stopped compiling on a file the
+/// reader never wrote -- the exact failure the tool exists to remove. The
+/// compiler cannot look at the filesystem, so the answer is observed once
+/// here, like every other external fact.
+///
+/// Read off the declaration line rather than the path, because a checkout's
+/// directories do not always match its packages, and through
+/// [`jails_java::java::blanked`] so a type named inside a comment or a string
+/// is not mistaken for one that exists.
+fn index_reader_types(
+    files: &BTreeMap<ProjectPath, CapturedFile>,
+) -> jails_contracts::ExternalTypeIndex {
+    let mut index = jails_contracts::ExternalTypeIndex::default();
+    for (path, file) in files {
+        if !path.as_str().ends_with(".java") {
+            continue;
+        }
+        let Ok(source) = std::str::from_utf8(&file.bytes) else {
+            continue;
+        };
+        let package = declared_package(source);
+        for name in declared_types(source) {
+            let qualified = if package.is_empty() {
+                name.clone()
+            } else {
+                format!("{package}.{name}")
+            };
+            index
+                .types
+                .entry(name)
+                .or_insert(jails_contracts::ExternalType {
+                    qualified_name: qualified,
+                    capabilities: BTreeSet::new(),
+                });
+        }
+    }
+    index
+}
+
+/// The `package` this source declares, or empty for the default package.
+fn declared_package(source: &str) -> String {
+    source
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix("package ")?
+                .trim()
+                .strip_suffix(';')
+                .map(|name| name.trim().to_string())
+        })
+        .unwrap_or_default()
+}
+
+/// Every type name this source declares, nested ones included.
+///
+/// **Deliberately over-collecting, and that is the safe direction.** The one
+/// consumer refuses a field whose type nothing declares, so a name picked up
+/// from a string literal costs a refusal that does not happen; a name *missed*
+/// would refuse a project that compiles. Line and block comments are stripped
+/// because they only ever add, and nothing else is worth a parser here --
+/// this answers "does this name exist", not "what is its shape".
+fn declared_types(source: &str) -> Vec<String> {
+    const KEYWORDS: [&str; 4] = ["class ", "record ", "interface ", "enum "];
+    let mut found = Vec::new();
+    for line in source.lines() {
+        let line = line.split("//").next().unwrap_or(line).trim();
+        for keyword in KEYWORDS {
+            let mut rest = line;
+            while let Some(at) = rest.find(keyword) {
+                let before_is_word = rest[..at]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|last| last.is_alphanumeric() || last == '_' || last == '.');
+                rest = &rest[at + keyword.len()..];
+                if before_is_word {
+                    continue;
+                }
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                if !name.is_empty() {
+                    found.push(name);
+                }
+            }
+        }
+    }
+    found
 }
 
 /// Which build language this module uses, observed from its build files.

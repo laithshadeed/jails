@@ -3918,7 +3918,9 @@ fn scaffold_refuses_an_unmapped_project_type_before_writing() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("author:Author"), "{stderr}");
-    assert!(stderr.contains("cannot persist"), "{stderr}");
+    // Refused for the reason that comes first: nothing declares `Author`, so
+    // the record naming it would not compile whether or not it can be stored.
+    assert!(stderr.contains("nothing declares"), "{stderr}");
     assert!(stderr.contains("fix:"), "{stderr}");
     assert!(
         !root

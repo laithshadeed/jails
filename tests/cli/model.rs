@@ -494,6 +494,14 @@ app Demo {
 "#,
     );
     write_plain_fixture(&root);
+    // A type the reader owns and jails knows nothing about: it exists, so the
+    // record naming it compiles, and jails cannot invent a value for it, so
+    // the companion test below has to say so rather than guess.
+    fs::write(
+        root.join("src/main/java/com/example/demo/SomeUnknown.java"),
+        "package com.example.demo;\n\npublic final class SomeUnknown {}\n",
+    )
+    .unwrap();
 
     for arguments in [
         &["g", "record", "Note", "title:string!", "count:int"][..],

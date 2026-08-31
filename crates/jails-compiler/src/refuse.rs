@@ -90,6 +90,33 @@ pub(crate) fn preflight(
             "canonical Spring source units require a captured Spring Boot project\n       fix: add Spring Boot to the build or use a plain class/interface unit",
         ));
     }
+    // **A capitalised field type is a type this project owns, and this is
+    // where that claim is checked.** `g scaffold Book author:Author` emitted a
+    // record naming `Author` and left the project unable to compile a file
+    // the reader never wrote -- the exact failure jails exists to remove, and
+    // one no later command could explain, because nothing in the model was
+    // wrong. The reader's own declarations are observed once during capture;
+    // the model's entities and enums are its own.
+    for entity in next_model.entities.values().filter(|entity| entity.active) {
+        for field in &entity.fields {
+            let jails_model::TypeRef::External(name) = &field.ty else {
+                continue;
+            };
+            if name.contains('.')
+                || snapshot.external_types.types.contains_key(name)
+                || next_model
+                    .entities
+                    .values()
+                    .any(|declared| &declared.names.java_type == name)
+            {
+                continue;
+            }
+            return Err(CompileError::new(format!(
+                "`{}:{name}` names a type nothing declares: `{name}` is neither in this model nor in your own sources\n       fix: declare it with `jails g record {name} ...` or `jails g enum {name} ...`, write it yourself, or use one of jails' lowercase types",
+                field.label
+            )));
+        }
+    }
     if next_model
         .entities
         .values()
