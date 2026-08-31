@@ -162,11 +162,9 @@ pub(crate) fn owns_jdl_at(root: &Path) -> bool {
 }
 
 pub(crate) fn sync(no_start: bool, invocation: Invocation) -> Result<()> {
-    // A sync can introduce a compose service -- a model that declares
-    // `storage postgres` on a project that had none is the ordinary way it
-    // happens -- so `--no-start` means here exactly what it means on `add`.
-    // It used to be refused by name on the grounds that canonical sync had no
-    // effects, which stopped being true when the plan started carrying them.
+    // Accepted rather than refused by name: a sync can introduce a compose
+    // service, so a script that passes the flag is saying something coherent
+    // -- it just happens to be what sync does anyway. See `sync_at`.
     sync_at(&root()?, invocation.without_starting(no_start))
 }
 
@@ -233,7 +231,18 @@ pub(crate) fn sync_at(root: &Path, invocation: Invocation) -> Result<()> {
             .map_err(|error| Failure::Told(format!("could not encode execution: {error}")))?;
         print_json(&value)?;
     }
-    crate::model_generate::run_follow_up_effects(root, &bundle, &invocation)
+    // **Sync converges the files; `add` installs the service.** A compose
+    // service that arrives through an edited model is worth naming -- the
+    // reader has just gained one and nothing else would say so -- but
+    // starting it is not what "make the tree match the model" means, and a
+    // convergence command that brings containers up cannot be run casually.
+    // `--no-start` is accepted for the scripts that pass it and changes
+    // nothing here.
+    crate::model_generate::run_follow_up_effects(
+        root,
+        &bundle,
+        &invocation.clone().without_starting(true),
+    )
 }
 
 pub(crate) fn refuse_legacy_mutation(command: &str, fix: &str) -> Result<()> {
