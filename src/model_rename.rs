@@ -81,6 +81,24 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         )));
     }
 
+    // **The route this resource already answers on.** `--api preserve` is the
+    // default and means what it says: a rename moves the Java type and, on a
+    // cutover, the table, and leaves every external name where callers found
+    // it. The projection is named because the pin has to land on the `use`
+    // line that declares the surface -- a scaffold's, or a bare `http`'s.
+    let accepted_route = (request.api == ExternalRenamePolicy::Preserve
+        && entity.facets.contains(&jails_model::Facet::Http))
+    .then(|| {
+        let projection = if entity.facets.contains(&jails_model::Facet::Repository) {
+            "scaffold"
+        } else {
+            "http"
+        };
+        (
+            projection.to_string(),
+            format!("/{}", entity.names.sql_table),
+        )
+    });
     let entity_id = entity.id.clone();
     let entity_label = entity.label.clone();
     let sql_table = entity.names.sql_table.clone();
@@ -96,6 +114,9 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             // the *whole* of the storage change rather than half of it.
             (!cutover && entity.facets.contains(&jails_model::Facet::Record))
                 .then_some(sql_table.as_str()),
+            accepted_route
+                .as_ref()
+                .map(|(projection, route)| (projection.as_str(), route.as_str())),
         )?
     } else {
         jails_model::set_entity_java_name(&current_source, &entity_label, &request.to)
@@ -121,6 +142,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         label: Some(next_label),
         java: Some(request.to.clone()),
         table: cutover.then(|| next_table.clone()),
+        route: accepted_route.as_ref().map(|(_, route)| route.clone()),
     };
     let mut proof = current_model.clone();
     proof.apply(patch.clone()).map_err(Failure::Told)?;

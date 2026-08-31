@@ -33,6 +33,7 @@ pub use edit::{
     rename_declaration as rename_jdl_declaration,
     replace_entity_member as replace_jdl_entity_member, set_app_property as set_jdl_app_property,
     set_entity_attribute as set_jdl_entity_attribute,
+    set_projection_path as set_jdl_projection_path,
 };
 pub use format::format;
 pub use token::{Span, Token, TokenKind};

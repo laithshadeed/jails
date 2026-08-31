@@ -1508,6 +1508,35 @@ pub fn managed_listing(root: &Path) -> String {
     found.join("\n")
 }
 
+/// What `jails resource status --output json` says about one resource.
+///
+/// **The canonical lifecycle record, read through the command that reports
+/// it.** A legacy project kept lifecycles in `.jails/ledger.toml` and these
+/// assertions read that file directly; a canonical one keeps the same three
+/// facts -- which Java type, which table, which migrations -- in the model and
+/// the migration directory, and this is the one place that answers from them.
+/// Going through the product rather than the files is deliberate: a test that
+/// re-derives the answer can disagree with what a reader is told.
+pub fn resource_status(root: &Path, selector: &str) -> serde_json::Value {
+    let output = Command::new(bin())
+        .current_dir(root)
+        .args(["resource", "status", selector, "--output", "json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "resource status {selector}: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "resource status {selector} is not JSON ({error}): {}",
+            String::from_utf8_lossy(&output.stdout)
+        )
+    })
+}
+
 /// Give a fixture the model every mutating command needs.
 ///
 /// **The on-ramp, run explicitly.** Any mutation initialises a project that has

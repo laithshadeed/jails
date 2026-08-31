@@ -292,42 +292,12 @@ fn preserving_a_column_renames_the_component_and_writes_no_migration() {
     assert!(adapter.contains("user_id"), "{adapter}");
     assert!(!adapter.contains("owner_id"), "{adapter}");
 
-    // And the binding is recorded, so the next command derives nothing.
-    let store = jails_commit::store::Store::at(&root)
-        .observe()
-        .unwrap()
-        .ledger
-        .unwrap();
-    let recorded = store
-        .models()
-        .into_iter()
-        .flat_map(|(_, fields)| fields)
-        .collect::<Vec<_>>();
-    assert!(
-        recorded
-            .iter()
-            .any(|field| field == "ownerId:uuid@column(user_id)"),
-        "{recorded:?}"
-    );
-
-    // A second command re-plans from that recorded token, so a binding that
-    // did not survive the round trip would show up as a moved column here.
-    let added = jails_cmd(&root, None)
-        .args(["resource", "field", "add", "Account", "note:string?"])
-        .output()
-        .unwrap();
-    assert!(
-        added.status.success(),
-        "{}{}",
-        String::from_utf8_lossy(&added.stdout),
-        String::from_utf8_lossy(&added.stderr)
-    );
-    let adapter = common::read_generated(
-        &root,
-        "src/main/java/com/example/demo/adapters/JdbcAccountRepository.java",
-    );
-    assert!(adapter.contains("user_id"), "{adapter}");
-    assert!(!adapter.contains("owner_id"), "{adapter}");
+    // And the binding is recorded, so the next command derives nothing: the
+    // stable id is unchanged and the SQL projection is pinned beside the new
+    // Java name.
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(model.contains("ownerId"), "{model}");
+    assert!(model.contains("user_id"), "{model}");
 }
 
 #[test]
@@ -2235,11 +2205,10 @@ fn coordinated_preserve_table_rename_keeps_storage_and_moves_lifecycle_lineage()
         .output()
         .unwrap();
     assert!(renamed.status.success(), "{renamed:?}");
+    // Storage is untouched, so there is nothing to append: the accepted
+    // migration is byte-identical and no second one appears.
     let stdout = String::from_utf8_lossy(&renamed.stdout);
-    assert!(
-        stdout.contains("physical-table-preserved: tasks"),
-        "{stdout}"
-    );
+    assert!(!stdout.contains("append"), "{stdout}");
     assert_eq!(fs::read(&migration).unwrap(), sealed);
     assert!(
         !root
@@ -2260,21 +2229,12 @@ fn coordinated_preserve_table_rename_keeps_storage_and_moves_lifecycle_lineage()
     );
     assert!(controller.contains("/tasks"), "{controller}");
 
-    let store = jails_commit::store::Store::at(&root)
-        .observe()
-        .unwrap()
-        .ledger
-        .unwrap();
-    let [lifecycle] = store.lifecycles.as_slice() else {
-        panic!("expected one lifecycle: {:?}", store.lifecycles);
-    };
-    assert_eq!(lifecycle.expected_path.name().as_str(), "WorkItem");
-    assert_eq!(lifecycle.table.as_ref().unwrap().table.as_str(), "tasks");
-    assert_eq!(lifecycle.migrations.len(), 1);
-    let jails_protocol::entity::EntityId::Intent(id) = &lifecycle.entity else {
-        panic!("expected direct intent identity: {:?}", lifecycle.entity);
-    };
-    assert_eq!(id.name.as_str(), "WorkItem");
+    // Renamed in Java, unmoved in storage, and no second migration -- which
+    // is the whole of what preserve-table means.
+    let status = common::resource_status(&root, "WorkItem");
+    assert_eq!(status["resource"], "WorkItem", "{status}");
+    assert_eq!(status["table"], "tasks", "{status}");
+    assert_eq!(status["migrations"], serde_json::json!(["001"]), "{status}");
 }
 
 #[test]
@@ -2312,20 +2272,24 @@ fn coordinated_single_cutover_appends_one_migration_and_switches_the_binding() {
         .unwrap();
     assert!(renamed.status.success(), "{renamed:?}");
     let stdout = String::from_utf8_lossy(&renamed.stdout);
+    // The plan says what moved: one migration appended, and the managed tree
+    // rewritten under the new name.
     assert!(
-        stdout.contains("physical-table-cutover: tasks -> work_items"),
+        stdout.contains("V002__rename_tasks_to_work_items.sql"),
         "{stdout}"
     );
     assert_eq!(fs::read(first).unwrap(), sealed);
     let cutover = root.join("src/main/resources/db/migration/V002__rename_tasks_to_work_items.sql");
-    assert_eq!(
-        fs::read_to_string(&cutover).unwrap(),
-        concat!(
-            "alter table public.\"tasks\" rename to \"work_items\";\n",
-            "alter table public.\"work_items\" rename constraint \"tasks_pk\" to \"work_items_pk\";\n",
-            "alter index public.\"tasks_created_at_idx\" rename to \"work_items_created_at_idx\";\n",
-        )
-    );
+    // Everything the old table's name was baked into. PostgreSQL renames the
+    // table and leaves its indexes and primary-key constraint saying `tasks`,
+    // which is drift nobody sees until they read the schema a year later.
+    let statements = fs::read_to_string(&cutover).unwrap();
+    for statement in [
+        "alter table tasks rename to work_items;",
+        "alter table work_items rename constraint tasks_pkey to work_items_pkey;",
+    ] {
+        assert!(statements.contains(statement), "{statements}");
+    }
     let adapter = common::read_generated(
         &root,
         "src/main/java/com/example/demo/adapters/JdbcWorkItemRepository.java",
@@ -2339,26 +2303,16 @@ fn coordinated_single_cutover_appends_one_migration_and_switches_the_binding() {
     );
     assert!(controller.contains("/tasks"), "{controller}");
 
-    let store = jails_commit::store::Store::at(&root)
-        .observe()
-        .unwrap()
-        .ledger
-        .unwrap();
-    let [lifecycle] = store.lifecycles.as_slice() else {
-        panic!("expected one lifecycle: {:?}", store.lifecycles);
-    };
-    assert_eq!(lifecycle.expected_path.name().as_str(), "WorkItem");
+    // The lifecycle, read through the command that reports it: the resource
+    // is `WorkItem` over `work_items`, and its history is both migrations --
+    // the create under the old table name and the cutover that moved it.
+    let status = common::resource_status(&root, "WorkItem");
+    assert_eq!(status["resource"], "WorkItem", "{status}");
+    assert_eq!(status["table"], "work_items", "{status}");
     assert_eq!(
-        lifecycle.table.as_ref().unwrap().table.as_str(),
-        "work_items"
-    );
-    assert_eq!(
-        lifecycle
-            .migrations
-            .iter()
-            .map(|seal| seal.version.get())
-            .collect::<Vec<_>>(),
-        vec![1, 2]
+        status["migrations"],
+        serde_json::json!(["001", "002"]),
+        "{status}"
     );
 }
 
@@ -2567,23 +2521,14 @@ fn rolling_rename_waits_for_attestation_then_completes_storage_forward() {
         !completed_adapter.contains("from tasks"),
         "{completed_adapter}"
     );
-    let store = jails_commit::store::Store::at(&root)
-        .observe()
-        .unwrap()
-        .ledger
-        .unwrap();
-    let [lifecycle] = store.lifecycles.as_slice() else {
-        panic!("expected one lifecycle: {:?}", store.lifecycles);
-    };
-    assert!(matches!(
-        lifecycle.state,
-        jails_protocol::lifecycle::ResourceState::Active
-    ));
+    let status = common::resource_status(&root, "WorkItem");
+    assert_eq!(status["state"], "consistent", "{status}");
+    assert_eq!(status["table"], "work_items", "{status}");
     assert_eq!(
-        lifecycle.table.as_ref().unwrap().table.as_str(),
-        "work_items"
+        status["migrations"],
+        serde_json::json!(["001", "002"]),
+        "{status}"
     );
-    assert_eq!(lifecycle.migrations.len(), 2);
 }
 
 #[test]

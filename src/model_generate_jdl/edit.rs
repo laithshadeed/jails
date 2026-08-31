@@ -308,6 +308,7 @@ pub(crate) fn rename_entity(
     stable_label: &str,
     stable_id: &str,
     pinned_table: Option<&str>,
+    pinned_route: Option<(&str, &str)>,
 ) -> Result<String> {
     if is_v1_source(source) {
         let mut renamed = jails_model::rename_jdl_declaration(
@@ -337,6 +338,16 @@ pub(crate) fn rename_entity(
                 )
                 .map_err(jdl_edit_failure)?;
             }
+        }
+        // **The route does not move with the name unless asked.** Every
+        // other derived name here is jails' own; a route has callers, and a
+        // rename that quietly answers 404 where it answered 200 yesterday is
+        // the one convention change a compiler must not make silently. See
+        // `set_jdl_projection_path`.
+        if let Some((projection, route)) = pinned_route {
+            renamed =
+                jails_model::set_jdl_projection_path(&renamed, next_java_name, projection, route)
+                    .map_err(jdl_edit_failure)?;
         }
         return Ok(renamed);
     }

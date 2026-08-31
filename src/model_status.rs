@@ -189,11 +189,46 @@ fn inspect(snapshot: &jails_contracts::WorkspaceSnapshot, selector: &str) -> Rep
     let mut migrations = Vec::new();
     let mut unreadable = false;
     if stored {
-        let table = entity.names.sql_table.as_str();
+        // **The lineage follows the renames.** A single cutover moves the
+        // table, so every migration written before it names a table this
+        // entity no longer has -- and reporting one row of history for a
+        // resource that has three is worse than reporting none, because it
+        // reads as a resource whose creation was never recorded. The rename
+        // statement names both sides, so walking backwards over it recovers
+        // the names this entity used to have without a second ledger.
+        let mut names = vec![entity.names.sql_table.clone()];
+        let mut walked = 0;
+        while walked < names.len() {
+            let current = names[walked].clone();
+            walked += 1;
+            for record in &snapshot.migration_history.records {
+                let Some(captured) = snapshot.files.get(&record.path) else {
+                    continue;
+                };
+                let text = String::from_utf8_lossy(&captured.bytes);
+                for line in text.lines() {
+                    let Some((head, tail)) = line.split_once(" rename to ") else {
+                        continue;
+                    };
+                    if tail.trim().trim_end_matches(';') != current {
+                        continue;
+                    }
+                    let Some(before) = head.split_whitespace().next_back() else {
+                        continue;
+                    };
+                    if !names.iter().any(|name| name == before) {
+                        names.push(before.to_string());
+                    }
+                }
+            }
+        }
         for record in &snapshot.migration_history.records {
             match snapshot.files.get(&record.path) {
                 Some(captured) => {
-                    if mentions_table(&captured.bytes, table) {
+                    if names
+                        .iter()
+                        .any(|table| mentions_table(&captured.bytes, table))
+                    {
                         migrations.push(record.version.clone());
                     }
                 }

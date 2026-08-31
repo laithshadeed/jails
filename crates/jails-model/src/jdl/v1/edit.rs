@@ -248,6 +248,59 @@ pub fn set_entity_attribute(
 }
 
 /// Insert one direct entity child beside children of the same semantic class.
+/// Pin the route a projection serves, so a rename does not move it.
+///
+/// **A derived name that moves is the point of `jails model explain`, and an
+/// HTTP route is the one derived name with callers.** Renaming a resource
+/// moves its Java type, its table and its route together, and the first two
+/// are jails' business where the third is somebody else's -- a client that
+/// asked for `/tasks` yesterday gets a 404 today, with nothing in the plan
+/// saying so. Writing the accepted route into the model turns the convention
+/// into a declaration, which is exactly what `derived` is for: the value stops
+/// being recomputed and starts being stated.
+///
+/// Rewrites the projection's own `use` line rather than adding a second one:
+/// two `use` members for one projection is a configuration conflict the linker
+/// refuses, and correctly.
+pub fn set_projection_path(
+    source: &str,
+    entity: &str,
+    projection: &str,
+    path: &str,
+) -> Result<String, Diagnostics> {
+    let cst = parse_cst(source)?;
+    let owner = stable_fragment(entity);
+    let quoted = format!("{path:?}");
+    for member in &cst.members {
+        if member.owner != owner || member.kind != "use" {
+            continue;
+        }
+        let text = &source[member.span.start..member.span.end];
+        let Some(rest) = text.trim_start().strip_prefix("use ") else {
+            continue;
+        };
+        let named = rest
+            .split(['(', ' ', '\n'])
+            .next()
+            .unwrap_or_default()
+            .trim();
+        if named != projection {
+            continue;
+        }
+        // Already carries arguments: the author stated something here, and a
+        // rename is not the moment to rewrite what they wrote.
+        if rest.contains('(') {
+            return Ok(source.to_string());
+        }
+        let indent = &text[..text.len() - text.trim_start().len()];
+        let replacement = format!("{indent}use {projection}(path: {quoted})");
+        let mut next = source.to_string();
+        next.replace_range(member.span.start..member.span.end, &replacement);
+        return Ok(next);
+    }
+    Ok(source.to_string())
+}
+
 pub fn insert_entity_member(
     source: &str,
     entity: &str,

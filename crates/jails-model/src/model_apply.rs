@@ -468,7 +468,18 @@ impl AppModel {
                 label,
                 java,
                 table,
+                route,
             } => {
+                if let Some(route) = route {
+                    for projection in self.projections.values_mut() {
+                        if projection.entity == entity
+                            && let crate::projection::ProjectionKind::Http { path } =
+                                &mut projection.kind
+                        {
+                            *path = Some(route.clone());
+                        }
+                    }
+                }
                 let target = self
                     .entities
                     .get_mut(&entity)

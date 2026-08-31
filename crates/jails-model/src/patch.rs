@@ -148,6 +148,14 @@ pub enum ModelPatch {
         label: Option<String>,
         java: Option<String>,
         table: Option<String>,
+        /// The HTTP route this resource keeps answering on.
+        ///
+        /// **The one derived name with callers.** A rename moves the Java
+        /// type and, on a cutover, the table -- both jails'. The route is
+        /// somebody else's, so `--api preserve` states it here and the model
+        /// carries it as a declaration rather than recomputing it from the
+        /// new name and answering 404 where it answered 200 yesterday.
+        route: Option<String>,
     },
 }
 

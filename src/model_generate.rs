@@ -276,14 +276,19 @@ pub(crate) fn finish_generation_with_reader_paths(
                 execution.plan_digest.as_str(),
                 execution.files_written
             );
-            // **What went is named, even when nobody asked.** A written file
-            // announces itself -- it is there, in the tree, under a path the
-            // reader can open. A deleted one leaves nothing behind, and with
-            // `--force` it may have carried an afternoon of edits, so the
-            // only place it can be seen is here.
+            // **What went, and what history gained.** A written file
+            // announces itself -- it is there, under a path the reader can
+            // open. A deleted one leaves nothing behind, and with `--force` it
+            // may have carried an afternoon of edits. A migration is the other
+            // half: it is append-only, so the moment to read it is before it
+            // reaches a database, and it is the one generated file a reader is
+            // expected to review.
             for line in crate::model_command::preview_lines(&bundle)
                 .iter()
-                .filter(|line| line.trim_start().starts_with("delete"))
+                .filter(|line| {
+                    let verb = line.trim_start();
+                    verb.starts_with("delete") || verb.starts_with("append")
+                })
             {
                 println!("{line}");
             }

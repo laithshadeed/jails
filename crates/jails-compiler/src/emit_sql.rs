@@ -163,10 +163,26 @@ pub(crate) fn derive(
                     old.names.sql_table, current.names.sql_table, old.names.java_type
                 )));
             }
+            // **Everything the old table's name is baked into.** PostgreSQL
+            // renames the table and leaves its indexes and its primary-key
+            // constraint under names that still say `tasks`, which is drift
+            // nobody sees until they read the schema a year later. Every one
+            // of these names is derived from the table's, so the compiler
+            // knows exactly which ones moved -- an index the reader named
+            // themselves is theirs and stays.
+            let (before, after) = (&old.names.sql_table, &current.names.sql_table);
+            statements.push(format!("alter table {before} rename to {after};"));
             statements.push(format!(
-                "alter table {} rename to {};",
-                old.names.sql_table, current.names.sql_table
+                "alter table {after} rename constraint {before}_pkey to {after}_pkey;"
             ));
+            for field in old.fields.iter() {
+                if field.indexed && !field.primary_key && !field.unique {
+                    let column = &field.names.sql_column;
+                    statements.push(format!(
+                        "alter index idx_{before}_{column} rename to idx_{after}_{column};"
+                    ));
+                }
+            }
             semantic_ids.insert(old.id.as_str().to_string());
             descriptions.push(format!(
                 "rename_{}_to_{}",
