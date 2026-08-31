@@ -29,6 +29,26 @@ pub(crate) fn lower_and_emit(
     for operation in model.operations.values() {
         let lowered = match &operation.kind {
             OperationKind::Command(spec) => {
+                let target = stored_entity(model, operation, &spec.on, "command")?;
+                if let Some(inputs) =
+                    proof::input_fields(target, &spec.fields, &spec.semantics.parameters)
+                    && let Some(written) = proof::write(
+                        model,
+                        capability.id.as_str(),
+                        operation,
+                        target,
+                        proof::WriteShape {
+                            port_suffix: "Command",
+                            port_package: jails_model::Package::ApplicationCommands,
+                            keyed: false,
+                            inputs: &inputs,
+                        },
+                    )?
+                {
+                    output
+                        .insert(written.0, written.1)
+                        .map_err(CompileError::new)?;
+                }
                 command::lower(model, capability.id.as_str(), operation, spec)?
             }
             OperationKind::Query(spec) => {
@@ -59,6 +79,25 @@ pub(crate) fn lower_and_emit(
                 )?
             }
             OperationKind::Transition(spec) => {
+                let target = stored_entity(model, operation, &spec.on, "transition")?;
+                if let Some(inputs) = proof::input_fields(target, &spec.fields, &[])
+                    && let Some(written) = proof::write(
+                        model,
+                        capability.id.as_str(),
+                        operation,
+                        target,
+                        proof::WriteShape {
+                            port_suffix: "Transition",
+                            port_package: jails_model::Package::ApplicationTransitions,
+                            keyed: true,
+                            inputs: &inputs,
+                        },
+                    )?
+                {
+                    output
+                        .insert(written.0, written.1)
+                        .map_err(CompileError::new)?;
+                }
                 transition::lower(model, capability.id.as_str(), operation, spec)?
             }
             OperationKind::Event(_) => continue,

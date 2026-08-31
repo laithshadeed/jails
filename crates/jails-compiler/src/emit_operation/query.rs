@@ -199,8 +199,14 @@ pub(super) fn lower(
         .filter(|filter| filter.required)
         .map(|filter| {
             format!(
-                "        statement = statement.param(\"{}\", input.{}());\n",
-                filter.label, filter.member
+                "        statement = statement.param(\"{}\", {});\n",
+                filter.label,
+                crate::emit_sql::bound_value(
+                    model,
+                    filter.field,
+                    &format!("input.{}()", filter.member),
+                    &mut imports
+                )
             )
         })
         .collect::<String>();
@@ -209,8 +215,15 @@ pub(super) fn lower(
         .filter(|filter| !filter.required)
         .map(|filter| {
             format!(
-                "        if (input.{}().isPresent()) {{\n            statement = statement.param(\"{}\", input.{}().orElseThrow());\n        }}\n",
-                filter.member, filter.label, filter.member
+                "        if (input.{}().isPresent()) {{\n            statement = statement.param(\"{}\", {});\n        }}\n",
+                filter.member,
+                filter.label,
+                crate::emit_sql::bound_value(
+                    model,
+                    filter.field,
+                    &format!("input.{}().orElseThrow()", filter.member),
+                    &mut imports
+                )
             )
         })
         .collect::<String>();

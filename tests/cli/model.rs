@@ -14201,3 +14201,111 @@ app Demo {
         }
     );
 }
+
+/// A command's and a transition's JDBC adapter each run against a real
+/// database.
+///
+/// The query adapter had a proof; the write half had none. A command's
+/// `insert ... returning` and a transition's `update ... returning` were
+/// asserted by nothing, so a bind the driver will not take compiled and
+/// shipped -- which is exactly what the first run found: only the repository
+/// adapter passed its parameters through `bound_value`, so an enum reached
+/// PostgreSQL raw and `Can't infer the SQL type to use for an instance of
+/// Shelf` came back, naming neither the column nor the statement.
+#[test]
+fn canonical_write_adapters_run_against_real_postgres() {
+    if !real_mvn_available() || !real_java_supports_target_release() {
+        common::skip("real Maven and a JDK that accepts TARGET_RELEASE");
+        return;
+    }
+    if !real_docker_available() {
+        common::skip("a running Docker-compatible container runtime is required");
+        return;
+    }
+    let root = jdl_project(
+        "jdl-v1-write-adapter-it",
+        r#"jdl 1
+app Demo {
+  pkg com.example.demo
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    for arguments in [
+        vec!["add", "db"],
+        vec!["g", "enum", "Shelf", "OPEN", "ARCHIVED"],
+        vec![
+            "g",
+            "scaffold",
+            "Note",
+            "id:long@pk",
+            "title:string!",
+            "shelf:Shelf",
+            "archived:boolean@default(false)",
+        ],
+        vec![
+            "g",
+            "usecase",
+            "PublishNote",
+            "title:string!",
+            "shelf:Shelf",
+            "--on",
+            "Note",
+        ],
+        vec![
+            "g",
+            "transition",
+            "ArchiveNote",
+            "id:long",
+            "archived:boolean",
+            "--on",
+            "Note",
+        ],
+    ] {
+        let output = jails_cmd(&root, None).args(&arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{arguments:?}:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let jdbc = root.join(".jails/generated/main/java/com/example/demo/adapters/jdbc");
+    // An enum reaches a `text` column as its constant name. Bound raw, pgjdbc
+    // refuses it at run time.
+    let command = fs::read_to_string(jdbc.join("JdbcPublishNoteCommand.java")).unwrap();
+    assert!(command.contains("input.shelf().name()"), "{command}");
+
+    let tests = root.join(".jails/generated/test/java/com/example/demo/adapters/jdbc");
+    for name in [
+        "JdbcPublishNoteCommandIT.java",
+        "JdbcArchiveNoteTransitionIT.java",
+    ] {
+        assert!(tests.join(name).is_file(), "{name} was not emitted");
+    }
+
+    let verified = real_maven_cmd(&root, &real_path_without_mvnd())
+        .args(["-q", "-B", "verify"])
+        .output()
+        .unwrap();
+    assert!(
+        verified.status.success(),
+        "the generated write-adapter integration tests failed real Maven:\n{}\n{}",
+        String::from_utf8_lossy(&verified.stdout),
+        String::from_utf8_lossy(&verified.stderr)
+    );
+    assert_eq!(
+        maven_report_summary(&root, "failsafe-reports"),
+        MavenReportSummary {
+            reports: 2,
+            tests: 2,
+            failures: 0,
+            errors: 0,
+            skipped: 0,
+        }
+    );
+}

@@ -58,94 +58,15 @@ pub(super) fn query(
         ),
     ]);
 
-    // The row the query has to find. Every filter is bound to the *same*
-    // sample the stored row carries, so the two cannot drift into a test that
-    // stores one value and asks for another.
-    let mut substitutions = BTreeMap::new();
-    // **Every parent row the database will insist on**, not only the ones the
-    // query joins: a declared relation is a foreign key, so storing the child
-    // without its parent fails on the constraint rather than on the query. A
-    // join and a relation can name the same parent, so the second is dropped.
-    let mut parents: Vec<ParentRow> = joins
-        .iter()
-        .map(|join| ParentRow {
-            entity: join.entity.clone(),
-            alias: join.alias.clone(),
-            mappings: join
-                .mappings
-                .iter()
-                .map(|mapping| (mapping.local.clone(), mapping.remote.clone()))
-                .collect(),
-        })
-        .collect();
-    for relation in model.relations.values() {
-        if relation.child != target.id
-            || parents
-                .iter()
-                .any(|parent| parent.entity == relation.parent)
-        {
-            continue;
-        }
-        parents.push(ParentRow {
-            entity: relation.parent.clone(),
-            alias: relation.label.clone(),
-            mappings: relation
-                .mappings
-                .iter()
-                .map(|mapping| (mapping.local.clone(), mapping.remote.clone()))
-                .collect(),
-        });
-    }
-    let mut setup = String::new();
-    let mut autowired = String::new();
-    for ParentRow {
-        entity: entity_id,
-        alias,
-        mappings,
-    } in &parents
-    {
-        let parent = model.entities.get(entity_id).ok_or_else(|| {
-            CompileError::new(format!(
-                "linked query `{}` references missing entity `{}`",
-                operation.label, entity_id
-            ))
-        })?;
-        let Some(parent_arguments) =
-            record_arguments(model, parent, &BTreeMap::new(), &mut imports)
-        else {
-            return Ok(None);
-        };
-        let variable = format!("{}Row", lower_first(alias));
-        imports.insert(domain_import(model, parent));
-        imports.insert(format!(
-            "{}.{}Repository",
-            model.project.package_for(Package::Repository),
-            parent.names.java_type
-        ));
-        autowired.push_str(&format!(
-            "    @Autowired\n    private {}Repository {}Repository;\n\n",
-            parent.names.java_type,
-            lower_first(&parent.names.java_type)
-        ));
-        setup.push_str(&format!(
-            "        {} {variable} = {}Repository.save(new {}({parent_arguments}));\n",
-            parent.names.java_type,
-            lower_first(&parent.names.java_type),
-            parent.names.java_type
-        ));
-        // **The assigned key, not a sample.** The child's foreign key has to
-        // be the value the database gave the parent, or the join finds nothing
-        // and the test proves the opposite of what it says.
-        for (local, remote) in mappings {
-            let Some(remote) = parent.field(remote) else {
-                return Ok(None);
-            };
-            substitutions.insert(
-                local.clone(),
-                format!("{variable}.{}()", remote.names.java_member),
-            );
-        }
-    }
+    // The rows the database will insist on, and the keys it assigned them.
+    let Some(fixtures) = parent_fixtures(model, operation, target, joins, &mut imports)? else {
+        return Ok(None);
+    };
+    let Fixtures {
+        setup,
+        autowired,
+        substitutions,
+    } = fixtures;
 
     let Some(stored) = record_arguments(model, target, &substitutions, &mut imports) else {
         return Ok(None);
@@ -214,6 +135,313 @@ pub(super) fn query(
             },
         },
     )))
+}
+
+/// The parent rows a target row cannot be stored without, and their keys.
+///
+/// **Every declared relation, not only the joins.** A relation is a foreign
+/// key, so storing the child without its parent fails on the constraint rather
+/// than on the statement under test -- and a join and a relation can name the
+/// same parent, so the second is dropped.
+///
+/// One owner because every operation proof needs the same rows: a query reads
+/// one, a command writes one, a transition changes one. Written per kind they
+/// would disagree about which parents exist, and the disagreement only shows
+/// up against a real database.
+struct Fixtures {
+    setup: String,
+    autowired: String,
+    /// The child's foreign-key components, by the parent key they read.
+    substitutions: BTreeMap<FieldId, String>,
+}
+
+fn parent_fixtures(
+    model: &AppModel,
+    operation: &Operation,
+    target: &Entity,
+    joins: &[Join],
+    imports: &mut BTreeSet<String>,
+) -> Result<Option<Fixtures>, CompileError> {
+    // The row the query has to find. Every filter is bound to the *same*
+    // sample the stored row carries, so the two cannot drift into a test that
+    // stores one value and asks for another.
+    let mut substitutions = BTreeMap::new();
+    // **Every parent row the database will insist on**, not only the ones the
+    // query joins: a declared relation is a foreign key, so storing the child
+    // without its parent fails on the constraint rather than on the query. A
+    // join and a relation can name the same parent, so the second is dropped.
+    let mut parents: Vec<ParentRow> = joins
+        .iter()
+        .map(|join| ParentRow {
+            entity: join.entity.clone(),
+            alias: join.alias.clone(),
+            mappings: join
+                .mappings
+                .iter()
+                .map(|mapping| (mapping.local.clone(), mapping.remote.clone()))
+                .collect(),
+        })
+        .collect();
+    for relation in model.relations.values() {
+        if relation.child != target.id
+            || parents
+                .iter()
+                .any(|parent| parent.entity == relation.parent)
+        {
+            continue;
+        }
+        parents.push(ParentRow {
+            entity: relation.parent.clone(),
+            alias: relation.label.clone(),
+            mappings: relation
+                .mappings
+                .iter()
+                .map(|mapping| (mapping.local.clone(), mapping.remote.clone()))
+                .collect(),
+        });
+    }
+    let mut setup = String::new();
+    let mut autowired = String::new();
+    for ParentRow {
+        entity: entity_id,
+        alias,
+        mappings,
+    } in &parents
+    {
+        let parent = model.entities.get(entity_id).ok_or_else(|| {
+            CompileError::new(format!(
+                "linked query `{}` references missing entity `{}`",
+                operation.label, entity_id
+            ))
+        })?;
+        let Some(parent_arguments) = record_arguments(model, parent, &BTreeMap::new(), imports)
+        else {
+            return Ok(None);
+        };
+        let variable = format!("{}Row", lower_first(alias));
+        imports.insert(domain_import(model, parent));
+        imports.insert(format!(
+            "{}.{}Repository",
+            model.project.package_for(Package::Repository),
+            parent.names.java_type
+        ));
+        autowired.push_str(&format!(
+            "    @Autowired\n    private {}Repository {}Repository;\n\n",
+            parent.names.java_type,
+            lower_first(&parent.names.java_type)
+        ));
+        setup.push_str(&format!(
+            "        {} {variable} = {}Repository.save(new {}({parent_arguments}));\n",
+            parent.names.java_type,
+            lower_first(&parent.names.java_type),
+            parent.names.java_type
+        ));
+        // **The assigned key, not a sample.** The child's foreign key has to
+        // be the value the database gave the parent, or the join finds nothing
+        // and the test proves the opposite of what it says.
+        for (local, remote) in mappings {
+            let Some(remote) = parent.field(remote) else {
+                return Ok(None);
+            };
+            substitutions.insert(
+                local.clone(),
+                format!("{variable}.{}()", remote.names.java_member),
+            );
+        }
+    }
+
+    Ok(Some(Fixtures {
+        setup,
+        autowired,
+        substitutions,
+    }))
+}
+
+/// The integration test beside a command's or transition's JDBC adapter.
+///
+/// **The write half of an operation reached no test at all.** A query's proof
+/// stores a row and reads it back; a command's `insert ... returning` and a
+/// transition's `update ... returning` were asserted by nothing, so a column
+/// list that drifted from the row mapper, a bind the driver will not take, and
+/// an `on conflict` naming a column with no unique index all compiled and
+/// shipped.
+///
+/// What it asserts is that the statement runs and answers. It deliberately
+/// does not assert *which* row: a command's returned key is the database's,
+/// and a transition's audit columns are `current_timestamp`, so pinning
+/// equality would fail on the shape of the schema rather than on the
+/// correctness of the statement.
+///
+/// A transition needs a row to change, so it stores one first through the
+/// entity's own repository; a command writes its own.
+pub(super) fn write(
+    model: &AppModel,
+    capability_id: &str,
+    operation: &Operation,
+    target: &Entity,
+    shape: WriteShape<'_>,
+) -> Result<Option<(ProjectPath, RenderedFile)>, CompileError> {
+    let WriteShape {
+        port_suffix,
+        port_package,
+        keyed,
+        inputs,
+    } = shape;
+    let package = model.project.package_for(Package::AdaptersJdbc);
+    let port_type = format!("{}{port_suffix}", operation.names.java_type);
+    let type_name = format!("Jdbc{port_type}IT");
+    let mut imports = BTreeSet::from([
+        "org.junit.jupiter.api.Test".to_string(),
+        "org.springframework.beans.factory.annotation.Autowired".to_string(),
+        "org.springframework.boot.test.context.SpringBootTest".to_string(),
+        "org.springframework.transaction.annotation.Transactional".to_string(),
+        "static org.assertj.core.api.Assertions.assertThat".to_string(),
+        domain_import(model, target),
+        format!("{}.{port_type}", model.project.package_for(port_package)),
+    ]);
+
+    // A scoped operation reads its tenant from the execution context, whose
+    // claims are strings the caller proves. jails cannot spell that for every
+    // scopeable type, so there is no honest test to write here.
+    if !scopes(target).is_empty() {
+        return Ok(None);
+    }
+
+    let Some(fixtures) = parent_fixtures(model, operation, target, &[], &mut imports)? else {
+        return Ok(None);
+    };
+    let Fixtures {
+        mut setup,
+        mut autowired,
+        substitutions,
+    } = fixtures;
+
+    let record = &target.names.java_type;
+    // A transition changes a row that has to be there; a command makes its own.
+    let invocation = if keyed {
+        let Some(stored) = record_arguments(model, target, &substitutions, &mut imports) else {
+            return Ok(None);
+        };
+        imports.insert(format!(
+            "{}.{record}Repository",
+            model.project.package_for(Package::Repository)
+        ));
+        autowired.push_str(&format!(
+            "    @Autowired\n    private {record}Repository repository;\n\n"
+        ));
+        setup.push_str(&format!(
+            "        {record} stored = repository.save(new {record}({stored}));\n"
+        ));
+        let key = crate::emit_java::primary_key(target)?;
+        format!(
+            "operation.execute(stored.{}(), new {port_type}.Input({{arguments}}))",
+            key.names.java_member
+        )
+    } else {
+        format!("operation.execute(new {port_type}.Input({{arguments}}))")
+    };
+    let Some(arguments) = input_arguments(model, target, inputs, &substitutions, &mut imports)
+    else {
+        return Ok(None);
+    };
+    let invocation = invocation.replace("{arguments}", &arguments);
+
+    let body = format!(
+        "@SpringBootTest\n@Transactional\nclass {type_name} {{\n\n{autowired}    @Autowired\n    private {port_type} operation;\n\n    @Test\n    void writesThroughTheRealDatabase() {{\n{setup}        {record} answered = {invocation};\n\n        // `returning` answers with the row the statement wrote, so a null\n        // here means it matched none -- which is the failure worth catching.\n        assertThat(answered).isNotNull();\n    }}\n\n    // Reader-owned cases belong below this stable boundary.\n}}"
+    );
+    let artifact_id = format!("art_{}_write_it", operation.id.as_str());
+    let rendered = crate::emit_capability::imported_test_container(
+        model,
+        &package,
+        render(&package, &imports, &body, &artifact_id),
+    );
+    let path = ProjectPath::parse(format!(
+        "{JAVA_TEST_ROOT}/{}/{type_name}.java",
+        package.replace('.', "/")
+    ))
+    .map_err(CompileError::new)?;
+    Ok(Some((
+        path,
+        RenderedFile {
+            kind: FileKind::JavaTest,
+            mode: FileMode::Regular,
+            bytes: rendered.into_bytes(),
+            provenance: Provenance {
+                artifact_id,
+                ejection_id: None,
+                ejectable: true,
+                semantic_ids: BTreeSet::from([
+                    capability_id.to_string(),
+                    operation.id.as_str().to_string(),
+                    target.id.as_str().to_string(),
+                ]),
+                compiler_pass: "capability-db-write".to_string(),
+            },
+        },
+    )))
+}
+
+/// The fields this operation's `Input` declares, or `None` when the test
+/// cannot be built from them.
+///
+/// The flat field list when there is one; otherwise the linked parameters,
+/// resolved back to the target's own fields. A parameter that is not a field
+/// of the target -- a joined filter, a typed component of the operation's own
+/// -- has no sample this proof can reach, so it emits nothing rather than a
+/// constructor call that will not compile.
+pub(super) fn input_fields<'a>(
+    target: &'a Entity,
+    flat: &[FieldId],
+    parameters: &[jails_model::OperationParameter],
+) -> Option<Vec<&'a jails_model::Field>> {
+    if parameters.is_empty() {
+        return flat.iter().map(|id| target.field(id)).collect();
+    }
+    parameters
+        .iter()
+        .map(|parameter| match &parameter.source {
+            jails_model::ParameterSource::Field(visible) if visible.entity == target.id => {
+                target.field(&visible.field)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// What a write proof needs to know about the port it drives.
+pub(super) struct WriteShape<'a> {
+    pub(super) port_suffix: &'a str,
+    pub(super) port_package: Package,
+    /// Whether `execute` takes the row's key before its input.
+    pub(super) keyed: bool,
+    /// The fields the `Input` record declares, in order.
+    pub(super) inputs: &'a [&'a jails_model::Field],
+}
+
+/// The `Input` arguments, matching the row the fixtures stored.
+///
+/// A component reading a foreign key takes the parent's assigned value rather
+/// than a sample, for the same reason the row does: a sampled key names a row
+/// that is not there.
+fn input_arguments(
+    model: &AppModel,
+    target: &Entity,
+    inputs: &[&jails_model::Field],
+    substitutions: &BTreeMap<FieldId, String>,
+    imports: &mut BTreeSet<String>,
+) -> Option<String> {
+    let _ = target;
+    inputs
+        .iter()
+        .map(|field| {
+            if let Some(value) = substitutions.get(&field.id) {
+                return Some(value.clone());
+            }
+            import_declared_type(model, &field.ty, imports);
+            crate::emit_companion_test::sample(model, field, imports)
+        })
+        .collect::<Option<Vec<_>>>()
+        .map(|arguments| arguments.join(", "))
 }
 
 /// A row that has to exist before the target row can be stored.

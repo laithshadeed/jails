@@ -845,6 +845,21 @@
           ]
         }
       },
+      ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcCreateCommandIT.java": {
+        "bytes": "<1176 bytes elided>",
+        "kind": "java-test",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_op_note_create_write_it",
+          "compiler_pass": "capability-db-write",
+          "ejectable": true,
+          "semantic_ids": [
+            "cap_db",
+            "ent_note",
+            "op_note_create"
+          ]
+        }
+      },
       ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcOpenQueryIT.java": {
         "bytes": "<1385 bytes elided>",
         "kind": "java-test",
@@ -857,6 +872,21 @@
             "cap_db",
             "ent_note",
             "op_note_open"
+          ]
+        }
+      },
+      ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcRenameTransitionIT.java": {
+        "bytes": "<1450 bytes elided>",
+        "kind": "java-test",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_op_note_rename_write_it",
+          "compiler_pass": "capability-db-write",
+          "ejectable": true,
+          "semantic_ids": [
+            "cap_db",
+            "ent_note",
+            "op_note_rename"
           ]
         }
       },
@@ -1256,6 +1286,6 @@
     },
     "root": ".jails/generated"
   },
-  "projection_digest": "sha256:d0c3b0974be30dda1bf9ac4078375616ba08f23f9d44e91ffb9804647c1d13f4",
+  "projection_digest": "sha256:8ac4d0605afe805262d92d12dfddd2d72edc3601bc583fdd6e05ccf872f8bc68",
   "schema": "jails.compiler-lock.v2"
 }

@@ -336,8 +336,15 @@ fn unheld_maven_example_manifest_passes_real_verification() {
             // dispatcher with a body built from the model's own JSON samples.
             // Canonical emitted the adapters and nothing that proved them
             // until this pin was written.
-            reports: 15,
-            tests: 33,
+            //
+            // 15 -> 17 reports, 33 -> 35 tests: `MessageControllerTest` and
+            // `UserControllerTest`, from the `http` facet finally serving the
+            // resource it declares. It emitted a port nothing implemented, so
+            // the sentence above about canonical emitting an `HttpPort` "where
+            // legacy emitted a controller and its test" no longer describes a
+            // difference in shape -- it described a missing endpoint.
+            reports: 17,
+            tests: 35,
             failures: 0,
             errors: 0,
             skipped: 0,
@@ -361,8 +368,16 @@ fn unheld_maven_example_manifest_passes_real_verification() {
             // three defects nothing else could: a `--via` join that reached no
             // emitter, an `Instant` the driver cannot infer a type for, and a
             // `generated always as identity` key that made `save` impossible.
-            reports: 4,
-            tests: 6,
+            //
+            // 4 -> 7 reports, 6 -> 9 tests: the write half. `SendMessage` and
+            // `EnsureUser` are commands and `MarkAsRead` is a transition, and
+            // their `insert ... returning` and `update ... returning` were
+            // asserted by nothing -- so only the repository adapter's
+            // parameters went through `bound_value`, and an enum reached
+            // PostgreSQL raw. `Can't infer the SQL type to use for an instance
+            // of MessageDirection`, from a statement that compiled.
+            reports: 7,
+            tests: 9,
             failures: 0,
             errors: 0,
             skipped: 0,

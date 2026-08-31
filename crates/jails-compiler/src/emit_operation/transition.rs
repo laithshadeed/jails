@@ -202,9 +202,19 @@ pub(super) fn lower(
         .iter()
         .map(|field| {
             let value = if field.required {
-                format!("input.{}()", field.names.java_member)
+                crate::emit_sql::bound_value(
+                    model,
+                    field,
+                    &format!("input.{}()", field.names.java_member),
+                    &mut imports,
+                )
             } else {
-                format!("input.{}().orElse(null)", field.names.java_member)
+                optional_bound_value(
+                    model,
+                    field,
+                    &format!("input.{}()", field.names.java_member),
+                    &mut imports,
+                )
             };
             format!(
                 "        statement = statement.param(\"{}\", {value});\n",
@@ -217,13 +227,26 @@ pub(super) fn lower(
         .map(|field| {
             if field.required {
                 format!(
-                    "        statement = statement.param(\"guard_{}\", input.{}());\n",
-                    field.names.sql_column, field.names.java_member
+                    "        statement = statement.param(\"guard_{}\", {});\n",
+                    field.names.sql_column,
+                    crate::emit_sql::bound_value(
+                        model,
+                        field,
+                        &format!("input.{}()", field.names.java_member),
+                        &mut imports
+                    )
                 )
             } else {
                 format!(
-                    "        if (input.{}().isPresent()) {{\n            statement = statement.param(\"guard_{}\", input.{}().orElseThrow());\n        }}\n",
-                    field.names.java_member, field.names.sql_column, field.names.java_member
+                    "        if (input.{}().isPresent()) {{\n            statement = statement.param(\"guard_{}\", {});\n        }}\n",
+                    field.names.java_member,
+                    field.names.sql_column,
+                    crate::emit_sql::bound_value(
+                        model,
+                        field,
+                        &format!("input.{}().orElseThrow()", field.names.java_member),
+                        &mut imports
+                    )
                 )
             }
         })
@@ -326,4 +349,23 @@ fn updates<'a>(
                 && field.semantics.scope.is_none()
         })
         .collect())
+}
+
+/// The same conversion for a component that may be absent.
+///
+/// Unwrapped before converting and null after: a conversion applied to the
+/// `Optional` would not compile, and one applied after `orElse(null)` would
+/// call a method on null.
+fn optional_bound_value(
+    model: &AppModel,
+    field: &jails_model::Field,
+    accessor: &str,
+    imports: &mut BTreeSet<String>,
+) -> String {
+    let converted = crate::emit_sql::bound_value(model, field, "value", imports);
+    if converted == "value" {
+        format!("{accessor}.orElse(null)")
+    } else {
+        format!("{accessor}.map(value -> {converted}).orElse(null)")
+    }
 }

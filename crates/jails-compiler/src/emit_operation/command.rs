@@ -86,16 +86,36 @@ pub(super) fn lower(
         let value = if let Some(parameter) = rich_inputs.get(&field.id) {
             let member = crate::emit_java::parameter_member(parameter);
             if parameter.required && !parameter.optional_filter {
-                InsertValue::Parameter(format!("input.{member}()"))
+                InsertValue::Parameter(crate::emit_sql::bound_value(
+                    model,
+                    field,
+                    &format!("input.{member}()"),
+                    &mut imports,
+                ))
             } else {
-                InsertValue::Parameter(format!("input.{member}().orElse(null)"))
+                InsertValue::Parameter(optional_bound_value(
+                    model,
+                    field,
+                    &format!("input.{member}()"),
+                    &mut imports,
+                ))
             }
         } else if inputs.iter().any(|input| input.id == field.id) {
             let member = &field.names.java_member;
             if field.required {
-                InsertValue::Parameter(format!("input.{member}()"))
+                InsertValue::Parameter(crate::emit_sql::bound_value(
+                    model,
+                    field,
+                    &format!("input.{member}()"),
+                    &mut imports,
+                ))
             } else {
-                InsertValue::Parameter(format!("input.{member}().orElse(null)"))
+                InsertValue::Parameter(optional_bound_value(
+                    model,
+                    field,
+                    &format!("input.{member}()"),
+                    &mut imports,
+                ))
             }
         } else if let Some(value) = resolved_values.get(&field.id) {
             InsertValue::Parameter(value.clone())
@@ -399,4 +419,23 @@ fn unique_lookup(entity: &Entity, field: &Field) -> bool {
                 ConstraintKind::PrimaryKey | ConstraintKind::Unique
             ) && constraint.fields.as_slice() == std::slice::from_ref(&field.id)
         })
+}
+
+/// The same conversion for a component that may be absent.
+///
+/// Unwrapped before converting and null after: a conversion applied to the
+/// `Optional` would not compile, and one applied after `orElse(null)` would
+/// call a method on null.
+fn optional_bound_value(
+    model: &AppModel,
+    field: &jails_model::Field,
+    accessor: &str,
+    imports: &mut std::collections::BTreeSet<String>,
+) -> String {
+    let converted = crate::emit_sql::bound_value(model, field, "value", imports);
+    if converted == "value" {
+        format!("{accessor}.orElse(null)")
+    } else {
+        format!("{accessor}.map(value -> {converted}).orElse(null)")
+    }
 }
