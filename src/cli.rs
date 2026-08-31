@@ -380,6 +380,13 @@ impl From<TypeChangeStrategy> for jails_protocol::request::TypeChangeStrategy {
 pub(crate) struct Invocation {
     pub(crate) pretend: bool,
     pub(crate) debug: bool,
+    /// Leave the plan's follow-up effects for the reader to start.
+    ///
+    /// Presentation in the same sense as `pretend`: the files are written
+    /// either way and only what happens *after* them differs, which is why it
+    /// rides here rather than being threaded through the frontends that never
+    /// look at it.
+    pub(crate) no_start: bool,
     pub(crate) output: Output,
     pub(crate) diff: bool,
     pub(crate) ast: bool,
@@ -409,6 +416,14 @@ impl Invocation {
             pretend: true,
             ..self
         }
+    }
+
+    /// The same invocation, leaving the plan's effects for the reader.
+    ///
+    /// `--no-start` is declared on the subcommands that can have an effect
+    /// rather than globally, so it arrives after the invocation is built.
+    pub(crate) fn without_starting(self, no_start: bool) -> Self {
+        Self { no_start, ..self }
     }
 
     /// The same invocation, acting on a project the caller has resolved.
@@ -445,6 +460,10 @@ impl Invocation {
             plan_in: None,
             command_path: vec!["new".to_string()],
             root: Some(root),
+            // `jails new --app` seeds a project rather than standing in one,
+            // and its own `--no-start` is the request's, applied once the
+            // whole manifest is in.
+            no_start: true,
         }
     }
 

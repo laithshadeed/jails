@@ -1375,7 +1375,10 @@ fn a_gradle_project_gets_the_commands_that_do_not_need_maven() {
         assert!(stderr.contains("built by Gradle"), "{command}: {stderr}");
         assert!(stderr.contains("routes"), "{command}: {stderr}");
     }
-    let refused = jails_cmd(&root, None).args(["add", "db"]).output().unwrap();
+    let refused = jails_cmd(&root, None)
+        .args(["add", "db", "--no-start"])
+        .output()
+        .unwrap();
     assert!(!refused.status.success(), "add must not half-install");
 
     // doctor says so first, and does not report on a pom that is not there.

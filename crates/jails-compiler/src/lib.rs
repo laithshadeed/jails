@@ -569,6 +569,43 @@ impl Compiler {
         if let Some(class) = emit_component::entry_point(snapshot, &next_model) {
             reader_document_intents.push(DocumentIntent::SetMavenMainClass { class });
         }
+        // **What is left to do once the files are written.** A compose
+        // service jails declares is not running because it was declared, and
+        // the command that declared it is the one place a reader is looking.
+        // It rides on the plan rather than on the frontend so `--pretend`
+        // shows it, the exported bundle carries it, and apply cannot start
+        // something the reviewed plan did not name.
+        let compose_services = |tree: &RenderedTree| {
+            tree.reader_facets
+                .iter()
+                .filter_map(|(id, facet)| match &facet.kind {
+                    jails_contracts::ReaderFacetKind::ComposeService { service, .. } => {
+                        Some((id.clone(), service.clone()))
+                    }
+                    _ => None,
+                })
+                .collect::<BTreeMap<_, _>>()
+        };
+        let accepted = compose_services(&baseline);
+        // **Only what this transition introduces.** Every service the model
+        // declares is in `generated` on every compile, so starting all of
+        // them would make an unrelated `jails add csv` try to bring up a
+        // database -- and fail on a machine with no engine, over a capability
+        // that has nothing to do with one. The plan's effects are the plan's:
+        // what changed, not what exists.
+        let mut follow_up_effects: Vec<jails_contracts::EffectIntent> =
+            compose_services(&generated)
+                .into_iter()
+                .filter(|(id, service)| accepted.get(id) != Some(service))
+                .map(|(_, service)| service)
+                .map(|service| jails_contracts::EffectIntent {
+                    id: format!("effect_compose_up_{service}"),
+                    kind: "compose-up".to_string(),
+                    arguments: BTreeMap::from([("service".to_string(), service)]),
+                })
+                .collect();
+        follow_up_effects.sort_by(|left, right| left.id.cmp(&right.id));
+        follow_up_effects.dedup_by(|left, right| left.id == right.id);
         let summary = SemanticPlan {
             model_nodes: next_model.node_count(),
             managed_files: generated.files.len(),
@@ -580,7 +617,7 @@ impl Compiler {
                     .chain(generated.reader_facets.keys())
                     .collect::<BTreeSet<_>>()
                     .len(),
-            effects: 0,
+            effects: follow_up_effects.len(),
         };
         Ok(PlanDraft {
             next_model,
@@ -588,7 +625,7 @@ impl Compiler {
             generated,
             migrations,
             reader_document_intents,
-            follow_up_effects: Vec::new(),
+            follow_up_effects,
             summary,
             diagnostics: Vec::new(),
         })

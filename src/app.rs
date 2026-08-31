@@ -255,10 +255,10 @@ pub(crate) fn run(command: AppCommand, invocation: crate::Invocation) -> Result<
                 .and_then(|()| replay(manifest.as_deref(), invocation.pretending()))
         }
         AppCommand::Apply { manifest, no_start } => {
-            // The canonical replay has no external service effects to
-            // suppress, so `--no-start` has nothing to act on; `sync` refuses
-            // the flag by name for the same reason.
-            let _ = no_start;
+            // A manifest's capabilities are replayed through `add`, so its
+            // compose services are started the same way -- and suppressed the
+            // same way.
+            let invocation = invocation.without_starting(no_start);
             crate::model_command::ensure_owned(invocation.clone())
                 .and_then(|()| replay(manifest.as_deref(), invocation))
         }

@@ -86,6 +86,13 @@ fn main() -> std::process::ExitCode {
         plan_out: cli.plan_out,
         plan_in: cli.plan_in,
         command_path: cli::command_path_from_env(),
+        // **Only `add` starts a service, and that is the CLI's own shape.**
+        // `--no-start` exists on the commands that install or run something;
+        // `jails g scaffold` on a project that already declares a database
+        // has never brought one up, and making every mutation run the plan's
+        // effects would. The `Add` arm reads the flag; everything else leaves
+        // what is running alone.
+        no_start: true,
     };
     let failure_output = invocation.output;
     let failure_path = invocation.command_path.clone();
@@ -179,7 +186,7 @@ fn main() -> std::process::ExitCode {
             package,
             declare: None,
         } => {
-            let _ = no_start;
+            let invocation = invocation.without_starting(no_start);
             return dispatch::finish_invocation(
                 model_command::ensure_owned(invocation.clone())
                     .and_then(|()| model_capability::add(capabilities, name, package, invocation)),

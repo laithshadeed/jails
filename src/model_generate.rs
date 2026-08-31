@@ -258,12 +258,21 @@ pub(crate) fn finish_generation_with_reader_paths(
     let execution = jails_workspace::execute(&root, &bundle)
         .map_err(|error| Failure::Told(format!("could not apply exact plan: {error}")))?;
     if invocation.output == Output::Human {
-        println!(
-            "applied model patch for {}: {} ({} files written)",
-            name,
-            execution.plan_digest.as_str(),
-            execution.files_written
-        );
+        // **"Nothing happened" and "everything happened and changed nothing"
+        // are different answers**, and only the second has files to name. A
+        // second `jails add csv` is the first, and a reader who cannot tell
+        // them apart cannot tell a no-op from a command that silently did not
+        // run.
+        if execution.files_written == 0 && execution.files_deleted == 0 {
+            println!("{name}: nothing to do, the project already matches the model");
+        } else {
+            println!(
+                "applied model patch for {}: {} ({} files written)",
+                name,
+                execution.plan_digest.as_str(),
+                execution.files_written
+            );
+        }
     } else {
         println!(
             "{}",
@@ -271,7 +280,61 @@ pub(crate) fn finish_generation_with_reader_paths(
                 .map_err(|error| Failure::Told(format!("could not encode execution: {error}")))?
         );
     }
-    Ok(())
+    run_follow_up_effects(&root, &bundle, &invocation)
+}
+
+/// Do what the reviewed plan said was left once the files were written.
+///
+/// **The effect is in the plan, not in this function's judgement.** A compose
+/// service jails declares is not running because it was declared, and the
+/// command that declared it is the one place a reader is looking -- so the
+/// same command starts it, `--no-start` says not to, and the failure names
+/// that flag. Reading the intent off the bundle rather than re-deciding here
+/// is what makes `--pretend` and the exported bundle able to show it.
+///
+/// The files are already durable when this runs, so a failed effect is
+/// reported as a failed *effect*: the status is 1 because the services really
+/// are not up, and the message says the project itself is complete. Exiting 0
+/// would be worse -- `for c in db api; do jails add $c || fail; done` is how
+/// people write this, and a silent half-install is what it would hide.
+fn run_follow_up_effects(
+    root: &std::path::Path,
+    bundle: &jails_contracts::PlanBundle,
+    invocation: &Invocation,
+) -> Result<()> {
+    let services: Vec<&str> = bundle
+        .plan
+        .follow_up_effects
+        .iter()
+        .filter(|effect| effect.kind == "compose-up")
+        .filter_map(|effect| effect.arguments.get("service").map(String::as_str))
+        .collect();
+    if services.is_empty() {
+        return Ok(());
+    }
+    if invocation.no_start {
+        if invocation.output == Output::Human {
+            println!(
+                "  waiting  {} -- run `jails start` when you want {} up",
+                services.join(", "),
+                if services.len() == 1 { "it" } else { "them" }
+            );
+        }
+        return Ok(());
+    }
+    if jails_project::compose::up(root, &services, invocation.debug) {
+        return Ok(());
+    }
+    if invocation.output == Output::Human {
+        println!("  {:<8}{}", "(failed)", services.join(", "));
+        println!(
+            "Every file this command wrote are written and durable; only the services are not up."
+        );
+        println!(
+            "       fix: start the container engine and run `jails start`, or repeat with `--no-start`"
+        );
+    }
+    Err(Failure::Reported)
 }
 
 /// The tests this plan writes that will not run.

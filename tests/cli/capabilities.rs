@@ -438,7 +438,7 @@ fn add_db_installs_postgres_flyway_and_testcontainers_without_an_orm() {
     write_fake_maven(&fake, &["docker"], &log);
 
     let output = jails_cmd(&root, Some(&fake))
-        .args(["add", "db"])
+        .args(["add", "db", "--no-start"])
         .output()
         .unwrap();
     assert!(
@@ -504,7 +504,7 @@ fn add_db_on_spring_wires_docker_compose_support() {
 
     assert!(
         jails_cmd(&root, Some(&fake))
-            .args(["add", "db"])
+            .args(["add", "db", "--no-start"])
             .status()
             .unwrap()
             .success()
@@ -712,7 +712,7 @@ class ExtraSliceTest {
 
     assert!(
         jails_cmd(&root, Some(&fake))
-            .args(["add", "db"])
+            .args(["add", "db", "--no-start"])
             .status()
             .unwrap()
             .success()
@@ -855,7 +855,7 @@ fn add_kafka_stacks_onto_db_compose_and_remove_undoes_one_side() {
 
     assert!(
         jails_cmd(&root, Some(&fake))
-            .args(["add", "db", "kafka"])
+            .args(["add", "db", "kafka", "--no-start"])
             .status()
             .unwrap()
             .success()
@@ -909,7 +909,10 @@ fn remove_is_the_inverse_of_add_csv() {
             .unwrap()
             .success()
     );
-    let reader = common::generated(&root, "src/main/java/com/example/demo/adapters/CsvReader.java");
+    let reader = common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/CsvReader.java",
+    );
     assert!(reader.is_file(), "{}", common::managed_listing(&root));
 
     let output = jails_cmd(&root, None)
@@ -1006,7 +1009,7 @@ fn add_accepts_multiple_capabilities_in_one_invocation() {
     write_fake_maven(&fake, &["docker"], &log);
 
     let output = jails_cmd(&root, Some(&fake))
-        .args(["add", "db", "json", "testkit"])
+        .args(["add", "db", "json", "testkit", "--no-start"])
         .output()
         .unwrap();
     assert!(
@@ -1259,7 +1262,7 @@ fn add_db_upgrades_an_out_of_date_properties_block() {
 
     assert!(
         jails_cmd(&root, Some(&fake))
-            .args(["add", "db"])
+            .args(["add", "db", "--no-start"])
             .status()
             .unwrap()
             .success()
@@ -1554,7 +1557,7 @@ fn add_kafka_and_generate_event_compile_against_real_spring() {
 
     assert!(
         jails_cmd(&root, Some(&fake))
-            .args(["add", "kafka"])
+            .args(["add", "kafka", "--no-start"])
             .status()
             .unwrap()
             .success()
@@ -1721,7 +1724,7 @@ fn add_redis_wires_a_ttl_enforcing_store_and_a_compose_service() {
 
     assert!(
         jails_cmd(&root, Some(&fake))
-            .args(["add", "redis"])
+            .args(["add", "redis", "--no-start"])
             .status()
             .unwrap()
             .success()

@@ -5955,7 +5955,10 @@ fn dependency_reconciliation_crosses_the_kotlin_gradle_binary_boundary() {
 fn unsupported_capabilities_refuse_before_the_legacy_engine_can_write() {
     let root = model_project("model-capability-refusal", EMPTY_MODEL);
     let before = snapshot_tree(&root);
-    let refused = jails_cmd(&root, None).args(["add", "db"]).output().unwrap();
+    let refused = jails_cmd(&root, None)
+        .args(["add", "db", "--no-start"])
+        .output()
+        .unwrap();
     assert!(!refused.status.success());
     let stderr = String::from_utf8(refused.stderr).unwrap();
     assert!(stderr.contains("canonical"), "{stderr}");
@@ -7940,7 +7943,7 @@ fn canonical_redis_pack_keeps_source_and_compose_in_the_iterative_loop() {
     )
     .unwrap();
     let added = jails_cmd(&root, None)
-        .args(["add", "redis"])
+        .args(["add", "redis", "--no-start"])
         .output()
         .unwrap();
     assert!(
@@ -8285,7 +8288,7 @@ fn canonical_toxiproxy_pack_keeps_testkit_edits_and_runs_with_real_maven() {
     )
     .unwrap();
     let added = jails_cmd(&root, None)
-        .args(["add", "toxiproxy"])
+        .args(["add", "toxiproxy", "--no-start"])
         .output()
         .unwrap();
     assert!(
@@ -9048,7 +9051,10 @@ fn canonical_database_and_safe_field_evolution_are_one_exact_compiler_path() {
         String::from_utf8_lossy(&preview.stderr)
     );
     assert_eq!(snapshot_tree(&root), before_db, "db preview wrote files");
-    let db = jails_cmd(&root, None).args(["add", "db"]).output().unwrap();
+    let db = jails_cmd(&root, None)
+        .args(["add", "db", "--no-start"])
+        .output()
+        .unwrap();
     assert!(
         db.status.success(),
         "{}",
@@ -11277,7 +11283,10 @@ fn canonical_idempotency_appends_its_table_once_and_only_when_new() {
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(stderr.contains("keep receipts across restarts"), "{stderr}");
 
-    let stored = jails_cmd(&root, None).args(["add", "db"]).output().unwrap();
+    let stored = jails_cmd(&root, None)
+        .args(["add", "db", "--no-start"])
+        .output()
+        .unwrap();
     assert!(
         stored.status.success(),
         "{}",
@@ -11360,7 +11369,10 @@ fn add_db_on_a_v1_model_sets_the_storage_axis() {
     )
     .unwrap();
 
-    let added = jails_cmd(&root, None).args(["add", "db"]).output().unwrap();
+    let added = jails_cmd(&root, None)
+        .args(["add", "db", "--no-start"])
+        .output()
+        .unwrap();
     assert!(
         added.status.success(),
         "{}",
@@ -11603,7 +11615,10 @@ fn canonical_add_db_wires_the_shipped_test_on_the_command_that_declares_it() {
     )
     .unwrap();
 
-    let added = jails_cmd(&root, None).args(["add", "db"]).output().unwrap();
+    let added = jails_cmd(&root, None)
+        .args(["add", "db", "--no-start"])
+        .output()
+        .unwrap();
     assert!(
         added.status.success(),
         "{}",
@@ -11713,7 +11728,7 @@ fn canonical_eject_transfers_a_spring_only_capability_pack() {
     .unwrap();
 
     let added = jails_cmd(&root, None)
-        .args(["add", "kafka"])
+        .args(["add", "kafka", "--no-start"])
         .output()
         .unwrap();
     assert!(
