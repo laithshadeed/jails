@@ -65,13 +65,13 @@ const KNOWN_GENERATE_KEYS: &[&str] = &[
     "consumes",
 ];
 
-pub(super) fn read_manifest(path: &Path) -> Result<(Manifest, Vec<Intent>)> {
+pub(super) fn read_manifest(path: &Path) -> Result<(Manifest, Vec<GenerateArgs>)> {
     let text =
         fs::read_to_string(path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
     parse_manifest(&text).map_err(|e| format!("{}: {e}", path.display()).into())
 }
 
-pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<Intent>)> {
+pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<GenerateArgs>)> {
     let mut manifest = Manifest::default();
     let mut current: Option<GenerateIntent> = None;
     let mut resolved = Vec::new();

@@ -177,11 +177,22 @@ pub(super) fn seed_canonical_model(
     app: Option<&Path>,
     source: String,
 ) -> Result<()> {
-    // **`--app` keeps the project legacy, because `.jails/app.toml` *is* the
-    // legacy manifest.** Seeding a model beside it would give the project two
-    // editable sources, and `app apply` refuses a canonical project by name
-    // for exactly that reason. Until `model import` reads a manifest, a
-    // project created from one stays where its manifest can be applied.
+    // **`--app` keeps the project legacy, and the reason has changed.** It
+    // used to be that `app apply` refused a canonical project outright, so a
+    // seeded model would have left the manifest unappliable. That is no longer
+    // true: a manifest replays into the model row by row, through the same
+    // frontends `jails g` uses.
+    //
+    // What blocks it now is where those frontends look. `model_command::root`
+    // walks up from the *process* directory, and `jails new` stands in the
+    // parent of the project it is creating -- the same edge `compile_at`,
+    // `load_model_at`, `resolve_manifest_at` and `materialize_seed` exist to
+    // stop, one layer lower. Seeding a model here without extending that
+    // containment to the generate frontends would replay every row against
+    // whatever encloses the destination directory.
+    //
+    // So this is a root to thread, not a design to settle, and it is the last
+    // thing holding `new --app` on the legacy engine.
     if app.is_some() {
         return Ok(());
     }

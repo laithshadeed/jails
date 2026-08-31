@@ -4410,15 +4410,18 @@ fn canonical_projects_fail_closed_before_legacy_mutation_routes() {
         // reader's own code. `a_canonical_project_runs_its_own_formatter`
         // holds the new behaviour.
         //
-        // The declarative manifest is a second desired-state authority, and
-        // it was the one route into the legacy engine this table did not
-        // cover: `app apply` planned `jails.toml`, a ledger and capability
-        // Java outside `.jails/generated` against a model it never read.
-        // `init` writes that second authority and `plan` renders a transition
-        // the canonical executor cannot perform, so all three refuse.
+        // `app plan` and `apply` were here and are not any more. They planned
+        // `jails.toml`, a ledger and capability Java outside
+        // `.jails/generated` against a model they never read -- but the
+        // objection was to the *engine*, not to the file: a `[[generate]]` row
+        // is a `GenerateArgs`, the same value `jails g` parses. Replaying one
+        // into the model is an import, not a second editable source, and
+        // `a_manifest_replays_into_the_model_and_converges` holds it.
+        //
+        // `init` still refuses, and for the reason the other two stopped
+        // needing to: it *writes* the manifest, which beside a model is the
+        // second editable source the cutover forbids.
         vec!["app", "init"],
-        vec!["app", "plan"],
-        vec!["app", "apply"],
     ] {
         let before = snapshot_tree(&root);
         let output = jails_cmd(&root, None).args(&arguments).output().unwrap();
@@ -13489,5 +13492,114 @@ app Vault {
     assert!(
         !refused.contains("os error"),
         "and not an OS error about an internal path:\n{refused}"
+    );
+}
+
+/// `.jails/app.toml` becomes an import format rather than a second engine.
+///
+/// `app plan` and `app apply` refused a canonical project, which was right
+/// while the alternative was a parallel engine: the legacy route planned
+/// `jails.toml`, a ledger and capability Java outside `.jails/generated`
+/// against a model it never read. The objection was to the engine, not to the
+/// file. A `[[generate]]` row is a `GenerateArgs` -- the same value `jails g`
+/// parses -- so every row can go through the frontend that already knows how
+/// to declare it, and the manifest's own syntax is the only thing its parser
+/// knows that the CLI does not.
+///
+/// Row by row rather than one transition, which costs atomicity and buys
+/// something better: each frontend is idempotent, so an interrupted replay
+/// converges by being run again rather than by resuming a journal a canonical
+/// project does not have.
+#[test]
+fn a_manifest_replays_into_the_model_and_converges() {
+    let root = jdl_project(
+        "jdl-v1-app-replay",
+        r#"jdl 1
+app Books {
+ pkg com.example.books
+ java 26
+ platform plain
+ build maven
+ storage none
+}
+"#,
+    );
+    write_plain_fixture(&root);
+    fs::write(
+        root.join(".jails/app.toml"),
+        r#"schema = 1
+capabilities = ["json"]
+
+[[generate]]
+kind = "record"
+name = "Loan"
+fields = ["id:uuid", "days:int"]
+
+[[generate]]
+kind = "enum"
+name = "Shelf"
+fields = ["OPEN", "CLOSED"]
+"#,
+    )
+    .unwrap();
+
+    let applied = jails_cmd(&root, None)
+        .args(["app", "apply"])
+        .output()
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    for declaration in ["cap json", "entity Loan", "enum Shelf"] {
+        assert!(
+            model.contains(declaration),
+            "the manifest's rows should reach the model, missing `{declaration}`:\n{model}"
+        );
+    }
+    assert!(
+        root.join(".jails/generated/main/java/com/example/books/domain/Loan.java")
+            .is_file(),
+        "and be compiled into the managed tree"
+    );
+    assert!(
+        !root.join(".jails/ledger.toml").exists(),
+        "a canonical replay must not create a legacy ledger"
+    );
+
+    // Convergent: every row is already declared, so nothing is written.
+    let again = jails_cmd(&root, None)
+        .args(["app", "apply"])
+        .output()
+        .unwrap();
+    let again = String::from_utf8_lossy(&again.stdout).to_string();
+    assert!(
+        again.matches("(0 files written)").count() >= 3,
+        "a second replay declares nothing new:\n{again}"
+    );
+
+    // `plan` is the same replay, pretending.
+    let planned = jails_cmd(&root, None)
+        .args(["app", "plan"])
+        .output()
+        .unwrap();
+    assert!(
+        planned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
+
+    // `app init` still refuses: it writes the manifest, and a manifest beside
+    // a model is the second editable source the cutover forbids.
+    let refused = jails_cmd(&root, None)
+        .args(["app", "init"])
+        .output()
+        .unwrap();
+    assert!(
+        !refused.status.success()
+            && String::from_utf8_lossy(&refused.stderr).contains("does not route"),
+        "`app init` writes a second editable source and must still refuse"
     );
 }

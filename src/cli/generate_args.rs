@@ -26,7 +26,12 @@ use super::*;
 /// type derives `Args` contributes exactly the arguments the fields
 /// declare, so `jails generate --help` is unchanged and so is the
 /// `commands` walk over the same `clap::Command`.
-#[derive(clap::Args)]
+// `Debug` because `.jails/app.toml`'s parser now produces this type rather
+// than a manifest-shaped copy of it, and its tests assert on the errors a
+// malformed row produces -- `unwrap_err` needs to be able to render the Ok
+// side. `Clone` for the same reason `Invocation` has it: a replay hands the
+// same row to a frontend that takes it by value.
+#[derive(Clone, Debug, clap::Args)]
 pub(crate) struct GenerateArgs {
     pub(crate) kind: ArtifactKind,
     pub(crate) name: String,

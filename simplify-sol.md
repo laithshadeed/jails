@@ -2383,8 +2383,8 @@ freshly created canonical project and reading which ones refuse.
 |---|---|
 | `fmt` | **closed.** The legacy route formats a scratch tree and commits the diff, because the legacy engine generates into `src/` and a half-finished Spotless run leaves jails' own output half-rewritten. A canonical project keeps its output under `.jails/generated`, so nothing jails owns is in the formatter's path and the plain goal is both simpler and more honest. |
 | `adopt`, `modernize` | **not gaps.** Both are pre-canonical by design and say so: `adopt` maps a foreign project's directories onto layers before a model exists, and `modernize` raises the build before capture. They are legacy *users*, though, so deleting the engine means giving each a reader-file path that does not need a compiled model. |
-| `app plan`, `app apply` | `.jails/app.toml` is the legacy manifest and a canonical project refuses it, because two editable sources is the thing the cutover forbids. Closing it means retiring the manifest, not porting it -- its rows are the same intents the JDL frontends already accept. |
-| `new --app` | Deliberately exempt from seeding, for the same reason: the manifest is applied through the legacy engine inside the publication, so a model as well would be the second source. Goes when `app.toml` goes. |
+| `app plan`, `app apply` | **closed, and not by retiring the manifest.** This row said the fix was to delete the format, because its rows are the same intents the JDL frontends already accept. That last clause turned out to be the answer rather than the argument: a `[[generate]]` row *is* a `GenerateArgs`, the identical value `jails g` parses, so a manifest replays into the model through the frontends that already know how to declare each row. The objection was always to the parallel *engine* -- which planned `jails.toml`, a ledger and capability Java outside `.jails/generated` against a model it never read -- and a one-way replay is not a second editable source, for the same reason `model import` is not. Row by row rather than one transition: each frontend is idempotent, so an interrupted replay converges by being run again, where the legacy path needed a journal a canonical project does not have. `app init` still refuses, because it *writes* the manifest. |
+| `new --app` | Still exempt from seeding, **and the reason has changed**. It was that `app apply` refused a canonical project, so a seeded model would leave the manifest unappliable. What blocks it now is where the generate frontends look: `model_command::root` walks up from the *process* directory and `jails new` stands in the parent of the project it is creating -- the same edge `compile_at`, `load_model_at`, `resolve_manifest_at` and `materialize_seed` exist to stop, one layer lower. A root to thread, not a design to settle. |
 | a foreign project | **closed by `jails model init`.** A project jails never created has no model and no ledger, and no command could give it one: `model import` is one-way from a *legacy ledger* with a record-and-enum boundary. So every mutation in somebody else's repository was legacy, which is the case `minicom-public/spring` exists to represent. `model init` reads the app block off the project -- package, release, platform, build, all facts it already states -- writes it through the canonical executor, and adopts not one line of the reader's Java. |
 
 **The order that follows from this** is not the deletion map's order, because the
@@ -2396,8 +2396,14 @@ file format to retire rather than a subsystem to port.
    `jails model init`. This was the one that mattered -- without it the legacy
    engine was load-bearing for every foreign repository, and no amount of
    porting the rest would have changed that.
-2. Retire `.jails/app.toml`: `app plan`/`app apply`/`new --app` go with it, and
-   the proof applications under `examples/` move to JDL.
+2. ~~Retire `.jails/app.toml`.~~ **Mostly done, and by making it an importer
+   rather than deleting it.** `app plan` and `app apply` replay into the model;
+   the whole `examples/ledger-cli` manifest -- five capabilities and eight rows
+   -- goes through it and `mvn compile` produces the classes, so the proof
+   applications did not have to move to JDL to stop needing the engine.
+   `app init` refuses, as the one command that writes a second editable source.
+   `new --app` is what remains, and it is a root to thread rather than a format
+   to retire.
 3. `adopt` and `modernize` onto reader-file operations.
 4. `jails-drive` and `jails-report` off the legacy value types. **Half done,
    and the half that is done was not porting.** Counting the 111 references

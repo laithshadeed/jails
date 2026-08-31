@@ -9,6 +9,7 @@ mod manifest;
 use manifest::*;
 
 use crate::add::Capability;
+use crate::cli::GenerateArgs;
 use crate::generate::{self, ArtifactKind};
 use clap::{Subcommand, ValueEnum};
 use jails_engine::route::Intent;
@@ -84,7 +85,7 @@ struct GenerateIntent {
 }
 
 impl GenerateIntent {
-    /// The row, as the engine takes it.
+    /// The row, as `jails g` takes it.
     ///
     /// One type rather than two. `pending.md` §6.2: a `[[generate]]` row used
     /// to become a `ResolvedIntent` here, which became a `route::Intent` at
@@ -94,7 +95,7 @@ impl GenerateIntent {
     /// the deprecated `strategy_on`/`strategy_yields` spellings are resolved
     /// by the parser that read them, which is the only place that should ever
     /// have known they exist.
-    fn finish(self, number: usize) -> Result<Intent> {
+    fn finish(self, number: usize) -> Result<GenerateArgs> {
         let kind = self
             .kind
             .ok_or_else(|| format!("[[generate]] #{number} is missing `kind`"))?;
@@ -123,15 +124,19 @@ impl GenerateIntent {
                 .into());
             }
         }
-        Ok(Intent {
+        Ok(GenerateArgs {
             kind,
             name,
             fields: self.fields,
             timestamps: self.timestamps,
             indexes: self.indexes,
             package: self.package,
-            on: self.strategy_on,
-            yields: self.strategy_yields,
+            strategy_on: self.strategy_on,
+            strategy_yields: self.strategy_yields,
+            // Field evolution only, and a manifest declares no evolution:
+            // every row is a thing to exist, not a change to one that does.
+            default_literal: None,
+            backfill_file: None,
             via: self.via,
             order_by: self.order_by,
             limit: self.limit,
@@ -149,7 +154,7 @@ impl GenerateIntent {
 
 /// The recipe name as the ledger spells it -- clap's canonical value, never
 /// an alias, or one kind would be stored under two names.
-fn recipe_of(intent: &Intent) -> String {
+fn recipe_of(intent: &GenerateArgs) -> String {
     intent
         .kind
         .to_possible_value()
@@ -159,7 +164,7 @@ fn recipe_of(intent: &Intent) -> String {
 }
 
 /// The name the ledger row carries, which is what the duplicate check keys on.
-fn recorded_name_of(intent: &Intent) -> String {
+fn recorded_name_of(intent: &GenerateArgs) -> String {
     generate::recorded_name(intent.kind, &intent.name)
 }
 
@@ -173,7 +178,7 @@ fn recorded_name_of(intent: &Intent) -> String {
 /// `(recipe_of, recorded_name_of, package)`; this stays only for whole-intent
 /// equivalence.
 #[cfg(test)]
-fn fingerprint(intent: &Intent) -> String {
+fn fingerprint(intent: &GenerateArgs) -> String {
     format!(
         "{}|{}|{}|{}|{}|{}|{}|{}",
         recipe_of(intent),
@@ -182,8 +187,8 @@ fn fingerprint(intent: &Intent) -> String {
         intent.fields.join(","),
         intent.timestamps,
         intent.indexes.join(","),
-        intent.on.as_deref().unwrap_or(""),
-        intent.yields.as_deref().unwrap_or(""),
+        intent.strategy_on.as_deref().unwrap_or(""),
+        intent.strategy_yields.as_deref().unwrap_or(""),
     )
 }
 
@@ -221,11 +226,13 @@ fn refuse_manifest(command: &str) -> Result<()> {
 
 pub(crate) fn run(command: AppCommand, invocation: crate::Invocation) -> Result<()> {
     if crate::model_command::owns() {
-        return refuse_manifest(match command {
-            AppCommand::Init { .. } => "app init",
-            AppCommand::Plan { .. } => "app plan",
-            AppCommand::Apply { .. } => "app apply",
-        });
+        return match command {
+            // `app init` writes a manifest, which would be a second editable
+            // source beside the model. That one still refuses.
+            AppCommand::Init { .. } => refuse_manifest("app init"),
+            AppCommand::Plan { manifest } => replay(manifest.as_deref(), invocation.pretending()),
+            AppCommand::Apply { manifest, .. } => replay(manifest.as_deref(), invocation),
+        };
     }
     match command {
         AppCommand::Init { manifest } => crate::dispatch::mutate(invocation, false, |run| {
@@ -244,6 +251,49 @@ pub(crate) fn run(command: AppCommand, invocation: crate::Invocation) -> Result<
     }
 }
 
+/// Replay a manifest into the model, one row at a time.
+///
+/// **The manifest becomes an import format rather than a second engine**, and
+/// that is the difference between this and the refusal it replaces. A row is a
+/// `GenerateArgs` -- the same value `jails g` parses -- so every row goes
+/// through the frontend that already knows how to declare it, and every
+/// capability through `model_capability`. Nothing here decides what a row
+/// means; the manifest's own syntax is the only thing this file knows that the
+/// CLI does not.
+///
+/// Refusing was defensible while the alternative was a parallel engine: two
+/// *editable* sources is what the cutover forbids. A one-way replay is not
+/// one, for the same reason `model import` is not -- it writes declarations
+/// into the model and the model is what every later command reads.
+///
+/// **Row by row rather than one transition, and that is an improvement.**
+/// Each frontend is idempotent -- a second `g record Order id:uuid` reports
+/// `0 files written` -- so an interrupted replay converges by being run again,
+/// where the legacy path needed a journal to resume from. What it costs is
+/// atomicity: a manifest that fails on row nine leaves rows one to eight
+/// applied. The legacy engine's own answer to that was the journal, and a
+/// canonical project has no journal by design.
+fn replay(requested: Option<&Path>, invocation: crate::Invocation) -> Result<()> {
+    let root = crate::model_command::root()?;
+    let path = manifest_path(&root, requested)?;
+    let (manifest, rows) = read_manifest(&path)?;
+    // Every capability in one patch, then every row. The manifest already
+    // parsed its capability list into the closed vocabulary, so there is no
+    // second lookup to get wrong here.
+    if !manifest.capabilities.is_empty() {
+        crate::model_capability::add(
+            manifest.capabilities.clone(),
+            None,
+            None,
+            invocation.clone(),
+        )?;
+    }
+    for row in rows {
+        crate::model_generate_jdl::run(row, invocation.clone())?;
+    }
+    Ok(())
+}
+
 /// The whole manifest, declared as one transition.
 ///
 /// One pass, not two. V1 reconciled every capability a second time because a
@@ -257,7 +307,12 @@ fn declared(
     requested: Option<&Path>,
 ) -> Result<jails_engine::route::Outcome> {
     let path = manifest_path(run.project().root(), requested)?;
-    let (manifest, intents) = read_manifest(&path)?;
+    let (manifest, rows) = read_manifest(&path)?;
+    // The rows are `GenerateArgs`, the same value `jails g` parses, so the
+    // canonical path can replay a manifest through the ordinary frontends.
+    // The legacy engine takes its own shape, and the conversion that already
+    // existed for the CLI does the work.
+    let intents: Vec<Intent> = rows.into_iter().map(Into::into).collect();
     jails_engine::route::app_apply(run, &manifest.capabilities, &intents)
 }
 
@@ -344,8 +399,11 @@ mod tests {
 
         let (_, new_intents) = parse_manifest(canonical).unwrap();
         let (_, old_intents) = parse_manifest(&legacy).unwrap();
-        assert_eq!(new_intents[0].on.as_deref(), Some("WorkItem"));
-        assert_eq!(new_intents[0].yields.as_deref(), Some("WorkQueued"));
+        assert_eq!(new_intents[0].strategy_on.as_deref(), Some("WorkItem"));
+        assert_eq!(
+            new_intents[0].strategy_yields.as_deref(),
+            Some("WorkQueued")
+        );
         // Identical intents, so identical state keys: renaming the key in a
         // manifest must not make `app apply` see a new intent and refuse on
         // files that already exist.
