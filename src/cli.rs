@@ -455,7 +455,7 @@ impl Invocation {
     /// already names.
     pub(crate) fn owns_jdl(&self) -> bool {
         match &self.root {
-            Some(root) => root.join(crate::model_command::JDL_PATH).is_file(),
+            Some(root) => crate::model_command::owns_jdl_at(root),
             None => crate::model_command::owns_jdl(),
         }
     }

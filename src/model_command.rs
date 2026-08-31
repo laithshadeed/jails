@@ -70,12 +70,19 @@ pub(crate) fn read_source(model_path: &Path) -> Result<String> {
 /// `jails new --app` replays a manifest into the project it is creating, and
 /// the process directory is that project's *parent*.
 pub(crate) fn read_source_at(root: &Path, model_path: &Path) -> Result<String> {
-    std::fs::read_to_string(root.join(model_path)).map_err(|error| {
-        Failure::Told(format!(
+    match std::fs::read_to_string(root.join(model_path)) {
+        Ok(source) => Ok(source),
+        // The same rule as `load_model_at`: a project with no model reads as
+        // the model `model init` would write, so the first mutation patches a
+        // real seed rather than refusing over the file it is about to create.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !owns_at(root) => {
+            crate::model_init::derive(&jails_project::model::Project::load(root)?)
+        }
+        Err(error) => Err(Failure::Told(format!(
             "could not read canonical model `{}`: {error}",
             model_path.display()
-        ))
-    })
+        ))),
+    }
 }
 
 pub(crate) fn owns() -> bool {
@@ -118,10 +125,15 @@ pub(crate) fn ensure_owned(invocation: Invocation) -> Result<()> {
     if owns() {
         return Ok(());
     }
+    // A dry run must not write, and it no longer has to: `load_model_at`
+    // derives this same seed in memory, so the plan reported is the real one.
+    // Saying the model would be created is still worth a line -- it is the
+    // half of the transition the reader has not seen yet.
     if invocation.pretend {
-        return Err(Failure::Told(format!(
-            "this project has no application model, so there is nothing to plan against.\n       fix: run `jails model init` to write `{JDL_PATH}`, then repeat with `--pretend`"
-        )));
+        if invocation.output == Output::Human {
+            println!("--pretend: would create {JDL_PATH}");
+        }
+        return Ok(());
     }
     // `model_init` prints what it did and what changes for the reader; saying
     // it twice would be noise, and saying it here as well as there is how the
@@ -129,8 +141,19 @@ pub(crate) fn ensure_owned(invocation: Invocation) -> Result<()> {
     crate::model_init::run(invocation)
 }
 
+/// Does this project author its model in JDL?
+///
+/// **A project with no model yet answers yes**, because the seed
+/// `model init` writes is JDL: reading the absence as "TOML" sent the first
+/// mutation on a fresh project to render the compatibility dialect, which is
+/// the one being removed. `.jails/model.toml` is the only thing that makes
+/// this false, and only while it is on disk.
 pub(crate) fn owns_jdl() -> bool {
-    project_root().is_some_and(|root| root.join(JDL_PATH).is_file())
+    project_root().is_none_or(|root| owns_jdl_at(&root))
+}
+
+pub(crate) fn owns_jdl_at(root: &Path) -> bool {
+    !root.join(TOML_PATH).is_file()
 }
 
 pub(crate) fn sync(no_start: bool, invocation: Invocation) -> Result<()> {
@@ -339,6 +362,81 @@ fn check(manifest: &Path, frozen: bool, output: Output) -> Result<()> {
     Ok(())
 }
 
+/// What this plan would do, one line per path, in the order it would do it.
+///
+/// **A dry run that prints a count is not a dry run.** The question a reader
+/// asks it is which of *their* files it is about to rewrite, and a digest and
+/// an operation count answer neither -- the legacy preview listed the paths
+/// and losing that was a regression, not a simplification. Verbs are the
+/// executor's own distinctions rather than prose: a managed tree publishes,
+/// a reader file is patched or removed, a migration is appended and can never
+/// be rewritten.
+///
+/// The managed tree expands to its files. It is one operation carrying a
+/// whole after-image, so reporting it as `publish .jails/generated` hides
+/// exactly the thing that changed, and the tree manifest is already in the
+/// bundle -- no filesystem read, and nothing here can disagree with what
+/// apply will write.
+pub(crate) fn preview_lines(bundle: &jails_contracts::PlanBundle) -> Vec<String> {
+    use jails_contracts::PlannedOperation as Op;
+    let mut lines = Vec::new();
+    for operation in &bundle.plan.operations {
+        match operation {
+            Op::PublishMergedTree {
+                root,
+                before,
+                after,
+            } => {
+                let was = before
+                    .as_ref()
+                    .and_then(|digest| bundle.trees.get(digest))
+                    .map(|tree| {
+                        tree.entries
+                            .keys()
+                            .collect::<std::collections::BTreeSet<_>>()
+                    })
+                    .unwrap_or_default();
+                let now = bundle
+                    .trees
+                    .get(after)
+                    .map(|tree| {
+                        tree.entries
+                            .keys()
+                            .collect::<std::collections::BTreeSet<_>>()
+                    })
+                    .unwrap_or_default();
+                // Tree entries are already project-relative, so the root is
+                // the operation's subject rather than a prefix to prepend.
+                let _ = root;
+                for path in now.union(&was) {
+                    let verb = match (was.contains(*path), now.contains(*path)) {
+                        (false, _) => "create",
+                        (true, true) => "write",
+                        (true, false) => "delete",
+                    };
+                    lines.push(format!("  {verb:<8}{}", path.as_str()));
+                }
+            }
+            Op::ReplaceModelFile { path, before, .. }
+            | Op::ReplaceStateFile { path, before, .. } => {
+                let verb = if before.is_some() { "write" } else { "create" };
+                lines.push(format!("  {verb:<8}{}", path.as_str()));
+            }
+            Op::PatchReaderFile { path, before, .. } => {
+                let verb = if before.is_some() { "patch" } else { "create" };
+                lines.push(format!("  {verb:<8}{}", path.as_str()));
+            }
+            Op::RemoveReaderFile { path, .. } => {
+                lines.push(format!("  {:<8}{}", "delete", path.as_str()));
+            }
+            Op::AppendMigration { path, .. } => {
+                lines.push(format!("  {:<8}{}", "append", path.as_str()));
+            }
+        }
+    }
+    lines
+}
+
 fn plan(manifest: &Path, bundle_path: Option<&Path>, output: Output) -> Result<()> {
     let (source, model) = load_model(manifest, output)?;
     let bundle = compile(manifest, source.as_bytes(), model)?;
@@ -355,6 +453,9 @@ fn plan(manifest: &Path, bundle_path: Option<&Path>, output: Output) -> Result<(
             bundle.plan.summary.managed_files,
             bundle_path.map_or_else(String::new, |path| format!(", bundle {}", path.display()))
         );
+        for line in preview_lines(&bundle) {
+            println!("{line}");
+        }
     } else {
         println!("{}", String::from_utf8_lossy(&encoded));
     }
@@ -514,6 +615,21 @@ pub(crate) fn load_model_at(
     // explicit `--manifest` resolves to. See `resolve_manifest`.
     let source = match std::fs::read_to_string(root.join(manifest)) {
         Ok(source) => source,
+        // **A project with no model reads as the model `model init` would
+        // write**, so a read-only command has something real to answer from.
+        // `--pretend` used to refuse here, which made the dry run of every
+        // mutation the one thing a reader could not do on a project jails had
+        // not touched yet -- exactly when they most want to see the plan
+        // first. Deriving it twice is free and cannot disagree: the seed is a
+        // pure function of the project, and `model init` writes this same
+        // source. Only a missing default source falls back, so an unreadable
+        // model and a mistyped `--manifest` are still errors rather than a
+        // silent plan against something the reader did not write.
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound && manifest == Path::new(JDL_PATH) =>
+        {
+            crate::model_init::derive(&jails_project::model::Project::load(root)?)?
+        }
         Err(error) => return io_failure(manifest, &error, output),
     };
     let parsed = if manifest.extension().and_then(|value| value.to_str()) == Some("jdl") {

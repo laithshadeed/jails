@@ -124,7 +124,7 @@ fn refuse_if_modelled(root: &Path) -> Result<()> {
 }
 
 /// The app block this project already states.
-fn derive(project: &jails_project::model::Project) -> Result<String> {
+pub(crate) fn derive(project: &jails_project::model::Project) -> Result<String> {
     let root = project.root();
     let label = root
         .file_name()

@@ -317,6 +317,9 @@ pub(crate) fn report_plan(
             bundle.plan.operations.len(),
             bundle.plan.summary.managed_files
         );
+        for line in crate::model_command::preview_lines(bundle) {
+            println!("{line}");
+        }
         if invocation.ast {
             println!(
                 "model patch: {}",
