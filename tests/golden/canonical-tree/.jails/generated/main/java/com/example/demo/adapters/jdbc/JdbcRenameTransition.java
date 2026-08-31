@@ -11,7 +11,7 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 @Repository
-public final class JdbcRenameTransition implements RenameTransition {
+public class JdbcRenameTransition implements RenameTransition {
 
     private final JdbcClient jdbc;
 

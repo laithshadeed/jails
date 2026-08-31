@@ -76,6 +76,26 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
             .collect::<Vec<_>>()
             .join("\n")
     );
+    // **Declaring the same association twice is a no-op, not a duplicate.**
+    // Every other canonical frontend is idempotent -- a second `g record` with
+    // the same shape writes nothing -- and this appended, so replaying a
+    // manifest a second time produced "a relation name is declared more than
+    // once in this entity". Identity is the child and the member name; a
+    // *different* mapping under the same name is still the collision the
+    // parser refuses, which is what it is for.
+    // Returned early rather than prepared as a no-op patch: re-issuing
+    // `AddRelation` fails on the id -- "relation id `rel_...` already exists"
+    // -- because a relation is added rather than reconciled. Identity is the
+    // child and the member name; a *different* mapping under the same name is
+    // still the collision the parser refuses, which is what it is for.
+    if current_model
+        .relations
+        .values()
+        .any(|relation| relation.label == label && relation.child == child.id)
+    {
+        crate::model_generate::report_already_declared(&args.name);
+        return Ok(());
+    }
     let next_source = jails_model::insert_jdl_entity_member(
         &current_source,
         &child.names.java_type,

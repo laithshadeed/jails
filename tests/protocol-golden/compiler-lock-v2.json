@@ -618,7 +618,7 @@
         }
       },
       ".jails/generated/main/java/com/example/notes/adapters/jdbc/JdbcCreateCommand.java": {
-        "bytes": "<1401 bytes elided>",
+        "bytes": "<1395 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -662,7 +662,7 @@
         }
       },
       ".jails/generated/main/java/com/example/notes/adapters/jdbc/JdbcRenameTransition.java": {
-        "bytes": "<1218 bytes elided>",
+        "bytes": "<1212 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -1217,6 +1217,6 @@
     },
     "root": ".jails/generated"
   },
-  "projection_digest": "sha256:8372ee6e97a341c2e6c37e5e9c560b2655d512f0815ce953a2294dd5f1437cd0",
+  "projection_digest": "sha256:34331ec7f8ad7ff806b0e8cb884d79d0962d1d0ec9b5b65f7c9e737483f1ee3a",
   "schema": "jails.compiler-lock.v2"
 }

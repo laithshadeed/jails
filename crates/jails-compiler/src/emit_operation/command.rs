@@ -214,7 +214,13 @@ pub(super) fn lower(
         ),
     };
     let body = format!(
-        "@Repository\npublic final class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;{member}\n\n    public {type_name}(JdbcClient jdbc{parameter}) {{\n        this.jdbc = jdbc;{assignment}\n    }}\n\n    @Override\n{method_annotation}    public {} execute({context}{port_type}.Input input) {{\n{resolutions}        JdbcClient.StatementSpec statement = jdbc.sql(\"{insert} returning {returning}\");\n{params}{result}\n    }}\n}}",
+        // **Not `final`, because `@Transactional` forces a proxy.** Spring Boot
+        // defaults `spring.aop.proxy-target-class=true`, so the transaction advice is
+        // applied by CGLIB subclassing -- which cannot subclass a final class, and the
+        // context fails at startup with "Could not generate CGLIB subclass". The
+        // adapter implements its port, so a JDK proxy would do, but making the whole
+        // application proxy by interface to keep one `final` is the wrong trade.
+        "@Repository\npublic class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;{member}\n\n    public {type_name}(JdbcClient jdbc{parameter}) {{\n        this.jdbc = jdbc;{assignment}\n    }}\n\n    @Override\n{method_annotation}    public {} execute({context}{port_type}.Input input) {{\n{resolutions}        JdbcClient.StatementSpec statement = jdbc.sql(\"{insert} returning {returning}\");\n{params}{result}\n    }}\n}}",
         target.names.java_type
     );
     operation_file(

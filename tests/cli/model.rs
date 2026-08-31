@@ -13698,3 +13698,158 @@ entity Crate {
         "the scaffold's index should be in the model:\n{model}"
     );
 }
+
+/// Four operation flags the canonical frontend refused to translate, each of
+/// which the model, the JDL grammar and the compiler had supported all along.
+///
+/// The pattern is the one `--index` had: the node exists, the frontend does
+/// not populate it, and the flag is rejected as "not represented". Found by
+/// applying a proof-application manifest to a canonical project, because
+/// nothing else asks for them together.
+#[test]
+fn a_canonical_query_carries_its_join_ordering_and_optional_filters() {
+    let root = jdl_project(
+        "jdl-v1-operation-flags",
+        r#"jdl 1
+app Post {
+ pkg com.example.post
+ java 26
+ platform spring
+ build maven
+ storage postgres
+}
+enum Channel {
+ EMAIL
+ SMS
+}
+entity Sender {
+ id: uuid @pk
+ email: string
+ use repo
+}
+entity Note {
+ id: uuid @pk
+ senderId: uuid
+ body: string
+ channel: Channel
+ use repo
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    let synced = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+
+    // `--via` is a join, and its filter may name a column of the *joined*
+    // entity: that is what the flag is for.
+    let via = jails_cmd(&root, None)
+        .args([
+            "g", "query", "ByEmail", "email", "--on", "Note", "--via", "Sender",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        via.status.success(),
+        "`--via` should reach the model's own join:\n{}",
+        String::from_utf8_lossy(&via.stderr)
+    );
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(
+        model.contains("join Sender as sender on sender_id -> sender.id"),
+        "the join is derived from the two entities:\n{model}"
+    );
+    assert!(
+        model.contains("sender.email"),
+        "and a joined filter is qualified by the alias:\n{model}"
+    );
+
+    // `--order-by` keeps its direction, and `?` marks an optional filter
+    // rather than a nullable column.
+    let listing = jails_cmd(&root, None)
+        .args([
+            "g",
+            "query",
+            "Recent",
+            "channel:Channel?",
+            "--on",
+            "Note",
+            "--order-by",
+            "id desc",
+            "--limit",
+            "20",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        listing.status.success(),
+        "`--order-by ... desc` and an optional filter should both translate:\n{}",
+        String::from_utf8_lossy(&listing.stderr)
+    );
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(
+        model.contains("order by [id desc]"),
+        "the direction rides beside the field:\n{model}"
+    );
+    assert!(
+        model.contains("channel?"),
+        "and `?` is the optional-filter marker the grammar already parsed:\n{model}"
+    );
+
+    // `--on-conflict` is the retained-result insert.
+    let upsert = jails_cmd(&root, None)
+        .args([
+            "g",
+            "usecase",
+            "EnsureSender",
+            "email",
+            "--on",
+            "Sender",
+            "--on-conflict",
+            "email",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        upsert.status.success(),
+        "`--on-conflict` should reach `conflict_key`:\n{}",
+        String::from_utf8_lossy(&upsert.stderr)
+    );
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(
+        model.contains("conflict on [email]"),
+        "the conflict key is a declaration, not a flag jails drops:\n{model}"
+    );
+
+    // Declaring the same association twice is a no-op, not a duplicate
+    // relation the parser then refuses.
+    for _ in 0..2 {
+        let association = jails_cmd(&root, None)
+            .args([
+                "g",
+                "association",
+                "NoteSender",
+                "--on",
+                "Note",
+                "--yields",
+                "Sender",
+                "senderId=id",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            association.status.success(),
+            "re-declaring an association must be idempotent:\n{}",
+            String::from_utf8_lossy(&association.stderr)
+        );
+    }
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert_eq!(
+        model.matches("relation noteSender").count(),
+        1,
+        "and must not append a second relation under the same name:\n{model}"
+    );
+}

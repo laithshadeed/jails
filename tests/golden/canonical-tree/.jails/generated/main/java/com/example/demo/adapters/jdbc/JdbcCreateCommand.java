@@ -10,7 +10,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 @Repository
-public final class JdbcCreateCommand implements CreateCommand {
+public class JdbcCreateCommand implements CreateCommand {
 
     private final JdbcClient jdbc;
     private final ApplicationEventPublisher events;

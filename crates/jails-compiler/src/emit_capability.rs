@@ -231,13 +231,18 @@ pub(crate) fn lower_and_emit(
                     root,
                     kind,
                     file.suffix,
-                    render(
-                        template_for(file, boot_major),
+                    with_test_container(
+                        model,
+                        file.source_set,
                         &package,
-                        &default_package,
-                        &template_class,
-                        capability,
-                        boot_major,
+                        render(
+                            template_for(file, boot_major),
+                            &package,
+                            &default_package,
+                            &template_class,
+                            capability,
+                            boot_major,
+                        ),
                     ),
                 )?;
             }
@@ -358,6 +363,51 @@ fn emit(
             },
         )
         .map_err(CompileError::new)
+}
+
+/// Import the container config into a generated `@SpringBootTest`.
+///
+/// **Once `spring-boot-starter-jdbc` is in the build, JDBC auto-configuration
+/// demands a `DataSource` for every `@SpringBootTest`** -- including a
+/// capability's own test, which never touches a database. The compiler already
+/// asks the materializer to splice this into the tests *on disk*
+/// (`EnsureSpringTestImport`), and that intent cannot reach the tree the
+/// compiler is producing in the same pass. So the ones it renders carry it
+/// from here.
+///
+/// Without it the generated test has no `DataSource` and falls back to
+/// whatever `spring.datasource.url` names -- which on a developer's machine is
+/// a real database on `:5432`, so the test passes or fails against somebody's
+/// local schema instead of its own container. That is how it surfaced: a proof
+/// application's `CorsConfigTest` failed a Flyway checksum against a database
+/// three days older than the run.
+fn with_test_container(
+    model: &AppModel,
+    source_set: SourceSet,
+    package: &str,
+    body: String,
+) -> String {
+    if !matches!(source_set, SourceSet::Test) {
+        return body;
+    }
+    if !model
+        .capabilities
+        .values()
+        .any(|capability| capability.kind == "db")
+    {
+        return body;
+    }
+    let base = model.project.package_for(Package::Base);
+    // `extra` is the import *statement*, and only when the config is not in
+    // this file's own package. Passing the package name itself puts a bare
+    // `com.example.app` line in the middle of the imports, which is the shape
+    // the first draft produced and javac reported as "class, interface, enum,
+    // or record expected".
+    let extra = match package == base {
+        true => String::new(),
+        false => format!("import {base}.TestcontainersConfig;\n"),
+    };
+    jails_codemod::annotate::splice_import(&body, "TestcontainersConfig", &extra).unwrap_or(body)
 }
 
 fn template_for(file: &JavaFile, boot_major: Option<u32>) -> &'static str {

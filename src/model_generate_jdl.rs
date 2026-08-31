@@ -110,7 +110,18 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     let fields = if args.kind == ArtifactKind::Event {
         model_generate::event_component_declarations(&current_model, &entity_label, &args.fields)?
     } else {
-        model_generate::operation_field_labels(&current_model, &entity_label, &args.fields)?
+        model_generate::operation_field_labels_via(
+            &current_model,
+            &entity_label,
+            args.via
+                .as_deref()
+                .map(java_type_name)
+                .as_deref()
+                .map(java_to_label)
+                .as_deref(),
+            args.kind == ArtifactKind::Query,
+            &args.fields,
+        )?
     };
     let operation_label = java_to_label(&args.name);
     let operation_id = OperationId::parse(format!("op_{operation_label}"))
@@ -194,13 +205,35 @@ fn operation_declaration(
             let order_by = order_by
                 .split(',')
                 .map(str::trim)
+                // **`asc`/`desc` pass through.** `operation_order_list`
+                // has parsed a direction since the grammar existed --
+                // `order by [ timeStamp desc ]` -- and this refused to emit
+                // one, so a query whose whole point is "newest first" could
+                // not reach a canonical project. The field still goes through
+                // the checked resolver; only the direction rides beside it.
                 .map(|item| {
-                    if item.is_empty() || item.contains(char::is_whitespace) {
-                        return Err(Failure::Told(format!(
-                            "canonical query ordering does not yet represent directions in `{item}`.\n       fix: use a comma-separated field list without `asc`/`desc`"
-                        )));
+                    let (field, direction) = match item.split_once(char::is_whitespace) {
+                        Some((field, rest)) => (field, rest.trim()),
+                        None => (item, ""),
+                    };
+                    if field.is_empty() {
+                        return Err(Failure::Told(
+                            "canonical query ordering needs a field name.\n       fix: give `--order-by` a comma-separated field list"
+                                .to_string(),
+                        ));
                     }
-                    model_generate::operation_field_label(model, entity_label, item)
+                    let direction = match direction {
+                        "" | "asc" => "",
+                        "desc" => " desc",
+                        other => {
+                            return Err(Failure::Told(format!(
+                                "`{other}` is not an ordering direction.\n       fix: use `asc` or `desc`"
+                            )));
+                        }
+                    };
+                    let label =
+                        model_generate::operation_field_label(model, entity_label, field)?;
+                    Ok(format!("{label}{direction}"))
                 })
                 .collect::<Result<Vec<_>>>()?;
             if v1 {
@@ -230,6 +263,84 @@ fn operation_declaration(
             output.push_str(&format!("    emit {event}\n    deliver outbox\n"));
         } else {
             output.push_str(&format!("    emits: {event}\n    delivery: outbox\n"));
+        }
+    }
+    // `--via` is a `join`: `g query --via User` reads `users` alongside
+    // `messages`, on the `userId` the child already declares. The model has
+    // carried `Query.semantics.joins` and the JDL has parsed
+    // `join User as user on userId -> user.id` all along; only this frontend
+    // refused to translate the flag.
+    //
+    // The column is derived from the two entities rather than recorded, which
+    // is the legacy `join` module's rule: `<parent>Id` on the child, and the
+    // parent's own primary key on the other side. A reference the model does
+    // not declare is named rather than guessed at.
+    if args.kind == ArtifactKind::Query
+        && let Some(via) = &args.via
+    {
+        let parent = java_type_name(via);
+        let parent_label = java_to_label(&parent);
+        let parent_entity = model
+            .entities
+            .values()
+            .find(|entity| entity.label == parent_label)
+            .ok_or_else(|| {
+                Failure::Told(format!(
+                    "`{parent}` does not name a canonical entity.\n       fix: choose an entity declared in `{MODEL_PATH}`"
+                ))
+            })?;
+        let key = parent_entity
+            .fields
+            .iter()
+            .find(|field| field.primary_key)
+            .ok_or_else(|| {
+                Failure::Told(format!(
+                    "`{parent}` has no primary key, so nothing can join to it.\n       fix: declare one component `@pk`"
+                ))
+            })?;
+        let child = model
+            .entities
+            .values()
+            .find(|entity| entity.label == entity_label)
+            .and_then(|entity| {
+                entity
+                    .fields
+                    .iter()
+                    .find(|field| field.label == format!("{parent_label}_id"))
+            })
+            .ok_or_else(|| {
+                Failure::Told(format!(
+                    "`{}` declares no `{parent_label}_id` component, so it does not reference `{parent}`.\n       fix: add one, or drop `--via {parent}`",
+                    args.name
+                ))
+            })?;
+        let alias = &parent_label;
+        if v1 {
+            output.push_str(&format!(
+                "    join {parent} as {alias} on {} -> {alias}.{}\n",
+                child.label, key.label
+            ));
+        } else {
+            output.push_str(&format!(
+                "    via: {parent}\n    join_on: {} -> {}\n",
+                child.label, key.label
+            ));
+        }
+    }
+    // `--on-conflict` is `conflict on [field]`: one
+    // `insert ... on conflict (col) do nothing returning`, then a read of the
+    // row that was already there. The model has carried `conflict_key` and the
+    // JDL has parsed `conflict on [...]` all along; only this frontend refused
+    // to translate the flag, so `g usecase --on-conflict` could not reach a
+    // canonical project at all.
+    if args.kind == ArtifactKind::Usecase
+        && let Some(component) = &args.on_conflict
+    {
+        let label = model_generate::operation_field_label(model, entity_label, component)?;
+        if v1 {
+            output.push_str(&format!("    conflict on [{label}]\n"));
+        } else {
+            output.push_str(&format!("    conflict_on: {label}\n"));
         }
     }
     if args.kind == ArtifactKind::Transition {
@@ -430,7 +541,15 @@ fn same_entity_contribution(
         && existing.label == requested.label
         && existing.names == requested.names
         && existing.active == requested.active
-        && existing.facets == requested.facets
+        // **A subset, like the fields and indexes below.** This asked for
+        // equality, so re-declaring an entity that had since gained a facet
+        // refused -- "already declared with a different shape" -- even though
+        // everything the request asks for is present. The minicom manifest
+        // declares `User` as a scaffold and again as a seed, so replaying it
+        // a second time hit exactly that, and the function's own name is
+        // `contribution`: what this request contributes must be there, not
+        // everything that is there must have come from this request.
+        && requested.facets.is_subset(&existing.facets)
         && existing.enum_constants == requested.enum_constants
         && requested
             .fields

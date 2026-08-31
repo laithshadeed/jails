@@ -172,6 +172,17 @@ pub(crate) struct PreparedMutation {
     pub(crate) authored_migration: Option<jails_contracts::RenderedMigration>,
 }
 
+/// Report a declaration that was already there.
+///
+/// Every canonical frontend is idempotent, and the ordinary path says so with
+/// `0 files written`. A frontend that can tell *before* preparing a patch --
+/// `g association`, where re-issuing `AddRelation` fails on the id rather than
+/// reconciling -- returns early instead, and says the same thing from here so
+/// the sentence lives with the rest of this module's output.
+pub(crate) fn report_already_declared(name: &str) {
+    println!("{name} is already declared (0 files written)");
+}
+
 pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
     finish_generation_with_reader_paths(prepared, &[])
 }
@@ -397,8 +408,8 @@ pub(crate) fn reject_unsupported_operation_options(
         || args.default_literal.is_some()
         || args.backfill_file.is_some()
         || !args.indexes.is_empty()
-        || args.via.is_some()
-        || args.on_conflict.is_some()
+        || (args.on_conflict.is_some() && profile != OperationProfile::Command)
+        || (args.via.is_some() && profile != OperationProfile::Query)
         || args.select.is_some()
         || !args.set.is_empty()
         || args.if_match.is_some()
@@ -433,10 +444,60 @@ pub(crate) fn operation_field_labels(
     entity: &str,
     fields: &[String],
 ) -> Result<Vec<String>> {
+    operation_field_labels_via(model, entity, None, false, fields)
+}
+
+/// The same resolution, with a joined entity's components in scope.
+///
+/// **A `--via` query's filter may name a component the target does not have**,
+/// and that is what the flag is for: `Message` has no `email`, so a query on
+/// it was reachable only by a caller that already knew the surrogate user id.
+/// `--via User` reads `users` alongside `messages`, and `email` is a column of
+/// the join rather than of the row. The model says so directly -- an operation
+/// parameter "may name a join alias that has no column on this table".
+///
+/// Target first, so a name both entities declare resolves against the one the
+/// query is on, which is where a reader would expect it to.
+pub(crate) fn operation_field_labels_via(
+    model: &AppModel,
+    entity: &str,
+    joined: Option<&str>,
+    optional_filters: bool,
+    fields: &[String],
+) -> Result<Vec<String>> {
     fields
         .iter()
-        .map(|field| operation_field_label(model, entity, field))
+        .map(|field| {
+            // **A trailing `?` on a query filter is not a nullable column.**
+            // `direction:MessageDirection?` means "filter by direction, or
+            // do not" -- three independent optional filters is eight queries
+            // written by hand -- and the model has carried `optional_filter`
+            // for it all along. Compared against the entity's own optionality
+            // it read as a disagreement, so the query refused.
+            match optional_filters && field.ends_with('?') {
+                true => Ok(format!(
+                    "{}?",
+                    resolve(model, entity, joined, field.trim_end_matches('?'))?
+                )),
+                false => resolve(model, entity, joined, field),
+            }
+        })
         .collect()
+}
+
+fn resolve(model: &AppModel, entity: &str, joined: Option<&str>, field: &str) -> Result<String> {
+    match operation_field_label(model, entity, field) {
+        Ok(label) => Ok(label),
+        // Qualified by the join's alias, because that is how the model names a
+        // column that is not on this table: an unqualified `email` is checked
+        // against the target and rejected, while `user.email` is the join's.
+        Err(error) => match joined {
+            Some(joined) => operation_field_label(model, joined, field)
+                .map(|label| format!("{joined}.{label}"))
+                .map_err(|_| error),
+            None => Err(error),
+        },
+    }
 }
 
 /// The payload components of an event, where a typed token means something a

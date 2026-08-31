@@ -258,6 +258,7 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
             let mut imports = BTreeSet::from([domain_import(model, entity)]);
             let input = if command.semantics.parameters.is_empty() {
                 let fields = fields(entity, &command.fields)?;
+                import_declared_types(model, &fields, &mut imports);
                 record_shape("Input", &fields, &mut imports)
             } else {
                 operation_record_shape(model, "Input", &command.semantics.parameters, &mut imports)?
@@ -277,6 +278,7 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
             let mut imports =
                 BTreeSet::from(["java.util.List".to_string(), domain_import(model, entity)]);
             let fields = fields(entity, &query.filters)?;
+            import_declared_types(model, &fields, &mut imports);
             let input = indent(&record_shape("Input", &fields, &mut imports), 4);
             let context = operation_context(model, entity, &mut imports);
             let type_name = with_suffix(&operation.names.java_type, "Query");
@@ -296,6 +298,7 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
             let mut imports = BTreeSet::from([domain_import(model, entity)]);
             let key_type = java_type(primary_key, &mut imports);
             let fields = fields(entity, &transition.fields)?;
+            import_declared_types(model, &fields, &mut imports);
             let input = indent(&record_shape("Input", &fields, &mut imports), 4);
             let context = operation_context(model, entity, &mut imports);
             let type_name = with_suffix(&operation.names.java_type, "Transition");
@@ -448,6 +451,42 @@ fn record_shape(type_name: &str, fields: &[&Field], imports: &mut BTreeSet<Strin
     record_shape_from_components(type_name, &components, imports)
 }
 
+/// Import a project type the model declares, when the record needs it.
+///
+/// **`java_type_ref` imports an external type only when it is fully
+/// qualified**, which a model-declared entity never is -- so an operation
+/// `Input` in `application.queries` carrying a `MessageDirection` compiled
+/// against a symbol it never imported. The entity's own record gets away with
+/// it by living in the same package; nothing above the domain does.
+///
+/// Called from every shape that can carry one rather than from `record_shape`,
+/// which has no model to ask.
+fn import_declared_type(model: &AppModel, ty: &TypeRef, imports: &mut BTreeSet<String>) {
+    let TypeRef::External(name) = ty else {
+        return;
+    };
+    if name.contains('.') {
+        return;
+    }
+    if model
+        .entities
+        .values()
+        .any(|entity| &entity.names.java_type == name)
+    {
+        imports.insert(format!(
+            "{}.{name}",
+            model.project.package_for(Package::Domain)
+        ));
+    }
+}
+
+/// The same, for every field a record shape is about to render.
+fn import_declared_types(model: &AppModel, fields: &[&Field], imports: &mut BTreeSet<String>) {
+    for field in fields {
+        import_declared_type(model, &field.ty, imports);
+    }
+}
+
 fn operation_record_shape(
     model: &AppModel,
     type_name: &str,
@@ -490,6 +529,7 @@ fn operation_record_shape(
                     parameter.constraints.nonnegative,
                 )
             };
+            import_declared_type(model, ty, imports);
             Ok(RecordComponent {
                 name: &parameter.name,
                 ty,
