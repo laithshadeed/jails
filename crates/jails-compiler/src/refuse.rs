@@ -102,12 +102,26 @@ pub(crate) fn preflight(
             let jails_model::TypeRef::External(name) = &field.ty else {
                 continue;
             };
+            // **Everything the next model will put in the tree, plus what the
+            // reader already has.** A sealed interface or a strategy port is a
+            // unit rather than an entity, and a component can carry a type of
+            // its own -- all three are emitted by this same plan, so a field
+            // naming one is naming something that will be there. What the
+            // check is for is the name nothing anywhere accounts for.
             if name.contains('.')
                 || snapshot.external_types.types.contains_key(name)
                 || next_model
                     .entities
                     .values()
                     .any(|declared| &declared.names.java_type == name)
+                || next_model
+                    .units
+                    .values()
+                    .any(|unit| &unit.java_type == name)
+                || next_model
+                    .components
+                    .values()
+                    .any(|component| &component.name == name)
             {
                 continue;
             }

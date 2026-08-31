@@ -3066,10 +3066,12 @@ fn destroy_refuses_to_remove_a_type_used_by_a_retained_entity() {
         .output()
         .unwrap();
 
+    // The refusal names the field that would be left pointing at nothing, and
+    // the two ways out: declare the type again, or write it yourself.
     assert!(!refused.status.success(), "{refused:?}");
     let stderr = String::from_utf8_lossy(&refused.stderr);
-    assert!(stderr.contains("pointing at nothing"), "{stderr}");
-    assert!(stderr.contains("scaffold Post"), "{stderr}");
+    assert!(stderr.contains("status:Status"), "{stderr}");
+    assert!(stderr.contains("nothing declares"), "{stderr}");
     assert!(status.is_file());
     assert_eq!(snapshot_tree(&root), before, "refusal mutated the project");
 }

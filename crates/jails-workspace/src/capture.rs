@@ -370,6 +370,14 @@ fn index_reader_types(
         if !path.as_str().ends_with(".java") {
             continue;
         }
+        // **The reader's sources only.** The managed tree is what the plan is
+        // about to change, so a type that is in it now may not be in it after
+        // -- and counting one made `destroy enum Status` succeed while an
+        // entity still declared a `Status` field, leaving a record that no
+        // longer compiles. What the model declares is asked of the model.
+        if path.as_str().starts_with(".jails/") {
+            continue;
+        }
         let Ok(source) = std::str::from_utf8(&file.bytes) else {
             continue;
         };
