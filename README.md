@@ -531,6 +531,11 @@ there the unit is a whole service block rather than a setting.)
   or everything in `compose.yaml` when invoked with no arguments.
 - `jails stop [db|kafka]...` — stop those containers (`db` is the postgres
   service). Does not delete `compose.yaml`.
+- `jails logs [services...] [--follow] [--since <when>] [--tail <n>]` — bounded
+  logs from the compose services `compose.yaml` declares, defaulting to every
+  one of them and to the last 200 lines. Bounded by default because the case
+  this exists for is reading what a service said while it failed to start, and
+  an unbounded dump of a container that has been up for a week buries it.
 - `jails add|a api` — the error-handling slice every Spring service writes by
   hand: a `@RestControllerAdvice` extending Spring's own
   `ResponseEntityExceptionHandler`, so framework exceptions keep their
@@ -830,6 +835,15 @@ there the unit is a whole service block rather than a setting.)
 - `jails add|a ci` — a least-privilege GitHub Actions `clean verify` gate with
   timeouts, concurrency cancellation, Maven caching, and immutable action
   commit pins.
+- `jails add|a k8s` — a Helm chart under `deploy/chart` (`Chart.yaml`,
+  `values.yaml`, deployment, service, configmap and a `PrometheusRule`). The
+  management port is separate from the serving one, so liveness and readiness
+  probes are reachable without exposing actuator to traffic, and the rule ships
+  SLO burn-rate alerts over the metrics `add observability` registers. It
+  **refuses by name** rather than guessing: it needs Spring, plus `actuator`,
+  `observability` and `docker`, and says which one is missing and the command
+  that installs it. A chart that deploys an image the project does not build is
+  worse than no chart.
 - `jails add|a h2` — an in-process database with the browser console wired up.
   Generated DDL switches dialect with it: the driver decides, and the one type
   name that differs is `timestamptz`, which H2 knows only inside its PostgreSQL
@@ -1014,6 +1028,19 @@ there the unit is a whole service block rather than a setting.)
   contract so it stays safe mid-debug, and it can only answer whether anything
   *will* run the migrations — this answers whether they work. Exits non-zero on
   failure.
+- `jails introspect db --datasource <name> [--schema public] [--table <glob>]
+  [--format human|json|manifest]` — what a live PostgreSQL datasource actually
+  contains: tables, columns, indexes and constraints, read and reported without
+  mutating anything. `--services` decides what to do when the service is not
+  running, and `start` is refused rather than implied — a read-only command
+  that starts a container is not read-only.
+- `jails pull --datasource <name> [--schema public] [--table <glob>]
+  [--into-slice <slice>]` — the same evidence rendered as a **canonical import
+  proposal**: what the model would have to declare for the compiler to produce
+  the schema that is already there. It proposes; it does not write the model.
+  That is the same one-way, fail-closed rule `jails model import` follows, for
+  the same reason — a database is evidence about a schema, not an authority
+  over the model.
 - `jails kafka <topics|describe|send|poison|tail|dlt|lag|reset> [--no-start]`
   — the broker counterpart to `jails db`. Everything runs inside the compose
   broker container, so there is nothing to install: the Kafka CLI tools ship
@@ -1115,6 +1142,12 @@ there the unit is a whole service block rather than a setting.)
   compile + tests (`mvn clean verify`). Both need `jails add format`. The
   `clean` is load-bearing: Maven's incremental compile leaves deleted tests
   in `target/`, and Surefire will still run them.
+- `jails lint` — a closed set of source checks for APIs and shortcuts that
+  **compile** but conflict with what jails generates: `@MockBean` where Boot 4
+  wants `@MockitoBean`, and its siblings. No compiler and no Maven, so it
+  answers on a project that does not build. The same table is rendered into the
+  generated `AGENTS.md`, which is what stops the machine check and the guidance
+  given to a coding agent drifting apart.
 - `jails completion <bash|zsh|fish|elvish|powershell>` — shell completion.
 
 `generate`, `destroy`, `add` and `remove` all take `--package <sub>` to override where
@@ -1648,6 +1681,27 @@ applies, and inferring it would have `sync` install things nobody asked for.
 
 Run `jails adopt --pretend` first.
 
+`jails model init` is the step after it, and the two used to refuse each other:
+`adopt` records a `jails.toml` layout row through the legacy engine, so a
+ledger exists, and `model init` read any ledger as a reason to refuse — while
+`model import`, the command it pointed at, had no declaration to carry. A
+ledger is a reason to refuse only when it holds something the importer could
+carry. An unreadable one still refuses, and separately: it might hold
+declarations, and seeding a model beside them would strand the project's
+contents outside the model that now owns them.
+
+### `jails architecture baseline`
+
+`g scaffold` writes an ArchUnit fitness suite, and on a project written before
+jails arrived it fails over the reader's own code. `baseline` records today's
+violations so the rules fail only on **new** ones — the four manual steps
+setting up ArchUnit's freeze store, as one command.
+
+Nothing on disk is rewritten. The permission is granted for one run through
+system properties, so `archunit.properties` stays strict in the repository and
+a new violation still fails the build. A baseline that edited the rules would
+be indistinguishable, six months later, from never having had them.
+
 ### A path that addresses its filters
 
 ```
@@ -1819,9 +1873,18 @@ override in effect for exactly that reason.
 
 Deferred out of v1 on purpose — this is meant to stay a small tool:
 
-- **Kotlin-DSL Gradle** (`build.gradle.kts`). The Groovy DSL is read and
-  spliced; the Kotlin one is a different grammar and stays foreign rather than
-  half-understood.
+- **Kotlin-DSL Gradle** (`build.gradle.kts`) **on the legacy path.** The Groovy
+  DSL is read and spliced there; the Kotlin one is a different grammar and
+  stays foreign rather than half-understood, so `build.gradle.kts` is
+  recognised as a project root — the commands that need no build file keep
+  working — and nothing parses it.
+
+  The **canonical** path does handle both. Its Gradle adapter appends one
+  marked block and touches nothing else, so the two DSLs differ by the syntax
+  of that block rather than by a grammar it has to understand; a project
+  holding both build scripts refuses rather than picking one. That is the bar
+  `gradle.rs` was always held to — answer exactly or refuse, never guess — met
+  by narrowing the question instead of by writing a second parser.
 - A runtime bean/route view (booting the context and asking Spring itself).
   `routes` and `beans` read source instead, which is instant and works on a
   project that does not start — at the cost of anything decided at runtime.
