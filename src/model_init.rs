@@ -92,13 +92,27 @@ fn refuse_if_modelled(root: &Path) -> Result<()> {
             )));
         }
     }
-    if root.join(".jails/ledger.toml").is_file() {
-        return Err(Failure::Told(
+    // A ledger is a reason to refuse only when it holds something `model
+    // import` could carry. `jails adopt` writes one to record a `jails.toml`
+    // layout row and declares no entity at all, so the two commands a foreign
+    // project most naturally runs, in that order, refused each other:
+    // `model init` sent the reader to `model import`, and `model import`
+    // answered "no supported record or enum declarations". A dead end between
+    // two commands that are each other's obvious next step.
+    match jails_state::compat::read(root) {
+        jails_state::compat::MachineState::Absent => Ok(()),
+        // Distinct from absent on purpose: an unreadable ledger might hold
+        // declarations, and seeding a model beside them would strand a
+        // project's whole contents outside the model that now owns it.
+        jails_state::compat::MachineState::Unreadable(why) => Err(Failure::Told(format!(
+            "this project has a legacy ledger and it cannot be read, so whether it holds declarations is unknown: {why}\n       fix: restore or remove `.jails/ledger.toml`, then retry"
+        ))),
+        jails_state::compat::MachineState::Current(state) if state.applied.is_empty() => Ok(()),
+        jails_state::compat::MachineState::Current(_) => Err(Failure::Told(
             "this project has a legacy ledger, so its declarations can be carried across rather than discarded.\n       fix: run `jails model import`, which is the one-way door for a project jails already generated into"
                 .to_string(),
-        ));
+        )),
     }
-    Ok(())
 }
 
 /// The app block this project already states.

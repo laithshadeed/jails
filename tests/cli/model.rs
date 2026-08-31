@@ -13388,3 +13388,67 @@ entity Bed {
          neither a pass nor an accusation:\n{unreadable}"
     );
 }
+
+/// `jails adopt` and `jails model init` are each other's obvious next step in
+/// a foreign repository, and they refused each other.
+///
+/// `adopt` records a `jails.toml` layout row through the legacy engine, which
+/// creates a ledger. `model init` refused any ledger by file existence and
+/// sent the reader to `model import`; `model import` answered "no supported
+/// record or enum declarations", because a layout row declares no entity. A
+/// dead end reachable by running the two commands a foreign project most
+/// naturally runs, in the order it would naturally run them.
+///
+/// A ledger is a reason to refuse only when it holds something `model import`
+/// could carry.
+#[test]
+fn a_project_that_only_recorded_its_layout_can_still_become_canonical() {
+    let root = temp_dir("adopt-then-model-init");
+    write_plain_fixture(&root);
+    // A directory name jails' synonym table maps onto a layer, so `adopt` has
+    // something to record.
+    let renamed = root.join("src/main/java/com/example/demo/persistence");
+    fs::create_dir_all(&renamed).unwrap();
+    fs::write(
+        renamed.join("Repo.java"),
+        "package com.example.demo.persistence;\npublic class Repo {}\n",
+    )
+    .unwrap();
+
+    let adopted = jails_cmd(&root, None).arg("adopt").output().unwrap();
+    assert!(
+        adopted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&adopted.stderr)
+    );
+    assert!(
+        root.join(".jails/ledger.toml").is_file(),
+        "adopt records through the legacy engine, which is the premise of this test"
+    );
+    let layout = fs::read_to_string(root.join("jails.toml")).unwrap();
+    assert!(
+        layout.contains("adapters = \"persistence\""),
+        "the layout row is what adopt is for:\n{layout}"
+    );
+
+    let initialised = jails_cmd(&root, None)
+        .args(["model", "init"])
+        .output()
+        .unwrap();
+    assert!(
+        initialised.status.success(),
+        "a ledger holding no declarations must not block the on-ramp:\n{}",
+        String::from_utf8_lossy(&initialised.stderr)
+    );
+
+    // And the layout the reader adopted is the one the compiler projects with.
+    let explained = jails_cmd(&root, None)
+        .args(["model", "explain", "java-package"])
+        .output()
+        .unwrap();
+    let explained = String::from_utf8_lossy(&explained.stdout).to_string();
+    assert!(
+        explained.contains("com.example.demo.persistence"),
+        "the adopted layer name should reach the compiler's projection:\n{explained}"
+    );
+}
