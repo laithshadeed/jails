@@ -1166,9 +1166,10 @@ and clamped separately. Anything here that starts a build tool belongs under
 per-target times was within four seconds of the whole run's wall clock, so
 essentially nothing overlapped. `scripts/run-tests.py` (`mise run test`) runs
 every one of them at once, longest first, and **is what `verify-rewrite`
-invokes.** (There are 34 today; the count moves whenever a test file is added,
-so take it from `cargo test --workspace --no-run` rather than from any number
-written down here or in the transcripts below.)
+invokes**, and prints how many it found on every run. (33 today; the count
+moves whenever a test file is added, so take it from that line rather than
+from any number written down here or in the transcripts below — a `cargo test
+--workspace --no-run` artifact count is *not* the same number and gave 34.)
 
 It deliberately was not, and the entry that said so named G0's one answer to
 "is this green" as the reason. The real blocker was smaller and is fixed:
