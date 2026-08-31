@@ -353,8 +353,13 @@ fn unheld_maven_example_manifest_passes_real_verification() {
             // serves a resource. It is the one generated test that checks the
             // *reader's* code as well as jails' own, which is why it counts
             // for seven where a controller test counts for one.
-            reports: 18,
-            tests: 42,
+            //
+            // 18 -> 20 reports, 42 -> 46 tests: `MessageDtoTest` and
+            // `UserDtoTest`, two cases each. A scaffold declares the request
+            // boundary now, so every resource ships the request and response
+            // records and the test that holds them to what a caller supplies.
+            reports: 20,
+            tests: 46,
             failures: 0,
             errors: 0,
             skipped: 0,

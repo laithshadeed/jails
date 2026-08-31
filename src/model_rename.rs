@@ -20,15 +20,25 @@ pub(crate) struct Request {
 }
 
 pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
-    if request.strategy != RenameStrategy::PreserveTable {
+    // **Two strategies, and the difference is one migration.** Preserving the
+    // table renames the Java projection and leaves storage exactly as
+    // accepted; a single cutover renames the table too and says so in one
+    // forward `alter table ... rename to ...`. Rolling and expand/contract are
+    // campaigns -- several plans with an attestation between them -- and a
+    // campaign is not something one command can honestly claim to have done.
+    let cutover = match request.strategy {
+        RenameStrategy::PreserveTable => false,
+        RenameStrategy::SingleCutover => true,
+        _ => {
+            return Err(Failure::Told(
+                "canonical resource rename implements `--strategy preserve-table` and `single-cutover`.\n       fix: a rolling or expand/contract rename is a campaign of plans rather than one; run the cutover when the readers are ready"
+                    .to_string(),
+            ));
+        }
+    };
+    if request.table.is_some() && !cutover {
         return Err(Failure::Told(
-            "canonical resource rename currently implements only `--strategy preserve-table`.\n       fix: use preserve-table, or wait for the typed cutover/rolling migration backend"
-                .to_string(),
-        ));
-    }
-    if request.table.is_some() {
-        return Err(Failure::Told(
-            "`--table` would change storage during a preserve-table rename.\n       fix: remove `--table`; the entity's accepted SQL projection remains unchanged"
+            "`--table` would change storage during a preserve-table rename.\n       fix: remove `--table`, or use `--strategy single-cutover` to move the table explicitly"
                 .to_string(),
         ));
     }
@@ -81,9 +91,10 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             &request.to,
             &entity_label,
             entity.id.as_str(),
-            entity
-                .facets
-                .contains(&jails_model::Facet::Record)
+            // Pinned only when the table stays. A cutover lets the SQL name
+            // follow the new label, which is what makes the migration below
+            // the *whole* of the storage change rather than half of it.
+            (!cutover && entity.facets.contains(&jails_model::Facet::Record))
                 .then_some(sql_table.as_str()),
         )?
     } else {
@@ -100,11 +111,16 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                 "lossless model edit removed entity `{entity_id}`.\n       fix: restore the entity declaration and retry"
             ))
         })?;
+    let next_table = next_model
+        .entities
+        .get(&entity_id)
+        .map(|entity| entity.names.sql_table.clone())
+        .unwrap_or_else(|| sql_table.clone());
     let patch = ModelPatch::RenameEntityProjection {
         entity: entity_id.clone(),
         label: Some(next_label),
         java: Some(request.to.clone()),
-        table: None,
+        table: cutover.then(|| next_table.clone()),
     };
     let mut proof = current_model.clone();
     proof.apply(patch.clone()).map_err(Failure::Told)?;
@@ -118,8 +134,8 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         "kind": "rename-entity-projection",
         "entity": entity_id,
         "java": request.to,
-        "table": sql_table,
-        "storage": "preserved",
+        "table": next_table,
+        "storage": if cutover { "single-cutover" } else { "preserved" },
     }))
     .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
 
@@ -132,6 +148,10 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         next_source,
         patch,
         patch_bytes,
+        // The cutover's `alter table ... rename to` is *derived*: the patch
+        // states the policy and the compiler emits the statement beside every
+        // other schema change, so it lands in the reviewed plan rather than
+        // being smuggled in beside it.
         authored_migration: None,
     })
 }

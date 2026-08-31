@@ -218,8 +218,8 @@ impl CommitPlan {
             (Self::Apply(_), LoadedProject::Pending(_)) => Err(jails_support::Failure::Told(
                 "this project has a frozen conflict, and jails cannot finish one yet -- \
                  the resolve verbs are not built.\n       fix: move the marked files aside \
-                 and run the command again, or restore them from `jails history` and \
-                 `jails undo`. Both leave the project in a state jails can plan against."
+                 and run the command again. That leaves the project in a state jails can \
+                 plan against; your own version control is where the previous one lives."
                     .to_string(),
             )),
             (Self::Finalise(_) | Self::Abort(_), LoadedProject::Ready(_)) => Err(

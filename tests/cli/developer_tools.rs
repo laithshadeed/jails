@@ -84,7 +84,12 @@ fn contract_out_uses_preview_and_transaction_commit() {
     );
     let document = fs::read_to_string(target).unwrap();
     assert!(document.contains("\"openapi\": \"3.1.0\""));
-    assert!(root.join(".jails/receipts").is_dir());
+    // **No receipts, and that is the assertion.** A canonical project's
+    // durable record is `.jails/compiler.lock.json`; the journal a legacy
+    // commit wrote is what the cutover removes, and a command that quietly
+    // created one would put the project back on a ledger nothing reads.
+    assert!(root.join(".jails/compiler.lock.json").is_file());
+    assert!(!root.join(".jails/receipts").exists());
 }
 
 #[test]

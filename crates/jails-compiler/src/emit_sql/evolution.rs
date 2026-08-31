@@ -19,6 +19,14 @@ pub(super) struct EvolutionPolicies {
     pub(super) relation_removals: BTreeMap<String, String>,
     pub(super) retirements: BTreeMap<String, StorageRetirementPolicy>,
     pub(super) revivals: BTreeMap<String, String>,
+    /// The SQL name a single-cutover rename moves an entity's table to.
+    ///
+    /// A rename with no policy is refused, because the accepted table would
+    /// simply be left behind under its old name with nothing saying so. This
+    /// is the reader stating the move, and the derived migration is one
+    /// `alter table ... rename to`, which keeps the rows, the indexes and the
+    /// constraints -- the whole reason a cutover is one statement.
+    pub(super) table_renames: BTreeMap<String, String>,
 }
 
 pub(super) fn evolution_policies(patch: Option<&ModelPatch>) -> EvolutionPolicies {
@@ -69,6 +77,15 @@ pub(super) fn evolution_policies(patch: Option<&ModelPatch>) -> EvolutionPolicie
                 output
                     .retirements
                     .insert(entity.as_str().to_string(), policy.clone());
+            }
+            ModelPatch::RenameEntityProjection {
+                entity,
+                table: Some(table),
+                ..
+            } => {
+                output
+                    .table_renames
+                    .insert(entity.as_str().to_string(), table.clone());
             }
             ModelPatch::ReviveEntity {
                 entity,

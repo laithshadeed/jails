@@ -153,10 +153,25 @@ pub(crate) fn derive(
             )));
         }
         if old.names.sql_table != current.names.sql_table {
-            return Err(CompileError::new(format!(
-                "table `{}` was renamed to `{}` without a migration policy\n       fix: use canonical rename with an explicit cutover policy",
+            // **The cutover is one statement, and it is derived here.** The
+            // rename policy states the destination; emitting the migration
+            // from the same place every other schema change comes from is
+            // what keeps it in the reviewed plan rather than beside it.
+            if policies.table_renames.get(old.id.as_str()) != Some(&current.names.sql_table) {
+                return Err(CompileError::new(format!(
+                    "table `{}` was renamed to `{}` without a migration policy\n       fix: `jails rename resource {} <NewName> --strategy single-cutover`, or keep the table with `--strategy preserve-table`",
+                    old.names.sql_table, current.names.sql_table, old.names.java_type
+                )));
+            }
+            statements.push(format!(
+                "alter table {} rename to {};",
                 old.names.sql_table, current.names.sql_table
-            )));
+            ));
+            semantic_ids.insert(old.id.as_str().to_string());
+            descriptions.push(format!(
+                "rename_{}_to_{}",
+                old.names.sql_table, current.names.sql_table
+            ));
         }
         for old_field in old.fields.iter() {
             let Some(current_field) = current.field(&old_field.id) else {
