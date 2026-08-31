@@ -200,6 +200,7 @@ fn reject_unsupported_options(args: &GenerateArgs) -> Result<()> {
         || args.default_literal.is_some()
         || args.backfill_file.is_some()
         || !args.indexes.is_empty()
+        || !args.uniques.is_empty()
         || args.via.is_some()
         || args.order_by.is_some()
         || args.limit.is_some()

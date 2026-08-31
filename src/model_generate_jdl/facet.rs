@@ -378,6 +378,7 @@ fn reject_unsupported_options(args: &GenerateArgs, kind: Kind) -> Result<()> {
         || args.default_literal.is_some()
         || args.backfill_file.is_some()
         || !args.indexes.is_empty()
+        || !args.uniques.is_empty()
         || args.strategy_on.is_some()
         || args.strategy_yields.is_some()
         || args.via.is_some()

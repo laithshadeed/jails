@@ -49,6 +49,7 @@ const KNOWN_GENERATE_KEYS: &[&str] = &[
     "fields",
     "timestamps",
     "indexes",
+    "unique",
     "package",
     "on",
     "yields",
@@ -132,6 +133,7 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<GenerateArgs>)
                     }
                 }
                 "indexes" => intent.indexes = string_array(value, line_number, key)?,
+                "unique" => intent.uniques = string_array(value, line_number, key)?,
                 "method" => {
                     let value = string(value, line_number, key)?;
                     intent.method = Some(
@@ -430,7 +432,7 @@ mod tests {
             // A value of the right shape for each: the point is that the key
             // is *reached*, not that this particular value is meaningful.
             let value = match *key {
-                "fields" | "indexes" | "set" | "bind" => "[]".to_string(),
+                "fields" | "indexes" | "unique" | "set" | "bind" => "[]".to_string(),
                 "timestamps" => "true".to_string(),
                 "limit" => "10".to_string(),
                 "kind" => "\"record\"".to_string(),

@@ -256,6 +256,7 @@ fn reject_unsupported_options(args: &GenerateArgs) -> Result<()> {
         || args.default_literal.is_some()
         || args.backfill_file.is_some()
         || !args.indexes.is_empty()
+        || !args.uniques.is_empty()
         || (!strategy_types && !controller && args.strategy_on.is_some())
         || (!strategy_types && !controller && args.strategy_yields.is_some())
         || args.via.is_some()

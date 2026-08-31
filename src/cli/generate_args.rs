@@ -60,6 +60,18 @@ pub(crate) struct GenerateArgs {
     ///   --index 'customer_id, created_at desc'
     #[arg(long = "index", value_name = "COLUMNS")]
     pub(crate) indexes: Vec<String>,
+    /// A composite unique key on the generated table, as the comma-separated
+    /// component list it covers.
+    ///
+    /// Per-column `@unique` covers the single-column case; this is for the
+    /// composite one, and it is what a multi-tenant foreign key needs:
+    /// PostgreSQL requires the columns a reference names to carry a unique
+    /// constraint of their own, so `(workspaceId, id)` needs stating even
+    /// where `id` alone is already the key.
+    ///
+    ///   --unique 'workspaceId, id'
+    #[arg(long = "unique", value_name = "COMPONENTS")]
+    pub(crate) uniques: Vec<String>,
     /// For `strategy`, the type each implementation examines. For
     /// `usecase`, the existing scaffolded resource the operation creates;
     /// for `query`, the scaffolded resource it reads; for `durable-job`,

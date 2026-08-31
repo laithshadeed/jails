@@ -395,6 +395,7 @@ pub(super) fn reject_v1_options(args: &GenerateArgs, kind: ComponentKind) -> Res
         || args.default_literal.is_some()
         || args.backfill_file.is_some()
         || !args.indexes.is_empty()
+        || !args.uniques.is_empty()
         || args.via.is_some()
         || args.order_by.is_some()
         || args.limit.is_some()

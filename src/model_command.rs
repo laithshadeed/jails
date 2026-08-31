@@ -79,8 +79,17 @@ pub(crate) fn read_source_at(root: &Path, model_path: &Path) -> Result<String> {
 }
 
 pub(crate) fn owns() -> bool {
-    project_root()
-        .is_some_and(|root| root.join(JDL_PATH).is_file() || root.join(TOML_PATH).is_file())
+    project_root().is_some_and(|root| owns_at(&root))
+}
+
+/// The same question about a root the caller already knows.
+///
+/// `owns` walks up from the process directory, which is the wrong root for
+/// every command holding an explicit one -- `jails new --app` stands in the
+/// parent of the project it is creating. Same containment boundary as the
+/// `_at` family.
+pub(crate) fn owns_at(root: &Path) -> bool {
+    root.join(JDL_PATH).is_file() || root.join(TOML_PATH).is_file()
 }
 
 /// Give this project a model if it has none, so a mutation has somewhere to go.

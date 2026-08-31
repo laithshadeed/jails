@@ -25,7 +25,7 @@ timestamps = true
 [[generate]]
 kind = "scaffold"
 name = "Payment"
-fields = ["id:uuid@pk", "merchantId:uuid@index@scope", "idempotencyKey:string!@unique", "amountMinor:long@positive", "currency:string!", "method:PaymentMethod", "status:PaymentStatus@index", "version:long@nonnegative", "authorisedAt:instant?", "capturedAt:instant?"]
+fields = ["id:uuid@pk", "merchantId:uuid@index@scope", "idempotencyKey:string!@unique", "amountMinor:long@positive", "currency:string!", "method:PaymentMethod", "status:PaymentStatus@default(AUTHORISED)@index", "version:long@default(0)@nonnegative", "authorisedAt:instant?", "capturedAt:instant?"]
 timestamps = true
 indexes = ["merchant_id, created_at desc", "status, created_at"]
 
@@ -101,12 +101,13 @@ yields = "PaymentAuthorised"
 
 # Durable work carries the command it will invoke, so its fields are that
 # command's, in order. Jails refuses anything else rather than storing a
-# payload it cannot replay -- and it cannot derive them for you, because the
-# `@scope` markers that make the work tenant-safe do not survive into the
-# generated record.
+# payload it cannot replay -- and it cannot derive them for you. The markers
+# are the one difference: `@scope` says which entity *column* proves tenancy,
+# and a stored payload has no columns, so the component's parameters carry the
+# types and nothing else.
 [[generate]]
 kind = "durable-job"
 name = "SettlementDispatcher"
-fields = ["id:uuid", "merchantId:uuid@scope", "idempotencyKey:string!", "amountMinor:long", "currency:string!", "method:PaymentMethod"]
+fields = ["id:uuid", "merchantId:uuid", "idempotencyKey:string!", "amountMinor:long", "currency:string!", "method:PaymentMethod"]
 on = "AuthorisePayment"
 yields = "Payment"

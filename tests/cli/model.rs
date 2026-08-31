@@ -4193,14 +4193,22 @@ fn jdl_fast_test_is_a_capability_in_the_authoring_source() {
 fn canonical_projects_fail_closed_before_legacy_mutation_routes() {
     let root = model_project("model-no-legacy-routes", MODEL);
     apply_canonical_model(&root, "initial-no-legacy-routes");
-    for arguments in [
+    for case in [
         // `undo`, `history` and `show` were here and are gone entirely: they
         // read an authenticated receipt store, and a canonical project keeps
         // none. There is nothing to unwind because the plan is
         // content-addressed and re-running converges, which is what `undo`'s
         // own refusal already said -- so the honest form is not a command that
         // reports an empty list forever.
-        vec!["rename", "Note", "Memo"],
+        // The textual rename is not routed anywhere -- it is a different
+        // operation, and it works. What it refuses is a type the *model*
+        // declares, because carrying only the Java would leave the next
+        // compilation rendering the old name back.
+        (
+            "rename Note Memo",
+            vec!["rename", "Note", "Memo"],
+            "declared in this project's application model",
+        ),
         // `fmt` was here and is not any more: it does not reach the legacy
         // engine at all now. The ceremony that put it there -- format a
         // scratch tree, commit the diff -- exists because the legacy engine
@@ -4220,21 +4228,19 @@ fn canonical_projects_fail_closed_before_legacy_mutation_routes() {
         // `init` still refuses, and for the reason the other two stopped
         // needing to: it *writes* the manifest, which beside a model is the
         // second editable source the cutover forbids.
-        vec!["app", "init"],
+        ("app init", vec!["app", "init"], "does not route"),
     ] {
         // `adopt` and `modernize` were here and are not: both run *before* a
         // project has a model and neither claims anything a later command
         // reconciles, so they write directly and are the two commands a
         // canonical project may still run.
+        let (label, arguments, told) = case;
         let before = snapshot_tree(&root);
         let output = jails_cmd(&root, None).args(&arguments).output().unwrap();
-        assert!(
-            !output.status.success(),
-            "{arguments:?} unexpectedly passed"
-        );
+        assert!(!output.status.success(), "{label} unexpectedly passed");
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(stderr.contains("does not route"), "{arguments:?}: {stderr}");
-        assert_eq!(snapshot_tree(&root), before, "{arguments:?} wrote files");
+        assert!(stderr.contains(told), "{label}: {stderr}");
+        assert_eq!(snapshot_tree(&root), before, "{label} wrote files");
     }
 }
 

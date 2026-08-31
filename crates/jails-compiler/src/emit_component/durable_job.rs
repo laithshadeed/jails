@@ -296,13 +296,34 @@ fn sample(model: &AppModel, command: &Operation) -> Result<(String, String), Com
         match ty {
             TypeRef::Builtin(builtin) => {
                 arguments.push(builtin.semantics().sample.to_string());
-                alternates.push(builtin.semantics().alternate);
+                alternates.push(builtin.semantics().alternate.map(str::to_string));
             }
+            // **A declared enum is one jails can spell**, and it is the case
+            // this exists for: `PaymentMethod` is a component of the very
+            // command the job replays, so refusing it refused the job
+            // outright. Fully qualified rather than imported -- the sample
+            // lands inside a template whose import list is fixed, and a
+            // constant reference needs no import to compile.
             TypeRef::External(name) => {
-                return Err(CompileError::new(format!(
-                    "durable job cannot enqueue `{}`: its input carries `{name}`, which jails cannot serialize or sample\n       fix: use builtin-typed command inputs, or write the queue by hand",
-                    command.label
-                )));
+                let constants = enum_constants(model, &name).ok_or_else(|| {
+                    CompileError::new(format!(
+                        "durable job cannot enqueue `{}`: its input carries `{name}`, which jails cannot serialize or sample\n       fix: use builtin-typed or enum command inputs, or write the queue by hand",
+                        command.label
+                    ))
+                })?;
+                let domain = model.project.package_for(Package::Domain);
+                let qualified = |constant: &str| format!("{domain}.{name}.{constant}");
+                let Some(first) = constants.first() else {
+                    return Err(CompileError::new(format!(
+                        "durable job cannot enqueue `{}`: its input carries `{name}`, an enum with no constants\n       fix: declare at least one constant",
+                        command.label
+                    )));
+                };
+                arguments.push(qualified(first));
+                // The *different* payload the idempotency-conflict test needs.
+                // `None` where the enum has one constant, so the test says why
+                // rather than inventing a value.
+                alternates.push(constants.get(1).map(|second| qualified(second)));
             }
         }
     }
@@ -310,16 +331,31 @@ fn sample(model: &AppModel, command: &Operation) -> Result<(String, String), Com
     Ok((arguments.join(", "), conflict))
 }
 
+/// The constants of a declared enum, or `None` when this names something else.
+fn enum_constants(model: &AppModel, java_type: &str) -> Option<Vec<String>> {
+    let entity = model
+        .entities
+        .values()
+        .find(|entity| entity.active && entity.names.java_type == java_type)?;
+    entity.facets.contains(&jails_model::Facet::Enum).then(|| {
+        entity
+            .enum_constants
+            .iter()
+            .map(|constant| constant.java_name.clone())
+            .collect()
+    })
+}
+
 /// The idempotency test, or a note saying why there is none.
-fn conflict_test(arguments: &[String], alternates: &[Option<&'static str>]) -> String {
+fn conflict_test(arguments: &[String], alternates: &[Option<String>]) -> String {
     let Some(index) = alternates.iter().position(Option::is_some) else {
         return "    // No idempotency-conflict test: this command's input has no\n    // component jails can vary, so a second, *different* payload is not\n    // something it can construct. The store still refuses one.\n"
             .to_string();
     };
     let mut other = arguments.to_vec();
     other[index] = alternates[index]
-        .expect("the position above found a Some")
-        .to_string();
+        .clone()
+        .expect("the position above found a Some");
     format!(
         "    /**\n     * The same id twice is the same request; the same id with different work\n     * is a mistake, and reporting it is what makes the first case safe.\n     */\n    @Test\n    void reusingAnIdRequiresTheSamePayload() {{\n        var id = UUID.randomUUID();\n        store.enqueue(id, sample());\n        store.enqueue(id, sample());\n        assertThat(store.status(id).orElseThrow().attempts()).isZero();\n\n        assertThatThrownBy(() -> store.enqueue(id, new {{{{usecase}}}}Command.Input({})))\n                .isInstanceOf({{{{name}}}}Queue.IdempotencyConflictException.class);\n    }}\n",
         other.join(", ")

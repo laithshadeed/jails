@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 pub(crate) fn run(old: &str, new: &str, force: bool, invocation: Invocation) -> Result<()> {
     validate(old, new)?;
     let root = crate::model_command::root()?;
-    refuse_declared(&root.join(crate::model_command::JDL_PATH), old, new)?;
+    refuse_declared(&root, old, new)?;
 
     let mut rewrites: BTreeMap<PathBuf, (String, PathBuf)> = BTreeMap::new();
     let mut occurrences = 0_usize;
@@ -121,12 +121,15 @@ pub(crate) fn run(old: &str, new: &str, force: bool, invocation: Invocation) -> 
 /// that is not a partial success but a divergence: the next compilation renders
 /// the old name back, and on a stored one the adapter would read
 /// `select ... from readers` while the schema history still creates `members`.
-fn refuse_declared(model_path: &Path, old: &str, new: &str) -> Result<()> {
-    let source = match std::fs::read_to_string(model_path) {
-        Ok(source) => source,
-        Err(_) => return Ok(()),
-    };
-    let Ok(model) = crate::model_generate_jdl::parse(&source) else {
+fn refuse_declared(root: &Path, old: &str, new: &str) -> Result<()> {
+    if !crate::model_command::owns() {
+        return Ok(());
+    }
+    let manifest = crate::model_command::resolve_manifest(None)?;
+    // A model that does not currently parse is not a reason to refuse: this
+    // command is one of the ways somebody fixes a project that is broken.
+    let Ok((_, model)) = crate::model_command::load_model_at(root, &manifest, crate::Output::Human)
+    else {
         return Ok(());
     };
     if !model

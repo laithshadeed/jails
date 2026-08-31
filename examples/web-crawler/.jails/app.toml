@@ -10,14 +10,14 @@ fields = ["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"]
 [[generate]]
 kind = "scaffold"
 name = "CrawlRun"
-fields = ["id:uuid@pk", "seedUrl:uri", "status:CrawlStatus@index", "pagesVisited:long@nonnegative", "startedAt:instant?", "finishedAt:instant?"]
+fields = ["id:uuid@pk", "seedUrl:uri", "status:CrawlStatus@default(QUEUED)@index", "pagesVisited:long@default(0)@nonnegative", "startedAt:instant?", "finishedAt:instant?"]
 timestamps = true
 indexes = ["status, id"]
 
 [[generate]]
 kind = "scaffold"
 name = "CrawledPage"
-fields = ["id:uuid@pk", "crawlRunId:uuid@index", "url:uri", "statusCode:int", "discoveredAt:instant"]
+fields = ["id:uuid@pk", "crawlRunId:uuid@index", "url:uri", "statusCode:int", "discoveredAt:instant@default(now())"]
 timestamps = true
 indexes = ["crawl_run_id, discovered_at desc"]
 

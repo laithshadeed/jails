@@ -52,6 +52,12 @@ fn run_entity(
     invocation: Invocation,
 ) -> Result<()> {
     reject_unsupported_options(&args, profile)?;
+    if !args.uniques.is_empty() {
+        return Err(Failure::Told(
+            "a composite unique key needs a `jdl 1` model.\n       fix: run `jails model upgrade` and repeat the command"
+                .to_string(),
+        ));
+    }
     let model_path = PathBuf::from(MODEL_PATH);
     let current_source = crate::model_command::read_source(&model_path)?;
     let current_model = jails_model::parse_toml(&current_source)
@@ -353,6 +359,12 @@ const SCAFFOLD_FACETS: &[Facet] = &[
 struct EntityProfile {
     facets: &'static [Facet],
     timestamps: bool,
+    /// Whether this profile puts a table behind the entity.
+    ///
+    /// Only `scaffold` does, which is what makes `--unique` meaningful: a
+    /// composite unique is a constraint on columns, and a profile with no
+    /// columns has nowhere to put one.
+    table: bool,
     /// Whether `--path` pins this profile's collection route.
     ///
     /// Only `scaffold` has one: it is the profile that carries `Facet::Http`,
@@ -365,16 +377,19 @@ fn entity_profile(kind: ArtifactKind) -> Option<&'static EntityProfile> {
     static RECORD: EntityProfile = EntityProfile {
         facets: RECORD_FACETS,
         timestamps: false,
+        table: false,
         route: false,
     };
     static ENUM: EntityProfile = EntityProfile {
         facets: ENUM_FACETS,
         timestamps: false,
+        table: false,
         route: false,
     };
     static SCAFFOLD: EntityProfile = EntityProfile {
         facets: SCAFFOLD_FACETS,
         timestamps: true,
+        table: true,
         route: true,
     };
     match kind {
@@ -405,6 +420,7 @@ pub(crate) fn operation_profile(kind: ArtifactKind) -> Option<OperationProfile> 
 
 fn reject_unsupported_options(args: &GenerateArgs, profile: &EntityProfile) -> Result<()> {
     let unsupported = (args.timestamps && !profile.timestamps)
+        || (!args.uniques.is_empty() && !profile.table)
         || args.package.is_some()
         || args.default_literal.is_some()
         || args.backfill_file.is_some()
@@ -449,6 +465,7 @@ pub(crate) fn reject_unsupported_operation_options(
         || args.default_literal.is_some()
         || args.backfill_file.is_some()
         || !args.indexes.is_empty()
+        || !args.uniques.is_empty()
         || (args.on_conflict.is_some() && profile != OperationProfile::Command)
         || (args.via.is_some()
             && !matches!(profile, OperationProfile::Query | OperationProfile::Command))
@@ -476,7 +493,13 @@ pub(crate) fn reject_unsupported_operation_options(
             kind_name(args.kind)
         )));
     }
-    if args.strategy_on.is_none() {
+    // **An event may stand on its own, and the grammar has always said so.**
+    // `parse_operation(None)` accepts a top-level `event`, the linker gives it
+    // `on: None`, and the compiler emits its payload record from the declared
+    // parameters -- so a domain event that is nobody's row (`PageDiscovered`,
+    // carrying its own id and the moment it happened) was refused only by this
+    // frontend. Every other operation writes or reads a row and needs one.
+    if args.strategy_on.is_none() && profile != OperationProfile::Event {
         return Err(Failure::Told(format!(
             "canonical `{}` needs the entity it operates on.\n       fix: pass `--on <Entity>`",
             kind_name(args.kind)
@@ -608,6 +631,9 @@ pub(crate) fn event_component_declarations(
                 }
                 Ok(format!("{}: {}", parsed.label, parsed.type_name))
             }
+            None if entity.is_empty() => Err(Failure::Told(format!(
+                "event component `{token}` has no type, and this event names no entity to read one from.\n       fix: write `{token}:<type>`, or pass `--on <Entity>` to borrow the row's"
+            ))),
             None => operation_field_label(model, entity, token),
         })
         .collect()
@@ -722,7 +748,7 @@ impl ParsedField {
     }
 }
 
-fn kind_name(kind: ArtifactKind) -> String {
+pub(crate) fn kind_name(kind: ArtifactKind) -> String {
     use clap::ValueEnum as _;
     kind.to_possible_value()
         .map(|value| value.get_name().to_string())

@@ -90,22 +90,33 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     let current_source = read_model(&invocation)?;
     let v1 = is_v1_source(&current_source);
     let current_model = parse(&current_source)?;
-    let on = args
-        .strategy_on
-        .as_deref()
-        .expect("operation validation requires --on");
-    let requested_entity = java_to_label(on);
-    let entity = current_model
-        .entities
-        .values()
-        .find(|entity| entity.label == requested_entity || entity.names.java_type == on)
-        .ok_or_else(|| {
-            Failure::Told(format!(
-                "`{on}` does not name a canonical entity.\n       fix: choose an entity declared in `{MODEL_PATH}`"
-            ))
-        })?;
-    let entity_label = entity.label.clone();
-    let entity_java_name = entity.names.java_type.clone();
+    // **An event may name no entity**, and then the block it becomes is a
+    // top-level declaration rather than an entity member. Everything below
+    // that reads the target -- the managed field list, the borrowed `--via`
+    // component, where the block is spliced -- has nothing to read, so the
+    // empty label is the honest value rather than a lookup that would fail.
+    let (entity_label, entity_java_name) = match args.strategy_on.as_deref() {
+        None => (String::new(), String::new()),
+        Some(on) => {
+            let requested_entity = java_to_label(on);
+            let entity = current_model
+                .entities
+                .values()
+                .find(|entity| entity.label == requested_entity || entity.names.java_type == on)
+                .ok_or_else(|| {
+                    Failure::Told(format!(
+                        "`{on}` does not name a canonical entity.\n       fix: choose an entity declared in `{MODEL_PATH}`"
+                    ))
+                })?;
+            (entity.label.clone(), entity.names.java_type.clone())
+        }
+    };
+    let standalone = entity_java_name.is_empty();
+    if standalone && !v1 {
+        return Err(Failure::Told(format!(
+            "an event with no entity needs `jdl 1`.\n       fix: upgrade `{MODEL_PATH}` to JDL v1, or pass `--on <Entity>`"
+        )));
+    }
     // An event's payload can carry a component the row does not: see
     // `event_component_declarations`. Every other operation's field list is a
     // projection of the target, so it goes through the checked resolver.
@@ -129,9 +140,35 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     let operation_id = OperationId::parse(format!("op_{operation_label}"))
         .map_err(|error| Failure::Told(format!("could not assign operation identity: {error}")))?;
     let declaration = operation_declaration(&args, &current_model, &entity_label, &fields, v1)?;
+    // The same block one level out. An entity member is rendered nested; a
+    // top-level declaration is the identical text without that indent, so it
+    // is one transform rather than a second renderer.
+    let declaration = match standalone {
+        true => declaration
+            .lines()
+            .map(|line| line.strip_prefix("  ").unwrap_or(line))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        false => declaration,
+    };
+    let splice = |source: &str| -> Result<String> {
+        match standalone {
+            true => {
+                let mut next = source.to_string();
+                if !next.ends_with('\n') {
+                    next.push('\n');
+                }
+                next.push('\n');
+                next.push_str(declaration.trim_end());
+                next.push('\n');
+                Ok(next)
+            }
+            false => insert_entity_member(source, &entity_java_name, &declaration),
+        }
+    };
     if let Some(existing) = current_model.operations.get(&operation_id) {
         let without = remove_operation(&current_source, &args.name, operation_id.as_str())?;
-        let requested_source = insert_entity_member(&without, &entity_java_name, &declaration)?;
+        let requested_source = splice(&without)?;
         let requested_model = parse(&requested_source)?;
         let requested = requested_model
             .operations
@@ -157,7 +194,7 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
             authored_migration: None,
         });
     }
-    let next_source = insert_entity_member(&current_source, &entity_java_name, &declaration)?;
+    let next_source = splice(&current_source)?;
     let next_model = parse(&next_source)?;
     let operation = next_model
         .operations
@@ -238,6 +275,7 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
                 &fields,
                 v1,
                 args.path.as_deref(),
+                &args.uniques,
             )?
         }
         _ => unreachable!("run only accepts entity kinds"),
@@ -450,6 +488,7 @@ pub(crate) fn entity_declaration_at(
     fields: &[String],
     v1: bool,
     path: Option<&str>,
+    uniques: &[String],
 ) -> Result<String> {
     let mut labels = BTreeSet::new();
     let mut parsed = Vec::new();
@@ -491,6 +530,36 @@ pub(crate) fn entity_declaration_at(
         };
         output.push_str(&line);
         output.push('\n');
+    }
+    // **A composite unique is a constraint on the table, not a marker on one
+    // component**, so it is its own member. PostgreSQL requires the columns a
+    // foreign key names to carry a unique constraint of their own, which is
+    // why a tenant-scoped reference needs `(workspaceId, id)` stated even
+    // where `id` alone is already the key.
+    for columns in uniques {
+        let components = columns
+            .split(',')
+            .map(str::trim)
+            .filter(|component| !component.is_empty())
+            .map(|component| labels.get(&java_to_label(component)).cloned().ok_or_else(|| {
+                Failure::Told(format!(
+                    "`{component}` is not a component of `{java_name}`.\n       fix: name components this entity declares"
+                ))
+            }))
+            .collect::<Result<Vec<_>>>()?;
+        if components.is_empty() {
+            return Err(Failure::Told(
+                "a composite unique key needs at least one component.\n       fix: give `--unique` a comma-separated component list"
+                    .to_string(),
+            ));
+        }
+        if !v1 {
+            return Err(Failure::Told(
+                "a composite unique key needs a `jdl 1` model.\n       fix: run `jails model upgrade` and repeat the command"
+                    .to_string(),
+            ));
+        }
+        output.push_str(&format!("  unique [{}]\n", components.join(", ")));
     }
     output.push_str("}\n");
     Ok(output)

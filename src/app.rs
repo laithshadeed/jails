@@ -63,6 +63,8 @@ struct GenerateIntent {
     fields: Vec<String>,
     timestamps: bool,
     indexes: Vec<String>,
+    /// Composite unique keys the table carries beside its primary key.
+    uniques: Vec<String>,
     package: Option<String>,
     strategy_on: Option<String>,
     strategy_yields: Option<String>,
@@ -115,6 +117,7 @@ impl GenerateIntent {
             .fields
             .iter()
             .chain(self.indexes.iter())
+            .chain(self.uniques.iter())
             .chain(self.package.iter())
             .chain(self.strategy_on.iter())
             .chain(self.strategy_yields.iter())
@@ -136,6 +139,7 @@ impl GenerateIntent {
             fields: self.fields,
             timestamps: self.timestamps,
             indexes: self.indexes,
+            uniques: self.uniques,
             package: self.package,
             strategy_on: self.strategy_on,
             strategy_yields: self.strategy_yields,
@@ -233,11 +237,23 @@ fn refuse_manifest(command: &str) -> Result<()> {
 
 pub(crate) fn run(command: AppCommand, invocation: crate::Invocation) -> Result<()> {
     match command {
-        // `app init` writes a manifest, which would be a second editable
-        // source beside the model. That one still refuses.
-        AppCommand::Init { .. } => refuse_manifest("app init"),
-        AppCommand::Plan { manifest } => crate::model_command::ensure_owned(invocation.clone())
-            .and_then(|()| replay(manifest.as_deref(), invocation.pretending())),
+        // **`app init` writes a manifest, which beside a model is the second
+        // editable source the cutover forbids -- so it refuses on a canonical
+        // project and only there.** On a project with no model it is the
+        // on-ramp it always was: write the starter manifest, edit it, and
+        // `app apply` replays it into the model that first apply creates.
+        // Refusing everywhere left the manifest format with no way to be
+        // written at all.
+        AppCommand::Init { manifest } => match crate::model_command::owns() {
+            true => refuse_manifest("app init"),
+            false => init(manifest.as_deref(), invocation),
+        },
+        // A plan reports and writes nothing, model included: seeding one here
+        // would make `app plan` the command that turns a project canonical.
+        AppCommand::Plan { manifest } => {
+            crate::model_command::ensure_owned(invocation.clone().pretending())
+                .and_then(|()| replay(manifest.as_deref(), invocation.pretending()))
+        }
         AppCommand::Apply { manifest, no_start } => {
             // The canonical replay has no external service effects to
             // suppress, so `--no-start` has nothing to act on; `sync` refuses
@@ -247,6 +263,52 @@ pub(crate) fn run(command: AppCommand, invocation: crate::Invocation) -> Result<
                 .and_then(|()| replay(manifest.as_deref(), invocation))
         }
     }
+}
+
+/// Seed `.jails/app.toml` and hand the file to the reader.
+///
+/// **One file, whose bytes stop being jails' the moment it lands.** Nothing is
+/// recorded about it: what the manifest goes on to declare is `app apply`'s
+/// business, and a claim here would be a claim on a document jails does not
+/// write again. So it is a one-shot write rather than a transition, for the
+/// same reason `adopt` and `modernize` are.
+///
+/// Seeding is not regeneration, which is why an existing manifest is a refusal
+/// rather than a merge. The bytes below are a skeleton nobody keeps; a
+/// manifest that exists is a document somebody has been writing, and merging
+/// one into the other produces a file neither of them meant.
+fn init(manifest: Option<&Path>, invocation: crate::Invocation) -> Result<()> {
+    let root = crate::model_command::root()?;
+    let target = manifest.map_or_else(|| root.join(DEFAULT_MANIFEST), |path| root.join(path));
+    if target.exists() {
+        return Err(jails_support::Failure::Told(format!(
+            "application manifest already exists: {}.\n       fix: edit it, or pass --manifest with a new path",
+            target.display()
+        )));
+    }
+    let skeleton = format!(
+        "\
+# Generic application intent. Add capabilities, then one [[generate]] table per slice.
+schema = {}
+capabilities = []
+
+# [[generate]]
+# kind = \"scaffold\"
+# name = \"Note\"
+# fields = [\"id:uuid@pk\", \"title:string!\"]
+# timestamps = true
+",
+        jails_protocol::compatibility::APP_MANIFEST_SCHEMA
+    );
+    if invocation.pretend {
+        println!("  create  {}", target.display());
+        println!("nothing was written.");
+        return Ok(());
+    }
+    jails_support::apply::put_one_shot(&target, skeleton)?;
+    println!("  create  {}", target.display());
+    println!("Edit it, then run `jails app apply` to replay it into the model.");
+    Ok(())
 }
 
 /// Replay a manifest into the model, one row at a time.
@@ -288,6 +350,29 @@ pub(crate) fn replay_at(
     let invocation = invocation.at(root.to_path_buf());
     let path = manifest_path(root, requested)?;
     let (manifest, rows) = read_manifest(&path)?;
+    // **A plan against a project with no model reports the manifest itself.**
+    // Every frontend below needs a model to patch, and seeding one would make
+    // `app plan` the command that turns a project canonical -- so what a plan
+    // can honestly say here is what applying would declare, which is the whole
+    // question somebody asks before running `apply` the first time.
+    if invocation.pretend && !crate::model_command::owns_at(root) {
+        println!(
+            "  model   {} would be created",
+            crate::model_command::JDL_PATH
+        );
+        for capability in &manifest.capabilities {
+            println!("  declare capability {}", capability.label());
+        }
+        for row in &rows {
+            println!(
+                "  declare {} {}",
+                crate::model_generate::kind_name(row.kind),
+                row.name
+            );
+        }
+        println!("nothing was written.");
+        return Ok(());
+    }
     // Every capability in one patch, then every row. The manifest already
     // parsed its capability list into the closed vocabulary, so there is no
     // second lookup to get wrong here.

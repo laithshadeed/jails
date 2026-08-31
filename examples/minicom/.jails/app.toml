@@ -20,13 +20,13 @@ fields = ["TO_USER", "FROM_USER"]
 [[generate]]
 kind = "scaffold"
 name = "User"
-fields = ["id:long@pk", "email:string!@unique"]
+fields = ["id:long@pk@default(identity())", "email:string!@unique"]
 timestamps = true
 
 [[generate]]
 kind = "scaffold"
 name = "Message"
-fields = ["id:long@pk", "userId:long@index", "body:string!", "isRead:boolean", "timeStamp:instant@index", "direction:MessageDirection", "version:long@nonnegative"]
+fields = ["id:long@pk@default(identity())", "userId:long@index", "body:string!", "isRead:boolean", "timeStamp:instant@index", "direction:MessageDirection", "version:long@nonnegative"]
 timestamps = true
 indexes = ["user_id, time_stamp desc"]
 
@@ -48,8 +48,11 @@ yields = "User"
 # `isRead`, `timeStamp` and `version` are carried for the opposite reason: the
 # canonical compiler refuses to construct a required field it was not given,
 # where the legacy engine inserted whatever the column defaulted to and said
-# nothing. Carrying them is the honest shape until a manifest can declare a
-# typed field default -- JDL has `@default(...)` and this file cannot reach it.
+# nothing. Carrying them is one honest shape; the other is a typed field
+# default on the entity, which this file *can* reach -- a `fields` entry here
+# is the same string `jails g` parses, so `@default(...)` works in a manifest
+# exactly as it does on the command line. The proof apps beside this one use
+# it for audit columns a caller has no business supplying.
 [[generate]]
 kind = "usecase"
 name = "SendMessage"

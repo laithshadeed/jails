@@ -57,6 +57,11 @@ fn owns_terminal_output(path: &Path) -> bool {
         // legacy half is already allowed through `jails-report`.
         || relative == "src/model_status.rs"
         || relative == "src/parse_error.rs"
+        // `app init` prints the file it seeded and what to do with it, and
+        // `app plan` prints the manifest's declarations -- a plan that
+        // returned them to a caller with nowhere to print them would satisfy
+        // the type and not the requirement.
+        || relative == "src/app.rs"
         // The textual rename's whole contract is the list it prints before it
         // asks for `--force`: every file it will edit and every one it will
         // move, so `--dry-run` is a review rather than a promise.

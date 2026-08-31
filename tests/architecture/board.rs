@@ -223,7 +223,14 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // paths. `rename_source::display` shortens an absolute path for
                 // the list the reader reviews. None threads a root further
                 // down: each takes one, answers, and stops.
-                ceiling: 83,
+                // 83 -> 85 for `app::init` and `model_command::owns_at`, which
+                // are the containment boundary again: `app init` seeds a file
+                // in the root it was given, and `owns_at` is `owns` asked
+                // about a root the caller already holds rather than about the
+                // process directory. `jails new --app` stands in the parent of
+                // the project it is creating, which is the edge every `_at`
+                // above exists for.
+                ceiling: 85,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;

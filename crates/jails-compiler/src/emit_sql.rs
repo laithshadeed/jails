@@ -309,6 +309,38 @@ fn create_table(model: &AppModel, entity: &Entity) -> Result<Vec<String>, Compil
             ));
         }
     }
+    // **Composite keys are table constraints, not column markers.** A
+    // single-column `@pk`/`@unique` rides on its column above; a tuple has no
+    // column to ride on, and it is what a tenant-scoped foreign key needs --
+    // PostgreSQL requires the columns a reference names to carry a unique
+    // constraint of their own, so `(workspace_id, id)` needs stating even
+    // where `id` alone is already the key.
+    for constraint in entity.constraints.values() {
+        let names = constraint
+            .fields
+            .iter()
+            .map(|field| {
+                entity
+                    .field(field)
+                    .map(|field| field.names.sql_column.as_str())
+                    .ok_or_else(|| {
+                        CompileError::new(format!(
+                            "linked constraint `{}` references missing field `{field}`",
+                            constraint.label
+                        ))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let kind = match constraint.kind {
+            jails_model::ConstraintKind::PrimaryKey => "primary key",
+            jails_model::ConstraintKind::Unique => "unique",
+        };
+        columns.push(format!(
+            "    constraint {} {kind} ({})",
+            constraint.sql_name,
+            names.join(", ")
+        ));
+    }
     let mut output = vec![format!(
         "create table {} (\n{}\n);",
         entity.names.sql_table,
