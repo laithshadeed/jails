@@ -3646,7 +3646,7 @@ fn jdl_storage_preserve_and_revive_toggle_one_entity_declaration() {
             "id:uuid@pk",
             "title:string!(1..200)",
         ],
-        vec!["add", "db"],
+        vec!["add", "db", "--no-start"],
     ] {
         let output = jails_cmd(&root, None).args(arguments).output().unwrap();
         assert!(output.status.success());
@@ -6502,7 +6502,7 @@ fn canonical_database_project(label: &str) -> PathBuf {
     write_spring_fixture(&root);
     for arguments in [
         vec!["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
-        vec!["add", "db"],
+        vec!["add", "db", "--no-start"],
     ] {
         let output = jails_cmd(&root, None).args(arguments).output().unwrap();
         assert!(
@@ -8544,7 +8544,7 @@ fn canonical_database_query_keeps_the_iterative_loop_and_ejects_only_its_adapter
             "--limit",
             "25",
         ],
-        vec!["add", "db"],
+        vec!["add", "db", "--no-start"],
     ] {
         let output = jails_cmd(&root, None).args(arguments).output().unwrap();
         assert!(
@@ -8741,7 +8741,7 @@ fn canonical_database_commands_and_transitions_are_independent_iterative_boundar
             "--yields",
             "NoteRenamed",
         ],
-        vec!["add", "db"],
+        vec!["add", "db", "--no-start"],
     ] {
         let output = jails_cmd(&root, None).args(arguments).output().unwrap();
         assert!(
@@ -9685,7 +9685,7 @@ fn jdl_field_evolution_keeps_ids_edits_and_forward_schema_history() {
     write_spring_fixture(&root);
     for arguments in [
         vec!["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
-        vec!["add", "db"],
+        vec!["add", "db", "--no-start"],
     ] {
         let output = jails_cmd(&root, None).args(arguments).output().unwrap();
         assert!(output.status.success());
@@ -9915,7 +9915,7 @@ fn jdl_composite_index_is_nested_model_data_and_preserves_record_edits() {
     write_spring_fixture(&root);
     for arguments in [
         vec!["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
-        vec!["add", "db"],
+        vec!["add", "db", "--no-start"],
     ] {
         let output = jails_cmd(&root, None).args(arguments).output().unwrap();
         assert!(
@@ -9998,7 +9998,7 @@ fn jdl_index_removal_is_forward_only_atomic_and_preserves_reader_edits() {
     write_spring_fixture(&root);
     for arguments in [
         vec!["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
-        vec!["add", "db"],
+        vec!["add", "db", "--no-start"],
         vec!["resource", "index", "add", "Note", "title, id desc"],
     ] {
         let output = jails_cmd(&root, None).args(arguments).output().unwrap();
@@ -13809,7 +13809,7 @@ app Demo {
     write_spring_fixture(&root);
     for arguments in [
         vec!["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
-        vec!["add", "db"],
+        vec!["add", "db", "--no-start"],
         vec![
             "g",
             "query",
@@ -13983,7 +13983,7 @@ app Demo {
     );
     write_spring_fixture(&root);
     for arguments in [
-        vec!["add", "db"],
+        vec!["add", "db", "--no-start"],
         vec!["g", "scaffold", "Note", "id:long@pk", "title:string!"],
     ] {
         let output = jails_cmd(&root, None).args(&arguments).output().unwrap();
@@ -14076,7 +14076,7 @@ app Demo {
     );
     write_spring_fixture(&root);
     for arguments in [
-        vec!["add", "db"],
+        vec!["add", "db", "--no-start"],
         vec![
             "g",
             "scaffold",
@@ -14150,7 +14150,7 @@ app Demo {
     );
     write_spring_fixture(&root);
     for arguments in [
-        vec!["add", "db"],
+        vec!["add", "db", "--no-start"],
         vec!["g", "enum", "Shelf", "OPEN", "ARCHIVED"],
         vec![
             "g",
