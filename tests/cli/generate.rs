@@ -6849,9 +6849,10 @@ fn a_pinned_component_is_written_by_the_endpoint_and_not_by_the_caller() {
         );
     }
 
-    let service = common::generated(&root, "src/main/java/com/example/demo/service");
-    let implementation =
-        fs::read_to_string(service.join("StoringSendAdminMessageUseCase.java")).unwrap();
+    let implementation = common::read_generated(
+        &root,
+        "src/main/java/com/example/demo/service/StoringSendAdminMessageUseCase.java",
+    );
     assert!(
         implementation.contains("SenderType.ADMIN"),
         "{implementation}"
@@ -6863,7 +6864,10 @@ fn a_pinned_component_is_written_by_the_endpoint_and_not_by_the_caller() {
 
     // And the request cannot carry it: a command component would be a way for
     // the caller to say something else.
-    let command = fs::read_to_string(service.join("SendAdminMessageCommand.java")).unwrap();
+    let command = common::read_generated(
+        &root,
+        "src/main/java/com/example/demo/service/SendAdminMessageCommand.java",
+    );
     assert!(!command.contains("senderType"), "{command}");
 }
 
@@ -7025,8 +7029,10 @@ fn an_optional_precondition_reaches_the_sql_the_port_and_the_route() {
         );
     }
 
-    let main = common::generated(&root, "src/main/java/com/example/demo");
-    let adapter = fs::read_to_string(main.join("adapters/JdbcMarkSeenTransition.java")).unwrap();
+    let adapter = common::read_generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/JdbcMarkSeenTransition.java",
+    );
     // One statement, not two: with a version it reads `version = 5` and
     // guards, without one it reads `version = version` and does not. It is
     // also what gives the null parameter a type -- an untyped null compared
@@ -7041,17 +7047,26 @@ fn an_optional_precondition_reaches_the_sql_the_port_and_the_route() {
     assert!(adapter.contains(".param(\"seen\", true)"), "{adapter}");
 
     // Boxed, because `null` is a value the port has to be able to hold.
-    let port = fs::read_to_string(main.join("service/MarkSeenUseCase.java")).unwrap();
+    let port = common::read_generated(
+        &root,
+        "src/main/java/com/example/demo/service/MarkSeenUseCase.java",
+    );
     assert!(
         port.contains("Result execute(Long id, MarkSeenCommand command, Long expectedVersion);"),
         "{port}"
     );
 
     // And the request cannot carry the pinned flag at all.
-    let command = fs::read_to_string(main.join("service/MarkSeenCommand.java")).unwrap();
+    let command = common::read_generated(
+        &root,
+        "src/main/java/com/example/demo/service/MarkSeenCommand.java",
+    );
     assert!(!command.contains("seen"), "{command}");
 
-    let controller = fs::read_to_string(main.join("web/MarkSeenController.java")).unwrap();
+    let controller = common::read_generated(
+        &root,
+        "src/main/java/com/example/demo/web/MarkSeenController.java",
+    );
     assert!(
         controller.contains("@RequestHeader(value = HttpHeaders.IF_MATCH, required = false)"),
         "{controller}"
@@ -7126,15 +7141,23 @@ fn a_transition_insists_on_the_precondition_unless_it_was_asked_not_to() {
         );
     }
 
-    let main = common::generated(&root, "src/main/java/com/example/demo");
-    let adapter = fs::read_to_string(main.join("adapters/JdbcRenameTransition.java")).unwrap();
+    let adapter = common::read_generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/JdbcRenameTransition.java",
+    );
     assert!(adapter.contains("version = :version"), "{adapter}");
     assert!(!adapter.contains("coalesce"), "{adapter}");
 
-    let port = fs::read_to_string(main.join("service/RenameUseCase.java")).unwrap();
+    let port = common::read_generated(
+        &root,
+        "src/main/java/com/example/demo/service/RenameUseCase.java",
+    );
     assert!(port.contains("long expectedVersion);"), "{port}");
 
-    let controller = fs::read_to_string(main.join("web/RenameController.java")).unwrap();
+    let controller = common::read_generated(
+        &root,
+        "src/main/java/com/example/demo/web/RenameController.java",
+    );
     assert!(
         controller.contains("@RequestHeader(HttpHeaders.IF_MATCH)"),
         "{controller}"
@@ -7234,7 +7257,13 @@ fn a_form_bound_endpoint_is_proved_by_a_form_post() {
 
     // And the transition's second test names the answer rather than a status
     // it could reach for another reason.
-    let proof = fs::read_to_string(web.join("MarkNoteSeenControllerTest.java")).unwrap();
+    let proof = common::read_generated(
+        &root,
+        &format!(
+            "src/test/java/com/example/demo/web/{}",
+            "MarkNoteSeenControllerTest.java"
+        ),
+    );
     assert!(
         proof.contains("aRequestWithNoIfMatchIsAppliedUnconditionally"),
         "{proof}"
@@ -7296,8 +7325,10 @@ fn a_use_case_can_resolve_its_key_from_the_parent_the_caller_names() {
         );
     }
 
-    let main = common::generated(&root, "src/main/java/com/example/demo");
-    let adapter = fs::read_to_string(main.join("adapters/ResolvingPostNoteUseCase.java")).unwrap();
+    let adapter = common::read_generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/ResolvingPostNoteUseCase.java",
+    );
     // One statement: the key is *selected* from the parent's row rather than
     // read first and inserted second, so there is no window where the parent
     // is deleted between the two and no way to name a key you do not own.
@@ -7323,12 +7354,18 @@ fn a_use_case_can_resolve_its_key_from_the_parent_the_caller_names() {
     assert!(!adapter.contains(".param(\"author_id\""), "{adapter}");
 
     // "No such parent" is an expected outcome, so it is a return value.
-    let port = fs::read_to_string(main.join("service/PostNoteUseCase.java")).unwrap();
+    let port = common::read_generated(
+        &root,
+        "src/main/java/com/example/demo/service/PostNoteUseCase.java",
+    );
     assert!(
         port.contains("Optional<Note> execute(PostNoteCommand command);"),
         "{port}"
     );
-    let controller = fs::read_to_string(main.join("web/PostNoteController.java")).unwrap();
+    let controller = common::read_generated(
+        &root,
+        "src/main/java/com/example/demo/web/PostNoteController.java",
+    );
     assert!(
         controller.contains(".orElseGet(() -> ResponseEntity.notFound().build())"),
         "{controller}"

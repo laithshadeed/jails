@@ -1416,13 +1416,52 @@ pub fn generated(root: &Path, relative: &str) -> PathBuf {
             continue;
         };
         for to in *candidates {
-            let moved = root.join(tree).join(format!("{to}{rest}"));
-            if moved.exists() {
-                return moved;
+            for name in renamed_kinds(rest) {
+                let moved = root.join(tree).join(format!("{to}{name}"));
+                if moved.exists() {
+                    return moved;
+                }
             }
         }
     }
     root.join(relative)
+}
+
+/// The same file under the type name the compiler gives its kind.
+///
+/// **The suffix moved with the package**, and for the same reason: an
+/// operation is a command, a query or a transition, and the compiler names the
+/// type after which one it is rather than after the word `jails g` happened to
+/// be typed with. `RenameUseCase` in `service` is `RenameTransition` in
+/// `application/transitions`.
+///
+/// Every candidate is still an exact path -- the basename has to match one of
+/// these spellings in one of that row's packages -- so a file that turns up
+/// somewhere unexpected is a failure rather than a match, which is what these
+/// assertions exist to check. The original spelling comes first, so a name
+/// that did not move is answered without consulting the table at all.
+fn renamed_kinds(relative: &str) -> Vec<String> {
+    const RENAMED: &[(&str, &[&str])] = &[
+        ("UseCase", &["Command", "Transition", "Query"]),
+        ("QueryController", &["Controller"]),
+        ("UseCaseController", &["Controller"]),
+    ];
+    let mut names = vec![relative.to_string()];
+    let Some(stem) = relative.strip_suffix(".java") else {
+        return names;
+    };
+    for (from, candidates) in RENAMED {
+        let Some(head) = stem.strip_suffix(from) else {
+            continue;
+        };
+        names.extend(
+            candidates
+                .iter()
+                .map(|to| format!("{head}{to}.java"))
+                .collect::<Vec<_>>(),
+        );
+    }
+    names
 }
 
 /// Read a generated file, and say what *is* there when it is not.
