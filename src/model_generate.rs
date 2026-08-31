@@ -312,7 +312,7 @@ pub(crate) fn finish_generation_with_reader_paths(
 /// are not up, and the message says the project itself is complete. Exiting 0
 /// would be worse -- `for c in db api; do jails add $c || fail; done` is how
 /// people write this, and a silent half-install is what it would hide.
-fn run_follow_up_effects(
+pub(crate) fn run_follow_up_effects(
     root: &std::path::Path,
     bundle: &jails_contracts::PlanBundle,
     invocation: &Invocation,

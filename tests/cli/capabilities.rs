@@ -1878,11 +1878,17 @@ fn add_records_what_it_applied_and_remove_takes_it_back_out() {
 fn sync_applies_what_the_manifest_declares() {
     let root = temp_dir("manifest-sync");
     write_spring_fixture(&root);
-    fs::write(
-        root.join("jails.toml"),
-        "[layout]\nadapters = \"persistence\"\n\n[project]\ncapabilities = [\"csv\"]\n",
-    )
-    .unwrap();
+    // The model *is* the manifest, and the case this test exists for is a
+    // declaration that arrived without its output: somebody edited the model
+    // in an editor, or merged a branch that added a capability. `sync` is the
+    // command that makes the tree match what the file says.
+    common::become_canonical(&root);
+    let model = root.join(".jails/model.jdl");
+    let declared = format!(
+        "{}\ncap csv @id(cap_csv)\n",
+        fs::read_to_string(&model).unwrap().trim_end()
+    );
+    fs::write(&model, declared).unwrap();
 
     // --pretend first: it answers "what is this project missing?".
     let preview = jails_cmd(&root, None)
@@ -1894,9 +1900,7 @@ fn sync_applies_what_the_manifest_declares() {
     assert!(shown.contains("plan "), "{shown}");
     assert!(shown.contains("create "), "{shown}");
     assert!(
-        !root
-            .join("src/main/java/com/example/demo/persistence")
-            .exists(),
+        !root.join(".jails/generated").exists(),
         "--dry-run wrote files"
     );
 
@@ -1910,10 +1914,11 @@ fn sync_applies_what_the_manifest_declares() {
     assert!(
         common::generated(
             &root,
-            "src/main/java/com/example/demo/persistence/CsvReader.java"
+            "src/main/java/com/example/demo/adapters/CsvReader.java"
         )
         .is_file(),
-        "sync did not apply the declared capability into the configured layer"
+        "sync did not apply the declared capability:\n{}",
+        common::managed_listing(&root)
     );
 }
 

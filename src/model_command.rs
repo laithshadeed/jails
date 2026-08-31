@@ -162,13 +162,12 @@ pub(crate) fn owns_jdl_at(root: &Path) -> bool {
 }
 
 pub(crate) fn sync(no_start: bool, invocation: Invocation) -> Result<()> {
-    if no_start {
-        return Err(Failure::Told(
-            "canonical sync has no external service effects and does not accept `--no-start`.\n       fix: run `jails sync` without the flag"
-                .to_string(),
-        ));
-    }
-    sync_at(&root()?, invocation)
+    // A sync can introduce a compose service -- a model that declares
+    // `storage postgres` on a project that had none is the ordinary way it
+    // happens -- so `--no-start` means here exactly what it means on `add`.
+    // It used to be refused by name on the grounds that canonical sync had no
+    // effects, which stopped being true when the plan started carrying them.
+    sync_at(&root()?, invocation.without_starting(no_start))
 }
 
 /// `jails sync` against a root the caller already holds.
@@ -183,24 +182,58 @@ pub(crate) fn sync(no_start: bool, invocation: Invocation) -> Result<()> {
 pub(crate) fn sync_at(root: &Path, invocation: Invocation) -> Result<()> {
     let manifest = resolve_manifest_at(root, None)?;
     let (source, model) = load_model_at(root, &manifest, invocation.output)?;
+    let bare = model.capabilities.is_empty();
     let bundle = compile_at(root, &manifest, source.as_bytes(), model, Repair::No)?;
+    // **A dry run must not write, and this one did.** `sync` is the command a
+    // reader reaches for when they are least sure what the tree is about to
+    // become -- a merged branch, an edited model -- so it is the last one
+    // that should ignore the flag.
+    if let Some(path) = &invocation.plan_out {
+        crate::model_generate::write_bundle(path, &bundle)?;
+    }
+    if invocation.pretend || invocation.plan_out.is_some() {
+        return crate::model_generate::report_plan(&bundle, &invocation);
+    }
     let execution = jails_workspace::execute(root, &bundle).map_err(|error| {
         Failure::Told(format!("could not synchronize canonical model: {error}"))
     })?;
     if invocation.output == Output::Human {
-        println!(
-            "synchronized {}: {} operations, {} files written, {} files deleted",
-            execution.plan_digest.as_str(),
-            execution.operations,
-            execution.files_written,
-            execution.files_deleted
-        );
+        // The same distinction `add` draws: a sync over a project that is
+        // already correct did all its work and changed nothing, which is the
+        // answer worth saying rather than three zeroes.
+        if execution.files_written == 0 && execution.files_deleted == 0 {
+            println!("nothing to do, the project already matches the model");
+            // **A project that has nothing to sync is usually a project that
+            // has not declared anything yet**, and "nothing to do" on its own
+            // reads as a tool that did not work. Saying which command puts
+            // something in the model costs one line and answers the question
+            // the reader is actually about to ask.
+            if bare {
+                println!(
+                    "       no capabilities are declared: `jails add <capability>` declares one"
+                );
+            }
+        } else {
+            println!(
+                "synchronized {}: {} operations, {} files written, {} files deleted",
+                execution.plan_digest.as_str(),
+                execution.operations,
+                execution.files_written,
+                execution.files_deleted
+            );
+            for line in preview_lines(&bundle)
+                .iter()
+                .filter(|line| line.trim_start().starts_with("delete"))
+            {
+                println!("{line}");
+            }
+        }
     } else {
         let value = serde_json::to_value(execution)
             .map_err(|error| Failure::Told(format!("could not encode execution: {error}")))?;
         print_json(&value)?;
     }
-    Ok(())
+    crate::model_generate::run_follow_up_effects(root, &bundle, &invocation)
 }
 
 pub(crate) fn refuse_legacy_mutation(command: &str, fix: &str) -> Result<()> {
