@@ -31,9 +31,18 @@ pub mod testing;
 
 // The lower crates, re-exported so every module in this one keeps saying
 // `crate::…` wherever it ships.
-pub(crate) use jails_generate::generate;
+//
+// **No legacy generator crate appears here, and removing the last one changed
+// no behaviour at all.** This block read `jails_generate::generate`, and every
+// symbol nine modules took through it -- `find_project_root` and
+// `is_dispatcher` -- was re-exported from a crate that survives the cutover.
+// Naming the owner is the whole change. What is left of the legacy ladder here
+// is `jails_commit::store` in `migrate`, which reads a frozen migration back
+// out of the object store by digest.
+pub(crate) use jails_codemod::dispatch::is_dispatcher;
 pub(crate) use jails_java::{classfile, java};
 pub(crate) use jails_project::{compose, maven, model, pom};
 pub(crate) use jails_report::why;
 pub(crate) use jails_spec::build;
+pub(crate) use jails_spec::spec::paths::find_project_root;
 pub(crate) use jails_support::{json, process};

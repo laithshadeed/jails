@@ -1,7 +1,7 @@
 //! Fast, closed-set source checks for APIs and architectural shortcuts that
 //! compile successfully but conflict with the projects jails generates.
 
-use crate::generate::find_project_root;
+use crate::find_project_root;
 use jails_support::Result;
 use std::path::Path;
 

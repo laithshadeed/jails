@@ -280,8 +280,8 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "jails-codec-derive",
+ "jails-codemod",
  "jails-commit",
- "jails-generate",
  "jails-java",
  "jails-project",
  "jails-protocol",

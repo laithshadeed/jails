@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::compose;
-use crate::generate::find_project_root;
+use crate::find_project_root;
 use jails_project::model::Project;
 use jails_protocol::database::MigrationInputV1;
 use jails_support::codec::sha256;

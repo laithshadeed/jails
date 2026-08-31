@@ -1,6 +1,6 @@
 //! `jails resource status`: one read-only view over every recorded authority.
 
-use crate::generate::find_project_root;
+use crate::find_project_root;
 use jails_project::model::Project;
 use jails_protocol::database::{FlywayHistoryV1, SchemaObject, SchemaObjectKind, SchemaSnapshot};
 use jails_protocol::entity::{EntityId, IntentId};

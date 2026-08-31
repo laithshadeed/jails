@@ -30,7 +30,7 @@ const GRADLE_INSTALL: &str = "https://docs.gradle.org/current/userguide/installa
 /// keeps `jails-workspace` out of the read-only crate rather than pulling the
 /// compiler ladder into it.
 pub fn doctor(json: bool, additional: Vec<Check>) -> Result<()> {
-    let root = crate::generate::find_project_root()?;
+    let root = crate::find_project_root()?;
     let project = Project::inspect(&root)?;
     let mut checks = developer_tool_checks(&project);
     checks.extend(additional);

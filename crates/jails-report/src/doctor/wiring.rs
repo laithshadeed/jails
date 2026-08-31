@@ -468,8 +468,14 @@ pub(super) fn jackson_check(project: &Project) -> Check {
 /// the running application does with a duplicate, and that is decided by the
 /// bytes on disk -- including bytes the reader wrote themselves, which is why
 /// a handler they have taught to answer 409 by hand passes.
+///
+/// The guard asks [`Project::has_jdbc`] directly. It used to ask the legacy
+/// planner, so that `doctor` could not hold a second opinion about what "has a
+/// database" means -- but the planner's answer *was* this method, three hops
+/// down, and the compiler decides the same arm from the model instead. Asking
+/// the project is now the shortest route to the one opinion there is.
 pub(super) fn duplicate_key_check(project: &Project) -> Check {
-    if !crate::add::plan_supports_duplicate_keys(project) {
+    if !project.has_jdbc() {
         return Check::new(
             Status::Skip,
             "conflicts",

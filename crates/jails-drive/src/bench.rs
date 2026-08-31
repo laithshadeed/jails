@@ -42,7 +42,7 @@ pub struct Profile {
 }
 
 pub fn bench(profile: Profile, debug: bool) -> Result<()> {
-    let root = crate::generate::find_project_root()?;
+    let root = crate::find_project_root()?;
     if !has_load_test(&root) {
         return Err(format!(
             "no load test at {SCRIPT}.\n       fix: run `jails add loadtest` first."

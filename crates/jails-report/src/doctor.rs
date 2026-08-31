@@ -263,7 +263,7 @@ fn capability_drift_checks(project: &Project) -> Vec<Check> {
 
     let mut checks = Vec::new();
     for label in recorded {
-        let Some(capability) = crate::add::Capability::value_variants()
+        let Some(capability) = crate::Capability::value_variants()
             .iter()
             .find(|candidate| candidate.label() == label)
         else {

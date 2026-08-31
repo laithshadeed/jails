@@ -19,7 +19,7 @@
 //! `run` and `watch` start compose services first when a `compose.yaml` is
 //! present, and only then.
 
-use crate::generate::find_project_root;
+use crate::find_project_root;
 use jails_support::Result;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -844,7 +844,7 @@ fn dispatcher_main_file(dir: &Path) -> Option<PathBuf> {
             }
         } else if path.extension().is_some_and(|ext| ext == "java") {
             let dispatches = fs::read_to_string(&path)
-                .map(|s| s.contains("static void main") && crate::generate::is_dispatcher(&s))
+                .map(|s| s.contains("static void main") && crate::is_dispatcher(&s))
                 .unwrap_or(false);
             if dispatches {
                 found.push(path);

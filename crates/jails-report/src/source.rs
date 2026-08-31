@@ -38,7 +38,7 @@ pub fn src(type_name: &str, json: bool) -> Result<()> {
     // question about a directory of sources, and the case §14 describes --
     // jumping into a library checkout -- is often asked from a repository that
     // is not a Maven project at all.
-    let root = crate::generate::find_project_root()
+    let root = crate::find_project_root()
         .or_else(|_| std::env::current_dir().map_err(|e| format!("failed to get cwd: {e}")))?;
     let found = search(&root, type_name);
     if found.is_empty() {
