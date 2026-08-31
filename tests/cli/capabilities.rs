@@ -1092,7 +1092,7 @@ fn add_cors_on_the_default_boot_version_compiles_and_runs_its_own_test() {
     let path = real_path_without_mvnd();
     let root = verified_spring_toolbox(&path);
     let test = fs::read_to_string(common::generated(
-        &root,
+        root,
         "src/test/java/com/example/demo/CorsConfigTest.java",
     ))
     .expect("add cors did not write its test into the Boot 4 toolbox");

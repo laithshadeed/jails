@@ -5108,7 +5108,7 @@ fn a_transition_throws_into_the_error_model_the_project_installed() {
             assert!(out.status.success(), "{out:?}");
         }
         fs::read_to_string(common::generated(
-            &root,
+            root,
             "src/main/java/com/example/demo/web/MarkReadController.java",
         ))
         .unwrap()
@@ -6108,7 +6108,7 @@ fn a_form_bound_record_answers_to_the_names_this_projects_wire_actually_uses() {
             String::from_utf8_lossy(&output.stderr)
         );
         fs::read_to_string(common::generated(
-            &root,
+            root,
             "src/main/java/com/example/demo/service/OpenTicketCommand.java",
         ))
         .unwrap()
@@ -7177,7 +7177,7 @@ fn a_form_bound_endpoint_is_proved_by_a_form_post() {
     }
     let path = real_path_without_mvnd();
     let root = verified_spring_db_toolbox(&path);
-    let web = common::generated(&root, "src/test/java/com/example/demo/web");
+    let web = common::generated(root, "src/test/java/com/example/demo/web");
 
     for (file, sample) in [
         (

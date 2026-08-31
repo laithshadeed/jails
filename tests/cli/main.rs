@@ -775,7 +775,7 @@ fn align_proof_app_smoke_context(project: &Path) {
     }
 
     let test = common::generated(
-        &project,
+        project,
         "src/test/java/com/example/demo/DemoApplicationTests.java",
     );
     let source = fs::read_to_string(&test).unwrap();
@@ -809,7 +809,7 @@ fn validate_proof_app_shared_context(project: &Path) {
 }
 
 fn assert_proof_app_context_source(project: &Path, file: &str, class_name: &str) {
-    let test_dir = common::generated(&project, "src/test/java/com/example/demo");
+    let test_dir = common::generated(project, "src/test/java/com/example/demo");
     let source = fs::read_to_string(test_dir.join(file)).unwrap();
     let class_marker = format!("class {class_name}");
     let class_start = source
@@ -1045,7 +1045,7 @@ fn verified_app_images(fixtures: &'static Vec<(&'static str, std::path::PathBuf)
 /// for generate/destroy's path resolution -- not a real, resolvable Maven
 /// project, since these tests never invoke Maven.
 fn write_project_skeleton(root: &std::path::Path) {
-    let pkg_dir = common::generated(&root, "src/main/java/com/example/demo");
+    let pkg_dir = common::generated(root, "src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
     fs::write(root.join("pom.xml"), "<project></project>").unwrap();
     fs::write(
@@ -1067,7 +1067,7 @@ fn write_project_skeleton(root: &std::path::Path) {
 // ---- add ----
 
 fn write_release_fixture(root: &std::path::Path, release: &str) {
-    let pkg_dir = common::generated(&root, "src/main/java/com/example/demo");
+    let pkg_dir = common::generated(root, "src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
     fs::write(
         root.join("pom.xml"),
@@ -1097,7 +1097,7 @@ fn write_inspectable_project(root: &Path) {
          <properties><maven.compiler.release>27</maven.compiler.release></properties></project>",
     )
     .unwrap();
-    let main = common::generated(&root, "src/main/java/dev/example/shop");
+    let main = common::generated(root, "src/main/java/dev/example/shop");
     fs::create_dir_all(main.join("api")).unwrap();
     fs::create_dir_all(main.join("domain")).unwrap();
     fs::write(
