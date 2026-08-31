@@ -29,8 +29,8 @@ use messaging::{KAFKA_PACK, MAIL_PACK};
 use reader_facet::ComposeService;
 
 use spring::{
-    ACTUATOR_PACK, CACHE_PACK, CORS_PACK, K8S_PACK, OBSERVABILITY_PACK, REDIS_PACK, SECURITY_PACK,
-    SSE_PACK,
+    ACTUATOR_PACK, API_PACK, CACHE_PACK, CORS_PACK, K8S_PACK, OBSERVABILITY_PACK, REDIS_PACK,
+    SECURITY_PACK, SSE_PACK,
 };
 
 use storage::{DB_PACK, H2_PACK};
@@ -106,7 +106,30 @@ impl BootCondition {
     }
 }
 
+/// A block of a template that only belongs in the file when the model also
+/// declares some other capability.
+///
+/// **The advice's `DuplicateKeyException` arm is why this exists.** jails puts
+/// `@unique` in the schema and generates an `ApiException.Conflict` documented
+/// "becomes a 409", and nothing joined the two -- so a duplicate insert
+/// answered 500, which is what alerting pages on and what clients retry. The
+/// arm cannot be unconditional: `DuplicateKeyException` is Spring's, from
+/// `spring-tx`, which arrives with the JDBC starter, and `api` does not
+/// require a database.
+///
+/// The legacy engine has the same conditional and a documented ordering trap
+/// with it -- `add api` before `add db` plans against a project that does not
+/// have the starter yet, and only `jails sync` repairs it. The compiler has no
+/// such trap: it compiles the whole model at once, so "does this model declare
+/// `db`" is a question with one answer.
+struct Fragment {
+    key: &'static str,
+    when_capability: &'static str,
+    body: &'static str,
+}
+
 struct Pack {
+    fragments: &'static [Fragment],
     files: &'static [JavaFile],
     files_when: BootCondition,
     resources: &'static [ResourceFile],
@@ -122,6 +145,7 @@ struct Pack {
 const NO_RESOURCES: &[ResourceFile] = &[];
 const NO_PROPERTIES: &[PropertySpec] = &[];
 const NO_PACKAGE_OVERRIDES: &[PackageOverride] = &[];
+const NO_FRAGMENTS: &[Fragment] = &[];
 const NO_COMPOSE_SERVICES: &[ComposeService] = &[];
 const NO_BUILD_FEATURES: &[BuildFeature] = &[];
 
@@ -200,12 +224,35 @@ pub(crate) fn lower_and_emit(
     observed: &crate::emit::Observed<'_>,
 ) -> Result<(), CompileError> {
     let boot_major = boot_major(observed.spring_boot);
+    // Every capability the *model* declares, which is a question the compiler
+    // can answer once for the whole tree. The legacy engine asks the project's
+    // pom instead, one capability at a time, which is why `add api` before
+    // `add db` leaves an advice describing a project that no longer exists.
+    let declared = model
+        .capabilities
+        .values()
+        .map(|capability| capability.kind.as_str())
+        .collect::<BTreeSet<_>>();
     for capability in model.capabilities.values() {
         if let Some(pack) = pack(&capability.kind) {
             let default_package = capability
                 .java_package
                 .clone()
                 .unwrap_or_else(|| (pack.default_package)(model));
+            // Resolved once per pack: a fragment whose capability the model
+            // does not declare substitutes to nothing, rather than being left
+            // in the file as a literal `{{key}}`.
+            let fragments = pack
+                .fragments
+                .iter()
+                .map(|fragment| {
+                    let body = match declared.contains(fragment.when_capability) {
+                        true => fragment.body,
+                        false => "",
+                    };
+                    (fragment.key, body)
+                })
+                .collect::<Vec<_>>();
             for file in pack
                 .files
                 .iter()
@@ -242,6 +289,7 @@ pub(crate) fn lower_and_emit(
                             &template_class,
                             capability,
                             boot_major,
+                            &fragments,
                         ),
                     ),
                 )?;
@@ -282,6 +330,7 @@ fn pack(kind: &str) -> Option<&'static Pack> {
         "h2" => Some(&H2_PACK),
         "actuator" => Some(&ACTUATOR_PACK),
         "cache" => Some(&CACHE_PACK),
+        "api" => Some(&API_PACK),
         "cors" => Some(&CORS_PACK),
         "observability" => Some(&OBSERVABILITY_PACK),
         "security" => Some(&SECURITY_PACK),
@@ -424,12 +473,17 @@ fn render(
     class: &str,
     capability: &Capability,
     boot_major: Option<u32>,
+    fragments: &[(&str, &str)],
 ) -> String {
     let hub_import = if package == default_package {
         String::new()
     } else {
         format!("import {default_package}.EventHub;\n")
     };
+    let mut template = template.to_string();
+    for (key, body) in fragments {
+        template = template.replace(&format!("{{{{{key}}}}}"), body);
+    }
     template
         .replace("{{pkg}}", package)
         .replace("{{web}}", package)

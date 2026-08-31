@@ -10865,10 +10865,32 @@ fn jdl_upgrade_moves_a_pre_v1_draft_onto_v1_without_re_identifying_anything() {
     // field would change a JDBC column, an artifact id, or a file path, and
     // all three are in this comparison.
     let after = generated_tree(&root);
+    // The advice and its test are the *one* exception, and it is the same
+    // documented fact the note below reports rather than a second one: the
+    // upgrade gains the `db` capability, `DuplicateKeyException` is Spring's
+    // from `spring-tx`, and that arrives with the JDBC starter. The arm is
+    // asserted by name below, so this is a narrowed comparison rather than a
+    // hole.
+    let gains_the_conflict_arm = |path: &str| {
+        path.ends_with("api/ApiExceptionHandler.java")
+            || path.ends_with("api/ApiExceptionHandlerTest.java")
+    };
     for (path, bytes) in &before {
         let Some(upgraded) = after.get(path) else {
             panic!("`{path}` disappeared across the upgrade");
         };
+        if gains_the_conflict_arm(path) {
+            assert!(
+                !bytes.contains("DuplicateKeyException"),
+                "`{path}` already handled a duplicate key before the upgrade"
+            );
+            assert!(
+                upgraded.contains("DuplicateKeyException"),
+                "`{path}` gained the `db` capability without the 409 arm that \
+                 makes a unique-constraint violation a conflict rather than a 500"
+            );
+            continue;
+        }
         assert_eq!(upgraded, bytes, "`{path}` changed across the upgrade");
     }
 

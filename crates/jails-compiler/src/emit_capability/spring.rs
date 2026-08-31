@@ -10,6 +10,102 @@ use jails_model::Package;
 mod names;
 use names::*;
 
+/// The `api` capability's own files, as opposed to the per-operation adapters
+/// `emit_http` writes.
+///
+/// Without these a canonical project got controllers and no way to describe a
+/// failure: `ApiException` is the sealed set the advice switches over, and the
+/// switch has no `default` -- so a new variant stops the build rather than
+/// quietly becoming a 500.
+const API_FILES: &[JavaFile] = &[
+    JavaFile {
+        suffix: "exception",
+        template: include_str!("../../../../templates/spring/api_exception_java.java"),
+        before_boot: None,
+        source_set: SourceSet::Main,
+        class_name: api_exception_class,
+        template_class: api_exception_class,
+    },
+    JavaFile {
+        suffix: "exception_handler",
+        template: include_str!("../../../../templates/spring/api_exception_handler_java.java"),
+        before_boot: None,
+        source_set: SourceSet::Main,
+        class_name: api_exception_handler_class,
+        template_class: api_exception_handler_class,
+    },
+    JavaFile {
+        suffix: "exception_handler_test",
+        // No classic form: `api` refuses below Boot 3, its advice being built
+        // on Framework 6's `ProblemDetail`.
+        template: include_str!("../../../../templates/spring/api_exception_handler_test_java.java"),
+        before_boot: None,
+        source_set: SourceSet::Test,
+        class_name: api_exception_handler_test_class,
+        template_class: api_exception_handler_test_class,
+    },
+];
+
+const API_FRAGMENTS: &[Fragment] = &[
+    Fragment {
+        key: "duplicate_key_import",
+        when_capability: "db",
+        body: "import org.springframework.dao.DuplicateKeyException;",
+    },
+    Fragment {
+        key: "duplicate_key_handler",
+        when_capability: "db",
+        body: DUPLICATE_KEY_HANDLER,
+    },
+    Fragment {
+        key: "duplicate_key_test",
+        when_capability: "db",
+        body: DUPLICATE_KEY_TEST,
+    },
+    Fragment {
+        key: "duplicate_key_route",
+        when_capability: "db",
+        body: DUPLICATE_KEY_ROUTE,
+    },
+];
+
+const DUPLICATE_KEY_HANDLER: &str = r#"
+    /**
+     * A unique constraint the database enforced, as the 409 it is.
+     *
+     * <p>Without this, a duplicate reaches the client as a 500 -- which is
+     * what alerting pages on and what a client library retries, so one
+     * duplicate becomes an incident and then a retry storm. The row was not
+     * written and never will be; that is a conflict, not a server fault.
+     *
+     * <p>The detail deliberately does not name the column. Spring's message
+     * carries the constraint name from the driver, which is a schema
+     * identifier rather than anything a caller can act on -- and echoing it
+     * tells an unauthenticated client the shape of your database.
+     */
+    @ExceptionHandler(DuplicateKeyException.class)
+    public ProblemDetail handleDuplicateKey(DuplicateKeyException failure) {
+        return ProblemDetail.forStatusAndDetail(
+                HttpStatus.CONFLICT, "a resource with those values already exists");
+    }
+"#;
+
+const DUPLICATE_KEY_TEST: &str = r#"
+    @Test
+    void aDuplicateKeyBecomesA409() {
+        // The database rejected a unique constraint; that is a conflict, not
+        // a server fault.
+        assertThat(mvc.get().uri("/boom/duplicate")).hasStatus(HttpStatus.CONFLICT);
+    }
+"#;
+
+const DUPLICATE_KEY_ROUTE: &str = r#"
+        @GetMapping("/boom/duplicate")
+        String duplicate() {
+            throw new DuplicateKeyException("unique constraint violated");
+        }
+"#;
+
 const ACTUATOR_FILES: &[JavaFile] = &[JavaFile {
     suffix: "endpoints_test",
     template: include_str!("../../../../templates/spring/actuator_test_java.java"),
@@ -494,6 +590,7 @@ pub(super) const fn property(key: &'static str, value: &'static str) -> Property
 }
 
 pub(super) const ACTUATOR_PACK: Pack = Pack {
+    fragments: NO_FRAGMENTS,
     files: ACTUATOR_FILES,
     files_when: BootCondition::Any,
     resources: NO_RESOURCES,
@@ -507,6 +604,7 @@ pub(super) const ACTUATOR_PACK: Pack = Pack {
 };
 
 pub(super) const CACHE_PACK: Pack = Pack {
+    fragments: NO_FRAGMENTS,
     files: CACHE_FILES,
     files_when: BootCondition::Any,
     resources: NO_RESOURCES,
@@ -527,6 +625,7 @@ pub(super) const CACHE_PACK: Pack = Pack {
 /// separately. Without it a burn-rate alert cannot tell which pod is failing,
 /// which is the question an alert exists to answer.
 pub(super) const K8S_PACK: Pack = Pack {
+    fragments: NO_FRAGMENTS,
     files: &[],
     files_when: BootCondition::Any,
     resources: NO_RESOURCES,
@@ -546,7 +645,33 @@ const K8S_PROPERTIES: &[PropertySpec] = &[PropertySpec {
     boot: BootCondition::Spring,
 }];
 
+pub(super) const API_PACK: Pack = Pack {
+    fragments: API_FRAGMENTS,
+    files: API_FILES,
+    files_when: BootCondition::Any,
+    resources: NO_RESOURCES,
+    dependencies: API_DEPENDENCIES,
+    properties: NO_PROPERTIES,
+    compose_services: NO_COMPOSE_SERVICES,
+    build_features: NO_BUILD_FEATURES,
+    default_package: api_package,
+    package_overrides: NO_PACKAGE_OVERRIDES,
+    // `ProblemDetail` is Framework 6, which is Boot 3.
+    minimum_boot: Some(3),
+};
+
+const API_DEPENDENCIES: &[DependencySpec] = &[DependencySpec {
+    group: "org.springframework.boot",
+    artifact: "spring-boot-starter-validation",
+    version: None,
+    scope: DependencyScope::Compile,
+    spring_managed_version: true,
+    only_when_build_exists: false,
+    boot: BootCondition::Spring,
+}];
+
 pub(super) const CORS_PACK: Pack = Pack {
+    fragments: NO_FRAGMENTS,
     files: CORS_FILES,
     files_when: BootCondition::Any,
     resources: NO_RESOURCES,
@@ -560,6 +685,7 @@ pub(super) const CORS_PACK: Pack = Pack {
 };
 
 pub(super) const OBSERVABILITY_PACK: Pack = Pack {
+    fragments: NO_FRAGMENTS,
     files: OBSERVABILITY_FILES,
     files_when: BootCondition::Any,
     resources: NO_RESOURCES,
@@ -573,6 +699,7 @@ pub(super) const OBSERVABILITY_PACK: Pack = Pack {
 };
 
 pub(super) const SECURITY_PACK: Pack = Pack {
+    fragments: NO_FRAGMENTS,
     files: SECURITY_FILES,
     files_when: BootCondition::Any,
     resources: NO_RESOURCES,
@@ -586,6 +713,7 @@ pub(super) const SECURITY_PACK: Pack = Pack {
 };
 
 pub(super) const SSE_PACK: Pack = Pack {
+    fragments: NO_FRAGMENTS,
     files: SSE_FILES,
     files_when: BootCondition::Any,
     resources: NO_RESOURCES,
@@ -599,6 +727,7 @@ pub(super) const SSE_PACK: Pack = Pack {
 };
 
 pub(super) const REDIS_PACK: Pack = Pack {
+    fragments: NO_FRAGMENTS,
     files: REDIS_FILES,
     files_when: BootCondition::Any,
     resources: NO_RESOURCES,

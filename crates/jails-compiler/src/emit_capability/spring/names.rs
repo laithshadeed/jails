@@ -14,6 +14,9 @@ macro_rules! fixed_name {
     };
 }
 
+fixed_name!(api_exception_class, "ApiException");
+fixed_name!(api_exception_handler_class, "ApiExceptionHandler");
+fixed_name!(api_exception_handler_test_class, "ApiExceptionHandlerTest");
 fixed_name!(actuator_test_class, "ActuatorEndpointsTest");
 fixed_name!(cache_config_class, "CacheConfig");
 fixed_name!(cache_test_class, "CacheConfigTest");

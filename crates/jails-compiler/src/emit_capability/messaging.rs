@@ -231,6 +231,7 @@ const KAFKA_PACKAGE_OVERRIDES: &[PackageOverride] = &[PackageOverride {
 }];
 
 pub(super) const KAFKA_PACK: Pack = Pack {
+    fragments: NO_FRAGMENTS,
     files: KAFKA_FILES,
     files_when: BootCondition::Spring,
     resources: NO_RESOURCES,
@@ -244,6 +245,7 @@ pub(super) const KAFKA_PACK: Pack = Pack {
 };
 
 pub(super) const MAIL_PACK: Pack = Pack {
+    fragments: NO_FRAGMENTS,
     files: MAIL_FILES,
     files_when: BootCondition::Spring,
     resources: NO_RESOURCES,

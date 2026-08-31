@@ -230,6 +230,7 @@ pub(super) const TOXIPROXY_PACK: Pack =
     pack(TOXIPROXY_FILES, TOXIPROXY_DEPENDENCIES, testkit_package);
 pub(super) const SQLITE_PACK: Pack = pack(SQLITE_FILES, SQLITE_DEPENDENCIES, adapters_package);
 pub(super) const TESTKIT_PACK: Pack = Pack {
+    fragments: NO_FRAGMENTS,
     resources: TESTKIT_RESOURCES,
     ..pack(TESTKIT_FILES, ASSERTJ_DEPENDENCIES, testkit_package)
 };
@@ -242,6 +243,7 @@ const COVERAGE_FEATURES: &[BuildFeature] = &[BuildFeature::Coverage];
 /// Keyed by [`BuildFeature::Formatting`] rather than by a plugin coordinate,
 /// because `spotless-maven-plugin` is not a name Gradle resolves.
 pub(super) const FORMAT_PACK: Pack = Pack {
+    fragments: NO_FRAGMENTS,
     files: &[],
     files_when: BootCondition::Any,
     resources: NO_RESOURCES,
@@ -257,6 +259,7 @@ pub(super) const FORMAT_PACK: Pack = Pack {
 const FORMAT_FEATURES: &[BuildFeature] = &[BuildFeature::Formatting];
 
 pub(super) const COVERAGE_PACK: Pack = Pack {
+    fragments: NO_FRAGMENTS,
     files: &[],
     files_when: BootCondition::Any,
     resources: NO_RESOURCES,
@@ -293,6 +296,7 @@ const fn pack(
     default_package: fn(&AppModel) -> String,
 ) -> Pack {
     Pack {
+        fragments: NO_FRAGMENTS,
         files,
         files_when: BootCondition::Any,
         resources: NO_RESOURCES,
