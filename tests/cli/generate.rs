@@ -5,7 +5,7 @@ use super::*;
 #[test]
 fn generate_standalone_and_destroy_roundtrip() {
     let root = temp_dir("standalone-roundtrip");
-    write_project_skeleton(&root);
+    write_spring_fixture(&root);
 
     let status = jails_cmd(&root, None)
         .args(["generate", "controller", "comment"])
@@ -1526,7 +1526,10 @@ fn a_snake_case_field_declaration_produces_a_camel_case_java_component() {
 #[test]
 fn object_method_field_names_refuse_before_writing_but_record_is_allowed() {
     let root = temp_dir("record-component-name");
-    write_project_skeleton(&root);
+    write_spring_fixture(&root);
+    // Canonical before the first snapshot: initialising the model is its own
+    // announced step, so a refusal that ran it first would look like a write.
+    common::become_canonical(&root);
 
     for field in ["hashCode:string", "toString:string", "equals:string"] {
         let before = snapshot_tree(&root);
@@ -3774,7 +3777,7 @@ fn generate_idempotency_produces_tests_that_run_and_pass() {
 #[test]
 fn planning_pretending_and_inspecting_leave_machine_state_byte_for_byte() {
     let root = temp_dir("read-purity");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
         root.join(".jails/app.toml"),
@@ -4043,48 +4046,88 @@ fn a_dispatcher_already_in_use_keeps_the_entry_point() {
     );
 }
 
+/// **The confirmation moved to the thing that is irreversible.** Removing a
+/// generated class is model subtraction: the declaration goes, the next
+/// compilation renders the tree without it, and running the command again puts
+/// it back -- so there is nothing to confirm, and a prompt on every removal was
+/// a prompt people learn to answer without reading.
+///
+/// Dropping a table is not reversible, and that is where the question is
+/// asked: `--storage drop` states the policy and `--confirm-table` names the
+/// table, so the two together are the answer a prompt used to collect. A
+/// retirement with neither is refused rather than assumed.
 #[test]
-fn destroy_without_force_prompts_and_aborts_on_no() {
-    let root = temp_dir("destroy-prompt");
-    write_project_skeleton(&root);
-    jails_cmd(&root, None)
-        .args(["generate", "controller", "comment"])
-        .status()
-        .unwrap();
-    let file = common::generated(
-        &root,
-        "src/main/java/com/example/demo/web/CommentController.java",
-    );
-    assert!(file.is_file());
-
-    let mut child = jails_cmd(&root, None)
-        .args(["destroy", "controller", "comment"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .spawn()
-        .unwrap();
-    child.stdin.take().unwrap().write_all(b"n\n").unwrap();
-    let status = child.wait().unwrap();
-
-    assert!(status.success());
+fn destroying_stored_data_needs_the_policy_and_the_table_named() {
+    let root = temp_dir("destroy-confirm");
+    write_spring_fixture(&root);
+    common::declare_storage(&root);
     assert!(
-        file.is_file(),
-        "file should survive a declined confirmation"
+        jails_cmd(&root, None)
+            .args(["g", "scaffold", "Note", "id:uuid@pk", "title:string!"])
+            .status()
+            .unwrap()
+            .success()
     );
+    let record = common::generated(&root, "src/main/java/com/example/demo/domain/Note.java");
+    assert!(record.is_file());
+
+    let refused = jails_cmd(&root, None)
+        .args(["destroy", "scaffold", "Note"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success(), "{refused:?}");
+    let told = String::from_utf8_lossy(&refused.stderr);
+    assert!(told.contains("storage-policy-required"), "{told}");
+    assert!(told.contains("--storage preserve"), "{told}");
+    assert!(told.contains("--confirm-table notes"), "{told}");
+    assert!(record.is_file(), "a refused retirement wrote nothing");
+
+    // Naming the wrong table is the same refusal, not a typo jails forgives.
+    let mistyped = jails_cmd(&root, None)
+        .args([
+            "destroy",
+            "scaffold",
+            "Note",
+            "--storage",
+            "drop",
+            "--confirm-table",
+            "note",
+        ])
+        .output()
+        .unwrap();
+    assert!(!mistyped.status.success(), "{mistyped:?}");
+    assert!(record.is_file(), "a refused retirement wrote nothing");
+
+    let dropped = jails_cmd(&root, None)
+        .args([
+            "destroy",
+            "scaffold",
+            "Note",
+            "--storage",
+            "drop",
+            "--confirm-table",
+            "notes",
+        ])
+        .output()
+        .unwrap();
+    assert!(dropped.status.success(), "{dropped:?}");
+    assert!(!record.is_file());
 }
 
 #[test]
 fn generate_twice_writes_nothing_the_second_time() {
     let root = temp_dir("duplicate");
-    write_project_skeleton(&root);
-    let service = common::generated(
-        &root,
-        "src/main/java/com/example/demo/service/CommentService.java",
-    );
+    write_spring_fixture(&root);
     jails_cmd(&root, None)
         .args(["generate", "service", "comment"])
         .status()
         .unwrap();
+    // Resolved after the write, not before: which tree holds a generated file
+    // is a fact about the project as it is now.
+    let service = common::generated(
+        &root,
+        "src/main/java/com/example/demo/service/CommentService.java",
+    );
     let before = fs::read_to_string(&service).unwrap();
     let output = jails_cmd(&root, None)
         .args(["generate", "service", "comment"])
@@ -4134,7 +4177,7 @@ fn generate_errors_outside_a_project() {
 #[test]
 fn short_generators_cover_raw_sql_and_test_seams() {
     let root = temp_dir("simple-generators");
-    write_project_skeleton(&root);
+    write_spring_fixture(&root);
 
     for args in [
         vec!["g", "interface", "IdGenerator"],
@@ -5252,7 +5295,7 @@ fn generate_strategy_produces_a_project_that_compiles_and_passes_tests() {
 #[test]
 fn destroy_strategy_removes_the_implementations_it_did_not_name() {
     let root = temp_dir("destroy-strategy");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
 
     assert!(
         jails_cmd(&root, None)
@@ -5310,7 +5353,7 @@ fn destroy_strategy_removes_the_implementations_it_did_not_name() {
 #[test]
 fn pretend_names_the_package_info_it_will_write() {
     let root = temp_dir("pkginfo-preview");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     // package-info is conditional on the annotation resolving.
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap().replace(
         "</dependencies>",
@@ -5418,7 +5461,7 @@ fn planned_package_infos_are_one_per_package() {
 #[test]
 fn a_project_template_override_replaces_the_built_in_and_doctor_names_it() {
     let root = temp_dir("template-override");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
 
     let overrides = root.join(".jails/templates/generate");
     fs::create_dir_all(&overrides).unwrap();
@@ -5474,7 +5517,7 @@ fn a_project_template_override_replaces_the_built_in_and_doctor_names_it() {
 #[test]
 fn a_template_override_missing_a_placeholder_is_refused_by_name() {
     let root = temp_dir("template-override-bad");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
 
     let overrides = root.join(".jails/templates/generate");
     fs::create_dir_all(&overrides).unwrap();

@@ -23,6 +23,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 const SCHEMA: &str = "jails.model.v1";
 
+/// The zero-argument `java.lang.Object` methods a record accessor would clash
+/// with. `getClass`, `notify`, `notifyAll` and `wait` are `final` or would
+/// change the type, so a component of that name fails to compile too.
+const OBJECT_METHODS: &[&str] = &[
+    "clone", "equals", "finalize", "getClass", "hashCode", "notify", "notifyAll", "toString",
+    "wait",
+];
+
 pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> {
     let mut linker = Linker::default();
 
@@ -523,6 +531,21 @@ impl Linker {
                 path,
                 format!("`{value}` is not a Java member name"),
                 "use a lower-camel-case Java identifier",
+            );
+            return;
+        }
+        // **A record component may not be named after a method every record
+        // already has.** `record Box(String hashCode)` does not compile:
+        // `java.lang.Object` declares the accessor the component would need,
+        // and every entity here becomes a record. It is a Java identifier by
+        // every other test, which is exactly why the refusal has to name the
+        // reason rather than the shape.
+        if OBJECT_METHODS.contains(&value) {
+            self.problem(
+                "model-java-object-method",
+                path,
+                format!("`{value}` is a method every record inherits from java.lang.Object"),
+                "rename the component -- a record cannot declare an accessor that overrides one",
             );
         }
     }
