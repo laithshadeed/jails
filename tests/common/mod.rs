@@ -1105,6 +1105,9 @@ impl PermitPool {
             let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("target/jails-test-permits")
                 .join(self.name);
+            // Reported through the slot refusals rather than swallowed: a
+            // pool whose directory does not exist refuses every slot with
+            // `NotFound`, which reads as contention and is not.
             let _ = fs::create_dir_all(&root);
             root
         })
@@ -1165,9 +1168,31 @@ impl PermitPool {
                     continue;
                 }
             };
-            match fs2::FileExt::try_lock_exclusive(&file) {
-                Ok(()) => return (Some(ProcessPermit { _file: Some(file) }), refusals),
-                Err(error) => refusals.push(format!("slot {slot}: locked ({error})")),
+            // `WouldBlock` is the only refusal that means "somebody holds
+            // this". Anything else is the call failing, and the one this
+            // binary is exposed to is `EINTR`: it reaps thousands of spawned
+            // `jails` processes, so `SIGCHLD` arrives constantly, and `fs2`
+            // surfaces an interrupted `flock` as an ordinary error. Reading
+            // that as contention is how a pool directory this process created
+            // for itself came to refuse both of its own slots under full-suite
+            // load and neither of them when run alone.
+            let mut attempts = 0;
+            loop {
+                match fs2::FileExt::try_lock_exclusive(&file) {
+                    Ok(()) => return (Some(ProcessPermit { _file: Some(file) }), refusals),
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        refusals.push(format!("slot {slot}: held"));
+                        break;
+                    }
+                    Err(_) if attempts < 16 => attempts += 1,
+                    Err(error) => {
+                        refusals.push(format!(
+                            "slot {slot}: {error} ({:?}), still failing after {attempts} retries",
+                            error.kind()
+                        ));
+                        break;
+                    }
+                }
             }
         }
         (None, refusals)
@@ -1621,9 +1646,14 @@ mod permit_pool_tests {
     fn infrastructure_start_pool_has_two_reusable_permits() {
         assert_eq!(MAX_INFRASTRUCTURE_START_PROCESSES, 2);
         let pool = pool("reusable");
-        let first = pool
-            .try_acquire(MAX_INFRASTRUCTURE_START_PROCESSES)
-            .unwrap();
+        let (first, refusals) = pool.try_acquire_reporting(MAX_INFRASTRUCTURE_START_PROCESSES);
+        let first = first.unwrap_or_else(|| {
+            panic!(
+                "the first of two permits was refused in a directory this process \
+                 created for itself; slot by slot: {}",
+                refusals.join("; ")
+            )
+        });
         let (second, refusals) = pool.try_acquire_reporting(MAX_INFRASTRUCTURE_START_PROCESSES);
         let second = second.unwrap_or_else(|| {
             panic!(
@@ -1637,9 +1667,14 @@ mod permit_pool_tests {
                 .is_none()
         );
         drop(first);
-        let replacement = pool
-            .try_acquire(MAX_INFRASTRUCTURE_START_PROCESSES)
-            .unwrap();
+        let (replacement, refusals) =
+            pool.try_acquire_reporting(MAX_INFRASTRUCTURE_START_PROCESSES);
+        let replacement = replacement.unwrap_or_else(|| {
+            panic!(
+                "a released permit was not reusable; slot by slot: {}",
+                refusals.join("; ")
+            )
+        });
 
         drop(second);
         drop(replacement);
