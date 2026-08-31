@@ -546,6 +546,64 @@ const K8S_PROPERTIES: &[PropertySpec] = &[PropertySpec {
     boot: BootCondition::Spring,
 }];
 
+const API_FILES: &[JavaFile] = &[
+    JavaFile {
+        suffix: "exception",
+        template: include_str!("../../../../templates/spring/api_exception_java.java"),
+        before_boot: None,
+        source_set: SourceSet::Main,
+        class_name: api_exception_class,
+        template_class: api_exception_class,
+    },
+    JavaFile {
+        suffix: "exception_handler",
+        template: include_str!("../../../../templates/spring/api_exception_handler_java.java"),
+        before_boot: None,
+        source_set: SourceSet::Main,
+        class_name: api_exception_handler_class,
+        template_class: api_exception_handler_class,
+    },
+    JavaFile {
+        suffix: "exception_handler_test",
+        template: include_str!("../../../../templates/spring/api_exception_handler_test_java.java"),
+        before_boot: None,
+        source_set: SourceSet::Test,
+        class_name: api_exception_handler_test_class,
+        template_class: api_exception_handler_test_class,
+    },
+];
+
+const API_DEPENDENCIES: &[DependencySpec] = &[DependencySpec {
+    group: "org.springframework.boot",
+    artifact: "spring-boot-starter-validation",
+    version: None,
+    scope: DependencyScope::Compile,
+    spring_managed_version: true,
+    only_when_build_exists: false,
+    boot: BootCondition::Spring,
+}];
+
+/// RFC 9457 problem responses, which `add api` promised and did not write.
+///
+/// The capability gated the operation controllers and nothing else, so a
+/// canonical project got endpoints and Spring's default error map -- a 400
+/// that does not say which field was wrong, and a duplicate key arriving as a
+/// 500. Boot 3 is the floor because the advice is built on Framework 6's
+/// `ProblemDetail`; below it the capability refuses by name rather than
+/// emitting something that cannot compile.
+pub(super) const API_PACK: Pack = Pack {
+    files: API_FILES,
+    files_when: BootCondition::Spring,
+    resources: NO_RESOURCES,
+    dependencies: API_DEPENDENCIES,
+    properties: NO_PROPERTIES,
+    compose_services: NO_COMPOSE_SERVICES,
+    build_features: NO_BUILD_FEATURES,
+    default_package: super::api_package,
+    package_overrides: NO_PACKAGE_OVERRIDES,
+    minimum_boot: Some(3),
+};
+
 pub(super) const CORS_PACK: Pack = Pack {
     files: CORS_FILES,
     files_when: BootCondition::Any,

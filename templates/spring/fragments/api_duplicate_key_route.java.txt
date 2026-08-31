@@ -1,0 +1,5 @@
+
+        @GetMapping("/boom/duplicate")
+        String duplicate() {
+            throw new DuplicateKeyException("unique constraint violated");
+        }

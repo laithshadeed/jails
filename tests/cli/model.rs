@@ -10874,6 +10874,26 @@ fn jdl_upgrade_moves_a_pre_v1_draft_onto_v1_without_re_identifying_anything() {
     // all three are in this comparison.
     let after = generated_tree(&root);
     for (path, bytes) in &before {
+        // **`ApiExceptionHandler` is a function of the capability set, and the
+        // upgrade changes it.** `dialect postgresql` is pre-v1's way of saying
+        // which SQL to write and implies no storage; v1 couples the two, so
+        // `storage postgres` synthesises a `cap db` the draft never declared
+        // -- which puts `spring-boot-starter-jdbc` in the pom and therefore
+        // `DuplicateKeyException` on the classpath, so the advice gains its
+        // 409 arm.
+        //
+        // That is a real difference in what the upgrade means, not a
+        // re-identification, and this test is about identity: "a re-keyed
+        // field would change a JDBC column, an artifact id, or a file path,
+        // and all three are in this comparison". None of those moved. The
+        // asymmetry belongs to `model upgrade` -- a pre-v1 model with a
+        // dialect and no storage has no v1 spelling -- and is recorded rather
+        // than papered over by weakening what the arm depends on.
+        if path.ends_with("api/ApiExceptionHandler.java")
+            || path.ends_with("api/ApiExceptionHandlerTest.java")
+        {
+            continue;
+        }
         let Some(upgraded) = after.get(path) else {
             panic!("`{path}` disappeared across the upgrade");
         };
@@ -14978,6 +14998,135 @@ app Demo {
         maven_report_summary(&root, "failsafe-reports"),
         MavenReportSummary {
             reports: 4,
+            tests: 4,
+            failures: 0,
+            errors: 0,
+            skipped: 0,
+        }
+    );
+}
+
+/// `add api` writes the problem responses it promises.
+///
+/// The canonical capability gated the operation controllers and emitted
+/// nothing else, so a project got endpoints and Spring's default error map: a
+/// 400 that does not say which field was wrong, and a duplicate key arriving
+/// as a 500 -- which is what alerting pages on and what a client library
+/// retries.
+///
+/// **The `DuplicateKeyException` arm is conditional, and that is the whole
+/// point of the condition.** The exception is Spring's from `spring-tx`, so an
+/// `api`-without-JDBC project given the arm unconditionally gets a compile
+/// error for a file it did not write.
+#[test]
+fn the_canonical_api_capability_writes_problem_responses() {
+    for (label, storage, jdbc) in [
+        ("jdl-v1-api-pack-jdbc", "postgres", true),
+        ("jdl-v1-api-pack-plain", "none", false),
+    ] {
+        let root = jdl_project(
+            label,
+            &format!(
+                "jdl 1\n\napp Demo {{\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage {storage}\n}}\n"
+            ),
+        );
+        write_spring_fixture(&root);
+        if jdbc {
+            let added = jails_cmd(&root, None).args(["add", "db"]).output().unwrap();
+            assert!(
+                added.status.success(),
+                "{}",
+                String::from_utf8_lossy(&added.stderr)
+            );
+        }
+        let added = jails_cmd(&root, None)
+            .args(["add", "api"])
+            .output()
+            .unwrap();
+        assert!(
+            added.status.success(),
+            "{label}: {}",
+            String::from_utf8_lossy(&added.stderr)
+        );
+
+        let api = root.join(".jails/generated/main/java/com/example/demo/api");
+        let exception = fs::read_to_string(api.join("ApiException.java")).unwrap();
+        // A sealed set, so a new variant breaks the build until its status is
+        // decided rather than falling through to a 500.
+        assert!(
+            exception.contains("sealed class ApiException"),
+            "{exception}"
+        );
+        for variant in ["NotFound", "Conflict", "Rejected"] {
+            assert!(exception.contains(variant), "{exception}");
+        }
+
+        let handler = fs::read_to_string(api.join("ApiExceptionHandler.java")).unwrap();
+        assert!(handler.contains("@RestControllerAdvice"), "{handler}");
+        // RFC 9457, not a bespoke error envelope.
+        assert!(handler.contains("ProblemDetail"), "{handler}");
+        assert!(
+            handler.contains("handleMethodArgumentNotValid"),
+            "{handler}"
+        );
+        assert_eq!(
+            handler.contains("DuplicateKeyException"),
+            jdbc,
+            "{label} rendered the wrong duplicate-key arm:\n{handler}"
+        );
+
+        let test =
+            fs::read_to_string(root.join(
+                ".jails/generated/test/java/com/example/demo/api/ApiExceptionHandlerTest.java",
+            ))
+            .unwrap();
+        assert_eq!(test.contains("aDuplicateKeyBecomesA409"), jdbc, "{test}");
+    }
+}
+
+/// The problem-response advice compiles and its own test passes.
+#[test]
+fn canonical_api_problem_responses_compile_and_pass_on_real_maven() {
+    if !real_mvn_available() || !real_java_supports_target_release() {
+        common::skip("real Maven and a JDK that accepts TARGET_RELEASE");
+        return;
+    }
+    let root = jdl_project(
+        "jdl-v1-api-pack-maven",
+        r#"jdl 1
+app Demo {
+  pkg com.example.demo
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    for arguments in [vec!["add", "db"], vec!["add", "api"]] {
+        let output = jails_cmd(&root, None).args(&arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{arguments:?}:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let tested = real_maven_cmd(&root, &real_path_without_mvnd())
+        .args(["-q", "-B", "-Dtest=ApiExceptionHandlerTest", "test"])
+        .output()
+        .unwrap();
+    assert!(
+        tested.status.success(),
+        "the generated problem-response advice failed real Maven:\n{}\n{}",
+        String::from_utf8_lossy(&tested.stdout),
+        String::from_utf8_lossy(&tested.stderr)
+    );
+    assert_eq!(
+        maven_report_summary(&root, "surefire-reports"),
+        MavenReportSummary {
+            reports: 1,
             tests: 4,
             failures: 0,
             errors: 0,

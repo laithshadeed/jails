@@ -459,42 +459,20 @@ fn duplicate_key_parts(present: bool) -> [(&'static str, &'static str); 2] {
     }
 }
 
-const DUPLICATE_KEY_HANDLER: &str = r#"
-    /**
-     * A unique constraint the database enforced, as the 409 it is.
-     *
-     * <p>Without this, a duplicate reaches the client as a 500 -- which is
-     * what alerting pages on and what a client library retries, so one
-     * duplicate becomes an incident and then a retry storm. The row was not
-     * written and never will be; that is a conflict, not a server fault.
-     *
-     * <p>The detail deliberately does not name the column. Spring's message
-     * carries the constraint name from the driver, which is a schema
-     * identifier rather than anything a caller can act on -- and echoing it
-     * tells an unauthenticated client the shape of your database.
-     */
-    @ExceptionHandler(DuplicateKeyException.class)
-    public ProblemDetail handleDuplicateKey(DuplicateKeyException failure) {
-        return ProblemDetail.forStatusAndDetail(
-                HttpStatus.CONFLICT, "a resource with those values already exists");
-    }
-"#;
+/// The three structural holes the API advice has, as shared files.
+///
+/// **Both engines render these**, so they are files rather than constants
+/// here: `CLAUDE.md` records what two copies of one generated block cost, and
+/// `templates/add/` is shared for the same reason. The decision whether a hole
+/// is filled stays in Rust; only the text moved.
+const DUPLICATE_KEY_HANDLER: &str =
+    include_str!("../../../templates/spring/fragments/api_duplicate_key_handler.java.txt");
 
-const DUPLICATE_KEY_TEST: &str = r#"
-    @Test
-    void aDuplicateKeyBecomesA409() {
-        // The database rejected a unique constraint; that is a conflict, not
-        // a server fault. `pending.md` §1.1.
-        assertThat(mvc.get().uri("/boom/duplicate")).hasStatus(HttpStatus.CONFLICT);
-    }
-"#;
+const DUPLICATE_KEY_TEST: &str =
+    include_str!("../../../templates/spring/fragments/api_duplicate_key_test.java.txt");
 
-const DUPLICATE_KEY_ROUTE: &str = r#"
-        @GetMapping("/boom/duplicate")
-        String duplicate() {
-            throw new DuplicateKeyException("unique constraint violated");
-        }
-"#;
+const DUPLICATE_KEY_ROUTE: &str =
+    include_str!("../../../templates/spring/fragments/api_duplicate_key_route.java.txt");
 
 /// The project's own failures, as a sealed set.
 ///

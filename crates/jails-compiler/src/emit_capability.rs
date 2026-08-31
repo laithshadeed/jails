@@ -29,8 +29,8 @@ use messaging::{KAFKA_PACK, MAIL_PACK};
 use reader_facet::ComposeService;
 
 use spring::{
-    ACTUATOR_PACK, CACHE_PACK, CORS_PACK, K8S_PACK, OBSERVABILITY_PACK, REDIS_PACK, SECURITY_PACK,
-    SSE_PACK,
+    ACTUATOR_PACK, API_PACK, CACHE_PACK, CORS_PACK, K8S_PACK, OBSERVABILITY_PACK, REDIS_PACK,
+    SECURITY_PACK, SSE_PACK,
 };
 
 use storage::{DB_PACK, H2_PACK};
@@ -242,6 +242,7 @@ pub(crate) fn lower_and_emit(
                             &template_class,
                             capability,
                             boot_major,
+                            model,
                         ),
                     ),
                 )?;
@@ -282,6 +283,7 @@ fn pack(kind: &str) -> Option<&'static Pack> {
         "h2" => Some(&H2_PACK),
         "actuator" => Some(&ACTUATOR_PACK),
         "cache" => Some(&CACHE_PACK),
+        "api" => Some(&API_PACK),
         "cors" => Some(&CORS_PACK),
         "observability" => Some(&OBSERVABILITY_PACK),
         "security" => Some(&SECURITY_PACK),
@@ -424,7 +426,10 @@ fn render(
     class: &str,
     capability: &Capability,
     boot_major: Option<u32>,
+    model: &AppModel,
 ) -> String {
+    let (duplicate_key_import, duplicate_key_handler, duplicate_key_test, duplicate_key_route) =
+        duplicate_key_parts(model);
     let hub_import = if package == default_package {
         String::new()
     } else {
@@ -454,6 +459,42 @@ fn render(
             meter_registry_customizer_import(boot_major),
         )
         .replace("{{webmvc_test_import}}", webmvc_test_import(boot_major))
+        .replace("{{duplicate_key_import}}", duplicate_key_import)
+        .replace("{{duplicate_key_handler}}", duplicate_key_handler)
+        .replace("{{duplicate_key_test}}", duplicate_key_test)
+        .replace("{{duplicate_key_route}}", duplicate_key_route)
+}
+
+/// The `DuplicateKeyException` arm, as rendered text or nothing.
+///
+/// **The exception is Spring's from `spring-tx`**, so an `api`-without-JDBC
+/// project given the arm unconditionally gets a compile error for a file it
+/// did not write -- which is the trap `CLAUDE.md` records for exactly this
+/// slice. It is rendered only where a JDBC capability put the type on the
+/// classpath.
+///
+/// Structural variation stays in Rust rather than becoming a template engine,
+/// which is `template.rs`'s rule: the template has a hole and this decides
+/// what goes in it. The *text* is shared with the legacy engine as files under
+/// `templates/spring/fragments/`, because two copies of one generated block
+/// drift where nobody looks.
+fn duplicate_key_parts(
+    model: &AppModel,
+) -> (&'static str, &'static str, &'static str, &'static str) {
+    let jdbc = model
+        .capabilities
+        .values()
+        .any(|capability| matches!(capability.kind.as_str(), "db" | "sqlite" | "h2"));
+    if jdbc {
+        (
+            "import org.springframework.dao.DuplicateKeyException;",
+            include_str!("../../../templates/spring/fragments/api_duplicate_key_handler.java.txt"),
+            include_str!("../../../templates/spring/fragments/api_duplicate_key_test.java.txt"),
+            include_str!("../../../templates/spring/fragments/api_duplicate_key_route.java.txt"),
+        )
+    } else {
+        ("", "", "", "")
+    }
 }
 
 fn render_property_value(value: &str, model: &AppModel) -> String {

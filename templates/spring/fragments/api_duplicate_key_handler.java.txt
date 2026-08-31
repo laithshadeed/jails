@@ -1,0 +1,19 @@
+
+    /**
+     * A unique constraint the database enforced, as the 409 it is.
+     *
+     * <p>Without this, a duplicate reaches the client as a 500 -- which is
+     * what alerting pages on and what a client library retries, so one
+     * duplicate becomes an incident and then a retry storm. The row was not
+     * written and never will be; that is a conflict, not a server fault.
+     *
+     * <p>The detail deliberately does not name the column. Spring's message
+     * carries the constraint name from the driver, which is a schema
+     * identifier rather than anything a caller can act on -- and echoing it
+     * tells an unauthenticated client the shape of your database.
+     */
+    @ExceptionHandler(DuplicateKeyException.class)
+    public ProblemDetail handleDuplicateKey(DuplicateKeyException failure) {
+        return ProblemDetail.forStatusAndDetail(
+                HttpStatus.CONFLICT, "a resource with those values already exists");
+    }

@@ -1,0 +1,7 @@
+
+    @Test
+    void aDuplicateKeyBecomesA409() {
+        // The database rejected a unique constraint; that is a conflict, not
+        // a server fault. `pending.md` §1.1.
+        assertThat(mvc.get().uri("/boom/duplicate")).hasStatus(HttpStatus.CONFLICT);
+    }
