@@ -27,7 +27,7 @@ class JdbcMarkNoteSeenTransitionIT {
     @Test
     void writesThroughTheRealDatabase() {
         Note stored = repository.save(new Note(1L, "sample", false, 1L));
-        Note answered = operation.execute(stored.id(), new MarkNoteSeenTransition.Input(1L, 1L));
+        Note answered = operation.execute(stored.id(), new MarkNoteSeenTransition.Input(1L));
 
         // `returning` answers with the row the statement wrote, so a null
         // here means it matched none -- which is the failure worth catching.

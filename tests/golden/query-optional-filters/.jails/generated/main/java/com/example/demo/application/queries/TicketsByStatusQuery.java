@@ -13,7 +13,7 @@ public interface TicketsByStatusQuery {
         String status,
         Optional<String> category
     ) {
-    
+
         public Input {
             Objects.requireNonNull(status, "status");
             status = status.trim();

@@ -209,9 +209,10 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
         }
         OperationKind::Transition(transition) => {
             let entity = entity(model, &transition.on)?;
-            let primary_key = primary_key(entity)?;
+            let key = transition_key(entity, transition)?;
             let mut imports = BTreeSet::from([domain_import(model, entity)]);
-            let key_type = java_type(primary_key, &mut imports);
+            let key_type = java_type(key, &mut imports);
+            let key_member = &key.names.java_member;
             let components = input_components(model, operation, &mut imports)?;
             let input = indent(
                 &record_shape_from_components("Input", &components, &mut imports),
@@ -221,7 +222,7 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
             let type_name = with_suffix(&operation.names.java_type, "Transition");
             let route = route_constant(transition.route.as_deref());
             let body = format!(
-                "public interface {type_name} {{\n{route}\n    {} execute({context}{key_type} id, Input input);\n\n{input}\n}}",
+                "public interface {type_name} {{\n{route}\n    {} execute({context}{key_type} {key_member}, Input input);\n\n{input}\n}}",
                 entity.names.java_type
             );
             (Package::ApplicationTransitions, type_name, body, imports)
@@ -370,7 +371,7 @@ pub(crate) fn input_components<'a>(
     imports: &mut BTreeSet<String>,
 ) -> Result<Vec<RecordComponent<'a>>, CompileError> {
     let from_fields =
-        |entity_id, field_ids: &'a [jails_model::FieldId], imports: &mut BTreeSet<String>| {
+        |entity_id, field_ids: &[jails_model::FieldId], imports: &mut BTreeSet<String>| {
             let entity = entity(model, entity_id)?;
             let fields = fields(entity, field_ids)?;
             import_declared_types(model, &fields, imports);
@@ -411,8 +412,20 @@ pub(crate) fn input_components<'a>(
                 parameter_components(model, &query.semantics.parameters, imports)
             }
         }
+        // **Minus the row selector.** `execute` already takes it, and a
+        // component bound from two places can disagree with itself -- a
+        // `PATCH /conversations/{userId}/status` whose body carries a
+        // different `userId` has no honest answer.
         OperationKind::Transition(transition) => {
-            from_fields(&transition.on, &transition.fields, imports)
+            let entity = entity(model, &transition.on)?;
+            let key = transition_key(entity, transition)?;
+            let carried = transition
+                .fields
+                .iter()
+                .filter(|field| *field != &key.id)
+                .cloned()
+                .collect::<Vec<_>>();
+            from_fields(&transition.on, &carried, imports)
         }
         OperationKind::Event(_) => Ok(Vec::new()),
     }
@@ -608,13 +621,55 @@ pub(crate) fn with_suffix(value: &str, suffix: &str) -> String {
     }
 }
 
+/// Shift a rendered block right, leaving blank lines blank.
+///
+/// **An empty line gets no prefix**, or the indent turns it into trailing
+/// whitespace -- which spotless removes, so a freshly generated project would
+/// fail its own `jails check` on bytes jails wrote.
 fn indent(value: &str, spaces: usize) -> String {
     let prefix = " ".repeat(spaces);
     value
         .lines()
-        .map(|line| format!("{prefix}{line}"))
+        .map(|line| {
+            if line.trim().is_empty() {
+                String::new()
+            } else {
+                format!("{prefix}{line}")
+            }
+        })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// The component a transition addresses its row by.
+///
+/// **The primary key unless the author named another one.** `--select userId`
+/// addresses the row by a different unique component, and four renderers have
+/// to agree about which one it is: the port's `execute` parameter, the JDBC
+/// adapter's `where`, the HTTP controller's path variable, and the proof that
+/// expands it. Reading `select` separately in each of them is `bugs.md` B48's
+/// shape, so it is read here.
+///
+/// A multi-column selector is refused where the update statement is rendered,
+/// which is the renderer that cannot express one; this returns the first so
+/// the port and the route still say something true about the rest.
+pub(crate) fn transition_key<'a>(
+    entity: &'a Entity,
+    transition: &jails_model::Transition,
+) -> Result<&'a Field, CompileError> {
+    match transition.semantics.select.first() {
+        None => primary_key(entity),
+        Some(selected) => entity
+            .fields
+            .iter()
+            .find(|field| &field.id == selected)
+            .ok_or_else(|| {
+                CompileError::new(format!(
+                    "linked entity `{}` does not declare selected field `{selected}`",
+                    entity.id
+                ))
+            }),
+    }
 }
 
 pub(crate) fn primary_key(entity: &Entity) -> Result<&Field, CompileError> {

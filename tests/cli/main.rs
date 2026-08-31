@@ -55,6 +55,12 @@ fn opts_line_for<'a>(script: &'a str, marker: &str) -> &'a str {
 
 /// Every file under a directory with its bytes, so "left it alone" is a claim
 /// about content rather than only about which names still exist.
+/// Every file in `dir`, for the "and it wrote nothing" half of a refusal.
+///
+/// `.jails/apply.lock` is excluded because the executor has to *take* the lock
+/// before it can recheck a single precondition -- so a refusal necessarily
+/// leaves an empty lock file behind, and counting it would turn every
+/// wrote-nothing assertion into an assertion that jails did not lock.
 fn snapshot_tree(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     let mut out = Vec::new();
     let Ok(entries) = fs::read_dir(dir) else {
@@ -64,7 +70,7 @@ fn snapshot_tree(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
         let path = entry.path();
         if path.is_dir() {
             out.extend(snapshot_tree(&path));
-        } else {
+        } else if !path.ends_with(".jails/apply.lock") {
             out.push((path.clone(), fs::read(&path).unwrap()));
         }
     }

@@ -65,6 +65,7 @@ fn lower(
     };
     let (method, path) = (route.method.wire_name(), route.path.as_str());
     let mut key_sample = None;
+    let mut path_member = String::from("id");
     let (target, binding, port_package, port_type, return_type, parameters, mut imports) =
         match &operation.kind {
             OperationKind::Command(command) => {
@@ -99,32 +100,59 @@ fn lower(
                 )
             }
             OperationKind::Transition(transition) => {
-                if !path.contains("{id}") {
+                let entity = entity(model, &transition.on)?;
+                // **The row this transition selects, which is not always the
+                // primary key.** `--select userId` addresses the row by another
+                // unique component, and every admin frontend then puts *that*
+                // in the URL -- so the placeholder the route has to carry is
+                // named after the selector rather than after `id`.
+                let key = match transition.semantics.select.as_slice() {
+                    [] => primary_key(entity)?,
+                    [only] => entity
+                        .fields
+                        .iter()
+                        .find(|field| &field.id == only)
+                        .ok_or_else(|| {
+                            CompileError::new(format!(
+                                "transition operation `{}` selects field `{only}`, which entity `{}` does not declare",
+                                operation.label, entity.id
+                            ))
+                        })?,
+                    _ => {
+                        return Err(CompileError::new(format!(
+                            "transition operation `{}` selects more than one field, which no single path variable can carry\n       fix: select one component, or remove the `api` capability",
+                            operation.label
+                        )));
+                    }
+                };
+                let member = key.names.java_member.clone();
+                if !path.contains(&format!("{{{member}}}")) {
                     return Err(CompileError::new(format!(
-                        "transition operation `{}` needs `{{id}}` in its API route\n       fix: set `route = \"PATCH /path/{{id}}\"` or remove the `api` capability",
+                        "transition operation `{}` needs `{{{member}}}` in its API route\n       fix: set `route = \"PATCH /path/{{{member}}}\"` or remove the `api` capability",
                         operation.label
                     )));
                 }
-                let entity = entity(model, &transition.on)?;
-                let primary_key = primary_key(entity)?;
+                path_member = member.clone();
                 let mut imports = BTreeSet::from([
                     domain_import(model, entity),
                     "org.springframework.web.bind.annotation.PathVariable".to_string(),
                     "org.springframework.web.bind.annotation.RequestBody".to_string(),
                 ]);
-                let key_type = java_type(primary_key, &mut imports);
-                // The `{id}` the test has to expand, sampled from the model's
-                // own key rather than from a literal that happens to parse: a
-                // `uuid` key rejects `"1"` at the path variable, before the
-                // handler runs.
-                key_sample = crate::emit_companion_test::json_sample(model, &primary_key.ty);
+                let key_type = java_type(key, &mut imports);
+                // The placeholder the test has to expand, sampled from the
+                // model's own key rather than from a literal that happens to
+                // parse: a `uuid` key rejects `"1"` at the path variable,
+                // before the handler runs.
+                key_sample = crate::emit_companion_test::json_sample(model, &key.ty);
                 (
                     entity,
                     Binding::Path,
                     Package::ApplicationTransitions,
                     with_suffix(&operation.names.java_type, "Transition"),
                     entity.names.java_type.clone(),
-                    format!("@PathVariable(\"id\") {key_type} id, @RequestBody PORT.Input input"),
+                    format!(
+                        "@PathVariable(\"{member}\") {key_type} {member}, @RequestBody PORT.Input input"
+                    ),
                     imports,
                 )
             }
@@ -195,7 +223,7 @@ fn lower(
             )
         };
     let invocation = if matches!(operation.kind, OperationKind::Transition(_)) {
-        format!("operation.execute({context_argument}id, input)")
+        format!("operation.execute({context_argument}{path_member}, input)")
     } else {
         format!("operation.execute({context_argument}input)")
     };

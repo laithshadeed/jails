@@ -14,7 +14,7 @@ public interface OpenTicketsQuery {
     public record Input(
         Optional<String> status
     ) {
-    
+
         public Input {
             status = Objects.requireNonNullElse(status, Optional.empty());
         }

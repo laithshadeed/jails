@@ -27,7 +27,7 @@ class JdbcSetTopicSubjectTransitionIT {
     @Test
     void writesThroughTheRealDatabase() {
         Topic stored = repository.save(new Topic(1L, 1L, "sample", 1L));
-        Topic answered = operation.execute(stored.id(), new SetTopicSubjectTransition.Input(1L, "sample"));
+        Topic answered = operation.execute(stored.userId(), new SetTopicSubjectTransition.Input("sample"));
 
         // `returning` answers with the row the statement wrote, so a null
         // here means it matched none -- which is the failure worth catching.

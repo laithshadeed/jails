@@ -12,7 +12,7 @@ public interface CreateCommand {
         String title,
         String status
     ) {
-    
+
         public Input {
             Objects.requireNonNull(title, "title");
             title = title.trim();

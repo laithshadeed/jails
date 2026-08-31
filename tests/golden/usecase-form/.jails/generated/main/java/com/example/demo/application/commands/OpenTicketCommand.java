@@ -12,7 +12,7 @@ public interface OpenTicketCommand {
     public record Input(
         String subject
     ) {
-    
+
         public Input {
             Objects.requireNonNull(subject, "subject");
             subject = subject.trim();

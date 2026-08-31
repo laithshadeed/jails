@@ -13,7 +13,7 @@ public interface PostNoteCommand {
         String email,
         String body
     ) {
-    
+
         public Input {
             Objects.requireNonNull(email, "email");
             email = email.trim();

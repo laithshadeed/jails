@@ -13,7 +13,7 @@ public interface ReceiveMessageCommand {
         UUID id,
         String body
     ) {
-    
+
         public Input {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(body, "body");

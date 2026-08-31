@@ -7,13 +7,12 @@ import java.util.Objects;
 public interface SetTopicSubjectTransition {
     String ROUTE = "PATCH /admin_api/topics/{userId}/subject";
 
-    Topic execute(long id, Input input);
+    Topic execute(long userId, Input input);
 
     public record Input(
-        long userId,
         String subject
     ) {
-    
+
         public Input {
             Objects.requireNonNull(subject, "subject");
             subject = subject.trim();

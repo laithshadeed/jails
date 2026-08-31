@@ -12,7 +12,7 @@ public interface PayoutsByStatusQuery {
     public record Input(
         PayoutStatus status
     ) {
-    
+
         public Input {
             Objects.requireNonNull(status, "status");
         }

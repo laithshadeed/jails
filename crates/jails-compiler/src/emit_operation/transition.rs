@@ -114,6 +114,10 @@ pub(super) fn lower(
         "org.springframework.transaction.annotation.Transactional".to_string(),
     ]);
     let key_type = java_type(selector[0], &mut imports);
+    // The port names this parameter after the component it selects on, and an
+    // override that renamed it would read as a different key to anyone
+    // comparing the two.
+    let key_member = &selector[0].names.java_member;
     let context = context_parameter(model, target, &mut imports);
     let scope_fields = scopes(target);
     let publications = super::publications(
@@ -274,7 +278,7 @@ pub(super) fn lower(
         // context fails at startup with "Could not generate CGLIB subclass". The
         // adapter implements its port, so a JDK proxy would do, but making the whole
         // application proxy by interface to keep one `final` is the wrong trade.
-        "@Repository\npublic class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;{event_member}\n\n    public {type_name}(JdbcClient jdbc{event_parameter}) {{\n        this.jdbc = jdbc;{event_assignment}\n    }}\n\n    @Override\n    @Transactional\n    public {} execute({context}{key_type} id, {port_type}.Input input) {{\n        var predicates = new ArrayList<>(List.of({predicate_seed}));\n{optional_guards}        var sql = \"update {} set {assignments} where \" + String.join(\" and \", predicates) + \" returning {columns}\";\n        JdbcClient.StatementSpec statement = jdbc.sql(sql);\n        statement = statement.param(\"id\", id);\n{set_params}{guard_params}{scope_params}{result}\n    }}\n}}",
+        "@Repository\npublic class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;{event_member}\n\n    public {type_name}(JdbcClient jdbc{event_parameter}) {{\n        this.jdbc = jdbc;{event_assignment}\n    }}\n\n    @Override\n    @Transactional\n    public {} execute({context}{key_type} {key_member}, {port_type}.Input input) {{\n        var predicates = new ArrayList<>(List.of({predicate_seed}));\n{optional_guards}        var sql = \"update {} set {assignments} where \" + String.join(\" and \", predicates) + \" returning {columns}\";\n        JdbcClient.StatementSpec statement = jdbc.sql(sql);\n        statement = statement.param(\"id\", {key_member});\n{set_params}{guard_params}{scope_params}{result}\n    }}\n}}",
         target.names.java_type, target.names.sql_table
     );
     operation_file(

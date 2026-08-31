@@ -1338,18 +1338,42 @@ struct ProcessPermit {
 /// say which one they are. Exact paths are pinned by the golden trees; this
 /// exists so a test about a file's *contents* is not also a second, weaker
 /// assertion about its package.
-const MOVED_PACKAGES: &[(&str, &str)] = &[
+const MOVED_PACKAGES: &[(&str, &[&str])] = &[
     (
         "src/main/java/com/example/demo/app/",
-        "com/example/demo/repository/",
+        &["com/example/demo/repository/"],
     ),
     (
-        "src/main/java/com/example/demo/adapters/InMemory",
-        "com/example/demo/adapters/memory/InMemory",
+        "src/main/java/com/example/demo/service/",
+        &[
+            "com/example/demo/application/commands/",
+            "com/example/demo/application/queries/",
+            "com/example/demo/application/transitions/",
+        ],
     ),
     (
-        "src/main/java/com/example/demo/adapters/Jdbc",
-        "com/example/demo/adapters/jdbc/Jdbc",
+        "src/main/java/com/example/demo/adapters/",
+        &[
+            "com/example/demo/adapters/jdbc/",
+            "com/example/demo/adapters/memory/",
+            "com/example/demo/adapters/http/",
+        ],
+    ),
+    (
+        "src/main/java/com/example/demo/web/",
+        &["com/example/demo/adapters/http/"],
+    ),
+    (
+        "src/test/java/com/example/demo/adapters/",
+        &[
+            "com/example/demo/adapters/jdbc/",
+            "com/example/demo/adapters/memory/",
+            "com/example/demo/adapters/http/",
+        ],
+    ),
+    (
+        "src/test/java/com/example/demo/web/",
+        &["com/example/demo/adapters/http/"],
     ),
 ];
 
@@ -1377,17 +1401,49 @@ pub fn generated(root: &Path, relative: &str) -> PathBuf {
     // rediscovered at three hundred assertions -- and so a file that turns up
     // somewhere *unexpected* is still a failure. A basename search would have
     // accepted any location, which is exactly the check these tests are for.
-    for (from, to) in MOVED_PACKAGES {
-        if let Some(rest) = relative.strip_prefix(from) {
-            let moved = root
-                .join(".jails/generated/main/java")
-                .join(format!("{to}{rest}"));
+    //
+    // A legacy package can map to more than one canonical package -- `service`
+    // split into commands, queries and transitions by what the operation *is*
+    // -- so each row lists its candidates and the basename still has to match
+    // exactly.
+    let tree = if relative.starts_with("src/test/") {
+        ".jails/generated/test/java"
+    } else {
+        ".jails/generated/main/java"
+    };
+    for (from, candidates) in MOVED_PACKAGES {
+        let Some(rest) = relative.strip_prefix(from) else {
+            continue;
+        };
+        for to in *candidates {
+            let moved = root.join(tree).join(format!("{to}{rest}"));
             if moved.exists() {
                 return moved;
             }
         }
     }
     root.join(relative)
+}
+
+/// Give a fixture the model every mutating command needs.
+///
+/// **The on-ramp, run explicitly.** Any mutation initialises a project that has
+/// none, so most tests never call this -- but a test whose *first* command is a
+/// dry run does, because `--pretend` must not write and there is nothing to
+/// plan against until the model exists. The refusal says exactly this; these
+/// tests are about what comes after it.
+pub fn become_canonical(root: &Path) {
+    let output = Command::new(bin())
+        .current_dir(root)
+        .args(["model", "init"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "could not initialise the model: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 /// Declare PostgreSQL storage, the way a reader would.

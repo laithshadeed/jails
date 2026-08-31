@@ -318,7 +318,7 @@ pub(super) fn write(
 
     let record = &target.names.java_type;
     // A transition changes a row that has to be there; a command makes its own.
-    let invocation = if keyed {
+    let invocation = if let Some(key) = keyed {
         let Some(stored) = record_arguments(model, target, &substitutions, &mut imports) else {
             return Ok(None);
         };
@@ -332,7 +332,6 @@ pub(super) fn write(
         setup.push_str(&format!(
             "        {record} stored = repository.save(new {record}({stored}));\n"
         ));
-        let key = crate::emit_java::primary_key(target)?;
         format!(
             "operation.execute(stored.{}(), new {port_type}.Input({{arguments}}))",
             key.names.java_member
@@ -413,7 +412,9 @@ pub(super) struct WriteShape<'a> {
     pub(super) port_suffix: &'a str,
     pub(super) port_package: Package,
     /// Whether `execute` takes the row's key before its input.
-    pub(super) keyed: bool,
+    /// The component the operation addresses its row by, when it changes an
+    /// existing one. `None` for a command, which writes its own.
+    pub(super) keyed: Option<&'a jails_model::Field>,
     /// The fields the `Input` record declares, in order.
     pub(super) inputs: &'a [&'a jails_model::Field],
 }

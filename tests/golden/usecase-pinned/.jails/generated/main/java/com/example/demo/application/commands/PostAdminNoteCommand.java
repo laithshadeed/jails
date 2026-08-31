@@ -13,7 +13,7 @@ public interface PostAdminNoteCommand {
         long authorId,
         String body
     ) {
-    
+
         public Input {
             Objects.requireNonNull(body, "body");
             body = body.trim();

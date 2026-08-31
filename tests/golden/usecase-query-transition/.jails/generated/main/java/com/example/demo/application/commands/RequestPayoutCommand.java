@@ -13,7 +13,7 @@ public interface RequestPayoutCommand {
         UUID id,
         long amount
     ) {
-    
+
         public Input {
             Objects.requireNonNull(id, "id");
             if (amount <= 0) {

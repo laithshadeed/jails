@@ -11,7 +11,7 @@ public interface RegisterPersonCommand {
     public record Input(
         String email
     ) {
-    
+
         public Input {
             Objects.requireNonNull(email, "email");
             email = email.trim();

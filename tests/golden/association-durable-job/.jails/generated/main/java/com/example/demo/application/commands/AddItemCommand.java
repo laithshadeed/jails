@@ -14,7 +14,7 @@ public interface AddItemCommand {
         UUID ownerId,
         String name
     ) {
-    
+
         public Input {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(ownerId, "ownerId");

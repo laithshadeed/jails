@@ -13,7 +13,7 @@ public interface OpenQuery {
     public record Input(
         String status
     ) {
-    
+
         public Input {
             Objects.requireNonNull(status, "status");
         }

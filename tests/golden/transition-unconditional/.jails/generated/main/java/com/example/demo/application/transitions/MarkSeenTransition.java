@@ -9,7 +9,6 @@ public interface MarkSeenTransition {
     Note execute(long id, Input input);
 
     public record Input(
-        long id,
         long version
     ) {
     }

@@ -12,7 +12,7 @@ public interface RenameTransition {
     public record Input(
         String title
     ) {
-    
+
         public Input {
             Objects.requireNonNull(title, "title");
             title = title.trim();

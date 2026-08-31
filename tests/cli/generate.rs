@@ -399,7 +399,7 @@ fn resource_field_uses_scaffold_storage_identity_and_leaves_plain_records_source
             "field",
             "add",
             "Tag",
-            "createdAt:instant",
+            "createdAt:instant@default(now())",
             "--default-literal",
             "2026-08-25T12:00:00Z",
         ])
@@ -562,7 +562,7 @@ fn a_field_reaches_the_companions_named_by_yields_as_well_as_on() {
             "Owner",
             "id:uuid@pk",
             "name:string!",
-            "createdAt:instant",
+            "createdAt:instant@default(now())",
         ],
         vec![
             "g",
@@ -571,7 +571,7 @@ fn a_field_reaches_the_companions_named_by_yields_as_well_as_on() {
             "id:uuid@pk",
             "ownerId:uuid@index",
             "name:string!",
-            "createdAt:instant",
+            "createdAt:instant@default(now())",
         ],
         vec![
             "g",
@@ -687,7 +687,7 @@ fn an_index_can_be_added_to_a_table_that_already_exists() {
             "id:uuid@pk",
             "customerId:uuid",
             "body:string!",
-            "createdAt:instant",
+            "createdAt:instant@default(now())",
         ])
         .output()
         .unwrap();
@@ -775,7 +775,7 @@ fn a_named_route_replaces_the_derived_one_everywhere_it_appears() {
             "Ping",
             "id:uuid@pk",
             "email:string!",
-            "createdAt:instant",
+            "createdAt:instant@default(now())",
         ],
         vec![
             "g",
@@ -1609,7 +1609,7 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
             "g",
             "field",
             "Note",
-            "createdAt:instant",
+            "createdAt:instant@default(now())",
             "--pretend",
             "--diff",
             "--ast",
@@ -1773,7 +1773,7 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
             "g",
             "field",
             "Note",
-            "createdAt:instant",
+            "createdAt:instant@default(now())",
             "--pretend",
             "--output",
             "json",
@@ -1851,7 +1851,7 @@ fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
             "Task",
             "id:uuid@pk",
             "title:string!",
-            "createdAt:instant@index",
+            "createdAt:instant@default(now())@index",
         ])
         .output()
         .unwrap();
@@ -2298,7 +2298,7 @@ fn coordinated_single_cutover_appends_one_migration_and_switches_the_binding() {
             "Task",
             "id:uuid@pk",
             "title:string!",
-            "createdAt:instant@index",
+            "createdAt:instant@default(now())@index",
         ])
         .output()
         .unwrap();
@@ -3338,7 +3338,7 @@ fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migra
             "field",
             "add",
             "Note",
-            "createdAt:instant",
+            "createdAt:instant@default(now())",
             "--default-literal",
             "2026-08-25T12:00:00Z",
         ])
@@ -3675,7 +3675,7 @@ fn scaffold_writes_http_requests_and_factory_builds_typed_test_data() {
                 "Note",
                 "id:uuid@pk",
                 "title:string!",
-                "createdAt:instant",
+                "createdAt:instant@default(now())",
             ])
             .status()
             .unwrap()
@@ -6847,7 +6847,7 @@ fn a_pin_that_cannot_be_resolved_is_refused_and_names_what_would_work() {
             "userId:long",
             "content:string!",
             "senderType:SenderType",
-            "sentAt:instant",
+            "sentAt:instant@default(now())",
         ],
     ] {
         assert!(
@@ -7541,7 +7541,7 @@ fn every_remaining_generator_kind_compiles_in_one_spring_project() {
             "Owner",
             "id:uuid@pk",
             "name:string!",
-            "createdAt:instant",
+            "createdAt:instant@default(now())",
         ][..],
         &[
             "g",
@@ -7550,7 +7550,7 @@ fn every_remaining_generator_kind_compiles_in_one_spring_project() {
             "id:uuid@pk",
             "ownerId:uuid@index",
             "name:string!",
-            "createdAt:instant",
+            "createdAt:instant@default(now())",
         ][..],
         &[
             "g",
@@ -7558,7 +7558,7 @@ fn every_remaining_generator_kind_compiles_in_one_spring_project() {
             "Message",
             "id:uuid@pk",
             "body:string!",
-            "createdAt:instant",
+            "createdAt:instant@default(now())",
         ][..],
         &[
             "g",

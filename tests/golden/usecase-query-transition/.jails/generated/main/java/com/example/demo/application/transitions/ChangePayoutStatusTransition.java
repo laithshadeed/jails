@@ -11,13 +11,11 @@ public interface ChangePayoutStatusTransition {
     Payout execute(UUID id, Input input);
 
     public record Input(
-        UUID id,
         PayoutStatus status,
         long version
     ) {
-    
+
         public Input {
-            Objects.requireNonNull(id, "id");
             Objects.requireNonNull(status, "status");
             if (version < 0) {
                 throw new IllegalArgumentException("version must be nonnegative");

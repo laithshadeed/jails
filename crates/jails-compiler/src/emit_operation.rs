@@ -40,7 +40,7 @@ pub(crate) fn lower_and_emit(
                         proof::WriteShape {
                             port_suffix: "Command",
                             port_package: jails_model::Package::ApplicationCommands,
-                            keyed: false,
+                            keyed: None,
                             inputs: &inputs,
                         },
                     )?
@@ -80,7 +80,17 @@ pub(crate) fn lower_and_emit(
             }
             OperationKind::Transition(spec) => {
                 let target = stored_entity(model, operation, &spec.on, "transition")?;
-                if let Some(inputs) = proof::input_fields(target, &spec.fields, &[])
+                // Minus the row selector, exactly as the port's `Input` is:
+                // `execute` takes the key beside the record, so a proof that
+                // passed it inside as well would not compile.
+                let key = crate::emit_java::transition_key(target, spec)?;
+                let carried = spec
+                    .fields
+                    .iter()
+                    .filter(|field| *field != &key.id)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if let Some(inputs) = proof::input_fields(target, &carried, &[])
                     && let Some(written) = proof::write(
                         model,
                         capability.id.as_str(),
@@ -89,7 +99,7 @@ pub(crate) fn lower_and_emit(
                         proof::WriteShape {
                             port_suffix: "Transition",
                             port_package: jails_model::Package::ApplicationTransitions,
-                            keyed: true,
+                            keyed: Some(key),
                             inputs: &inputs,
                         },
                     )?
