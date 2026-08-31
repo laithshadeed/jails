@@ -45,10 +45,49 @@ pub(super) fn operation_declaration(
         .filter_map(|assignment| assignment.split_once('='))
         .map(|(component, _)| java_to_label(component))
         .collect::<Vec<_>>();
+    // **A scope, a version and an `@updated` stamp are never request inputs.**
+    // The linker says so by name -- "version is request-visible only through
+    // an if-match precondition" -- and the familiar spelling of a transition
+    // always names the version in its field list, so it has to come out here
+    // as well as out of the update list below.
+    // **The two lists exclude different things, and the version is why.**
+    // Without `--if-match` the linker refuses the version as a request input
+    // at all; with it, the linker *requires* one shorthand parameter for it,
+    // because stating the value you expect to be replacing is what a
+    // compare-and-swap is. It is never a *target*, though -- the compiler
+    // increments it -- so it leaves the update list either way. A scope and an
+    // `@updated` stamp are neither input nor target.
+    let managed = |as_input: bool| {
+        model
+            .entities
+            .values()
+            .find(|candidate| candidate.label == entity_label)
+            .map(|entity| {
+                entity
+                    .fields
+                    .iter()
+                    .filter(|field| {
+                        field.semantics.scope.is_some()
+                            || (field.semantics.version && !(as_input && args.if_match.is_some()))
+                            || field.semantics.updated
+                    })
+                    .map(|field| field.label.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+    let managed_inputs = managed(true);
+    let managed_targets = managed(false);
+    let borrowed = |field: &String| match (args.kind, args.via.as_ref(), field.split_once('.')) {
+        (ArtifactKind::Usecase, Some(via), Some((_, member))) => {
+            format!("{}.{member} as {member}", java_type_name(via))
+        }
+        _ => field.clone(),
+    };
     let parameters = fields
         .iter()
-        .filter(|field| !pinned.contains(field))
-        .cloned()
+        .filter(|field| !pinned.contains(field) && !managed_inputs.contains(field))
+        .map(borrowed)
         .collect::<Vec<_>>();
     let mut output = format!(
         "  {kind} {}({}) @id(op_{}) {{\n",
@@ -207,6 +246,75 @@ pub(super) fn operation_declaration(
     // `bind p from form "wire"` and `consumes form` all along -- so the
     // refusal told the reader to hand-edit `.jails/model.jdl`, which is true
     // and useless.
+    // **`--via` on a command is a key resolution**, not a join: the caller
+    // states a natural key of the parent -- an author's email -- and the
+    // command resolves the foreign key from it before inserting. The grammar
+    // has read `resolve authorId from Author.id where Author.email = email`
+    // all along, and the parameter form is `Author.email as email` rather than
+    // the query's `author.email`, because a command has no join to alias.
+    if args.kind == ArtifactKind::Usecase
+        && let Some(via) = &args.via
+    {
+        let parent_type = java_type_name(via);
+        let parent = model
+            .entities
+            .values()
+            .find(|entity| entity.names.java_type == parent_type)
+            .ok_or_else(|| {
+                Failure::Told(format!(
+                    "`{parent_type}` does not name a canonical entity.\n       fix: choose an entity declared in `{MODEL_PATH}`"
+                ))
+            })?;
+        let parent_key = parent
+            .fields
+            .iter()
+            .find(|field| field.primary_key)
+            .ok_or_else(|| {
+                Failure::Told(format!(
+                    "`{parent_type}` has no primary key, so nothing can resolve to it.\n       fix: declare one component `@pk`"
+                ))
+            })?;
+        let child = model
+            .entities
+            .values()
+            .find(|entity| entity.label == entity_label);
+        let foreign_key = model
+            .relations
+            .values()
+            .find(|relation| relation.parent == parent.id)
+            .and_then(|relation| relation.mappings.first())
+            .and_then(|mapping| child.and_then(|entity| entity.field(&mapping.local)))
+            // **The conventional column when no association is declared.**
+            // `--via Author` on an entity carrying `authorId` is the shape the
+            // legacy recipe read, and refusing it would make the flag usable
+            // only after `g association`, which is not what it is for. A
+            // declared relation still wins, because it states the pairing
+            // rather than assuming it.
+            .or_else(|| {
+                let conventional = format!("{}_id", parent.label);
+                child.and_then(|entity| {
+                    entity
+                        .fields
+                        .iter()
+                        .find(|field| field.label == conventional)
+                })
+            })
+            .ok_or_else(|| {
+                Failure::Told(format!(
+                    "nothing on `{entity_label}` points at `{parent_type}`.\n       fix: give it a `{}_id` column, or declare the association with `jails g association {parent_type}Link <childField>=<parentField> --on {entity_label} --yields {parent_type}`",
+                    java_to_label(&parent_type)
+                ))
+            })?;
+        for field in fields {
+            let Some((_, member)) = field.split_once('.') else {
+                continue;
+            };
+            output.push_str(&format!(
+                "    resolve {} from {parent_type}.{} where {parent_type}.{member} = {member}\n",
+                foreign_key.label, parent_key.label
+            ));
+        }
+    }
     if args.kind == ArtifactKind::Transition {
         // **The selector and every pinned component are subtracted from the
         // update.** A transition does not write the column it selects by, and
@@ -214,35 +322,35 @@ pub(super) fn operation_declaration(
         // caller supplies -- the linker refuses either overlap by name
         // (`model-transition-field-role`), which is the check that makes the
         // three roles mean different things.
-        let selector = args.select.as_ref().map(|field| java_to_label(field));
-        // A scope, a version and an `@updated` stamp are the compiler's to
-        // write -- the linker refuses an explicit target for any of them
-        // (`model-managed-field-target`). `--on Message id version` is the
-        // familiar spelling of a transition and always names the version, so
-        // subtracting it here is what lets that spelling keep working.
-        let managed = model
-            .entities
-            .values()
-            .find(|candidate| candidate.label == entity_label)
-            .map(|entity| {
-                entity
-                    .fields
-                    .iter()
-                    .filter(|field| {
-                        field.semantics.scope.is_some()
-                            || field.semantics.version
-                            || field.semantics.updated
+        // **With no `--select`, the row selector is the primary key.** That is
+        // what a transition selects by, and the familiar spelling names it in
+        // the field list -- `g transition MarkSeen id:long version:long` --
+        // so without this it arrived as an update and the compiler refused it
+        // as "attempts to rewrite primary key `id`". Legacy inferred the same
+        // thing; this makes the inference explicit in the model rather than
+        // leaving it to be re-derived.
+        let selector = args.select.as_ref().map_or_else(
+            || {
+                model
+                    .entities
+                    .values()
+                    .find(|candidate| candidate.label == entity_label)
+                    .and_then(|entity| {
+                        entity
+                            .fields
+                            .iter()
+                            .find(|field| field.primary_key)
+                            .map(|field| field.label.clone())
                     })
-                    .map(|field| field.label.clone())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+            },
+            |field| Some(java_to_label(field)),
+        );
         let updated = fields
             .iter()
             .filter(|field| {
                 selector.as_deref() != Some(field.as_str())
                     && !pinned.contains(field)
-                    && !managed.contains(field)
+                    && !managed_targets.contains(field)
             })
             .cloned()
             .collect::<Vec<_>>();
