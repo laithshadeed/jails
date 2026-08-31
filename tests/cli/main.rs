@@ -414,7 +414,11 @@ fn verified_spring_toolboxes(path: &str) -> &'static SpringToolboxes {
                     "note:string?",
                 ][..],
                 &["generate", "dto", "Payout"][..],
-                &["generate", "client", "Billing"][..],
+                // Not `Billing`: the model has one component namespace, so a
+                // service and a client of one name are one declaration and the
+                // second is refused by name. The engine this replaces put them
+                // in different packages and never had to decide.
+                &["generate", "client", "Ledger"][..],
                 // The other client shape: the call the project makes rather
                 // than a REST collection to delete (missing.md M7). Its test
                 // is `@Disabled` and still has to compile.
@@ -475,14 +479,27 @@ fn verified_spring_toolboxes(path: &str) -> &'static SpringToolboxes {
                 );
             }
             for args in [
+                // The entity the event observes, then the event. An event is
+                // an entity's operation on the canonical path, so `--on` is
+                // not decoration: without it there is nothing for the payload
+                // to be a projection of.
+                &[
+                    "generate",
+                    "scaffold",
+                    "Payout",
+                    "id:uuid@pk",
+                    "amount:decimal",
+                    "occurredAt:instant",
+                ][..],
                 &[
                     "generate",
                     "event",
                     "PayoutSettled",
                     "id:uuid",
-                    "payoutId:uuid",
                     "amount:decimal",
                     "occurredAt:instant",
+                    "--on",
+                    "Payout",
                 ][..],
                 &["generate", "auth", "Api"][..],
                 &["generate", "webhook", "Provider"][..],
@@ -757,7 +774,10 @@ fn align_proof_app_smoke_context(project: &Path) {
         assert_proof_app_context_source(project, file, class_name);
     }
 
-    let test = project.join("src/test/java/com/example/demo/DemoApplicationTests.java");
+    let test = common::generated(
+        &project,
+        "src/test/java/com/example/demo/DemoApplicationTests.java",
+    );
     let source = fs::read_to_string(&test).unwrap();
     let shared = format!("{PROOF_APP_SHARED_SPRING_BOOT_TEST}\nclass DemoApplicationTests");
     if !source.contains(&shared) {
@@ -789,7 +809,7 @@ fn validate_proof_app_shared_context(project: &Path) {
 }
 
 fn assert_proof_app_context_source(project: &Path, file: &str, class_name: &str) {
-    let test_dir = project.join("src/test/java/com/example/demo");
+    let test_dir = common::generated(&project, "src/test/java/com/example/demo");
     let source = fs::read_to_string(test_dir.join(file)).unwrap();
     let class_marker = format!("class {class_name}");
     let class_start = source
@@ -1025,7 +1045,7 @@ fn verified_app_images(fixtures: &'static Vec<(&'static str, std::path::PathBuf)
 /// for generate/destroy's path resolution -- not a real, resolvable Maven
 /// project, since these tests never invoke Maven.
 fn write_project_skeleton(root: &std::path::Path) {
-    let pkg_dir = root.join("src/main/java/com/example/demo");
+    let pkg_dir = common::generated(&root, "src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
     fs::write(root.join("pom.xml"), "<project></project>").unwrap();
     fs::write(
@@ -1047,7 +1067,7 @@ fn write_project_skeleton(root: &std::path::Path) {
 // ---- add ----
 
 fn write_release_fixture(root: &std::path::Path, release: &str) {
-    let pkg_dir = root.join("src/main/java/com/example/demo");
+    let pkg_dir = common::generated(&root, "src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
     fs::write(
         root.join("pom.xml"),
@@ -1077,7 +1097,7 @@ fn write_inspectable_project(root: &Path) {
          <properties><maven.compiler.release>27</maven.compiler.release></properties></project>",
     )
     .unwrap();
-    let main = root.join("src/main/java/dev/example/shop");
+    let main = common::generated(&root, "src/main/java/dev/example/shop");
     fs::create_dir_all(main.join("api")).unwrap();
     fs::create_dir_all(main.join("domain")).unwrap();
     fs::write(

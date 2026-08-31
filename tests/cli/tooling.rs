@@ -84,7 +84,7 @@ fn test_flags_rerun_failures_stop_early_and_name_the_slowest() {
 
     // A file and a line: JUnit has no FileSelector, so jails resolves the
     // enclosing @Test itself. This is what an editor keybinding sends.
-    let test_file = root.join("src/test/java/com/example/demo/PayoutTest.java");
+    let test_file = common::generated(&root, "src/test/java/com/example/demo/PayoutTest.java");
     fs::create_dir_all(test_file.parent().unwrap()).unwrap();
     fs::write(
         &test_file,
@@ -307,7 +307,7 @@ fn test_command_explains_the_canonical_partition() {
 fn compile_none_never_compiles_ineligible_warm_tests_and_strict_warm_refuses() {
     let root = temp_dir("mock-test-isolation");
     write_plain_fixture(&root);
-    let source = root.join("src/test/java/com/example/demo/ContextTest.java");
+    let source = common::generated(&root, "src/test/java/com/example/demo/ContextTest.java");
     fs::create_dir_all(source.parent().unwrap()).unwrap();
     fs::write(
         &source,
@@ -465,7 +465,7 @@ fn check_command_invokes_mvn_clean_verify() {
 #[test]
 fn build_tool_launcher_uses_spring_boot_run_for_spring_projects() {
     let root = temp_dir("mock-run-spring");
-    let pkg_dir = root.join("src/main/java/com/example/demo");
+    let pkg_dir = common::generated(&root, "src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
     fs::write(
         pkg_dir.join("App.java"),
@@ -511,7 +511,7 @@ fn gradle_build_tool_launcher_preserves_the_same_application_vector() {
     let root = temp_dir("mock-run-gradle-spring");
     fs::write(root.join("settings.gradle"), "rootProject.name = 'demo'\n").unwrap();
     fs::write(root.join("build.gradle"), "plugins { id 'java' }\n").unwrap();
-    let pkg_dir = root.join("src/main/java/com/example/demo");
+    let pkg_dir = common::generated(&root, "src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
     fs::write(
         pkg_dir.join("App.java"),
@@ -550,7 +550,7 @@ fn gradle_build_tool_launcher_preserves_the_same_application_vector() {
 #[test]
 fn run_starts_compose_services_only_when_explicitly_requested() {
     let root = temp_dir("mock-run-compose");
-    let pkg_dir = root.join("src/main/java/com/example/demo");
+    let pkg_dir = common::generated(&root, "src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
     fs::write(
         pkg_dir.join("App.java"),
@@ -897,7 +897,7 @@ fn gradle_console_uses_the_shared_existing_runtime_classpath() {
         "plugins { id 'java' }\nsourceCompatibility = 26\n",
     )
     .unwrap();
-    let source = root.join("src/main/java/com/example/demo/DemoApplication.java");
+    let source = common::generated(&root, "src/main/java/com/example/demo/DemoApplication.java");
     fs::create_dir_all(source.parent().unwrap()).unwrap();
     fs::write(
         &source,
@@ -958,7 +958,7 @@ fn gradle_console_uses_the_shared_existing_runtime_classpath() {
 #[test]
 fn run_command_compiles_before_attempting_a_plain_main_class() {
     let root = temp_dir("mock-run-plain");
-    let pkg_dir = root.join("src/main/java/com/example/demo");
+    let pkg_dir = common::generated(&root, "src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
     fs::write(root.join("pom.xml"), "<project></project>").unwrap();
     fs::write(
@@ -1021,7 +1021,7 @@ fn run_no_build_refuses_an_unproven_jar_instead_of_running_whatever_exists() {
 #[test]
 fn run_no_build_errors_clearly_when_target_is_missing() {
     let root = temp_dir("no-build-missing-plain");
-    let pkg_dir = root.join("src/main/java/com/example/demo");
+    let pkg_dir = common::generated(&root, "src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
     fs::write(root.join("pom.xml"), "<project></project>").unwrap();
     fs::write(
@@ -1049,7 +1049,7 @@ fn run_no_build_runs_already_compiled_plain_classes_without_mvn() {
         return;
     }
     let root = temp_dir("no-build-plain-real");
-    let pkg_dir = root.join("src/main/java/com/example/demo");
+    let pkg_dir = common::generated(&root, "src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
     fs::write(root.join("pom.xml"), "<project></project>").unwrap();
     let source = pkg_dir.join("App.java");
@@ -1132,7 +1132,7 @@ fn run_no_build_runs_already_compiled_plain_classes_without_mvn() {
 #[test]
 fn direct_launch_refuses_a_selected_jdk_older_than_the_project_release() {
     let root = temp_dir("run-old-jdk");
-    let source = root.join("src/main/java/com/example/demo/App.java");
+    let source = common::generated(&root, "src/main/java/com/example/demo/App.java");
     let class = root.join("target/classes/com/example/demo/App.class");
     fs::create_dir_all(source.parent().unwrap()).unwrap();
     fs::create_dir_all(class.parent().unwrap()).unwrap();
@@ -1181,7 +1181,7 @@ fn direct_launch_refuses_a_selected_jdk_older_than_the_project_release() {
 #[test]
 fn jar_launch_reuses_only_a_byte_current_proved_artifact() {
     let root = temp_dir("run-proved-jar");
-    let source = root.join("src/main/java/com/example/demo/App.java");
+    let source = common::generated(&root, "src/main/java/com/example/demo/App.java");
     fs::create_dir_all(source.parent().unwrap()).unwrap();
     fs::write(root.join("pom.xml"), "<project/>\n").unwrap();
     fs::write(&source, "package com.example.demo;\nclass App {}\n").unwrap();
@@ -1333,7 +1333,7 @@ fn a_generated_command_is_reachable_by_name_through_jails_run() {
 #[test]
 fn a_gradle_project_gets_the_commands_that_do_not_need_maven() {
     let root = temp_dir("foreign-build");
-    let main = root.join("src/main/java/com/acme/shop");
+    let main = common::generated(&root, "src/main/java/com/acme/shop");
     fs::create_dir_all(&main).unwrap();
     // A multi-module Gradle build: only `settings.gradle` at the top.
     fs::write(root.join("settings.gradle"), "rootProject.name = 'shop'\n").unwrap();
@@ -1363,10 +1363,7 @@ fn a_gradle_project_gets_the_commands_that_do_not_need_maven() {
         "{report}{}",
         String::from_utf8_lossy(&generated.stderr)
     );
-    assert!(
-        root.join("src/main/java/com/acme/shop/domain/Order.java")
-            .is_file()
-    );
+    assert!(common::generated(&root, "src/main/java/com/acme/shop/domain/Order.java").is_file());
     assert!(report.contains("Gradle project"), "{report}");
     assert!(report.contains("plain JDBC"), "{report}");
 
@@ -1596,7 +1593,7 @@ fn modernize_takes_a_boot_2_gradle_project_to_the_versions_jails_generates_again
         "create table users (\n  id integer primary key,\n  created_at datetime\n);\n",
     )
     .unwrap();
-    let base = root.join("src/main/java/com/example/demo");
+    let base = common::generated(&root, "src/main/java/com/example/demo");
     fs::create_dir_all(&base).unwrap();
     fs::write(
         base.join("Reader.java"),
@@ -1705,7 +1702,7 @@ fn modernize_takes_a_boot_2_gradle_project_to_the_versions_jails_generates_again
 fn adopt_teaches_jails_where_an_existing_project_keeps_things() {
     let root = temp_dir("adopt");
     write_plain_fixture(&root);
-    let base = root.join("src/main/java/com/example/demo");
+    let base = common::generated(&root, "src/main/java/com/example/demo");
     for (dir, class) in [
         ("controllers", "OrderController"),
         ("persistence", "JdbcOrderRepository"),
@@ -1788,7 +1785,7 @@ fn auto_engine_merges_warm_and_build_partitions_without_losing_a_selector() {
     let path = real_path_without_mvnd();
     let root = temp_dir("mixed-test-partitions");
     write_plain_fixture(&root);
-    let tests = root.join("src/test/java/com/example/demo");
+    let tests = common::generated(&root, "src/test/java/com/example/demo");
     fs::create_dir_all(&tests).unwrap();
     fs::write(
         tests.join("PlainTest.java"),
@@ -1846,7 +1843,7 @@ fn a_timed_warm_run_cancels_the_request_and_recycles_the_daemon() {
     let path = real_path_without_mvnd();
     let root = temp_dir("timed-warm-test");
     write_plain_fixture(&root);
-    let tests = root.join("src/test/java/com/example/demo");
+    let tests = common::generated(&root, "src/test/java/com/example/demo");
     fs::create_dir_all(&tests).unwrap();
     fs::write(
         tests.join("SlowTest.java"),
@@ -1962,7 +1959,7 @@ fn testd_refuses_stale_classes_and_sees_a_recompile_after_it_started() {
     write_plain_fixture(&root);
     // The plain fixture ships no test, and a daemon that finds nothing to run
     // would satisfy every assertion below for the wrong reason.
-    let test_dir = root.join("src/test/java/com/example/demo");
+    let test_dir = common::generated(&root, "src/test/java/com/example/demo");
     std::fs::create_dir_all(&test_dir).unwrap();
     let test_source = test_dir.join("AppTest.java");
     std::fs::write(
@@ -2155,7 +2152,7 @@ fn testd_affected_selects_transitively_and_widens_when_it_cannot_know() {
 
     // Change Money, which OrderTest reaches only *through* Order. Recompile
     // first, or the staleness gate refuses before the selector is consulted.
-    let money = root.join("src/main/java/com/example/demo/Money.java");
+    let money = common::generated(&root, "src/main/java/com/example/demo/Money.java");
     std::fs::write(
         &money,
         "package com.example.demo;\n\npublic record Money(long amount) {\n    // edited\n}\n",
@@ -2356,7 +2353,8 @@ fn an_adopted_reader_written_project_generates_compiles_and_keeps_its_own_bytes(
     // list asks for. Re-declaring the same record is not a collision to refuse
     // -- identity is the entity, so this is an update that changes nothing --
     // and the check that matters is that it *says* so and writes nothing.
-    let generated_at = root.join("src/main/java/net/acme/legacy/domain/Receipt.java");
+    let generated_at =
+        common::generated(&root, "src/main/java/net/acme/legacy/domain/Receipt.java");
     let generated_before = fs::read_to_string(&generated_at).unwrap();
     let again = jails_cmd_with_path(&root, &path)
         .args(["g", "record", "Receipt", "id:uuid", "total:long"])

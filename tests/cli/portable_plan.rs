@@ -49,10 +49,7 @@ fn exported_plan_applies_the_exact_prepared_transaction_without_replanning() {
         .output()
         .unwrap();
     assert!(applied.status.success(), "{applied:?}");
-    assert!(
-        root.join("src/main/java/com/example/demo/domain/Note.java")
-            .is_file()
-    );
+    assert!(common::generated(&root, "src/main/java/com/example/demo/domain/Note.java").is_file());
 }
 
 #[test]

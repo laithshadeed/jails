@@ -15,10 +15,20 @@
 use super::*;
 use jails_model::Package;
 
+/// The in-memory adapter, and whether it is the project's repository bean.
+///
+/// **`bean` is true exactly when nothing else implements the port.** With `db`
+/// declared the JDBC adapter carries `@Repository` and this one is a plain
+/// class a test constructs; without it, this *is* the implementation, and
+/// leaving it unannotated gave a scaffolded Spring project a service
+/// constructor-injecting a port no bean satisfied. Annotating both would make
+/// two beans qualify for one injection point, which is the ambiguity `jails
+/// beans` reports.
 pub(super) fn lower_fake_repository(
     model: &AppModel,
     capability_id: &str,
     entity: &Entity,
+    bean: bool,
 ) -> Result<Unit, CompileError> {
     let primary_key = primary_key(entity)?;
     let package = model.project.package_for(Package::AdaptersMemory);
@@ -39,10 +49,30 @@ pub(super) fn lower_fake_repository(
     let key_type = java_type(primary_key, &mut imports);
     let record = &entity.names.java_type;
     let key = &primary_key.names.java_member;
+    // **`@Component`, not `@Repository`.** The extra meaning `@Repository`
+    // carries is persistence-exception translation, which registers a
+    // post-processor that CGLIB-proxies every such bean -- and this class is
+    // `final`, so the context dies with "Cannot subclass final class". There
+    // is nothing here to translate either: a `LinkedHashMap` throws no
+    // `SQLException`. The JDBC adapter keeps `@Repository`, where both halves
+    // of that annotation are true.
+    let annotation = if bean {
+        imports.insert("org.springframework.stereotype.Component".to_string());
+        "@Component\n"
+    } else {
+        ""
+    };
     let body = format!(
-        "public final class {type_name} implements {record}Repository {{\n\n    private final Map<{key_type}, {record}> rows = new LinkedHashMap<>();\n\n    @Override\n    public Optional<{record}> findById({key_type} id) {{\n        return Optional.ofNullable(rows.get(id));\n    }}\n\n    @Override\n    public List<{record}> findAll() {{\n        return List.copyOf(rows.values());\n    }}\n\n    @Override\n    public {record} save({record} value) {{\n        rows.put(value.{key}(), value);\n        return value;\n    }}\n\n    @Override\n    public boolean deleteById({key_type} id) {{\n        return rows.remove(id) != null;\n    }}\n}}"
+        "{annotation}public final class {type_name} implements {record}Repository {{\n\n    private final Map<{key_type}, {record}> rows = new LinkedHashMap<>();\n\n    @Override\n    public Optional<{record}> findById({key_type} id) {{\n        return Optional.ofNullable(rows.get(id));\n    }}\n\n    @Override\n    public List<{record}> findAll() {{\n        return List.copyOf(rows.values());\n    }}\n\n    @Override\n    public {record} save({record} value) {{\n        rows.put(value.{key}(), value);\n        return value;\n    }}\n\n    @Override\n    public boolean deleteById({key_type} id) {{\n        return rows.remove(id) != null;\n    }}\n}}"
     );
-    let artifact_id = format!("art_{capability_id}_{}_repository", entity.id.as_str());
+    // **Keyed on the entity, not on whichever capability asked for it.** This
+    // adapter is emitted whenever the port has no other implementation and
+    // again when `fake` is declared, and the file is the same either way -- so
+    // an id carrying the owner made `add fake` on a project that already had
+    // the adapter look like a *different* artifact wanting a path the first one
+    // held, which the executor correctly reports as reader-owned. The
+    // capability still shows in `semantic_ids`.
+    let artifact_id = format!("art_{}_repository_memory", entity.id.as_str());
     let rendered = render(&package, &imports, &body, &artifact_id);
     let package_path = package.replace('.', "/");
     let path = ProjectPath::parse(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))

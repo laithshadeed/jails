@@ -92,17 +92,38 @@ pub(crate) fn lower_and_emit(
             .insert(unit.path, unit.file)
             .map_err(CompileError::new)?;
     }
-    if let Some(capability) = model
+    // **A repository port always has an implementation**, and that is the
+    // scaffold's whole promise: it produces a resource that *runs*. Gating the
+    // in-memory adapter on the `fake` capability alone left a scaffolded
+    // project with a `@Component` service constructor-injecting a port no bean
+    // satisfies, so the application refused to start with "No qualifying bean
+    // of type ...Repository" -- a project that compiles and cannot boot, which
+    // is exactly the failure `jails beans` exists to report.
+    //
+    // The bean is still unique: `lower_db_repository` carries `@Repository`
+    // when `db` is declared and this one drops the annotation, so the two
+    // never both qualify for one injection point.
+    let fake = model
         .capabilities
         .values()
-        .find(|capability| capability.kind == "fake")
-    {
+        .find(|capability| capability.kind == "fake");
+    let stored = model
+        .capabilities
+        .values()
+        .any(|capability| capability.kind == "db");
+    if fake.is_some() || !stored {
+        let owner = fake.map_or("cap_scaffold_default", |capability| capability.id.as_str());
         for entity in model
             .entities
             .values()
             .filter(|entity| entity.active && entity.facets.contains(&Facet::Repository))
         {
-            let unit = repository::lower_fake_repository(model, capability.id.as_str(), entity)?;
+            let unit = repository::lower_fake_repository(
+                model,
+                owner,
+                entity,
+                !stored && spring_boot.is_some(),
+            )?;
             output
                 .insert(unit.path, unit.file)
                 .map_err(CompileError::new)?;

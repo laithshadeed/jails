@@ -27,9 +27,12 @@ fn about_describes_a_synthetic_nested_maven_reactor() {
     .unwrap();
     for module in ["sample-core", "sample-web"] {
         let module_root = root.join(module);
-        fs::create_dir_all(module_root.join("src/main/java/dev/example")).unwrap();
+        fs::create_dir_all(common::generated(&module_root, "src/main/java/dev/example")).unwrap();
         fs::write(
-            module_root.join("src/main/java/dev/example/DemoApplication.java"),
+            common::generated(
+                &module_root,
+                "src/main/java/dev/example/DemoApplication.java",
+            ),
             "package dev.example;\n\npublic class DemoApplication {}\n",
         )
         .unwrap();
@@ -135,7 +138,7 @@ fn completion_offers_artifact_kinds_for_generate_destroy_and_their_aliases() {
 fn lint_reports_closed_set_stale_apis_as_file_and_line() {
     let root = temp_dir("lint-stale-api");
     write_project_skeleton(&root);
-    let source = root.join("src/main/java/com/example/demo/Legacy.java");
+    let source = common::generated(&root, "src/main/java/com/example/demo/Legacy.java");
     fs::write(
         &source,
         "package com.example.demo;\n\n@Entity\nclass Legacy {}\n",
@@ -333,8 +336,14 @@ fn doctor_reports_missing_and_changed_managed_outputs_with_repair_guidance() {
             .unwrap()
             .success()
     );
-    let controller = root.join("src/main/java/com/example/demo/web/NoteController.java");
-    let service = root.join("src/main/java/com/example/demo/service/NoteService.java");
+    let controller = common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/NoteController.java",
+    );
+    let service = common::generated(
+        &root,
+        "src/main/java/com/example/demo/service/NoteService.java",
+    );
     fs::remove_file(&controller).unwrap();
     fs::write(
         &service,
@@ -669,11 +678,11 @@ fn doctor_reports_resolved_developer_tool_paths_and_versions() {
     )
     .unwrap();
     fs::write(
-        root.join("src/main/java/com/example/demo/DemoApplication.java"),
+        common::generated(&root, "src/main/java/com/example/demo/DemoApplication.java"),
         "package com.example.demo;\nimport org.springframework.boot.autoconfigure.SpringBootApplication;\n@SpringBootApplication public class DemoApplication {}\n",
     )
     .unwrap();
-    let controller = root.join("src/main/java/com/example/demo/NoteController.java");
+    let controller = common::generated(&root, "src/main/java/com/example/demo/NoteController.java");
     fs::write(
         controller,
         "package com.example.demo;\nclass NoteController { @GetMapping(\"/notes\") String get() { return \"ok\"; } }\n",
@@ -940,7 +949,7 @@ source = "src/main/resources/db/queries/FindOrder.sql"
 fn rename_moves_the_type_its_companion_and_every_reference() {
     let root = temp_dir("rename");
     write_inspectable_project(&root);
-    let tests = root.join("src/test/java/dev/example/shop/domain");
+    let tests = common::generated(&root, "src/test/java/dev/example/shop/domain");
     fs::create_dir_all(&tests).unwrap();
     fs::write(
         tests.join("OrderTest.java"),
@@ -957,7 +966,7 @@ fn rename_moves_the_type_its_companion_and_every_reference() {
         .unwrap();
     assert!(output.status.success(), "{:?}", output);
 
-    let domain = root.join("src/main/java/dev/example/shop/domain");
+    let domain = common::generated(&root, "src/main/java/dev/example/shop/domain");
     assert!(domain.join("Purchase.java").is_file());
     assert!(!domain.join("Order.java").exists());
     assert!(tests.join("PurchaseTest.java").is_file());
@@ -1008,17 +1017,14 @@ fn rename_dry_run_writes_nothing() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("nothing was written"), "{stdout}");
-    assert!(
-        root.join("src/main/java/dev/example/shop/domain/Order.java")
-            .is_file()
-    );
+    assert!(common::generated(&root, "src/main/java/dev/example/shop/domain/Order.java").is_file());
 }
 
 #[test]
 fn notes_reads_comments_and_ignores_string_literals() {
     let root = temp_dir("notes");
     write_spring_fixture(&root);
-    let pkg = root.join("src/main/java/com/example/demo");
+    let pkg = common::generated(&root, "src/main/java/com/example/demo");
     fs::write(
         pkg.join("Probe.java"),
         "package com.example.demo;\n\
@@ -1051,7 +1057,7 @@ fn notes_can_be_filtered_to_one_tag() {
     let root = temp_dir("notes-filter");
     write_spring_fixture(&root);
     fs::write(
-        root.join("src/main/java/com/example/demo/Probe.java"),
+        common::generated(&root, "src/main/java/com/example/demo/Probe.java"),
         "package com.example.demo;\n// TODO one\n// FIXME two\npublic class Probe {}\n",
     )
     .unwrap();
@@ -1119,7 +1125,7 @@ fn stats_counts_a_renamed_layer_under_its_configured_name() {
 fn src_resolves_a_type_and_lists_every_match() {
     let root = temp_dir("src-command");
     write_plain_fixture(&root);
-    let main = root.join("src/main/java/com/example/demo");
+    let main = common::generated(&root, "src/main/java/com/example/demo");
     for (package, dir) in [("com.example.demo.a", "a"), ("com.example.demo.b", "b")] {
         fs::create_dir_all(main.join(dir)).unwrap();
         fs::write(

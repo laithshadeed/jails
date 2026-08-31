@@ -171,6 +171,8 @@ pub(crate) fn properties(
             ComponentKind::HttpSink => {
                 properties.extend(http_sink::properties(model, component)?);
             }
+            ComponentKind::Auth => properties.extend(auth::properties()),
+            ComponentKind::Webhook => properties.extend(webhook::properties(component)),
             _ => {}
         }
     }

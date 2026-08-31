@@ -10,6 +10,13 @@
 //! Derived so `destroy` can find it and two projects spell it the same way,
 //! and without a default because a webhook whose secret silently defaults is a
 //! webhook anybody can call.
+//!
+//! It is *declared* all the same, with a value that is visibly not a secret.
+//! `@Value("${app.stripe.secret}")` with nothing declaring the key does not
+//! fail safe -- it fails `contextLoads`, so the project does not start at all
+//! and the reader is told about a placeholder rather than about a webhook. A
+//! line in `application.properties` reading `replace-me` is the same warning
+//! delivered where they can act on it.
 
 use super::{Emitted, Package, java, package};
 use crate::CompileError;
@@ -76,4 +83,15 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             TEST.replace("{{pkg}}", &base).replace("{{name}}", name),
         )?,
     ])
+}
+
+/// The shared secret this webhook verifies against.
+///
+/// See the module docs: declared so the project starts, with a value nobody
+/// could mistake for one.
+pub(super) fn properties(component: &Component) -> Vec<super::PropertyEntry> {
+    vec![super::PropertyEntry {
+        key: format!("app.{}.secret", component.label.replace('_', "-")),
+        value: "replace-me-with-the-providers-signing-secret".to_string(),
+    }]
 }

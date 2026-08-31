@@ -618,7 +618,7 @@ app Demo {
 fn model_init_makes_a_foreign_project_canonical_without_touching_its_sources() {
     let root = temp_dir("model-init-foreign");
     write_plain_fixture(&root);
-    let reader = root.join("src/main/java/com/example/demo/Existing.java");
+    let reader = common::generated(&root, "src/main/java/com/example/demo/Existing.java");
     fs::create_dir_all(reader.parent().unwrap()).unwrap();
     let untouched = "package com.example.demo;\n\npublic class Existing {\n}\n";
     fs::write(&reader, untouched).unwrap();
@@ -1009,7 +1009,7 @@ entity Task {
     );
 
     if real_mvn_available() && real_java_supports_target_release() {
-        let test_dir = root.join("src/test/java/com/example/work");
+        let test_dir = common::generated(&root, "src/test/java/com/example/work");
         fs::create_dir_all(&test_dir).unwrap();
         fs::write(
             test_dir.join("ScopedExecutionTest.java"),
@@ -2812,8 +2812,14 @@ fn canonical_controller_ejection_transfers_the_whole_http_adapter_boundary() {
         String::from_utf8_lossy(&ejected.stderr)
     );
     let reader = [
-        root.join("src/main/java/com/example/demo/web/HealthController.java"),
-        root.join("src/test/java/com/example/demo/web/HealthControllerTest.java"),
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/web/HealthController.java",
+        ),
+        common::generated(
+            &root,
+            "src/test/java/com/example/demo/web/HealthControllerTest.java",
+        ),
     ];
     assert!(managed.iter().all(|path| !path.exists()));
     for (index, path) in reader.iter().enumerate() {
@@ -3464,7 +3470,7 @@ fn legacy_record_import_adopts_live_bytes_then_joins_the_iterative_merge_loop() 
         "{}",
         String::from_utf8_lossy(&generated.stderr)
     );
-    let reader = root.join("src/main/java/com/example/demo/domain/Task.java");
+    let reader = common::generated(&root, "src/main/java/com/example/demo/domain/Task.java");
     let original = fs::read_to_string(&reader).unwrap();
     let split = original.rfind("\n}").unwrap();
     let edited = format!(
@@ -3539,8 +3545,11 @@ fn legacy_enum_import_adopts_the_abi_and_converter_then_keeps_both_in_the_merge_
         "{}",
         String::from_utf8_lossy(&generated.stderr)
     );
-    let reader_enum = root.join("src/main/java/com/example/demo/domain/Status.java");
-    let reader_converter = root.join("src/main/java/com/example/demo/web/StatusConverter.java");
+    let reader_enum = common::generated(&root, "src/main/java/com/example/demo/domain/Status.java");
+    let reader_converter = common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/StatusConverter.java",
+    );
     for (path, method) in [
         (
             &reader_enum,
@@ -3628,7 +3637,7 @@ fn legacy_import_plan_refuses_a_later_reader_edit_before_any_cutover_write() {
         .output()
         .unwrap();
     assert!(generated.status.success());
-    let reader = root.join("src/main/java/com/example/demo/domain/Task.java");
+    let reader = common::generated(&root, "src/main/java/com/example/demo/domain/Task.java");
     let bundle = root.join("import-plan.json");
     let planned = jails_cmd(&root, None)
         .args(["model", "import", "--plan-out"])
@@ -4614,8 +4623,10 @@ fn model_eject_transfers_generated_java_once_and_reader_edits_survive() {
     let generated = root.join(
         ".jails/generated/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
     );
-    let reader =
-        root.join("src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java");
+    let reader = common::generated(
+        &root,
+        "src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
+    );
     let generated_bytes = fs::read(&generated).unwrap();
     let model_before = fs::read(root.join(".jails/model.toml")).unwrap();
 
@@ -4712,8 +4723,10 @@ fn jdl_ejection_transfers_only_one_artifact_and_records_inline_ownership() {
     let generated = root.join(
         ".jails/generated/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
     );
-    let reader =
-        root.join("src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java");
+    let reader = common::generated(
+        &root,
+        "src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
+    );
     let generated_bytes = fs::read(&generated).unwrap();
     let ejected = jails_cmd(&root, None)
         .args(["model", "eject", "art_cap_fake_ent_note_repository"])
@@ -4770,7 +4783,10 @@ fn factory_ejection_transfers_only_the_testkit_implementation_boundary() {
     }
     let generated =
         root.join(".jails/generated/test/java/com/example/notes/testkit/NoteFactory.java");
-    let reader = root.join("src/test/java/com/example/notes/testkit/NoteFactory.java");
+    let reader = common::generated(
+        &root,
+        "src/test/java/com/example/notes/testkit/NoteFactory.java",
+    );
     let record = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
     let ejected = jails_cmd(&root, None)
         .args(["model", "eject", "art_ent_note_factory"])
@@ -4823,8 +4839,10 @@ fn factory_ejection_transfers_only_the_testkit_implementation_boundary() {
 fn model_eject_refuses_a_reader_destination_collision_without_writing() {
     let root = eject_model_project("model-eject-collision");
     apply_canonical_model(&root, "initial-plan");
-    let reader =
-        root.join("src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java");
+    let reader = common::generated(
+        &root,
+        "src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
+    );
     fs::create_dir_all(reader.parent().unwrap()).unwrap();
     fs::write(&reader, "package com.example.notes.domain;\n// mine\n").unwrap();
     let before = snapshot_tree(&root);
@@ -4864,8 +4882,10 @@ fn model_eject_plan_refuses_a_destination_created_after_review() {
     let generated = root.join(
         ".jails/generated/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
     );
-    let reader =
-        root.join("src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java");
+    let reader = common::generated(
+        &root,
+        "src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
+    );
     fs::create_dir_all(reader.parent().unwrap()).unwrap();
     fs::write(
         &reader,
@@ -5311,8 +5331,11 @@ fn scaffold_profile_preserves_the_legacy_domain_and_repository_contracts() {
         String::from_utf8_lossy(&compiled_output.stderr)
     );
 
-    let old_record =
-        fs::read_to_string(legacy.join("src/main/java/com/example/demo/domain/Note.java")).unwrap();
+    let old_record = fs::read_to_string(common::generated(
+        &legacy,
+        "src/main/java/com/example/demo/domain/Note.java",
+    ))
+    .unwrap();
     let new_record = fs::read_to_string(
         compiled.join(".jails/generated/main/java/com/example/notes/domain/Note.java"),
     )
@@ -5328,9 +5351,11 @@ fn scaffold_profile_preserves_the_legacy_domain_and_repository_contracts() {
         assert!(new_record.contains(contract), "compiler lost `{contract}`");
     }
 
-    let old_repository =
-        fs::read_to_string(legacy.join("src/main/java/com/example/demo/app/NoteRepository.java"))
-            .unwrap();
+    let old_repository = fs::read_to_string(common::generated(
+        &legacy,
+        "src/main/java/com/example/demo/app/NoteRepository.java",
+    ))
+    .unwrap();
     let new_repository = fs::read_to_string(
         compiled
             .join(".jails/generated/main/java/com/example/notes/repository/NoteRepository.java"),
@@ -5701,8 +5726,10 @@ fn canonical_api_adapters_merge_then_eject_at_the_operation_boundary() {
         "{}",
         String::from_utf8_lossy(&ejected.stderr)
     );
-    let reader =
-        root.join("src/main/java/com/example/notes/adapters/http/CreateNoteController.java");
+    let reader = common::generated(
+        &root,
+        "src/main/java/com/example/notes/adapters/http/CreateNoteController.java",
+    );
     assert!(!command.exists());
     assert!(fs::read_to_string(&reader).unwrap().contains("handWritten"));
     assert!(
@@ -6188,8 +6215,11 @@ fn record_compiler_preserves_the_legacy_semantic_contract() {
         String::from_utf8_lossy(&compiled_output.stderr)
     );
 
-    let old =
-        fs::read_to_string(legacy.join("src/main/java/com/example/demo/domain/Note.java")).unwrap();
+    let old = fs::read_to_string(common::generated(
+        &legacy,
+        "src/main/java/com/example/demo/domain/Note.java",
+    ))
+    .unwrap();
     let new = fs::read_to_string(
         compiled.join(".jails/generated/main/java/com/example/notes/domain/Note.java"),
     )
@@ -6878,8 +6908,14 @@ fn canonical_data_capability_packs_keep_the_iterative_loop_and_eject_as_one_boun
         "{}",
         String::from_utf8_lossy(&ejected.stderr)
     );
-    let reader_main = root.join("src/main/java/com/example/notes/feeds/DatasetReader.java");
-    let reader_test = root.join("src/test/java/com/example/notes/feeds/DatasetReaderTest.java");
+    let reader_main = common::generated(
+        &root,
+        "src/main/java/com/example/notes/feeds/DatasetReader.java",
+    );
+    let reader_test = common::generated(
+        &root,
+        "src/test/java/com/example/notes/feeds/DatasetReaderTest.java",
+    );
     assert!(!feeds_main.exists());
     assert!(!feeds_test.exists());
     assert!(reader_main.is_file());
@@ -7037,9 +7073,14 @@ fn canonical_http_and_fake_packs_merge_and_eject_as_complete_boundaries() {
         "{}",
         String::from_utf8_lossy(&ejected_http.stderr)
     );
-    let reader_http = root.join("src/main/java/com/example/notes/transport/AdminServer.java");
-    let reader_http_test =
-        root.join("src/test/java/com/example/notes/transport/AdminServerTest.java");
+    let reader_http = common::generated(
+        &root,
+        "src/main/java/com/example/notes/transport/AdminServer.java",
+    );
+    let reader_http_test = common::generated(
+        &root,
+        "src/test/java/com/example/notes/transport/AdminServerTest.java",
+    );
     assert_eq!(fs::read(&reader_http).unwrap(), http_bytes);
     assert_eq!(fs::read(&reader_http_test).unwrap(), http_test_bytes);
     assert!(!moved_http.exists());
@@ -7056,8 +7097,11 @@ fn canonical_http_and_fake_packs_merge_and_eject_as_complete_boundaries() {
         "{}",
         String::from_utf8_lossy(&ejected_fake.stderr)
     );
-    let reader_fake = root.join("src/test/java/com/example/notes/testkit/Fake.java");
-    let reader_fake_test = root.join("src/test/java/com/example/notes/testkit/FakeTest.java");
+    let reader_fake = common::generated(&root, "src/test/java/com/example/notes/testkit/Fake.java");
+    let reader_fake_test = common::generated(
+        &root,
+        "src/test/java/com/example/notes/testkit/FakeTest.java",
+    );
     assert_eq!(fs::read(reader_fake).unwrap(), fake_bytes);
     assert_eq!(fs::read(reader_fake_test).unwrap(), fake_test_bytes);
     assert!(!fake.exists());
@@ -7406,7 +7450,10 @@ fn canonical_h2_pack_merges_ejects_and_builds() {
         "{}",
         String::from_utf8_lossy(&ejected.stderr)
     );
-    let reader = root.join("src/test/java/com/example/demo/adapters/H2DatabaseTest.java");
+    let reader = common::generated(
+        &root,
+        "src/test/java/com/example/demo/adapters/H2DatabaseTest.java",
+    );
     assert!(!managed.exists());
     assert_eq!(fs::read(&reader).unwrap(), live_bytes);
 
@@ -7505,7 +7552,10 @@ fn canonical_actuator_pack_merges_ejects_only_java_and_builds() {
         "{}",
         String::from_utf8_lossy(&ejected.stderr)
     );
-    let reader = root.join("src/test/java/com/example/demo/ActuatorEndpointsTest.java");
+    let reader = common::generated(
+        &root,
+        "src/test/java/com/example/demo/ActuatorEndpointsTest.java",
+    );
     assert!(!managed.exists());
     assert_eq!(fs::read(&reader).unwrap(), live_bytes);
 
@@ -7612,8 +7662,8 @@ fn canonical_cache_pack_merges_ejects_the_java_boundary_and_builds() {
         String::from_utf8_lossy(&ejected.stderr)
     );
     let reader = [
-        root.join("src/main/java/com/example/demo/CacheConfig.java"),
-        root.join("src/test/java/com/example/demo/CacheConfigTest.java"),
+        common::generated(&root, "src/main/java/com/example/demo/CacheConfig.java"),
+        common::generated(&root, "src/test/java/com/example/demo/CacheConfigTest.java"),
     ];
     for ((managed, reader), expected) in managed.iter().zip(&reader).zip(live_bytes) {
         assert!(!managed.exists());
@@ -7724,8 +7774,8 @@ fn canonical_cors_pack_merges_ejects_the_java_boundary_and_builds() {
         String::from_utf8_lossy(&ejected.stderr)
     );
     let reader = [
-        root.join("src/main/java/com/example/demo/CorsConfig.java"),
-        root.join("src/test/java/com/example/demo/CorsConfigTest.java"),
+        common::generated(&root, "src/main/java/com/example/demo/CorsConfig.java"),
+        common::generated(&root, "src/test/java/com/example/demo/CorsConfigTest.java"),
     ];
     for ((managed, reader), expected) in managed.iter().zip(&reader).zip(live_bytes) {
         assert!(!managed.exists());
@@ -7824,10 +7874,13 @@ fn canonical_observability_pack_merges_ejects_and_serves_prometheus() {
         String::from_utf8_lossy(&ejected.stderr)
     );
     let reader = [
-        root.join("src/main/java/com/example/demo/MetricsConfig.java"),
-        root.join("src/main/java/com/example/demo/AppMetrics.java"),
-        root.join("src/test/java/com/example/demo/AppMetricsTest.java"),
-        root.join("src/test/java/com/example/demo/PrometheusScrapeTest.java"),
+        common::generated(&root, "src/main/java/com/example/demo/MetricsConfig.java"),
+        common::generated(&root, "src/main/java/com/example/demo/AppMetrics.java"),
+        common::generated(&root, "src/test/java/com/example/demo/AppMetricsTest.java"),
+        common::generated(
+            &root,
+            "src/test/java/com/example/demo/PrometheusScrapeTest.java",
+        ),
     ];
     for ((managed, reader), expected) in managed.iter().zip(&reader).zip(live_bytes) {
         assert!(!managed.exists());
@@ -7935,11 +7988,20 @@ fn canonical_security_pack_merges_ejects_and_keeps_cors_buildable() {
         String::from_utf8_lossy(&ejected.stderr)
     );
     let reader = [
-        root.join("src/main/java/com/example/demo/SecurityConfig.java"),
-        root.join("src/main/java/com/example/demo/ProductionSecurityConfig.java"),
-        root.join("src/main/java/com/example/demo/ScopeAuthorizer.java"),
-        root.join("src/test/java/com/example/demo/SecurityConfigTest.java"),
-        root.join("src/test/java/com/example/demo/ScopeAuthorizerTest.java"),
+        common::generated(&root, "src/main/java/com/example/demo/SecurityConfig.java"),
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/ProductionSecurityConfig.java",
+        ),
+        common::generated(&root, "src/main/java/com/example/demo/ScopeAuthorizer.java"),
+        common::generated(
+            &root,
+            "src/test/java/com/example/demo/SecurityConfigTest.java",
+        ),
+        common::generated(
+            &root,
+            "src/test/java/com/example/demo/ScopeAuthorizerTest.java",
+        ),
     ];
     for ((managed, reader), expected) in managed.iter().zip(&reader).zip(live_bytes) {
         assert!(!managed.exists());
@@ -8053,10 +8115,16 @@ fn canonical_sse_pack_merges_ejects_across_packages_and_runs_its_proof() {
         String::from_utf8_lossy(&ejected.stderr)
     );
     let reader = [
-        root.join("src/main/java/com/example/demo/EventHub.java"),
-        root.join("src/main/java/com/example/demo/SchedulingConfig.java"),
-        root.join("src/main/java/com/example/demo/web/EventStreamController.java"),
-        root.join("src/test/java/com/example/demo/EventHubTest.java"),
+        common::generated(&root, "src/main/java/com/example/demo/EventHub.java"),
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/SchedulingConfig.java",
+        ),
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/web/EventStreamController.java",
+        ),
+        common::generated(&root, "src/test/java/com/example/demo/EventHubTest.java"),
     ];
     for ((managed, reader), expected) in managed.iter().zip(&reader).zip(live_bytes) {
         assert!(!managed.exists());
@@ -8540,7 +8608,7 @@ fn canonical_toxiproxy_pack_keeps_testkit_edits_and_runs_with_real_maven() {
 fn canonical_coverage_is_lossless_refuses_owned_edits_and_passes_real_verify() {
     let root = temp_dir("model-coverage-capability-pack");
     write_plain_fixture(&root);
-    let test_dir = root.join("src/test/java/com/example/demo");
+    let test_dir = common::generated(&root, "src/test/java/com/example/demo");
     fs::create_dir_all(&test_dir).unwrap();
     fs::write(
         test_dir.join("DemoApplicationTest.java"),
@@ -8812,7 +8880,10 @@ fn canonical_database_query_keeps_the_iterative_loop_and_ejects_only_its_adapter
         "{}",
         String::from_utf8_lossy(&ejected.stderr)
     );
-    let reader = root.join("src/main/java/com/example/notes/adapters/jdbc/JdbcOpenNotesQuery.java");
+    let reader = common::generated(
+        &root,
+        "src/main/java/com/example/notes/adapters/jdbc/JdbcOpenNotesQuery.java",
+    );
     assert!(!adapter.exists(), "ejected query adapter stayed managed");
     assert_eq!(fs::read(&reader).unwrap(), before_ejection);
     assert!(abi.is_file(), "ejecting an adapter removed its managed ABI");
@@ -9029,8 +9100,10 @@ fn canonical_database_commands_and_transitions_are_independent_iterative_boundar
         "{}",
         String::from_utf8_lossy(&ejected_command.stderr)
     );
-    let reader_command =
-        root.join("src/main/java/com/example/notes/adapters/jdbc/JdbcCreateNoteCommand.java");
+    let reader_command = common::generated(
+        &root,
+        "src/main/java/com/example/notes/adapters/jdbc/JdbcCreateNoteCommand.java",
+    );
     assert!(!command.exists());
     assert!(
         transition.exists(),
@@ -9068,8 +9141,10 @@ fn canonical_database_commands_and_transitions_are_independent_iterative_boundar
         "{}",
         String::from_utf8_lossy(&ejected_transition.stderr)
     );
-    let reader_transition =
-        root.join("src/main/java/com/example/notes/adapters/jdbc/JdbcRenameNoteTransition.java");
+    let reader_transition = common::generated(
+        &root,
+        "src/main/java/com/example/notes/adapters/jdbc/JdbcRenameNoteTransition.java",
+    );
     assert!(!transition.exists());
     assert_eq!(
         fs::read(&reader_transition).unwrap(),
@@ -11759,9 +11834,11 @@ fn canonical_storage_postgres_writes_the_container_compose_and_datasource() {
     // `contextLoads` test `jails new` wrote never touches a database, and
     // without the container imported into it JDBC auto-configuration fails the
     // context with "Failed to determine a suitable driver class".
-    let shipped =
-        fs::read_to_string(root.join("src/test/java/com/example/demo/DemoApplicationTests.java"))
-            .unwrap();
+    let shipped = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/DemoApplicationTests.java",
+    ))
+    .unwrap();
     assert!(
         shipped.contains("@Import(TestcontainersConfig.class)"),
         "{shipped}"
@@ -11787,8 +11864,11 @@ fn canonical_storage_postgres_writes_the_container_compose_and_datasource() {
         String::from_utf8_lossy(&resync.stderr)
     );
     assert_eq!(
-        fs::read_to_string(root.join("src/test/java/com/example/demo/DemoApplicationTests.java"))
-            .unwrap(),
+        fs::read_to_string(common::generated(
+            &root,
+            "src/test/java/com/example/demo/DemoApplicationTests.java"
+        ))
+        .unwrap(),
         before
     );
 }
@@ -11822,9 +11902,11 @@ fn canonical_add_db_wires_the_shipped_test_on_the_command_that_declares_it() {
         String::from_utf8_lossy(&added.stderr)
     );
 
-    let shipped =
-        fs::read_to_string(root.join("src/test/java/com/example/demo/DemoApplicationTests.java"))
-            .unwrap();
+    let shipped = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/DemoApplicationTests.java",
+    ))
+    .unwrap();
     assert!(
         shipped.contains("@Import(TestcontainersConfig.class)"),
         "the shipped test was not wired by the command that declared storage:\n{shipped}"
@@ -11851,7 +11933,7 @@ fn a_canonical_command_run_from_a_subdirectory_is_still_canonical() {
          platform spring\n  build maven\n  storage none\n}\n",
     )
     .unwrap();
-    let inside = root.join("src/main/java/com/example/demo");
+    let inside = common::generated(&root, "src/main/java/com/example/demo");
 
     let generated = jails_cmd(&inside, None)
         .args(["g", "record", "Sub", "name:String"])
@@ -11949,8 +12031,11 @@ fn canonical_eject_transfers_a_spring_only_capability_pack() {
         String::from_utf8_lossy(&ejected.stderr)
     );
     assert!(
-        root.join("src/main/java/com/example/demo/messaging/KafkaConfig.java")
-            .exists(),
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/messaging/KafkaConfig.java"
+        )
+        .exists(),
         "the implementation was not transferred to reader source"
     );
     assert!(
@@ -12072,9 +12157,9 @@ fn canonical_cli_registers_its_commands_and_claims_the_entry_point() {
         ),
     )
     .unwrap();
-    fs::create_dir_all(root.join("src/main/java/com/example/demo")).unwrap();
+    fs::create_dir_all(common::generated(&root, "src/main/java/com/example/demo")).unwrap();
     fs::write(
-        root.join("src/main/java/com/example/demo/App.java"),
+        common::generated(&root, "src/main/java/com/example/demo/App.java"),
         "package com.example.demo;\n\n\
          import java.util.SequencedMap;\n\n\
          public final class App {\n\
@@ -12123,7 +12208,11 @@ fn canonical_cli_registers_its_commands_and_claims_the_entry_point() {
         "{}",
         String::from_utf8_lossy(&generated_command.stderr)
     );
-    let app = fs::read_to_string(root.join("src/main/java/com/example/demo/App.java")).unwrap();
+    let app = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/App.java",
+    ))
+    .unwrap();
     assert!(
         app.contains("commands.put(GreetCommand.NAME, GreetCommand::run);"),
         "the command did not register itself on the command that declared it:\n{app}"
@@ -12154,7 +12243,11 @@ fn canonical_cli_registers_its_commands_and_claims_the_entry_point() {
         String::from_utf8_lossy(&resync.stderr)
     );
     assert_eq!(
-        fs::read_to_string(root.join("src/main/java/com/example/demo/App.java")).unwrap(),
+        fs::read_to_string(common::generated(
+            &root,
+            "src/main/java/com/example/demo/App.java"
+        ))
+        .unwrap(),
         before
     );
 }
@@ -13435,7 +13528,7 @@ fn a_project_that_only_recorded_its_layout_can_still_become_canonical() {
     write_plain_fixture(&root);
     // A directory name jails' synonym table maps onto a layer, so `adopt` has
     // something to record.
-    let renamed = root.join("src/main/java/com/example/demo/persistence");
+    let renamed = common::generated(&root, "src/main/java/com/example/demo/persistence");
     fs::create_dir_all(&renamed).unwrap();
     fs::write(
         renamed.join("Repo.java"),

@@ -20,14 +20,8 @@ fn new_cli_creates_expected_project_layout() {
         )),
         "{pom}"
     );
-    assert!(
-        root.join("src/main/java/com/example/demo/App.java")
-            .is_file()
-    );
-    assert!(
-        root.join("src/test/java/com/example/demo/AppTest.java")
-            .is_file()
-    );
+    assert!(common::generated(&root, "src/main/java/com/example/demo/App.java").is_file());
+    assert!(common::generated(&root, "src/test/java/com/example/demo/AppTest.java").is_file());
     let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
     assert!(agents.contains("jails check"), "{agents}");
     assert!(agents.contains("@MockBean"), "{agents}");
@@ -90,12 +84,18 @@ fn new_offline_creates_a_complete_spring_project_without_network() {
     assert!(pom.contains("<requireJavaVersion>"), "{pom}");
     assert!(pom.contains("<requireMavenVersion>"), "{pom}");
     assert!(
-        root.join("src/main/java/com/example/demoapp/DemoAppApplication.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demoapp/DemoAppApplication.java"
+        )
+        .is_file()
     );
     assert!(
-        root.join("src/test/java/com/example/demoapp/DemoAppApplicationTests.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/test/java/com/example/demoapp/DemoAppApplicationTests.java"
+        )
+        .is_file()
     );
     assert_eq!(
         fs::read_to_string(root.join("mise.toml")).unwrap(),
@@ -464,7 +464,7 @@ fn new_cli_gives_its_own_base_package_a_package_info() {
 #[test]
 fn new_cli_inside_another_project_uses_the_new_projects_root() {
     let outer = temp_dir("new-cli-nested-root");
-    fs::create_dir_all(outer.join("src/main/java/com/outer")).unwrap();
+    fs::create_dir_all(common::generated(&outer, "src/main/java/com/outer")).unwrap();
     fs::write(
         outer.join("pom.xml"),
         "<project><properties>\
@@ -473,7 +473,7 @@ fn new_cli_inside_another_project_uses_the_new_projects_root() {
     )
     .unwrap();
     fs::write(
-        outer.join("src/main/java/com/outer/Outer.java"),
+        common::generated(&outer, "src/main/java/com/outer/Outer.java"),
         "package com.outer;\nclass Outer {}\n",
     )
     .unwrap();
@@ -608,8 +608,7 @@ fn new_gradle_writes_a_legacy_boot_build_file_the_maven_path_cannot_produce() {
     // `SpringApplication` is org.springframework.boot's, and a class cannot
     // shadow the type its own main() calls.
     assert!(
-        root.join("src/main/java/com/intercom/spring/Application.java")
-            .is_file(),
+        common::generated(&root, "src/main/java/com/intercom/spring/Application.java").is_file(),
         "expected Application.java, not SpringApplication.java"
     );
     assert!(

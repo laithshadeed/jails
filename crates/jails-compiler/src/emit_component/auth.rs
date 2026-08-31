@@ -73,3 +73,23 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
         )?,
     ])
 }
+
+/// The one property the token configuration reads.
+///
+/// **A generator that emits code and not the setting it needs hands the reader
+/// a project that compiles and refuses to start**, which is the same rule that
+/// makes `g client` splice its starter and `g dto` its validation dependency.
+/// `ApiTokenConfig` resolves `${app.auth.secret}` in its constructor, so a
+/// project with an auth component and no such property fails context
+/// initialisation with `Could not resolve placeholder` -- and the test that
+/// notices is `contextLoads`, which every generated project ships.
+///
+/// The value is a placeholder the reader must replace, and it says so: an
+/// empty default would be a *silent* weak secret, which is worse than one that
+/// is obviously not a secret.
+pub(super) fn properties() -> Vec<super::PropertyEntry> {
+    vec![super::PropertyEntry {
+        key: "app.auth.secret".to_string(),
+        value: "replace-me-with-a-32-byte-secret".to_string(),
+    }]
+}

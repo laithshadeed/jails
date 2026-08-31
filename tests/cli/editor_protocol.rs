@@ -5,15 +5,19 @@ use super::*;
 fn editor_fixture(label: &str) -> PathBuf {
     let root = temp_dir(label);
     write_project_skeleton(&root);
-    fs::create_dir_all(root.join("src/main/java/com/example/demo/web")).unwrap();
-    fs::create_dir_all(root.join("src/test/java/com/example/demo")).unwrap();
+    fs::create_dir_all(common::generated(
+        &root,
+        "src/main/java/com/example/demo/web",
+    ))
+    .unwrap();
+    fs::create_dir_all(common::generated(&root, "src/test/java/com/example/demo")).unwrap();
     fs::write(
-        root.join("src/main/java/com/example/demo/web/NoteController.java"),
+        common::generated(&root, "src/main/java/com/example/demo/web/NoteController.java"),
         "package com.example.demo.web;\n@RestController\n@RequestMapping(\"/notes\")\nfinal class NoteController { @GetMapping public String list() { return \"ok\"; } }\n",
     )
     .unwrap();
     fs::write(
-        root.join("src/test/java/com/example/demo/NoteTest.java"),
+        common::generated(&root, "src/test/java/com/example/demo/NoteTest.java"),
         "package com.example.demo;\nfinal class NoteTest {}\n",
     )
     .unwrap();

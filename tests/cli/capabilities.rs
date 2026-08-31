@@ -338,12 +338,18 @@ fn add_name_override_renames_the_generated_class() {
             .success()
     );
     assert!(
-        root.join("src/main/java/com/example/demo/adapters/TransactionReader.java")
-            .exists()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/adapters/TransactionReader.java"
+        )
+        .exists()
     );
     assert!(
-        root.join("src/test/java/com/example/demo/adapters/TransactionReaderTest.java")
-            .exists()
+        common::generated(
+            &root,
+            "src/test/java/com/example/demo/adapters/TransactionReaderTest.java"
+        )
+        .exists()
     );
 }
 
@@ -397,16 +403,25 @@ fn add_sqlite_writes_a_first_migration_and_both_classes() {
             .success()
     );
     assert!(
-        root.join("src/main/java/com/example/demo/adapters/Database.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/adapters/Database.java"
+        )
+        .is_file()
     );
     assert!(
-        root.join("src/main/java/com/example/demo/adapters/Migrations.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/adapters/Migrations.java"
+        )
+        .is_file()
     );
     assert!(
-        root.join("src/test/java/com/example/demo/adapters/DatabaseTest.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/test/java/com/example/demo/adapters/DatabaseTest.java"
+        )
+        .is_file()
     );
     assert!(
         root.join("src/main/resources/db/migration/001_init.sql")
@@ -502,7 +517,10 @@ fn add_db_on_spring_wires_docker_compose_support() {
         "@ServiceConnection and the container-bean lifecycle live there: {pom}"
     );
     assert!(pom.contains("<optional>true</optional>"));
-    let config = root.join("src/test/java/com/example/demo/TestcontainersConfig.java");
+    let config = common::generated(
+        &root,
+        "src/test/java/com/example/demo/TestcontainersConfig.java",
+    );
     assert!(config.is_file(), "missing {}", config.display());
     let config_src = fs::read_to_string(&config).unwrap();
     assert!(
@@ -520,9 +538,11 @@ fn add_db_on_spring_wires_docker_compose_support() {
     // The @SpringBootTest that came with the project has to be wired, or JDBC
     // auto-config fails it with "Failed to determine a suitable driver class"
     // on a test the user never wrote.
-    let tests =
-        fs::read_to_string(root.join("src/test/java/com/example/demo/DemoApplicationTests.java"))
-            .unwrap();
+    let tests = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/DemoApplicationTests.java",
+    ))
+    .unwrap();
     assert!(
         tests.contains("@Import(TestcontainersConfig.class)"),
         "{tests}"
@@ -549,9 +569,11 @@ fn add_db_on_spring_wires_docker_compose_support() {
             .unwrap()
             .success()
     );
-    let tests =
-        fs::read_to_string(root.join("src/test/java/com/example/demo/DemoApplicationTests.java"))
-            .unwrap();
+    let tests = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/DemoApplicationTests.java",
+    ))
+    .unwrap();
     assert!(!tests.contains("TestcontainersConfig"), "{tests}");
     assert!(!config.is_file());
     assert!(
@@ -604,8 +626,11 @@ fn remove_db_refuses_while_a_scaffold_still_needs_it() {
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
     assert!(pom.contains("spring-boot-starter-jdbc"), "{pom}");
     assert!(
-        root.join("src/main/java/com/example/demo/adapters/JdbcArticleRepository.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/adapters/JdbcArticleRepository.java"
+        )
+        .is_file()
     );
 }
 
@@ -627,7 +652,10 @@ fn add_db_on_spring_wires_every_test_through_an_imported_configuration() {
     write_fake_maven(&fake, &["docker"], &log);
 
     fs::write(
-        root.join("src/test/java/com/example/demo/PostgresContainerConfig.java"),
+        common::generated(
+            &root,
+            "src/test/java/com/example/demo/PostgresContainerConfig.java",
+        ),
         r#"package com.example.demo;
 
 import org.springframework.beans.factory.support.BeanDefinitionRegistry;
@@ -662,7 +690,7 @@ public class PostgresContainerConfig
 "#,
     )
     .unwrap();
-    let api = root.join("src/test/java/com/example/demo/api");
+    let api = common::generated(&root, "src/test/java/com/example/demo/api");
     fs::create_dir_all(&api).unwrap();
     fs::write(
         api.join("ExtraSliceTest.java"),
@@ -689,9 +717,11 @@ class ExtraSliceTest {
             .success()
     );
 
-    let config =
-        fs::read_to_string(root.join("src/test/java/com/example/demo/TestcontainersConfig.java"))
-            .unwrap();
+    let config = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/TestcontainersConfig.java",
+    ))
+    .unwrap();
     assert!(
         !config.contains("ApplicationContextInitializer"),
         "the global registration is what this migration removes: {config}"
@@ -700,9 +730,11 @@ class ExtraSliceTest {
 
     // Both @SpringBootTest classes get the import, including the one in a
     // different package -- which needs the extra import statement too.
-    let tests =
-        fs::read_to_string(root.join("src/test/java/com/example/demo/DemoApplicationTests.java"))
-            .unwrap();
+    let tests = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/DemoApplicationTests.java",
+    ))
+    .unwrap();
     assert!(
         tests.contains("@Import(TestcontainersConfig.class)"),
         "{tests}"
@@ -751,7 +783,10 @@ fn add_db_on_spring_makes_context_loads_pass() {
     // The failure `add db` actually hits in a real app: JDBC auto-config
     // CGLIB-proxies every `@Repository`, and jails-style classes are `final`.
     fs::write(
-        root.join("src/main/java/com/example/demo/InMemoryThingRepository.java"),
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/InMemoryThingRepository.java",
+        ),
         r#"package com.example.demo;
 
 import org.springframework.stereotype.Repository;
@@ -766,7 +801,7 @@ public final class InMemoryThingRepository {}
     // reconciled. Put this cross-package test in place first: creating it
     // afterwards accidentally made the regression depend on a developer
     // PostgreSQL listening on localhost:5432.
-    let api = root.join("src/test/java/com/example/demo/api");
+    let api = common::generated(&root, "src/test/java/com/example/demo/api");
     fs::create_dir_all(&api).unwrap();
     fs::write(
         api.join("ExtraSliceTest.java"),
@@ -875,7 +910,10 @@ fn remove_is_the_inverse_of_add_csv() {
             .unwrap()
             .success()
     );
-    let reader = root.join("src/main/java/com/example/demo/adapters/CsvReader.java");
+    let reader = common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/CsvReader.java",
+    );
     assert!(reader.is_file());
 
     let output = jails_cmd(&root, None)
@@ -921,8 +959,11 @@ fn remove_without_force_prompts_and_aborts_on_no() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("aborted"), "{stdout}");
     assert!(
-        root.join("src/main/java/com/example/demo/adapters/CsvReader.java")
-            .is_file(),
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/adapters/CsvReader.java"
+        )
+        .is_file(),
         "aborted remove must leave the files"
     );
 }
@@ -954,7 +995,7 @@ fn capabilities_stack_without_clobbering_each_other() {
             "expected exactly one {artifact} dependency"
         );
     }
-    let pkg = root.join("src/main/java/com/example/demo");
+    let pkg = common::generated(&root, "src/main/java/com/example/demo");
     assert!(pkg.join("adapters/CsvReader.java").is_file());
     assert!(pkg.join("adapters/Database.java").is_file());
     assert!(pkg.join("adapters/Json.java").is_file());
@@ -987,9 +1028,9 @@ fn add_accepts_multiple_capabilities_in_one_invocation() {
             "missing {artifact}: {pom}"
         );
     }
-    let main = root.join("src/main/java/com/example/demo");
+    let main = common::generated(&root, "src/main/java/com/example/demo");
     assert!(main.join("adapters/Json.java").is_file());
-    let test = root.join("src/test/java/com/example/demo");
+    let test = common::generated(&root, "src/test/java/com/example/demo");
     assert!(test.join("testkit/Clocks.java").is_file());
 }
 
@@ -1050,8 +1091,11 @@ fn add_cors_on_the_default_boot_version_compiles_and_runs_its_own_test() {
     }
     let path = real_path_without_mvnd();
     let root = verified_spring_toolbox(&path);
-    let test = fs::read_to_string(root.join("src/test/java/com/example/demo/CorsConfigTest.java"))
-        .expect("add cors did not write its test into the Boot 4 toolbox");
+    let test = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/CorsConfigTest.java",
+    ))
+    .expect("add cors did not write its test into the Boot 4 toolbox");
     assert!(
         test.contains("servlet.assertj.MockMvcTester"),
         "the toolbox rendered the legacy variant, so the default branch is still unexecuted"
@@ -1261,9 +1305,10 @@ fn add_api_generates_problem_detail_handling_that_compiles_and_passes() {
         .unwrap();
     assert!(status.success());
 
-    let handler = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/api/ApiExceptionHandler.java"),
-    )
+    let handler = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/api/ApiExceptionHandler.java",
+    ))
     .unwrap();
     // Spring's own base class, so framework exceptions keep their statuses.
     assert!(
@@ -1435,9 +1480,9 @@ fn a_spring_capability_is_refused_in_a_plain_maven_project() {
          <properties><maven.compiler.release>27</maven.compiler.release></properties></project>",
     )
     .unwrap();
-    fs::create_dir_all(root.join("src/main/java/com/example/demo")).unwrap();
+    fs::create_dir_all(common::generated(&root, "src/main/java/com/example/demo")).unwrap();
     fs::write(
-        root.join("src/main/java/com/example/demo/App.java"),
+        common::generated(&root, "src/main/java/com/example/demo/App.java"),
         "package com.example.demo;\npublic class App {}\n",
     )
     .unwrap();
@@ -1565,17 +1610,19 @@ fn add_kafka_and_generate_event_compile_against_real_spring() {
             .success()
     );
 
-    let listener = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/messaging/PayoutSettledListener.java"),
-    )
+    let listener = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/messaging/PayoutSettledListener.java",
+    ))
     .unwrap();
     // No catch: swallowing here commits an offset for a message that was
     // never processed, which is data loss wearing a success badge.
     assert!(!listener.contains("catch ("), "{listener}");
 
-    let publisher = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/messaging/PayoutSettledPublisher.java"),
-    )
+    let publisher = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/messaging/PayoutSettledPublisher.java",
+    ))
     .unwrap();
     // Keyed sends: ordering is per partition, and a null key round-robins.
     assert!(
@@ -1583,9 +1630,10 @@ fn add_kafka_and_generate_event_compile_against_real_spring() {
         "{publisher}"
     );
 
-    let event = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/messaging/PayoutSettledEvent.java"),
-    )
+    let event = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/messaging/PayoutSettledEvent.java",
+    ))
     .unwrap();
     assert!(
         event.contains(
@@ -1626,9 +1674,11 @@ fn add_security_writes_an_explicit_chain_that_denies_by_default() {
         );
     }
 
-    let config =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/SecurityConfig.java"))
-            .unwrap();
+    let config = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/SecurityConfig.java",
+    ))
+    .unwrap();
     // Default deny: a new endpoint is protected until someone says otherwise.
     assert!(config.contains(".anyRequest()"), "{config}");
     assert!(config.contains(".authenticated()"), "{config}");
@@ -1694,9 +1744,11 @@ fn add_redis_wires_a_ttl_enforcing_store_and_a_compose_service() {
     // that only works because something was already cached.
     assert!(!compose.contains("redis-data"), "{compose}");
 
-    let store =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/adapters/KeyValueStore.java"))
-            .unwrap();
+    let store = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/KeyValueStore.java",
+    ))
+    .unwrap();
     // Every write carries a lifetime. `set(k, v)` with no expiry stores a key
     // forever, which is a memory leak that survives restarts.
     assert!(store.contains("set(key, value, ttl)"), "{store}");
@@ -1849,8 +1901,11 @@ fn sync_applies_what_the_manifest_declares() {
             .success()
     );
     assert!(
-        root.join("src/main/java/com/example/demo/persistence/CsvReader.java")
-            .is_file(),
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/persistence/CsvReader.java"
+        )
+        .is_file(),
         "sync did not apply the declared capability into the configured layer"
     );
 }
@@ -1932,7 +1987,10 @@ fn remove_names_generated_files_that_were_edited_before_deleting_them() {
         .status()
         .unwrap();
 
-    let generated = root.join("src/main/java/com/example/demo/adapters/CsvReader.java");
+    let generated = common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/CsvReader.java",
+    );
     let mut edited = fs::read_to_string(&generated).unwrap();
     edited.push_str("\n// an afternoon of work\n");
     fs::write(&generated, edited).unwrap();
@@ -1986,7 +2044,10 @@ fn dry_run_remove_names_edited_files() {
         .status()
         .unwrap();
 
-    let generated = root.join("src/main/java/com/example/demo/adapters/CsvReader.java");
+    let generated = common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/CsvReader.java",
+    );
     fs::write(
         &generated,
         "package com.example.demo.adapters;\nclass CsvReader {}\n",

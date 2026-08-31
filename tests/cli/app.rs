@@ -103,10 +103,7 @@ fn app_manifest_formats_the_complete_generated_tree_once() {
         "format should run after generation, once: {invocations}"
     );
     assert!(invocations.contains("spotless:apply"), "{invocations}");
-    assert!(
-        root.join("src/main/java/com/example/demo/domain/Note.java")
-            .is_file()
-    );
+    assert!(common::generated(&root, "src/main/java/com/example/demo/domain/Note.java").is_file());
 }
 
 /// `app plan` names an entity the manifest has stopped asking for.
@@ -169,8 +166,7 @@ fn app_plan_names_an_entity_the_manifest_no_longer_declares() {
     assert!(!stdout.contains("Keep.java"), "{stdout}");
     // Planning stays non-mutating: nothing was removed.
     assert!(
-        root.join("src/main/java/com/example/demo/domain/Dropped.java")
-            .is_file(),
+        common::generated(&root, "src/main/java/com/example/demo/domain/Dropped.java").is_file(),
         "`app plan` may not delete anything"
     );
     assert!(
@@ -236,8 +232,11 @@ fn a_manifest_field_appended_to_a_scaffold_becomes_a_forward_migration() {
     .unwrap();
     assert!(added.contains("alter table deals"), "{added}");
     assert!(added.contains("add column memo text"), "{added}");
-    let record =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Deal.java")).unwrap();
+    let record = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/domain/Deal.java",
+    ))
+    .unwrap();
     assert!(record.contains("Optional<String> memo"), "{record}");
 
     // Re-applying the same manifest changes nothing, which is what makes the
@@ -400,7 +399,7 @@ fn app_manifest_merges_an_edited_intent_over_user_changes() {
         "schema=1\nrecord|Note||id:uuid@pk|false|||\n",
     )
     .unwrap();
-    let record = root.join("src/main/java/com/example/demo/domain/Note.java");
+    let record = common::generated(&root, "src/main/java/com/example/demo/domain/Note.java");
     let source = fs::read_to_string(&record).unwrap();
     let edited = source.replacen(
         "\n}\n",
@@ -481,7 +480,7 @@ fn app_manifest_updates_an_intent_without_needing_a_git_repository() {
             .unwrap()
             .success()
     );
-    let record = root.join("src/main/java/com/example/demo/domain/Note.java");
+    let record = common::generated(&root, "src/main/java/com/example/demo/domain/Note.java");
     let before = fs::read_to_string(&record).unwrap();
     fs::write(
         &manifest,
@@ -604,7 +603,7 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
         );
     }
 
-    let main = root.join("src/main/java/com/example/demo");
+    let main = common::generated(&root, "src/main/java/com/example/demo");
     assert!(main.join("domain/CrawlStatus.java").is_file());
     assert!(main.join("domain/CrawlRun.java").is_file());
     assert!(main.join("domain/CrawledPage.java").is_file());
@@ -646,8 +645,11 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
             .is_file()
     );
     assert!(
-        root.join("src/test/java/com/example/demo/jobs/SiteTraversalWorkflowIT.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/test/java/com/example/demo/jobs/SiteTraversalWorkflowIT.java"
+        )
+        .is_file()
     );
     assert!(main.join("messaging/PageDiscoveredEvent.java").is_file());
     assert!(main.join("jobs/CrawlDispatcherWork.java").is_file());
@@ -714,7 +716,7 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let main = root.join("src/main/java/com/example/demo");
+    let main = common::generated(&root, "src/main/java/com/example/demo");
     for name in [
         "Workspace",
         "Member",
@@ -831,8 +833,11 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
     assert!(provider.contains("Idempotency-Key"), "{provider}");
     assert!(provider.contains("HttpClient.Redirect.NEVER"), "{provider}");
     assert!(
-        root.join("src/test/java/com/example/demo/jobs/ProviderHttpOutboxSinkTest.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/test/java/com/example/demo/jobs/ProviderHttpOutboxSinkTest.java"
+        )
+        .is_file()
     );
     for name in [
         "ContactWorkspace",

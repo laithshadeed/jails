@@ -5,9 +5,13 @@ use super::*;
 fn web_fixture(label: &str) -> PathBuf {
     let root = temp_dir(label);
     write_project_skeleton(&root);
-    fs::create_dir_all(root.join("src/main/java/com/example/demo/web")).unwrap();
+    fs::create_dir_all(common::generated(
+        &root,
+        "src/main/java/com/example/demo/web",
+    ))
+    .unwrap();
     fs::write(
-        root.join("src/main/java/com/example/demo/web/NoteController.java"),
+        common::generated(&root, "src/main/java/com/example/demo/web/NoteController.java"),
         "package com.example.demo.web;\n@RestController\n@RequestMapping(\"/notes\")\nfinal class NoteController { @GetMapping(\"/{id}\") String get() { return \"ok\"; } }\n",
     )
     .unwrap();
@@ -32,7 +36,11 @@ fn contract_emit_and_check_catch_a_removed_operation() {
     let baseline = root.join("baseline.json");
     fs::write(&baseline, &emitted.stdout).unwrap();
 
-    fs::remove_file(root.join("src/main/java/com/example/demo/web/NoteController.java")).unwrap();
+    fs::remove_file(common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/NoteController.java",
+    ))
+    .unwrap();
     let checked = jails_cmd(&root, None)
         .args(["contract", "check", "--against", baseline.to_str().unwrap()])
         .output()
@@ -183,7 +191,7 @@ fn logs_are_bounded_and_accept_only_declared_services() {
 fn runner_boots_one_spring_main_with_private_startup_and_project_script() {
     let root = web_fixture("spring-runner");
     fs::write(
-        root.join("src/main/java/com/example/demo/DemoApplication.java"),
+        common::generated(&root, "src/main/java/com/example/demo/DemoApplication.java"),
         "package com.example.demo;\nimport org.springframework.boot.autoconfigure.SpringBootApplication;\n@SpringBootApplication public class DemoApplication {}\n",
     )
     .unwrap();
@@ -232,7 +240,7 @@ fn runner_boots_one_spring_main_with_private_startup_and_project_script() {
 fn runner_treats_a_jshell_snippet_failure_as_a_failed_command() {
     let root = web_fixture("spring-runner-failure");
     fs::write(
-        root.join("src/main/java/com/example/demo/DemoApplication.java"),
+        common::generated(&root, "src/main/java/com/example/demo/DemoApplication.java"),
         "package com.example.demo;\nimport org.springframework.boot.autoconfigure.SpringBootApplication;\n@SpringBootApplication public class DemoApplication {}\n",
     )
     .unwrap();
@@ -306,7 +314,7 @@ fn real_console_and_runner_observe_predestroy_and_reject_session_failures() {
         ),
     )
     .unwrap();
-    let source = root.join("src/main/java/com/example/demo");
+    let source = common::generated(&root, "src/main/java/com/example/demo");
     fs::create_dir_all(&source).unwrap();
     fs::write(
         source.join("DemoApplication.java"),
@@ -404,7 +412,7 @@ fn unsafe_spring_boots_print_preflight_and_require_yes_without_a_terminal() {
     )
     .unwrap();
     fs::write(
-        root.join("src/main/java/com/example/demo/DemoApplication.java"),
+        common::generated(&root, "src/main/java/com/example/demo/DemoApplication.java"),
         "package com.example.demo;\nimport org.springframework.boot.autoconfigure.SpringBootApplication;\n@SpringBootApplication public class DemoApplication {}\n",
     )
     .unwrap();

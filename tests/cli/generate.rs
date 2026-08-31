@@ -12,7 +12,10 @@ fn generate_standalone_and_destroy_roundtrip() {
         .status()
         .unwrap();
     assert!(status.success());
-    let file = root.join("src/main/java/com/example/demo/web/CommentController.java");
+    let file = common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/CommentController.java",
+    );
     assert!(file.is_file());
     let contents = fs::read_to_string(&file).unwrap();
     assert!(contents.contains("class CommentController"));
@@ -21,7 +24,10 @@ fn generate_standalone_and_destroy_roundtrip() {
         "spring.md §2: a controller is an entry point, not module API"
     );
     // Rails generates a test alongside `generate controller`; jails matches that.
-    let test_file = root.join("src/test/java/com/example/demo/web/CommentControllerTest.java");
+    let test_file = common::generated(
+        &root,
+        "src/test/java/com/example/demo/web/CommentControllerTest.java",
+    );
     assert!(test_file.is_file(), "expected {}", test_file.display());
 
     let status = jails_cmd(&root, None)
@@ -263,17 +269,20 @@ fn preserving_a_column_renames_the_component_and_writes_no_migration() {
         "preserve wrote a migration"
     );
 
-    let record =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Account.java"))
-            .unwrap();
+    let record = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/domain/Account.java",
+    ))
+    .unwrap();
     assert!(record.contains("UUID ownerId"), "{record}");
     assert!(!record.contains("userId"), "{record}");
 
     // The SQL half did not move, and that is the point: the adapter still
     // reads and writes `user_id` while the Java component is `ownerId`.
-    let adapter = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/adapters/JdbcAccountRepository.java"),
-    )
+    let adapter = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/JdbcAccountRepository.java",
+    ))
     .unwrap();
     assert!(adapter.contains("user_id"), "{adapter}");
     assert!(!adapter.contains("owner_id"), "{adapter}");
@@ -308,9 +317,10 @@ fn preserving_a_column_renames_the_component_and_writes_no_migration() {
         String::from_utf8_lossy(&added.stdout),
         String::from_utf8_lossy(&added.stderr)
     );
-    let adapter = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/adapters/JdbcAccountRepository.java"),
-    )
+    let adapter = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/JdbcAccountRepository.java",
+    ))
     .unwrap();
     assert!(adapter.contains("user_id"), "{adapter}");
     assert!(!adapter.contains("owner_id"), "{adapter}");
@@ -373,8 +383,11 @@ fn resource_field_uses_scaffold_storage_identity_and_leaves_plain_records_source
         .unwrap();
     assert!(renamed.status.success(), "{renamed:?}");
     assert_eq!(fs::read_dir(&migrations).unwrap().count(), before);
-    let tag =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Tag.java")).unwrap();
+    let tag = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/domain/Tag.java",
+    ))
+    .unwrap();
     assert!(tag.contains("Optional<String> name"), "{tag}");
     assert!(!tag.contains("label"), "{tag}");
 
@@ -417,7 +430,7 @@ fn package_overrides_normalize_the_base_and_unique_names_resolve_without_the_fla
         .output()
         .unwrap();
     assert!(generated.status.success(), "{generated:?}");
-    let record = root.join("src/main/java/com/example/demo/billing/Invoice.java");
+    let record = common::generated(&root, "src/main/java/com/example/demo/billing/Invoice.java");
     assert!(record.is_file(), "missing {}", record.display());
     assert!(
         !root
@@ -903,9 +916,10 @@ fn a_transition_can_select_by_a_component_other_than_id() {
     );
 
     // The SQL is what proves it: the predicate, not just the record.
-    let adapter = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/adapters/JdbcSetStatusTransition.java"),
-    )
+    let adapter = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/JdbcSetStatusTransition.java",
+    ))
     .unwrap();
     assert!(adapter.contains("where user_id = :user_id"), "{adapter}");
     assert!(!adapter.contains("where id = :id"), "{adapter}");
@@ -1046,9 +1060,10 @@ fn a_transition_can_take_its_key_from_the_url() {
     );
 
     // The command record no longer carries the key.
-    let command = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/service/SetStatusCommand.java"),
-    )
+    let command = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/service/SetStatusCommand.java",
+    ))
     .unwrap();
     assert!(
         command.contains("record SetStatusCommand(String status)"),
@@ -1057,9 +1072,10 @@ fn a_transition_can_take_its_key_from_the_url() {
     assert!(!command.contains("userId"), "{command}");
 
     // Mounted *and* bound.
-    let controller = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/web/SetStatusController.java"),
-    )
+    let controller = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/SetStatusController.java",
+    ))
     .unwrap();
     assert!(
         controller.contains("PATH = \"/admin_api/conversations/{userId}/status\""),
@@ -1081,9 +1097,10 @@ fn a_transition_can_take_its_key_from_the_url() {
 
     // One port shape, and the SQL binds the key from the parameter rather than
     // off a command component that is no longer there.
-    let port = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/service/SetStatusUseCase.java"),
-    )
+    let port = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/service/SetStatusUseCase.java",
+    ))
     .unwrap();
     assert!(
         port.contains(
@@ -1091,9 +1108,10 @@ fn a_transition_can_take_its_key_from_the_url() {
         ),
         "{port}"
     );
-    let adapter = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/adapters/JdbcSetStatusTransition.java"),
-    )
+    let adapter = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/JdbcSetStatusTransition.java",
+    ))
     .unwrap();
     assert!(adapter.contains("where user_id = :user_id"), "{adapter}");
     assert!(adapter.contains(".param(\"user_id\", userId)"), "{adapter}");
@@ -1101,9 +1119,10 @@ fn a_transition_can_take_its_key_from_the_url() {
     assert!(adapter.contains("Result.NotFound(userId)"), "{adapter}");
 
     // And the proof expands the variable, which is the half B48 dropped.
-    let test = fs::read_to_string(
-        root.join("src/test/java/com/example/demo/web/SetStatusControllerTest.java"),
-    )
+    let test = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/web/SetStatusControllerTest.java",
+    ))
     .unwrap();
     assert!(
         test.contains("mvc.patch().uri(SetStatusController.PATH, "),
@@ -1246,9 +1265,10 @@ fn what_explain_says_about_a_query_is_what_a_query_does() {
             .status
             .success()
     );
-    let adapter = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/adapters/JdbcOpenLoansQuery.java"),
-    )
+    let adapter = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/JdbcOpenLoansQuery.java",
+    ))
     .unwrap();
 
     // An optional filter widens rather than matching null, and the
@@ -1384,19 +1404,25 @@ fn generate_scaffold_writes_a_raw_jdbc_slice() {
         .unwrap();
     assert!(status.success());
 
-    let pkg = root.join("src/main/java/com/example/demo");
+    let pkg = common::generated(&root, "src/main/java/com/example/demo");
     assert!(pkg.join("domain/Post.java").is_file());
     assert!(pkg.join("app/PostRepository.java").is_file());
     assert!(pkg.join("adapters/JdbcPostRepository.java").is_file());
     assert!(pkg.join("service/PostService.java").is_file());
     assert!(pkg.join("web/PostController.java").is_file());
     assert!(
-        root.join("src/test/java/com/example/demo/adapters/JdbcPostRepositoryIT.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/test/java/com/example/demo/adapters/JdbcPostRepositoryIT.java"
+        )
+        .is_file()
     );
     assert!(
-        root.join("src/test/java/com/example/demo/web/PostControllerTest.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/test/java/com/example/demo/web/PostControllerTest.java"
+        )
+        .is_file()
     );
 }
 
@@ -1487,7 +1513,7 @@ fn a_snake_case_field_declaration_produces_a_camel_case_java_component() {
             .unwrap();
         assert!(output.status.success(), "{name}: {output:?}");
         let record = std::fs::read_to_string(
-            root.join("src/main/java/com/example/demo/domain")
+            common::generated(&root, "src/main/java/com/example/demo/domain")
                 .join(format!("{name}.java")),
         )
         .unwrap();
@@ -1569,7 +1595,7 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
         .unwrap();
     assert!(generated.status.success(), "{generated:?}");
 
-    let test = root.join("src/test/java/com/example/demo/domain/NoteTest.java");
+    let test = common::generated(&root, "src/test/java/com/example/demo/domain/NoteTest.java");
     let reader_edit = format!(
         "// reader-owned context\n{}",
         fs::read_to_string(&test).unwrap()
@@ -1782,8 +1808,7 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
     );
     assert!(applied.contains("CreateFile { path:"), "{applied}");
     assert!(
-        root.join("src/main/java/com/example/demo/domain/Fresh.java")
-            .is_file(),
+        common::generated(&root, "src/main/java/com/example/demo/domain/Fresh.java").is_file(),
         "an applied reviewed transition did not commit"
     );
 
@@ -1959,8 +1984,11 @@ fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
         "revive published a second create migration"
     );
     assert!(
-        root.join("src/main/java/com/example/demo/web/TaskController.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/web/TaskController.java"
+        )
+        .is_file()
     );
     let revived_store = jails_commit::store::Store::at(&root)
         .observe()
@@ -2126,9 +2154,10 @@ fn renaming_a_storage_backed_resource_keeps_its_table_or_refuses() {
 
     // Coherent afterwards: the adapter still queries the table the migration
     // history creates, and the recorded identity says so.
-    let adapter = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/adapters/JdbcReaderRepository.java"),
-    )
+    let adapter = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/JdbcReaderRepository.java",
+    ))
     .unwrap();
     assert!(adapter.contains("from members"), "{adapter}");
     assert!(!adapter.contains("readers"), "{adapter}");
@@ -2153,9 +2182,12 @@ fn renaming_a_storage_backed_resource_keeps_its_table_or_refuses() {
         String::from_utf8_lossy(&evolved.stdout)
     );
     assert!(
-        fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Reader.java"))
-            .unwrap()
-            .contains("nickname")
+        fs::read_to_string(common::generated(
+            &root,
+            "src/main/java/com/example/demo/domain/Reader.java"
+        ))
+        .unwrap()
+        .contains("nickname")
     );
 
     // A source-only resource has no storage to carry, so the textual rename
@@ -2221,17 +2253,18 @@ fn coordinated_preserve_table_rename_keeps_storage_and_moves_lifecycle_lineage()
             .exists()
     );
     assert!(
-        root.join("src/main/java/com/example/demo/domain/WorkItem.java")
-            .is_file()
+        common::generated(&root, "src/main/java/com/example/demo/domain/WorkItem.java").is_file()
     );
     assert!(
         !root
             .join("src/main/java/com/example/demo/domain/Task.java")
             .exists()
     );
-    let controller =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/web/WorkItemController.java"))
-            .unwrap();
+    let controller = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/WorkItemController.java",
+    ))
+    .unwrap();
     assert!(controller.contains("/tasks"), "{controller}");
 
     let store = jails_commit::store::Store::at(&root)
@@ -2300,16 +2333,19 @@ fn coordinated_single_cutover_appends_one_migration_and_switches_the_binding() {
             "alter index public.\"tasks_created_at_idx\" rename to \"work_items_created_at_idx\";\n",
         )
     );
-    let adapter = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/adapters/JdbcWorkItemRepository.java"),
-    )
+    let adapter = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/JdbcWorkItemRepository.java",
+    ))
     .unwrap();
     assert!(adapter.contains("work_items"), "{adapter}");
     assert!(!adapter.contains("from tasks"), "{adapter}");
     assert!(!adapter.contains("into tasks"), "{adapter}");
-    let controller =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/web/WorkItemController.java"))
-            .unwrap();
+    let controller = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/WorkItemController.java",
+    ))
+    .unwrap();
     assert!(controller.contains("/tasks"), "{controller}");
 
     let store = jails_commit::store::Store::at(&root)
@@ -2477,8 +2513,10 @@ fn rolling_rename_waits_for_attestation_then_completes_storage_forward() {
             .join("src/main/resources/db/migration/V002__rename_tasks_to_work_items.sql")
             .exists()
     );
-    let adapter_path =
-        root.join("src/main/java/com/example/demo/adapters/JdbcWorkItemRepository.java");
+    let adapter_path = common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/JdbcWorkItemRepository.java",
+    );
     let staged_adapter = fs::read_to_string(&adapter_path).unwrap();
     assert!(staged_adapter.contains("from tasks"), "{staged_adapter}");
 
@@ -2567,7 +2605,7 @@ fn coordinated_resource_rename_reports_reader_owned_java_without_rewriting_it() 
         .output()
         .unwrap();
     assert!(generated.status.success(), "{generated:?}");
-    let manual = root.join("src/main/java/com/example/demo/Manual.java");
+    let manual = common::generated(&root, "src/main/java/com/example/demo/Manual.java");
     fs::write(
         &manual,
         "package com.example.demo;\nimport com.example.demo.domain.Task;\nfinal class Manual { Task task; }\n",
@@ -2614,7 +2652,10 @@ fn resource_repair_restores_sealed_history_and_missing_owned_projections() {
     let migration = root.join("src/main/resources/db/migration/V001__create_tasks.sql");
     let sealed = fs::read(&migration).unwrap();
     fs::write(&migration, b"-- accidentally edited\n").unwrap();
-    let controller = root.join("src/main/java/com/example/demo/web/TaskController.java");
+    let controller = common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/TaskController.java",
+    );
     fs::remove_file(&controller).unwrap();
 
     let repaired = jails_cmd(&root, None)
@@ -2848,8 +2889,11 @@ fn task_drop_keeps_v001_and_appends_an_exact_forward_migration() {
         recreated_migration.display()
     );
     assert!(
-        root.join("src/main/java/com/example/demo/web/TaskController.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/web/TaskController.java"
+        )
+        .is_file()
     );
 }
 
@@ -3042,7 +3086,7 @@ fn scaffold_reuses_an_existing_record_and_destroy_preserves_it() {
         .unwrap();
     assert!(scaffold.success());
 
-    let record_path = root.join("src/main/java/com/example/demo/domain/Post.java");
+    let record_path = common::generated(&root, "src/main/java/com/example/demo/domain/Post.java");
     let source = fs::read_to_string(&record_path).unwrap();
     assert!(source.contains("UUID id"), "{source}");
     assert!(source.contains("String title"), "{source}");
@@ -3054,9 +3098,10 @@ fn scaffold_reuses_an_existing_record_and_destroy_preserves_it() {
     assert!(field.status.success(), "{field:?}");
     let evolved = fs::read_to_string(&record_path).unwrap();
     assert!(evolved.contains("Optional<Instant> createdAt"), "{evolved}");
-    let jdbc = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/adapters/JdbcPostRepository.java"),
-    )
+    let jdbc = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/JdbcPostRepository.java",
+    ))
     .unwrap();
     assert!(jdbc.contains("created_at"), "{jdbc}");
 
@@ -3075,8 +3120,7 @@ fn scaffold_reuses_an_existing_record_and_destroy_preserves_it() {
         "destroy scaffold reverted the field shared with the record intent: {preserved}"
     );
     assert!(
-        root.join("src/test/java/com/example/demo/domain/PostTest.java")
-            .is_file(),
+        common::generated(&root, "src/test/java/com/example/demo/domain/PostTest.java").is_file(),
         "the record intent itself remains tracked and intact"
     );
     assert!(
@@ -3105,7 +3149,7 @@ fn destroy_refuses_to_remove_a_type_used_by_a_retained_entity() {
             .unwrap()
             .success()
     );
-    let status = root.join("src/main/java/com/example/demo/domain/Status.java");
+    let status = common::generated(&root, "src/main/java/com/example/demo/domain/Status.java");
     let before = snapshot_tree(&root);
 
     let refused = jails_cmd(&root, None)
@@ -3263,7 +3307,7 @@ fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migra
         .unwrap();
     assert!(scaffold.success());
 
-    let request = root.join("src/main/java/com/example/demo/web/NoteRequest.java");
+    let request = common::generated(&root, "src/main/java/com/example/demo/web/NoteRequest.java");
     let edited = format!(
         "{}// user-owned validation\n",
         fs::read_to_string(&request).unwrap()
@@ -3312,12 +3356,16 @@ fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migra
     assert!(stdout.contains("replace "), "{stdout}");
     assert!(stdout.contains(".sql"), "{stdout}");
 
-    let record =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Note.java")).unwrap();
+    let record = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/domain/Note.java",
+    ))
+    .unwrap();
     assert!(record.contains("Instant createdAt"), "{record}");
-    let jdbc = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/adapters/JdbcNoteRepository.java"),
-    )
+    let jdbc = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/JdbcNoteRepository.java",
+    ))
     .unwrap();
     assert!(jdbc.contains("created_at"), "{jdbc}");
     // The edited derivative is *merged*, not skipped. V1 left it alone, which
@@ -3515,8 +3563,11 @@ fn resource_field_commands_use_the_risk_specific_cli_contracts() {
         "{migration}"
     );
 
-    let record =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Task.java")).unwrap();
+    let record = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/domain/Task.java",
+    ))
+    .unwrap();
     assert!(record.contains("String headline"), "{record}");
     assert!(record.contains("long priority"), "{record}");
     assert!(record.contains("String description"), "{record}");
@@ -3572,8 +3623,11 @@ fn scaffold_timestamps_flow_through_ddl_create_and_optimistic_updates() {
         .status()
         .unwrap();
     assert!(scaffold.success());
-    let record =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Note.java")).unwrap();
+    let record = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/domain/Note.java",
+    ))
+    .unwrap();
     assert!(record.contains("Instant createdAt"), "{record}");
     assert!(record.contains("Instant updatedAt"), "{record}");
     let ddl =
@@ -3596,9 +3650,10 @@ fn scaffold_timestamps_flow_through_ddl_create_and_optimistic_updates() {
         .status()
         .unwrap();
     assert!(transition.success());
-    let adapter = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/adapters/JdbcRenameNoteTransition.java"),
-    )
+    let adapter = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/JdbcRenameNoteTransition.java",
+    ))
     .unwrap();
     assert!(
         adapter.contains("updated_at = current_timestamp"),
@@ -3652,9 +3707,11 @@ fn scaffold_writes_http_requests_and_factory_builds_typed_test_data() {
             .unwrap()
             .success()
     );
-    let factory =
-        fs::read_to_string(root.join("src/test/java/com/example/demo/testkit/NoteFactory.java"))
-            .unwrap();
+    let factory = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/testkit/NoteFactory.java",
+    ))
+    .unwrap();
     assert!(
         factory.contains("public static NoteFactory aNote()"),
         "{factory}"
@@ -3796,9 +3853,11 @@ fn a_timestamped_scaffold_does_not_ask_the_caller_for_its_audit_columns() {
             .success()
     );
 
-    let request =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/web/NoteRequest.java"))
-            .unwrap();
+    let request = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/NoteRequest.java",
+    ))
+    .unwrap();
     assert!(!request.contains("Instant createdAt"), "{request}");
     assert!(!request.contains("Instant updatedAt"), "{request}");
     assert!(
@@ -3808,21 +3867,28 @@ fn a_timestamped_scaffold_does_not_ask_the_caller_for_its_audit_columns() {
 
     // The record still declares them, and the response still returns them: the
     // server sets these, it does not hide them.
-    let record =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Note.java")).unwrap();
+    let record = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/domain/Note.java",
+    ))
+    .unwrap();
     assert!(record.contains("Instant createdAt"), "{record}");
-    let response =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/web/NoteResponse.java"))
-            .unwrap();
+    let response = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/NoteResponse.java",
+    ))
+    .unwrap();
     assert!(response.contains("Instant createdAt"), "{response}");
 
     // And the sendable collection describes a request that can be made -- as
     // does the generated controller test, which sends that same body.
     let requests = fs::read_to_string(root.join("requests/note.http")).unwrap();
     assert!(!requests.contains("createdAt"), "{requests}");
-    let controller_test =
-        fs::read_to_string(root.join("src/test/java/com/example/demo/web/NoteControllerTest.java"))
-            .unwrap();
+    let controller_test = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/web/NoteControllerTest.java",
+    ))
+    .unwrap();
     assert!(
         controller_test.contains("theDocumentedCreateRequestIsAccepted"),
         "{controller_test}"
@@ -3861,9 +3927,11 @@ fn a_scoped_scaffold_documents_only_the_request_its_controller_answers() {
     assert!(requests.contains("POST {{baseUrl}}/notes"), "{requests}");
     assert!(!requests.contains("GET {{baseUrl}}"), "{requests}");
 
-    let controller_test =
-        fs::read_to_string(root.join("src/test/java/com/example/demo/web/NoteControllerTest.java"))
-            .unwrap();
+    let controller_test = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/web/NoteControllerTest.java",
+    ))
+    .unwrap();
     assert!(
         controller_test.contains("hasStatus(405)"),
         "{controller_test}"
@@ -3982,7 +4050,10 @@ fn destroy_without_force_prompts_and_aborts_on_no() {
         .args(["generate", "controller", "comment"])
         .status()
         .unwrap();
-    let file = root.join("src/main/java/com/example/demo/web/CommentController.java");
+    let file = common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/CommentController.java",
+    );
     assert!(file.is_file());
 
     let mut child = jails_cmd(&root, None)
@@ -4005,7 +4076,10 @@ fn destroy_without_force_prompts_and_aborts_on_no() {
 fn generate_twice_writes_nothing_the_second_time() {
     let root = temp_dir("duplicate");
     write_project_skeleton(&root);
-    let service = root.join("src/main/java/com/example/demo/service/CommentService.java");
+    let service = common::generated(
+        &root,
+        "src/main/java/com/example/demo/service/CommentService.java",
+    );
     jails_cmd(&root, None)
         .args(["generate", "service", "comment"])
         .status()
@@ -4076,13 +4150,9 @@ fn short_generators_cover_raw_sql_and_test_seams() {
         );
     }
 
+    assert!(common::generated(&root, "src/main/java/com/example/demo/IdGenerator.java").is_file());
     assert!(
-        root.join("src/main/java/com/example/demo/IdGenerator.java")
-            .is_file()
-    );
-    assert!(
-        root.join("src/test/java/com/example/demo/DatabaseSmokeIT.java")
-            .is_file()
+        common::generated(&root, "src/test/java/com/example/demo/DatabaseSmokeIT.java").is_file()
     );
     assert!(
         root.join("src/main/resources/db/migration/V001__create_reward_core.sql")
@@ -4093,12 +4163,16 @@ fn short_generators_cover_raw_sql_and_test_seams() {
             .is_file()
     );
     assert!(
-        root.join("src/main/java/com/example/demo/app/RewardRepository.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/app/RewardRepository.java"
+        )
+        .is_file()
     );
-    let adapter = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/adapters/JdbcRewardRepository.java"),
-    )
+    let adapter = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/JdbcRewardRepository.java",
+    ))
     .unwrap();
     assert!(adapter.contains("PreparedStatement") || adapter.contains("prepareStatement"));
     assert!(
@@ -4517,9 +4591,10 @@ fn a_scaffold_with_database_types_compiles_including_its_derived_jdbc_adapter() 
         .unwrap();
     assert!(status.success());
 
-    let adapter = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/adapters/JdbcPayoutRepository.java"),
-    )
+    let adapter = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/JdbcPayoutRepository.java",
+    ))
     .unwrap();
     // Derived, not left as a TODO.
     assert!(
@@ -4548,9 +4623,11 @@ fn a_scaffold_with_database_types_compiles_including_its_derived_jdbc_adapter() 
 
     // The DTOs name the project's own enum, so they have to import it --
     // `field.imports` only carries the built-in types' packages.
-    let request =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/web/PayoutRequest.java"))
-            .unwrap();
+    let request = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/PayoutRequest.java",
+    ))
+    .unwrap();
     assert!(
         request.contains("import com.example.demo.domain.Currency;"),
         "{request}"
@@ -4607,9 +4684,10 @@ fn a_scaffold_emits_a_migration_whose_columns_match_the_adapter() {
     assert!(migration.contains("primary key (id)"), "{migration}");
 
     // The same column names the adapter selects and inserts.
-    let adapter = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/adapters/JdbcPayoutRepository.java"),
-    )
+    let adapter = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/JdbcPayoutRepository.java",
+    ))
     .unwrap();
     for column in ["id", "amount", "paid_at", "note"] {
         assert!(migration.contains(column), "migration missing {column}");
@@ -4661,7 +4739,7 @@ fn pretend_is_global_and_reaches_destroy_too() {
         .output()
         .unwrap();
     assert!(created.status.success());
-    let file = root.join("src/main/java/com/example/demo/domain/Payout.java");
+    let file = common::generated(&root, "src/main/java/com/example/demo/domain/Payout.java");
     assert!(file.is_file());
 
     let output = jails_cmd(&root, None)
@@ -4745,9 +4823,10 @@ fn the_generated_controller_test_uses_the_assertj_mockmvc_entry_point() {
         .unwrap();
     assert!(status.success());
 
-    let test = fs::read_to_string(
-        root.join("src/test/java/com/example/demo/web/PayoutControllerTest.java"),
-    )
+    let test = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/web/PayoutControllerTest.java",
+    ))
     .unwrap();
     assert!(
         test.contains("org.springframework.test.web.servlet.assertj.MockMvcTester"),
@@ -4805,9 +4884,11 @@ fn generate_dto_client_and_job_compile_and_pass_against_real_spring() {
         );
     }
 
-    let request =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/web/PayoutRequest.java"))
-            .unwrap();
+    let request = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/PayoutRequest.java",
+    ))
+    .unwrap();
     // Constraints come from the field spec, so a bad request is rejected at
     // the edge rather than deep in the domain.
     assert!(request.contains("@NotNull UUID id"), "{request}");
@@ -4817,26 +4898,32 @@ fn generate_dto_client_and_job_compile_and_pass_against_real_spring() {
     assert!(!request.contains("@NotNull String note"), "{request}");
     assert!(request.contains("Optional.ofNullable(note)"), "{request}");
 
-    let client =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/clients/BillingClient.java"))
-            .unwrap();
+    let client = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/clients/BillingClient.java",
+    ))
+    .unwrap();
     assert!(client.contains("@GetExchange"), "{client}");
     // No base URL in the annotation: it belongs to the group's configuration.
     assert!(!client.contains("@HttpExchange(url"), "{client}");
     // One registration per client, listed by type: a shared one carries a
     // single group name, so a second client took the first's configuration
     // with it. missing.md M13.
-    let config = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/clients/BillingClientConfig.java"),
-    )
+    let config = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/clients/BillingClientConfig.java",
+    ))
     .unwrap();
     assert!(
         config.contains("@ImportHttpServices(group = \"billing\", types = BillingClient.class)"),
         "{config}"
     );
 
-    let job =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/jobs/SweepJob.java")).unwrap();
+    let job = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/jobs/SweepJob.java",
+    ))
+    .unwrap();
     // fixedDelay, not fixedRate: a slow run must not queue another on top.
     assert!(job.contains("fixedDelayString"), "{job}");
     // An exception escaping a @Scheduled method cancels every future run.
@@ -5020,8 +5107,11 @@ fn a_transition_throws_into_the_error_model_the_project_installed() {
             let out = jails_cmd(root, None).args(args).output().unwrap();
             assert!(out.status.success(), "{out:?}");
         }
-        fs::read_to_string(root.join("src/main/java/com/example/demo/web/MarkReadController.java"))
-            .unwrap()
+        fs::read_to_string(common::generated(
+            &root,
+            "src/main/java/com/example/demo/web/MarkReadController.java",
+        ))
+        .unwrap()
     };
 
     let installed = build(&with_api, true);
@@ -5176,7 +5266,7 @@ fn destroy_strategy_removes_the_implementations_it_did_not_name() {
     );
 
     // An implementation the generate call never knew about.
-    let domain = root.join("src/main/java/com/example/demo/domain");
+    let domain = common::generated(&root, "src/main/java/com/example/demo/domain");
     fs::write(
         domain.join("HandWrittenRewardRule.java"),
         "package com.example.demo.domain;\n\n\
@@ -5257,8 +5347,11 @@ fn pretend_names_the_package_info_it_will_write() {
         "preview and apply disagreed about what would be written"
     );
     assert!(
-        root.join("src/main/java/com/example/demo/domain/package-info.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/domain/package-info.java"
+        )
+        .is_file()
     );
 }
 
@@ -5347,9 +5440,11 @@ fn a_project_template_override_replaces_the_built_in_and_doctor_names_it() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let generated =
-        fs::read_to_string(root.join("src/test/java/com/example/demo/cli/SyncCommandTest.java"))
-            .unwrap();
+    let generated = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/cli/SyncCommandTest.java",
+    ))
+    .unwrap();
     assert!(
         generated.starts_with("// generated by an overridden template"),
         "{generated}"
@@ -5446,9 +5541,11 @@ fn a_boot_2_project_gets_the_classic_mockmvc_for_every_generated_web_test() {
         String::from_utf8_lossy(&generated.stdout),
         String::from_utf8_lossy(&generated.stderr)
     );
-    let test =
-        fs::read_to_string(root.join("src/test/java/com/acme/svc/web/FooControllerTest.java"))
-            .unwrap();
+    let test = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/acme/svc/web/FooControllerTest.java",
+    ))
+    .unwrap();
     // MockMvcTester is Spring Framework 6.2; this project is Framework 5.3.
     // Asserted on the import rather than the word: the classic templates name
     // the type in a comment saying why it is not used.
@@ -5470,8 +5567,11 @@ fn a_boot_2_project_gets_the_classic_mockmvc_for_every_generated_web_test() {
         "{}",
         String::from_utf8_lossy(&cors.stderr)
     );
-    let cors_test =
-        fs::read_to_string(root.join("src/test/java/com/acme/svc/CorsConfigTest.java")).unwrap();
+    let cors_test = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/acme/svc/CorsConfigTest.java",
+    ))
+    .unwrap();
     assert!(
         !cors_test.contains("servlet.assertj.MockMvcTester"),
         "{cors_test}"
@@ -5528,9 +5628,11 @@ fn a_boot_2_project_gets_the_classic_mockmvc_for_every_generated_web_test() {
         "{}",
         String::from_utf8_lossy(&scaffolded.stderr)
     );
-    let source =
-        fs::read_to_string(root.join("src/test/java/com/acme/svc/web/NoteControllerTest.java"))
-            .unwrap();
+    let source = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/acme/svc/web/NoteControllerTest.java",
+    ))
+    .unwrap();
     assert!(
         !source.contains("servlet.assertj.MockMvcTester"),
         "the Framework 6.2 entry point: {source}"
@@ -6005,9 +6107,10 @@ fn a_form_bound_record_answers_to_the_names_this_projects_wire_actually_uses() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        fs::read_to_string(
-            root.join("src/main/java/com/example/demo/service/OpenTicketCommand.java"),
-        )
+        fs::read_to_string(common::generated(
+            &root,
+            "src/main/java/com/example/demo/service/OpenTicketCommand.java",
+        ))
         .unwrap()
     };
 
@@ -6073,9 +6176,11 @@ fn an_enum_constant_can_be_called_something_else_on_the_wire() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let source =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/domain/IssueStatus.java"))
-            .unwrap();
+    let source = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/domain/IssueStatus.java",
+    ))
+    .unwrap();
     assert!(source.contains("OPEN(\"open\")"), "{source}");
     assert!(source.contains("IN_PROGRESS(\"in_progress\")"), "{source}");
     // The annotations are Jackson's and stayed at the 2.x package even in
@@ -6094,9 +6199,10 @@ fn an_enum_constant_can_be_called_something_else_on_the_wire() {
     // `@JsonValue` covers a JSON body and nothing else: a form field, a path
     // variable and a query parameter go through Spring's conversion service,
     // whose enum converter calls `valueOf`.
-    let converter = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/web/IssueStatusConverter.java"),
-    )
+    let converter = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/IssueStatusConverter.java",
+    ))
     .unwrap();
     assert!(
         converter.contains("Converter<String, IssueStatus>"),
@@ -6108,9 +6214,11 @@ fn an_enum_constant_can_be_called_something_else_on_the_wire() {
     );
 
     // The generated test asserts the round trip rather than restating it.
-    let test =
-        fs::read_to_string(root.join("src/test/java/com/example/demo/domain/IssueStatusTest.java"))
-            .unwrap();
+    let test = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/domain/IssueStatusTest.java",
+    ))
+    .unwrap();
     assert!(test.contains("roundTripsEveryWireValue"), "{test}");
     assert!(test.contains("rejectsAnUnknownWireValue"), "{test}");
 
@@ -6123,9 +6231,11 @@ fn an_enum_constant_can_be_called_something_else_on_the_wire() {
         .status()
         .unwrap();
     assert!(status.success());
-    let source =
-        fs::read_to_string(plain.join("src/main/java/com/example/demo/domain/Currency.java"))
-            .unwrap();
+    let source = fs::read_to_string(common::generated(
+        &plain,
+        "src/main/java/com/example/demo/domain/Currency.java",
+    ))
+    .unwrap();
     assert!(source.contains("    GBP,\n    EUR\n}"), "{source}");
     assert!(!source.contains("JsonValue"), "{source}");
     assert!(
@@ -6182,9 +6292,10 @@ fn a_query_path_may_address_its_filters_by_name() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let controller = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/web/TicketsForQueryController.java"),
-    )
+    let controller = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/TicketsForQueryController.java",
+    ))
     .unwrap();
     // A GET with no body, and the variable actually bound.
     assert!(controller.contains("@GetMapping"), "{controller}");
@@ -6295,9 +6406,10 @@ fn a_form_bound_query_answers_a_get_and_reads_the_query_string() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let controller = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/web/OpenTicketsQueryController.java"),
-    )
+    let controller = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/OpenTicketsQueryController.java",
+    ))
     .unwrap();
     assert!(controller.contains("@GetMapping"), "{controller}");
     assert!(
@@ -6314,9 +6426,10 @@ fn a_form_bound_query_answers_a_get_and_reads_the_query_string() {
     // The proof moves with the wire: parameters, not a JSON body, and no
     // `status=null` -- a filter is sampled as if it were present, because a
     // request that sends the four-character string proves nothing.
-    let test = fs::read_to_string(
-        root.join("src/test/java/com/example/demo/web/OpenTicketsQueryControllerTest.java"),
-    )
+    let test = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/web/OpenTicketsQueryControllerTest.java",
+    ))
     .unwrap();
     assert!(test.contains("mvc.get()"), "{test}");
     assert!(test.contains(".param(\"status\", \"sample\")"), "{test}");
@@ -6366,9 +6479,10 @@ fn a_form_bound_query_answers_a_get_and_reads_the_query_string() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let staged = fs::read_to_string(
-        root.join("src/test/java/com/example/demo/web/MattersByStageQueryControllerTest.java"),
-    )
+    let staged = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/web/MattersByStageQueryControllerTest.java",
+    ))
     .unwrap();
     assert!(staged.contains(".param(\"stage\", \"open\")"), "{staged}");
     assert!(!staged.contains("\"OPEN\""), "{staged}");
@@ -6387,9 +6501,10 @@ fn a_form_bound_query_answers_a_get_and_reads_the_query_string() {
         .output()
         .unwrap();
     assert!(output.status.success());
-    let json = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/web/TicketsBySubjectQueryController.java"),
-    )
+    let json = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/TicketsBySubjectQueryController.java",
+    ))
     .unwrap();
     assert!(json.contains("@PostMapping"), "{json}");
 }
@@ -6436,13 +6551,15 @@ fn a_gradle_projects_dependencies_are_read_from_its_gradle_file() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let jdbc = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/adapters/JdbcTicketRepository.java"),
-    )
+    let jdbc = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/JdbcTicketRepository.java",
+    ))
     .unwrap();
-    let memory = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/adapters/InMemoryTicketRepository.java"),
-    )
+    let memory = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/InMemoryTicketRepository.java",
+    ))
     .unwrap();
     // Exactly one of them is the bean, and it is the one that talks to the
     // database the query adapter also reads.
@@ -6488,9 +6605,10 @@ fn an_integration_test_is_disabled_rather_than_uncompilable_without_a_container_
         );
     }
 
-    let it = fs::read_to_string(
-        root.join("src/test/java/com/example/demo/adapters/JdbcRoomPresenceIT.java"),
-    )
+    let it = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/adapters/JdbcRoomPresenceIT.java",
+    ))
     .unwrap();
     assert!(!it.contains("@Import(TestcontainersConfig.class)"), "{it}");
     assert!(
@@ -6546,9 +6664,11 @@ fn the_documented_body_carries_only_what_the_request_record_declares() {
             .success()
     );
 
-    let request =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/web/TicketRequest.java"))
-            .unwrap();
+    let request = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/TicketRequest.java",
+    ))
+    .unwrap();
     let declared: Vec<&str> = ["id", "subject", "version"]
         .into_iter()
         .filter(|name| {
@@ -6612,9 +6732,11 @@ fn a_scaffold_answers_on_the_collection_route_it_was_given() {
             .success()
     );
 
-    let controller =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/web/UserController.java"))
-            .unwrap();
+    let controller = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/UserController.java",
+    ))
+    .unwrap();
     assert!(
         controller.contains(r#"public static final String PATH = "/admin_api/users";"#),
         "{controller}"
@@ -6684,7 +6806,7 @@ fn a_pinned_component_is_written_by_the_endpoint_and_not_by_the_caller() {
         );
     }
 
-    let service = root.join("src/main/java/com/example/demo/service");
+    let service = common::generated(&root, "src/main/java/com/example/demo/service");
     let implementation =
         fs::read_to_string(service.join("StoringSendAdminMessageUseCase.java")).unwrap();
     assert!(
@@ -6860,7 +6982,7 @@ fn an_optional_precondition_reaches_the_sql_the_port_and_the_route() {
         );
     }
 
-    let main = root.join("src/main/java/com/example/demo");
+    let main = common::generated(&root, "src/main/java/com/example/demo");
     let adapter = fs::read_to_string(main.join("adapters/JdbcMarkSeenTransition.java")).unwrap();
     // One statement, not two: with a version it reads `version = 5` and
     // guards, without one it reads `version = version` and does not. It is
@@ -6896,9 +7018,10 @@ fn an_optional_precondition_reaches_the_sql_the_port_and_the_route() {
     // generated, compiles, and is executed by nothing -- removing `coalesce`
     // would change no test, which is the shape `CLAUDE.md` records for
     // `g auth` and `add sse`.
-    let integration = fs::read_to_string(
-        root.join("src/test/java/com/example/demo/adapters/JdbcMarkSeenTransitionIT.java"),
-    )
+    let integration = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/adapters/JdbcMarkSeenTransitionIT.java",
+    ))
     .unwrap();
     assert!(
         integration.contains("aCallerThatSendsNoPreconditionAppliesUnconditionallyAndCanRepeat"),
@@ -6912,9 +7035,10 @@ fn an_optional_precondition_reaches_the_sql_the_port_and_the_route() {
     // The controller test names the answer rather than a status it might
     // reach for another reason -- it asserted 400 before, and a form-bound
     // transition sent a JSON body is answered 400 too.
-    let proof = fs::read_to_string(
-        root.join("src/test/java/com/example/demo/web/MarkSeenControllerTest.java"),
-    )
+    let proof = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/web/MarkSeenControllerTest.java",
+    ))
     .unwrap();
     assert!(
         proof.contains("aRequestWithNoIfMatchIsAppliedUnconditionally"),
@@ -6961,7 +7085,7 @@ fn a_transition_insists_on_the_precondition_unless_it_was_asked_not_to() {
         );
     }
 
-    let main = root.join("src/main/java/com/example/demo");
+    let main = common::generated(&root, "src/main/java/com/example/demo");
     let adapter = fs::read_to_string(main.join("adapters/JdbcRenameTransition.java")).unwrap();
     assert!(adapter.contains("version = :version"), "{adapter}");
     assert!(!adapter.contains("coalesce"), "{adapter}");
@@ -6975,9 +7099,10 @@ fn a_transition_insists_on_the_precondition_unless_it_was_asked_not_to() {
         "{controller}"
     );
 
-    let proof = fs::read_to_string(
-        root.join("src/test/java/com/example/demo/web/RenameControllerTest.java"),
-    )
+    let proof = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/web/RenameControllerTest.java",
+    ))
     .unwrap();
     assert!(
         proof.contains("aRequestWithNoIfMatchIsRefusedRatherThanAppliedBlind"),
@@ -7052,7 +7177,7 @@ fn a_form_bound_endpoint_is_proved_by_a_form_post() {
     }
     let path = real_path_without_mvnd();
     let root = verified_spring_db_toolbox(&path);
-    let web = root.join("src/test/java/com/example/demo/web");
+    let web = common::generated(&root, "src/test/java/com/example/demo/web");
 
     for (file, sample) in [
         (
@@ -7131,7 +7256,7 @@ fn a_use_case_can_resolve_its_key_from_the_parent_the_caller_names() {
         );
     }
 
-    let main = root.join("src/main/java/com/example/demo");
+    let main = common::generated(&root, "src/main/java/com/example/demo");
     let adapter = fs::read_to_string(main.join("adapters/ResolvingPostNoteUseCase.java")).unwrap();
     // One statement: the key is *selected* from the parent's row rather than
     // read first and inserted second, so there is no window where the parent
@@ -7170,9 +7295,10 @@ fn a_use_case_can_resolve_its_key_from_the_parent_the_caller_names() {
     );
 
     // The proof is the only thing that observes the empty result.
-    let integration = fs::read_to_string(
-        root.join("src/test/java/com/example/demo/adapters/ResolvingPostNoteUseCaseIT.java"),
-    )
+    let integration = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/adapters/ResolvingPostNoteUseCaseIT.java",
+    ))
     .unwrap();
     assert!(
         integration.contains("assertThat(useCase.execute(command)).isEmpty();"),
@@ -7307,9 +7433,10 @@ fn a_component_can_be_bound_from_a_parameter_of_another_name() {
         );
     }
 
-    let command = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/service/MarkSeenCommand.java"),
-    )
+    let command = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/service/MarkSeenCommand.java",
+    ))
     .unwrap();
     assert!(
         command.contains(r#"@BindParam("note_id") long id"#),
@@ -7322,9 +7449,10 @@ fn a_component_can_be_bound_from_a_parameter_of_another_name() {
 
     // The proof posts what the record binds. They are one fact, and a proof
     // posting the other name passes or fails for the wrong reason.
-    let proof = fs::read_to_string(
-        root.join("src/test/java/com/example/demo/web/MarkSeenControllerTest.java"),
-    )
+    let proof = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/web/MarkSeenControllerTest.java",
+    ))
     .unwrap();
     assert!(proof.contains(r#".param("note_id", "7")"#), "{proof}");
     assert!(!proof.contains(r#".param("id""#), "{proof}");

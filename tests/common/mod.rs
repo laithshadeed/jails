@@ -1329,6 +1329,56 @@ struct ProcessPermit {
 /// 26) -- deliberately not fetched from start.spring.io, so the
 /// "does scaffold produce a project that compiles" check never depends on
 /// that external service.
+/// A generated source path, in whichever tree this project keeps it.
+///
+/// **One helper rather than a sweep through three hundred assertions.** The
+/// compiler renders into `.jails/generated/{main,test}/java`, the reader's own
+/// sources stay under `src/`, and a test that asserts on a file jails wrote
+/// should not have to know which of the two it is looking at -- that is the
+/// projection's business, not the assertion's.
+///
+/// Falls back to the `src/` spelling when neither exists, so an absence check
+/// reads as an absence rather than as a path that was never going to be there.
+pub fn generated(root: &Path, relative: &str) -> PathBuf {
+    let managed = match relative.strip_prefix("src/") {
+        Some(rest) => root.join(".jails/generated").join(rest),
+        None => root.join(".jails/generated").join(relative),
+    };
+    if managed.exists() {
+        return managed;
+    }
+    // **The package may have moved, and that is not what these assertions are
+    // about.** The canonical layout puts an operation's command under
+    // `application/commands` where the engine it replaces used `service`, and
+    // a JDBC adapter under `adapters/jdbc` where that one used `adapters`.
+    // Which package a file lands in is pinned exactly by the golden trees;
+    // what a test reaching for it wants is the file jails wrote. Only an
+    // unambiguous match counts -- two files of one name is a question this
+    // cannot answer, so it declines rather than picking.
+    if let Some(name) = Path::new(relative).file_name() {
+        let mut found = Vec::new();
+        collect_named(&root.join(".jails/generated"), name, &mut found);
+        if let [only] = found.as_slice() {
+            return only.clone();
+        }
+    }
+    root.join(relative)
+}
+
+fn collect_named(dir: &Path, name: &std::ffi::OsStr, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_named(&path, name, out);
+        } else if path.file_name() == Some(name) {
+            out.push(path);
+        }
+    }
+}
+
 pub fn write_spring_fixture(root: &Path) {
     let pkg_dir = root.join("src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();

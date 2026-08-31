@@ -103,7 +103,7 @@ fn undo_restores_exact_preimages_as_a_new_forward_transaction() {
         .unwrap();
     let value: serde_json::Value = serde_json::from_slice(&history.stdout).unwrap();
     let transaction = value["receipts"][0]["transaction_id"].as_str().unwrap();
-    let source = root.join("src/main/java/com/example/demo/domain/Note.java");
+    let source = common::generated(&root, "src/main/java/com/example/demo/domain/Note.java");
     assert!(source.is_file());
 
     let preview = jails_cmd(&root, None)
@@ -150,7 +150,7 @@ fn undo_refuses_a_user_edited_after_image_without_writing() {
         .unwrap();
     let value: serde_json::Value = serde_json::from_slice(&history.stdout).unwrap();
     let transaction = value["receipts"][0]["transaction_id"].as_str().unwrap();
-    let source = root.join("src/main/java/com/example/demo/domain/Note.java");
+    let source = common::generated(&root, "src/main/java/com/example/demo/domain/Note.java");
     fs::write(&source, "// reader edit\n").unwrap();
     let before = snapshot_tree(&root);
 
