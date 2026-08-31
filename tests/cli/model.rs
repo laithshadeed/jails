@@ -13452,3 +13452,42 @@ fn a_project_that_only_recorded_its_layout_can_still_become_canonical() {
         "the adopted layer name should reach the compiler's projection:\n{explained}"
     );
 }
+
+/// `jails sql check` reads `.jails/app.toml`, and a canonical project has
+/// never had one.
+///
+/// The answer was `failed to read application manifest
+/// /path/.jails/app.toml: No such file or directory (os error 2)` -- an OS
+/// error naming an internal path the reader never wrote, with no fix line and
+/// no hint that the command does not apply to their project. An absent
+/// manifest is a refusal with a reason.
+#[test]
+fn sql_check_says_why_a_canonical_project_has_no_application_manifest() {
+    let root = jdl_project(
+        "jdl-v1-sql-check-manifest",
+        r#"jdl 1
+app Vault {
+ pkg com.example.vault
+ java 26
+ platform plain
+ build maven
+ storage none
+}
+"#,
+    );
+    write_plain_fixture(&root);
+
+    let refused = jails_cmd(&root, None)
+        .args(["sql", "check"])
+        .output()
+        .unwrap();
+    let refused = String::from_utf8_lossy(&refused.stderr).to_string();
+    assert!(
+        refused.contains("legacy application manifest") && refused.contains("fix:"),
+        "an absent manifest is a refusal with a reason:\n{refused}"
+    );
+    assert!(
+        !refused.contains("os error"),
+        "and not an OS error about an internal path:\n{refused}"
+    );
+}

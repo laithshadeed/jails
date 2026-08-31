@@ -394,11 +394,26 @@ pub fn read_manifest(
             }
         })
         .unwrap_or_else(|| project.root().join(".jails/app.toml"));
-    let contents = fs::read_to_string(&path).map_err(|error| {
-        format!(
+    // An absent manifest is a refusal with a reason, not an OS error naming a
+    // path the reader never wrote. A modelled project has never had one:
+    // `.jails/app.toml` is the legacy manifest, and it declares its queries in
+    // the model instead -- so `No such file or directory (os error 2)` was the
+    // answer every canonical project got, about an internal path, with no fix
+    // line and no hint that the command does not apply to it.
+    let contents = fs::read_to_string(&path).map_err(|error| match (
+        error.kind() == std::io::ErrorKind::NotFound,
+        requested.is_none() && project.is_modelled(),
+    ) {
+        (true, true) => "`.jails/app.toml` is the legacy application manifest, and this project declares its queries in `.jails/model.jdl`.\n       fix: frozen SQL contracts are not yet read from the model; pass `--manifest <PATH>` to check one explicitly"
+            .to_string(),
+        (true, false) => format!(
+            "no application manifest at {}.\n       fix: pass `--manifest <PATH>`, or declare the queries this command checks",
+            path.display()
+        ),
+        _ => format!(
             "failed to read application manifest {}: {error}",
             path.display()
-        )
+        ),
     })?;
     let format = match path.extension().and_then(|extension| extension.to_str()) {
         Some("toml") => ManifestFormat::Toml,
