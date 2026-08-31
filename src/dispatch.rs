@@ -93,6 +93,28 @@ pub(crate) fn finish_invocation(
 /// printed as the route goes. A route that printed its own progress would be
 /// describing the work a second time, which is the drift §R3.4 exists to
 /// remove.
+/// Refuse a mutation in a project that has no application model.
+///
+/// **This is the cutover, at the one place every legacy mutation passes
+/// through.** `mutate`, `mutate_confirmed`, `apply_plan` and
+/// `one_transition_each` all build a `jails_engine::route::Run` here, so the
+/// legacy engine is reachable from exactly this function and nowhere else.
+///
+/// The legacy path is not something to preserve. It is a refusal: a project
+/// without `.jails/model.jdl` has an on-ramp -- `jails model init` reads the
+/// app block off a project jails never created, adopting not one line of the
+/// reader's Java -- and every project jails itself creates has been canonical
+/// since `new` began seeding a model.
+fn require_canonical() -> Result<()> {
+    if crate::model_command::owns() {
+        return Ok(());
+    }
+    Err(jails_support::Failure::Told(
+        "this project has no application model, so there is nothing to compile.\n       fix: run `jails model init` to read one off the project, then repeat the command"
+            .to_string(),
+    ))
+}
+
 pub(crate) fn mutate(
     invocation: Invocation,
     no_start: bool,
@@ -125,6 +147,7 @@ pub(crate) fn mutate_confirmed(
     assumed: bool,
     route: impl Fn(&jails_engine::route::Run) -> Result<jails_engine::route::Outcome>,
 ) -> Result<()> {
+    require_canonical()?;
     let discovering = std::time::Instant::now();
     let project = model::Project::discover()?;
     let discover_time = discovering.elapsed();

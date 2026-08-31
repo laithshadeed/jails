@@ -409,7 +409,8 @@ pub(crate) fn reject_unsupported_operation_options(
         || args.backfill_file.is_some()
         || !args.indexes.is_empty()
         || (args.on_conflict.is_some() && profile != OperationProfile::Command)
-        || (args.via.is_some() && profile != OperationProfile::Query)
+        || (args.via.is_some()
+            && !matches!(profile, OperationProfile::Query | OperationProfile::Command))
         || (args.select.is_some() && profile != OperationProfile::Transition)
         || (!args.set.is_empty()
             && !matches!(
@@ -481,12 +482,37 @@ pub(crate) fn operation_field_labels_via(
             match optional_filters && field.ends_with('?') {
                 true => Ok(format!(
                     "{}?",
-                    resolve(model, entity, joined, field.trim_end_matches('?'))?
+                    resolve_filter(model, entity, joined, field.trim_end_matches('?'))?
                 )),
                 false => resolve(model, entity, joined, field),
             }
         })
         .collect()
+}
+
+/// The same, for a filter the caller may omit.
+///
+/// **The `?` stands in for the entity's own suffix rather than beside it.**
+/// `status:string?` on an entity whose `status` is `string!` is the natural
+/// spelling of "filter by status, or do not" -- nobody writes `status:string!?`
+/// -- so the optionality is what the marker replaced and comparing it against
+/// the column's read as a disagreement. The *type* is still compared, because
+/// filtering a `string` column with an `int` is a mistake either way.
+fn resolve_filter(
+    model: &AppModel,
+    entity: &str,
+    joined: Option<&str>,
+    field: &str,
+) -> Result<String> {
+    let relaxed = field
+        .split_once(':')
+        .map_or_else(|| field.to_string(), |(name, _)| name.to_string());
+    match resolve(model, entity, joined, field) {
+        Ok(label) => Ok(label),
+        // The bare name resolves against the entity's own declaration, so the
+        // column still has to exist -- this relaxes the suffix, not the check.
+        Err(error) => resolve(model, entity, joined, &relaxed).map_err(|_| error),
+    }
 }
 
 fn resolve(model: &AppModel, entity: &str, joined: Option<&str>, field: &str) -> Result<String> {

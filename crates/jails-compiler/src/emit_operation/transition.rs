@@ -113,7 +113,7 @@ pub(super) fn lower(
         "org.springframework.stereotype.Repository".to_string(),
         "org.springframework.transaction.annotation.Transactional".to_string(),
     ]);
-    let key_type = java_type(primary_key, &mut imports);
+    let key_type = java_type(selector[0], &mut imports);
     let context = context_parameter(model, target, &mut imports);
     let scope_fields = scopes(target);
     let publications = super::publications(
@@ -177,7 +177,7 @@ pub(super) fn lower(
             field.names.sql_column, field.names.sql_column
         )
     });
-    let predicate_seed = std::iter::once(format!("{} = :id", primary_key.names.sql_column))
+    let predicate_seed = std::iter::once(format!("{} = :id", selector[0].names.sql_column))
         .chain(required_guards)
         .chain(scope_fields.iter().map(|field| {
             format!(
@@ -269,10 +269,15 @@ pub(super) fn lower(
 
 /// The fields that identify the row, defaulting to the primary key.
 ///
-/// `jdl-sol.md` §12.4 allows any field list here, but the update statement
-/// below binds the key as `:id` and nothing else, so a selector this emitter
-/// cannot render refuses rather than silently widening the `where` clause to
-/// every matching row. Answer exactly or refuse.
+/// `jdl-sol.md` §12.4 allows any field list here, and the update statement
+/// below binds exactly one -- so a single selector renders whichever field it
+/// names, and more than one refuses rather than silently widening the `where`
+/// clause to every matching row. Answer exactly or refuse.
+///
+/// **It used to insist on the primary key**, which made
+/// `--select userId --path /topics/{userId}/subject` -- a transition keyed on
+/// the column its own route carries -- unreachable, though the statement
+/// binds one column either way and nothing about `id` was load-bearing.
 fn selector<'a>(
     operation: &Operation,
     target: &'a jails_model::Entity,
@@ -283,10 +288,11 @@ fn selector<'a>(
         return Ok(vec![primary_key]);
     }
     let selected = resolve_fields(operation, target, &transition.semantics.select, "select")?;
-    if selected.len() != 1 || selected[0].id != primary_key.id {
+    if selected.len() != 1 {
         return Err(CompileError::new(format!(
-            "canonical transition `{}` selects rows by a field other than primary key `{}`\n       fix: select the primary key, or eject this adapter and write the statement by hand",
-            operation.label, primary_key.label
+            "canonical transition `{}` selects rows by {} fields, and the update statement binds one\n       fix: select a single field, or eject this adapter and write the statement by hand",
+            operation.label,
+            selected.len()
         )));
     }
     Ok(selected)

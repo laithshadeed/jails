@@ -107,6 +107,11 @@ pub const SCENARIOS: &[Scenario] = &[
         fixture: Fixture::Spring,
         seed: &[("src/main/resources/db/migration/.gitkeep", "")],
         steps: &[
+            // `--default-literal` is the value existing *rows* get, so there
+            // has to be a table holding some: canonical refuses to backfill a
+            // source-only record rather than emitting an `update` against
+            // nothing.
+            &["add", "db", "--no-start"],
             &["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
             &[
                 "g",
@@ -129,7 +134,7 @@ pub const SCENARIOS: &[Scenario] = &[
                 "Note",
                 "id:uuid",
                 "title:string!",
-                "createdAt:instant",
+                "createdAt:instant@default(now())",
             ],
             &["g", "factory", "Note"],
         ],
@@ -198,7 +203,10 @@ pub const SCENARIOS: &[Scenario] = &[
         name: "repo",
         fixture: Fixture::Plain,
         seed: &[],
-        steps: &[&["g", "repo", "Note", "id:uuid", "title:string"]],
+        steps: &[
+            &["g", "record", "Note", "id:uuid@pk", "title:string"],
+            &["g", "repo", "Note"],
+        ],
     },
     Scenario {
         name: "migration",
@@ -211,16 +219,23 @@ pub const SCENARIOS: &[Scenario] = &[
         name: "scaffold-spring",
         fixture: Fixture::Spring,
         seed: &[],
-        steps: &[&[
-            "g",
-            "scaffold",
-            "Note",
-            "id:uuid@pk",
-            "title:string!",
-            "createdAt:instant",
-            "--index",
-            "title, created_at desc",
-        ]],
+        steps: &[
+            // The index is a stable child of a stored entity, so there has to
+            // be a schema for it to be added to: canonical refuses index
+            // evolution without an accepted one rather than emitting DDL
+            // against a table nothing declared.
+            &["add", "db", "--no-start"],
+            &[
+                "g",
+                "scaffold",
+                "Note",
+                "id:uuid@pk",
+                "title:string!",
+                "createdAt:instant@default(now())",
+                "--index",
+                "title, created_at desc",
+            ],
+        ],
     },
     Scenario {
         name: "controller-service",
@@ -309,7 +324,8 @@ pub const SCENARIOS: &[Scenario] = &[
         seed: &[],
         steps: &[
             &["add", "kafka", "--no-start"],
-            &["g", "event", "Transaction"],
+            &["g", "scaffold", "Ledger", "id:uuid@pk", "amount:long"],
+            &["g", "event", "Transaction", "--on", "Ledger"],
         ],
     },
     // ---- capabilities, plain Maven ----
@@ -480,7 +496,7 @@ pub const SCENARIOS: &[Scenario] = &[
                 "amount:long@positive",
                 "status:PayoutStatus@index",
                 "version:long@nonnegative",
-                "createdAt:instant",
+                "createdAt:instant@default(now())",
             ],
             &[
                 "g",
@@ -518,6 +534,7 @@ pub const SCENARIOS: &[Scenario] = &[
         fixture: Fixture::Spring,
         seed: &[],
         steps: &[
+            &["add", "json"],
             &["add", "db", "--no-start"],
             &[
                 "g",
@@ -525,7 +542,7 @@ pub const SCENARIOS: &[Scenario] = &[
                 "Owner",
                 "id:uuid@pk",
                 "name:string!",
-                "createdAt:instant",
+                "createdAt:instant@default(now())",
             ],
             &[
                 "g",
@@ -534,7 +551,7 @@ pub const SCENARIOS: &[Scenario] = &[
                 "id:uuid@pk",
                 "ownerId:uuid@index",
                 "name:string!",
-                "createdAt:instant",
+                "createdAt:instant@default(now())",
             ],
             &[
                 "g",
@@ -597,7 +614,7 @@ pub const SCENARIOS: &[Scenario] = &[
                 "Message",
                 "id:uuid@pk",
                 "body:string!",
-                "createdAt:instant",
+                "createdAt:instant@default(now())",
             ],
             // `--on Message` is what makes the topic ordered per message
             // rather than per event: the partition key becomes `messageId`.
@@ -648,7 +665,7 @@ pub const SCENARIOS: &[Scenario] = &[
                 "Owner",
                 "id:uuid@pk",
                 "email:string!@unique",
-                "createdAt:instant",
+                "createdAt:instant@default(now())",
             ],
             &[
                 "g",
@@ -657,7 +674,7 @@ pub const SCENARIOS: &[Scenario] = &[
                 "id:uuid@pk",
                 "ownerId:uuid@index",
                 "name:string!",
-                "createdAt:instant",
+                "createdAt:instant@default(now())",
             ],
             &[
                 "g",
@@ -690,7 +707,7 @@ pub const SCENARIOS: &[Scenario] = &[
                 "Person",
                 "id:uuid@pk",
                 "email:string!@unique",
-                "createdAt:instant",
+                "createdAt:instant@default(now())",
             ],
             &[
                 "g",
@@ -801,7 +818,7 @@ pub const SCENARIOS: &[Scenario] = &[
                 "id:long@pk",
                 "body:string!",
                 "seen:boolean",
-                "version:long",
+                "version:long@version",
             ],
             &[
                 "g",
@@ -890,7 +907,7 @@ pub const SCENARIOS: &[Scenario] = &[
                 "id:long@pk",
                 "body:string!",
                 "seen:boolean",
-                "version:long",
+                "version:long@version",
             ],
             &[
                 "g",
@@ -1019,7 +1036,7 @@ pub const SCENARIOS: &[Scenario] = &[
                 "id:long@pk",
                 "userId:long",
                 "subject:string!",
-                "version:long",
+                "version:long@version",
             ],
             &[
                 "g",

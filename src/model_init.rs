@@ -28,9 +28,23 @@ use std::path::Path;
 pub(crate) fn run(invocation: Invocation) -> Result<()> {
     let root = crate::model_command::root()?;
     let project = jails_project::model::Project::discover()?;
+    let source = derive(&project)?;
+    // **Deriving the same model twice is a no-op, not a collision.** Every
+    // other canonical frontend is idempotent -- a second `g record` with the
+    // same shape writes nothing -- and this refused outright, so a project
+    // that already had exactly the model `model init` would write could not be
+    // asked for one. Compared by content: a `.jails/model.jdl` that differs is
+    // still the one editable source the cutover turns on, and still refuses.
+    if let Ok(existing) = std::fs::read_to_string(root.join(crate::model_command::JDL_PATH))
+        && existing == source
+    {
+        if invocation.output == Output::Human {
+            println!("  exists  {}", crate::model_command::JDL_PATH);
+        }
+        return Ok(());
+    }
     refuse_if_modelled(&root)?;
 
-    let source = derive(&project)?;
     let model = jails_model::parse_jdl(&source)
         .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
     let model_path = Path::new(crate::model_command::JDL_PATH);

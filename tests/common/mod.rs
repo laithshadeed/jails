@@ -1265,6 +1265,43 @@ pub fn write_spring_fixture(root: &Path) {
         SPRING_FIXTURE_TESTS,
     )
     .unwrap();
+    seed_canonical_model(root);
+}
+
+/// Give a fixture the model that makes it canonical.
+///
+/// `model_command::owns` is "does `.jails/model.jdl` exist", so a fixture
+/// without one exercised the legacy engine however canonical the command
+/// under test was. That is why the shared fixtures had never run the compiler
+/// at all, and it is what the cutover needs: `dispatch::require_canonical`
+/// refuses a mutation in a project with no model, so a legacy fixture now
+/// refuses every command rather than quietly taking the other path.
+///
+/// Through `jails model init` rather than a hand-written node, because that is
+/// the command whose whole job is reading the app block off a project that
+/// already exists: package, release, platform, build and storage are facts the
+/// fixture's own pom states. A node written here instead says `storage none`
+/// over a pom that declares the JDBC starter, and every SQL the fixture asks
+/// for then refuses for a reason the fixture invented.
+pub fn seed_canonical_model(root: &Path) {
+    // A test that brings its own `.jails/model.jdl` -- most of `model.rs` does,
+    // because the model *is* what it is testing -- already has the one
+    // editable source, and deriving a second from the pom would be the
+    // collision the cutover exists to prevent.
+    if root.join(".jails/model.jdl").is_file() || root.join(".jails/model.toml").is_file() {
+        return;
+    }
+    let output = jails_cmd(root, None)
+        .arg("model")
+        .arg("init")
+        .output()
+        .expect("jails model init could not be run for a fixture");
+    assert!(
+        output.status.success(),
+        "jails model init failed for a fixture:\n{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 /// A Boot 2.7 project, for the tests that have to prove a classic
@@ -1298,6 +1335,7 @@ pub fn write_spring2_fixture(root: &Path) {
         SPRING_FIXTURE_TESTS,
     )
     .unwrap();
+    seed_canonical_model(root);
 }
 
 /// Pinned, and `spring-boot-starter-web` rather than `-webmvc`: the module was
@@ -1456,6 +1494,7 @@ pub fn write_plain_fixture(root: &Path) {
         "package com.example.demo;\n\npublic class DemoApplication {}\n",
     )
     .unwrap();
+    seed_canonical_model(root);
 }
 
 /// Which build the adopted fixture is, since `simplify-sol.md`'s G5 asks for
@@ -1578,6 +1617,7 @@ pub fn write_adopted_fixture(root: &Path, flavour: Adopted) {
         fs::create_dir_all(at.parent().unwrap()).unwrap();
         fs::write(&at, body).unwrap();
     }
+    seed_canonical_model(root);
 }
 
 /// The Spring flavour's build file: the reader's own coordinates under the
