@@ -843,13 +843,26 @@ Five things to know before touching it:
   **Plain `jails new` is still legacy, and that is the cutover's first step.**
   It is one line to seed the model and it is not a switch: flipping it reaches
   a canonical project that applies and compiles, and what stops it is a
-  measurement — 8 reports and 23 tests canonically against 21 and 57 from the
-  legacy engine for the same manifest. The missing ones are the per-operation
-  controller tests `examples.rs` names, so the flip is blocked on deciding
-  whether the canonical `api` capability should emit them. `new` must also seed
-  its six default properties as `prop` declarations rather than reader-owned
-  text, or a capability declaring the same key collides with the project's own
-  scaffolding.
+  measurement — how much of the legacy engine's generated test suite the
+  compiler reproduces for the same manifest. **The legacy side is pinned**, at
+  `reports: 21, tests: 57` in `tests/cli/examples.rs`; the canonical side is
+  not pinned anywhere and has to be measured by compiling the minicom manifest.
+  It was 8 and 23 when the gap was first recorded and is 15 and 33 as of
+  `302d0b6` — **re-measure rather than quoting either**, because three commits
+  moved it in one afternoon.
+
+  **What is no longer the blocker is worth knowing**, because the note used to
+  name it: the missing tests were the per-operation controller tests, and the
+  open question was whether the canonical `api` capability should emit them.
+  It does. Each controller carries a companion test issuing a real request,
+  and two facts that renderer must not work out for itself are decided once —
+  how the request binds (a query is `@ModelAttribute`, a command is
+  `@RequestBody`) and what the `Input` record declares. Two renderers reaching
+  that answer separately is `bugs.md` B48 twice more.
+
+  `new` must also seed its six default properties as `prop` declarations rather
+  than reader-owned text, or a capability declaring the same key collides with
+  the project's own scaffolding.
 - `src/app.rs` — `jails app plan|apply`: a declarative manifest at
   `.jails/app.toml` (`schema`, `capabilities`, and a closed `[[generate]]`
   schema of `kind`/`name`/`fields`/`timestamps`/`indexes`/`package`/`on`/
