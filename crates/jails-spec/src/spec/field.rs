@@ -338,7 +338,7 @@ pub fn builtin_by_java_name(ty: &str) -> Option<(&'static str, Option<&'static s
 /// `jails_protocol::declaration::FieldSpec` holds the same component in
 /// validated form, one layer up; it used to reach a `Field` by rendering
 /// itself back to a `name:type@marker` token and handing that to
-/// [`parse_fields`] — a value this program had just parsed, printed, and
+/// `parse_fields` — a value this program had just parsed, printed, and
 /// parsed again with the other of the two parsers. `FieldSpec::projected`
 /// calls this instead.
 ///

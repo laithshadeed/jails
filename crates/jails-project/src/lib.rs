@@ -6,7 +6,7 @@
 //!
 //! The files jails writes *about* a project live here too, and they divide by
 //! who owns them. [`config`] and [`compose`] are the reader's, edited by
-//! byte-preserving splice. [`ledger`] and [`generated_files`] are jails' own
+//! byte-preserving splice. `ledger` and [`generated_files`] are jails' own
 //! bookkeeping and are never hand-edited.
 //!
 //! [`maven`] is how to invoke this project's Maven, deliberately separate from

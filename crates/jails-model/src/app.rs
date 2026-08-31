@@ -56,7 +56,7 @@ impl ProjectIntent {
     ///
     /// Only the head renames: a reader who called their adapters `persistence`
     /// means `persistence.jdbc`, not that the JDBC adapter has moved somewhere
-    /// else. A [`Head::Facet`] head is the compiler's own and renames to
+    /// else. A `Head::Facet` head is the compiler's own and renames to
     /// nothing.
     pub fn package_for(&self, package: Package) -> String {
         let (Some(head), tail) = package.placement() else {

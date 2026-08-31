@@ -1081,6 +1081,16 @@ CI and this file cannot drift apart about what passing means. `mise run lint`
 is its fast half -- `fmt --check` plus `clippy --workspace --all-targets -D
 warnings` -- and is what `.githooks/pre-commit` runs, for the same reason.
 
+**`RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps` is in the gate
+too, and the reason is this file's own subject.** The comments here are dense
+with `` [`Type`] `` and `` [`module`] `` links, and rustdoc resolves every one
+-- so a module that changes crates leaves a link naming an item that no longer
+exists, reported at `warning` level, which nothing read. Twenty-five had
+accumulated, several pointing at modules that had moved. It is `--no-deps` and
+warm, ~28s on a ~217s gate, and it sits in `verify-rewrite` rather than in
+`lint` on purpose: nearly tripling what `.githooks/pre-commit` waits for is a
+worse trade than catching a stale link one push later.
+
 Two properties it has that a hand-typed `cargo test` does not, both of which
 this project has been bitten by:
 
@@ -2505,8 +2515,9 @@ The pattern it replaces was `env::temp_dir().join(pid + timestamp)` followed by
 read the same nanosecond, and `create_dir_all`'s whole contract is that an
 existing directory counts as success. Both halves failed together about once in
 five full-workspace runs — one test was handed another's tree and `jails g cli
-Admin` refused over files it had not written. In `app/reconcile.rs` the same
-collision would have merged a regenerated intent against somebody else's base.
+Admin` refused over files it had not written. In `jails-prepare`'s `reconcile`
+the same collision would have merged a regenerated intent against somebody
+else's base.
 
 Three rules, each load-bearing:
 

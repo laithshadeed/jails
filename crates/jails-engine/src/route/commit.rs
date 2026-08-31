@@ -22,8 +22,8 @@ pub(super) fn observed(project: &Project) -> Result<ObservedStore> {
 /// cannot do from there is make the caller's plan true again: by the time the
 /// lock is taken the request has already been measured against the project the
 /// interruption left behind, so the only honest answer is `RecoveredPrior-
-/// Transaction` — replan. [`commit`] below does exactly that, but twelve
-/// routes assemble their own `DesiredChangeSet` and call [`commit_set`]
+/// Transaction` — replan. `commit` below does exactly that, but twelve
+/// routes assemble their own `DesiredChangeSet` and call `commit_set`
 /// directly, and for those the replan had nowhere to happen: the reader was
 /// told to run the command again, and running it again said the same thing
 /// until the recovery finally settled.

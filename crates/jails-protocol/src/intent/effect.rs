@@ -13,7 +13,7 @@
 //! ## Why `Failed` carries an attempt and a code
 //!
 //! Because "the compose reconcile did not work" is not actionable and
-//! "attempt 2 exited non-zero: <summary>" is. The failure codes are closed —
+//! "attempt 2 exited non-zero: `<summary>`" is. The failure codes are closed —
 //! spawn, timeout, non-zero exit, interrupted twice, protocol — so a resume
 //! can decide whether retrying is even sensible rather than looping on a
 //! condition that will never clear.

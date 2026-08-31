@@ -32,7 +32,7 @@ pub(crate) fn finish(result: Result<()>) -> std::process::ExitCode {
 }
 
 /// Finish a parsed invocation, preserving the selected machine encoding even
-/// when planning stopped before it could produce an [`Outcome`].
+/// when planning stopped before it could produce a `route::Outcome`.
 pub(crate) fn finish_invocation(
     result: Result<()>,
     output: Output,

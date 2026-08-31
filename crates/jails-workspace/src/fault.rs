@@ -25,7 +25,7 @@
 //!
 //! ## Compiled out
 //!
-//! Under `cfg(not(any(test, feature = "fault-injection")))` [`trip`] is an
+//! Under `cfg(not(any(test, feature = "fault-injection")))` `trip` is an
 //! inlined `Ok(())` with no state behind it. A failpoint mechanism that reads
 //! an environment variable in a shipped binary is a way to make somebody's
 //! project stop halfway.

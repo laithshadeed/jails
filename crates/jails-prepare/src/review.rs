@@ -1,6 +1,6 @@
 //! Runtime-only review material for a prepared transition.
 //!
-//! The durable [`PreparedChange`](crate::prepare::PreparedChange) deliberately
+//! The durable [`crate::prepare::PreparedChange`] deliberately
 //! carries content addresses rather than preimage bytes. A terminal diff needs
 //! the bytes too, but they must not change the operation identity, journal, or
 //! receipt. This module is that boundary: preparation derives one review from

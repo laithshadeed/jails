@@ -6,8 +6,8 @@
 //! crate so the contract is structural rather than a promise
 //! (`pending.md` §7.6).
 //!
-//! [`run`], [`launcher`] and [`testd`] are three ways to run the same tests,
-//! fastest last, and [`affected`] is how `testd` decides which ones.
+//! [`run`], `launcher` and [`testd`] are three ways to run the same tests,
+//! fastest last, and `affected` is how `testd` decides which ones.
 //!
 //! The one edge back down is `run` -> `jails_report::why`: `mvn
 //! spring-boot:run` exits 0 over a failed startup, so `run` pipes the output,

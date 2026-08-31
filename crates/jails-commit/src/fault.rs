@@ -4,7 +4,7 @@
 //! abort."* That is the whole design constraint. A failpoint mechanism that
 //! reads an environment variable is a way to make a shipped binary corrupt a
 //! user's project, so this one is compiled out entirely: under `cfg(not(any(
-//! test, feature = "fault-injection")))` [`trip`] is an inlined `Ok(())` with
+//! test, feature = "fault-injection")))` `trip` is an inlined `Ok(())` with
 //! no state behind it.
 //!
 //! ## Why failpoints and not just unit tests

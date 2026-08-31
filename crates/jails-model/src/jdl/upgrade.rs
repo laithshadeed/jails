@@ -86,7 +86,7 @@ impl Build {
 /// bridge must not have: the next `sync` sees every field as new.
 ///
 /// So the legacy model supplies the identity, this writes it out explicitly,
-/// and [`preserves_identity`] proves it landed. The result is not formatted:
+/// and `preserves_identity` proves it landed. The result is not formatted:
 /// `format_jdl_v1` owns layout, and running it here would make one command
 /// answer two questions.
 pub fn upgrade(source: &str, axes: Axes) -> Result<Upgraded, Diagnostics> {

@@ -371,7 +371,7 @@ impl From<TypeChangeStrategy> for jails_protocol::request::TypeChangeStrategy {
 ///
 /// A parameter object rather than global presentation and execution flags
 /// threaded through every arm: they arrive together, are consumed together by
-/// [`mutate`], and are easy to swap at a call site.
+/// `dispatch::mutate`, and are easy to swap at a call site.
 #[derive(Clone)]
 pub(crate) struct Invocation {
     pub(crate) pretend: bool,
@@ -552,7 +552,7 @@ pub(crate) enum Command {
     ///
     ///   name:string      required, must not be null
     ///   name:string!     required and must not be blank (text only)
-    ///   name:string?     optional -- becomes an Optional<T> component
+    ///   name:string?     optional -- becomes an `Optional<T>` component
     ///
     /// Case is the rule. A lowercase type is one jails knows and can build a
     /// sample of: string, int, long, double, boolean, uuid, instant, date,
@@ -739,12 +739,12 @@ pub(crate) enum Command {
         #[arg(long, value_name = "FILE")]
         export: Option<String>,
     },
-    /// Write a [layout] table matching where this project already keeps things
+    /// Write a `[layout]` table matching where this project already keeps things
     ///
     /// For a codebase jails did not create. Reads the directories under the
     /// base package, maps the ones it recognises onto jails' layers, and
     /// reports the ones it does not rather than guessing. Never touches
-    /// [project] capabilities -- `jails sync` acts on that list.
+    /// `[project] capabilities` -- `jails sync` acts on that list.
     Adopt,
     /// Upgrade the build to the Spring Boot and JDK jails generates against
     ///

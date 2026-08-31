@@ -73,7 +73,7 @@ pub struct AppModel {
     /// §7.2 puts it in the model and §18.4 makes it inspectable, which is one
     /// requirement rather than two: being *in* the model is what puts it in
     /// the accepted-model and plan digest, so a convention that moves cannot
-    /// move silently. See [`crate::derived`], including which half of §18.4's
+    /// move silently. See the `derived` module, including which half of §18.4's
     /// role list belongs here and which belongs to the plan.
     ///
     /// Maintained by [`AppModel::refresh_derived`] and by nothing else.

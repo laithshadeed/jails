@@ -692,7 +692,7 @@ mod tests {
 /// other, so nothing distinguished a write into the staging tree from a write
 /// into a live project, and the gate could only assume the worst. A function
 /// that takes a `Tree` is a function that cannot reach a published project --
-/// [`Tree::inside`] refuses a path outside it. `pending.md` §5.
+/// `Tree::inside` refuses a path outside it. `pending.md` §5.
 ///
 /// It lives here rather than beside `jails new` because the generators write
 /// into it too: `generate::write_new_file` is called only from the publication

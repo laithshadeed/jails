@@ -373,23 +373,20 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // and a held line printed the same word. It counts
                 // `file.literals` now, and the true number is 13.
                 //
-                // Three of those are what the row was written to prevent, and
-                // all three are in the new tree:
-                // `jails-compiler/src/emit_capability/reader_facet.rs`,
-                // `jails-workspace/src/documents.rs` and
-                // `jails-workspace/src/reader_facet.rs` each build the block
-                // with their own `format!`. They are not careless: `codemod`
-                // is in `jails-project`, and neither new crate depends on it,
-                // so reuse was not available. Closing this row means giving
-                // the splice a home both trees can reach -- which is the same
-                // "one document backend" the Maven row above is about -- not
-                // deleting three `format!`s.
+                // Three of those thirteen were what the row was written to
+                // prevent, and all three had appeared in the *new* tree. They
+                // were not careless: `codemod` lived in `jails-project`, and
+                // neither canonical crate depends on it, so reuse was not
+                // available and a fourth, fifth and sixth implementation were
+                // structurally forced.
                 //
-                // The rest are reads and messages: `compose.rs` asking
-                // whether a marker is present, `resource.rs` refusing one
-                // inside canonical YAML, `doctor.rs` writing a `# jails:`
-                // note into `~/.testcontainers.properties`. They know the
-                // format too, and they are why the target is 0 rather than 3.
+                // **That is what closed it.** `codemod` is its own crate with
+                // no dependencies at all, which is a home both trees can
+                // reach, and the row is at zero -- so this is history rather
+                // than a plan. The lesson is the one the vacuous-gate note
+                // above teaches from the other direction: a gate that cannot
+                // fail and a gate whose subject cannot obey it both print the
+                // same word as a gate that is holding.
                 ceiling: MARKED_BLOCK_LITERALS,
                 target: 0,
                 why: "The marked block is how jails edits a file the reader owns, and it is \

@@ -36,7 +36,7 @@ impl DependencyScope {
     }
 }
 
-/// Returns [`ExitCode`] rather than calling [`std::process::exit`].
+/// Returns [`std::process::ExitCode`] rather than calling [`std::process::exit`].
 ///
 /// `crate::process::exit` terminates without unwinding, so destructors on the
 /// current stack never run. jails holds real resources while a command is in

@@ -17,7 +17,7 @@ use super::*;
 /// they decide *which* capability this is. `add csv --name Order` and `add csv
 /// --name Invoice` are two, and a singleton identity would make the second look
 /// like the first already installed. Which parameters a capability accepts is
-/// [`jails_project::capability::identity`]'s to refuse, so a parameter that has
+/// `jails_project::capability`'s identity check to refuse, so a parameter that has
 /// no meaning is reported rather than quietly dropped by a recipe that happens
 /// not to read it.
 pub fn install(run: &Run, asked: &Declaration) -> Result<Outcome> {

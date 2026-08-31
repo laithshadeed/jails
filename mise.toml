@@ -95,19 +95,38 @@ depends = ["lint"]
 # its own suite, while the parts that are jails' -- that the probe matches a
 # direct invocation, and that the flag lands between the caller's flags and the
 # operands -- are unit-tested on whatever git the machine has.
+#
+# **`cargo doc` is in the gate because nothing was checking the doc links.**
+# This repository's comments are dense with `[`Type`]` and `[`module`]`
+# references and rustdoc resolves every one of them -- so a module that moves
+# leaves a link naming an item that no longer exists, and rustdoc says so at
+# `warning` level, which nothing read. Twenty-five had accumulated, several of
+# them pointing at modules that had changed crates.
+#
+# It is `--no-deps` and warm, so it is ~28s on top of a ~217s gate, and it is
+# in `verify-rewrite` rather than in `lint` deliberately: `lint` is what
+# `.githooks/pre-commit` runs, and nearly tripling the pre-commit wait is a
+# worse trade than catching a stale link one push later.
 run = [
+  "RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps",
   "JAILS_GIT_DIFF_ALGORITHM= JAILS_REQUIRE_TOOLCHAIN=1 ./scripts/run-tests.py",
 ]
 
 [tasks.test]
-description = "Run every test binary concurrently, longest first (the fast inner-loop run)"
-# Deliberately *not* what `verify-rewrite` invokes. `simplify-sol.md`'s G0 asks
-# for one answer to "is this green", so the mandatory gate stays on plain
-# `cargo test --workspace` -- the thing CI, the pre-push hook and every other
-# Rust project agree on the meaning of. This is the same binaries, the same
-# filters and the same exit status, overlapped rather than run end to end,
-# for the loop a developer is actually sitting in front of. It needs python3,
-# which the gate must not.
+description = "Run every test binary concurrently, longest first (the inner-loop run)"
+# **This is the same runner the gate invokes**, without the two environment
+# pins -- so an inner-loop run may skip a tier the gate would fail on, which is
+# the whole reason `verify-rewrite` sets them.
+#
+# It was deliberately *not* the gate's runner for a while, and this comment
+# said so: G0 asks for one answer to "is this green", so the gate stayed on
+# plain `cargo test --workspace`, and "it needs python3, which the gate must
+# not" was the stated cost of keeping them apart. That reversed once the Maven
+# permit budget became a `flock` shared across processes -- the reason the two
+# could not be the same command -- and `verify-rewrite`'s own note above
+# records the python3 dependency as a cost the gate now accepts. Two comments
+# in one file disagreeing about what the gate runs is exactly the drift G0
+# exists to prevent.
 run = "./scripts/run-tests.py"
 
 [tasks.verify-rewrite-g1-canary]

@@ -6,7 +6,7 @@ The durable transaction executor: handles project locks, Write-Ahead Journaling 
 
 ## Purpose & Overview
 
-`jails-commit` takes an immutable [`PreparedBundle`](file:///home/laith/code/jails/crates/jails-prepare/src/pipeline.rs) from `jails-prepare` and applies it durably to disk.
+`jails-commit` takes an immutable [`PreparedBundle`](../../crates/jails-prepare/src/pipeline.rs) from `jails-prepare` and applies it durably to disk.
 
 ### Core Guarantees
 1. **Advisory Project Mutex**: Acquires `.jails/lock` to ensure only one mutating command runs per project root at any time.
@@ -43,21 +43,21 @@ sequenceDiagram
 
 ## Key Modules
 
-- [`execute`](file:///home/laith/code/jails/crates/jails-commit/src/execute.rs):
-  - Manages [`LockedProject`](file:///home/laith/code/jails/crates/jails-commit/src/execute.rs#L93) lock acquisition and runs the 11-step commit algorithm.
-- [`journal`](file:///home/laith/code/jails/crates/jails-commit/src/journal.rs):
+- [`execute`](../../crates/jails-commit/src/execute.rs):
+  - Manages [`LockedProject`](../../crates/jails-commit/src/execute.rs#L93) lock acquisition and runs the 11-step commit algorithm.
+- [`journal`](../../crates/jails-commit/src/journal.rs):
   - Defines `JournalV1`, `JournalState` (`Prepared`, `Active`, `Committed`), and receipts.
-- [`recover`](file:///home/laith/code/jails/crates/jails-commit/src/recover.rs):
+- [`recover`](../../crates/jails-commit/src/recover.rs):
   - Inspects uncommitted journals and rolls forward active transactions.
-- [`store`](file:///home/laith/code/jails/crates/jails-commit/src/store.rs):
+- [`store`](../../crates/jails-commit/src/store.rs):
   - Content-addressable object store (`.jails/objects/`) and directory layout helpers.
-- [`fault`](file:///home/laith/code/jails/crates/jails-commit/src/fault.rs):
+- [`fault`](../../crates/jails-commit/src/fault.rs):
   - Fault injection hooks for crash-recovery integration testing.
 
 ---
 
 ## How It Connects to Other Crates
 
-- **Called by [`jails-engine`](file:///home/laith/code/jails/crates/jails-engine/README.md)**: Receives prepared bundles and returns committed results.
-- **Uses [`jails-prepare`](file:///home/laith/code/jails/crates/jails-prepare/README.md)**: Reads prepared change definitions.
-- **Uses [`jails-support`](file:///home/laith/code/jails/crates/jails-support/README.md)**: Acquires advisory filesystem locks.
+- **Called by [`jails-engine`](../../crates/jails-engine/README.md)**: Receives prepared bundles and returns committed results.
+- **Uses [`jails-prepare`](../../crates/jails-prepare/README.md)**: Reads prepared change definitions.
+- **Uses [`jails-support`](../../crates/jails-support/README.md)**: Acquires advisory filesystem locks.

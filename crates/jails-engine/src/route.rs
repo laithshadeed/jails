@@ -1,15 +1,18 @@
-//! The V2 route, assembled end to end and not yet reachable from dispatch.
+//! One request, as one transition. **This is the production route.**
 //!
-//! plan.md §R6.1 is explicit that migration is "incremental in code and tests
-//! but **atomic at the production dispatch point**": once one command writes
-//! schema 2, an unswitched schema-1 writer cannot safely read or update it, so
-//! there is exactly one commit where every command changes at once. Step 1
-//! therefore says to land the executor "dark", and steps 2 to 6 to build each
-//! command's route while default dispatch stays on V1.
+//! plan.md §R6.1 was explicit that migration had to be "incremental in code
+//! and tests but **atomic at the production dispatch point**": once one
+//! command writes schema 2, an unswitched schema-1 writer cannot safely read
+//! or update it, so there was exactly one commit where every command changed
+//! at once. Step 1 landed this executor "dark" and steps 2 to 6 built each
+//! command's route while default dispatch stayed on V1.
 //!
-//! This module is where those routes are assembled. Nothing in `main.rs` calls
-//! it; the tests do. That is the point — the whole path can be exercised,
-//! measured against V1 and crash-tested long before anything depends on it.
+//! **That flip happened, and V1 is deleted.** `src/dispatch.rs` calls into
+//! here for every legacy-path command, so this module doc is history rather
+//! than a caveat — it is kept because the *shape* below is what the dark
+//! period bought: the whole path could be exercised, measured against V1 and
+//! crash-tested before anything depended on it, which is why the flip was one
+//! commit and not a season.
 //!
 //! ## What one route is
 //!
