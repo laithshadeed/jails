@@ -4178,13 +4178,18 @@ fn generate_errors_outside_a_project() {
 fn short_generators_cover_raw_sql_and_test_seams() {
     let root = temp_dir("simple-generators");
     write_spring_fixture(&root);
+    common::declare_storage(&root);
 
     for args in [
         vec!["g", "interface", "IdGenerator"],
         vec!["g", "integration-test", "DatabaseSmoke"],
         vec!["g", "migration", "createRewardCore"],
         vec!["g", "mig", "add_outbox"],
-        vec!["g", "repository", "Reward", "id:uuid"],
+        // The record first, then the port over it: a repository derives every
+        // column from the entity it stores, so naming fields here would be a
+        // second place for the shape to be stated and disagree.
+        vec!["g", "record", "Reward", "id:uuid@pk", "name:string!"],
+        vec!["g", "repository", "Reward"],
     ] {
         let output = jails_cmd(&root, None).args(&args).output().unwrap();
         assert!(
@@ -4209,7 +4214,7 @@ fn short_generators_cover_raw_sql_and_test_seams() {
     assert!(
         common::generated(
             &root,
-            "src/main/java/com/example/demo/app/RewardRepository.java"
+            "src/main/java/com/example/demo/repository/RewardRepository.java"
         )
         .is_file()
     );
@@ -4218,12 +4223,18 @@ fn short_generators_cover_raw_sql_and_test_seams() {
         "src/main/java/com/example/demo/adapters/JdbcRewardRepository.java",
     ))
     .unwrap();
-    assert!(adapter.contains("PreparedStatement") || adapter.contains("prepareStatement"));
+    // **Spring's `JdbcClient`, and no ORM.** The statements are written out --
+    // one column list feeding the select, the insert and the row mapper -- so
+    // what the adapter does is readable in the file; what it is not is a
+    // mapping layer that decides for you.
+    assert!(adapter.contains("JdbcClient"), "{adapter}");
     assert!(
-        adapter.contains("\"\"\""),
-        "raw SQL should be emitted as text blocks: {adapter}"
+        adapter.contains("select id, name from rewards"),
+        "{adapter}"
     );
-    assert!(!adapter.contains("org.springframework"));
+    assert!(adapter.contains("insert into rewards"), "{adapter}");
+    assert!(!adapter.contains("EntityManager"), "{adapter}");
+    assert!(!adapter.contains("@Entity"), "{adapter}");
 }
 
 #[test]

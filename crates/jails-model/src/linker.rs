@@ -27,7 +27,14 @@ const SCHEMA: &str = "jails.model.v1";
 /// with. `getClass`, `notify`, `notifyAll` and `wait` are `final` or would
 /// change the type, so a component of that name fails to compile too.
 const OBJECT_METHODS: &[&str] = &[
-    "clone", "equals", "finalize", "getClass", "hashCode", "notify", "notifyAll", "toString",
+    "clone",
+    "equals",
+    "finalize",
+    "getClass",
+    "hashCode",
+    "notify",
+    "notifyAll",
+    "toString",
     "wait",
 ];
 
