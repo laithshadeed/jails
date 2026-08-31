@@ -181,7 +181,7 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
                         "model-field-type",
                         format!("{field_path}.type"),
                         message,
-                        "use a builtin type or a fully qualified Java type",
+                        "use one of jails' lowercase types, or name a capitalised type this project declares",
                     );
                     None
                 }

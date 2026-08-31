@@ -37,7 +37,7 @@ use jails_support::codec::{hex, sha256};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
-const COMPILER_LOCK_SCHEMA: &str = "jails.compiler-lock.v2";
+const COMPILER_LOCK_SCHEMA: &str = "jails.compiler-lock.v3";
 
 #[derive(Serialize)]
 struct CompilerLock<'a> {
@@ -47,6 +47,12 @@ struct CompilerLock<'a> {
     model: &'a jails_model::AppModel,
     projection_digest: ContentDigest,
     projection: &'a jails_contracts::RenderedTree,
+    /// Every migration published so far, sealed by content.
+    ///
+    /// Carried forward rather than recomputed: the point is to record what was
+    /// published, so a later capture reading a different file on disk is the
+    /// finding rather than the new truth.
+    migrations: BTreeMap<ProjectPath, ContentDigest>,
 }
 
 const PLAN_SCHEMA: &str = "jails.plan.v1";
@@ -124,7 +130,19 @@ pub fn materialize_with_model(
     } else {
         Vec::new()
     };
-    materialize_migrations(snapshot, &draft, &mut base, &mut blobs, &mut operations)?;
+    // **Only a migration jails authored whole is sealed.** A derived one
+    // names the declaration it came from; `g migration` writes a comment for
+    // the reader to fill in and names nothing, and sealing that would report a
+    // fault the moment the reader did what the file asks.
+    let mut sealed_migrations = snapshot.accepted_migrations.clone();
+    materialize_migrations(
+        snapshot,
+        &draft,
+        &mut base,
+        &mut blobs,
+        &mut operations,
+        &mut sealed_migrations,
+    )?;
     crate::reader_facet::materialize(
         snapshot,
         &draft.baseline.reader_facets,
@@ -175,6 +193,7 @@ pub fn materialize_with_model(
         snapshot,
         &draft,
         compiler_version,
+        sealed_migrations,
         &mut blobs,
         &mut operations,
     )?;
@@ -214,6 +233,7 @@ fn materialize_migrations(
     base: &mut jails_contracts::SnapshotPreconditions,
     blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
     operations: &mut Vec<PlannedOperation>,
+    sealed: &mut BTreeMap<ProjectPath, ContentDigest>,
 ) -> Result<(), String> {
     if draft.migrations.is_empty() {
         return Ok(());
@@ -265,6 +285,9 @@ fn materialize_migrations(
             .entry(path.clone())
             .or_insert(jails_contracts::FilePrecondition::Missing);
         let after = file_image(&migration.bytes, FileMode::Regular, blobs)?;
+        if !migration.semantic_ids.is_empty() {
+            sealed.insert(path.clone(), after.blob.clone());
+        }
         operations.push(PlannedOperation::AppendMigration { path, after });
     }
 
@@ -275,6 +298,7 @@ fn materialize_compiler_lock(
     snapshot: &WorkspaceSnapshot,
     draft: &PlanDraft,
     compiler_version: &str,
+    migrations: BTreeMap<ProjectPath, ContentDigest>,
     blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
     operations: &mut Vec<PlannedOperation>,
 ) -> Result<(), String> {
@@ -293,6 +317,7 @@ fn materialize_compiler_lock(
         model: &draft.next_model,
         projection_digest,
         projection: &draft.generated,
+        migrations,
     })
     .map_err(|error| format!("could not encode compiler lock: {error}"))?;
     let path = ProjectPath::parse(crate::capture::COMPILER_LOCK)?;
@@ -751,7 +776,12 @@ fn canonical_digest(label: &str, value: &impl Serialize) -> Result<ContentDigest
     digest(&bytes)
 }
 
-pub(crate) fn digest(bytes: &[u8]) -> Result<ContentDigest, String> {
+/// The content address of some bytes, in the one spelling the plan uses.
+///
+/// Public because a reader outside this crate has to be able to ask whether a
+/// file still matches a digest the lock recorded, and re-deriving "sha256:" +
+/// hex somewhere else is how two answers to one question start.
+pub fn digest(bytes: &[u8]) -> Result<ContentDigest, String> {
     ContentDigest::parse(format!("sha256:{}", hex(&sha256(bytes))))
 }
 

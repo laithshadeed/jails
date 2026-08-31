@@ -357,14 +357,20 @@ fn doctor_reports_missing_and_changed_managed_outputs_with_repair_guidance() {
     let output = jails_cmd(&root, None).arg("doctor").output().unwrap();
     assert!(!output.status.success());
     let report = String::from_utf8_lossy(&output.stdout);
-    assert!(report.contains("recorded output"), "{report}");
+    // **A deletion is a fault and an edit is not**, which is the canonical
+    // answer and a better one: `sync` refuses while a managed file is gone, so
+    // nothing converges until somebody restores it, while an edit is merged
+    // forward on every sync and the reader is entitled to know they are doing
+    // it rather than to be told they broke something.
+    assert!(report.contains("managed output"), "{report}");
+    assert!(report.contains("NoteController.java deleted"), "{report}");
     assert!(
-        report.contains("NoteController.java` is missing"),
+        report.contains("restore the file from version control"),
         "{report}"
     );
-    assert!(report.contains("NoteService.java` changed"), "{report}");
+    assert!(report.contains("managed edits"), "{report}");
     assert!(
-        report.contains("jails resource repair Note --strategy roll-forward"),
+        report.contains("NoteService.java changed since generation"),
         "{report}"
     );
 }
@@ -395,9 +401,11 @@ fn doctor_reports_a_sealed_migration_that_was_deleted_or_edited() {
             .success()
     );
 
+    // The question is asked out loud even when the answer is yes: a check that
+    // appears only on a fault is one a reader cannot tell was ever run.
     let clean = jails_cmd(&root, None).arg("doctor").output().unwrap();
     let report = String::from_utf8_lossy(&clean.stdout).to_string();
-    assert!(!report.contains("sealed migration"), "{report}");
+    assert!(report.contains("ok    sealed migrations"), "{report}");
 
     // The command's own migration, not the scaffold's -- the exact file the
     // old check could not see.
@@ -407,13 +415,16 @@ fn doctor_reports_a_sealed_migration_that_was_deleted_or_edited() {
     let output = jails_cmd(&root, None).arg("doctor").output().unwrap();
     assert!(!output.status.success());
     let report = String::from_utf8_lossy(&output.stdout);
-    assert!(report.contains("migrations Task"), "{report}");
+    assert!(report.contains("sealed migrations"), "{report}");
     assert!(
         report.contains("V002__add_priority_to_tasks.sql` is missing"),
         "{report}"
     );
+    // Never a repair verb: repair renders the managed tree from the model, and
+    // schema history is not in it. Restoring the file is the only answer that
+    // keeps a database that already ran it described by what is on disk.
     assert!(
-        report.contains("jails resource repair Task --strategy roll-forward"),
+        report.contains("restore the file from version control"),
         "{report}"
     );
 

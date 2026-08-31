@@ -1049,10 +1049,23 @@ fn verified_app_images(fixtures: &'static Vec<(&'static str, std::path::PathBuf)
 /// A minimal project skeleton (pom.xml + an *Application.java) good enough
 /// for generate/destroy's path resolution -- not a real, resolvable Maven
 /// project, since these tests never invoke Maven.
+/// The smallest thing jails will treat as a project: a pom, a package, a class.
+///
+/// **The release is part of "smallest".** A build that declares none is one
+/// jails refuses to model, because every record it would write needs a release
+/// this pom does not state -- so a fixture without one tests the refusal rather
+/// than whatever the test was about.
 fn write_project_skeleton(root: &std::path::Path) {
     let pkg_dir = root.join("src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
-    fs::write(root.join("pom.xml"), "<project></project>").unwrap();
+    fs::write(
+        root.join("pom.xml"),
+        format!(
+            "<project>\n    <properties>\n        <maven.compiler.release>{}</maven.compiler.release>\n    </properties>\n</project>",
+            common::TARGET_RELEASE
+        ),
+    )
+    .unwrap();
     fs::write(
         pkg_dir.join("DemoApplication.java"),
         "package com.example.demo;\n\npublic class DemoApplication {}\n",

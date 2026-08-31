@@ -41,6 +41,7 @@ const READER_TEST_ROOT: &str = "src/test/java";
 pub(crate) const COMPILER_LOCK: &str = ".jails/compiler.lock.json";
 const COMPILER_LOCK_SCHEMA_V1: &str = "jails.compiler-lock.v1";
 const COMPILER_LOCK_SCHEMA_V2: &str = "jails.compiler-lock.v2";
+const COMPILER_LOCK_SCHEMA_V3: &str = "jails.compiler-lock.v3";
 
 #[derive(Deserialize)]
 struct CompilerLockV1 {
@@ -57,11 +58,28 @@ struct CompilerLockV2 {
     projection: RenderedTree,
 }
 
+/// v2 plus the seal on published schema history.
+///
+/// The migration map is what makes append-only checkable: `migration_history`
+/// is read fresh from the tree, so it agrees with whatever the file says now,
+/// and only a recorded digest can say the file changed after it was published.
+#[derive(Deserialize)]
+struct CompilerLockV3 {
+    compiler: String,
+    model_digest: ContentDigest,
+    model: AppModel,
+    projection_digest: ContentDigest,
+    projection: RenderedTree,
+    #[serde(default)]
+    migrations: BTreeMap<ProjectPath, ContentDigest>,
+}
+
 #[derive(Debug)]
 struct AcceptedCompilerState {
     model: AppModel,
     projection: Option<RenderedTree>,
     compiler: Option<String>,
+    migrations: BTreeMap<ProjectPath, ContentDigest>,
 }
 
 pub fn capture(
@@ -297,6 +315,7 @@ fn capture_model_state(
         snapshot.accepted_model = Some(accepted.model);
         snapshot.accepted_projection = accepted.projection;
         snapshot.accepted_compiler = accepted.compiler;
+        snapshot.accepted_migrations = accepted.migrations;
     }
     snapshot.project = project;
     snapshot.migration_history = capture_migration_history(root, &mut files, &mut preconditions)?;
@@ -498,6 +517,7 @@ fn decode_compiler_lock(bytes: &[u8]) -> Result<AcceptedCompilerState, String> {
                 model: lock.model,
                 projection: None,
                 compiler: None,
+                migrations: BTreeMap::new(),
             })
         }
         COMPILER_LOCK_SCHEMA_V2 => {
@@ -515,6 +535,25 @@ fn decode_compiler_lock(bytes: &[u8]) -> Result<AcceptedCompilerState, String> {
                 model: lock.model,
                 projection: Some(lock.projection),
                 compiler: Some(lock.compiler),
+                migrations: BTreeMap::new(),
+            })
+        }
+        COMPILER_LOCK_SCHEMA_V3 => {
+            let lock: CompilerLockV3 = serde_json::from_value(header)
+                .map_err(|error| format!("could not decode `{COMPILER_LOCK}`: {error}"))?;
+            verify_model(&lock.model, &lock.model_digest)?;
+            let projection = serde_json::to_vec(&lock.projection)
+                .map_err(|error| format!("could not verify `{COMPILER_LOCK}`: {error}"))?;
+            if digest(&projection)? != lock.projection_digest {
+                return Err(format!(
+                    "compiler lock `{COMPILER_LOCK}` does not match its accepted projection\n       fix: restore a known-good lock; do not infer merge bases from generated source"
+                ));
+            }
+            Ok(AcceptedCompilerState {
+                model: lock.model,
+                projection: Some(lock.projection),
+                compiler: Some(lock.compiler),
+                migrations: lock.migrations,
             })
         }
         other => Err(format!(

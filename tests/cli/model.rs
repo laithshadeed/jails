@@ -698,7 +698,11 @@ app Demo {
     let legacy = temp_dir("model-init-legacy-ledger");
     write_plain_fixture(&legacy);
     fs::create_dir_all(legacy.join(".jails")).unwrap();
-    fs::write(legacy.join(".jails/ledger.toml"), "written by another jails\n").unwrap();
+    fs::write(
+        legacy.join(".jails/ledger.toml"),
+        "written by another jails\n",
+    )
+    .unwrap();
     let refused = jails_cmd(&legacy, None)
         .args(["model", "init"])
         .output()

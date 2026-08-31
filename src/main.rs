@@ -46,6 +46,7 @@ mod modernize;
 mod new;
 mod parse_error;
 mod plan_command;
+mod rename_source;
 mod schema_command;
 mod sql_command;
 mod template_macro;
@@ -221,12 +222,23 @@ fn main() -> std::process::ExitCode {
             new,
             force,
         } => {
-            // **Every rename is a projection patch now.** The bare
-            // `rename OLD NEW` was a textual identifier sweep over the
-            // reader's own tree, which is a different operation from renaming
-            // a declared resource and could not be expressed as one; it is
-            // refused by name rather than approximated.
-            let _ = (old, new, force);
+            // **Two different operations under one verb, and they stay
+            // apart.** `rename resource` moves a *declared* resource -- the
+            // model, the table and the managed tree together. The bare
+            // `rename OLD NEW` is a textual identifier sweep over the reader's
+            // own sources, for a type the model does not declare; it needs no
+            // model and initialises none, which is why it is dispatched before
+            // `ensure_owned` rather than inside it.
+            if command.is_none() {
+                let (Some(old), Some(new)) = (old, new) else {
+                    let result = Err(jails_support::Failure::Told(
+                        "`jails rename` takes either a resource -- `rename resource <current> <new> --strategy ...` -- or two simple type names.\n       fix: name what you are renaming".to_string(),
+                    ));
+                    return dispatch::finish_invocation(result, failure_output, &failure_path);
+                };
+                let result = rename_source::run(&old, &new, force, invocation);
+                return dispatch::finish_invocation(result, failure_output, &failure_path);
+            }
             let result = model_command::ensure_owned(invocation.clone()).and_then(|()| match command {
                 Some(cli::RenameCommand::Resource {
                     from,
@@ -251,10 +263,7 @@ fn main() -> std::process::ExitCode {
                     "rename storage",
                     "use a supported single-cutover field/entity policy; multi-release storage campaigns are not canonical yet",
                 ),
-                None => model_command::refuse_legacy_mutation(
-                    "rename OLD NEW",
-                    "use `jails rename resource <current> <new> --strategy preserve-table|single-cutover`",
-                ),
+                None => unreachable!("the textual rename is dispatched above"),
             });
             return dispatch::finish_invocation(result, failure_output, &failure_path);
         }

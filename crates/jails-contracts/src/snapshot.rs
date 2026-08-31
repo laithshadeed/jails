@@ -170,6 +170,16 @@ pub struct WorkspaceSnapshot {
     /// merge state; it is neither desired-state authority nor history.
     pub accepted_projection: Option<RenderedTree>,
     pub accepted_compiler: Option<String>,
+    /// Digest of every migration the executor has published, as accepted.
+    ///
+    /// **Schema history is append-only, and this is what makes that
+    /// checkable.** A migration already applied to a database cannot be
+    /// rewritten -- Flyway refuses on the checksum, and a database that ran
+    /// the old text is not described by the new one -- so an edit is a fault
+    /// rather than a preserved reader edit. Nothing else here can see it:
+    /// `migration_history` is read fresh from the tree on every capture, so it
+    /// agrees with whatever the file says now.
+    pub accepted_migrations: BTreeMap<ProjectPath, ContentDigest>,
     pub project: ProjectFacts,
     pub external_types: ExternalTypeIndex,
     pub migration_history: MigrationHistory,
@@ -189,6 +199,7 @@ impl WorkspaceSnapshot {
             accepted_model: None,
             accepted_projection: None,
             accepted_compiler: None,
+            accepted_migrations: BTreeMap::new(),
             project,
             external_types: ExternalTypeIndex::default(),
             migration_history: MigrationHistory::default(),

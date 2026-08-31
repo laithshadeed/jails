@@ -233,8 +233,25 @@ const JDBC_CONTAINERS: &[&str] = &[
     "JdbcDatabaseContainer",
 ];
 
+/// Every tree whose Java reaches the test classpath.
+///
+/// **A canonical project keeps most of its tests in the managed tree**, and
+/// the build file declares `.jails/generated/test/java` as a source root, so
+/// reading only `src/test/java` answered "there is no container config" about
+/// a project that had one -- a `FAIL` telling the reader to run the command
+/// they had just run. Both trees, or the check is about the wrong project.
+fn test_source_roots(root: &Path) -> Vec<std::path::PathBuf> {
+    [
+        root.join("src/test/java"),
+        root.join(".jails/generated/test/java"),
+    ]
+    .into_iter()
+    .filter(|tree| tree.is_dir())
+    .collect()
+}
+
 pub(super) fn test_container_wiring(root: &Path) -> (Option<String>, Vec<String>) {
-    let tests = root.join("src/test/java");
+    let tests = test_source_roots(root);
     // The config this check is about, and only that one. `add kafka` writes a
     // `@TestConfiguration` with `@ServiceConnection` too, and taking whichever
     // the walk saw last made `doctor` report every `@SpringBootTest` in the
@@ -247,8 +264,9 @@ pub(super) fn test_container_wiring(root: &Path) -> (Option<String>, Vec<String>
     // present, auto-configuration demands a `DataSource` for every
     // `@SpringBootTest`, including ones that never touch a database. A broker
     // has no equivalent demand.
-    let config = crate::java::types_annotated_with(&tests, "TestConfiguration")
-        .into_iter()
+    let config = tests
+        .iter()
+        .flat_map(|tree| crate::java::types_annotated_with(tree, "TestConfiguration"))
         .filter(|found| {
             crate::java::annotations(&found.source)
                 .iter()
@@ -259,8 +277,9 @@ pub(super) fn test_container_wiring(root: &Path) -> (Option<String>, Vec<String>
         .next_back();
 
     let unimported = match &config {
-        Some(class) => crate::java::types_annotated_with(&tests, "SpringBootTest")
-            .into_iter()
+        Some(class) => tests
+            .iter()
+            .flat_map(|tree| crate::java::types_annotated_with(tree, "SpringBootTest"))
             .filter_map(|found| {
                 let stem = found.type_name()?.to_string();
                 // The config class does not import itself.

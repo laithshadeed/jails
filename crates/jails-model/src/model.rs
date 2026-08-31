@@ -381,7 +381,7 @@ impl TypeRef {
             return Ok(Self::External(value.to_string()));
         }
         Err(format!(
-            "`{value}` is not a type jails knows and is not a Java type name\n       fix: use one of jails' types, or name a type this project declares, which is capitalised"
+            "`{value}` is an unknown field type: it is not one of jails' own, and a type this project declares is capitalised"
         ))
     }
 

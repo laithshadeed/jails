@@ -191,8 +191,101 @@ fn collect() -> Result<Vec<Check>> {
         .fix("jails sync"),
     });
 
+    checks.push(published_history(&root, &snapshot));
+    checks.push(unwritten_migrations(&snapshot));
     checks.extend(schema_lineage(&snapshot));
     Ok(checks)
+}
+
+/// A migration file that carries no SQL at all.
+///
+/// `g migration` writes a correctly numbered file at the right path and a
+/// comment, because jails cannot know the SQL and a wrong guess is worse than
+/// none. Leaving it *silent* is the defect: Flyway applies it, checksums it,
+/// and never mentions it again -- so the history asserts a change that did not
+/// happen. A warning rather than a fault, because it is the reader's file and
+/// an unfinished one is an ordinary state to be in mid-change.
+fn unwritten_migrations(snapshot: &jails_contracts::WorkspaceSnapshot) -> Check {
+    let mut empty = Vec::new();
+    for record in &snapshot.migration_history.records {
+        let Some(file) = snapshot.files.get(&record.path) else {
+            continue;
+        };
+        let Ok(text) = std::str::from_utf8(&file.bytes) else {
+            continue;
+        };
+        if text
+            .lines()
+            .all(|line| line.trim().is_empty() || line.trim_start().starts_with("--"))
+        {
+            empty.push(record.path.as_str().to_string());
+        }
+    }
+    if empty.is_empty() {
+        return Check::new(
+            Status::Ok,
+            "migration bodies",
+            "every migration in the history says something",
+        );
+    }
+    empty.sort();
+    Check::new(
+        Status::Warn,
+        "migration bodies",
+        format!(
+            "{} contain no SQL, so Flyway will apply and checksum a change that did not happen",
+            list(&empty)
+        ),
+    )
+    .fix("write the statements, or delete the file if it is not needed yet")
+}
+
+/// Is the schema history jails published still the history it published?
+///
+/// **Append-only is the whole of it.** A migration already applied to a
+/// database cannot be rewritten: Flyway refuses on the checksum, and a
+/// database that ran the old text is not described by the new one. So unlike a
+/// generated Java file -- where an edit is a supported thing to be doing and
+/// the merge carries it forward -- an edited or deleted migration is a fault,
+/// and this is the only check that can see it. The captured
+/// `migration_history` is read fresh from the tree on every capture, so it
+/// agrees with whatever the file says now; only the lock's seal remembers what
+/// was published.
+fn published_history(
+    root: &std::path::Path,
+    snapshot: &jails_contracts::WorkspaceSnapshot,
+) -> Check {
+    let mut faults = Vec::new();
+    for (path, sealed) in &snapshot.accepted_migrations {
+        match std::fs::read(root.join(path.as_str())) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                faults.push(format!("`{path}` is missing"));
+            }
+            Err(error) => faults.push(format!("`{path}` cannot be read: {error}")),
+            Ok(bytes) => {
+                if jails_workspace::digest(&bytes).as_ref() != Ok(sealed) {
+                    faults.push(format!("`{path}` differs from the bytes jails published"));
+                }
+            }
+        }
+    }
+    if faults.is_empty() {
+        return Check::new(
+            Status::Ok,
+            "sealed migrations",
+            match snapshot.accepted_migrations.len() {
+                0 => "no schema history has been published yet".to_string(),
+                n => format!("all {n} published migration(s) are byte-for-byte as written"),
+            },
+        );
+    }
+    faults.sort();
+    Check::new(
+        Status::Fail,
+        "sealed migrations",
+        format!("{}; schema history is append-only", faults.join("; ")),
+    )
+    .fix("restore the file from version control, then write a new forward migration for the change")
 }
 
 /// Does every column a stored entity's Java carries exist in its migrations?
