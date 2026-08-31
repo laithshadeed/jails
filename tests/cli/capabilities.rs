@@ -538,11 +538,10 @@ fn add_db_on_spring_wires_docker_compose_support() {
     // The @SpringBootTest that came with the project has to be wired, or JDBC
     // auto-config fails it with "Failed to determine a suitable driver class"
     // on a test the user never wrote.
-    let tests = fs::read_to_string(common::generated(
+    let tests = common::read_generated(
         &root,
         "src/test/java/com/example/demo/DemoApplicationTests.java",
-    ))
-    .unwrap();
+    );
     assert!(
         tests.contains("@Import(TestcontainersConfig.class)"),
         "{tests}"
@@ -569,11 +568,10 @@ fn add_db_on_spring_wires_docker_compose_support() {
             .unwrap()
             .success()
     );
-    let tests = fs::read_to_string(common::generated(
+    let tests = common::read_generated(
         &root,
         "src/test/java/com/example/demo/DemoApplicationTests.java",
-    ))
-    .unwrap();
+    );
     assert!(!tests.contains("TestcontainersConfig"), "{tests}");
     assert!(!config.is_file());
     assert!(
@@ -717,11 +715,10 @@ class ExtraSliceTest {
             .success()
     );
 
-    let config = fs::read_to_string(common::generated(
+    let config = common::read_generated(
         &root,
         "src/test/java/com/example/demo/TestcontainersConfig.java",
-    ))
-    .unwrap();
+    );
     assert!(
         !config.contains("ApplicationContextInitializer"),
         "the global registration is what this migration removes: {config}"
@@ -730,11 +727,10 @@ class ExtraSliceTest {
 
     // Both @SpringBootTest classes get the import, including the one in a
     // different package -- which needs the extra import statement too.
-    let tests = fs::read_to_string(common::generated(
+    let tests = common::read_generated(
         &root,
         "src/test/java/com/example/demo/DemoApplicationTests.java",
-    ))
-    .unwrap();
+    );
     assert!(
         tests.contains("@Import(TestcontainersConfig.class)"),
         "{tests}"
@@ -1302,11 +1298,10 @@ fn add_api_generates_problem_detail_handling_that_compiles_and_passes() {
         .unwrap();
     assert!(status.success());
 
-    let handler = fs::read_to_string(common::generated(
+    let handler = common::read_generated(
         &root,
         "src/main/java/com/example/demo/api/ApiExceptionHandler.java",
-    ))
-    .unwrap();
+    );
     // Spring's own base class, so framework exceptions keep their statuses.
     assert!(
         handler.contains("extends ResponseEntityExceptionHandler"),
@@ -1607,31 +1602,28 @@ fn add_kafka_and_generate_event_compile_against_real_spring() {
             .success()
     );
 
-    let listener = fs::read_to_string(common::generated(
+    let listener = common::read_generated(
         &root,
         "src/main/java/com/example/demo/messaging/PayoutSettledListener.java",
-    ))
-    .unwrap();
+    );
     // No catch: swallowing here commits an offset for a message that was
     // never processed, which is data loss wearing a success badge.
     assert!(!listener.contains("catch ("), "{listener}");
 
-    let publisher = fs::read_to_string(common::generated(
+    let publisher = common::read_generated(
         &root,
         "src/main/java/com/example/demo/messaging/PayoutSettledPublisher.java",
-    ))
-    .unwrap();
+    );
     // Keyed sends: ordering is per partition, and a null key round-robins.
     assert!(
         publisher.contains("kafka.send(topic, String.valueOf(event.id()), event)"),
         "{publisher}"
     );
 
-    let event = fs::read_to_string(common::generated(
+    let event = common::read_generated(
         &root,
         "src/main/java/com/example/demo/messaging/PayoutSettledEvent.java",
-    ))
-    .unwrap();
+    );
     assert!(
         event.contains(
             "record PayoutSettledEvent(UUID id, UUID payoutId, BigDecimal amount, Instant occurredAt)"
@@ -1671,11 +1663,8 @@ fn add_security_writes_an_explicit_chain_that_denies_by_default() {
         );
     }
 
-    let config = fs::read_to_string(common::generated(
-        &root,
-        "src/main/java/com/example/demo/SecurityConfig.java",
-    ))
-    .unwrap();
+    let config =
+        common::read_generated(&root, "src/main/java/com/example/demo/SecurityConfig.java");
     // Default deny: a new endpoint is protected until someone says otherwise.
     assert!(config.contains(".anyRequest()"), "{config}");
     assert!(config.contains(".authenticated()"), "{config}");
@@ -1741,11 +1730,10 @@ fn add_redis_wires_a_ttl_enforcing_store_and_a_compose_service() {
     // that only works because something was already cached.
     assert!(!compose.contains("redis-data"), "{compose}");
 
-    let store = fs::read_to_string(common::generated(
+    let store = common::read_generated(
         &root,
         "src/main/java/com/example/demo/adapters/KeyValueStore.java",
-    ))
-    .unwrap();
+    );
     // Every write carries a lifetime. `set(k, v)` with no expiry stores a key
     // forever, which is a memory leak that survives restarts.
     assert!(store.contains("set(key, value, ttl)"), "{store}");

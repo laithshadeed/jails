@@ -184,6 +184,27 @@ fn controller(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
     let type_name = with_suffix(&entity.names.java_type, "Controller");
     let record = &entity.names.java_type;
     let key = primary_key(entity)?;
+    // **What `create` binds is what this entity declares a boundary for.** A
+    // scaffold carries the DTO facet, so the caller is asked for the fields
+    // they own and every server-assigned value is minted on the way in. A bare
+    // `use http` has no request record to bind, and inventing a reference to
+    // one would not compile.
+    let bounded = entity.facets.contains(&jails_model::Facet::Dto);
+    let (create_doc, bound, from_request) = if bounded {
+        (
+            format!(
+                "/**\n     * The request record, not the domain row: a caller supplies what\n     * they are asked for, and every server-assigned value is minted by\n     * {{@link {record}Request#toDomain()}} rather than taken from the body.\n     */\n    "
+            ),
+            format!("@Valid @RequestBody {record}Request request"),
+            "request.toDomain()".to_string(),
+        )
+    } else {
+        (
+            String::new(),
+            format!("@RequestBody {record} request"),
+            "request".to_string(),
+        )
+    };
     let mut imports = BTreeSet::from([
         domain_import(model, entity),
         // **The service, not the repository.** The suite jails generates
@@ -207,6 +228,9 @@ fn controller(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
         "org.springframework.web.bind.annotation.RequestMapping".to_string(),
         "org.springframework.web.bind.annotation.RestController".to_string(),
     ]);
+    if bounded {
+        imports.insert("jakarta.validation.Valid".to_string());
+    }
     let key_type = java_type(key, &mut imports);
     let key_member = &key.names.java_member;
     let path = resource_path(model, entity);
@@ -231,9 +255,9 @@ fn controller(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
          \x20               .map(ResponseEntity::ok)\n\
          \x20               .orElseGet(() -> ResponseEntity.notFound().build());\n\
          \x20   }}\n\n\
-         \x20   @PostMapping\n\
-         \x20   public ResponseEntity<{record}> create(@RequestBody {record} request) {{\n\
-         \x20       {record} created = service.save(request);\n\
+         \x20   {create_doc}@PostMapping\n\
+         \x20   public ResponseEntity<{record}> create({bound}) {{\n\
+         \x20       {record} created = service.save({from_request});\n\
          \x20       return ResponseEntity.created(URI.create(PATH + \"/\" + created.{key_member}()))\n\
          \x20               .body(created);\n\
          \x20   }}\n\n\

@@ -1425,6 +1425,50 @@ pub fn generated(root: &Path, relative: &str) -> PathBuf {
     root.join(relative)
 }
 
+/// Read a generated file, and say what *is* there when it is not.
+///
+/// **A bare `.unwrap()` on a missing generated path says `NotFound` and
+/// nothing else**, which is the least useful failure in this suite: the
+/// question is always whether the file moved, was renamed, or was never
+/// written, and answering it meant re-running the command by hand. Listing the
+/// managed tree turns each of those into a one-glance answer, and costs
+/// nothing on the passing path.
+pub fn read_generated(root: &Path, relative: &str) -> String {
+    let path = generated(root, relative);
+    match fs::read_to_string(&path) {
+        Ok(source) => source,
+        Err(error) => panic!(
+            "could not read generated `{relative}` ({error}).\nThe managed tree holds:\n{}",
+            managed_listing(root)
+        ),
+    }
+}
+
+/// Every path under `.jails/generated`, one per line.
+pub fn managed_listing(root: &Path) -> String {
+    fn walk(dir: &Path, base: &Path, into: &mut Vec<String>) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, base, into);
+            } else if let Ok(rest) = path.strip_prefix(base) {
+                into.push(format!("  {}", rest.display()));
+            }
+        }
+    }
+    let base = root.join(".jails/generated");
+    let mut found = Vec::new();
+    walk(&base, &base, &mut found);
+    found.sort();
+    if found.is_empty() {
+        return "  (nothing -- this project has no managed tree)".to_string();
+    }
+    found.join("\n")
+}
+
 /// Give a fixture the model every mutating command needs.
 ///
 /// **The on-ramp, run explicitly.** Any mutation initialises a project that has

@@ -76,7 +76,12 @@ pub(crate) fn read_source_at(root: &Path, model_path: &Path) -> Result<String> {
         // the model `model init` would write, so the first mutation patches a
         // real seed rather than refusing over the file it is about to create.
         Err(error) if error.kind() == std::io::ErrorKind::NotFound && !owns_at(root) => {
-            crate::model_init::derive(&jails_project::model::Project::load(root)?)
+            crate::model_init::derive(&jails_project::model::Project::load(root)?).map_err(|_| {
+                Failure::Told(format!(
+                    "could not read canonical model `{}`: {error}",
+                    model_path.display()
+                ))
+            })
         }
         Err(error) => Err(Failure::Told(format!(
             "could not read canonical model `{}`: {error}",

@@ -232,11 +232,7 @@ fn a_manifest_field_appended_to_a_scaffold_becomes_a_forward_migration() {
     .unwrap();
     assert!(added.contains("alter table deals"), "{added}");
     assert!(added.contains("add column memo text"), "{added}");
-    let record = fs::read_to_string(common::generated(
-        &root,
-        "src/main/java/com/example/demo/domain/Deal.java",
-    ))
-    .unwrap();
+    let record = common::read_generated(&root, "src/main/java/com/example/demo/domain/Deal.java");
     assert!(record.contains("Optional<String> memo"), "{record}");
 
     // Re-applying the same manifest changes nothing, which is what makes the

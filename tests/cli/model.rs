@@ -5121,11 +5121,8 @@ fn scaffold_profile_preserves_the_legacy_domain_and_repository_contracts() {
         String::from_utf8_lossy(&compiled_output.stderr)
     );
 
-    let old_record = fs::read_to_string(common::generated(
-        &legacy,
-        "src/main/java/com/example/demo/domain/Note.java",
-    ))
-    .unwrap();
+    let old_record =
+        common::read_generated(&legacy, "src/main/java/com/example/demo/domain/Note.java");
     let new_record = fs::read_to_string(
         compiled.join(".jails/generated/main/java/com/example/notes/domain/Note.java"),
     )
@@ -5141,11 +5138,10 @@ fn scaffold_profile_preserves_the_legacy_domain_and_repository_contracts() {
         assert!(new_record.contains(contract), "compiler lost `{contract}`");
     }
 
-    let old_repository = fs::read_to_string(common::generated(
+    let old_repository = common::read_generated(
         &legacy,
         "src/main/java/com/example/demo/app/NoteRepository.java",
-    ))
-    .unwrap();
+    );
     let new_repository = fs::read_to_string(
         compiled
             .join(".jails/generated/main/java/com/example/notes/repository/NoteRepository.java"),
@@ -6010,11 +6006,7 @@ fn record_compiler_preserves_the_legacy_semantic_contract() {
         String::from_utf8_lossy(&compiled_output.stderr)
     );
 
-    let old = fs::read_to_string(common::generated(
-        &legacy,
-        "src/main/java/com/example/demo/domain/Note.java",
-    ))
-    .unwrap();
+    let old = common::read_generated(&legacy, "src/main/java/com/example/demo/domain/Note.java");
     let new = fs::read_to_string(
         compiled.join(".jails/generated/main/java/com/example/notes/domain/Note.java"),
     )
@@ -11552,11 +11544,10 @@ fn canonical_storage_postgres_writes_the_container_compose_and_datasource() {
     // `contextLoads` test `jails new` wrote never touches a database, and
     // without the container imported into it JDBC auto-configuration fails the
     // context with "Failed to determine a suitable driver class".
-    let shipped = fs::read_to_string(common::generated(
+    let shipped = common::read_generated(
         &root,
         "src/test/java/com/example/demo/DemoApplicationTests.java",
-    ))
-    .unwrap();
+    );
     assert!(
         shipped.contains("@Import(TestcontainersConfig.class)"),
         "{shipped}"
@@ -11582,11 +11573,10 @@ fn canonical_storage_postgres_writes_the_container_compose_and_datasource() {
         String::from_utf8_lossy(&resync.stderr)
     );
     assert_eq!(
-        fs::read_to_string(common::generated(
+        common::read_generated(
             &root,
             "src/test/java/com/example/demo/DemoApplicationTests.java"
-        ))
-        .unwrap(),
+        ),
         before
     );
 }
@@ -11620,11 +11610,10 @@ fn canonical_add_db_wires_the_shipped_test_on_the_command_that_declares_it() {
         String::from_utf8_lossy(&added.stderr)
     );
 
-    let shipped = fs::read_to_string(common::generated(
+    let shipped = common::read_generated(
         &root,
         "src/test/java/com/example/demo/DemoApplicationTests.java",
-    ))
-    .unwrap();
+    );
     assert!(
         shipped.contains("@Import(TestcontainersConfig.class)"),
         "the shipped test was not wired by the command that declared storage:\n{shipped}"
@@ -11926,11 +11915,7 @@ fn canonical_cli_registers_its_commands_and_claims_the_entry_point() {
         "{}",
         String::from_utf8_lossy(&generated_command.stderr)
     );
-    let app = fs::read_to_string(common::generated(
-        &root,
-        "src/main/java/com/example/demo/App.java",
-    ))
-    .unwrap();
+    let app = common::read_generated(&root, "src/main/java/com/example/demo/App.java");
     assert!(
         app.contains("commands.put(GreetCommand.NAME, GreetCommand::run);"),
         "the command did not register itself on the command that declared it:\n{app}"
@@ -11961,11 +11946,7 @@ fn canonical_cli_registers_its_commands_and_claims_the_entry_point() {
         String::from_utf8_lossy(&resync.stderr)
     );
     assert_eq!(
-        fs::read_to_string(common::generated(
-            &root,
-            "src/main/java/com/example/demo/App.java"
-        ))
-        .unwrap(),
+        common::read_generated(&root, "src/main/java/com/example/demo/App.java"),
         before
     );
 }
@@ -14010,7 +13991,9 @@ app Demo {
     for method in [
         "public List<Note> list()",
         "public ResponseEntity<Note> byId(@PathVariable(\"id\") long id)",
-        "public ResponseEntity<Note> create(@RequestBody Note request)",
+        // The request record, not the domain row: the caller is asked for
+        // what they own and the server mints the rest.
+        "public ResponseEntity<Note> create(@Valid @RequestBody NoteRequest request)",
         "public ResponseEntity<Void> delete(@PathVariable(\"id\") long id)",
     ] {
         assert!(

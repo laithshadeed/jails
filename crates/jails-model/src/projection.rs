@@ -191,21 +191,31 @@ fn select(
     }
 }
 
+/// The profiles, resolved to the projections they stand for.
+///
+/// **A scaffold carries `dto`, and that is the row worth explaining.**
+/// Without the request records the controller binds the domain row, so a
+/// caller can set the audit columns and the optimistic-lock version -- values
+/// the server is the authority on. A scaffold is the profile that means "the
+/// whole resource, served", so the boundary belongs in it rather than in
+/// something an author has to remember to add beside it. A bare `use http`
+/// still binds the row, which is the shape somebody asking for one controller
+/// and nothing else chose; `plan.md` tracks closing that half.
 fn expand(projection: source::Projection) -> Vec<source::Projection> {
+    fn plain(kind: &str) -> source::Projection {
+        source::Projection {
+            kind: kind.to_string(),
+            fields: Vec::new(),
+            path: None,
+        }
+    }
     if projection.kind != "scaffold" {
         return vec![projection];
     }
     vec![
-        source::Projection {
-            kind: "repo".to_string(),
-            fields: Vec::new(),
-            path: None,
-        },
-        source::Projection {
-            kind: "service".to_string(),
-            fields: Vec::new(),
-            path: None,
-        },
+        plain("repo"),
+        plain("service"),
+        plain("dto"),
         source::Projection {
             kind: "http".to_string(),
             fields: Vec::new(),

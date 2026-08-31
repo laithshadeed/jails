@@ -22,31 +22,126 @@ pub(crate) fn lower(
     ]
 }
 
+/// Whether a caller supplies this field, or the server assigns it.
+///
+/// **This is the whole reason a request record exists.** Binding the domain
+/// record at the HTTP boundary lets any caller set the audit columns, the
+/// optimistic-lock version and the tenancy scope -- the three things the
+/// server is the authority on -- so `POST` with a `createdAt` of last year
+/// silently succeeds. The request declares what the caller is *asked* for and
+/// nothing else, which makes the omission structural rather than a check
+/// somebody has to remember.
+///
+/// A literal default (`@default(QUEUED)`) stays: it is a value the caller may
+/// supply and the schema fills in when they do not. Only the four functions
+/// the model closes over -- `now`, `today`, `uuid7`, `identity` -- name a
+/// value the server computes.
+pub(crate) fn caller_supplied(field: &Field) -> bool {
+    // **A scope field stays declared, and that is a limit rather than a
+    // choice.** Proving it belongs to the caller needs the claim, and the
+    // resource controller has no `ExecutionContext` to read one from -- that
+    // machinery is the operation boundary's, where `@scope` is already proved
+    // against a `ScopeAuthorizer`. Dropping the component here would leave
+    // `toDomain` with no value for it and nowhere honest to get one. See
+    // `plan.md` for the resource-boundary half.
+    if field.semantics.updated || field.semantics.version {
+        return false;
+    }
+    !matches!(
+        field.semantics.default.as_ref().map(|default| &default.value),
+        Some(jails_model::Value::Function { name, arguments })
+            if arguments.is_empty()
+                && matches!(name.as_str(), "now" | "today" | "uuid7" | "identity")
+    )
+}
+
+/// The value `toDomain` supplies for a field the caller was not asked for.
+///
+/// Minted here rather than in the controller so the assignment sits where the
+/// model declares it. `identity()` is the database's to assign, and the insert
+/// omits the column -- so the honest Java placeholder is `null`, not a value
+/// invented on the way past.
+fn assigned_value(
+    model: &AppModel,
+    field: &Field,
+    imports: &mut BTreeSet<String>,
+) -> Result<String, CompileError> {
+    if let Some(jails_model::Value::Function { name, .. }) = field
+        .semantics
+        .default
+        .as_ref()
+        .map(|default| &default.value)
+    {
+        match name.as_str() {
+            "uuid7" => {
+                imports.insert(format!(
+                    "{}.TimeOrderedUuid",
+                    model.project.package_for(Package::Domain)
+                ));
+                return Ok("TimeOrderedUuid.next()".to_string());
+            }
+            // The database assigns it and the insert omits the column, so
+            // the Java side needs a placeholder rather than a value. A
+            // primitive key has no null to write, and zero is what an
+            // unassigned identity reads as everywhere else in Java.
+            "identity" => {
+                let java = emit_java::java_type(field, imports);
+                return Ok(match java.as_str() {
+                    "long" => "0L".to_string(),
+                    "int" | "short" | "byte" => "0".to_string(),
+                    _ => "null".to_string(),
+                });
+            }
+            _ => {}
+        }
+    }
+    let java = emit_java::java_type(field, imports);
+    match java.as_str() {
+        "Instant" => Ok("Instant.now()".to_string()),
+        "LocalDate" => Ok("LocalDate.now()".to_string()),
+        "LocalDateTime" => Ok("LocalDateTime.now()".to_string()),
+        "OffsetDateTime" => Ok("OffsetDateTime.now()".to_string()),
+        "long" | "Long" if field.semantics.version => Ok("0L".to_string()),
+        "int" | "Integer" if field.semantics.version => Ok("0".to_string()),
+        _ => Err(CompileError::new(format!(
+            "field `{}` is server-assigned but `{java}` is not a type jails can mint\n       fix: declare it a caller input, or eject the DTO and assign it yourself",
+            field.label
+        ))),
+    }
+}
+
 fn request(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, CompileError> {
     let package = model.project.package_for(Package::Web);
     let type_name = format!("{}Request", entity.names.java_type);
     let artifact_id = format!("art_{}_dto_request", entity.id.as_str());
     let mut imports = BTreeSet::from([emit_java::domain_import(model, entity)]);
-    let components = components(entity, &mut imports, true);
-    if entity.fields.iter().any(|field| !field.required) {
-        imports.insert("java.util.Optional".to_string());
-    }
-    let arguments = entity
+    let asked = entity
         .fields
         .iter()
-        .map(|field| {
-            let name = &field.names.java_member;
-            if field.required {
-                format!("                {name}")
-            } else {
-                format!("                Optional.ofNullable({name})")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(",\n");
+        .filter(|field| caller_supplied(field))
+        .collect::<Vec<_>>();
+    let components = declared(model, &asked, &mut imports, true);
+    if asked.iter().any(|field| !field.required) {
+        imports.insert("java.util.Optional".to_string());
+    }
+    let mut arguments = Vec::new();
+    for field in &entity.fields {
+        let name = &field.names.java_member;
+        arguments.push(if !caller_supplied(field) {
+            format!(
+                "                {}",
+                assigned_value(model, field, &mut imports)?
+            )
+        } else if field.required {
+            format!("                {name}")
+        } else {
+            format!("                Optional.ofNullable({name})")
+        });
+    }
+    let arguments = arguments.join(",\n");
     let record = &entity.names.java_type;
     let body = format!(
-        "public record {type_name}(\n{components}\n) {{\n\n    public {record} toDomain() {{\n        return new {record}(\n{arguments});\n    }}\n}}"
+        "public record {type_name}(\n{components}\n) {{\n\n    /**\n     * The domain row this request describes, with every server-assigned\n     * value supplied here rather than taken from the caller.\n     */\n    public {record} toDomain() {{\n        return new {record}(\n{arguments});\n    }}\n}}"
     );
     unit(
         package,
@@ -65,7 +160,7 @@ fn response(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, Compil
     let type_name = format!("{}Response", entity.names.java_type);
     let artifact_id = format!("art_{}_dto_response", entity.id.as_str());
     let mut imports = BTreeSet::from([emit_java::domain_import(model, entity)]);
-    let components = components(entity, &mut imports, false);
+    let components = components(model, entity, &mut imports, false);
     let variable = lower_first(&entity.names.java_type);
     let arguments = entity
         .fields
@@ -107,14 +202,28 @@ fn contract_test(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, C
         "org.junit.jupiter.api.Test".to_string(),
         "static org.junit.jupiter.api.Assertions.assertEquals".to_string(),
     ]);
-    let names = entity
-        .fields
-        .iter()
-        .map(|field| format!("\"{}\"", field.names.java_member))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let quoted = |fields: Vec<&Field>| {
+        fields
+            .iter()
+            .map(|field| format!("\"{}\"", field.names.java_member))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let every = quoted(entity.fields.iter().collect());
+    let asked = quoted(
+        entity
+            .fields
+            .iter()
+            .filter(|field| caller_supplied(field))
+            .collect(),
+    );
+    // **The two records answer different questions, so the test asks two.**
+    // A response projects the whole row; a request declares only what a caller
+    // supplies, and asserting they match is asserting the boundary does not
+    // exist. Naming the omitted components is what makes a field that quietly
+    // becomes caller-settable fail here rather than in production.
     let body = format!(
-        "final class {type_name} {{\n\n    @Test\n    void requestAndResponseExposeCanonicalComponents() {{\n        var expected = List.of({names});\n        assertEquals(expected, componentNames({record}Request.class));\n        assertEquals(expected, componentNames({record}Response.class));\n    }}\n\n    private static List<String> componentNames(Class<?> type) {{\n        return Arrays.stream(type.getRecordComponents())\n                .map(component -> component.getName())\n                .toList();\n    }}\n}}"
+        "final class {type_name} {{\n\n    @Test\n    void theResponseProjectsEveryComponent() {{\n        assertEquals(List.of({every}), componentNames({record}Response.class));\n    }}\n\n    /**\n     * The request declares what a caller supplies and nothing else: an\n     * audit column or an optimistic-lock version accepted from the body is\n     * a value the server is supposed to be the authority on.\n     */\n    @Test\n    void theRequestAsksOnlyForCallerSuppliedComponents() {{\n        assertEquals(List.of({asked}), componentNames({record}Request.class));\n    }}\n\n    private static List<String> componentNames(Class<?> type) {{\n        return Arrays.stream(type.getRecordComponents())\n                .map(component -> component.getName())\n                .toList();\n    }}\n}}"
     );
     unit(
         package,
@@ -128,9 +237,34 @@ fn contract_test(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, C
     )
 }
 
-fn components(entity: &Entity, imports: &mut BTreeSet<String>, validation: bool) -> String {
-    entity
-        .fields
+fn components(
+    model: &AppModel,
+    entity: &Entity,
+    imports: &mut BTreeSet<String>,
+    validation: bool,
+) -> String {
+    declared(
+        model,
+        &entity.fields.iter().collect::<Vec<_>>(),
+        imports,
+        validation,
+    )
+}
+
+fn declared(
+    model: &AppModel,
+    fields: &[&Field],
+    imports: &mut BTreeSet<String>,
+    validation: bool,
+) -> String {
+    // **A DTO lives in `web` and a declared type lives in `domain`**, so an
+    // enum or record component that needs no import inside the entity's own
+    // package needs one here. Left out, every project whose entity carries a
+    // declared type produced a request and a response that did not compile.
+    for field in fields {
+        emit_java::import_declared_type(model, &field.ty, imports);
+    }
+    fields
         .iter()
         .map(|field| {
             let annotation = if validation {
