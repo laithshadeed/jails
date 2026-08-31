@@ -401,6 +401,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-compiler", "emit_http", 4),
     ("jails-compiler", "emit_java", 4),
     ("jails-compiler", "emit_operation", 4),
+    ("jails-compiler", "emit_resource_http", 4),
     ("jails-compiler", "emit", 4),
     ("jails-compiler", "emit_seed", 4),
     ("jails-compiler", "emit_sql", 4),
@@ -871,6 +872,13 @@ const DEFAULT_BRANCH_IS_EXECUTED: &[(&str, &str)] = &[
     (
         "crates/jails-compiler/src/emit_http/proof.rs",
         "scoped_execution_context_survives_evolution_and_binds_tenant_at_runtime",
+    ),
+    // The scaffold's controller test picks `MockMvcTester` on Boot 4 and
+    // standalone `perform(...)` below it. The named test drives the generated
+    // collection through real `mvn test` on the 4.1.0 fixture.
+    (
+        "crates/jails-compiler/src/emit_resource_http.rs",
+        "canonical_scaffold_http_compiles_and_passes_on_real_maven",
     ),
     (
         "crates/jails-generate/src/generate/recipes.rs",

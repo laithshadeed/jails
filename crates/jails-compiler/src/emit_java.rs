@@ -39,6 +39,18 @@ pub(crate) fn lower_and_emit(
                 }
                 continue;
             }
+            // **The scaffold's HTTP surface, which is three files.** The
+            // single-file arm below emits only the port -- an interface with
+            // no implementation, no route and no caller -- so a canonical
+            // scaffold serves nothing.
+            if *facet == Facet::Http {
+                for unit in crate::emit_resource_http::lower(model, entity, spring_boot)? {
+                    output
+                        .insert(unit.path, unit.file)
+                        .map_err(CompileError::new)?;
+                }
+                continue;
+            }
             if *facet == Facet::Dto {
                 for unit in crate::emit_dto::lower(model, entity) {
                     let unit = unit?;
@@ -184,16 +196,10 @@ fn lower_facet(model: &AppModel, entity: &Entity, facet: Facet) -> Result<Unit, 
             );
             (package, type_name, body, imports)
         }
-        Facet::Http => {
-            let package = model.project.package_for(Package::PortsHttp);
-            let type_name = format!("{}HttpPort", entity.names.java_type);
-            let imports = BTreeSet::from([format!("{domain_package}.{}", entity.names.java_type)]);
-            let body = format!(
-                "public interface {type_name} {{\n\n    {} create({} request);\n}}",
-                entity.names.java_type, entity.names.java_type
-            );
-            (package, type_name, body, imports)
-        }
+        // Three files rather than one: the port, the controller that serves
+        // the resource, and its test. `emit_resource_http` owns them, and the
+        // loop above routes the facet there before reaching this.
+        Facet::Http => unreachable!("http has a multi-file backend"),
         Facet::Events => {
             let package = model.project.package_for(Package::PortsEvents);
             let type_name = format!("{}Events", entity.names.java_type);
