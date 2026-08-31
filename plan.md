@@ -593,6 +593,41 @@ verbatim from `customer.js` and `admin.js`:
       instead of "what did it say" reports a tool as far less finished than it
       is.
 
+- [ ] **P13.10** **The Maven budget is shared across processes and the fixture
+      it protects is not.** Two `mise run verify-rewrite` runs overlapping on
+      one machine produce eight `capabilities::` failures that read exactly
+      like capability regressions and are not.
+      `cached_toolchain_dir_with_salt` (`tests/common/mod.rs`) keeps one
+      persistent generated project per label under `target/jails-e2e-cache`,
+      and takes no lock:
+
+      ```rust
+      if root.exists() { fs::remove_dir_all(&root).unwrap(); }
+      fs::create_dir_all(&root).unwrap();
+      ```
+
+      Both halves race. One process walks `remove_dir_all` while another
+      creates files underneath it, and the remove dies `DirectoryNotEmpty`
+      (errno 39) on that `unwrap`. Separately, `.jails-generated-ready` is
+      written *before* the directory is filled, so a second process reads it,
+      returns "reuse this", and runs against a half-built toolbox -- observed
+      as `add kafka failed in the services Spring toolbox`.
+
+      **This is `PermitPool` one directory over.** That budget was a `Mutex`
+      and a `Condvar` -- the whole machine's budget only while one binary runs
+      at a time -- and is a `flock` now precisely so the suite can be launched
+      concurrently. The e2e cache is the shared state that did not get the same
+      treatment, so the guard is process-safe and what it guards is not.
+
+      The fix is the same shape: take a `flock` on the label directory for the
+      whole build-or-reuse decision, and write `.jails-generated-ready` last.
+      Recorded rather than done because it is test infrastructure and the
+      operational rule is currently sufficient -- run one gate at a time, and
+      `rm -rf target/jails-e2e-cache` if two have overlapped. What makes it
+      worth fixing anyway is that the failure is *silent about its cause*: a
+      half-built toolbox is stamped ready, so the next clean run reuses it and
+      the regression appears to persist.
+
 - [ ] **P13.9** **A full tmpfs reports itself as a product bug, and the
       one-hour fixture sweep does not bound a burst.** Two `new-cli` unit tests
       failed with `PoisonError` and *"failed to create a scratch directory ...

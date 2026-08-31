@@ -1751,6 +1751,36 @@ the noise floor is guesswork until it is. `workflow_dispatch` takes a
 dispatched run prints what every subprocess on the runner queued and cost,
 rather than inferring the runner from this machine.
 
+**Two gate runs at once corrupt each other, and the mechanism is one this
+repository has already paid for.** `cached_toolchain_dir_with_salt`
+(`tests/common/mod.rs`) shares one persistent fixture per label under
+`target/jails-e2e-cache`, and it has no lock at all:
+
+```rust
+if root.exists() { fs::remove_dir_all(&root).unwrap(); }
+fs::create_dir_all(&root).unwrap();
+```
+
+Two processes racing there fail in two different ways, and a concurrent run
+produced both. One is walking `remove_dir_all` while the other creates files
+underneath it, so the remove dies with `DirectoryNotEmpty` (errno 39) -- the
+panic is on the `unwrap` above. The other reads `.jails-generated-ready`,
+present because a *different* process wrote it before starting to fill the
+directory, returns "reuse this", and then runs against a half-built toolbox:
+`add kafka failed in the services Spring toolbox`.
+
+**That is the `PermitPool` defect again**, one directory over. The Maven budget
+was a `Mutex` and a `Condvar` -- the whole machine's budget only while one
+binary runs at a time -- and is a `flock` now, shared however the suite is
+launched. The e2e cache is the state that did not get the same treatment, so
+the budget is process-safe and the fixture it protects is not.
+
+Until it is locked the rule is operational: **run one gate at a time**, and if
+two have overlapped, `rm -rf target/jails-e2e-cache` before believing the next
+result -- a half-built toolbox is stamped ready and will be reused. The
+failures it produces are all in `capabilities::` and read exactly like real
+capability regressions.
+
 **A test that waits is worse than a test that works.** The single most
 expensive test in the suite was `run_starts_compose_services_only_when_
 explicitly_requested`, at **30.0s** -- the entire wall clock of the `tooling`
