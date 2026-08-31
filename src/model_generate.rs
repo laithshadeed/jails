@@ -233,6 +233,17 @@ pub(crate) fn finish_generation_with_reader_paths(
     // side effect -- the materializer allocates its version from the observed
     // history and refuses if the path it lands on already exists.
     draft.migrations.extend(authored_migration);
+    // **What the compiler noticed but would not refuse over.** A warning that
+    // stays inside the draft is a warning nobody reads; these are the shapes
+    // that compile and run and are probably not what the reader meant, so
+    // they belong on the way past rather than in a report they would have to
+    // know to ask for.
+    if invocation.output == Output::Human {
+        for diagnostic in &draft.diagnostics {
+            eprintln!("jails: {}", diagnostic.message);
+            eprintln!("       fix: {}", diagnostic.fix);
+        }
+    }
     let bundle = jails_workspace::materialize_with_model(
         &snapshot,
         CanonicalModelPatch {

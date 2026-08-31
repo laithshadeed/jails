@@ -616,6 +616,29 @@ impl Compiler {
                 .collect();
         follow_up_effects.sort_by(|left, right| left.id.cmp(&right.id));
         follow_up_effects.dedup_by(|left, right| left.id == right.id);
+        // **A resource with nowhere to keep its rows is worth saying out
+        // loud.** Without a declared storage the scaffold still emits its
+        // record, its port and an in-memory adapter -- a resource that runs
+        // and forgets everything on restart. That is a legitimate shape to
+        // want, and it is also what a reader who simply has not run `jails
+        // add db` yet gets, with nothing to tell the two apart.
+        let mut diagnostics = Vec::new();
+        if next_model.project.dialect != "postgresql" {
+            for entity in next_model.entities.values() {
+                if entity.active && entity.facets.contains(&jails_model::Facet::Repository) {
+                    diagnostics.push(jails_contracts::CompilerDiagnostic {
+                        severity: jails_contracts::DiagnosticSeverity::Warning,
+                        code: "storage-absent".to_string(),
+                        semantic_id: Some(jails_model::StableId::as_str(&entity.id).to_string()),
+                        message: format!(
+                            "`{}` is stored in memory only: this model declares no SQL storage, so no `create table {}` was written",
+                            entity.names.java_type, entity.names.sql_table
+                        ),
+                        fix: "run `jails add db` for PostgreSQL and Flyway migrations, or keep the in-memory adapter".to_string(),
+                    });
+                }
+            }
+        }
         let summary = SemanticPlan {
             model_nodes: next_model.node_count(),
             managed_files: generated.files.len(),
@@ -637,7 +660,7 @@ impl Compiler {
             reader_document_intents,
             follow_up_effects,
             summary,
-            diagnostics: Vec::new(),
+            diagnostics,
         })
     }
 }

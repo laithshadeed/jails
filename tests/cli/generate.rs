@@ -5938,70 +5938,44 @@ fn what_jails_generates_for_boot_2_compiles_and_what_cannot_refuses_by_name() {
     );
 }
 
-/// A scaffold's `create table`, into a project whose schema is `schema.sql`.
+/// A project whose schema is `schema.sql` is told, not written into.
 ///
-/// The bug this closes was silent: the migration is conditional on
-/// `src/main/resources/db/migration` existing, which is `add db`'s directory,
-/// so `jails g scaffold` into a Spring project that initialises its datasource
-/// with `spring.sql.init` wrote a repository, a JDBC adapter and an `IT`
-/// against a table that does not exist -- and printed nothing. Found on
-/// `minicom-15-01-2026/spring`, and verified fixed there: H2 2.x accepts the
-/// block and the whole context starts.
+/// **The silence is the bug, and it is closed from the other side.** The
+/// legacy generator spliced a marked `create table` block into
+/// `src/main/resources/schema.sql` when Flyway's directory was absent, and
+/// wrote nothing and said nothing when neither existed -- so `jails g
+/// scaffold` into a Spring project initialised by `spring.sql.init` produced a
+/// repository, a JDBC adapter and an `IT` against a table that did not exist.
 ///
-/// It is a `codemod` marked block rather than an append, because that is what
-/// makes `destroy` take out exactly the table jails wrote and leave the
-/// reader's own tables alone.
+/// The compiler's answer is the opposite one: `schema.sql` is a file jails
+/// does not manage, so it stays the reader's byte for byte, and the resource
+/// says out loud that its rows live in memory. `storage postgres` is the
+/// declaration that makes jails responsible for a schema, and it keeps that
+/// history in forward migrations where a re-applied script cannot exist.
 #[test]
-fn a_scaffold_writes_its_ddl_into_schema_sql_when_that_is_where_the_schema_lives() {
+fn a_scaffold_leaves_an_unmanaged_schema_sql_alone_and_says_where_its_rows_live() {
     let root = temp_dir("schema-sql-ddl");
     write_spring_fixture(&root);
     let resources = root.join("src/main/resources");
     fs::create_dir_all(&resources).unwrap();
-    // No trailing newline, like the checkout this was found on: the opening
-    // marker landed on the same line as `);` before the separator existed.
-    fs::write(
-        resources.join("schema.sql"),
-        "create table users (\n  id bigint primary key\n);",
-    )
-    .unwrap();
+    let schema_path = resources.join("schema.sql");
+    let reader_schema = "create table users (\n  id bigint primary key\n);";
+    fs::write(&schema_path, reader_schema).unwrap();
 
     let output = jails_cmd(&root, None)
         .args(["g", "scaffold", "Ticket", "id:long@pk", "subject:string!"])
         .output()
         .unwrap();
-    assert!(
-        output.status.success(),
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let told = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(output.status.success(), "{told}");
+    assert!(told.contains("stored in memory only"), "{told}");
+    assert!(told.contains("jails add db"), "{told}");
 
-    let schema = fs::read_to_string(resources.join("schema.sql")).unwrap();
-    assert!(schema.starts_with("create table users ("), "{schema}");
-    // SQL comments, not `#`: a `# jails:` marker in a .sql file is a syntax
-    // error rather than a comment in the wrong place.
-    assert!(schema.contains("-- jails:create-tickets"), "{schema}");
-    assert!(schema.contains("-- /jails:create-tickets"), "{schema}");
-    assert!(schema.contains("create table tickets ("), "{schema}");
-    assert!(schema.contains("\n-- jails:create-tickets"), "{schema}");
-    // No Flyway here, so nothing was written there either.
+    // Byte for byte, marker-free: a file jails does not manage is one it does
+    // not touch, and a `-- jails:` marker in somebody else's schema is a claim
+    // on bytes nothing would ever take back.
+    assert_eq!(fs::read_to_string(&schema_path).unwrap(), reader_schema);
     assert!(!root.join("src/main/resources/db/migration").exists());
-
-    // The inverse: `destroy` takes out the block it wrote, and only that.
-    let output = jails_cmd(&root, None)
-        .args(["destroy", "scaffold", "Ticket", "--force"])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let schema = fs::read_to_string(resources.join("schema.sql")).unwrap();
-    assert!(!schema.contains("jails:create-tickets"), "{schema}");
-    assert!(!schema.contains("create table tickets"), "{schema}");
-    assert!(schema.contains("create table users ("), "{schema}");
 }
 
 /// A project with neither destination is told, rather than handed a resource
@@ -6015,14 +5989,14 @@ fn a_scaffold_with_nowhere_to_put_ddl_says_so() {
         .args(["g", "scaffold", "Ticket", "id:long@pk", "subject:string!"])
         .output()
         .unwrap();
-    let report = String::from_utf8_lossy(&output.stdout).to_string();
+    // Not a refusal: an in-memory resource is a legitimate shape to want, and
+    // it is also what a reader who has not run `jails add db` yet gets, with
+    // nothing else to tell the two apart.
+    let report = String::from_utf8_lossy(&output.stderr).to_string();
     assert!(output.status.success(), "{report}");
-    assert!(
-        report.contains("`create_tickets` was not written"),
-        "{report}"
-    );
+    assert!(report.contains("stored in memory only"), "{report}");
+    assert!(report.contains("create table tickets"), "{report}");
     assert!(report.contains("jails add db"), "{report}");
-    assert!(report.contains("schema.sql"), "{report}");
 }
 
 /// The wire contract, both directions, on the project that needs it.
