@@ -2404,7 +2404,29 @@ file format to retire rather than a subsystem to port.
    `app init` refuses, as the one command that writes a second editable source.
    `new --app` is what remains, and it is a root to thread rather than a format
    to retire.
-3. `adopt` and `modernize` onto reader-file operations.
+3. `adopt` and `modernize` onto reader-file operations. **The blocker is a
+   design decision, and it is now a narrow one.** Both write files the reader
+   owns -- `jails.toml`'s `[layout]` table, and the build file's release and
+   Boot version -- on projects that have no model at all. Neither needs a
+   transaction; both need a *writer*. `apply::` is banned outside the write
+   layer, at a gate held at zero, so the writer has to be
+   `jails-workspace::execute`. But `execute` takes a `PlanBundle` whose `Plan`
+   carries a `CanonicalModelPatch`: every plan it will run is a model
+   transition. Handing it a reader-file patch means either
+
+   - making the layout and the build's release *model* nodes, so `adopt` and
+     `modernize` become ordinary patches -- which contradicts them being
+     pre-canonical, since the model they would patch does not exist yet; or
+   - giving `jails-workspace` an explicit reader-file operation with its own
+     contract, distinct from a compiled plan.
+
+   The second is the shape the ejection path already implies -- it uses the
+   same reader-file operation with a `Missing` before-image -- but it widens
+   "the only canonical project writer" from "runs exact compiled plans" to
+   "runs exact operations, some of which no compiler produced", and that is a
+   sentence in the architecture rather than a refactor. Forging a `Plan`
+   outside the compiler to get past it would break the property the whole
+   cutover is built on.
 4. `jails-drive` and `jails-report` off the legacy value types. **Half done,
    and the half that is done was not porting.** Counting the 111 references
    these two crates held into the nine crates is the finding: roughly two
