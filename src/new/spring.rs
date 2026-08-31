@@ -334,7 +334,7 @@ fn finish_spring_project(tree: &publish::Tree<'_>, requested_deps: &str) -> Resu
 /// Through `apply::remove` rather than `fs::remove_file`, because the write
 /// layer is the only thing that mutates a project and a deletion is a
 /// mutation. The first version of this reached for `std::fs` and reopened a
-/// gate `tests/architecture.rs` holds closed at zero.
+/// gate `tests/architecture/` holds closed at zero.
 ///
 /// Best-effort: a project without one is the ordinary case for `--offline`,
 /// and failing to delete a file nobody asked for is not a reason to fail

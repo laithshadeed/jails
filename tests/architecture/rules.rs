@@ -148,7 +148,7 @@ fn the_abstract_md_ladder_gates_are_ratchets_that_only_move_down() {
     for (gate, actual) in &fell {
         report.push_str(&format!(
             "\nIMPROVED, RECORD IT: {} is {actual}, below the recorded ceiling of {}.\n  \
-             rung {}\n  Lower this row's `ceiling` to {actual} in tests/architecture.rs. An \
+             rung {}\n  Lower this row's `ceiling` to {actual} in tests/architecture/board.rs. An \
              improvement that is not recorded here is one the next change may silently \
              undo, which is exactly the failure abstract.md §8.1 documented.\n",
             gate.name, gate.ceiling, gate.rung

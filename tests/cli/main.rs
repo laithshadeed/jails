@@ -163,12 +163,13 @@ fn verified_plain_toolbox(path: &str) -> &'static std::path::PathBuf {
     VERIFIED.get_or_init(|| {
         let workdir = temp_dir("plain-toolbox-verified");
         // **The manifest is applied *at creation*, not after.** `new-cli`
-        // seeds `.jails/model.jdl`, so an ordinary plain project is canonical
-        // -- and a canonical project refuses `app apply`, because
-        // `.jails/app.toml` is the legacy manifest and two editable sources is
-        // what the cutover forbids. `--app` is the supported route for a
-        // manifest and applies it inside the publication, which is what
-        // `plan.md` §R6.5 made it for.
+        // seeds `.jails/model.jdl`, so an ordinary plain project is canonical,
+        // and `--app` is the route that applies a manifest inside the
+        // publication -- which is what `plan.md` §R6.5 made it for. A
+        // canonical `app apply` would work too now that it replays into the
+        // model rather than refusing, but it would run against a project this
+        // fixture has already published, so the toolbox would be measuring a
+        // different command than the one it exists to cover.
         let manifest = workdir.join("ledger-cli.app.toml");
         fs::write(
             &manifest,

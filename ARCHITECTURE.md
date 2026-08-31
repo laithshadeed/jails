@@ -45,8 +45,9 @@ JUnit console dependency; its inverse removes the node. Test launching is not
 a hidden mutation side channel into the legacy engine.
 
 Canonical mode remains explicit until every advertised new-project workflow
-has a compiler backend. Ordinary `new`, offline Spring, Gradle, `new-cli`, and
-`new --app` therefore stay on the compatibility engine. `.jails/model.jdl` is
+has a compiler backend. `new-cli` and `new --app` seed a model and are
+canonical; ordinary `new`, offline Spring and Gradle stay on the compatibility
+engine. `.jails/model.jdl` is
 the human-source cutover boundary; `.jails/model.toml` is a temporary compiler
 compatibility input for existing canonical projects. Implemented canonical
 mutations and one-way import now write JDL. The two
@@ -101,11 +102,14 @@ its projections without SQL, exact-table revival reuses the preserved table,
 and confirmed drop removes the node and appends `drop table`. Inactive entities
 cannot acquire fields, indexes, or operation edges.
 
-The cutover is currently partial: `jails model check|plan|apply`, the one-way
-record importer, and canonical
-`jails g record|scaffold` use these contracts. `scaffold` is a semantic profile
-over record, repository, service and HTTP facets rather than a separate
-planner. All four operation kinds lower from linked stable identities to typed
+The cutover is currently partial in one direction only: **every advertised
+generator (39 of 39) and capability (25 of 25) has a compiler backend**, held
+by an exhaustive match over the `clap::ValueEnum` that defines each vocabulary,
+so a word added without one fails to compile rather than at the cutover. What
+is still partial is the *deletion* — the legacy crates are all still present,
+and ordinary `jails new` still creates a project that uses them. `scaffold` is
+a semantic profile over record, repository, service and HTTP facets rather than
+a separate planner. All four operation kinds lower from linked stable identities to typed
 managed Java ABI. Familiar `usecase`, `query`, `transition`, and `event`
 frontends append those declarations as `ModelPatch` operations; executable
 Spring HTTP adapters are compiler-owned by the `api` capability, while business
@@ -194,19 +198,19 @@ exact-plan E2E proves preview, plan-out, apply and frozen convergence.
 
 ## 1. Legacy system overview during cutover
 
-[`jails`](file:///home/laith/code/jails/README.md) is an opinionated developer CLI and scaffolding tool for **Java / Spring Boot** and plain Maven projects, inspired by Rails' developer experience.
+[`jails`](README.md) is an opinionated developer CLI and scaffolding tool for **Java / Spring Boot** and plain Maven projects, inspired by Rails' developer experience.
 
 ### Legacy architectural tenets
 1. **Explicit Ports & Adapters (Hexagonal Architecture)**: Domain models are pure Java records. Persistence layers are explicit interfaces with derived raw-JDBC implementations (`JdbcClient`) and in-memory test fakes. No heavy ORMs (Hibernate/JPA) are generated.
 2. **Transactional Codebase Mutations**: Every mutation—generating a scaffold, adding a capability, modifying `pom.xml` or `application.properties`—is treated as an atomic, journaled database transaction with full dry-run parity (`--pretend`).
 3. **Two-Phase Commit & Roll-Forward Durability**: Multi-file writes are staged into private transaction inodes and hard-linked into the project root. Interrupted executions roll forward on the next invocation rather than leaving half-written files.
-4. **Sub-Second Feedback Loops**: Includes a resident JVM test daemon ([`testd`](file:///home/laith/code/jails/crates/jails-drive/src/testd.rs)) that cuts JUnit turnaround time to **20–60ms** by analyzing constant pools in `.class` bytecode to test only affected files.
+4. **Sub-Second Feedback Loops**: Includes a resident JVM test daemon ([`testd`](crates/jails-drive/src/testd.rs)) that cuts JUnit turnaround time to **20–60ms** by analyzing constant pools in `.class` bytecode to test only affected files.
 
 ---
 
 ## 2. Layered Crate Architecture
 
-The repository is organized into distinct crates in the [`crates/`](file:///home/laith/code/jails/crates) directory. Dependencies flow downward only; cycles are prevented at compile time.
+The repository is organized into distinct crates in the [`crates/`](crates) directory. Dependencies flow downward only; cycles are prevented at compile time.
 
 ```mermaid
 flowchart TD
@@ -270,28 +274,55 @@ flowchart TD
 
 ## 3. Crate Responsibilities Index
 
+Nineteen crates: the **four canonical** ones the cutover is building toward,
+**thirteen legacy** ones the strangler will delete, and **two leaves** that
+belong to neither ladder. A crate may only depend on one below it, and Cargo
+enforces that; `no_module_depends_on_a_layer_above_its_own` in
+`tests/architecture/` enforces the same rule for module-level edges the
+compiler cannot see. The `LAYERS` table in `tests/architecture/rules.rs` is the
+authority on which crate a module belongs to — this index is prose, and prose
+is what goes stale.
+
+### The canonical ladder, lowest first
+
+| Crate | Directory | Contract |
+| :--- | :--- | :--- |
+| **`jails-model`** | [`crates/jails-model/`](crates/jails-model) | Closed source schema, stable IDs, linking, semantic diagnostics, `AppModel` and `ModelPatch`. Both JDL dialects parse here. |
+| **`jails-contracts`** | [`crates/jails-contracts/`](crates/jails-contracts) | Portable `WorkspaceSnapshot`, `PlanDraft`, exact `Plan`, operations, trees and blobs. |
+| **`jails-compiler`** | [`crates/jails-compiler/`](crates/jails-compiler) | Pure semantic lowering to a desired artifact tree. No filesystem, environment or subprocess access — held by `canonical_compiler_is_pure_after_capture`. |
+| **`jails-workspace`** | [`crates/jails-workspace/`](crates/jails-workspace) | Capture, exact materialization, verification, and the single canonical executor. |
+
+### Neither ladder
+
 | Crate | Directory | Purpose |
 | :--- | :--- | :--- |
-| [**`jails`**](file:///home/laith/code/jails/src/main.rs) | [`src/`](file:///home/laith/code/jails/src) | CLI argument parser ([Clap](file:///home/laith/code/jails/src/main.rs#L31-L69)), global flags (`--pretend`, `--output`), and [dispatch router](file:///home/laith/code/jails/src/dispatch.rs). |
-| [**`jails-engine`**](file:///home/laith/code/jails/crates/jails-engine/README.md) | [`crates/jails-engine/`](file:///home/laith/code/jails/crates/jails-engine) | Connects parsed CLI requests to recipes, runs preparation, acquires project locks, and calls the commit engine. |
-| [**`jails-prepare`**](file:///home/laith/code/jails/crates/jails-prepare/README.md) | [`crates/jails-prepare/`](file:///home/laith/code/jails/crates/jails-prepare) | In-memory transaction planner: calculates diffs, AST merges, file operations, and prepares execution bundles. |
-| [**`jails-commit`**](file:///home/laith/code/jails/crates/jails-commit/README.md) | [`crates/jails-commit/`](file:///home/laith/code/jails/crates/jails-commit) | The durable transaction executor: handles file locks (`flock`), Write-Ahead Logging (`.jails/`), staged publishing, and crash recovery. |
-| [**`jails-generate`**](file:///home/laith/code/jails/crates/jails-generate/README.md) | [`crates/jails-generate/`](file:///home/laith/code/jails/crates/jails-generate) | Code generation recipes for Java, Spring Boot, and PostgreSQL (scaffolds, repositories, controllers, migrations). |
-| [**`jails-project`**](file:///home/laith/code/jails/crates/jails-project/README.md) | [`crates/jails-project/`](file:///home/laith/code/jails/crates/jails-project) | Project introspection and manipulation: Maven `pom.xml`, Gradle builds, `compose.yaml`, and `application.properties`. |
-| [**`jails-java`**](file:///home/laith/code/jails/crates/jails-java/README.md) | [`crates/jails-java/`](file:///home/laith/code/jails/crates/jails-java) | Java AST syntax inspection, mustache-style template rendering, and `.class` bytecode constant-pool analysis. |
-| [**`jails-drive`**](file:///home/laith/code/jails/crates/jails-drive/README.md) | [`crates/jails-drive/`](file:///home/laith/code/jails/crates/jails-drive) | Active runners: executes Maven/Gradle builds, manages the [`testd`](file:///home/laith/code/jails/crates/jails-drive/src/testd.rs) background JVM daemon, and interactive consoles (`psql`, Kafka). |
-| [**`jails-report`**](file:///home/laith/code/jails/crates/jails-report/README.md) | [`crates/jails-report/`](file:///home/laith/code/jails/crates/jails-report) | Read-only diagnostic tools: [`doctor`](file:///home/laith/code/jails/crates/jails-report/src/doctor.rs) checks, [`why`](file:///home/laith/code/jails/crates/jails-report/src/why.rs) log diagnosis, routes, bean dependency graphs. |
-| [**`jails-protocol`**](file:///home/laith/code/jails/crates/jails-protocol/README.md) | [`crates/jails-protocol/`](file:///home/laith/code/jails/crates/jails-protocol) | Domain types, strongly-typed newtypes, closed vocabularies, and transaction schema contracts. |
-| [**`jails-spec`**](file:///home/laith/code/jails/crates/jails-spec/README.md) | [`crates/jails-spec/`](file:///home/laith/code/jails/crates/jails-spec) | Parser for the field specification DSL (`name:string!`, `user_id:uuid?`, `@scope`, `@index`). |
-| [**`jails-state`**](file:///home/laith/code/jails/crates/jails-state/README.md) | [`crates/jails-state/`](file:///home/laith/code/jails/crates/jails-state) | Directory listing and state inspection underneath `.jails/`. |
-| [**`jails-support`**](file:///home/laith/code/jails/crates/jails-support/README.md) | [`crates/jails-support/`](file:///home/laith/code/jails/crates/jails-support) | Reusable utilities: OS file locking (`flock`), process execution, error modeling. |
-| [**`jails-testkit`**](file:///home/laith/code/jails/crates/jails-testkit/README.md) | [`crates/jails-testkit/`](file:///home/laith/code/jails/crates/jails-testkit) | Test infrastructure: atomic scratch directories, project fixtures, process-global CWD locking. |
+| **`jails-codemod`** | [`crates/jails-codemod/`](crates/jails-codemod) | The marked block (`# jails:<marker>`), and only that. **No dependencies at all**, which is the point: it lived in `jails-project` until three more implementations appeared in crates that cannot depend on it. |
+| **`jails-codec-derive`** | [`crates/jails-codec-derive/`](crates/jails-codec-derive) | The `#[derive(Codec)]` proc macro. |
+
+### The legacy ladder, lowest first
+
+| Crate | Directory | Purpose |
+| :--- | :--- | :--- |
+| [**`jails`**](src/main.rs) | [`src/`](src) | CLI argument parser ([`cli.rs`](src/cli.rs)), global flags (`--pretend`, `--output`), the [dispatch router](src/dispatch.rs), and the canonical `model_*` frontends. |
+| [**`jails-engine`**](crates/jails-engine/README.md) | [`crates/jails-engine/`](crates/jails-engine) | Connects parsed CLI requests to recipes, runs preparation, acquires project locks, and calls the commit engine. |
+| [**`jails-prepare`**](crates/jails-prepare/README.md) | [`crates/jails-prepare/`](crates/jails-prepare) | In-memory transaction planner: calculates diffs, AST merges, file operations, and prepares execution bundles. |
+| [**`jails-commit`**](crates/jails-commit/README.md) | [`crates/jails-commit/`](crates/jails-commit) | The durable transaction executor: handles file locks (`flock`), Write-Ahead Logging (`.jails/`), staged publishing, and crash recovery. |
+| [**`jails-generate`**](crates/jails-generate/README.md) | [`crates/jails-generate/`](crates/jails-generate) | Code generation recipes for Java, Spring Boot, and PostgreSQL (scaffolds, repositories, controllers, migrations). |
+| [**`jails-project`**](crates/jails-project/README.md) | [`crates/jails-project/`](crates/jails-project) | Project introspection and manipulation: Maven `pom.xml`, Gradle builds, `compose.yaml`, and `application.properties`. |
+| [**`jails-java`**](crates/jails-java/README.md) | [`crates/jails-java/`](crates/jails-java) | Java AST syntax inspection, mustache-style template rendering, and `.class` bytecode constant-pool analysis. |
+| [**`jails-drive`**](crates/jails-drive/README.md) | [`crates/jails-drive/`](crates/jails-drive) | Active runners: executes Maven/Gradle builds, manages the [`testd`](crates/jails-drive/src/testd.rs) background JVM daemon, and interactive consoles (`psql`, Kafka). |
+| [**`jails-report`**](crates/jails-report/README.md) | [`crates/jails-report/`](crates/jails-report) | Read-only diagnostic tools: [`doctor`](crates/jails-report/src/doctor.rs) checks, [`why`](crates/jails-report/src/why.rs) log diagnosis, routes, bean dependency graphs. |
+| [**`jails-protocol`**](crates/jails-protocol/README.md) | [`crates/jails-protocol/`](crates/jails-protocol) | The plan/transition/effect vocabulary: recipes, intents, closed vocabularies, and transaction schema contracts. The validating newtypes it used to own now live in `jails-support`, because the crates that outlive the cutover need them and this one does not. |
+| [**`jails-spec`**](crates/jails-spec/README.md) | [`crates/jails-spec/`](crates/jails-spec) | Parser for the field specification DSL (`name:string!`, `user_id:uuid?`, `@scope`, `@index`). |
+| [**`jails-state`**](crates/jails-state/README.md) | [`crates/jails-state/`](crates/jails-state) | Directory listing and state inspection underneath `.jails/`. |
+| [**`jails-support`**](crates/jails-support/README.md) | [`crates/jails-support/`](crates/jails-support) | Write, run, encode, and name: the apply layer (the only module that writes), OS file locking (`flock`), process execution, error modeling, and the validating newtypes (`identity`, `identifier`). |
+| [**`jails-testkit`**](crates/jails-testkit/README.md) | [`crates/jails-testkit/`](crates/jails-testkit) | Test infrastructure: atomic scratch directories, project fixtures, process-global CWD locking. |
 
 ---
 
 ## 4. The Mutation Lifecycle (Transaction Protocol)
 
-Every state change in `jails` runs through the transaction protocol implemented in [`jails-engine`](file:///home/laith/code/jails/crates/jails-engine/src/route/commit.rs) and [`jails-commit`](file:///home/laith/code/jails/crates/jails-commit/src/execute.rs).
+Every state change in `jails` runs through the transaction protocol implemented in [`jails-engine`](crates/jails-engine/src/route/commit.rs) and [`jails-commit`](crates/jails-commit/src/execute.rs).
 
 ```mermaid
 sequenceDiagram
@@ -335,7 +366,7 @@ sequenceDiagram
 
 ## 5. Fast Test Daemon (`testd`)
 
-One of `jails`' most significant developer-experience features is [`jails testd`](file:///home/laith/code/jails/crates/jails-drive/src/testd.rs).
+One of `jails`' most significant developer-experience features is [`jails testd`](crates/jails-drive/src/testd.rs).
 
 ```mermaid
 flowchart LR
@@ -348,19 +379,19 @@ flowchart LR
 ```
 
 - **Warm JVM**: Cold `mvn test` costs 1–2 seconds per invocation because of JVM boot, Surefire plugin initialization, and classloading. A resident JVM keeps classloaders warm.
-- **Bytecode Dependency Analysis**: [`jails-java::classfile`](file:///home/laith/code/jails/crates/jails-java/src/classfile.rs) reads compiled `.class` constant pools in `target/classes` to construct an in-memory reverse dependency graph. Running `jails testd --affected` identifies and runs *only* the test classes that transitively depend on what you just edited.
+- **Bytecode Dependency Analysis**: [`jails-java::classfile`](crates/jails-java/src/classfile.rs) reads compiled `.class` constant pools in `target/classes` to construct an in-memory reverse dependency graph. Running `jails testd --affected` identifies and runs *only* the test classes that transitively depend on what you just edited.
 
 ---
 
 ## 6. How to Explore the Codebase
 
-1. **Start with the CLI entrypoint**: Read [`src/main.rs`](file:///home/laith/code/jails/src/main.rs) and [`src/dispatch.rs`](file:///home/laith/code/jails/src/dispatch.rs) to see how CLI subcommands are defined and routed.
+1. **Start with the CLI entrypoint**: Read [`src/main.rs`](src/main.rs) and [`src/dispatch.rs`](src/dispatch.rs) to see how CLI subcommands are defined and routed.
 2. **Follow a Generation Command**:
-   - Inspect [`jails-generate::generate`](file:///home/laith/code/jails/crates/jails-generate/src/generate.rs) to see how domain records, DTOs, and controllers are constructed.
-   - Inspect [`jails-engine::route::artifact`](file:///home/laith/code/jails/crates/jails-engine/src/route/artifact.rs) to trace how an artifact recipe turns into a transaction.
+   - Inspect [`jails-generate::generate`](crates/jails-generate/src/generate.rs) to see how domain records, DTOs, and controllers are constructed.
+   - Inspect [`jails-engine::route::artifact`](crates/jails-engine/src/route/artifact.rs) to trace how an artifact recipe turns into a transaction.
 3. **Understand the Transaction Engine**:
-   - Read [`jails-prepare::pipeline`](file:///home/laith/code/jails/crates/jails-prepare/src/pipeline.rs) to see how diffs and merges are prepared.
-   - Read [`jails-commit::execute`](file:///home/laith/code/jails/crates/jails-commit/src/execute.rs) to see the 11-step atomic commit sequence.
+   - Read [`jails-prepare::pipeline`](crates/jails-prepare/src/pipeline.rs) to see how diffs and merges are prepared.
+   - Read [`jails-commit::execute`](crates/jails-commit/src/execute.rs) to see the 11-step atomic commit sequence.
 4. **Explore Diagnostics & Driving**:
-   - See [`jails-report::doctor`](file:///home/laith/code/jails/crates/jails-report/src/doctor.rs) for environment checking logic.
-   - See [`jails-drive::run`](file:///home/laith/code/jails/crates/jails-drive/src/run.rs) and [`jails-drive::testd`](file:///home/laith/code/jails/crates/jails-drive/src/testd.rs) for build and test orchestration.
+   - See [`jails-report::doctor`](crates/jails-report/src/doctor.rs) for environment checking logic.
+   - See [`jails-drive::run`](crates/jails-drive/src/run.rs) and [`jails-drive::testd`](crates/jails-drive/src/testd.rs) for build and test orchestration.

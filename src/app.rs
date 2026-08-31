@@ -1,9 +1,16 @@
-//! Apply a small, declarative application manifest through Jails' existing
-//! capability and generator engines.
+//! Apply a small, declarative application manifest.
 //!
 //! This is deliberately domain-blind. A crawler and a support inbox are two
 //! different lists of the same generic intents; neither gets a command,
 //! branch, enum, or template in Jails core.
+//!
+//! **Two backends, and which one runs is the project's answer, not a flag.**
+//! A legacy project applies the manifest through the capability and generator
+//! engines, as one transition with a journal to resume from. A canonical
+//! project *replays* it row by row into the model, through the same frontends
+//! `jails g` and `jails add` use -- see [`replay`] for why that is not a
+//! second editable source, and [`refuse_manifest`] for the one subcommand
+//! that still refuses.
 
 mod manifest;
 use manifest::*;
@@ -202,21 +209,22 @@ fn fingerprint(intent: &GenerateArgs) -> String {
 /// against a typed comparison precisely because two implementations of one
 /// question disagree. Here `plan` *is* `apply` stopped one step before the
 /// lock, so what it names is exactly what the apply then writes.
-/// The manifest is a second desired-state authority, so a canonical project
-/// refuses it.
+/// `app init` *writes* a manifest, which would be a second editable authority
+/// beside the model, so a canonical project refuses it.
 ///
-/// Every other mutating command was gated at the `main.rs` match and this one
-/// was not, which made it the one way to reach the legacy engine from a
-/// project that owns `.jails/model.jdl`: `app apply` planned `jails.toml`, a
-/// legacy ledger and capability Java into `src/main/java`, outside the managed
-/// tree, against a model it had never read. Two editable authorities writing
-/// one project is the disease this compiler exists to cure, and a *planner*
-/// that can still be invoked is not a cured one.
+/// **Only `init`.** `plan` and `apply` replay instead -- see [`replay`]. The
+/// distinction is between writing a second editable source and reading one
+/// once: a replay puts declarations into the model, and the model is what
+/// every later command reads.
 ///
-/// All three subcommands refuse, not only `apply`. `init` writes the second
-/// authority, and `plan` renders a legacy transition the canonical executor
-/// would never perform -- a preview of work that cannot happen is worse than
-/// a refusal, because the reader believes it.
+/// What all three used to refuse was a parallel *engine*. Every other mutating
+/// command was gated at the dispatch match and this one was not, which made
+/// `app apply` the one way to reach the legacy engine from a project that owns
+/// `.jails/model.jdl`: it planned `jails.toml`, a legacy ledger and capability
+/// Java into `src/main/java`, outside the managed tree, against a model it had
+/// never read. Two editable authorities writing one project is the disease
+/// this compiler exists to cure, and a *planner* that can still be invoked is
+/// not a cured one.
 fn refuse_manifest(command: &str) -> Result<()> {
     crate::model_command::refuse_legacy_mutation(
         command,

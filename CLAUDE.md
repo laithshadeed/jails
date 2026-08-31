@@ -25,10 +25,16 @@ available.
 This file describes what the code *is* and the traps in it; `plan.md` is the
 working checklist of what is not done and why. Do not add proposals here.
 
-**Items are `P<phase>.<item>`, and the numbering is deliberate.** Roughly 262
-source comments cite an *older* `plan.md` by section (`plan.md §R6`,
+**Items are `P<phase>.<item>`, and the numbering is deliberate.** 271 source
+comments cite `plan.md`, 97 of them an *older* one by section (`plan.md §R6`,
 `plan.md §19.2`), and `P3.1` can never be confused with `§R6`, so both citation
 styles keep working against the same filename. `plan.md`'s own header says so.
+
+Every citation count in this section is
+`grep -rIoh --include='*.rs' '<doc>\.md' crates/*/src src tests | wc -l`, and
+each drifts with every commit that adds a comment. **Re-measure before quoting
+one**; they are recorded to show the order of magnitude that makes leaving the
+citations in place cheaper than stripping them, not as facts to cite.
 
 **A closed item is *deleted*, never marked done** -- from `plan.md` and, in the
 same commit, from the file it closes an entry in: `bugs.md`, `missing.md`,
@@ -36,7 +42,7 @@ same commit, from the file it closes an entry in: `bugs.md`, `missing.md`,
 `git log -p -- plan.md` is where a closed item and the measurement that closed
 it live.
 
-**`pending.md` is gone, and 116 comments still cite it.** It was the checklist
+**`pending.md` is gone, and 117 comments still cite it.** It was the checklist
 until `2f8003ba` (2026-08-25) deleted it; `plan.md` and `missing.md`, which an
 earlier round had folded *into* it, are back on disk as the checklist and one
 of its sources. A `pending.md §N` citation resolves the way every deleted
@@ -48,7 +54,7 @@ git show <commit>^:pending.md             # its last content
 ```
 
 **Four more design documents resolve the same way** and are not on disk:
-`abstract.md` (58 citations -- the §7 ladder `tests/architecture/` implements),
+`abstract.md` (62 citations -- the §7 ladder `tests/architecture/` implements),
 `refactor.md` (1), `playground.md` and `test.md` (0 each). Those citations are
 still the best record of *why* a decision was made, which is why they were left
 in place rather than stripped when the files went.
@@ -101,13 +107,22 @@ and every later plan refused the same way. `write_atomic` stages under
 recognise its own debris, and the sweep runs under the lock, where nothing
 matching can belong to a live run.
 
-Do not make ordinary `new`, offline Spring, Gradle, `new-cli`, or `new --app`
-canonical by default until every advertised follow-up workflow has a compiler
-backend. `.jails/model.jdl` is the intended authoring boundary;
-`.jails/model.toml` remains a temporary compatibility input for existing
-canonical projects; the one-way importer now emits JDL. Never permit both
-editable sources. Default-on
-partial coverage breaks working capability commands.
+**`new-cli` and `new --app` are canonical; ordinary `new` is not, and that is
+the cutover's first step rather than a switch** -- see `src/new.rs` below for
+the measurement blocking it. Do not make offline Spring or Gradle canonical by
+default until every advertised follow-up workflow has a compiler backend:
+default-on partial coverage breaks working capability commands.
+
+`.jails/model.jdl` is the intended authoring boundary; `.jails/model.toml`
+remains a temporary compatibility input for existing canonical projects; the
+one-way importer now emits JDL. **Never permit both editable sources** -- and
+read that as it is written, because two of the things it sounds like it
+forbids are allowed. `model import` and `app plan|apply` both *read* a legacy
+authority and write declarations into the model, one way, once. That is not a
+second editable source, because the model is what every later command reads.
+What is forbidden is a second thing the reader *edits*, which is why `app init`
+-- the subcommand that writes a manifest -- is the one that still refuses on a
+canonical project.
 
 `model import` is one-way and fail-closed. Its currently supported boundary is
 a ledger containing record and enum intents only. For every source artifact,
@@ -316,18 +331,18 @@ module belongs to** — this one is the prose, and prose is what goes stale.
 
 | crate | what belongs in it |
 |---|---|
-| `jails-support` | **write, run, encode.** Nothing here knows what a Java project is — `codemod` moved to `jails-project` and `CWD_LOCK` to `jails-testkit` when that rule was applied honestly, and `runner` is `hermetic`, named for the contract that separates it from `process`. `Result`, `Failure` and `debug_cmd` live here. |
+| `jails-support` | **write, run, encode, and name.** Nothing here knows what a Java project is — `codemod` moved to `jails-project` and `CWD_LOCK` to `jails-testkit` when that rule was applied honestly, and `runner` is `hermetic`, named for the contract that separates it from `process`. `Result`, `Failure` and `debug_cmd` live here, and so do `identity` and `identifier` — see the note below the table. |
 | `jails-testkit` | one `CWD_LOCK`, taken as a `[dev-dependency]`. Test infrastructure that cannot be `#[cfg(test)]`, because a dependent crate's tests cannot see one. |
 | `jails-java` | reading Java (`java`, `classfile`) and rendering templates into it (`template`). |
 | `jails-spec` | where a project is and how it is laid out (`build`, `spec::paths`, `spec::layout`), what a field spec means (`spec::field`), and the closed CLI vocabularies (`spec::kind`). |
 | `jails-state` | **jails' own machine state, read and classified**: `compat` (absent / current / unreadable, never a fourth answer that quietly repairs something) and `listing` (what a directory holds). Below the Java project on purpose — `jails-commit` needs both and neither is about Java. |
-| `jails-protocol` | **the validated values every closed jails format is built from** — `Recipe`, `Name`, `Package`, `FieldSpec`, `EntityId`, `ResourceKey`, and the plan/transition/effect vocabulary above them. One constructor per type, and every wire decoder calls it, so a value rejected at the CLI cannot arrive through a recovered journal instead. 23 flat modules; §7.4 of `pending.md` groups them. |
+| `jails-protocol` | **the plan/transition/effect vocabulary** — `Recipe`, `FieldSpec`, `EntityId`, `ResourceKey` and the intent, durable and observation values above them. One constructor per type, and every wire decoder calls it, so a value rejected at the CLI cannot arrive through a recovered journal instead. 43 modules under five heads (`vocabulary`, `intent`, `durable`, `observe`, `compatibility`); §7.4 of `pending.md` groups them. The validating newtypes it used to own are one crate lower — again, see below. |
 | `jails-project` | one resolved `model::Project`, plus every file jails writes *about* a project — the reader's (`config`, `compose`, `pom`, `gradle`) and the read-only `projection` of jails' own. `compat` is `jails-state`'s, one row up; this said both. |
 | `jails-generate` | everything that decides what Java to write: `generate`, `spring`, `add`, `sql`. Its planning half (`plan_for`, `artifacts_for`) is what the engine calls and is pure. |
 | `jails-prepare` | **turning semantic desire into an exact executable transition**: `desire`, `reconcile`, `pipeline`, `merge`, `sandbox`, `report`. Plan-only — nothing here creates `.jails/` or commits anything. Everything a commit needs to *decide* is decided here, so the executor applies a value rather than re-deriving one. |
 | `jails-commit` | **making a prepared transition durable, and recovering one**: `store`, `journal`, `execute`, `activate`, `recover`, `gc`. Crash recovery rolls a fully persisted, validated journal *forward*; preimages exist for a guarded explicit abort and for audit, not as the crash policy. That is what keeps this crate small — there is one direction to finish in. |
 | `jails-report` | commands that **answer a question**: `doctor`, `why`, `explain`, `source`, `commands`. Read-only by contract, and the contract is structural — this crate sits *below* `jails-drive`, so a reporting command that started something would not compile. |
-| `jails-drive` | commands that **start something**: `run`, `testd`, `launcher`, `affected`, `migrate`, `kafka`, `console`, `bench`, `lint`, `reports`. The one edge back down is `run` → `report::why`, because `mvn spring-boot:run` exits 0 over a failed startup. |
+| `jails-drive` | commands that **start something**: `run`, `testd`, `launcher`, `affected`, `migrate`, `kafka`, `console`, `bench`, `lint`, `reports`, and `testing` — the vocabulary of `jails test`, whose only consumers are here and in the binary. The one edge back down is `run` → `report::why`, because `mvn spring-boot:run` exits 0 over a failed startup. |
 | `jails-engine` | **one request, as one transition.** `route` and its submodules are where a parsed command becomes a capture, a desire, a preparation and a commit. Above the executor because it drives it; below the CLI because it is not about arguments. |
 | `jails` (root) | the binary: `main`, `new`, `app`, `invoke`, and `tests/`. |
 
@@ -344,13 +359,32 @@ everything below the generators reached up into `generate.rs` for `Field`,
 `layout` and `find_project_root`. `jails-spec` is those symbols at their own
 layer.
 
-Four things to know before touching it:
+**Vocabulary a surviving crate needs does not live in a crate that dies.**
+`jails-drive` and `jails-report` are not legacy -- they are the commands that
+outlive the cutover -- and they held 111 references into the nine crates the
+strangler deletes. Counting what those references *were* is the finding: about
+two thirds were vocabulary parked beside the legacy engine rather than calls
+into it. So `identity` (the validating newtypes -- `ObjectId`, `Name`,
+`Package`, `JavaType`, `ProjectPath`, `SqlName`) and `identifier` moved down
+into `jails-support`, and `testing` moved up into `jails-drive`. Nothing about
+any of them changed. `jails-drive` went 61 references to 15; `jails-report`'s
+remaining 50 are reports *about* the legacy ledger, which is a different
+problem and not a move. The canonical four already depend on nothing legacy,
+so those two crates and the binary are the whole blocker.
+
+Five things to know before touching it:
 
 - **Each crate's `lib.rs` carries a facade block** re-exporting the lower
   crates, so module code keeps saying `crate::java` and `crate::Result`
   wherever it ships. Only that block knows which crate a module lives in,
   which is what makes moving one a one-line change instead of a sweep through
-  forty files. Keep it trimmed to what the crate actually references.
+  forty files. Keep it trimmed to what the crate actually references. **A move
+  leaves a re-export behind**, which is why the 115 files that say
+  `jails_protocol::identity::Name` still say it after `identity` changed
+  crates.
+- **`jails-support` names itself** with `extern crate self as jails_support`.
+  `#[derive(Codec)]` writes absolute paths into every impl it generates, and
+  those do not resolve inside the crate that now hosts them.
 - **`CARGO_MANIFEST_DIR` expands at the call site**, so `template!` cannot bake
   in its own root: it would resolve to whichever crate invoked it.
   `jails_java::template_at!` takes the root as an argument and each crate
@@ -369,7 +403,24 @@ Four things to know before touching it:
 
 ## Layout
 
-- `src/main.rs` — clap derive CLI, dispatch only.
+- **The binary's front half is three files, split by the question each one
+  answers.** `src/cli.rs` is the clap definition — read when somebody asks
+  *what can I type*. `src/main.rs` is the module list, the tree it hands to
+  clap, and `main`'s translation of a `Failure` into an exit status.
+  `src/dispatch.rs` is the match from a parsed command to a transition — read
+  when somebody asks *what does it do*. It shipped as `invoke` for two years
+  because `jails-java` already had a `dispatch` and every architecture gate
+  identified a file by its **basename**, so two modules sharing a name were
+  measured against each other's rules; `module_of` answers `(crate, module)`
+  now, and the file is called what it is.
+- **The canonical frontends are `src/model_*.rs`**, one per surface —
+  `model_generate`, `model_resource`, `model_capability`, `model_destroy`,
+  `model_rename`, `model_index`, `model_migration`, `model_setting`,
+  `model_eject`, `model_import`, `model_upgrade`, `model_init`, `model_explain`,
+  `model_doctor`, `model_status`, and the JDL editors behind
+  `model_jdl_edit`/`model_generate_jdl`. `src/model_command.rs` is the
+  canonical/legacy switch and the one owner of *which directory a model command
+  is about* — see the first gotcha below.
 - `src/new.rs` — `new` (start.spring.io wrapper, real network) and `new-cli`
   (hand-written pom/App/AppTest, no network). Both also seed
   `src/test/resources/fixtures/.gitkeep`.
@@ -719,9 +770,10 @@ Four things to know before touching it:
   `crates/jails-generate/src/spring/workflow.rs` (usecase + its outbox half, transition, query),
   `crates/jails-generate/src/spring/durable.rs` (job, durable-job), `crates/jails-generate/src/spring/http.rs` (client,
   fetcher, http-workflow, http-sink) and `crates/jails-generate/src/spring/schema.rs` (association,
-  idempotency). `spring.rs` itself is down from 6,624 to ~1,900 lines and holds
-  the shared precondition, the shared helpers used by more than one kind, and
-  the capability slices. `transition` and `query` have since moved out of
+  idempotency). `spring.rs` itself is down from 6,624 to 1,118 lines -- 558 of
+  them production, which is what the board counts -- and holds the shared
+  precondition, the shared helpers used by more than one kind, and the
+  capability slices. `transition` and `query` have since moved out of
   `workflow.rs` into files of their own, and each then split again **by
   secret**: `spring/query/proof.rs` and `spring/transition/proof.rs` hold what
   jails writes to *prove* the recipe, because the fact a test turns on -- where
@@ -736,10 +788,14 @@ Four things to know before touching it:
   `include_str!` is relative to the *file*, so every template path in a moved
   block gains a `../`.
 
-  The largest module is now `crates/jails-generate/src/generate.rs`, which `abstract.md` §3.2 calls
-  Ousterhout's named anti-pattern verbatim — parse → dispatch → write → side
-  effects. `tests/architecture/` has a gate on the largest module precisely
-  so a split cannot be satisfied by *moving* a monolith.
+  **It is no longer the largest module either, and neither is `generate.rs`.**
+  The board's *largest module* row is at 688 production lines and reads
+  `crates/jails-model/src/jdl/v1/parser.rs`; `generate.rs` is 723 raw lines.
+  `abstract.md` §3.2 called `generate.rs` Ousterhout's named anti-pattern
+  verbatim — parse → dispatch → write → side effects — and that shape is what
+  the splits above removed. The gate stays because it is on *whatever* the
+  largest module is, so a split cannot be satisfied by *moving* a monolith;
+  run the board rather than trusting the filename in this paragraph.
 
   **Placement is a value, not six strings: `spring::Slice`.** Every generator
   and renderer here takes a `Slice` — a resolved `model::Project` plus the
@@ -765,12 +821,35 @@ Four things to know before touching it:
   generated code targets APIs that moved recently, and the failure mode is
   silent: it compiles against the version you had.
 - `src/new.rs` also owns **`--app <manifest>`** on both `new` and `new-cli`:
-  create the project, seed `.jails/app.toml`, apply it. One command from an
-  empty directory to a project that passes `mvn clean verify`. Making it work
-  meant removing every `Project::discover()` from the apply path — every route
-  takes an explicit `Run` carrying a resolved `Project` — because `discover`
-  reads the **process CWD**, which is the parent directory, not the project
-  just created.
+  create the project, seed the model, apply it. One command from an empty
+  directory to a project that passes `mvn clean verify`. Making it work meant
+  removing every `Project::discover()` from the apply path — every route takes
+  an explicit `Run` carrying a resolved `Project` — because `discover` reads
+  the **process CWD**, which is the parent directory, not the project just
+  created.
+
+  **`new --app` is canonical**: a model, no ledger, generation under
+  `.jails/generated`. The root rides on `Invocation` rather than being threaded
+  as a parameter, and that was the shape worth finding — `jails new` stands in
+  the *parent* of the project it is creating, so `model_command::root` resolves
+  the wrong one, while an explicit root would have reached roughly nine
+  frontend entry points on the one ladder rung that exists to discourage a fact
+  re-derived from a primitive. `Invocation` is that resolved value and was
+  already threaded everywhere. The `_at` family — `compile_at`, `load_model_at`,
+  `resolve_manifest_at`, `sync_at`, `materialize_seed` — is a **containment
+  boundary** that stops the walk from the process directory, not a pattern to
+  extend downward.
+
+  **Plain `jails new` is still legacy, and that is the cutover's first step.**
+  It is one line to seed the model and it is not a switch: flipping it reaches
+  a canonical project that applies and compiles, and what stops it is a
+  measurement — 8 reports and 23 tests canonically against 21 and 57 from the
+  legacy engine for the same manifest. The missing ones are the per-operation
+  controller tests `examples.rs` names, so the flip is blocked on deciding
+  whether the canonical `api` capability should emit them. `new` must also seed
+  its six default properties as `prop` declarations rather than reader-owned
+  text, or a capability declaring the same key collides with the project's own
+  scaffolding.
 - `src/app.rs` — `jails app plan|apply`: a declarative manifest at
   `.jails/app.toml` (`schema`, `capabilities`, and a closed `[[generate]]`
   schema of `kind`/`name`/`fields`/`timestamps`/`indexes`/`package`/`on`/
@@ -779,10 +858,21 @@ Four things to know before touching it:
   under both spellings is an error, not a last-one-wins). **Deliberately domain-blind** — the module docs say it,
   and it is load-bearing: a crawler, a support inbox and a payments gateway
   are three lists of the same generic intents, and none of them gets a
-  command, branch, enum or template in core. `apply` is **one transition** over
-  the whole manifest: capabilities and intents are declared together and
-  reconciliation works out the difference, so an interrupted apply resumes from
-  the journal rather than from a half-written registry.
+  command, branch, enum or template in core.
+
+  **There are two backends, and the project decides which runs.** On a legacy
+  project `apply` is **one transition** over the whole manifest: capabilities
+  and intents are declared together and reconciliation works out the
+  difference, so an interrupted apply resumes from the journal rather than from
+  a half-written registry. On a canonical one it **replays** the manifest row
+  by row into the model, through the same frontends `jails g` and `jails add`
+  use — a `[[generate]]` row *is* a `GenerateArgs`, byte for byte the value
+  `jails g` parses. Row by row costs atomicity (a manifest that fails on row
+  nine leaves rows one to eight applied) and buys convergence: every frontend
+  is idempotent, so an interrupted replay is repaired by running it again,
+  where the legacy path needed a journal a canonical project does not have.
+  `app init` is the one subcommand that still refuses, because it writes the
+  manifest rather than reading it.
 
   It used to reconcile every capability a *second* time, because a generator
   can create an integration point an already-installed capability needs — the
@@ -845,7 +935,7 @@ Four things to know before touching it:
   same target) and reach the shared helpers through
   `#[path = "../common/mod.rs"] mod common;`.
 - `tests/architecture/` — **the `abstract.md` §7 ladder, as ratchets.**
-  Eleven gates, each a number measured over *production* Rust (comments,
+  Twenty-five gates, each a number measured over *production* Rust (comments,
   string literals and `#[cfg(test)]` modules are blanked first, the same trick
   `java.rs` uses). It fails when a number **rises above** its recorded ceiling
   *and* when one **falls below** it without the ceiling being lowered in the
@@ -1041,7 +1131,7 @@ it lives under `target/` and every read and write failure is ignored.
 `scripts/run-tests.py` keeps the same kind of ledger for whole binaries.
 
 **3. A scan of the workspace happens once.** `tests/architecture/` has
-nineteen gates over the same 414 files and 5.9 MB, and it re-walked, re-read
+twenty-five gates over the same 457 files and 6.2 MB, and it re-walked, re-read
 and re-blanked all of it for each -- eleven full passes, 9.4s, no I/O worth
 the name and no subprocess at all. `measure::sources()` is memoised behind a
 `OnceLock` and its per-file blanking runs on the scheduler above: **0.35s**.
@@ -1075,8 +1165,10 @@ and clamped separately. Anything here that starts a build tool belongs under
 **6. `cargo test` runs the test binaries one after another.** The sum of the
 per-target times was within four seconds of the whole run's wall clock, so
 essentially nothing overlapped. `scripts/run-tests.py` (`mise run test`) runs
-all thirty-two at once, longest first, and **is what `verify-rewrite`
-invokes.**
+every one of them at once, longest first, and **is what `verify-rewrite`
+invokes.** (There are 34 today; the count moves whenever a test file is added,
+so take it from `cargo test --workspace --no-run` rather than from any number
+written down here or in the transcripts below.)
 
 It deliberately was not, and the entry that said so named G0's one answer to
 "is this green" as the reason. The real blocker was smaller and is fixed:

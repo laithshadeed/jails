@@ -256,8 +256,10 @@ verbatim from `customer.js` and `admin.js`:
       - **CI existed nowhere.** `.github/workflows/verify-rewrite.yml` runs
         that one command and nothing else, on a runner given every tool a
         skip would otherwise hide -- JDK 26 and `jshell`, Maven, mvnd, Gradle
-        8.5 on JDK 21, git, and a container runtime. Unverified against a real
-        runner; it has only been checked for structure.
+        8.5 on JDK 21, git, and a container runtime. It has since run green on
+        a real runner many times over, and `CLAUDE.md` carries the phase-by-
+        phase cost and the two caching defects that were found by reading its
+        logs.
       - **`.githooks/pre-push` ran its own `cargo build && cargo test`** -- no
         `--workspace`, so the root package alone, and no
         `JAILS_REQUIRE_TOOLCHAIN`, so a test that could not find its toolchain
@@ -736,16 +738,26 @@ verbatim from `customer.js` and `admin.js`:
 
 ## Verification
 
-Per commit, the workflow `CLAUDE.md` mandates — `--workspace` is not optional,
-since `cargo test` at the root reported 390 passing where the tree has 418:
+Per commit, the one gate — `simplify-sol.md`'s G0, and the only thing
+`.githooks/pre-push` and `.github/workflows/verify-rewrite.yml` invoke, so the
+hook, CI and this document cannot disagree about what passing means:
 
 ```
-cargo fmt --all && cargo clippy --workspace --all-targets \
-  && cargo build --workspace && cargo test --workspace && cargo install --path .
+mise run verify-rewrite && cargo install --path .
 ```
 
-The full suite is **148 s wall, 1501 tests, 38 binaries** on this machine;
-`tests/cli` is 84 s of it, dominated by real `mvn`/`javac`.
+Two properties it has that a hand-typed `cargo test` does not, and this
+document has been bitten by both. `--workspace` is not optional: `cargo test`
+at the root tests the root package only, and reported 390 passing where the
+tree had 418. And `JAILS_REQUIRE_TOOLCHAIN=1` turns a graceful skip into a
+failure naming what was missing, which is the difference between covering the
+generated-code path and believing you did.
+
+**Do not quote a suite time or test count from this document.** Both move with
+every commit, and a remembered number is how a measurement of two tiers gets
+written down as a measurement of three — take them from the run.
+`scripts/run-tests.py` prints both, and `CLAUDE.md`'s performance section has
+the standing measurements with the machine each was taken on.
 
 Per phase, the tier that answers the question the tool exists for:
 
@@ -754,8 +766,7 @@ JAILS_REQUIRE_TOOLCHAIN=1 cargo test --workspace
 cargo test --test architecture -- --nocapture --test-threads=1
 ```
 
-The first turns every graceful skip into a failure naming what was missing —
-necessary before believing a green run covered the generated-code path.
+The board print is the one `verify-rewrite` does not show you.
 
 **End to end, per item, in a disposable project under the scratch directory**,
 which is how every entry in these four documents was found in the first place:

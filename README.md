@@ -32,11 +32,18 @@ including hand edits, to `src/main/java` while its record/port ABI stays
 managed.
 
 Canonical mode is explicit while the compiler does not cover every advertised
-generator and capability. Ordinary `new`/`new-cli` projects stay on the legacy
-engine so existing workflows keep working. `.jails/model.jdl` opts into the JDL
-front end; `.jails/model.toml` remains a temporary compatibility front end for
-existing canonical projects. All currently implemented canonical mutations
-edit JDL directly. A project may never contain both.
+generator and capability. `new-cli` and `new --app` seed a model and are
+canonical; ordinary `jails new` still produces a legacy project, so existing
+Spring workflows keep working. `.jails/model.jdl` opts into the JDL front end;
+`.jails/model.toml` remains a temporary compatibility front end for existing
+canonical projects. All currently implemented canonical mutations edit JDL
+directly. A project may never contain both.
+
+A project jails did not create reaches the model through `jails model init`
+(no ledger, or one holding nothing to carry) or `jails model import` (a ledger
+with record and enum declarations). `jails adopt` first is fine: it records a
+`jails.toml` layout row and nothing else, and `model init` treats a ledger as a
+reason to refuse only when it holds something the importer could carry.
 
 The checked-in syntax below is the pre-v1 compatibility spelling used by
 today's CLI editors. The normative `jdl 1` frontend is now executable in the

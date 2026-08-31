@@ -12,7 +12,7 @@
 //! ledger hung off `write_new_file` alone has a hole precisely where a
 //! capability updates a file it previously wrote. That is not a bug anybody
 //! introduced carelessly -- it is what happens when "route writes through the
-//! helper" is a convention instead of a boundary. `tests/architecture.rs`
+//! helper" is a convention instead of a boundary. `tests/architecture/`
 //! makes it a boundary by failing when `fs::write` appears anywhere else.
 //!
 //! ## The four ways to write, and why they are different

@@ -25,10 +25,10 @@ Current `jails` tried to implement a strict, modern 2026 Hexagonal Architecture 
 1. It generates 10–15 distinct files per entity across multiple package layers (`domain`, `repository`, `adapter`, `controller`, `dto`, `test`, `migration`).
 2. When the user edits those files, `jails` loses the ability to reason about them cleanly.
 3. To compensate, `jails` built **110,000 lines of accidental infrastructure**:
-   - A custom Git-like Object Store with SHA-256 domain hashes, Write-Ahead Logs, staging `.publish` inodes, and hard-linking engines ([`jails-commit`](file:///home/laith/code/jails/crates/jails-commit/README.md)).
+   - A custom Git-like Object Store with SHA-256 domain hashes, Write-Ahead Logs, staging `.publish` inodes, and hard-linking engines ([`jails-commit`](crates/jails-commit/README.md)).
    - Brittle comment/string-masking parsers (`blanked()`) to surgically slice XML (`pom.xml`), Groovy (`build.gradle`), and Java source code without standard ASTs.
-   - Procedural string-concatenation generators with thousands of lines of manual formatting, indentation, and import math ([`jails-generate`](file:///home/laith/code/jails/crates/jails-generate/README.md)).
-   - 13 segregated crates with complex cross-boundary ceremony ([`jails-protocol`](file:///home/laith/code/jails/crates/jails-protocol/README.md), [`jails-prepare`](file:///home/laith/code/jails/crates/jails-prepare/README.md), [`jails-engine`](file:///home/laith/code/jails/crates/jails-engine/README.md)).
+   - Procedural string-concatenation generators with thousands of lines of manual formatting, indentation, and import math ([`jails-generate`](crates/jails-generate/README.md)).
+   - 13 segregated crates with complex cross-boundary ceremony ([`jails-protocol`](crates/jails-protocol/README.md), [`jails-prepare`](crates/jails-prepare/README.md), [`jails-engine`](crates/jails-engine/README.md)).
 
 ---
 
@@ -185,7 +185,7 @@ flowchart TD
 
 #### Replacing Procedural Rust with Declarative Minijinja Templates
 Templates are pure, readable Java files with Jinja expressions.
-Compare the old 1,607-line [`generate/repository.rs`](file:///home/laith/code/jails/crates/jails-generate/src/generate/repository.rs) with the new **40-line template**:
+Compare the old 1,607-line [`generate/repository.rs`](crates/jails-generate/src/generate/repository.rs) with the new **40-line template**:
 
 ```java
 // templates/java/repository_port.java.jinja
