@@ -191,8 +191,20 @@ pub(super) fn seed_canonical_model(
     // containment to the generate frontends would replay every row against
     // whatever encloses the destination directory.
     //
-    // So this is a root to thread, not a design to settle, and it is the last
-    // thing holding `new --app` on the legacy engine.
+    // And threading one is the wrong shape, which is worth recording so the
+    // next attempt does not start there: `read_source` and `finish_generation`
+    // are called from seventeen places across `model_generate_jdl` and its
+    // four submodules, so the parameter would reach roughly nine entry points
+    // -- every one of them a `root: &Path` the `abstract.md` §7 ladder counts,
+    // against a ceiling of 79. That rung exists to discourage exactly this,
+    // and the `_at` family is a *containment boundary* rather than a pattern
+    // to extend downward.
+    //
+    // The shape that fits is to lift declaration rendering out of the
+    // frontends, so a manifest's rows can be appended to the seed source and
+    // `materialize_seed` compiles the whole thing at the one root that is
+    // already explicit. That is the last thing holding `new --app` on the
+    // legacy engine, and it is a piece of work rather than a parameter.
     if app.is_some() {
         return Ok(());
     }
