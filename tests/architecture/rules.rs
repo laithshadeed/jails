@@ -70,8 +70,14 @@ fn owns_terminal_output(path: &Path) -> bool {
         || relative == "crates/jails-generate/src/generate/recipes.rs"
         || relative.starts_with("crates/jails-drive/src/")
         || relative.starts_with("crates/jails-report/src/")
-        || relative == "crates/jails-engine/src/route/capability.rs"
-        || relative.starts_with("crates/jails-engine/src/route/maintenance/")
+        // The two commands that run *before* a project has a model. Both
+        // report what they read and what they would change, and both are
+        // interactive by contract -- `adopt` prints a classification the
+        // reader is meant to check before it writes a `[layout]` table.
+        || relative == "src/adopt.rs"
+        || relative == "src/modernize.rs"
+        || relative == "src/sql_command.rs"
+        || relative == "src/contract_command.rs"
 }
 
 #[test]
@@ -393,6 +399,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-contracts", "snapshot", 3),
     // Pure lowering: semantic world -> desired artifact tree.
     ("jails-compiler", "emit_dto", 4),
+    ("jails-compiler", "emit_architecture", 4),
     ("jails-compiler", "emit_capability", 4),
     ("jails-compiler", "emit_component", 4),
     ("jails-compiler", "emit_enum", 4),
@@ -439,6 +446,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-project", "synonyms", 5),
     ("jails-project", "capture", 5),
     ("jails-project", "compose", 5),
+    ("jails-project", "named_query", 5),
     ("jails-project", "model", 5),
     ("jails-project", "modernize", 5),
     ("jails-project", "project", 5),
@@ -452,7 +460,6 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-generate", "architecture", 6),
     ("jails-generate", "sql", 6),
     ("jails-generate", "generate", 6),
-    ("jails-generate", "named_query", 6),
     ("jails-generate", "spring", 6),
     ("jails-generate", "add", 6),
     // jails-prepare: turning desire into an exact executable transition.
@@ -484,7 +491,6 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-commit", "store", 7),
     // jails-engine: one request, as one transition. Above the executor because
     // it drives it, and below the CLI because it is not about arguments.
-    ("jails-engine", "route", 8),
     // jails-report: commands that answer a question. Read-only by contract,
     // and below `jails-drive` so the contract is structural.
     ("jails-report", "doctor", 7),
@@ -515,6 +521,8 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-drive", "testing", 8),
     // jails-cli: the binary and the whole-project lifecycle commands.
     ("jails", "new", 9),
+    ("jails", "adopt", 9),
+    ("jails", "modernize", 9),
     ("jails", "app", 9),
     ("jails", "sql_command", 9),
     ("jails", "schema_command", 9),

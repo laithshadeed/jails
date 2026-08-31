@@ -8,10 +8,6 @@ use jails_support::{Failure, Result};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
-pub(crate) fn owns() -> bool {
-    crate::model_command::owns()
-}
-
 pub(crate) fn set(key: String, value: String, tests: bool, invocation: Invocation) -> Result<()> {
     let jdl = crate::model_command::owns_jdl();
     let target = target(tests);

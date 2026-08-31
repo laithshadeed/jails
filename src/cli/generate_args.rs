@@ -204,35 +204,3 @@ pub(crate) struct GenerateArgs {
     #[arg(long, value_name = "FORMAT")]
     pub(crate) consumes: Option<jails_spec::spec::kind::WireFormat>,
 }
-
-/// The request as the engine's vocabulary, which is the only thing `main.rs`
-/// wanted from it.
-///
-/// Here rather than in `main.rs` because this is where the field names are:
-/// a conversion written beside the struct cannot fall out of step with it,
-/// and one written at the dispatch site is a second list that can.
-impl From<GenerateArgs> for jails_engine::route::Intent {
-    fn from(args: GenerateArgs) -> Self {
-        Self {
-            kind: args.kind,
-            name: args.name,
-            fields: args.fields,
-            timestamps: args.timestamps,
-            indexes: args.indexes,
-            package: args.package,
-            on: args.strategy_on,
-            yields: args.strategy_yields,
-            via: args.via,
-            order_by: args.order_by,
-            limit: args.limit,
-            on_conflict: args.on_conflict,
-            path: args.path,
-            select: args.select,
-            set: args.set,
-            if_match: args.if_match,
-            bind: args.bind,
-            method: args.method,
-            consumes: args.consumes,
-        }
-    }
-}

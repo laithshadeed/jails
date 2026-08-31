@@ -1,0 +1,24 @@
+@baseUrl = http://localhost:8080
+
+### Create Payout
+POST {{baseUrl}}/payouts
+Content-Type: application/json
+
+{
+  "amount": 1,
+  "status": "PENDING",
+  "version": 1
+}
+
+### List Payout
+GET {{baseUrl}}/payouts
+Accept: application/json
+
+@id = 00000000-0000-0000-0000-000000000001
+
+### Get Payout
+GET {{baseUrl}}/payouts/{{id}}
+Accept: application/json
+
+### Delete Payout
+DELETE {{baseUrl}}/payouts/{{id}}

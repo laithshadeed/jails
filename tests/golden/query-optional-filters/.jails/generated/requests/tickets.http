@@ -1,0 +1,23 @@
+@baseUrl = http://localhost:8080
+
+### Create Ticket
+POST {{baseUrl}}/tickets
+Content-Type: application/json
+
+{
+  "status": "sample",
+  "category": "sample"
+}
+
+### List Ticket
+GET {{baseUrl}}/tickets
+Accept: application/json
+
+@id = 1
+
+### Get Ticket
+GET {{baseUrl}}/tickets/{{id}}
+Accept: application/json
+
+### Delete Ticket
+DELETE {{baseUrl}}/tickets/{{id}}

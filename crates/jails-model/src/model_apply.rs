@@ -40,6 +40,19 @@ impl AppModel {
                 }
                 self.relations.insert(id, relation);
             }
+            ModelPatch::AddProjection(projection) => {
+                if !self.entities.contains_key(&projection.entity) {
+                    return Err(format!(
+                        "projection `{}` names a missing entity `{}`",
+                        projection.id, projection.entity
+                    ));
+                }
+                let id = projection.id.clone();
+                if self.projections.contains_key(&id) {
+                    return Err(format!("projection id `{id}` already exists"));
+                }
+                self.projections.insert(id, projection);
+            }
             ModelPatch::AddFacet { entity, facet } => crate::facet::add(self, entity, facet)?,
             ModelPatch::RemoveFacet { entity, facet } => crate::facet::remove(self, entity, facet)?,
             ModelPatch::AddUnit(unit) => {
@@ -321,6 +334,22 @@ impl AppModel {
                 }
             }
             ModelPatch::AddIndex { entity, index } => crate::index::add(self, entity, index)?,
+            ModelPatch::RemoveRelation {
+                relation,
+                confirmed_name,
+            } => {
+                let accepted = self
+                    .relations
+                    .get(&relation)
+                    .ok_or_else(|| format!("relation id `{relation}` does not exist"))?;
+                if accepted.sql_name != confirmed_name {
+                    return Err(format!(
+                        "relation `{relation}` is accepted as constraint `{}`, not `{confirmed_name}`\n       fix: name the accepted constraint",
+                        accepted.sql_name
+                    ));
+                }
+                self.relations.remove(&relation);
+            }
             ModelPatch::RemoveIndex {
                 entity,
                 index,

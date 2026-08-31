@@ -42,16 +42,13 @@ pub fn seed_manifest(
     // `no_start` is not passed on because the canonical path has no external
     // service effects to suppress; `sync` refuses the flag by name for the
     // same reason.
-    if tree.root().join(crate::model_command::JDL_PATH).is_file() {
-        let _ = no_start;
-        crate::app::replay_at(
-            tree.root(),
-            None,
-            crate::Invocation::for_new(tree.root().to_path_buf(), debug),
-        )?;
-        return Ok(crate::app::Applied::Clean);
-    }
-    crate::app::apply_in(tree.root(), no_start, debug)
+    let _ = no_start;
+    crate::app::replay_at(
+        tree.root(),
+        None,
+        crate::Invocation::for_new(tree.root().to_path_buf(), debug),
+    )?;
+    Ok(crate::app::Applied::Clean)
 }
 
 /// Whether the manifest run left a failure the caller still has to report.
@@ -67,7 +64,6 @@ pub fn seed_manifest(
 pub(super) fn reported(applied: crate::app::Applied) -> Result<()> {
     match applied {
         crate::app::Applied::Clean => Ok(()),
-        crate::app::Applied::CommittedThenReported => Err(jails_support::Failure::Reported),
     }
 }
 

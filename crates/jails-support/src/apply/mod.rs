@@ -118,6 +118,32 @@ pub fn replace(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> 
         .map_err(|error| format!("failed to write {}: {error}", path.display()))?)
 }
 
+/// Write a file jails renders once from an authority outside the model.
+///
+/// **A named category, not a loophole.** Every managed artifact goes through
+/// `jails-workspace::execute`, which is the only canonical project writer:
+/// it locks, rechecks preconditions and publishes exact after-images, and the
+/// model is what tells it which files exist. These do not have a model entry
+/// and never will -- their authority is somewhere else entirely, and nothing
+/// reconciles them because there is nothing to reconcile against:
+///
+/// - `jails adopt` writes a `[layout]` table in `jails.toml`. That is
+///   *configuration jails reads*, which is the opposite of a thing jails owns
+///   and would later take away.
+/// - `jails modernize` bumps versions in the reader's build file.
+/// - `jails contract emit --out` projects a document out of source that
+///   already exists.
+/// - `jails sql generate` renders adapters for queries declared in the
+///   reader's `.sql` manifest.
+///
+/// Re-running is how each is refreshed, which is exactly why a transaction
+/// would buy nothing: there is no accepted state for the next run to diverge
+/// from. The name is deliberately long for [`put_outside_project`]'s reason --
+/// nothing that writes a *managed* artifact should reach one by accident.
+pub fn put_one_shot(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
+    put(path, contents)
+}
+
 /// Write content that already accounts for whatever was there.
 ///
 /// This is where every splice lands. `pom.xml`, `compose.yaml`,

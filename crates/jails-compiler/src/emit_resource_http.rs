@@ -50,7 +50,81 @@ pub(crate) fn lower(
     if let Some(test) = controller_test(model, entity, spring_boot)? {
         units.push(test);
     }
+    units.push(requests(model, entity)?);
     Ok(units)
+}
+
+/// The four requests the controller above answers, as a file an editor sends.
+///
+/// **Only the ones it answers**, which is why this is rendered beside the
+/// controller rather than from the entity alone: the two would otherwise be
+/// free to disagree, and a collection whose `### List` block returns 405 tells
+/// the reader something about this file rather than about their project.
+///
+/// `{{baseUrl}}` and `{{id}}` are the HTTP Client format's own variable syntax
+/// and are written with a Rust `format!` for that reason -- `template!` reads
+/// `{{...}}` as a placeholder, so a `.http` rendered through it would have its
+/// own syntax substituted away.
+fn requests(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
+    let path = resource_path(model, entity);
+    let name = &entity.names.java_type;
+    let key = primary_key(entity)?;
+    let body: Vec<String> = entity
+        .fields
+        .iter()
+        .filter(|field| field.id != key.id && field.semantics.default.is_none())
+        .filter_map(|field| {
+            // A component jails cannot sample is left out rather than guessed
+            // at: a wrong body documents a payload the record refuses, which
+            // is worse than a shorter one the reader completes.
+            let sample = crate::emit_companion_test::json_sample(model, &field.ty)?;
+            Some(format!("  \"{}\": {sample}", field.names.java_member))
+        })
+        .collect();
+    // **Unquoted**, unlike the body above. `@id` is substituted into a path,
+    // where a JSON string's own quotes would be sent literally and the request
+    // would 400 on a key nobody mistyped.
+    let key_sample = crate::emit_companion_test::json_sample(model, &key.ty)
+        .map(|sample| sample.trim_matches('"').to_string())
+        .unwrap_or_else(|| "1".to_string());
+    let collection = format!(
+        "@baseUrl = http://localhost:8080\n\n\
+         ### Create {name}\n\
+         POST {{{{baseUrl}}}}{path}\n\
+         Content-Type: application/json\n\n\
+         {{\n{}\n}}\n\n\
+         ### List {name}\n\
+         GET {{{{baseUrl}}}}{path}\n\
+         Accept: application/json\n\n\
+         @id = {key_sample}\n\n\
+         ### Get {name}\n\
+         GET {{{{baseUrl}}}}{path}/{{{{id}}}}\n\
+         Accept: application/json\n\n\
+         ### Delete {name}\n\
+         DELETE {{{{baseUrl}}}}{path}/{{{{id}}}}\n",
+        body.join(",\n")
+    );
+    let artifact_id = format!("art_{}_http_requests", entity.id.as_str());
+    let path = ProjectPath::parse(format!(
+        ".jails/generated/requests/{}.http",
+        entity.names.sql_table
+    ))
+    .map_err(CompileError::new)?;
+    Ok(Unit {
+        path,
+        file: RenderedFile {
+            kind: FileKind::HttpCollection,
+            mode: FileMode::Regular,
+            bytes: collection.into_bytes(),
+            provenance: Provenance {
+                artifact_id: artifact_id.clone(),
+                ejection_id: None,
+                ejectable: true,
+                semantic_ids: BTreeSet::from([entity.id.as_str().to_string()]),
+                compiler_pass: "java-facets".to_string(),
+            },
+        },
+    })
 }
 
 /// The managed ABI this facet has always published.
@@ -86,12 +160,20 @@ fn port(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
 /// one does not stay in step, and the divergence shows up as a route that does
 /// not match the table it reads.
 fn resource_path(model: &AppModel, entity: &Entity) -> String {
+    // **Both halves of the predicate belong in the same closure.** Finding the
+    // entity's *first* projection and then asking whether it happens to be the
+    // HTTP one reads a pinned route only when nothing else sorts ahead of it --
+    // and `scaffold` expands to repo, service and http, so the answer was
+    // always the repository and the pin was always dropped. The reader saw
+    // `/operators` for a path they had written into the model, with no
+    // diagnostic anywhere.
     model
         .projections
         .values()
-        .find(|projection| projection.entity == entity.id)
-        .and_then(|projection| match &projection.kind {
-            jails_model::ProjectionKind::Http { path } => path.clone(),
+        .find_map(|projection| match &projection.kind {
+            jails_model::ProjectionKind::Http { path } if projection.entity == entity.id => {
+                path.clone()
+            }
             _ => None,
         })
         .unwrap_or_else(|| format!("/{}", entity.names.sql_table))
@@ -104,9 +186,15 @@ fn controller(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
     let key = primary_key(entity)?;
     let mut imports = BTreeSet::from([
         domain_import(model, entity),
+        // **The service, not the repository.** The suite jails generates
+        // beside this file forbids a `*Controller` depending on the
+        // repository package, so injecting the port here made a freshly
+        // scaffolded project fail its own `ArchitectureTest` on the first
+        // `mvn test` -- two of jails' own generators disagreeing about where
+        // the boundary is.
         format!(
-            "{}.{record}Repository",
-            model.project.package_for(Package::Repository)
+            "{}.{record}Service",
+            model.project.package_for(Package::Service)
         ),
         "java.net.URI".to_string(),
         "java.util.List".to_string(),
@@ -128,31 +216,31 @@ fn controller(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
          public final class {type_name} {{\n\n\
          \x20   /** The collection this controller serves. */\n\
          \x20   public static final String PATH = \"{path}\";\n\n\
-         \x20   private final {record}Repository repository;\n\n\
-         \x20   public {type_name}({record}Repository repository) {{\n\
-         \x20       this.repository = repository;\n\
+         \x20   private final {record}Service service;\n\n\
+         \x20   public {type_name}({record}Service service) {{\n\
+         \x20       this.service = service;\n\
          \x20   }}\n\n\
          \x20   @GetMapping\n\
          \x20   public List<{record}> list() {{\n\
-         \x20       return repository.findAll();\n\
+         \x20       return service.all();\n\
          \x20   }}\n\n\
          \x20   /** 404 rather than an empty 200: \"no such thing\" and \"here is nothing\" differ. */\n\
          \x20   @GetMapping(\"/{{id}}\")\n\
          \x20   public ResponseEntity<{record}> byId(@PathVariable(\"id\") {key_type} id) {{\n\
-         \x20       return repository.findById(id)\n\
+         \x20       return service.byId(id)\n\
          \x20               .map(ResponseEntity::ok)\n\
          \x20               .orElseGet(() -> ResponseEntity.notFound().build());\n\
          \x20   }}\n\n\
          \x20   @PostMapping\n\
          \x20   public ResponseEntity<{record}> create(@RequestBody {record} request) {{\n\
-         \x20       {record} created = repository.save(request);\n\
+         \x20       {record} created = service.save(request);\n\
          \x20       return ResponseEntity.created(URI.create(PATH + \"/\" + created.{key_member}()))\n\
          \x20               .body(created);\n\
          \x20   }}\n\n\
          \x20   /** 204 when something was removed, 404 when there was nothing to remove. */\n\
          \x20   @DeleteMapping(\"/{{id}}\")\n\
          \x20   public ResponseEntity<Void> delete(@PathVariable(\"id\") {key_type} id) {{\n\
-         \x20       return repository.deleteById(id)\n\
+         \x20       return service.delete(id)\n\
          \x20               ? ResponseEntity.noContent().build()\n\
          \x20               : ResponseEntity.notFound().build();\n\
          \x20   }}\n\n\
@@ -199,6 +287,13 @@ fn controller_test(
             "{}.{record}Repository",
             model.project.package_for(Package::Repository)
         ),
+        // The real service over a stub port: it is four forwards, so
+        // substituting a second stub for it would assert that the test's own
+        // fake forwards correctly.
+        format!(
+            "{}.{record}Service",
+            model.project.package_for(Package::Service)
+        ),
         "java.util.List".to_string(),
         "java.util.Optional".to_string(),
         "org.junit.jupiter.api.Test".to_string(),
@@ -215,7 +310,7 @@ fn controller_test(
         imports.insert("org.springframework.test.web.servlet.assertj.MockMvcTester".to_string());
         (
             format!(
-                "    private final MockMvcTester mvc = MockMvcTester.of(new {controller}(REPOSITORY));"
+                "    private final MockMvcTester mvc = MockMvcTester.of(new {controller}(new {record}Service(REPOSITORY)));"
             ),
             format!("        assertThat(mvc.get().uri(\"{path}\")).hasStatusOk();"),
         )
@@ -235,7 +330,7 @@ fn controller_test(
         );
         (
             format!(
-                "    private final MockMvc mvc = standaloneSetup(new {controller}(REPOSITORY)).build();"
+                "    private final MockMvc mvc = standaloneSetup(new {controller}(new {record}Service(REPOSITORY))).build();"
             ),
             format!("        mvc.perform(get(\"{path}\")).andExpect(status().isOk());"),
         )

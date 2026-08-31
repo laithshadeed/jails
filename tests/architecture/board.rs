@@ -210,7 +210,9 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // was already threaded everywhere, which is this rung's own
                 // prescribed cure. Threading a parameter instead would have
                 // reached roughly nine frontend entry points.
-                ceiling: 81,
+                // 81 -> 80: the legacy engine's deletion took one root-taking
+                // function with it.
+                ceiling: 80,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;
@@ -598,6 +600,8 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // work of its own: `codec!`'s `enum` arm carried an unknown-tag
                 // refusal with no `fix:`, and deleting the unused macro took
                 // its message with it.
+                // 395 -> 391 the same way: the legacy engine went, and four of
+                // its refusals with it.
                 ceiling: REFUSALS_WITHOUT_A_FIX,
                 target: REFUSALS_WITHOUT_A_FIX,
                 why: "A refusal that names no next step leaves the reader to guess, and jails' \

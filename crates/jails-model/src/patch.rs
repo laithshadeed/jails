@@ -95,9 +95,39 @@ pub enum ModelPatch {
     /// SQL name, and re-deriving any of that here would be a second answer to
     /// a question the model already answered.
     AddRelation(crate::Relation),
+    /// One entity projection, whole, with whatever arguments it carries.
+    ///
+    /// **`AddFacet` cannot express this and the difference was silent.** A
+    /// facet is a bare set member, so `use scaffold(path: "/admin_api/…")` and
+    /// `use search(fields: [title])` reached the model with their arguments
+    /// dropped: the first `jails g` compiled against an entity that had
+    /// `Facet::Http` and no `Projection`, so `emit_resource_http` fell back to
+    /// the table name, and the next unrelated `jails sync` -- which reparses
+    /// the whole source -- quietly moved the route. Two commands, two answers,
+    /// no diagnostic between them.
+    ///
+    /// Whole rather than `{ entity, kind }` for [`Self::AddRelation`]'s
+    /// reason: the linker has already resolved a search projection's field
+    /// labels to stable IDs, and re-deriving them here would be a second
+    /// answer to a question the model has answered.
+    AddProjection(crate::Projection),
     RemoveIndex {
         entity: EntityId,
         index: IndexId,
+        confirmed_name: String,
+    },
+    /// One accepted foreign key, retired by naming it.
+    ///
+    /// **The same shape [`Self::RemoveIndex`] has, for the same reason.**
+    /// Dropping a constraint is a forward migration somebody has to mean, and
+    /// inferring one from a deleted declaration is how a production invariant
+    /// disappears in a routine edit -- so the compiler refuses a relation that
+    /// merely stopped being declared, and this patch is how the reader says
+    /// they meant it. `confirmed_name` is the SQL constraint name as accepted,
+    /// so a rename between accepting and retiring refuses rather than emitting
+    /// `drop constraint` against a name the database does not have.
+    RemoveRelation {
+        relation: crate::id::RelationId,
         confirmed_name: String,
     },
     ReplaceField {

@@ -304,7 +304,7 @@ fn resolve_fields(
         .collect()
 }
 
-fn compatibility_facet(kind: &ProjectionKind) -> Facet {
+pub(crate) fn compatibility_facet(kind: &ProjectionKind) -> Facet {
     match kind {
         ProjectionKind::Value => Facet::Record,
         ProjectionKind::Repository => Facet::Repository,

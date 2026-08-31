@@ -53,12 +53,16 @@ fn snapshot(dir: &Path) -> BTreeMap<String, String> {
 
 /// The project-owned `.jails/` files a golden snapshot holds.
 ///
-/// `ledger.toml` is jails' registry and `app.toml` is the reader's manifest.
-/// `architecture.toml` is the reviewable project architecture policy.
-/// Everything else under `.jails/` is the executor's, and is listed in
-/// [`EXECUTOR_STATE`] rather than excluded by a wildcard, so a new one is a
-/// deliberate entry rather than a silent omission.
-const SNAPSHOTTED_PROJECT_FILES: [&str; 3] = ["ledger.toml", "app.toml", "architecture.toml"];
+/// **`model.jdl` is the authored source every scenario now starts from**, and
+/// it is the most load-bearing entry here: the snapshot is the only place the
+/// declaration a scenario's `g` commands built up is visible beside the tree
+/// they produced. `ledger.toml` is jails' registry and `app.toml` is the
+/// reader's manifest. `architecture.toml` is the reviewable project
+/// architecture policy. Everything else under `.jails/` is the executor's, and
+/// is listed in [`EXECUTOR_STATE`] rather than excluded by a wildcard, so a new
+/// one is a deliberate entry rather than a silent omission.
+const SNAPSHOTTED_PROJECT_FILES: [&str; 4] =
+    ["model.jdl", "ledger.toml", "app.toml", "architecture.toml"];
 
 /// The compiler's managed tree, snapshotted whole.
 ///

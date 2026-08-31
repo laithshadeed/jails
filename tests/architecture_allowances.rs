@@ -161,11 +161,11 @@ fn run_case(case: &Case) -> Option<String> {
 fn project(root: &Path) {
     copy("tests/golden/scaffold-spring/pom.xml", root.join("pom.xml"));
     copy(
-        "tests/golden/scaffold-spring/src/test/java/com/example/demo/ArchitectureTest.java",
+        "tests/golden/scaffold-spring/.jails/generated/test/java/com/example/demo/ArchitectureTest.java",
         root.join("src/test/java/com/example/demo/ArchitectureTest.java"),
     );
     copy(
-        "tests/golden/scaffold-spring/src/test/resources/archunit.properties",
+        "tests/golden/scaffold-spring/.jails/generated/test/resources/archunit.properties",
         root.join("src/test/resources/archunit.properties"),
     );
     write(
@@ -180,9 +180,14 @@ fn project(root: &Path) {
          import com.example.demo.domain.billing.Bill;\n\
          public record Money(Bill bill) {}\n",
     );
+    // **`repository`, which is where the canonical layout puts a port.** The
+    // rule under test names that package by generated text, so a fixture whose
+    // port sat in `app` left `APPLICATION_PORTS_DEPEND_INWARD` matching no
+    // class at all -- and ArchUnit fails a rule that checked nothing, which is
+    // the whole reason it does.
     write(
-        root.join("src/main/java/com/example/demo/app/Port.java"),
-        "package com.example.demo.app;\npublic interface Port {}\n",
+        root.join("src/main/java/com/example/demo/repository/Port.java"),
+        "package com.example.demo.repository;\npublic interface Port {}\n",
     );
     write(
         root.join("src/main/java/com/example/demo/adapters/Adapter.java"),

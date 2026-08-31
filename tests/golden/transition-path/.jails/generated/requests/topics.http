@@ -1,0 +1,23 @@
+@baseUrl = http://localhost:8080
+
+### Create Topic
+POST {{baseUrl}}/topics
+Content-Type: application/json
+
+{
+  "userId": 1,
+  "subject": "sample"
+}
+
+### List Topic
+GET {{baseUrl}}/topics
+Accept: application/json
+
+@id = 1
+
+### Get Topic
+GET {{baseUrl}}/topics/{{id}}
+Accept: application/json
+
+### Delete Topic
+DELETE {{baseUrl}}/topics/{{id}}

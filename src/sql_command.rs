@@ -1,11 +1,10 @@
 //! CLI boundary for deterministic SQL contract checks.
 
 use crate::SqlCommand;
-use jails_generate::named_query::{self, NamedQueryPackages};
 use jails_project::model::Project;
-use jails_protocol::identity::Package;
 use jails_support::Result;
 use std::fs;
+use std::path::Path;
 
 pub(crate) fn run(command: SqlCommand, invocation: crate::Invocation) -> Result<()> {
     match command {
@@ -91,14 +90,12 @@ pub(crate) fn run(command: SqlCommand, invocation: crate::Invocation) -> Result<
             target,
             into_slice,
             manifest,
-        } => crate::dispatch::mutate(invocation, false, |run| {
-            jails_engine::route::sql_generate(
-                run,
-                target.as_deref(),
-                manifest.as_deref(),
-                into_slice.as_deref(),
-            )
-        }),
+        } => generate(
+            target.as_deref(),
+            manifest.as_deref(),
+            into_slice.as_deref(),
+            invocation,
+        ),
     }
 }
 
@@ -149,8 +146,8 @@ fn check_frozen(
     project: &Project,
     query: &jails_project::query_workspace::CheckedQuery,
 ) -> Result<()> {
-    let packages = packages(&query.slice_package)?;
-    let expected = named_query::project(&query.source, &query.contract, &packages)?
+    let packages = jails_project::named_query::NamedQueryPackages::under(&query.slice_package)?;
+    let expected = jails_project::named_query::project(&query.source, &query.contract, &packages)?
         .into_iter()
         .find(|artifact| artifact.kind == "SQL contract")
         .expect("named query projection always emits its contract");
@@ -172,11 +169,51 @@ fn check_frozen(
     }
     Ok(())
 }
-
-fn packages(base: &Package) -> Result<NamedQueryPackages> {
-    Ok(NamedQueryPackages {
-        application_query: base.join(&Package::parse("application.query")?),
-        jdbc_adapter: base.join(&Package::parse("adapter.jdbc")?),
-        fake_adapter: base.join(&Package::parse("adapter.query")?),
-    })
+/// Project each checked named query into Java, as ordinary files.
+///
+/// **A one-shot, not a declaration**, which is why it writes directly rather
+/// than through the compiler: a named query lives in the reader's `.sql`
+/// manifest, and jails renders its adapter beside it. There is nothing here
+/// for a model to hold and nothing a later `sync` would reconcile -- the
+/// manifest is the authority, and re-running is how the output is refreshed.
+fn generate(
+    selector: Option<&str>,
+    manifest: Option<&Path>,
+    into_slice: Option<&str>,
+    invocation: crate::Invocation,
+) -> Result<()> {
+    let project = Project::discover()?;
+    let checked = jails_project::query_workspace::check_offline(&project, manifest, selector)?;
+    if let Some(expected) = into_slice {
+        for query in &checked {
+            let slice = query.source.id.slice.as_str();
+            if slice != expected {
+                return Err(format!(
+                    "query `{slice}.{}` belongs to slice `{slice}`, not `{expected}`.\n       fix: omit `--into-slice` or name the manifest slice that owns the query.",
+                    query.source.id.name.as_str()
+                )
+                .into());
+            }
+        }
+    }
+    let mut written = 0usize;
+    for query in checked {
+        let packages = jails_project::named_query::NamedQueryPackages::under(&query.slice_package)?;
+        for artifact in
+            jails_project::named_query::project(&query.source, &query.contract, &packages)?
+        {
+            if invocation.pretend {
+                println!("--pretend: would write {}", artifact.path.display());
+            } else {
+                jails_support::apply::put_one_shot(&artifact.path, artifact.contents)?;
+            }
+            written += 1;
+        }
+    }
+    if invocation.pretend {
+        println!("--pretend: {written} file(s) would be written");
+    } else {
+        println!("wrote {written} file(s)");
+    }
+    Ok(())
 }

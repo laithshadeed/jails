@@ -1,0 +1,19 @@
+jdl 1
+app Demo @id(project_demo) {
+  pkg com.example.demo
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+entity Ticket @id(ent_ticket) {
+  use scaffold
+
+  id: long @id(fld_ticket_id) @pk
+  subject: string @id(fld_ticket_subject) @notBlank
+  status: string? @id(fld_ticket_status)
+  query OpenTickets(status?) @id(op_open_tickets) {
+    route POST "/admin_api/tickets" consumes form
+  }
+}

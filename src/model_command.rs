@@ -83,6 +83,43 @@ pub(crate) fn owns() -> bool {
         .is_some_and(|root| root.join(JDL_PATH).is_file() || root.join(TOML_PATH).is_file())
 }
 
+/// Give this project a model if it has none, so a mutation has somewhere to go.
+///
+/// **This is what makes the legacy engine unreachable, and it is the whole of
+/// the cutover's last step.** Every project jails creates is canonical from its
+/// first command; the case left over was somebody else's repository, which had
+/// no model and therefore fell through to the engine being deleted. `model
+/// init` was written as the on-ramp for exactly that and then had to be run by
+/// hand, which meant the fall-through survived because a reader who did not
+/// know the command existed never took it.
+///
+/// It adopts no line of the reader's Java: what it writes is the app block,
+/// every field of it read off the project rather than asked for. What changes
+/// is that the *next* generator renders into `.jails/generated` through the
+/// compiler, and that is said out loud rather than done quietly -- a reader
+/// whose files stop appearing under `src/main/java` with no explanation has
+/// been surprised by their tool.
+///
+/// **A legacy ledger is not initialised over.** `model init` refuses one that
+/// holds declarations and sends the reader to `model import`, which is the
+/// one-way carry; auto-initialising there would strand a project's whole
+/// contents outside the model that now owns it. `--pretend` refuses too: a
+/// dry run must not write, and there is no model to plan against.
+pub(crate) fn ensure_owned(invocation: Invocation) -> Result<()> {
+    if owns() {
+        return Ok(());
+    }
+    if invocation.pretend {
+        return Err(Failure::Told(format!(
+            "this project has no application model, so there is nothing to plan against.\n       fix: run `jails model init` to write `{JDL_PATH}`, then repeat with `--pretend`"
+        )));
+    }
+    // `model_init` prints what it did and what changes for the reader; saying
+    // it twice would be noise, and saying it here as well as there is how the
+    // two go out of step.
+    crate::model_init::run(invocation)
+}
+
 pub(crate) fn owns_jdl() -> bool {
     project_root().is_some_and(|root| root.join(JDL_PATH).is_file())
 }
@@ -222,7 +259,7 @@ fn format(check: bool, invocation: Invocation) -> Result<()> {
     })
 }
 
-fn apply(bundle_path: &Path, output: Output) -> Result<()> {
+pub(crate) fn apply(bundle_path: &Path, output: Output) -> Result<()> {
     let bytes = std::fs::read(bundle_path).map_err(|error| {
         Failure::Told(format!(
             "could not read exact plan bundle `{}`: {error}\n       fix: pass the file written by `jails model plan --bundle <path>`",

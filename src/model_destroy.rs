@@ -19,10 +19,6 @@ pub(crate) struct Request {
     pub(crate) migration_effect: bool,
 }
 
-pub(crate) fn owns() -> bool {
-    crate::model_command::owns()
-}
-
 pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
     let jdl = crate::model_command::owns_jdl();
     if request.package || request.migration_effect {
@@ -36,7 +32,71 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
     let current_source = crate::model_command::read_source(&model_path)?;
     let current_model = parse_model(&current_source, jdl)?;
     let label = java_to_label(&request.name);
-    let (patch, next_source, patch_bytes) = if matches!(
+    let (patch, next_source, patch_bytes) = if request.kind == ArtifactKind::Association {
+        // **Retiring a foreign key is a forward migration, not the un-running
+        // of one.** Refusing the verb -- which is where this started -- left
+        // both halves of an association permanently undestroyable, so the
+        // command exists and names the accepted constraint: the compiler drops
+        // exactly `confirmed_name` and refuses a relation that merely stopped
+        // being declared.
+        if !jdl || !crate::model_generate_jdl::is_v1_source(&current_source) {
+            return Err(Failure::Told(
+                "retiring an association needs a `jdl 1` model.\n       fix: run `jails model upgrade --to 1`, then retry"
+                    .to_string(),
+            ));
+        }
+        if request.storage.is_some() || request.confirm_table.is_some() {
+            return Err(Failure::Told(
+                "an association has no table of its own to retire.\n       fix: remove the storage flags"
+                    .to_string(),
+            ));
+        }
+        let relation = current_model
+            .relations
+            .values()
+            .find(|relation| relation.label == label || relation.sql_name == request.name)
+            .ok_or_else(|| {
+                Failure::Told(format!(
+                    "canonical association `{}` does not exist.\n       fix: name a relation declared on the child entity",
+                    request.name
+                ))
+            })?
+            .clone();
+        let child = current_model
+            .entities
+            .get(&relation.child)
+            .ok_or_else(|| {
+                Failure::Told(format!(
+                    "association `{}` names a missing child entity",
+                    request.name
+                ))
+            })?
+            .clone();
+        // **The member's spelling, not the relation's label.** A relation is
+        // declared as a lowerCamel *member* (`relation itemOwner to Owner`)
+        // and linked under the stable-fragment label `item_owner`, so removal
+        // has to ask the CST for the name it actually wrote.
+        let member = crate::model_generate_jdl::relation_member_name(&relation.label);
+        let next = jails_model::remove_jdl_entity_member(
+            &current_source,
+            &child.names.java_type,
+            &["relation"],
+            Some(&member),
+            None,
+        )
+        .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
+        let patch = ModelPatch::RemoveRelation {
+            relation: relation.id.clone(),
+            confirmed_name: relation.sql_name.clone(),
+        };
+        let bytes = serde_json::to_vec(&json!({
+            "kind": "remove-relation",
+            "relation": relation.id,
+            "confirmed_name": relation.sql_name,
+        }))
+        .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
+        (patch, next, bytes)
+    } else if matches!(
         request.kind,
         ArtifactKind::Record | ArtifactKind::Value | ArtifactKind::Enum | ArtifactKind::Scaffold
     ) {
@@ -152,7 +212,11 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         (patch, next, bytes)
     } else if matches!(
         request.kind,
-        ArtifactKind::Factory | ArtifactKind::Dto | ArtifactKind::Repo
+        ArtifactKind::Factory
+            | ArtifactKind::Dto
+            | ArtifactKind::Repo
+            | ArtifactKind::Search
+            | ArtifactKind::Seed
     ) {
         if !jdl {
             return Err(Failure::Told(
@@ -175,6 +239,8 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                         ArtifactKind::Factory => entity.facets.contains(&Facet::Factory),
                         ArtifactKind::Dto => entity.facets.contains(&Facet::Dto),
                         ArtifactKind::Repo => entity.facets.contains(&Facet::Repository),
+                        ArtifactKind::Search => entity.facets.contains(&Facet::Search),
+                        ArtifactKind::Seed => entity.facets.contains(&Facet::Seed),
                         _ => false,
                     }
             })
@@ -183,6 +249,8 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                     ArtifactKind::Factory => "factory",
                     ArtifactKind::Dto => "dto",
                     ArtifactKind::Repo => "repository",
+                    ArtifactKind::Search => "search",
+                    ArtifactKind::Seed => "seed",
                     _ => unreachable!(),
                 };
                 Failure::Told(format!(
@@ -195,6 +263,11 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             ArtifactKind::Factory => (Facet::Factory, "@factory", "factory"),
             ArtifactKind::Dto => (Facet::Dto, "@dto", "dto"),
             ArtifactKind::Repo => (Facet::Repository, "@repository", "repository"),
+            // The projection carries its field list, and removal names the
+            // projection rather than the fields -- which is why `set_marker`
+            // can take it back where `set_projection` had to put it there.
+            ArtifactKind::Search => (Facet::Search, "@search", "search"),
+            ArtifactKind::Seed => (Facet::Seed, "@seed", "seed"),
             _ => unreachable!(),
         };
         let next = crate::model_generate_jdl::facet::set_marker(
@@ -399,7 +472,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         (ModelPatch::RemoveOperation(id), next, bytes)
     } else {
         return Err(Failure::Told(format!(
-            "canonical destroy does not map `{}` to a semantic declaration.\n       fix: destroy `record`, `value`, `enum`, `sealed`, `strategy`, `controller`, `scaffold`, `factory`, `dto`, `repo`, `class`, `interface`, `service`, `test`, `integration-test`, `usecase`, `query`, `transition`, or `event`, or edit the application model",
+            "canonical destroy does not map `{}` to a semantic declaration.\n       fix: destroy `record`, `value`, `enum`, `sealed`, `strategy`, `controller`, `scaffold`, `factory`, `dto`, `repo`, `search`, `seed`, `association`, `class`, `interface`, `service`, `test`, `integration-test`, `usecase`, `query`, `transition`, or `event`, or edit the application model",
             kind_name(request.kind)
         )));
     };

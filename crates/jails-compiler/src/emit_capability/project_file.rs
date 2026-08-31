@@ -316,8 +316,14 @@ fn lower_loadtest(
 ) -> Result<(), CompileError> {
     let routes = routes(model);
     if routes.is_empty() {
+        // **Phrased as the state, not as the command**, because the compiler
+        // is pure over (snapshot, patch) and cannot tell installing the
+        // capability from removing the last route out from under one already
+        // installed. Naming only the first left the second sending the reader
+        // to run a command they had run -- and it is the same refusal every
+        // other reference the model protects gives.
         return Err(CompileError::new(
-            "no HTTP routes are declared in the canonical model.\n       fix: generate a controller or routed operation before `jails add loadtest`.",
+            "removing the last route would leave the `loadtest` capability pointing at nothing.\n       fix: keep a controller or routed operation, or run `jails remove loadtest`",
         ));
     }
     for (suffix, path, template) in LOADTEST_PATHS {

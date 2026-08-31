@@ -10,7 +10,7 @@
 //! parameter threaded through four signatures.
 
 use crate::{CompileError, emit_capability, emit_component, emit_http, emit_java, emit_operation};
-use jails_contracts::{ProjectPath, RenderedTree, WorkspaceSnapshot};
+use jails_contracts::{FileKind, ProjectPath, RenderedTree, WorkspaceSnapshot};
 
 /// The workspace facts emission needs and a pure compiler may not observe.
 ///
@@ -38,7 +38,56 @@ pub(crate) fn emit(
     emit_operation::lower_and_emit(model, output)?;
     emit_operation::outbox::lower_and_emit(model, output)?;
     emit_component::lower_and_emit(model, output)?;
-    emit_http::lower_and_emit(model, output, observed.spring_boot)
+    emit_http::lower_and_emit(model, output, observed.spring_boot)?;
+    crate::emit_architecture::lower(model, output)?;
+    tidy_java(output);
+    Ok(())
+}
+
+/// Collapse runs of blank lines in every emitted Java file.
+///
+/// **One rule in one place, for the reason the legacy write path had the same
+/// one.** palantir-java-format removes a doubled blank line, so leaving one in
+/// means `add format` -- which jails installs itself -- fails `jails check` on
+/// a project whose every line jails wrote. Templates produce them without
+/// meaning to: `api_exception_handler_java.java` has a `{{duplicate_key_import}}`
+/// line that substitutes to nothing on a project without the JDBC starter, and
+/// the empty line it leaves behind is invisible in the template and obvious in
+/// the output.
+///
+/// A blank line inside a text block is data and is left alone, which is why
+/// this counts `"""` fences rather than trimming unconditionally.
+fn tidy_java(output: &mut RenderedTree) {
+    for file in output.files.values_mut() {
+        if !matches!(file.kind, FileKind::JavaMain | FileKind::JavaTest) {
+            continue;
+        }
+        let Ok(text) = std::str::from_utf8(&file.bytes) else {
+            continue;
+        };
+        let trailing_newline = text.ends_with('\n');
+        let mut kept: Vec<&str> = Vec::new();
+        let mut in_text_block = false;
+        let mut previous_blank = false;
+        for line in text.lines() {
+            let blank = line.trim().is_empty();
+            if blank && previous_blank {
+                continue;
+            }
+            kept.push(line);
+            if line.matches("\"\"\"").count() % 2 == 1 {
+                in_text_block = !in_text_block;
+            }
+            previous_blank = blank && !in_text_block;
+        }
+        let mut tidied = kept.join("\n");
+        if trailing_newline {
+            tidied.push('\n');
+        }
+        if tidied.as_bytes() != file.bytes.as_slice() {
+            file.bytes = tidied.into_bytes();
+        }
+    }
 }
 
 pub(crate) fn compose_path(snapshot: &WorkspaceSnapshot) -> Result<ProjectPath, CompileError> {

@@ -213,7 +213,6 @@ dependencies = [
  "jails-compiler",
  "jails-contracts",
  "jails-drive",
- "jails-engine",
  "jails-generate",
  "jails-java",
  "jails-model",
@@ -289,25 +288,6 @@ dependencies = [
  "jails-spec",
  "jails-support",
  "tempfile",
-]
-
-[[package]]
-name = "jails-engine"
-version = "0.1.0"
-dependencies = [
- "clap",
- "jails-commit",
- "jails-drive",
- "jails-generate",
- "jails-java",
- "jails-prepare",
- "jails-project",
- "jails-protocol",
- "jails-report",
- "jails-spec",
- "jails-support",
- "serde",
- "serde_json",
 ]
 
 [[package]]

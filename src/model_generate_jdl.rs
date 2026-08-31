@@ -230,13 +230,16 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
     }
     let declaration = match args.kind {
         ArtifactKind::Enum => enum_declaration(&args.name, &entity_label, &fields, v1)?,
-        ArtifactKind::Record | ArtifactKind::Value | ArtifactKind::Scaffold => entity_declaration(
-            &args.name,
-            &entity_label,
-            args.kind == ArtifactKind::Scaffold,
-            &fields,
-            v1,
-        )?,
+        ArtifactKind::Record | ArtifactKind::Value | ArtifactKind::Scaffold => {
+            entity_declaration_at(
+                &args.name,
+                &entity_label,
+                args.kind == ArtifactKind::Scaffold,
+                &fields,
+                v1,
+                args.path.as_deref(),
+            )?
+        }
         _ => unreachable!("run only accepts entity kinds"),
     };
     if let Some(existing) = current_model.entity(&entity_id) {
@@ -265,11 +268,32 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
         .entity(&entity_id)
         .cloned()
         .ok_or_else(|| Failure::Told(format!("new entity `{entity_id}` did not link")))?;
+    // **The entity's projections ride with it.** `AddEntity` carries
+    // `entity.facets`, which records *that* an entity is served over HTTP and
+    // not *where*; the arguments live on the `Projection`. Sending the entity
+    // alone made the patch a lossy description of the source that produced it,
+    // so the first compile disagreed with every later `sync`.
+    let projections: Vec<_> = next_model
+        .projections
+        .values()
+        .filter(|projection| projection.entity == entity_id)
+        .cloned()
+        .collect();
     let patch_bytes = serde_json::to_vec(&json!({
         "kind": "add-entity",
         "entity": entity,
+        "projections": projections,
     }))
     .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
+    let patch = if projections.is_empty() {
+        ModelPatch::AddEntity(entity)
+    } else {
+        ModelPatch::Batch(
+            std::iter::once(ModelPatch::AddEntity(entity))
+                .chain(projections.into_iter().map(ModelPatch::AddProjection))
+                .collect(),
+        )
+    };
     let indexes = std::mem::take(&mut args.indexes);
     let name = args.name.clone();
     finish_generation(PreparedMutation {
@@ -279,7 +303,7 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
         current_source,
         current_model,
         next_source,
-        patch: ModelPatch::AddEntity(entity),
+        patch,
         patch_bytes,
         authored_migration: None,
     })?;
@@ -384,12 +408,58 @@ fn append_declaration(mut source: String, declaration: &str) -> Result<String> {
     Ok(source)
 }
 
+/// The lowerCamel member name a relation is declared under.
+///
+/// The single owner of the `item_owner` -> `itemOwner` direction, so
+/// `g association` and `destroy association` cannot disagree about which
+/// member they are naming -- which they did, and the destroy half reported the
+/// declaration as missing from the entity it was sitting in.
+pub(crate) fn relation_member_name(label: &str) -> String {
+    let mut out = String::with_capacity(label.len());
+    let mut capitalise = false;
+    for character in label.chars() {
+        if character == '_' {
+            capitalise = true;
+            continue;
+        }
+        if capitalise {
+            out.extend(character.to_uppercase());
+            capitalise = false;
+        } else {
+            out.push(character);
+        }
+    }
+    out
+}
+
 pub(crate) fn entity_declaration(
     java_name: &str,
     entity_label: &str,
     scaffold: bool,
     fields: &[String],
     v1: bool,
+) -> Result<String> {
+    entity_declaration_at(java_name, entity_label, scaffold, fields, v1, None)
+}
+
+/// The same declaration, with the collection route the reader pinned.
+///
+/// **`--path` is a projection argument, not a new mechanism.** `use
+/// scaffold(path: "/admin_api/operators")` is already in the v1 grammar and
+/// `emit_resource_http::resource_path` already prefers it over the table name;
+/// what refused was the frontend, so the flag reached a project that could
+/// represent it and was told the profile could not. The pre-v1 draft has no
+/// projection arguments, so pinning there is refused rather than silently
+/// dropped -- a route the reader asked for and did not get is the failure this
+/// closes, and writing it into a dialect on the deletion list would only move
+/// it.
+pub(crate) fn entity_declaration_at(
+    java_name: &str,
+    entity_label: &str,
+    scaffold: bool,
+    fields: &[String],
+    v1: bool,
+    path: Option<&str>,
 ) -> Result<String> {
     let mut labels = BTreeSet::new();
     let mut parsed = Vec::new();
@@ -406,8 +476,20 @@ pub(crate) fn entity_declaration(
     let mut output = format!("entity {java_name} @id(ent_{entity_label}) {{\n");
     if scaffold {
         if v1 {
-            output.push_str("  use scaffold\n\n");
+            match path {
+                Some(path) => output.push_str(&format!(
+                    "  use scaffold(path: {})\n\n",
+                    serde_json::to_string(path).expect("a route path encodes as a JSON string")
+                )),
+                None => output.push_str("  use scaffold\n\n"),
+            }
         } else {
+            if path.is_some() {
+                return Err(Failure::Told(
+                    "pinning a resource route needs a `jdl 1` model.\n       fix: run `jails model upgrade` and repeat the command"
+                        .to_string(),
+                ));
+            }
             output = output.replacen(" {", " @scaffold {", 1);
         }
     }

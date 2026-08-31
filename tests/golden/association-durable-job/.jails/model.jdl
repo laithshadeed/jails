@@ -1,0 +1,38 @@
+jdl 1
+app Demo @id(project_demo) {
+  pkg com.example.demo
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+cap json @id(cap_json)
+
+entity Owner @id(ent_owner) {
+  use scaffold
+
+  id: uuid @id(fld_owner_id) @pk
+  name: string @id(fld_owner_name) @notBlank
+  createdAt: instant @id(fld_owner_created_at) @default(now())
+}
+
+entity Item @id(ent_item) {
+  use scaffold
+
+  id: uuid @id(fld_item_id) @pk
+  ownerId: uuid @id(fld_item_owner_id) @index
+  name: string @id(fld_item_name) @notBlank
+  createdAt: instant @id(fld_item_created_at) @default(now())
+
+  relation itemOwner to Owner {
+    map ownerId -> id
+  }
+  command AddItem(id, owner_id, name) @id(op_add_item) {
+  }
+}
+
+component durable-job ItemDispatcher(id: uuid, ownerId: uuid, name: string @notBlank) @id(cmp_durable_job_item_dispatcher) {
+  on add_item
+  yields item
+}

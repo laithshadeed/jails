@@ -38,6 +38,7 @@ pub mod junit;
 pub mod maven;
 pub mod model;
 pub mod modernize;
+pub mod named_query;
 pub mod pom;
 pub mod project;
 pub mod projection;

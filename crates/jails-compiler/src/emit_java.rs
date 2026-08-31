@@ -1,6 +1,7 @@
 //! Lower semantic facets into deterministic Java source units.
 
 mod execution_context;
+mod facet;
 mod record_validation;
 mod repository;
 mod time_ordered_uuid;
@@ -63,7 +64,7 @@ pub(crate) fn lower_and_emit(
             let unit = if *facet == Facet::Factory {
                 crate::emit_factory::lower(model, entity)?
             } else {
-                lower_facet(model, entity, *facet)?
+                facet::lower_facet(model, entity, *facet, spring_boot)?
             };
             output
                 .insert(unit.path, unit.file)
@@ -143,118 +144,6 @@ pub(crate) fn lower_and_emit(
 pub(crate) struct Unit {
     pub(crate) path: ProjectPath,
     pub(crate) file: RenderedFile,
-}
-
-fn lower_facet(model: &AppModel, entity: &Entity, facet: Facet) -> Result<Unit, CompileError> {
-    let domain_package = model.project.package_for(Package::Domain);
-    let (package, type_name, body, mut imports) = match facet {
-        Facet::Enum => (
-            domain_package.clone(),
-            entity.names.java_type.clone(),
-            crate::emit_enum::shape(entity),
-            crate::emit_enum::imports(entity),
-        ),
-        Facet::Record => {
-            let mut imports = BTreeSet::new();
-            let fields = entity.fields.iter().collect::<Vec<_>>();
-            (
-                domain_package.clone(),
-                entity.names.java_type.clone(),
-                record_shape(&entity.names.java_type, &fields, &mut imports),
-                imports,
-            )
-        }
-        Facet::Factory => unreachable!("factory has a test-source backend"),
-        Facet::Dto => unreachable!("dto has a multi-file backend"),
-        Facet::Repository => {
-            let package = model.project.package_for(Package::Repository);
-            let primary_key = primary_key(entity)?;
-            let mut imports = BTreeSet::from([
-                "java.util.List".to_string(),
-                "java.util.Optional".to_string(),
-                format!("{domain_package}.{}", entity.names.java_type),
-            ]);
-            let key_type = java_type(primary_key, &mut imports);
-            let type_name = format!("{}Repository", entity.names.java_type);
-            let variable = lower_first(&entity.names.java_type);
-            let body = format!(
-                "public interface {type_name} {{\n\n    Optional<{}> findById({key_type} id);\n\n    List<{}> findAll();\n\n    {} save({} {variable});\n\n    boolean deleteById({key_type} id);\n\n    // Reader extensions belong below this stable boundary.\n}}",
-                entity.names.java_type,
-                entity.names.java_type,
-                entity.names.java_type,
-                entity.names.java_type,
-            );
-            (package, type_name, body, imports)
-        }
-        Facet::Service => {
-            let package = model.project.package_for(Package::Service);
-            let type_name = format!("{}Service", entity.names.java_type);
-            let imports = BTreeSet::from([format!("{domain_package}.{}", entity.names.java_type)]);
-            let body = format!(
-                "public interface {type_name} {{\n\n    {} save({} value);\n}}",
-                entity.names.java_type, entity.names.java_type
-            );
-            (package, type_name, body, imports)
-        }
-        // Three files rather than one: the port, the controller that serves
-        // the resource, and its test. `emit_resource_http` owns them, and the
-        // loop above routes the facet there before reaching this.
-        Facet::Http => unreachable!("http has a multi-file backend"),
-        Facet::Events => {
-            let package = model.project.package_for(Package::PortsEvents);
-            let type_name = format!("{}Events", entity.names.java_type);
-            let imports = BTreeSet::from([format!("{domain_package}.{}", entity.names.java_type)]);
-            let body = format!(
-                "public interface {type_name} {{\n\n    void publish({} event);\n}}",
-                entity.names.java_type
-            );
-            (package, type_name, body, imports)
-        }
-        // Three files rather than one, so it never reaches here. Falling
-        // through to the *factory's* arm instead makes `use seed` link,
-        // validate, and emit `<Name>Factory.java` while reporting success
-        // (`bugs.md` B59). A wrong artifact reported as written is a worse
-        // failure than a missing one, because nothing looks wrong.
-        Facet::Seed => unreachable!("seed has a multi-file backend"),
-        Facet::Search => {
-            let package = model.project.package_for(Package::PortsSearch);
-            let type_name = format!("{}Search", entity.names.java_type);
-            let record = &entity.names.java_type;
-            let imports = BTreeSet::from([
-                "java.util.List".to_string(),
-                format!("{domain_package}.{record}"),
-            ]);
-            // `matching(query, limit)`, not `search(query)`. There is no
-            // unbounded overload on purpose: a search with no limit is a full
-            // scan waiting for the table to grow, and the caller who wants
-            // everything can say so.
-            let body = format!(
-                "public interface {type_name} {{\n\n    /**\n     * @param query what the reader typed. It is parsed by PostgreSQL, not\n     *     concatenated into SQL -- see the adapter.\n     * @param limit how many rows at most.\n     */\n    List<{record}> matching(String query, int limit);\n}}"
-            );
-            (package, type_name, body, imports)
-        }
-    };
-    imports.remove(&format!("{package}.{type_name}"));
-    let artifact_id = format!("art_{}_{}", entity.id.as_str(), facet_name(facet));
-    let rendered = render(&package, &imports, &body, &artifact_id);
-    let package_path = package.replace('.', "/");
-    let path = ProjectPath::parse(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))
-        .map_err(CompileError::new)?;
-    Ok(Unit {
-        path,
-        file: RenderedFile {
-            kind: FileKind::JavaMain,
-            mode: FileMode::Regular,
-            bytes: rendered.into_bytes(),
-            provenance: Provenance {
-                artifact_id,
-                ejection_id: None,
-                ejectable: false,
-                semantic_ids: BTreeSet::from([entity.id.as_str().to_string()]),
-                compiler_pass: "java-facets".to_string(),
-            },
-        },
-    })
 }
 
 fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, CompileError> {

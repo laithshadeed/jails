@@ -1,0 +1,19 @@
+jdl 1
+app Demo @id(project_demo) {
+  pkg com.example.demo
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+entity Person @id(ent_person) {
+  use scaffold
+
+  id: uuid @id(fld_person_id) @pk
+  email: string @id(fld_person_email) @notBlank @unique
+  createdAt: instant @id(fld_person_created_at) @default(now())
+  command RegisterPerson(email) @id(op_register_person) {
+    conflict on [email]
+  }
+}

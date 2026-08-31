@@ -19,7 +19,6 @@ use crate::add::Capability;
 use crate::cli::GenerateArgs;
 use crate::generate::{self, ArtifactKind};
 use clap::{Subcommand, ValueEnum};
-use jails_engine::route::Intent;
 use jails_support::Result;
 use std::collections::HashSet;
 use std::fs;
@@ -233,28 +232,19 @@ fn refuse_manifest(command: &str) -> Result<()> {
 }
 
 pub(crate) fn run(command: AppCommand, invocation: crate::Invocation) -> Result<()> {
-    if crate::model_command::owns() {
-        return match command {
-            // `app init` writes a manifest, which would be a second editable
-            // source beside the model. That one still refuses.
-            AppCommand::Init { .. } => refuse_manifest("app init"),
-            AppCommand::Plan { manifest } => replay(manifest.as_deref(), invocation.pretending()),
-            AppCommand::Apply { manifest, .. } => replay(manifest.as_deref(), invocation),
-        };
-    }
     match command {
-        AppCommand::Init { manifest } => crate::dispatch::mutate(invocation, false, |run| {
-            jails_engine::route::app_init(run, manifest.as_deref().and_then(Path::to_str))
-        }),
-        AppCommand::Plan { manifest } => {
-            crate::dispatch::mutate(invocation.pretending(), false, |run| {
-                declared(run, manifest.as_deref())
-            })
-        }
+        // `app init` writes a manifest, which would be a second editable
+        // source beside the model. That one still refuses.
+        AppCommand::Init { .. } => refuse_manifest("app init"),
+        AppCommand::Plan { manifest } => crate::model_command::ensure_owned(invocation.clone())
+            .and_then(|()| replay(manifest.as_deref(), invocation.pretending())),
         AppCommand::Apply { manifest, no_start } => {
-            crate::dispatch::mutate(invocation, no_start, |run| {
-                declared(run, manifest.as_deref())
-            })
+            // The canonical replay has no external service effects to
+            // suppress, so `--no-start` has nothing to act on; `sync` refuses
+            // the flag by name for the same reason.
+            let _ = no_start;
+            crate::model_command::ensure_owned(invocation.clone())
+                .and_then(|()| replay(manifest.as_deref(), invocation))
         }
     }
 }
@@ -315,28 +305,6 @@ pub(crate) fn replay_at(
     Ok(())
 }
 
-/// The whole manifest, declared as one transition.
-///
-/// One pass, not two. V1 reconciled every capability a second time because a
-/// capability wires itself into what the project has, and a test a *later*
-/// row writes was invisible to the row that needed to wire it. That is fixed
-/// where it belongs -- the capability writing a `@SpringBootTest` puts the
-/// container import in itself -- so a second pass would only run the formatter
-/// twice and open a transaction with nothing in it.
-fn declared(
-    run: &jails_engine::route::Run,
-    requested: Option<&Path>,
-) -> Result<jails_engine::route::Outcome> {
-    let path = manifest_path(run.project().root(), requested)?;
-    let (manifest, rows) = read_manifest(&path)?;
-    // The rows are `GenerateArgs`, the same value `jails g` parses, so the
-    // canonical path can replay a manifest through the ordinary frontends.
-    // The legacy engine takes its own shape, and the conversion that already
-    // existed for the CLI does the work.
-    let intents: Vec<Intent> = rows.into_iter().map(Into::into).collect();
-    jails_engine::route::app_apply(run, &manifest.capabilities, &intents)
-}
-
 /// Apply a manifest against a project root the caller already knows.
 ///
 /// `run` finds the root from the process CWD, which is right for `jails app
@@ -345,53 +313,17 @@ fn declared(
 /// user is standing in.
 /// What applying a manifest left behind.
 ///
-/// Two outcomes rather than one `Result`, because `jails new --app` has to
-/// treat them differently: a manifest that could not be applied leaves no
-/// project, and a manifest that *was* applied leaves one whether or not a
-/// post-commit effect succeeded.
+/// One variant now, and it is kept as a type rather than collapsed to `()`
+/// because the *caller* is what makes the distinction real: `jails new --app`
+/// publishes by rename, so an error thrown out of the apply discards the whole
+/// scratch tree. The legacy engine could commit and then fail a post-commit
+/// effect -- a compose service that would not start -- which had to be
+/// reported without unmaking the project. The canonical replay has no
+/// post-commit effect to fail, so that second outcome no longer arises.
 pub(crate) enum Applied {
-    /// The transaction committed and everything after it succeeded.
+    /// The replay finished and everything after it succeeded.
     Clean,
-    /// The transaction committed; something after it failed, and the reason
-    /// has already been printed.
-    CommittedThenReported,
 }
-
-pub(crate) fn apply_in(root: &Path, no_start: bool, debug: bool) -> Result<Applied> {
-    let discovering = std::time::Instant::now();
-    let project = crate::model::Project::load(root)?;
-    let mut run = jails_engine::route::Run::committing(&project).with_timing(
-        jails_prepare::timing::TimingPhase::Discover,
-        discovering.elapsed(),
-    );
-    if no_start {
-        run = run.without_start();
-    }
-    if debug {
-        run = run.with_debug();
-    }
-    let recovered = jails_engine::route::finish_interrupted(&project)?;
-    let outcome = declared(&run, None)?.after_recovery(recovered);
-    let committed = outcome.is_committed();
-    match crate::dispatch::report(
-        &outcome,
-        &["app".to_string(), "apply".to_string()],
-        crate::Output::Human,
-        jails_prepare::review::ReviewSelection::default(),
-        debug,
-    ) {
-        Ok(()) => Ok(Applied::Clean),
-        Err(error) if committed => {
-            // Printed already. Returning it as a value rather than an error
-            // is what lets the caller finish publishing the project the
-            // commit is in before it reports the failure.
-            let _ = error;
-            Ok(Applied::CommittedThenReported)
-        }
-        Err(error) => Err(error),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -16,6 +16,24 @@
     </dependencies>
     <build>
         <plugins>
+            <!-- jails:generated-source-roots -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <version>3.6.1</version>
+                <executions>
+                    <execution>
+                        <id>jails-generated-main-source-root</id>
+                        <phase>generate-sources</phase>
+                        <goals><goal>add-source</goal></goals>
+                        <configuration>
+                            <sources><source>.jails/generated/main/java</source></sources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- /jails:generated-source-roots -->
+            <!-- jails:coverage -->
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
@@ -51,6 +69,7 @@
                     </execution>
                 </executions>
             </plugin>
+            <!-- /jails:coverage -->
         </plugins>
     </build>
 </project>

@@ -4515,9 +4515,12 @@ fn model_plan_is_deterministic_and_writes_a_self_verifying_bundle() {
         serde_json::from_slice(&fs::read(&first).unwrap()).unwrap();
     jails_workspace::verify_bundle(&bundle).unwrap();
     assert_eq!(bundle.plan.operations.len(), 2);
-    // Six, not five: every record and enum now ships its companion test, so
-    // the entity in this model contributes two managed files rather than one.
-    assert_eq!(bundle.plan.summary.managed_files, 6);
+    // Nine: the record and its companion test, the repository port, the
+    // service the controller delegates to, the HTTP port, the controller and
+    // its test -- and the project's `ArchitectureTest` with the
+    // `archunit.properties` that points its freeze store at a baseline the
+    // reader has to create deliberately.
+    assert_eq!(bundle.plan.summary.managed_files, 9);
     assert_eq!(bundle.plan.id, bundle.plan.digest.as_str());
 }
 
@@ -14204,11 +14207,15 @@ app Demo {
             "missing {method}:\n{controller}"
         );
     }
-    // The repository port, because `service` is a one-method stub and the
-    // linker already refuses `http` on an entity without `repo`.
+    // **The service, not the repository port.** The suite jails generates
+    // beside this controller forbids a `*Controller` depending on the
+    // repository package, so injecting the port here made a freshly
+    // scaffolded project fail its own `ArchitectureTest` on the first
+    // `mvn test`.
+    assert!(controller.contains("NoteService service"), "{controller}");
     assert!(
-        controller.contains("NoteRepository repository"),
-        "{controller}"
+        !controller.contains("NoteRepository"),
+        "the controller reaches past the service into persistence:\n{controller}"
     );
 
     // The port stays: it is managed ABI, whatever now serves the resource.

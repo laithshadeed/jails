@@ -116,28 +116,12 @@ const ALLOWED: &[AllowedConcept] = &[
             "crates/jails-prepare/src/serialize.rs",
             // A whole route ends in the ledger write, and its declared
             // intent is literally a `LedgerIntent`.
-            "crates/jails-engine/src/route.rs",
-            "crates/jails-engine/src/route/commit.rs",
-            "crates/jails-engine/src/route/request.rs",
-            "crates/jails-engine/src/route/app.rs",
-            "crates/jails-engine/src/route/artifact.rs",
-            "crates/jails-engine/src/route/capability.rs",
-            "crates/jails-engine/src/route/field.rs",
             // Resolving which recorded entity a field command targets is a
             // search of the ledger's applied rows.
-            "crates/jails-engine/src/route/field/target.rs",
-            "crates/jails-engine/src/route/maintenance/adopt.rs",
-            "crates/jails-engine/src/route/maintenance/app_init.rs",
-            "crates/jails-engine/src/route/maintenance/format.rs",
-            "crates/jails-engine/src/route/maintenance/modernize.rs",
-            "crates/jails-engine/src/route/maintenance/rename.rs",
             // A rename's identity transition is read out of the ledger's
             // applied rows, which is what names the entities being renamed.
-            "crates/jails-engine/src/route/maintenance/rename/source.rs",
             // The coordinated verbs resolve their subject against the ledger
             // and guard the generation the campaign was planned from.
-            "crates/jails-engine/src/route/maintenance/rename/resource.rs",
-            "crates/jails-engine/src/route/oneshot.rs",
             // Reading the store *is* reading `ledger.toml`, and the reader
             // cannot name the file it opens without naming it.
             "crates/jails-commit/src/store.rs",

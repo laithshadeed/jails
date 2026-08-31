@@ -1752,9 +1752,16 @@ mod permit_pool_tests {
     fn pool(label: &str) -> PermitPool {
         static TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
         let token = TOKEN.get_or_init(|| {
+            // **Nanoseconds since the epoch, not within the second.** Thirty-
+            // three binaries start together and pids are recycled, so a pid
+            // plus a sub-second reading collides often enough to be seen: two
+            // live processes then share one named budget, and the assertions
+            // below -- which are about *this* process holding and releasing a
+            // permit -- fail on a permit somebody else took. It reads exactly
+            // like a bug in the pool and is a bug in the label.
             let nanos = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|since| since.subsec_nanos())
+                .map(|since| since.as_nanos())
                 .unwrap_or_default();
             format!("{}-{nanos}", std::process::id())
         });

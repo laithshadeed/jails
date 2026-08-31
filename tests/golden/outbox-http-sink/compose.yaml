@@ -15,8 +15,6 @@ services:
       interval: 2s
       timeout: 5s
       retries: 10
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
   # /jails:db
   # jails:kafka
   kafka:
@@ -45,7 +43,3 @@ services:
       timeout: 10s
       retries: 10
   # /jails:kafka
-volumes:
-  # jails:db
-  postgres-data:
-  # /jails:db

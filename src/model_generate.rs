@@ -20,10 +20,6 @@ use std::path::{Path, PathBuf};
 
 const MODEL_PATH: &str = ".jails/model.toml";
 
-pub(crate) fn owns(_args: &GenerateArgs) -> bool {
-    crate::model_command::owns()
-}
-
 pub(crate) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     if crate::model_command::owns_jdl() {
         return crate::model_generate_jdl::run(args, invocation);
@@ -322,20 +318,29 @@ const SCAFFOLD_FACETS: &[Facet] = &[
 struct EntityProfile {
     facets: &'static [Facet],
     timestamps: bool,
+    /// Whether `--path` pins this profile's collection route.
+    ///
+    /// Only `scaffold` has one: it is the profile that carries `Facet::Http`,
+    /// and a route on a kind that serves nothing would be a flag with nowhere
+    /// to land.
+    route: bool,
 }
 
 fn entity_profile(kind: ArtifactKind) -> Option<&'static EntityProfile> {
     static RECORD: EntityProfile = EntityProfile {
         facets: RECORD_FACETS,
         timestamps: false,
+        route: false,
     };
     static ENUM: EntityProfile = EntityProfile {
         facets: ENUM_FACETS,
         timestamps: false,
+        route: false,
     };
     static SCAFFOLD: EntityProfile = EntityProfile {
         facets: SCAFFOLD_FACETS,
         timestamps: true,
+        route: true,
     };
     match kind {
         ArtifactKind::Record | ArtifactKind::Value => Some(&RECORD),
@@ -374,7 +379,7 @@ fn reject_unsupported_options(args: &GenerateArgs, profile: &EntityProfile) -> R
         || args.order_by.is_some()
         || args.limit.is_some()
         || args.on_conflict.is_some()
-        || args.path.is_some()
+        || (args.path.is_some() && !profile.route)
         || args.select.is_some()
         || !args.set.is_empty()
         || args.if_match.is_some()

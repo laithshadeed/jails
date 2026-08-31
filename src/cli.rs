@@ -461,13 +461,6 @@ impl Invocation {
             None => crate::model_command::owns_jdl(),
         }
     }
-
-    pub(crate) fn review(&self) -> jails_prepare::review::ReviewSelection {
-        jails_prepare::review::ReviewSelection {
-            diff: self.diff,
-            ast: self.ast,
-        }
-    }
 }
 
 #[derive(Subcommand)]

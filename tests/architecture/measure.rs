@@ -389,22 +389,14 @@ pub(crate) fn root_path_parameters(src: &[Source]) -> usize {
 /// number nobody can reach is a gate nobody reads; the pattern is
 /// `SILENT_WITHOUT_A_RECORD`'s, and a stale entry here fails the test below the
 /// same way.
-pub(crate) const A_FRESH_READ_IS_CORRECT: &[(&str, &str)] = &[
-    (
-        "apply_in",
-        "`jails new --app` has just created the project on disk, so there is no earlier \
-         `Project` for this to be a second read of. Passing one in would mean resolving it \
-         at the call site instead, which is the same read one frame up",
-    ),
-    (
-        "read_build_file",
-        "it is the read a `Project` is *constructed from*, not a second one taken beside \
+pub(crate) const A_FRESH_READ_IS_CORRECT: &[(&str, &str)] = &[(
+    "read_build_file",
+    "it is the read a `Project` is *constructed from*, not a second one taken beside \
          it. Both `load` and `inspect` go through it precisely so there is one answer: \
          `inspect` reading `pom.xml` unconditionally while `load` had learned about \
          `build.gradle` is what made `doctor` report a Gradle project as having no build \
          file at all",
-    ),
-];
+)];
 
 /// Functions that exist *to* turn a path into project facts, so re-deriving is
 /// their whole job rather than envy of someone else's.
@@ -1104,7 +1096,7 @@ pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 // type (`#[codec(unknown_fix = "...")]`) rather than in the one place the
 // message is built. `PlannedSubject` is the first to use it; the other ten
 // `fix:`-carrying decoders are still hand-written.
-pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 395;
+pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 391;
 
 /// A refusal that builds a message and does not say what to do next.
 ///
@@ -1282,6 +1274,12 @@ pub(crate) fn executor_bypasses(src: &[Source]) -> usize {
                 // Authenticated sockets and metadata under `.jails/run` are
                 // disposable process state, not project authority. These
                 // verbs check the exact directory and refuse all other paths.
+                // Rendered once from an authority that is not the model --
+                // `jails.toml`'s `[layout]`, a modernized build file, a
+                // contract document, a named query's adapters. The verb says
+                // so in its own name and its doc lists all four; there is no
+                // accepted state for a transaction to protect.
+                "apply::put_one_shot",
                 "apply::ensure_runtime_directory",
                 "apply::put_runtime_state",
                 "apply::remove_runtime_state",

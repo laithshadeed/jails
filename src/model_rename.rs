@@ -10,10 +10,6 @@ use std::path::PathBuf;
 
 const MODEL_PATH: &str = ".jails/model.toml";
 
-pub(crate) fn owns() -> bool {
-    crate::model_command::owns()
-}
-
 pub(crate) struct Request {
     pub(crate) from: String,
     pub(crate) to: String,

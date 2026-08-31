@@ -9,10 +9,6 @@ use jails_support::{Failure, Result};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
-pub(crate) fn owns() -> bool {
-    crate::model_command::owns()
-}
-
 /// The `app { storage ... }` value a legacy capability label means, for the
 /// two kinds JDL v1 states as an axis rather than a capability.
 ///

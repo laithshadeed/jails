@@ -16,7 +16,6 @@
 pub mod add;
 pub(crate) mod architecture;
 pub mod generate;
-pub mod named_query;
 pub mod spring;
 pub mod sql;
 

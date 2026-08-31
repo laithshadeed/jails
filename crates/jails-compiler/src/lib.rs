@@ -3,6 +3,7 @@
 //! This crate has no workspace path, filesystem, process, clock, network, or
 //! transaction API. Equal snapshots and patches produce equal drafts.
 
+mod emit_architecture;
 mod emit_capability;
 mod emit_companion_test;
 mod emit_component;
@@ -330,6 +331,21 @@ impl Compiler {
                 version: None,
                 scope: DependencyScope::Compile,
             };
+            if !dependencies.iter().any(|declared| {
+                declared.group == required.group && declared.artifact == required.artifact
+            }) {
+                dependencies.push(required);
+            }
+        }
+        // **Only when there is a build to declare it in.** A model with no
+        // captured pom or Gradle script reaches the `BuildSystem::Unknown` arm
+        // below, which refuses the moment any dependency is wanted -- so
+        // adding one unconditionally turned "this project has no build file"
+        // into a compile error for every scaffold.
+        if emit_architecture::applies(&next_model)
+            && snapshot.project.build_system != BuildSystem::Unknown
+        {
+            let required = emit_architecture::dependency();
             if !dependencies.iter().any(|declared| {
                 declared.group == required.group && declared.artifact == required.artifact
             }) {

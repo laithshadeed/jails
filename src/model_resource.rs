@@ -2,7 +2,6 @@
 
 use crate::Invocation;
 use crate::cli::{GenerateArgs, ResourceFieldCommand};
-use crate::dispatch;
 use crate::model_generate::{
     PreparedMutation, field_declaration, finish_generation_with_reader_paths, parse_field,
 };
@@ -11,11 +10,10 @@ use jails_support::{Failure, Result};
 use serde_json::json;
 use std::path::PathBuf;
 
-pub(crate) fn owns() -> bool {
-    crate::model_command::owns()
-}
-
 pub(crate) fn run(command: ResourceFieldCommand, invocation: Invocation) -> Result<()> {
+    // Every arm below evolves a declared field, so the project needs a model
+    // before any of them has anything to evolve.
+    crate::model_command::ensure_owned(invocation.clone())?;
     match command {
         ResourceFieldCommand::Add {
             entity,
@@ -23,37 +21,23 @@ pub(crate) fn run(command: ResourceFieldCommand, invocation: Invocation) -> Resu
             default_literal,
             backfill_file,
             package,
-        } => {
-            if owns() {
-                return add_field(
-                    AddFieldRequest {
-                        entity,
-                        field_spec,
-                        default_literal,
-                        backfill_file,
-                        package,
-                    },
-                    invocation,
-                );
-            }
-            dispatch::mutate(invocation, false, |run| {
-                jails_engine::route::add_field_with_data(
-                    run,
-                    &entity,
-                    &field_spec,
-                    package.as_deref(),
-                    default_literal.as_deref(),
-                    backfill_file.as_deref(),
-                )
-            })
-        }
+        } => add_field(
+            AddFieldRequest {
+                entity,
+                field_spec,
+                default_literal,
+                backfill_file,
+                package,
+            },
+            invocation,
+        ),
         ResourceFieldCommand::Rename {
             entity,
             field,
             new_name,
             column,
             package,
-        } if owns() => crate::model_field_evolution::rename(
+        } => crate::model_field_evolution::rename(
             crate::model_field_evolution::RenameRequest {
                 entity,
                 field,
@@ -63,29 +47,13 @@ pub(crate) fn run(command: ResourceFieldCommand, invocation: Invocation) -> Resu
             },
             invocation,
         ),
-        ResourceFieldCommand::Rename {
-            entity,
-            field,
-            new_name,
-            column,
-            package,
-        } => dispatch::mutate(invocation, false, |run| {
-            jails_engine::route::rename_field(
-                run,
-                &entity,
-                &field,
-                &new_name,
-                column.into(),
-                package.as_deref(),
-            )
-        }),
         ResourceFieldCommand::Type {
             entity,
             field,
             to,
             strategy,
             package,
-        } if owns() => crate::model_field_evolution::change_type(
+        } => crate::model_field_evolution::change_type(
             crate::model_field_evolution::TypeRequest {
                 entity,
                 field,
@@ -95,22 +63,6 @@ pub(crate) fn run(command: ResourceFieldCommand, invocation: Invocation) -> Resu
             },
             invocation,
         ),
-        ResourceFieldCommand::Type {
-            entity,
-            field,
-            to,
-            strategy,
-            package,
-        } => dispatch::mutate(invocation, false, |run| {
-            jails_engine::route::change_field_type(
-                run,
-                &entity,
-                &field,
-                &to,
-                strategy.into(),
-                package.as_deref(),
-            )
-        }),
         ResourceFieldCommand::Nullability {
             entity,
             field,
@@ -118,7 +70,7 @@ pub(crate) fn run(command: ResourceFieldCommand, invocation: Invocation) -> Resu
             required,
             backfill_file,
             package,
-        } if owns() => crate::model_field_evolution::set_nullability(
+        } => crate::model_field_evolution::set_nullability(
             crate::model_field_evolution::NullabilityRequest {
                 entity,
                 field,
@@ -129,29 +81,12 @@ pub(crate) fn run(command: ResourceFieldCommand, invocation: Invocation) -> Resu
             },
             invocation,
         ),
-        ResourceFieldCommand::Nullability {
-            entity,
-            field,
-            nullable,
-            required: _,
-            backfill_file,
-            package,
-        } => dispatch::mutate(invocation, false, |run| {
-            jails_engine::route::set_field_nullability_with_data(
-                run,
-                &entity,
-                &field,
-                nullable,
-                backfill_file.as_deref(),
-                package.as_deref(),
-            )
-        }),
         ResourceFieldCommand::Drop {
             entity,
             field,
             confirm_column,
             package,
-        } if owns() => crate::model_field_evolution::drop_field(
+        } => crate::model_field_evolution::drop_field(
             crate::model_field_evolution::DropRequest {
                 entity,
                 field,
@@ -160,20 +95,6 @@ pub(crate) fn run(command: ResourceFieldCommand, invocation: Invocation) -> Resu
             },
             invocation,
         ),
-        ResourceFieldCommand::Drop {
-            entity,
-            field,
-            confirm_column,
-            package,
-        } => dispatch::mutate(invocation, false, |run| {
-            jails_engine::route::drop_field(
-                run,
-                &entity,
-                &field,
-                &confirm_column,
-                package.as_deref(),
-            )
-        }),
     }
 }
 

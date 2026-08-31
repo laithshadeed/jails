@@ -133,21 +133,19 @@ const ALLOWED_LEFTOVER: &[(&str, &str, &str)] = &[
 
 /// Kinds `destroy` refuses, and the refusal is the point.
 ///
-/// The first two are forward-only: a migration that has run cannot be unrun by
-/// deleting its file, and a field overlay is undone by another overlay.
-/// `cases` is the third **one-shot**, and it joined this list with the
-/// dispatch flip: V1 destroyed it by rebuilding the test path from the
-/// markdown path, while a one-shot is now a receipt over the source's bytes
-/// and the ledger schema has no list for taking one back. Regenerating from
-/// the same brief is already a no-op, so the receipt is never in the way --
-/// the generated test is the reader's to delete.
+/// Both are forward-only: a migration that has run cannot be unrun by deleting
+/// its file, and a field overlay is undone by another overlay.
 ///
-/// `association` was here and is not. Its DDL is append-only too, but
-/// retiring it *appends* `drop constraint` -- the next migration, not the
-/// un-running of one -- exactly as `--storage drop` appends `drop table`.
-/// Refusing the verb left both halves of an association permanently
-/// undestroyable.
-const FORWARD_ONLY: &[&str] = &["migration", "field", "cases"];
+/// **Two kinds were here and are not, for the same reason.** `association`'s
+/// DDL is append-only too, but retiring it *appends* `drop constraint` -- the
+/// next migration, not the un-running of one -- exactly as `--storage drop`
+/// appends `drop table`; refusing the verb left both halves of an association
+/// permanently undestroyable. `cases` was a *ledger* limitation rather than a
+/// semantic one: a one-shot was a receipt over the source's bytes and the
+/// schema had no list for taking one back. On the compiler it is an ordinary
+/// component declaration, so removing it is model subtraction like any other
+/// and the generated test goes with it.
+const FORWARD_ONLY: &[&str] = &["migration", "field"];
 
 fn explanation(kind: &str, rel: &str) -> Option<&'static str> {
     ALLOWED_LEFTOVER

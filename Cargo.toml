@@ -31,7 +31,6 @@ jails-commit = { path = "crates/jails-commit" }
 jails-compiler = { path = "crates/jails-compiler" }
 jails-contracts = { path = "crates/jails-contracts" }
 jails-drive = { path = "crates/jails-drive" }
-jails-engine = { path = "crates/jails-engine" }
 jails-generate = { path = "crates/jails-generate" }
 jails-java = { path = "crates/jails-java" }
 jails-model = { path = "crates/jails-model" }
@@ -73,7 +72,6 @@ edition.workspace = true
 [dependencies]
 jails-drive.workspace = true
 jails-report.workspace = true
-jails-engine.workspace = true
 jails-commit.workspace = true
 jails-prepare.workspace = true
 jails-generate.workspace = true

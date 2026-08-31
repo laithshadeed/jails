@@ -18,15 +18,6 @@ pub(crate) enum DependencyScope {
 }
 
 impl DependencyScope {
-    pub(crate) fn resolved(self) -> jails_protocol::coordinate::MavenScope {
-        use jails_protocol::coordinate::MavenScope;
-        match self {
-            Self::Compile => MavenScope::Compile,
-            Self::Runtime => MavenScope::Runtime,
-            Self::Test => MavenScope::Test,
-        }
-    }
-
     pub(crate) fn canonical(self) -> jails_model::DependencyScope {
         match self {
             Self::Compile => jails_model::DependencyScope::Compile,
@@ -77,45 +68,4 @@ pub(crate) fn split_setting(text: &str) -> Result<(String, String)> {
         )
         .into()),
     }
-}
-
-/// Which file a `jails set` wrote into. See `Command::Set` for why `--tests`
-/// is `config/` and not the obvious path.
-pub(crate) fn declared_property(
-    key: &str,
-    tests: bool,
-) -> Result<jails_protocol::entity::DeclaredId> {
-    Ok(jails_protocol::entity::DeclaredId::Property {
-        path: jails_protocol::identity::ProjectPath::parse(if tests {
-            "src/test/resources/config/application.properties"
-        } else {
-            "src/main/resources/application.properties"
-        })?,
-        key: jails_protocol::identity::PropertyKey::parse(key)?,
-    })
-}
-
-/// Translate the two destroy flags into the engine's closed storage choice.
-pub(crate) fn storage_retirement(
-    storage: Option<crate::cli::StoragePolicy>,
-    confirm_table: Option<String>,
-) -> Result<Option<jails_engine::route::RequestedStorageRetirement>> {
-    Ok(match storage {
-        Some(crate::cli::StoragePolicy::Preserve) if confirm_table.is_some() => {
-            return Err(
-                "`--confirm-table` is only meaningful with `--storage drop`.\n       \
-                 fix: remove the confirmation when preserving storage."
-                    .into(),
-            );
-        }
-        Some(crate::cli::StoragePolicy::Preserve) => {
-            Some(jails_engine::route::RequestedStorageRetirement::Preserve)
-        }
-        Some(crate::cli::StoragePolicy::Drop) => {
-            Some(jails_engine::route::RequestedStorageRetirement::Drop {
-                confirmed_table: confirm_table,
-            })
-        }
-        None => None,
-    })
 }

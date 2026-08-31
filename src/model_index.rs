@@ -11,40 +11,21 @@ use serde_json::json;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-pub(crate) fn owns() -> bool {
-    crate::model_command::owns()
-}
-
 pub(crate) fn run(command: ResourceIndexCommand, invocation: Invocation) -> Result<()> {
     match command {
         ResourceIndexCommand::Add {
             entity,
             columns,
             package,
-        } => {
-            if owns() {
-                add(entity, columns, package, invocation)
-            } else {
-                crate::dispatch::mutate(invocation, false, |run| {
-                    jails_engine::route::add_index(run, &entity, &columns, package.as_deref())
-                })
-            }
-        }
+        } => crate::model_command::ensure_owned(invocation.clone())
+            .and_then(|()| add(entity, columns, package, invocation)),
         ResourceIndexCommand::Remove {
             entity,
             columns,
             confirm_index,
             package,
-        } => {
-            if owns() {
-                remove(entity, columns, confirm_index, package, invocation)
-            } else {
-                Err(Failure::Told(
-                    "index removal is available only in a canonical model project.\n       fix: import the project with `jails model import`, or keep the legacy index migration reader-owned"
-                        .to_string(),
-                ))
-            }
-        }
+        } => crate::model_command::ensure_owned(invocation.clone())
+            .and_then(|()| remove(entity, columns, confirm_index, package, invocation)),
     }
 }
 

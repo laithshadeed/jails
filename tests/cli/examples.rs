@@ -343,8 +343,14 @@ fn unheld_maven_example_manifest_passes_real_verification() {
             // the sentence above about canonical emitting an `HttpPort` "where
             // legacy emitted a controller and its test" no longer describes a
             // difference in shape -- it described a missing endpoint.
-            reports: 17,
-            tests: 35,
+            //
+            // 17 -> 18 reports, 35 -> 42 tests: `ArchitectureTest`, whose
+            // seven ArchUnit rules the compiler now emits for any model that
+            // serves a resource. It is the one generated test that checks the
+            // *reader's* code as well as jails' own, which is why it counts
+            // for seven where a controller test counts for one.
+            reports: 18,
+            tests: 42,
             failures: 0,
             errors: 0,
             skipped: 0,

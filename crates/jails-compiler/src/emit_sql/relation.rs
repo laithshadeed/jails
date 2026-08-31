@@ -17,6 +17,7 @@ use jails_model::StableId as _;
 /// is a dependency order, so an inline table constraint would work or not
 /// depending on how the ids happened to sort.
 pub(super) fn derive_into(
+    removals: &std::collections::BTreeMap<String, String>,
     next: &AppModel,
     previous: &AppModel,
     statements: &mut Vec<String>,
@@ -38,11 +39,32 @@ pub(super) fn derive_into(
         // The same policy indexes have, for the same reason: dropping a
         // constraint is a forward migration somebody has to mean, and
         // inferring one from a deleted declaration is how a production
-        // invariant disappears in a routine edit.
-        return Err(CompileError::new(format!(
-            "accepted foreign key `{}` was removed without a retirement policy\n       fix: keep the relation, or drop the constraint in a migration you write",
-            old.sql_name
-        )));
+        // invariant disappears in a routine edit. `RemoveRelation` is how the
+        // reader says they meant it, and it names the accepted constraint --
+        // so the drop below is never inferred, only confirmed.
+        let Some(confirmed) = removals.get(old.id.as_str()) else {
+            return Err(CompileError::new(format!(
+                "accepted foreign key `{}` was removed without a retirement policy\n       fix: run `jails destroy association {}`, or drop the constraint in a migration you write",
+                old.sql_name, old.label
+            )));
+        };
+        let child = next
+            .entities
+            .get(&old.child)
+            .or_else(|| previous.entities.get(&old.child))
+            .ok_or_else(|| {
+                CompileError::new(format!(
+                    "relation `{}` names a missing child entity\n       fix: repair the linked model before compiling",
+                    old.label
+                ))
+            })?;
+        statements.push(format!(
+            "alter table {}\n  drop constraint {confirmed};",
+            child.names.sql_table
+        ));
+        semantic_ids.insert(old.id.as_str().to_string());
+        descriptions.push(format!("drop_{confirmed}"));
+        continue;
     }
     Ok(())
 }

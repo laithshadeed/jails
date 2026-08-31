@@ -308,7 +308,23 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
                         sql_table,
                     },
                     active: entity.active,
-                    facets: entity.facets,
+                    // **`http` implies `service`**, and the compatibility
+                    // input is why this is here rather than only in
+                    // `validate_prerequisites`. JDL v1 states the requirement
+                    // and refuses a model that breaks it; the pre-v1 draft
+                    // lists facets directly and reaches no such check, so a
+                    // `.jails/model.toml` could declare `http` without
+                    // `service` -- and the controller that serves the resource
+                    // delegates to the service, so the project compiled
+                    // against a package that did not exist. Two dialects for
+                    // one model must mean the same application.
+                    facets: {
+                        let mut facets = entity.facets;
+                        if facets.contains(&crate::model::Facet::Http) {
+                            facets.insert(crate::model::Facet::Service);
+                        }
+                        facets
+                    },
                     enum_constants,
                     fields,
                     indexes,
