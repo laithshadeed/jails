@@ -1083,6 +1083,25 @@ longer signs anything.
 with PID N is still running", about a process that is not), and the session
 then looks like one that never had a container engine.
 
+**The proxy port rotates, and `~/.m2/settings.xml` pins it.** A resumed
+session gets a new port, so a `settings.xml` written by an earlier one sends
+every Maven request to a socket nobody is listening on -- and the harness
+*replaces* `JAVA_TOOL_OPTIONS` with its own GC flags, dropping the environment's
+proxy sysprops, so that file is the only thing pointing Maven anywhere. It
+presents as **~25 product-shaped test failures** at
+`maven-resources-plugin ... Connection refused`, while a hand-run `mvn` from
+the shell passes, because the shell still has the live port in its environment.
+Maven then caches each failure as a `.lastUpdated` marker and honours it rather
+than retrying, so repointing the file is not enough on its own:
+
+```
+find ~/.m2/repository -name '*.lastUpdated' -delete
+```
+
+A warm-looking local repository can therefore be poisoned rather than warm.
+Suspect this before suspecting the diff whenever the whole real-toolchain tier
+fails at once and the unit tiers are green.
+
 Before it existed a web session ran two of the three tiers and said so
 nowhere: `javac` rejected `--release 26`, ~50 tier-3 tests went red, and the
 Stop hook ran `mise run verify-rewrite` into a command that was not installed.
@@ -1676,6 +1695,40 @@ A one-line edit to `jails-generate`, timed over `cargo test --workspace
 
 So the state is worth about a minute of compilation a run and the superseded
 half of it is worth nothing. Do not reach for the whole directory.
+
+**On the runner it is four times that, and the size it removes is not what it
+is worth.** The trim's own line from run `33383805799`, the first CI run to
+carry it:
+
+```
+trim: dropped 189 superseded incremental sessions, 8149 MB -> 4081 MB
+```
+
+Twice the local figure, because CI's entry accumulates orphans from every run
+that ever restored it and nothing had ever collected them. **The compressed
+entry barely moved**: 2647 MB uploaded on that run against 2643 MB on the
+next, so zstd was already collapsing near-duplicate sessions and what they
+cost was disk rather than transfer. Read the 8149 -> 4081 as the saving and
+you will over-claim it fourfold.
+
+What it is actually worth is the transfer, measured across three consecutive
+runs -- and it takes two of them to arrive, because the first trimmed save
+still carries the orphans that run created:
+
+| | baseline | first trimmed save | second | third |
+|---|---|---|---|---|
+| restore | 46s | 58s | 46s | **32s** |
+| save | 45s | 37s | 34s | 35s |
+| **transfer** | **91s** | 95s | 80s | **67s** |
+| the gate itself | 323s | 372s | 298s | 355s |
+
+**~24s a run, once settled.** The trim step itself is 1.3s.
+
+**And the gate column is why no single run can show that.** Those four
+numbers are near-identical work -- 298s, 323s, 355s, 372s -- so the job total
+moves by more than the saving in both directions, and a conclusion drawn from
+one pair of runs will say whatever that pair happened to do. This is the ±40s
+noise floor recorded above, measured again from the other side.
 
 **`CARGO_INCREMENTAL=0` on CI is a smaller cache and a slower gate, and the
 gate is what is billed.** The cargo entry really is mostly incremental state --
