@@ -219,7 +219,7 @@ impl Client {
             return Err("testd needs junit-platform-console on the test classpath\n       fix: run `jails test --fast` once to install the matching launcher".into());
         }
         let cookie = secret()?;
-        let spec = CommandSpec::new("java")
+        let spec = CommandSpec::new(crate::process::java_program())
             .arg(HEAP_LIMIT)
             .arg(METASPACE_LIMIT)
             .arg("-cp")

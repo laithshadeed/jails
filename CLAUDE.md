@@ -2078,6 +2078,29 @@ jails knows nothing about.
   with no command registered in it**: once `App` dispatches something it is the
   project's real CLI, and moving the jar out from under it would break what the
   reader built.
+- **Anything running compiled project code takes `JAVA_HOME`'s JVM, never
+  PATH's.** `jails_support::process::java_program()` is the one resolver, and
+  `testd`, `jails run --no-build` and the plain-Java `run` all go through it.
+  Maven compiles under `JAVA_HOME`, so that is the release the `.class` files
+  carry; the first `java` on PATH is a different question. A machine with one
+  JDK cannot tell them apart, and this one has two -- 26 from `mise.toml` and
+  21 beside it for the pinned-Gradle example -- so `/usr/bin/java` loads
+  nothing a modern build produced:
+
+  ```
+  UnsupportedClassVersionError: class file version 70.0, this version of the
+  Java Runtime only recognizes class file versions up to 65.0
+  ```
+
+  Probing which `java` a *reader* would get is the other question, and that one
+  belongs on PATH.
+- **A `testd` run that produces no cases refuses; it does not complete.** The
+  completed frame carries the daemon's console output on its **first case**, so
+  a run with zero cases has nowhere to put a diagnostic: the coordinator gets
+  `passed: false`, `cases: []`, and prints nothing at all while exiting 1. The
+  refusal frame has fields of its own, and `summarize` fills them with the head
+  of JUnit's output and every `Caused by:` line -- the two places it says why
+  it found nothing.
 - **`JAILS_MAVEN` names the Maven command, and mvnd is probed before it is
   chosen.** mvnd writes a registry under the Maven user home *before* Maven
   runs, so a read-only home kills it with a non-zero exit indistinguishable

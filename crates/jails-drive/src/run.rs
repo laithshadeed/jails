@@ -697,7 +697,7 @@ pub(super) fn build_tool_run(
     if pom.contains("org.springframework.boot") {
         if no_build {
             let jar = find_built_jar(&root)?;
-            let mut run = Command::new("java");
+            let mut run = Command::new(crate::process::java_program());
             run.args(["-jar"]).arg(&jar).args(args).current_dir(&root);
             return run_inherited(run, debug);
         }
@@ -748,7 +748,7 @@ pub(super) fn build_tool_run(
         ).into());
     }
 
-    let mut run = Command::new("java");
+    let mut run = Command::new(crate::process::java_program());
     run.args(["-cp", "target/classes", &fqcn])
         .args(args)
         .current_dir(&root);

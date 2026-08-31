@@ -1853,17 +1853,15 @@ fn a_timed_warm_run_cancels_the_request_and_recycles_the_daemon() {
         "package com.example.demo;\nimport org.junit.jupiter.api.Test;\nclass SlowTest { @Test void slow() throws Exception { Thread.sleep(30_000); } }\n",
     )
     .unwrap();
-    // **The warm-up must compile `SlowTest` and must not run it.** The thing
-    // being proved here is that a one-second budget cancels a request that is
-    // still in flight, so the fixture's test sleeps thirty seconds -- and a
-    // bare `jails test --fast` warm-up sat through every one of them. Measured
-    // over `tests/cli`: 33.7s, at the very tail of the binary, with nothing
-    // else left running on a four-core box, which put those thirty seconds
-    // straight onto the suite's wall clock.
-    //
-    // `PingTest` gives the warm-up something real to execute, and naming it as
-    // the selector leaves `SlowTest` compiled but unrun -- which is exactly
-    // what the timed run below needs, since it passes `--compile none`.
+    // **The warm-up compiles `SlowTest` without running it, and leaves a
+    // daemon up.** What is being proved below is that a one-second budget
+    // cancels a request still in flight, so the fixture's test sleeps thirty
+    // seconds and the warm-up must not be the thing that waits for it: naming
+    // `PingTest` as the selector leaves `SlowTest` compiled and unrun, which
+    // is what the timed run needs since it passes `--compile none`. A bare
+    // `jails test --fast` sits through all thirty, which measured 33.7s at the
+    // tail of `tests/cli` on an otherwise idle box -- straight onto the
+    // suite's wall clock.
     fs::write(
         tests.join("PingTest.java"),
         "package com.example.demo;\nimport org.junit.jupiter.api.Test;\nclass PingTest { @Test void ping() {} }\n",
@@ -1876,6 +1874,20 @@ fn a_timed_warm_run_cancels_the_request_and_recycles_the_daemon() {
         .unwrap();
     if !prepared.status.success() {
         skip("could not prepare the timed warm-test fixture");
+        return;
+    }
+
+    // **The daemon has to be up before the clock starts.** `--fast` is the
+    // launcher, not `testd`, so without this the timed run pays a cold JVM
+    // boot and the daemon's own `--scan-class-path` warm-up inside the window
+    // it is measuring -- which is not what a one-second budget is about, and
+    // which drifts past any wall-clock bound as soon as the machine is busy.
+    let daemon = jails_cmd_with_path(&root, &path)
+        .args(["test", "PingTest", "--engine", "warm", "--compile", "none"])
+        .output()
+        .unwrap();
+    if !daemon.status.success() {
+        skip("could not start testd for the timed warm-test fixture");
         return;
     }
 
