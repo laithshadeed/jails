@@ -9,6 +9,19 @@
 
 use super::*;
 
+/// Which operation is being linked: its label, and the diagnostic path built
+/// from it.
+///
+/// One value rather than two parameters because they are always passed
+/// together and always derived from each other -- and because splitting `path`
+/// back apart to recover `label` is the re-derivation this crate spends its
+/// doc comments warning about.
+#[derive(Clone, Copy)]
+pub(super) struct Declaration<'a> {
+    pub(super) label: &'a str,
+    pub(super) path: &'a str,
+}
+
 /// The delivery policy, or a diagnostic naming the two that exist.
 ///
 /// A command that delivers through an outbox and emits nothing is refused
@@ -31,14 +44,15 @@ fn link_delivery(delivery: Option<&str>, path: &str, linker: &mut Linker) -> lin
 }
 
 pub(super) fn link_command_semantics(
+    declaration: Declaration<'_>,
     source: source::CommandSemantics,
-    path: &str,
     entity: &EntityId,
     entity_labels: &BTreeMap<String, EntityId>,
     entity_fields: &BTreeMap<EntityId, BTreeMap<String, FieldId>>,
     events: &EventRegistry<'_>,
     linker: &mut Linker,
 ) -> linked::CommandSemantics {
+    let Declaration { label, path } = declaration;
     let semantics = linked::CommandSemantics {
         parameters: link_parameters(
             source.parameters,
@@ -81,7 +95,13 @@ pub(super) fn link_command_semantics(
         ),
         delivery: link_delivery(source.delivery.as_deref(), path, linker),
         bindings: source.bindings.into_iter().map(link_binding).collect(),
-        route: source.route.map(link_route),
+        // A route the author did not declare is derived rather than
+        // absent -- see `derived_route`. `internal` is the one shape that
+        // stays off HTTP, because saying so is what `@internal` means.
+        route: source
+            .route
+            .map(link_route)
+            .or_else(|| (!source.internal).then(|| derived_route(RoutedKind::Command, label))),
         internal: source.internal,
     };
     // A policy about *how* events travel, on a command with none, is a
@@ -126,13 +146,14 @@ pub(super) fn link_command_semantics(
 }
 
 pub(super) fn link_query_semantics(
+    declaration: Declaration<'_>,
     source: source::QuerySemantics,
-    path: &str,
     entity: &EntityId,
     entity_labels: &BTreeMap<String, EntityId>,
     entity_fields: &BTreeMap<EntityId, BTreeMap<String, FieldId>>,
     linker: &mut Linker,
 ) -> linked::QuerySemantics {
+    let Declaration { label, path } = declaration;
     let mut aliases = BTreeMap::new();
     let joins = source
         .joins
@@ -185,7 +206,13 @@ pub(super) fn link_query_semantics(
             .collect(),
         limit: source.limit,
         bindings: source.bindings.into_iter().map(link_binding).collect(),
-        route: source.route.map(link_route),
+        // A route the author did not declare is derived rather than
+        // absent -- see `derived_route`. `internal` is the one shape that
+        // stays off HTTP, because saying so is what `@internal` means.
+        route: source
+            .route
+            .map(link_route)
+            .or_else(|| (!source.internal).then(|| derived_route(RoutedKind::Query, label))),
         internal: source.internal,
     };
     validate_http_semantics(
@@ -201,14 +228,15 @@ pub(super) fn link_query_semantics(
 }
 
 pub(super) fn link_transition_semantics(
+    declaration: Declaration<'_>,
     source: source::TransitionSemantics,
-    path: &str,
     entity: &EntityId,
     entity_labels: &BTreeMap<String, EntityId>,
     entity_fields: &BTreeMap<EntityId, BTreeMap<String, FieldId>>,
     events: &EventRegistry<'_>,
     linker: &mut Linker,
 ) -> linked::TransitionSemantics {
+    let Declaration { label, path } = declaration;
     let semantics = linked::TransitionSemantics {
         parameters: link_parameters(
             source.parameters,
@@ -248,7 +276,13 @@ pub(super) fn link_transition_semantics(
             linker,
         ),
         bindings: source.bindings.into_iter().map(link_binding).collect(),
-        route: source.route.map(link_route),
+        // A route the author did not declare is derived rather than
+        // absent -- see `derived_route`. `internal` is the one shape that
+        // stays off HTTP, because saying so is what `@internal` means.
+        route: source
+            .route
+            .map(link_route)
+            .or_else(|| (!source.internal).then(|| derived_route(RoutedKind::Transition, label))),
         internal: source.internal,
     };
     validate_http_semantics(
@@ -414,5 +448,51 @@ pub(super) fn link_event_semantics(
     linked::EventSemantics {
         parameters,
         partition_by: source.partition_by,
+    }
+}
+
+/// The route an operation answers on when its author declared none.
+///
+/// **The `api` capability's whole surface used to depend on a declaration.**
+/// `emit_http.rs` skips an operation whose `semantics.route` is `None`, so a
+/// model that named six operations and pinned two paths got two controllers,
+/// while the legacy generator derived the other four. That is not a stricter
+/// rule -- it is a silently smaller application, which is the failure mode
+/// `derived` exists to make impossible.
+///
+/// The shape is the legacy engine's, unchanged, so a project that crosses to
+/// the compiler keeps the URLs its callers already use: `/actions/<name>` for
+/// the two kinds that write and `/queries/<name>` for the one that reads.
+///
+/// The transition is the one departure, and it is forced rather than chosen.
+/// Legacy took the row's key out of the request *body* of a `PUT`, which is a
+/// key in two places at once; the canonical controller binds
+/// `@PathVariable("id")` and refuses a transition route without `{id}`. So the
+/// derived path carries it.
+///
+/// A route derived here is **not** pinned: `derived::records` reads the
+/// author's declaration to decide that, so a convention that moves shows up as
+/// a moved convention rather than as a changed contract.
+fn derived_route(kind: RoutedKind, label: &str) -> linked::OperationRoute {
+    let name = label.replace('_', "-");
+    match kind {
+        RoutedKind::Command => linked::OperationRoute {
+            method: crate::EndpointMethod::Post,
+            path: format!("/actions/{name}"),
+            consumes: None,
+        },
+        RoutedKind::Query => linked::OperationRoute {
+            method: crate::EndpointMethod::Post,
+            path: format!("/queries/{name}"),
+            consumes: None,
+        },
+        // PUT rather than PATCH for the same reason the legacy recipe chose
+        // it: a compare-and-swap update against a version the caller states is
+        // idempotent, and PUT is the method that promises that.
+        RoutedKind::Transition => linked::OperationRoute {
+            method: crate::EndpointMethod::Put,
+            path: format!("/actions/{name}/{{id}}"),
+            consumes: None,
+        },
     }
 }

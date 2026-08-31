@@ -32,6 +32,21 @@ pub struct Operation {
     pub kind: OperationKind,
 }
 
+impl Operation {
+    /// The route this operation answers on, declared or derived.
+    ///
+    /// **Read this rather than the flat `route: Option<String>` beside it.**
+    /// The flat field is the `.jails/model.toml` spelling, kept so that format
+    /// still parses; it is a rendering of this one and carries no method or
+    /// request format of its own. `emit_http` read the flat field and so saw
+    /// nothing for an operation whose route the convention derived -- two of
+    /// six controllers on the minicom manifest, with no diagnostic, because a
+    /// missing route is how an operation says it has no HTTP surface.
+    pub fn route(&self) -> Option<&OperationRoute> {
+        routes(&self.kind).1
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct OperationNames {
     pub java_type: String,
@@ -302,6 +317,18 @@ pub struct OperationRoute {
     pub consumes: Option<RequestFormat>,
 }
 
+impl OperationRoute {
+    /// `METHOD /path`, the one spelling `valid_route` accepts and the
+    /// collision table is keyed by.
+    ///
+    /// Two routes that differ only in how a caller spelled the method are one
+    /// route to Spring, so the key has to be the canonical form rather than
+    /// whatever the source said.
+    pub fn canonical(&self) -> String {
+        format!("{} {}", self.method.wire_name(), self.path)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ParameterBinding {
     pub parameter: String,
@@ -317,6 +344,20 @@ pub enum BindingSource {
     Header,
     Claim,
     Form,
+}
+
+/// What the author declared, and what the operation actually answers on.
+///
+/// One accessor rather than a match at each site, because the pair is what
+/// every reader of a route needs: `derived::records` uses it to decide whether
+/// a row is pinned, and the linker uses it to know a route was derived.
+pub(crate) fn routes(kind: &OperationKind) -> (Option<&String>, Option<&OperationRoute>) {
+    match kind {
+        OperationKind::Command(spec) => (spec.route.as_ref(), spec.semantics.route.as_ref()),
+        OperationKind::Query(spec) => (spec.route.as_ref(), spec.semantics.route.as_ref()),
+        OperationKind::Transition(spec) => (spec.route.as_ref(), spec.semantics.route.as_ref()),
+        OperationKind::Event(_) => (None, None),
+    }
 }
 
 pub(crate) fn entity(kind: &OperationKind) -> Option<&EntityId> {

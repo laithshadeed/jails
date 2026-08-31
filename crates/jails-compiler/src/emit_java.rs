@@ -256,14 +256,11 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
         OperationKind::Command(command) => {
             let entity = entity(model, &command.on)?;
             let mut imports = BTreeSet::from([domain_import(model, entity)]);
-            let input = if command.semantics.parameters.is_empty() {
-                let fields = fields(entity, &command.fields)?;
-                import_declared_types(model, &fields, &mut imports);
-                record_shape("Input", &fields, &mut imports)
-            } else {
-                operation_record_shape(model, "Input", &command.semantics.parameters, &mut imports)?
-            };
-            let input = indent(&input, 4);
+            let components = input_components(model, operation, &mut imports)?;
+            let input = indent(
+                &record_shape_from_components("Input", &components, &mut imports),
+                4,
+            );
             let context = operation_context(model, entity, &mut imports);
             let type_name = with_suffix(&operation.names.java_type, "Command");
             let route = route_constant(command.route.as_deref());
@@ -277,9 +274,11 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
             let entity = entity(model, &query.on)?;
             let mut imports =
                 BTreeSet::from(["java.util.List".to_string(), domain_import(model, entity)]);
-            let fields = fields(entity, &query.filters)?;
-            import_declared_types(model, &fields, &mut imports);
-            let input = indent(&record_shape("Input", &fields, &mut imports), 4);
+            let components = input_components(model, operation, &mut imports)?;
+            let input = indent(
+                &record_shape_from_components("Input", &components, &mut imports),
+                4,
+            );
             let context = operation_context(model, entity, &mut imports);
             let type_name = with_suffix(&operation.names.java_type, "Query");
             let route = route_constant(query.route.as_deref());
@@ -297,9 +296,11 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
             let primary_key = primary_key(entity)?;
             let mut imports = BTreeSet::from([domain_import(model, entity)]);
             let key_type = java_type(primary_key, &mut imports);
-            let fields = fields(entity, &transition.fields)?;
-            import_declared_types(model, &fields, &mut imports);
-            let input = indent(&record_shape("Input", &fields, &mut imports), 4);
+            let components = input_components(model, operation, &mut imports)?;
+            let input = indent(
+                &record_shape_from_components("Input", &components, &mut imports),
+                4,
+            );
             let context = operation_context(model, entity, &mut imports);
             let type_name = with_suffix(&operation.names.java_type, "Transition");
             let route = route_constant(transition.route.as_deref());
@@ -330,12 +331,11 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
                 )?;
                 record_shape(&type_name, &fields, &mut imports)
             } else {
-                operation_record_shape(
-                    model,
+                record_shape_from_components(
                     &type_name,
-                    &event.semantics.parameters,
+                    &parameter_components(model, &event.semantics.parameters, &mut imports)?,
                     &mut imports,
-                )?
+                )
             };
             (Package::DomainEvents, type_name, body, imports)
         }
@@ -435,6 +435,60 @@ pub(crate) fn domain_import(model: &AppModel, entity: &Entity) -> String {
     )
 }
 
+/// What one operation's `Input` record declares, in order.
+///
+/// **One answer, because two readers need it and they must not differ.** The
+/// record renderer builds the components from this, and `emit_http::proof`
+/// builds the request that binds to them from the same list. They disagreed
+/// before it existed: a query's `Input` takes entity fields, so its components
+/// are `java_member` (`userId`), while a command with linked parameters takes
+/// those, so its components are parameter labels (`user_id`). A test that
+/// guessed either spelling sent `user_id=1` at a record declaring `userId` and
+/// got a 400 -- `bugs.md` B48 in its second form.
+///
+/// The imports the components need are collected here too, for the same
+/// reason: the branch that decides the component decides which type it names.
+pub(crate) fn input_components<'a>(
+    model: &'a AppModel,
+    operation: &'a Operation,
+    imports: &mut BTreeSet<String>,
+) -> Result<Vec<RecordComponent<'a>>, CompileError> {
+    let from_fields =
+        |entity_id, field_ids: &'a [jails_model::FieldId], imports: &mut BTreeSet<String>| {
+            let entity = entity(model, entity_id)?;
+            let fields = fields(entity, field_ids)?;
+            import_declared_types(model, &fields, imports);
+            Ok::<_, CompileError>(
+                fields
+                    .into_iter()
+                    .map(|field| RecordComponent {
+                        name: &field.names.java_member,
+                        ty: &field.ty,
+                        required: field.required,
+                        non_blank: field.non_blank,
+                        length: field.length.as_ref(),
+                        positive: field.semantics.positive,
+                        nonnegative: field.semantics.nonnegative,
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        };
+    match &operation.kind {
+        OperationKind::Command(command) => {
+            if command.semantics.parameters.is_empty() {
+                from_fields(&command.on, &command.fields, imports)
+            } else {
+                parameter_components(model, &command.semantics.parameters, imports)
+            }
+        }
+        OperationKind::Query(query) => from_fields(&query.on, &query.filters, imports),
+        OperationKind::Transition(transition) => {
+            from_fields(&transition.on, &transition.fields, imports)
+        }
+        OperationKind::Event(_) => Ok(Vec::new()),
+    }
+}
+
 fn record_shape(type_name: &str, fields: &[&Field], imports: &mut BTreeSet<String>) -> String {
     let components = fields
         .iter()
@@ -487,12 +541,11 @@ fn import_declared_types(model: &AppModel, fields: &[&Field], imports: &mut BTre
     }
 }
 
-fn operation_record_shape(
-    model: &AppModel,
-    type_name: &str,
-    parameters: &[OperationParameter],
+fn parameter_components<'a>(
+    model: &'a AppModel,
+    parameters: &'a [OperationParameter],
     imports: &mut BTreeSet<String>,
-) -> Result<String, CompileError> {
+) -> Result<Vec<RecordComponent<'a>>, CompileError> {
     let components = parameters
         .iter()
         .map(|parameter| {
@@ -541,11 +594,7 @@ fn operation_record_shape(
             })
         })
         .collect::<Result<Vec<_>, CompileError>>()?;
-    Ok(record_shape_from_components(
-        type_name,
-        &components,
-        imports,
-    ))
+    Ok(components)
 }
 
 fn record_shape_from_components(
@@ -660,10 +709,10 @@ pub(crate) fn primitive(ty: &TypeRef, required: bool) -> bool {
         && matches!(ty, TypeRef::Builtin(builtin) if builtin.semantics().java_primitive.is_some())
 }
 
-struct RecordComponent<'a> {
-    name: &'a str,
-    ty: &'a TypeRef,
-    required: bool,
+pub(crate) struct RecordComponent<'a> {
+    pub(crate) name: &'a str,
+    pub(crate) ty: &'a TypeRef,
+    pub(crate) required: bool,
     non_blank: bool,
     length: Option<&'a jails_model::LengthRange>,
     positive: bool,

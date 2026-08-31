@@ -68,6 +68,18 @@
       }
     },
     "derived": {
+      "http-route:op_note_create": {
+        "rule_id": "convention.http-route",
+        "value": "POST /actions/create"
+      },
+      "http-route:op_note_open": {
+        "rule_id": "convention.http-route",
+        "value": "POST /queries/open"
+      },
+      "http-route:op_note_rename": {
+        "rule_id": "convention.http-route",
+        "value": "PUT /actions/rename/{id}"
+      },
       "java-package:project_notes": {
         "rule_id": "convention.base-package",
         "value": "com.example.notes"
@@ -375,7 +387,11 @@
                 }
               ],
               "resolutions": [],
-              "route": null
+              "route": {
+                "consumes": null,
+                "method": "post",
+                "path": "/actions/create"
+              }
             }
           }
         },
@@ -479,7 +495,11 @@
                   }
                 }
               ],
-              "route": null
+              "route": {
+                "consumes": null,
+                "method": "post",
+                "path": "/queries/open"
+              }
             }
           }
         },
@@ -524,7 +544,11 @@
                 }
               ],
               "precondition": null,
-              "route": null,
+              "route": {
+                "consumes": null,
+                "method": "put",
+                "path": "/actions/rename/{id}"
+              },
               "select": [],
               "update": [
                 "fld_note_title"
@@ -600,7 +624,7 @@
       }
     }
   },
-  "model_digest": "sha256:0997b23a62d9d929023e01a7f5a1d09502d79980ec0f20e9694851db410c4cb5",
+  "model_digest": "sha256:c8e1bd819cec86177ded20d964f6afb3dae5960eac3d3b007d9c719846608f95",
   "projection": {
     "files": {
       ".jails/generated/main/java/com/example/notes/adapters/Json.java": {

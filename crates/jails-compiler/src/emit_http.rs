@@ -1,6 +1,9 @@
 //! Spring HTTP adapters for routed semantic operations.
 
+mod proof;
+
 use crate::CompileError;
+use crate::emit_companion_test::JAVA_TEST_ROOT;
 use crate::emit_java::{
     JAVA_ROOT, domain_import, entity, java_type, primary_key, render, with_suffix,
 };
@@ -8,9 +11,27 @@ use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile,
 use jails_model::{AppModel, Operation, OperationKind, Package, StableId};
 use std::collections::BTreeSet;
 
+/// How one controller takes its request, decided once beside the parameter
+/// list it is decided from.
+///
+/// The controller renderer and the test renderer both need this answer, and
+/// `bugs.md` B48 is what happens when each works it out separately: a
+/// path-variable query got a test that POSTed a JSON body to a GET-only route,
+/// at a URI whose placeholder was never expanded.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Binding {
+    /// `@RequestBody` -- the request is JSON.
+    Body,
+    /// `@ModelAttribute` -- the request is parameters.
+    Model,
+    /// `@PathVariable` for the row key, then `@RequestBody`.
+    Path,
+}
+
 pub(crate) fn lower_and_emit(
     model: &AppModel,
     output: &mut RenderedTree,
+    spring_boot: Option<&str>,
 ) -> Result<(), CompileError> {
     let Some(capability) = model
         .capabilities
@@ -20,10 +41,12 @@ pub(crate) fn lower_and_emit(
         return Ok(());
     };
     for operation in model.operations.values() {
-        let Some((path, file)) = lower(model, capability.id.as_str(), operation)? else {
+        let Some(files) = lower(model, capability.id.as_str(), operation, spring_boot)? else {
             continue;
         };
-        output.insert(path, file).map_err(CompileError::new)?;
+        for (path, file) in files {
+            output.insert(path, file).map_err(CompileError::new)?;
+        }
     }
     Ok(())
 }
@@ -32,17 +55,23 @@ fn lower(
     model: &AppModel,
     capability_id: &str,
     operation: &Operation,
-) -> Result<Option<(ProjectPath, RenderedFile)>, CompileError> {
-    let (target, route, port_package, port_type, return_type, parameters, mut imports) =
+    spring_boot: Option<&str>,
+) -> Result<Option<Vec<(ProjectPath, RenderedFile)>>, CompileError> {
+    // The typed route the linker resolved, not the flat `.jails/model.toml`
+    // rendering beside it: that one is `None` whenever the convention supplied
+    // the path, which is every operation whose author did not pin one.
+    let Some(route) = operation.route() else {
+        return Ok(None);
+    };
+    let (method, path) = (route.method.wire_name(), route.path.as_str());
+    let mut key_sample = None;
+    let (target, binding, port_package, port_type, return_type, parameters, mut imports) =
         match &operation.kind {
             OperationKind::Command(command) => {
-                let Some(route) = command.route.as_deref() else {
-                    return Ok(None);
-                };
                 let entity = entity(model, &command.on)?;
                 (
                     entity,
-                    route,
+                    Binding::Body,
                     Package::ApplicationCommands,
                     with_suffix(&operation.names.java_type, "Command"),
                     entity.names.java_type.clone(),
@@ -54,13 +83,10 @@ fn lower(
                 )
             }
             OperationKind::Query(query) => {
-                let Some(route) = query.route.as_deref() else {
-                    return Ok(None);
-                };
                 let entity = entity(model, &query.on)?;
                 (
                     entity,
-                    route,
+                    Binding::Model,
                     Package::ApplicationQueries,
                     with_suffix(&operation.names.java_type, "Query"),
                     format!("List<{}>", entity.names.java_type),
@@ -73,10 +99,6 @@ fn lower(
                 )
             }
             OperationKind::Transition(transition) => {
-                let Some(route) = transition.route.as_deref() else {
-                    return Ok(None);
-                };
-                let (_, path) = split_route(route)?;
                 if !path.contains("{id}") {
                     return Err(CompileError::new(format!(
                         "transition operation `{}` needs `{{id}}` in its API route\n       fix: set `route = \"PATCH /path/{{id}}\"` or remove the `api` capability",
@@ -91,9 +113,14 @@ fn lower(
                     "org.springframework.web.bind.annotation.RequestBody".to_string(),
                 ]);
                 let key_type = java_type(primary_key, &mut imports);
+                // The `{id}` the test has to expand, sampled from the model's
+                // own key rather than from a literal that happens to parse: a
+                // `uuid` key rejects `"1"` at the path variable, before the
+                // handler runs.
+                key_sample = crate::emit_companion_test::json_sample(model, &primary_key.ty);
                 (
                     entity,
-                    route,
+                    Binding::Path,
                     Package::ApplicationTransitions,
                     with_suffix(&operation.names.java_type, "Transition"),
                     entity.names.java_type.clone(),
@@ -103,7 +130,6 @@ fn lower(
             }
             OperationKind::Event(_) => return Ok(None),
         };
-    let (method, path) = split_route(route)?;
     let package = model.project.package_for(Package::AdaptersHttp);
     let type_name = with_suffix(&operation.names.java_type, "Controller");
     imports.extend([
@@ -181,7 +207,9 @@ fn lower(
     let package_path = package.replace('.', "/");
     let path = ProjectPath::parse(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))
         .map_err(CompileError::new)?;
-    Ok(Some((
+    let semantic_ids =
+        BTreeSet::from([capability_id.to_string(), operation.id.as_str().to_string()]);
+    let controller = (
         path,
         RenderedFile {
             kind: FileKind::JavaMain,
@@ -191,22 +219,56 @@ fn lower(
                 artifact_id,
                 ejection_id: None,
                 ejectable: true,
-                semantic_ids: BTreeSet::from([
-                    capability_id.to_string(),
-                    operation.id.as_str().to_string(),
-                ]),
+                semantic_ids: semantic_ids.clone(),
                 compiler_pass: "capability-api".to_string(),
             },
         },
-    )))
-}
+    );
 
-fn split_route(route: &str) -> Result<(&str, &str), CompileError> {
-    route.split_once(' ').ok_or_else(|| {
-        CompileError::new(format!(
-            "linked operation contains invalid route `{route}`\n       fix: use `METHOD /path`"
-        ))
-    })
+    // The `Input` record the controller binds to, read from the one place
+    // that decides it -- see `emit_java::input_components`.
+    // The declared-type imports `input_components` collects are the *record's*
+    // -- the test names those types only inside a JSON literal, so they are
+    // deliberately discarded here rather than emitted unused.
+    let components = crate::emit_java::input_components(model, operation, &mut BTreeSet::new())?;
+
+    // The companion test is the point of the adapter existing at all. Without
+    // it the canonical `api` capability wrote a controller nothing ever
+    // dispatched a request to -- which compiles, starts, and proves nothing.
+    let (test_imports, test_body) = proof::controller_test(
+        model,
+        proof::ControllerProof {
+            type_name: &type_name,
+            route,
+            binding,
+            returns: &target.names.java_type,
+            many: matches!(operation.kind, OperationKind::Query(_)),
+            components: &components,
+            key_json: key_sample,
+            spring_boot,
+        },
+    )?;
+    let test_artifact = format!("art_{}_http_test", operation.id.as_str());
+    let test_path = ProjectPath::parse(format!(
+        "{JAVA_TEST_ROOT}/{package_path}/{type_name}Test.java"
+    ))
+    .map_err(CompileError::new)?;
+    let test = (
+        test_path,
+        RenderedFile {
+            kind: FileKind::JavaTest,
+            mode: FileMode::Regular,
+            bytes: render(&package, &test_imports, &test_body, &test_artifact).into_bytes(),
+            provenance: Provenance {
+                artifact_id: test_artifact,
+                ejection_id: None,
+                ejectable: true,
+                semantic_ids,
+                compiler_pass: "capability-api".to_string(),
+            },
+        },
+    );
+    Ok(Some(vec![controller, test]))
 }
 
 fn java_string(value: &str) -> String {

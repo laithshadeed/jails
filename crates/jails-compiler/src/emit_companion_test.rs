@@ -25,7 +25,7 @@ use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile}
 use jails_model::{AppModel, Entity, Field, Package, StableId, TypeRef};
 use std::collections::BTreeSet;
 
-const JAVA_TEST_ROOT: &str = ".jails/generated/test/java";
+pub(crate) const JAVA_TEST_ROOT: &str = ".jails/generated/test/java";
 
 /// The companion test for one entity, or `None` when the facet has none.
 pub(crate) fn lower(
@@ -285,4 +285,72 @@ fn lower_first(value: &str) -> String {
     characters.next().map_or_else(String::new, |first| {
         first.to_ascii_lowercase().to_string() + characters.as_str()
     })
+}
+
+/// A sample of one model-declared Java type, for a caller that has the name
+/// rather than the field.
+///
+/// The HTTP proof needs exactly this: a controller's port answers with the
+/// entity the operation targets, and the test has to build one to stub the
+/// port with.
+pub(crate) fn declared_sample_of(
+    model: &AppModel,
+    java_type: &str,
+    imports: &mut BTreeSet<String>,
+) -> Option<String> {
+    declared_sample(model, java_type, imports, &mut BTreeSet::new())
+}
+
+/// The same value [`sample`] builds, spelled as JSON.
+///
+/// **Not derivable from the Java expression**, which is why `BuiltinSemantics`
+/// carries both: `UUID.fromString("…")` is a bare string on the wire and `1L`
+/// is a number with no suffix. A generated request body that rendered the Java
+/// spelling would document a payload the record it came from refuses.
+/// Takes no import set, deliberately: JSON names no Java type. A `uuid` is a
+/// string on the wire and an enum constant is its own name, so a caller that
+/// only builds a request body needs nothing imported for it.
+pub(crate) fn json_sample(model: &AppModel, ty: &TypeRef) -> Option<String> {
+    json_sample_with(model, ty, &mut BTreeSet::new())
+}
+
+fn json_sample_with(model: &AppModel, ty: &TypeRef, seen: &mut BTreeSet<String>) -> Option<String> {
+    match ty {
+        TypeRef::Builtin(builtin) => Some(builtin.semantics().json.to_string()),
+        TypeRef::External(external) => {
+            let entity = model
+                .entities
+                .values()
+                .find(|entity| entity.active && entity.names.java_type == *external)?;
+            if !seen.insert(external.clone()) {
+                return None;
+            }
+            let rendered = if entity.facets.contains(&jails_model::Facet::Enum) {
+                // By name, for the reason `declared_sample` gives: the first
+                // constant stands for a different value the moment somebody
+                // reorders the enum, with nothing in the diff to say so.
+                entity
+                    .enum_constants
+                    .first()
+                    .map(|constant| format!("\"{}\"", constant.java_name))
+            } else if entity.facets.contains(&jails_model::Facet::Record) {
+                entity
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        if !field.required {
+                            return Some(format!("\"{}\": null", field.names.java_member));
+                        }
+                        let value = json_sample_with(model, &field.ty, seen)?;
+                        Some(format!("\"{}\": {value}", field.names.java_member))
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .map(|entries| format!("{{{}}}", entries.join(", ")))
+            } else {
+                None
+            };
+            seen.remove(external);
+            rendered
+        }
+    }
 }

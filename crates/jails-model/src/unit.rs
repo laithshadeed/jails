@@ -71,6 +71,19 @@ impl EndpointMethod {
     pub fn takes_body(self) -> bool {
         matches!(self, Self::Post | Self::Put | Self::Patch)
     }
+
+    /// The uppercase spelling every HTTP surface uses: the route grammar's own
+    /// `METHOD /path`, Spring's `RequestMethod` constant, and the collision
+    /// key. `{:?}` renders `Post`, which is none of those.
+    pub fn wire_name(self) -> &'static str {
+        match self {
+            Self::Get => "GET",
+            Self::Post => "POST",
+            Self::Put => "PUT",
+            Self::Patch => "PATCH",
+            Self::Delete => "DELETE",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]

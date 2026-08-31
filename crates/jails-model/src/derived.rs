@@ -342,12 +342,16 @@ pub fn records(model: &crate::AppModel) -> BTreeMap<DerivedRoleKey, DerivedValue
                 crate::naming::upper_camel_case(&operation.label),
             ),
         );
-        let (declared, resolved) = operation_route(operation);
+        let (declared, resolved) = crate::operation::routes(&operation.kind);
         if let Some(resolved) = resolved {
             into.insert(
                 DerivedRoleKey::new(operation.id.as_str(), DerivedRole::HttpRoute),
                 DerivedValue {
-                    value: format!("{:?} {}", resolved.method, resolved.path),
+                    // `canonical`, not `{:?}`: the record is what `jails model
+                    // explain` prints and what the digest carries, and `Post
+                    // /actions/create` is a spelling no route grammar, Spring
+                    // annotation or collision key uses.
+                    value: resolved.canonical(),
                     rule_id: "convention.http-route".to_string(),
                     inputs: Vec::new(),
                     // The one row where a pin *is* recoverable: the
@@ -361,19 +365,6 @@ pub fn records(model: &crate::AppModel) -> BTreeMap<DerivedRoleKey, DerivedValue
         }
     }
     into
-}
-
-fn operation_route(
-    operation: &crate::Operation,
-) -> (Option<&String>, Option<&crate::OperationRoute>) {
-    match &operation.kind {
-        crate::OperationKind::Command(spec) => (spec.route.as_ref(), spec.semantics.route.as_ref()),
-        crate::OperationKind::Query(spec) => (spec.route.as_ref(), spec.semantics.route.as_ref()),
-        crate::OperationKind::Transition(spec) => {
-            (spec.route.as_ref(), spec.semantics.route.as_ref())
-        }
-        crate::OperationKind::Event(_) => (None, None),
-    }
 }
 
 #[cfg(test)]

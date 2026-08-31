@@ -103,8 +103,11 @@ pub(super) fn link(
                     );
                     linker.route(route.as_deref(), &path, routes);
                     let semantics = link_command_semantics(
+                        Declaration {
+                            label: &label,
+                            path: &path,
+                        },
                         semantics,
-                        &path,
                         &entity,
                         entity_labels,
                         entity_fields,
@@ -151,8 +154,11 @@ pub(super) fn link(
                     }
                     linker.route(route.as_deref(), &path, routes);
                     let mut semantics = link_query_semantics(
+                        Declaration {
+                            label: &label,
+                            path: &path,
+                        },
                         semantics,
-                        &path,
                         &entity,
                         entity_labels,
                         entity_fields,
@@ -218,8 +224,11 @@ pub(super) fn link(
                     });
                     linker.route(route.as_deref(), &path, routes);
                     let mut semantics = link_transition_semantics(
+                        Declaration {
+                            label: &label,
+                            path: &path,
+                        },
                         semantics,
-                        &path,
                         &entity,
                         entity_labels,
                         entity_fields,
@@ -330,6 +339,15 @@ pub(super) fn link(
                     "revive the entity or remove the operation",
                 );
                 continue;
+            }
+            // A derived route claims its path exactly as a declared one does.
+            // `linker.route` above sees only what the author wrote, so without
+            // this a convention could quietly take a path some other operation
+            // had pinned, and the collision would surface as two Spring
+            // handlers mapped to one URL -- a context that fails to start,
+            // named after a route nobody typed.
+            if let (None, Some(derived)) = crate::operation::routes(&kind) {
+                linker.route(Some(&derived.canonical()), &path, routes);
             }
             let java_type = operation_java_types
                 .remove(&label)
