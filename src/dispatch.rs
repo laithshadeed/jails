@@ -11,9 +11,14 @@
 //! Split out of `main.rs` under the ladder's largest-module gate, and the cut
 //! is a real seam rather than a size one: `main.rs` says what the CLI
 //! *accepts* -- the clap definition, one arm per subcommand -- and this says
-//! what happens to a mutating one. Every route goes through [`mutate`], so
-//! `--pretend`, `--debug`, `--no-start` and `--output` are honoured in exactly
-//! one place and a command cannot forget one.
+//! what happens to the result of one.
+//!
+//! **The flags ride on [`Invocation`], which `main` builds once.**
+//! `--pretend`, `--debug`, `--output`, `--diff`, `--ast` and the plan paths
+//! are read from the parsed CLI into that one value, so a route receives them
+//! rather than re-reading them and a command cannot honour a different set
+//! from its neighbour. This module is the other end: it turns whatever a route
+//! returns into the process's exit status and its single rendered report.
 
 use crate::{Invocation, Output};
 use jails_support::Result;
@@ -84,15 +89,6 @@ pub(crate) fn finish_invocation(
     std::process::ExitCode::FAILURE
 }
 
-/// Run one mutation through the transaction protocol, and report it once.
-///
-/// **Every mutating command goes through here.** That is the point of the
-/// single dispatch point plan.md §R6 names: `--pretend`, `--debug`,
-/// `--no-start` and `--output` are honoured in one place, so a command cannot
-/// forget one, and the result is rendered from the envelope rather than
-/// printed as the route goes. A route that printed its own progress would be
-/// describing the work a second time, which is the drift §R3.4 exists to
-/// remove.
 /// Apply a plan bundle written earlier by `--plan-out`.
 ///
 /// **The reviewed transition is the bundle, and applying it never replans.**

@@ -580,6 +580,21 @@ fn kebab(name: &str) -> String {
     output
 }
 
+impl NamedQueryPackages {
+    /// The three packages a slice's generated query artifacts land in.
+    ///
+    /// Derived here rather than at the call site so the frontend and any later
+    /// caller cannot disagree about where a query adapter goes -- the same
+    /// rule `sql_table` has one owner for.
+    pub fn under(base: &QueryPackage) -> jails_support::Result<Self> {
+        Ok(Self {
+            application_query: base.join(&QueryPackage::parse("application.query")?),
+            jdbc_adapter: base.join(&QueryPackage::parse("adapter.jdbc")?),
+            fake_adapter: base.join(&QueryPackage::parse("adapter.query")?),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -703,20 +718,5 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-    }
-}
-
-impl NamedQueryPackages {
-    /// The three packages a slice's generated query artifacts land in.
-    ///
-    /// Derived here rather than at the call site so the frontend and any later
-    /// caller cannot disagree about where a query adapter goes -- the same
-    /// rule `sql_table` has one owner for.
-    pub fn under(base: &QueryPackage) -> jails_support::Result<Self> {
-        Ok(Self {
-            application_query: base.join(&QueryPackage::parse("application.query")?),
-            jdbc_adapter: base.join(&QueryPackage::parse("adapter.jdbc")?),
-            fake_adapter: base.join(&QueryPackage::parse("adapter.query")?),
-        })
     }
 }

@@ -684,8 +684,9 @@ fn append_project_table(text: &str, rendered: &str) -> String {
     out
 }
 
-/// The same layout edit as text. See [`edited_capabilities`] for why the
-/// splice and the write are separate.
+/// The same layout edit as text. See `edited_capabilities` for why the
+/// splice and the write are separate -- it is `pub(crate)`, so this is a plain
+/// reference rather than a link a public item's documentation cannot resolve.
 pub fn with_layout(text: &str, layer: &str, directory: &str) -> Result<String> {
     if !is_layer(layer) {
         return Err(format!(
