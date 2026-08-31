@@ -52,6 +52,16 @@ pub fn temp_dir(label: &str) -> PathBuf {
         .keep()
 }
 
+/// Whether the suite should print what every subprocess cost.
+///
+/// **Empty means off**, which is not pedantry: CI passes this through an
+/// expression that yields `''` when the dispatch input is false, and a bare
+/// `is_some()` reads a set-but-empty variable as "on" -- so every ordinary run
+/// would have printed a few thousand profile lines nobody asked for.
+pub fn profiling() -> bool {
+    std::env::var_os("JAILS_TEST_PROFILE").is_some_and(|value| !value.is_empty())
+}
+
 /// A persistent generated-project directory keyed to this integration-test
 /// executable. Maven may reuse unchanged javac output across `cargo test`
 /// invocations, while every Java test is still executed on every invocation.
@@ -976,7 +986,7 @@ impl ToolchainCommand {
 }
 
 fn profile_command_description(command: &Command) -> Option<String> {
-    std::env::var_os("JAILS_TEST_PROFILE").map(|_| {
+    profiling().then(|| {
         let _ = test_profile_epoch();
         let cwd = command
             .get_current_dir()

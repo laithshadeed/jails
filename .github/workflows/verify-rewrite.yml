@@ -42,7 +42,19 @@ on:
   push:
     branches: [main]
   pull_request:
+  # **A one-off, on demand, with the suite's own subprocess profiler on.**
+  # Every timing in `CLAUDE.md` was taken on a developer machine, and the one
+  # thing a developer machine cannot tell you is why the runner disagrees with
+  # it -- `tests/cli` is 147s here and 296s there on the same four cores, and
+  # no amount of local measurement explains the gap. `JAILS_TEST_PROFILE`
+  # makes every subprocess print its queue and run time, so a dispatch with
+  # `profile: true` answers it directly instead of by inference.
   workflow_dispatch:
+    inputs:
+      profile:
+        description: Print every subprocess's timing (JAILS_TEST_PROFILE)
+        type: boolean
+        default: false
 
 # Supersede an **older commit's** run when a branch is pushed again while one
 # is still going. That run is genuinely obsolete, which is what cancellation is
@@ -232,18 +244,64 @@ jobs:
 
       - name: verify-rewrite
         run: mise run verify-rewrite
+        env:
+          JAILS_TEST_PROFILE: ${{ inputs.profile && '1' || '' }}
 
       # `target/` is cached, and the suite writes things under it that are not
-      # build output: `jails-e2e-cache` alone is ~39 MB of generated projects
+      # build output: `jails-e2e-cache` alone is 36 MB of generated projects
       # kept between runs, and the logs, cost ledger and permit slots have no
       # meaning on another machine. Dropping them before the post step keeps
       # the cache to artifacts, which is the only part worth carrying.
+      #
+      # **`target/debug/incremental` is the largest thing in the entry, and
+      # most of it is dead.** Cargo names a unit's incremental directory after
+      # its fingerprint and writes a fresh `s-*` session inside it on every
+      # build; it never removes a directory whose fingerprint has moved on, so
+      # a cache carried from run to run accumulates one orphan per crate per
+      # dependency or feature change, for ever. Measured on this workspace
+      # after a day of builds: **5.6 GB, against 688 MB once every superseded
+      # session was dropped**, with two live `jails_generate-*` and two live
+      # `jails_drive-*` directories differing only in their hash.
+      #
+      # Keeping the newest session in each directory is what makes this free
+      # rather than a saving paid for in compilation, and the difference is
+      # stark enough to be worth the measurement: with its incremental state a
+      # one-line edit to `jails-generate` rebuilds the workspace's test
+      # binaries in **4.1s**, and with `target/debug/incremental` deleted
+      # outright in **65.0s**. After this trim it is 3.3s. That is also why
+      # `CARGO_INCREMENTAL=0` -- which would shrink the entry far more -- was
+      # tried here and reverted: it cost the gate 90-120s to save 30s of
+      # transfer.
       #
       # This runs unconditionally: a failed run's artifacts are still valid
       # for the next one, and cargo revalidates everything it restores anyway.
       - name: Trim the cargo cache to build artifacts
         if: always()
-        run: rm -rf target/jails-e2e-cache target/jails-test-logs target/jails-test-permits
+        run: |
+          rm -rf target/jails-e2e-cache target/jails-test-logs target/jails-test-permits
+          python3 - <<'TRIM'
+          import shutil
+          from pathlib import Path
+
+          root = Path("target/debug/incremental")
+          before = sum(f.stat().st_size for f in root.rglob("*") if f.is_file()) if root.is_dir() else 0
+          removed = 0
+          for crate in sorted(root.iterdir()) if root.is_dir() else []:
+              if not crate.is_dir():
+                  continue
+              sessions = sorted(
+                  (p for p in crate.iterdir() if p.is_dir()),
+                  key=lambda p: p.stat().st_mtime,
+              )
+              for stale in sessions[:-1]:
+                  shutil.rmtree(stale, ignore_errors=True)
+                  removed += 1
+          after = sum(f.stat().st_size for f in root.rglob("*") if f.is_file()) if root.is_dir() else 0
+          print(
+              f"trim: dropped {removed} superseded incremental sessions, "
+              f"{before / 1e6:.0f} MB -> {after / 1e6:.0f} MB"
+          )
+          TRIM
 
       # After the trim, so the entry carries artifacts and not the suite's
       # scratch trees. Skipped only on cancellation -- see the restore step.

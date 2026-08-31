@@ -1155,6 +1155,15 @@ unchanged, because these units spend their time in `fork`/`exec` and page
 faults rather than on a core. `parallel::budget()` is four units per core for
 that reason.
 
+**That is `parallel::budget()`, not libtest's `--test-threads`, and raising
+the latter is not the same lever.** The reading above invites it, so it was
+measured over a warm `tests/cli` with the full toolchain: **147s at four
+threads, 136s at eight, 140s at sixteen**. Eight is worth 7% and sixteen is
+worse than eight, which puts the whole range inside this suite's noise -- and
+`scripts/run-tests.py` records what oversubscription cost the last time it was
+tried, a generated `http-sink` test whose localhost timeout went marginal on a
+starved box. Leave it at the harness default.
+
 That is a *different* budget from `default_max_toolchain_processes`, and the
 two must not be confused: this one governs cheap `jails` spawns, that one
 governs whole JVMs and is far smaller -- Surefire forks again underneath each
@@ -1587,34 +1596,30 @@ Doing this properly means `cargo-sweep`, which reads `.fingerprint` rather
 than guessing, and paying to install and cache it. Until someone does, the
 stale 87% rides along, and that is the cheaper of the two.
 
-**Pruning superseded artifacts out of the cargo cache does not pay, and the
-number that makes it look like it should is real.** `cargo` never garbage-
-collects `target/`: each CI run restores the previous run's artifacts and adds
-its own, so a workspace crate accumulates one `.rlib` per historical build
-hash while only the newest is linked. Measured here: `target/debug/deps` at
-**9.68 GB across 2610 files, of which 8.44 GB -- 87% -- was superseded**, and
-deleting it took `target/debug` from 13 GB to 4.6 GB. Against 63s a run spent
-moving the entry (42s restore, 21s save), that looks like an easy ~48s.
+**The other half of that entry does pay, and it is the cheap half.**
+`target/debug/incremental` is the largest single thing in the cache, and
+cargo's own housekeeping does not reach most of it: a unit's incremental
+directory is named after its fingerprint and gets a fresh `s-*` session on
+every build, and a directory whose fingerprint has moved on is never removed.
+Measured here after a day of builds: **5.6 GB**, with two live
+`jails_generate-*` and two live `jails_drive-*` directories differing only in
+their hash. Keeping the newest session in each directory took a freshly built
+tree from **1427 MB to 713 MB** with no rebuild at all, and the workflow's
+trim step does it now.
 
-It is not, because cargo rebuilds whatever it cannot find, and finding the
-live set exactly is harder than it looks. Three rules were measured:
+The reason to keep the newest session rather than the whole directory is the
+same measurement that explains why `CARGO_INCREMENTAL=0` was reverted below.
+A one-line edit to `jails-generate`, timed over `cargo test --workspace
+--no-run`:
 
-| keep rule | rebuild cost |
+| incremental state | rebuild |
 |---|---|
-| newest per (stem, extension) by mtime | 24s |
-| exactly the `filenames` cargo reports | **150s** |
-| every file sharing a reported artifact's stem | **126s** |
+| as the previous build left it | **4.1s** |
+| `target/debug/incremental` deleted outright | **65.0s** |
+| after the trim | **3.3s** |
 
-The exact-filenames rule is the trap: `--message-format=json` names a fresh
-dependency's `.rlib` and not the `.rmeta` beside it that pipelined
-compilation reads, so cargo went off rebuilding `tempfile` and `serde_json`.
-Matching by stem fixes that specific case and still misses others -- proc-macro
-and build-script units among the likely candidates. Every rule costs more
-recompilation than the transfer it saves.
-
-Doing this properly means `cargo-sweep`, which reads `.fingerprint` rather
-than guessing, and paying to install and cache it. Until someone does, the
-stale 87% rides along, and that is the cheaper of the two.
+So the state is worth about a minute of compilation a run and the superseded
+half of it is worth nothing. Do not reach for the whole directory.
 
 **`CARGO_INCREMENTAL=0` on CI is a smaller cache and a slower gate, and the
 gate is what is billed.** The cargo entry really is mostly incremental state --
@@ -1655,10 +1660,40 @@ hash misses exactly as often as an mtime does. Making it deterministic means
 `codegen-units = 1`, which costs far more compile time than the cache could
 return.
 
+**And the stamp was never the real obstacle, which is the correction that
+matters here.** A stamp is only a guess at "would this binary produce the same
+tree"; the tree itself answers it exactly. That was implemented: park the
+superseded directory instead of deleting it, regenerate, compare the two
+source trees byte for byte, and move the old `target/` back only when they
+match. It needed one exclusion found by measurement rather than reasoning --
+`.jails/lock` holds the pid of the run that took it, and a `journal.bin` under
+`.jails/receipts` differs every time, so jails' transaction store had to be
+left out while `.jails/generated` stayed in -- and after that all four
+persistent fixtures reported `reused=true` on a relinked binary.
+
+**It was then measured and deleted, because it is worth nothing.** `tests/cli`
+came in at 147s and 149s with no reuse and 150s and 147s with all four
+fixtures reusing. The javac output it preserves is about a second of a 30s
+Maven run: what those runs cost is a JVM starting, a Spring context booting
+and the tests executing, and reuse cannot skip any of it. The 67s figure that
+made the fixture cache look valuable was a **cold `~/.m2`**, not a cold
+`target/` -- the same trap as every other cold-versus-warm number in this
+file, and CI caches `~/.m2` already.
+
 So the stamp stays on the mtime, and the workflow keeps deleting
 `target/jails-e2e-cache` before saving: an entry that can never be hit is
 upload, download and storage for nothing. The cache is worth having *within* a
 machine's working session, which is what it was written for.
+
+**`tests/cli` is 147s here and 296s on the runner, and nothing in this file
+explains the gap.** Both are four cores, both have a warm `~/.m2` and a
+container engine, and an earlier measurement had them at 245s against 298s --
+so the local half has halved and the CI half has not moved. That is the open
+question worth answering before any further tuning, because every idea below
+the noise floor is guesswork until it is. `workflow_dispatch` takes a
+`profile` input for exactly this: it turns on `JAILS_TEST_PROFILE`, so one
+dispatched run prints what every subprocess on the runner queued and cost,
+rather than inferring the runner from this machine.
 
 **A test that waits is worse than a test that works.** The single most
 expensive test in the suite was `run_starts_compose_services_only_when_
@@ -1673,6 +1708,24 @@ finds what the fake `docker` claims it started: **0.02s**, and a better model
 of the case, not a weaker one. It was also *flaky* before, failing under
 full-suite load and passing alone. When a test is slow, ask what it is waiting
 for before asking how to make the waiting faster.
+
+**It happened again, and the second instance is the one that shows how to
+find them.** `a_timed_warm_run_cancels_the_request_and_recycles_the_daemon`
+proves that a one-second budget cancels a request still in flight, so its
+fixture's `SlowTest` sleeps thirty seconds -- and its warm-up ran
+`jails test --fast` with no selector and sat through every one of them. In the
+subprocess profile that showed up as **33.7s at 201.6s of a 238.1s span, with
+occupancy 1.0**: the whole binary was one test waiting, on an otherwise idle
+four-core box, so those thirty seconds were thirty seconds of the suite's wall
+clock. Compiling `SlowTest` and naming a trivial `PingTest` as the warm-up's
+selector leaves the timed run exactly the margin it needs -- it passes
+`--compile none`, so the class still has to be there -- and costs **5.3s**.
+
+The way to find the next one is the occupancy timeline rather than the
+per-test totals: bucket every profiled subprocess by the second it was
+running, and look for a stretch at 1.0 near the end. A slow test inside a
+saturated stretch costs a fraction of itself; a slow test alone in the tail
+costs all of it.
 
 ## Package layout
 

@@ -858,7 +858,7 @@ fn verified_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::P
     VERIFIED.get_or_init(|| {
         let suite_started = std::time::Instant::now();
         let profile_stage = |stage: &str| {
-            if std::env::var_os("JAILS_TEST_PROFILE").is_some() {
+            if common::profiling() {
                 eprintln!(
                     "JAILS_TEST_PROFILE app_stage={stage} elapsed_ms={}",
                     suite_started.elapsed().as_millis()
