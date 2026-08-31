@@ -5982,7 +5982,14 @@ fn fake_capability_is_a_global_compiler_profile_and_remove_is_recompilation() {
         "{}",
         String::from_utf8_lossy(&removed.stderr)
     );
-    assert!(!adapter_path.exists());
+    // **The adapter stays, and that is the capability's meaning changing
+    // rather than removal failing.** A repository port always has exactly one
+    // implementation: with `db` declared it is the JDBC adapter, and without
+    // it this one, or the scaffold's service would be constructor-injecting a
+    // port no bean satisfies. So `fake` no longer *adds* the in-memory
+    // adapter to a project that has no storage -- it is already there -- and
+    // what removal takes back is the declaration.
+    assert!(adapter_path.exists());
     let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
     assert!(!model.contains("[capabilities.fake]"), "{model}");
     let frozen = jails_cmd(&root, None)

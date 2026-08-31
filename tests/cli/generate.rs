@@ -3681,7 +3681,7 @@ fn scaffold_writes_http_requests_and_factory_builds_typed_test_data() {
             .unwrap()
             .success()
     );
-    let requests = fs::read_to_string(root.join("requests/note.http")).unwrap();
+    let requests = fs::read_to_string(common::generated(&root, "requests/note.http")).unwrap();
     assert!(requests.contains("POST {{baseUrl}}/notes"), "{requests}");
     assert!(requests.contains("GET {{baseUrl}}/notes"), "{requests}");
     assert!(
@@ -3883,7 +3883,7 @@ fn a_timestamped_scaffold_does_not_ask_the_caller_for_its_audit_columns() {
 
     // And the sendable collection describes a request that can be made -- as
     // does the generated controller test, which sends that same body.
-    let requests = fs::read_to_string(root.join("requests/note.http")).unwrap();
+    let requests = fs::read_to_string(common::generated(&root, "requests/note.http")).unwrap();
     assert!(!requests.contains("createdAt"), "{requests}");
     let controller_test = fs::read_to_string(common::generated(
         &root,
@@ -3924,7 +3924,7 @@ fn a_scoped_scaffold_documents_only_the_request_its_controller_answers() {
             .success()
     );
 
-    let requests = fs::read_to_string(root.join("requests/note.http")).unwrap();
+    let requests = fs::read_to_string(common::generated(&root, "requests/note.http")).unwrap();
     assert!(requests.contains("POST {{baseUrl}}/notes"), "{requests}");
     assert!(!requests.contains("GET {{baseUrl}}"), "{requests}");
 
@@ -6694,7 +6694,7 @@ fn the_documented_body_carries_only_what_the_request_record_declares() {
     // The `{{id}}` a GET and a DELETE need is still there: it is sampled from
     // the key's own type rather than read back out of a body that no longer
     // carries it.
-    let collection = fs::read_to_string(root.join("requests/ticket.http")).unwrap();
+    let collection = fs::read_to_string(common::generated(&root, "requests/ticket.http")).unwrap();
     assert!(collection.contains("@id = 1"), "{collection}");
     assert!(
         collection.contains("GET {{baseUrl}}/tickets/{{id}}"),
@@ -6749,7 +6749,7 @@ fn a_scaffold_answers_on_the_collection_route_it_was_given() {
     // The editor collection is the same one value, not a second derivation --
     // which is the drift `sql::table_name` being the only pluraliser exists to
     // stop.
-    let requests = fs::read_to_string(root.join("requests/user.http")).unwrap();
+    let requests = fs::read_to_string(common::generated(&root, "requests/user.http")).unwrap();
     assert!(
         requests.contains("POST {{baseUrl}}/admin_api/users"),
         "{requests}"
