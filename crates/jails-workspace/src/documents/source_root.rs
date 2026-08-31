@@ -41,6 +41,7 @@ pub(crate) fn ensure_maven_source_roots(
     text: &str,
     roots: &[jails_contracts::MavenSourceRoot],
 ) -> Result<String, String> {
+    let existing = source_root_block_start(text)?;
     let mut text = strip_source_root_blocks(text)?;
     if roots.is_empty() {
         return Ok(text);
@@ -99,6 +100,19 @@ pub(crate) fn ensure_maven_source_roots(
     plugin.push_str(&close);
     plugin.push('\n');
 
+    // **Back where it was, when it was already there.** This strips the block
+    // and re-inserts it before `</plugins>`, which is position-stable only
+    // while it is the last thing in there -- and it was, until the
+    // integration-test plugin started landing beside it. After that every plan
+    // wants to move one block past the other, so `jails model check --frozen`
+    // reports a pending operation on a project that has just been
+    // synchronised and the pom churns by a whole block on every run.
+    //
+    // The offset is taken before the strip, because removing the old block
+    // shifts everything after it.
+    if let Some((at, indent)) = existing {
+        return Ok(insert_at_line(&text, at, &indent_block(&plugin, &indent)));
+    }
     if let Some(at) = direct_child_close(&text, &["project", "build", "plugins"]) {
         return Ok(insert_indented_block(&text, at, &plugin, 0));
     }
@@ -235,6 +249,34 @@ fn source_set_label(source_set: jails_contracts::JavaSourceSet) -> &'static str 
         jails_contracts::JavaSourceSet::MainResources => "main-resources",
         jails_contracts::JavaSourceSet::TestResources => "test-resources",
     }
+}
+
+/// Where the block jails owns starts, before it is stripped.
+///
+/// `None` when the document has none, which is the only case that has to pick
+/// a fresh position.
+fn source_root_block_start(text: &str) -> Result<Option<(usize, String)>, String> {
+    let open = format!("<!-- {ROOTS_MARKER} -->");
+    let close = format!("<!-- /{ROOTS_MARKER} -->");
+    if owned_block(text, &open, &close)?.is_none() {
+        return Ok(None);
+    }
+    let Some(marker) = text.find(&open) else {
+        return Ok(None);
+    };
+    // The block's own line start and its own indentation, because neither can
+    // be recovered afterwards: the strip removes the whole line, so the offset
+    // then points at whatever followed, and `insert_indented_block` would read
+    // that line's indent instead of this one's.
+    let line = text[..marker].rfind('\n').map_or(0, |at| at + 1);
+    let indent = &text[line..marker];
+    if !indent
+        .chars()
+        .all(|character| character == ' ' || character == '\t')
+    {
+        return Ok(None);
+    }
+    Ok(Some((line, indent.to_string())))
 }
 
 #[cfg(test)]

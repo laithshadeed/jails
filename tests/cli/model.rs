@@ -13969,3 +13969,80 @@ entity Note {
         "and must not append a second relation under the same name:\n{model}"
     );
 }
+
+/// A marked block jails owns stays where it is.
+///
+/// `ensure_maven_source_roots` strips its block and re-inserts it before
+/// `</plugins>`, which is position-stable only while it is the last thing in
+/// there -- and it was, until the integration-test plugin started landing
+/// beside it. After that every plan wanted to move one block past the other,
+/// so `jails model check --frozen` reported a pending operation on a project
+/// that had just been synchronised and the pom churned by a whole block on
+/// every run.
+///
+/// Two blocks is the smallest case that can show it, which is why this needs
+/// an operation: the failsafe plugin arrives with the first emitted `*IT`.
+#[test]
+fn two_marked_build_blocks_keep_their_places_across_replans() {
+    let root = jdl_project(
+        "jdl-v1-marked-block-order",
+        r#"jdl 1
+app Demo {
+  pkg com.example.demo
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    for arguments in [
+        vec!["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
+        vec!["add", "db"],
+        vec![
+            "g",
+            "query",
+            "NotesByTitle",
+            "title:string!",
+            "--on",
+            "Note",
+        ],
+    ] {
+        let output = jails_cmd(&root, None).args(&arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{arguments:?}:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    let roots = pom.find("jails:generated-source-roots").unwrap();
+    let tests = pom.find("jails:integration-tests").unwrap();
+    assert!(roots < tests, "{pom}");
+
+    // Frozen on the *first* ask, not after a repairing sync: a plan that has
+    // to be applied before the tree matches the model is a plan that never
+    // settles.
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&frozen.stdout),
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+
+    // And a sync moves nothing, which is the same property from the other
+    // side.
+    let synced = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    assert_eq!(fs::read_to_string(root.join("pom.xml")).unwrap(), pom);
+}
