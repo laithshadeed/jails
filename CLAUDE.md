@@ -1089,6 +1089,27 @@ A warm-looking local repository can therefore be poisoned rather than warm.
 Suspect this before suspecting the diff whenever the whole real-toolchain tier
 fails at once and the unit tiers are green.
 
+**A mise shim resolves the version from the current directory, and the tests
+do not run in this one.** `mise.toml` pins java, maven and mvnd for the
+repository; a tier-3 test runs its toolchain inside a scratch directory, where
+there is no `mise.toml` and the shim falls back to whatever the global config
+names -- nothing, in a session whose hook installed the tools per-project. The
+three failures differ and none of them names the cause:
+
+| tool | what it looks like |
+|---|---|
+| `mvnd` | `mise ERROR No version is set for shim: mvnd`, and the command exits 1 |
+| `maven` | *passes*, on whatever system Maven is on PATH -- 3.9.11 here against the pinned 3.9.16 |
+| `java` | JDK 21, so `jails testd` dies loading a class compiled `--release 26` and prints **nothing** |
+
+The `java` row is the dangerous one, and it is why the fix is a global rather
+than a wrapper: the daemon is compiled by `java`'s single-file source launcher,
+so a wrong JDK is a `UnsupportedClassVersionError` inside a process whose output
+nobody reads, surfacing as four `tooling::` daemon tests failing with an empty
+report. `mise use -g java@<pinned> maven@<pinned> mvnd@<pinned>` is the repair,
+and `mise ls` in `/tmp` rather than in the repository is how to see the problem
+at all.
+
 Before it existed a web session ran two of the three tiers and said so
 nowhere: `javac` rejected `--release 26`, ~50 tier-3 tests went red, and the
 Stop hook ran `mise run verify-rewrite` into a command that was not installed.

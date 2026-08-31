@@ -45,6 +45,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -56,6 +57,59 @@ REPO = Path(__file__).resolve().parent.parent
 # reason: it is a scheduling hint, never an input to a result, so it must not
 # be reviewable state and must survive being deleted.
 LEDGER = REPO / "target" / "jails-test-costs" / "binaries.tsv"
+# Where each test binary leaves what its subprocesses cost. Under `target/` for
+# the ledger's reason -- it is a report, never an input to a result -- and
+# cleared before every run, or a binary that did not run this time would
+# contribute its last run's numbers to this run's summary.
+PROFILE = REPO / "target" / "jails-test-profile"
+
+
+def read_subprocess_totals() -> tuple[float, float, float, dict[str, tuple[int, float]]]:
+    """What every test binary's subprocesses cost, summed across the run.
+
+    The span is the largest any single binary reported rather than the sum:
+    the binaries overlap, so summing their spans would count the same wall
+    clock several times and make concurrency look impossible.
+    """
+    span = 0.0
+    work = 0.0
+    queued = 0.0
+    tools: dict[str, tuple[int, float]] = {}
+    for report in sorted(PROFILE.glob("*.tsv")):
+        for line in report.read_text(errors="replace").splitlines():
+            fields = line.split("\t")
+            if fields[0] == "span_ms" and len(fields) == 2:
+                span = max(span, int(fields[1]) / 1000)
+            elif fields[0] == "queue_ms" and len(fields) == 2:
+                queued += int(fields[1]) / 1000
+            elif fields[0] == "tool" and len(fields) == 4:
+                count, run_ms = tools.get(fields[1], (0, 0.0))
+                tools[fields[1]] = (count + int(fields[2]), run_ms + int(fields[3]) / 1000)
+                work += int(fields[3]) / 1000
+    return span, work, queued, tools
+
+
+def report_subprocess_totals(elapsed: float) -> None:
+    """Say where the wall clock went, in two lines, on every run.
+
+    This is the only thing that can answer why the same suite takes 147s on a
+    developer machine and 296s on a four-core CI runner: both numbers are
+    real, and neither says whether the difference is more work, less overlap,
+    or time spent queueing. Printing it unconditionally is the point -- the
+    run that raises the question is never the run you thought to instrument.
+    """
+    _, work, queued, tools = read_subprocess_totals()
+    if not tools:
+        return
+    busiest = sorted(tools.items(), key=lambda row: -row[1][1])
+    print(
+        "run-tests: subprocess cost "
+        + ", ".join(f"{name} {run:.1f}s over {count}" for name, (count, run) in busiest)
+    )
+    print(
+        f"run-tests: {work:.1f}s of subprocess work in {elapsed:.1f}s"
+        f" (mean concurrency {work / elapsed:.2f}), {queued:.1f}s queued for a permit"
+    )
 
 
 def build(cargo_args: list[str]) -> list[Path]:
@@ -288,6 +342,7 @@ def main() -> int:
 
     logs = REPO / "target" / "jails-test-logs"
     logs.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(PROFILE, ignore_errors=True)
 
     print(
         f"run-tests: {len(binaries)} binaries, {jobs} at a time"
@@ -332,6 +387,7 @@ def main() -> int:
     slowest = sorted(observed.items(), key=lambda row: -row[1])[:5]
     print(f"\nrun-tests: {elapsed:.1f}s wall for {len(binaries)} binaries")
     print("run-tests: slowest " + ", ".join(f"{n} {t:.1f}s" for n, t in slowest))
+    report_subprocess_totals(elapsed)
     if failed:
         print(
             f"run-tests: {len(failed)} binary(ies) failed: "

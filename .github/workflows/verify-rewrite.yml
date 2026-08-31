@@ -278,7 +278,8 @@ jobs:
       - name: Trim the cargo cache to build artifacts
         if: always()
         run: |
-          rm -rf target/jails-e2e-cache target/jails-test-logs target/jails-test-permits
+          rm -rf target/jails-e2e-cache target/jails-test-logs target/jails-test-permits \
+            target/jails-test-profile
           python3 - <<'TRIM'
           import shutil
           from pathlib import Path

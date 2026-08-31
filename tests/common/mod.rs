@@ -3,6 +3,7 @@
 pub mod parallel;
 pub mod scenarios;
 
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::fs::File;
@@ -10,6 +11,7 @@ use std::io;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Output, Stdio};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 pub fn bin() -> &'static str {
@@ -977,7 +979,9 @@ impl ToolchainCommand {
         let queue_time = queued_at.elapsed();
         let started_at = Instant::now();
         let result = self.inner.status();
-        report_profiled_command(description, "status", queue_time, started_at.elapsed());
+        let run_time = started_at.elapsed();
+        record_subprocess(&self.inner, queue_time, run_time);
+        report_profiled_command(description, "status", queue_time, run_time);
         result
     }
 
@@ -1006,6 +1010,7 @@ impl ToolchainCommand {
         let result = self.inner.output();
         let run_time = started_at.elapsed();
         drop(permit);
+        record_subprocess(&self.inner, queue_time, run_time);
         report_profiled_command(description, "output", queue_time, run_time);
         result
     }
@@ -1043,6 +1048,85 @@ fn report_profiled_command(
             "JAILS_TEST_PROFILE operation={operation} start_ms={start_ms} run_start_ms={run_start_ms} end_ms={end_ms} queue_ms={queue_ms} run_ms={run_ms} {description}"
         );
     }
+}
+
+/// What every toolchain subprocess cost, recorded whatever `JAILS_TEST_PROFILE`
+/// says.
+///
+/// The per-subprocess lines behind that variable answer *which command was
+/// slow* and cost a few thousand lines of output, so they stay opt-in. This
+/// answers a different question -- *where does the wall clock go* -- in four
+/// numbers, and it has to be on by default or it is not there on the run that
+/// raises the question. The run that raised this one cannot be repeated:
+/// `tests/cli` is 147s on a developer machine and 296s on the four-core CI
+/// runner with a warm `~/.m2` and a container engine on both, and no
+/// measurement taken locally explains the gap. A measurement that needs a
+/// specially dispatched run is a measurement nobody takes.
+///
+/// Bucketed by the program's own file stem rather than by a table of tools:
+/// a stem jails has never heard of is still a subprocess whose seconds are on
+/// the wall clock, and naming the buckets in advance is how one goes missing.
+#[derive(Default)]
+struct SubprocessTotals {
+    /// The end of the last subprocess, against the profile epoch. Divided into
+    /// the summed run time this gives mean concurrency, which is the number
+    /// that separates "the machine is saturated" from "the schedule has gaps".
+    span_ms: u128,
+    queue_ms: u128,
+    by_tool: BTreeMap<String, (u64, u128)>,
+}
+
+fn record_subprocess(command: &Command, queue_time: Duration, run_time: Duration) {
+    static TOTALS: OnceLock<Mutex<SubprocessTotals>> = OnceLock::new();
+    let tool = Path::new(command.get_program())
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let end_ms = test_profile_epoch().elapsed().as_millis();
+
+    let Ok(mut totals) = TOTALS.get_or_init(Default::default).lock() else {
+        return;
+    };
+    totals.span_ms = totals.span_ms.max(end_ms);
+    totals.queue_ms += queue_time.as_millis();
+    let entry = totals.by_tool.entry(tool).or_default();
+    entry.0 += 1;
+    entry.1 += run_time.as_millis();
+    write_subprocess_totals(&totals);
+}
+
+/// Rewritten whole on every subprocess, because a test binary has no exit hook
+/// that libtest will run. The file is a few hundred bytes against subprocesses
+/// that are seconds long, so the cost does not register; the alternative is an
+/// append-only log that has to be parsed back, for a summary this size.
+fn write_subprocess_totals(totals: &SubprocessTotals) {
+    let Some(name) = std::env::current_exe().ok().and_then(|exe| {
+        exe.file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+    }) else {
+        return;
+    };
+    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/jails-test-profile");
+    if fs::create_dir_all(&directory).is_err() {
+        return;
+    }
+    let mut body = format!(
+        "span_ms\t{}\nqueue_ms\t{}\n",
+        totals.span_ms, totals.queue_ms
+    );
+    for (tool, (count, run_ms)) in &totals.by_tool {
+        body.push_str(&format!("tool\t{tool}\t{count}\t{run_ms}\n"));
+    }
+    // Staged and renamed for `CostLedger`'s reason: the aggregator may read
+    // while a binary is still running, and a half-written file would be a
+    // silently wrong summary rather than a visible failure.
+    let path = directory.join(format!("{name}.tsv"));
+    let staging = directory.join(format!("{name}.{}.tmp", std::process::id()));
+    if fs::write(&staging, body).is_ok() {
+        let _ = fs::rename(&staging, &path);
+    }
+    let _ = fs::remove_file(&staging);
 }
 
 fn test_profile_epoch() -> &'static Instant {
