@@ -1,7 +1,7 @@
 //! Typed JDL v1 frontend for the closed component registry.
 
+use crate::ArtifactKind;
 use crate::cli::GenerateArgs;
-use crate::generate::ArtifactKind;
 use crate::model_resource::java_to_label;
 use jails_model::{ComponentKind, UnitKind};
 use jails_support::{Failure, Result};
@@ -46,6 +46,13 @@ pub(super) fn v1_declaration(
     } else if args.kind == ArtifactKind::Client {
         Some(format!(
             "/{}",
+            // `sql::table_name`, not `jails_model::plural_snake_case`.
+            // `both_pluralizers_answer_the_same_for_every_specified_rule`
+            // pins the two over §9.7's vocabulary, and swapping them here
+            // still moved a golden route -- the gate covers the pluralisation
+            // rules, not the whole projection `SqlName::conventional_table`
+            // performs on the way to them. A default route is reader-visible
+            // API, so it stays on the function that produced the one shipped.
             jails_generate::sql::table_name(name).replace('_', "-")
         ))
     } else if args.method.is_some() || args.consumes.is_some() {
@@ -316,9 +323,7 @@ pub(crate) fn component_stem(kind: ArtifactKind, requested: &str) -> Result<Stri
     if kind == ArtifactKind::Cases {
         return cases_stem(Path::new(requested));
     }
-    Ok(jails_generate::generate::strip_redundant_suffix(
-        kind, requested,
-    ))
+    Ok(crate::strip_redundant_suffix(kind, requested))
 }
 
 fn cases_stem(source: &Path) -> Result<String> {

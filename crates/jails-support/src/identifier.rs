@@ -49,6 +49,54 @@ pub fn snake_case(value: &str) -> String {
     out
 }
 
+/// A reader-typed migration description, normalised or refused.
+///
+/// `Add Note ArchivedAt`, `add-note-archived-at` and `addNoteArchivedAt` all
+/// become `add_note_archived_at`; anything holding a character that has no
+/// place in a filename -- a slash, a quote, a dot -- is refused rather than
+/// stripped, because the result becomes `V<n>__<this>.sql` and a description
+/// silently shortened to something else names a migration nobody typed.
+///
+/// **Distinct from [`snake_case`], which normalises an identifier that is
+/// already one.** This one validates: its input is a phrase a person typed at
+/// a prompt, so runs of separators collapse, leading and trailing ones go, and
+/// an empty result is an error naming what to type instead.
+///
+/// It is here rather than beside the migrations it names because it is a
+/// naming rule and this is where naming lives -- and because its one caller is
+/// the canonical `jails g migration`, which must not reach into a crate the
+/// cutover deletes.
+pub fn sql_name(value: &str) -> crate::Result<String> {
+    let mut out = String::new();
+    let mut previous_was_lower_or_digit = false;
+    for ch in value.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            if ch.is_ascii_uppercase() && previous_was_lower_or_digit && !out.ends_with('_') {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+            previous_was_lower_or_digit = ch.is_ascii_lowercase() || ch.is_ascii_digit();
+        } else if matches!(ch, '-' | '_' | ' ') {
+            if !out.is_empty() && !out.ends_with('_') {
+                out.push('_');
+            }
+            previous_was_lower_or_digit = false;
+        } else {
+            return Err(format!("'{value}' is not a usable SQL migration name").into());
+        }
+    }
+    while out.ends_with('_') {
+        out.pop();
+    }
+    if out.is_empty() {
+        Err(crate::Failure::Told(
+            "a migration needs a description, e.g. `jails g migration create_rewards`".to_string(),
+        ))
+    } else {
+        Ok(out)
+    }
+}
+
 /// Replace `old` with `new` wherever it appears as a whole identifier
 /// outside a string or character literal. Returns the new text and how many
 /// replacements were made.

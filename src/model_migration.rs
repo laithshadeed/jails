@@ -75,7 +75,7 @@ pub(crate) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
 /// reader is told what to type rather than shown a compiler-produced-invalid
 /// message about a name they chose.
 fn description(name: &str) -> Result<String> {
-    let description = jails_generate::generate::sql_name(name)
+    let description = jails_support::identifier::sql_name(name)
         .map_err(|error| Failure::Told(format!("{error}")))?;
     if description.is_empty()
         || !description

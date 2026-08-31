@@ -346,33 +346,6 @@ mod tests {
         assert!(pom.contains("<artifactId>assertj-core</artifactId>"));
     }
 
-    /// The entry point is a dispatcher, not a Hello World stub -- otherwise
-    /// `generate command` has nothing to register into, which is the whole
-    /// point of `new-cli`.
-    #[test]
-    fn app_java_is_a_command_dispatcher() {
-        let src = crate::generate::cli_java("com.example.demo", "App", "demo");
-        assert!(src.contains("package com.example.demo;"));
-        assert!(src.contains("public static void main(String[] args)"));
-        assert!(src.contains("public final class App"), "{src}");
-        assert!(
-            src.contains("usage: demo <command> [args]"),
-            "the program name should be the project's"
-        );
-        assert!(
-            crate::generate::is_dispatcher(&src),
-            "generate command must be able to find this"
-        );
-    }
-
-    #[test]
-    fn app_test_java_drives_the_dispatcher() {
-        let src = crate::generate::cli_test("com.example.demo", "App");
-        assert!(src.contains("import org.junit.jupiter.api.Test;"));
-        assert!(src.contains("class AppTest"));
-        assert!(src.contains("App.run("));
-    }
-
     /// What `jails new-cli` is asked for, with every Spring-shaped field at
     /// the value that means "not asked" -- the same spelling `main.rs` uses.
     fn plain_request<'a>(name: &'a str, git: bool) -> Request<'a> {

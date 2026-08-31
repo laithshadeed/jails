@@ -15,8 +15,8 @@
 //! the next one, check whether it is only the syntax editor that is missing.
 
 use super::{MODEL_PATH, java_to_label, java_type_name};
+use crate::ArtifactKind;
 use crate::cli::GenerateArgs;
-use crate::generate::ArtifactKind;
 use crate::model_generate;
 use jails_support::{Failure, Result};
 

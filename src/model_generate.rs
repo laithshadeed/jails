@@ -8,8 +8,8 @@ mod render;
 use render::operation_declaration;
 pub(crate) use render::{entity_declaration, enum_declaration, field_declaration};
 
+use crate::ArtifactKind;
 use crate::cli::GenerateArgs;
-use crate::generate::ArtifactKind;
 use crate::model_resource::java_to_label;
 use crate::{Invocation, Output};
 use jails_contracts::{CanonicalModelPatch, ModelFileUpdate, ProjectPath};

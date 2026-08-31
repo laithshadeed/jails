@@ -15,8 +15,8 @@ pub(crate) use edit::{
 };
 use operation::operation_declaration;
 
+use crate::ArtifactKind;
 use crate::cli::GenerateArgs;
-use crate::generate::ArtifactKind;
 use crate::model_generate::{ParsedField, PreparedMutation, finish_generation, parse_field};
 use crate::model_resource::java_to_label;
 use crate::{Invocation, model_generate};
