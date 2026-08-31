@@ -299,11 +299,16 @@ is what goes stale.
 | **`jails-codemod`** | [`crates/jails-codemod/`](crates/jails-codemod) | The marked block (`# jails:<marker>`), and only that. **No dependencies at all**, which is the point: it lived in `jails-project` until three more implementations appeared in crates that cannot depend on it. |
 | **`jails-codec-derive`** | [`crates/jails-codec-derive/`](crates/jails-codec-derive) | The `#[derive(Codec)]` proc macro. |
 
+### The binary, above both ladders
+
+| Crate | Directory | Purpose |
+| :--- | :--- | :--- |
+| [**`jails`**](src/main.rs) | [`src/`](src) | CLI argument parser ([`cli.rs`](src/cli.rs)), global flags (`--pretend`, `--output`), the [dispatch router](src/dispatch.rs), and the canonical `model_*` frontends. It is the one place both ladders meet: [`model_command::owns`](src/model_command.rs) is the switch, and a command that has no canonical backend must refuse there rather than fall through to the legacy engine. |
+
 ### The legacy ladder, lowest first
 
 | Crate | Directory | Purpose |
 | :--- | :--- | :--- |
-| [**`jails`**](src/main.rs) | [`src/`](src) | CLI argument parser ([`cli.rs`](src/cli.rs)), global flags (`--pretend`, `--output`), the [dispatch router](src/dispatch.rs), and the canonical `model_*` frontends. |
 | [**`jails-engine`**](crates/jails-engine/README.md) | [`crates/jails-engine/`](crates/jails-engine) | Connects parsed CLI requests to recipes, runs preparation, acquires project locks, and calls the commit engine. |
 | [**`jails-prepare`**](crates/jails-prepare/README.md) | [`crates/jails-prepare/`](crates/jails-prepare) | In-memory transaction planner: calculates diffs, AST merges, file operations, and prepares execution bundles. |
 | [**`jails-commit`**](crates/jails-commit/README.md) | [`crates/jails-commit/`](crates/jails-commit) | The durable transaction executor: handles file locks (`flock`), Write-Ahead Logging (`.jails/`), staged publishing, and crash recovery. |
