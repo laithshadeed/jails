@@ -16,11 +16,9 @@ Three edits share this crate for one reason: there is nowhere in the workspace t
 
 ## Why it is its own crate
 
-It lived in `jails-project` until 2026-08-29, and neither `jails-compiler` nor `jails-workspace` depends on that crate — so three *more* implementations of the marked block had appeared there. They were not careless: reuse was structurally unavailable, so the fourth, fifth and sixth `format!` were forced.
+Neither `jails-compiler` nor `jails-workspace` depends on `jails-project`, so a splice living there is unreachable from the canonical ladder and each crate that needs one writes its own `format!`. A crate with no dependencies is reachable from everywhere, which is the only arrangement in which one implementation can serve both ladders.
 
-The gate that was supposed to stop exactly this had never been able to. It counted blanked source, where a `# jails:` literal has already been replaced by spaces, so it read zero whatever the code said — a vacuous gate and a held line print the same word.
-
-`tests/architecture/` now fails on a `# jails:` literal outside this crate, counted against `file.literals`.
+`tests/architecture/` fails on a `# jails:` literal outside this crate, counted against **`file.literals`** — not `file.production`. Blanked source has every string literal replaced by spaces, and a `# jails:` marker only ever appears inside one, so a gate reading blanked source reports zero whatever the code says.
 
 ---
 

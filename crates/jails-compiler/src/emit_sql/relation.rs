@@ -143,10 +143,10 @@ use repo for Author\nuse repo for Book\n";
 
     /// A declared relation becomes a constraint, rather than nothing at all.
     ///
-    /// It used to be nothing: `AppModel.relations` linked, `sync` reported
-    /// success, and `book.author_id` referenced no table. A declaration that
-    /// reports success and produces no artifact is the same silence
-    /// `bugs.md` B59 describes, arriving from the other side.
+    /// Linking `AppModel.relations` without emitting one leaves `sync`
+    /// reporting success over a `book.author_id` that references no table. A
+    /// declaration that reports success and produces no artifact is the same
+    /// silence `bugs.md` B59 describes, arriving from the other side.
     #[test]
     fn a_declared_relation_becomes_a_foreign_key() {
         let sql = first_migration(MODEL);

@@ -879,13 +879,12 @@ class Clock @id(unit_class_clock)
     /// hundred lines should not have to notice for themselves that a JDBC
     /// adapter appeared.
     ///
-    /// **And the second note this used to assert is now the wrong outcome.**
-    /// It reported that the record's positional constructor had moved, which
-    /// it did -- because the pre-v1 path lost declaration order on its way
-    /// through intermediate TOML (`audit.md` A2.2b). Fixed at the source, the
-    /// two frontends agree, so the upgrade moves no constructor and has
-    /// nothing to say. `title, id` is deliberately reverse-alphabetical: with
-    /// sorted labels this assertion would pass either way.
+    /// **The upgrade moves no constructor, so it reports none.** Both
+    /// frontends preserve declaration order, and a note saying the record's
+    /// positional constructor had moved would mean the pre-v1 path had lost
+    /// that order on its way through intermediate TOML (`audit.md` A2.2b).
+    /// `title, id` is deliberately reverse-alphabetical: with sorted labels
+    /// this assertion would pass either way.
     #[test]
     fn the_upgrade_reports_what_it_changes_beyond_spelling() {
         let draft = "application Demo @id(project_demo)\npackage com.example.demo\njava 26\n\

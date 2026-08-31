@@ -166,11 +166,11 @@ public final class {name} {{
 
 /// The companion test for `generate class`.
 ///
-/// It used to construct the class and assert `isNotNull()`, which is three
-/// bad things at once: it **passes while the class is entirely broken** (one
-/// real project reported 39 green tests over a repository that could not read
-/// or write), it inflates the count so the suite looks covered, and passing
-/// `null` for a constructor argument teaches that as the pattern. `java.md`
+/// Constructing the class and asserting `isNotNull()` is three bad things at
+/// once: it **passes while the class is entirely broken** (one real project
+/// reported 39 green tests over a repository that could not read or write), it
+/// inflates the count so the suite looks covered, and passing `null` for a
+/// constructor argument teaches that as the pattern. `java.md`
 /// §7 -- "don't test getters, records' `equals`, or Spring's wiring" -- is the
 /// same rule stated generally.
 ///

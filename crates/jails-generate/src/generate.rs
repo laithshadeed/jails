@@ -617,8 +617,7 @@ mod tests {
     }
 
     /// Typing the name the type will actually have is the obvious thing to
-    /// do, and it used to produce `RewardHistoryServiceService.java`. A real
-    /// project renamed four generated files by hand because of this.
+    /// do, and without this it produces `RewardHistoryServiceService.java`.
     #[test]
     fn a_name_that_already_carries_its_kinds_suffix_does_not_get_it_twice() {
         for (kind, given, want) in [

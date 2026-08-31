@@ -1,36 +1,31 @@
 //! Which build tool a directory uses — and, deliberately, nothing more.
 //!
-//! `plan.md` §12: in `ideas/minicom-public/spring`, **zero of jails' ~30
-//! commands worked**, and the whole gate was eleven lines looking for
-//! `pom.xml`. Yet `inspect.rs` and `rename.rs` contain zero occurrences of
-//! `pom`: `routes`, `beans`, `stats`, `notes`, `rename`, `destroy --pretend`,
-//! `doctor` and most of `generate` never needed Maven at all. They were
-//! refused by the door, not by anything they do.
+//! **The door recognises any build marker, and only the commands that
+//! genuinely need Maven refuse — themselves, through [`require_maven`].**
+//! Gating the door on `pom.xml` alone refuses about thirty commands on a
+//! foreign project, and most of them never touch Maven: `inspect.rs` and
+//! `rename.rs` contain zero occurrences of `pom`, and `routes`, `beans`,
+//! `stats`, `notes`, `rename`, `destroy --pretend`, `doctor` and most of
+//! `generate` read source and write source. `plan.md` §12.
 //!
-//! So the door widens and the commands that genuinely need Maven say so
-//! themselves, through [`require_maven`].
+//! ## Reading a Gradle build, and the bar for doing so
 //!
-//! ## The line this used to not cross, and now does
+//! **jails does read `build.gradle`, and the danger in that is a confident
+//! wrong answer** -- a tool that half-understands a build file and reports a
+//! dependency the build does not have. Recognising a filename is not
+//! understanding a build.
 //!
-//! This module's header said, for a long time and in exactly these words:
-//! *"jails never reads, writes, parses or invokes `build.gradle`."* The reason
-//! was sound -- the failure it prevented is a *confident wrong answer*, a tool
-//! that half-understands a build file reporting a dependency the build does
-//! not have -- and recognising a filename is genuinely not understanding a
-//! build.
+//! So the Gradle reader has one bar: it may only answer questions it can answer
+//! exactly, and it must refuse rather than guess. `gradle.rs` states which
+//! constructs it understands and returns `None` -- never a default -- for
+//! anything else, so a dynamically computed dependency list reads as "cannot
+//! tell" rather than as "absent".
 //!
-//! **That is a deliberate reversal, not an oversight.** It was decided on
-//! 2026-08-24 against a real target: `minicom-public/spring`, a Gradle + Spring
-//! Boot project that has to be worked in daily. On it, `add`, `check`, `test`,
-//! `build` and `run` all refused, and `generate` wrote code with a note saying
-//! which dependencies the reader had to add by hand. Degrading politely is
-//! worth less than working, when the project is the one you are actually in.
-//!
-//! The old rule's *reason* survives as the bar the Gradle reader has to clear:
-//! it may only answer questions it can answer exactly, and it must refuse
-//! rather than guess. `gradle.rs` states which constructs it understands and
-//! returns `None` -- never a default -- for anything else, so a dynamically
-//! computed dependency list reads as "cannot tell" rather than as "absent".
+//! Not reading it at all is the safer-looking option and the worse one: on a
+//! Gradle + Spring Boot project, `add`, `check`, `test`, `build` and `run` all
+//! refuse, and `generate` writes code with a note naming the dependencies the
+//! reader has to add by hand. Degrading politely is worth less than working
+//! when the project is the one you are actually in.
 //!
 //! A build file jails cannot read at all is still a `Foreign` build, and the
 //! cost of that is real and said out loud rather than discovered: generated

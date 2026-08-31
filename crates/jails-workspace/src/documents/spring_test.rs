@@ -7,11 +7,11 @@
 //! project that declares `storage postgres` and touches nothing else fails
 //! `mvn verify` on a test nobody wrote.
 //!
-//! **Why it is an import rather than a global registration.** jails used to
-//! register the container from a test-classpath `spring.factories`, which gave
-//! every `@SpringBootTest` a `DataSource` for free — and made every pure slice
-//! and every `@WebMvcTest` start a PostgreSQL it never queried. Naming it per
-//! test is the cost of not doing that.
+//! **Why it is an import rather than a global registration.** Registering the
+//! container from a test-classpath `spring.factories` gives every
+//! `@SpringBootTest` a `DataSource` for free — and makes every pure slice and
+//! every `@WebMvcTest` start a PostgreSQL it never queries. Naming it per test
+//! is the cost of not doing that.
 //!
 //! **The target set comes from the snapshot, never from disk.** A file this
 //! touches has a captured before-image, so the plan is exact: a test edited

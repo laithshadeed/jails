@@ -185,9 +185,9 @@ fn reconcile_facet_bytes(
 }
 
 fn compose_marked_range(text: &str, marker: &str) -> Result<Option<(usize, usize)>, String> {
-    // The same two strings `codemod` writes, from `codemod`: this used to
-    // build them here, so the file that finds a block and the file that writes
-    // one were two statements of one format.
+    // The same two strings `codemod` writes, from `codemod`. Building them
+    // here makes the file that finds a block and the file that writes one two
+    // statements of one format.
     let marked = jails_codemod::Marked::new(marker);
     let open = marked.open();
     let close = marked.close();

@@ -10,8 +10,8 @@
 //! dispatches into `spring`, `spring` renders through `generate`'s shared
 //! helpers, and separating them would buy a boundary that neither wants. The
 //! boundary that matters is the one *below*: nothing here is reachable from
-//! `jails-project` or lower, which is what the twelve-module cycle used to
-//! make impossible.
+//! `jails-project` or lower. That is the edge which keeps the ladder acyclic,
+//! and it is the one to defend.
 
 pub mod add;
 pub(crate) mod architecture;

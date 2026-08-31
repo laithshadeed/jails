@@ -205,11 +205,12 @@ impl CommitPlan {
         match (&self, project) {
             (Self::Apply(_), LoadedProject::Ready(_)) => Ok(self),
             (Self::Finalise(_) | Self::Abort(_), LoadedProject::Pending(_)) => Ok(self),
-            // The two verbs this used to name -- `jails continue` and `jails
-            // abort` -- do not exist. `PendingIdentity`, `ResolutionIdentity`
-            // and `RestoreIdentity` are here with no route behind them
-            // (research.md §3.3), so the message sent a reader to a command
-            // that would answer "unrecognized subcommand". A `fix:` line that
+            // **The message names no verb, because there is none to name.**
+            // `jails continue` and `jails abort` do not exist:
+            // `PendingIdentity`, `ResolutionIdentity` and `RestoreIdentity` are
+            // here with no route behind them (research.md §3.3), so naming
+            // either sends a reader to "unrecognized subcommand". A `fix:` line
+            // that
             // refuses is worse than none: it leaves the reader unable to tell
             // which of jails' answers to believe. Say what is true instead,
             // and say that finishing it forward is a gap rather than

@@ -277,8 +277,7 @@ fn maven(sources: &Sources, upgrade: &mut Upgrade) {
 /// `DATETIME` in a Spring-initialised schema, which H2 2.x does not have.
 ///
 /// Verified the hard way: H2 2.4.240 answers `Unknown data type: "DATETIME"`,
-/// and the project that hit it had been running on the H2 that Boot 2.7
-/// managed, where the type existed. The rewrite is exact rather than a guess
+/// while the H2 that Boot 2.7 manages accepts it. The rewrite is exact rather than a guess
 /// -- it is gated on H2 actually being this project's driver, and `timestamp`
 /// is the type H2 documents in its place -- which is the same bargain
 /// `Dialect::column_type` takes for `timestamptz`.

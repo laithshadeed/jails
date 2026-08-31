@@ -228,10 +228,10 @@ pub(super) fn boxed_key(java_type: &str) -> &'static str {
 /// `sql::columns` derives one column per field in declaration order, so the
 /// index that picks the key column out of one picks the key component out of
 /// the other. This is what lets the in-memory adapter key on the same thing
-/// the JDBC adapter's `where` clause does -- they used to disagree, the
-/// in-memory one keying on `String.valueOf(x.id())` or, with no `id`
-/// component at all, on a collision-prone counter while its Javadoc claimed
-/// otherwise. plan.md P3.3.
+/// the JDBC adapter's `where` clause does. Deriving them separately lets them
+/// disagree: the in-memory one keys on `String.valueOf(x.id())`, or on a
+/// collision-prone counter when there is no `id` component at all, while its
+/// Javadoc claims otherwise. plan.md P3.3.
 pub(crate) fn key_component<'a>(
     fields: &'a [Field],
     columns: &[crate::sql::Column],

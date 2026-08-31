@@ -12,11 +12,11 @@
 //! temporary compatibility input's router at once, and the two agree because
 //! the number is what the cutover is measured on. A kind marked
 //! `Compatibility` that the compiler actually emits under-reports coverage,
-//! which is how `cases` sat here for a while after its backend landed.
+//! so a kind whose backend has landed must be moved to `Native` here.
 //!
-//! **It is 39/39 as of this commit**, so every arm below is `Native` and the
-//! table's remaining job is the one it was built for: making the next clap
-//! variant a compile error until its ownership is decided.
+//! **Every arm below is `Native`**, and the table's job is the one it was
+//! built for: making the next clap variant a compile error until its
+//! ownership is decided.
 
 use crate::add::Capability;
 use crate::generate::ArtifactKind;

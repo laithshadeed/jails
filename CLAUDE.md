@@ -10,16 +10,13 @@ The scope bar: no ORM, no jails runtime jar, no Lombok, no preview features in
 generated Java, and no plugin system with lifecycle hooks. Check `README.md`'s
 "Not yet" before adding a command that isn't already there.
 
-**"No Gradle" was on that list and was deliberately removed on 2026-08-24.**
-The target that reversed it is `minicom-public/spring`, a Gradle + Spring Boot
-project that has to be worked in daily: `add`, `check`, `test`, `build` and
-`run` all refused there, and `generate` wrote code with a note listing the
-dependencies the reader had to splice by hand. Degrading politely is worth less
-than working, when the project is the one you are actually in. The old rule's
-*reason* survives as the bar `gradle.rs` has to clear -- answer exactly or
-refuse, never guess -- because a tool that half-understands a build file
-reporting a dependency the build does not have is still the worst outcome
-available.
+**Gradle is supported, and `gradle.rs` has one bar to clear: answer exactly
+or refuse, never guess.** A tool that half-understands a build file and reports
+a dependency the build does not have is the worst outcome available -- worse
+than refusing, and worse than not supporting Gradle at all. Degrading politely
+is worth less than working when the project is the one you are actually in,
+which is why `add`, `check`, `test`, `build` and `run` all work on a Gradle
+project rather than declining.
 
 **Every idea, roadmap item and open design question lives in `plan.md`.**
 This file describes what the code *is* and the traps in it; `plan.md` is the
@@ -59,10 +56,9 @@ git show <commit>^:pending.md             # its last content
 still the best record of *why* a decision was made, which is why they were left
 in place rather than stripped when the files went.
 
-**One exception, recorded here because the file that used to record it is
-gone:** the `refactor.md` on disk when it was folded in had been recreated
-untracked, so `git show` reaches an *older* tracked version rather than the one
-that was folded. There is no way to recover the untracked one.
+**`refactor.md` is the one that does not resolve cleanly.** `git show` reaches
+an older tracked version than the one folded in, because the copy on disk at
+that point was untracked. There is no way to recover it.
 
 ## Canonical compiler cutover
 
@@ -336,7 +332,7 @@ module belongs to** — this one is the prose, and prose is what goes stale.
 | `jails-java` | reading Java (`java`, `classfile`) and rendering templates into it (`template`). |
 | `jails-spec` | where a project is and how it is laid out (`build`, `spec::paths`, `spec::layout`), what a field spec means (`spec::field`), and the closed CLI vocabularies (`spec::kind`). |
 | `jails-state` | **jails' own machine state, read and classified**: `compat` (absent / current / unreadable, never a fourth answer that quietly repairs something) and `listing` (what a directory holds). Below the Java project on purpose — `jails-commit` needs both and neither is about Java. |
-| `jails-protocol` | **the plan/transition/effect vocabulary** — `Recipe`, `FieldSpec`, `EntityId`, `ResourceKey` and the intent, durable and observation values above them. One constructor per type, and every wire decoder calls it, so a value rejected at the CLI cannot arrive through a recovered journal instead. 43 modules under five heads (`vocabulary`, `intent`, `durable`, `observe`, `compatibility`); §7.4 of `pending.md` groups them. The validating newtypes it used to own are one crate lower — again, see below. |
+| `jails-protocol` | **the plan/transition/effect vocabulary** — `Recipe`, `FieldSpec`, `EntityId`, `ResourceKey` and the intent, durable and observation values above them. One constructor per type, and every wire decoder calls it, so a value rejected at the CLI cannot arrive through a recovered journal instead. 43 modules under five heads (`vocabulary`, `intent`, `durable`, `observe`, `compatibility`); §7.4 of `pending.md` groups them. The validating newtypes are one crate lower, in `jails-support` — see below. |
 | `jails-project` | one resolved `model::Project`, plus every file jails writes *about* a project — the reader's (`config`, `compose`, `pom`, `gradle`) and the read-only `projection` of jails' own. `compat` is `jails-state`'s, one row up; this said both. |
 | `jails-generate` | everything that decides what Java to write: `generate`, `spring`, `add`, `sql`. Its planning half (`plan_for`, `artifacts_for`) is what the engine calls and is pure. |
 | `jails-prepare` | **turning semantic desire into an exact executable transition**: `desire`, `reconcile`, `pipeline`, `merge`, `sandbox`, `report`. Plan-only — nothing here creates `.jails/` or commits anything. Everything a commit needs to *decide* is decided here, so the executor applies a value rather than re-deriving one. |
@@ -351,26 +347,25 @@ each other; so do `jails-generate` and `jails-prepare`. The layering is a DAG,
 not a line, and `LAYERS` records it as one number per module because a
 same-level edge is allowed.
 
-**This existed because `src/` was one twelve-module cycle** — `add`, `compose`,
-`config`, `generate`, `inspect`, `launcher`, `model`, `project`, `run`,
-`spring`, `sql`, `why` — so no boundary could be drawn anywhere in it. The
-cause was not tangled logic: every back-edge was a single symbol, because
-everything below the generators reached up into `generate.rs` for `Field`,
-`layout` and `find_project_root`. `jails-spec` is those symbols at their own
-layer.
+**`jails-spec` exists to keep the ladder acyclic.** Without it everything
+below the generators reaches up into `generate.rs` for `Field`, `layout` and
+`find_project_root`, and those single back-edges are enough to make the whole
+of `src/` one cycle with no boundary drawable anywhere in it. `jails-spec` is
+those symbols at their own layer, which is why a new shared symbol belongs
+there rather than beside its first caller.
 
 **Vocabulary a surviving crate needs does not live in a crate that dies.**
 `jails-drive` and `jails-report` are not legacy -- they are the commands that
-outlive the cutover -- and they held 111 references into the nine crates the
-strangler deletes. Counting what those references *were* is the finding: about
-two thirds were vocabulary parked beside the legacy engine rather than calls
-into it. So `identity` (the validating newtypes -- `ObjectId`, `Name`,
-`Package`, `JavaType`, `ProjectPath`, `SqlName`) and `identifier` moved down
-into `jails-support`, and `testing` moved up into `jails-drive`. Nothing about
-any of them changed. `jails-drive` went 61 references to 15; `jails-report`'s
-remaining 50 are reports *about* the legacy ledger, which is a different
-problem and not a move. The canonical four already depend on nothing legacy,
-so those two crates and the binary are the whole blocker.
+outlive the cutover -- so anything they need must sit outside the nine crates
+the strangler deletes. That is why `identity` (the validating newtypes:
+`ObjectId`, `Name`, `Package`, `JavaType`, `ProjectPath`, `SqlName`) and
+`identifier` are in `jails-support`, and `testing` is in `jails-drive`, rather
+than beside the legacy engine they happen to be used by.
+
+`jails-drive` holds 15 references into those nine crates and `jails-report` 50,
+and `jails-report`'s are reports *about* the legacy ledger -- a different
+problem, not a misplaced type. The canonical four depend on nothing legacy, so
+those two crates and the binary are the whole blocker.
 
 Five things to know before touching it:
 
@@ -408,11 +403,11 @@ Five things to know before touching it:
   *what can I type*. `src/main.rs` is the module list, the tree it hands to
   clap, and `main`'s translation of a `Failure` into an exit status.
   `src/dispatch.rs` is the match from a parsed command to a transition — read
-  when somebody asks *what does it do*. It shipped as `invoke` for two years
-  because `jails-java` already had a `dispatch` and every architecture gate
-  identified a file by its **basename**, so two modules sharing a name were
-  measured against each other's rules; `module_of` answers `(crate, module)`
-  now, and the file is called what it is.
+  when somebody asks *what does it do*. `jails-java` has a `dispatch` too --
+  the splice that registers a generated command in a project's own CLI -- and
+  the two coexist because `module_of` identifies a module by `(crate, module)`.
+  A gate that matched on **basename** alone would measure each against the
+  other's rules.
 - **The canonical frontends are `src/model_*.rs`**, one per surface —
   `model_generate`, `model_resource`, `model_capability`, `model_destroy`,
   `model_rename`, `model_index`, `model_migration`, `model_setting`,
@@ -475,20 +470,19 @@ Five things to know before touching it:
   cut: they share one precondition (`require_spring`), not one subject. See
   that entry below, and note it has outgrown its original rationale.
 - `templates/**.java` + `crates/jails-java/src/template.rs` — the Java bodies, as Java files.
-  A template used to be a Rust `format!` string, which meant **every brace
-  doubled** (`class {name}Controller {{`, and `{{@code public}}` in Javadoc)
-  because `format!` owns that syntax and Java is made of braces. The
-  templates are real `.java` files now, pulled in with `include_str!` so they
-  are still compile-time constants with no runtime file access and no new
-  dependency. Placeholders are `{{name}}`, chosen by **checking**: no `{{` appears in
-  any `.java` jails writes, so it cannot collide, while `${name}` would
-  (spring.rs generates `@Value("${...}")`). It *does* appear in generated
-  `.http` files, where `{{baseUrl}}` is the HTTP Client format's own variable
-  syntax -- but those are built with a Rust `format!` (escaped `{{{{`) rather
-  than rendered through `template!`, so the two syntaxes never meet. Re-check
-  against `.java` specifically if this is ever revisited; the original claim
-  was "no `{{` in the golden corpus", and that stopped being true when the
-  `.http` files were added. A missing or
+  **Templates are real `.java` files, never Rust `format!` strings.** Java is
+  made of braces and `format!` owns that syntax, so a `format!` template
+  doubles every one of them (`class {name}Controller {{`, and `{{@code
+  public}}` in Javadoc). They are pulled in with `include_str!`, so they are
+  still compile-time constants with no runtime file access and no new
+  dependency. Placeholders are `{{name}}`, which is safe because no `{{`
+  appears in any `.java` jails writes, while `${name}` would collide
+  (`spring.rs` generates `@Value("${...}")`). **Check `.java` specifically if
+  this is ever revisited**, not the whole golden corpus: `{{` *does* appear in
+  generated `.http` files, where `{{baseUrl}}` is the HTTP Client format's own
+  variable syntax. Those are built with a Rust `format!` (escaped `{{{{`)
+  rather than rendered through `template!`, so the two syntaxes never meet. A
+  missing or
   unused key is a panic, not silent text in a generated class. It is
   substitution only — **not** a template engine: anything structural (Spring's
   `@Component` versus its absence, a body repeated per field) stays in Rust
@@ -537,14 +531,11 @@ Five things to know before touching it:
   `OsString` end to end so a forwarded argument containing a space survives.
 - **The layer list has one owner: `config::LAYERS_IN_ORDER`.** It carries each
   layer's package name *and* the heading `stats` prints, and the validation
-  list is derived from it rather than written out again. `inspect.rs` used to
-  keep its own copy, which is exactly the drift `refactor.md` §6 predicted --
-  a deleted document, resolved through git as this file's header explains. It
-  reported against jails' *default* package names, so a project with
-  `adapters = "persistence"` had its adapters counted as "Other", and `cli`
-  and `messaging` -- missing from the copy -- were never counted at all.
-  Anything reporting per layer must go through `Config::layers()`, which
-  applies the project's renames. Layer matching is on whole path segments in
+  list is derived from it rather than written out again. **Anything reporting
+  per layer must go through `Config::layers()`**, which applies the project's
+  renames. A second copy of the list reports against jails' *default* package
+  names, so a project with `adapters = "persistence"` has its adapters counted
+  as "Other", and any layer missing from the copy is never counted at all. Layer matching is on whole path segments in
   sequence, so `webshop` is not the `web` layer and a nested
   `adapters = "infra.jdbc"` still matches.
 - **`jails.toml` is a manifest, and its truth is maintained by `add`, not by
@@ -560,12 +551,11 @@ Five things to know before touching it:
   that leaves comments and `[layout]` byte-for-byte alone — this is a file
   people edit, same rule as `pom.rs`.
 - `crates/jails-spec/src/build.rs` — **which build tool a directory uses, and nothing more.**
-  `find_project_root` used to look for `pom.xml` alone, which refused ~30
+  **The door is any recognised marker, nearest wins**, and the Maven-inherent
+  commands refuse themselves through `require_maven` — a refusal that can say
+  what still works. Keying the door on `pom.xml` alone refuses about thirty
   commands on a foreign project when only about ten of them need Maven at all
-  (`inspect.rs` and `rename.rs` contain zero occurrences of `pom`). The door
-  is any recognised marker now, nearest wins, and the Maven-inherent commands
-  refuse themselves through `require_maven` — a refusal that can say what
-  still works. **jails never reads, writes, parses or invokes a foreign build
+  (`inspect.rs` and `rename.rs` contain zero occurrences of `pom`). **jails never reads, writes, parses or invokes a foreign build
   file**; recognising a filename is not understanding a build. Because the
   templates are shaped by what the pom says, a missing pom silently changes
   the Java jails emits (`repository_wiring` → `PlainJdbc`,
@@ -619,17 +609,21 @@ Five things to know before touching it:
   `doctor.rs`) each with its own `format!`; `tests/architecture/` fails on a
   `# jails:` literal outside this crate, so a sixth cannot appear quietly.
 
-  **It is its own crate, with no dependencies at all**, and that is the
-  point. It lived in `jails-project` until 2026-08-29, and neither
-  `jails-compiler` nor `jails-workspace` depends on that crate -- so three
-  more implementations had appeared there, structurally forced rather than
-  careless. The gate that was supposed to stop exactly this had never been
-  able to: it counted blanked source, where a `# jails:` literal has already
-  been replaced by spaces, so it read zero whatever the code said. It no longer wraps a capability's `application.properties` settings
-  — see the per-key rule in the gotchas below. `Marked::indented` exists because a marker at column zero inside a
-  YAML mapping is a parse error rather than a misplaced comment. There is no
-  `replace` — nothing needs one, and `remove` then `add` is the path `sync`
-  takes.
+  **It is its own crate with no dependencies at all**, and that is what makes
+  it reachable from both ladders: neither `jails-compiler` nor
+  `jails-workspace` depends on `jails-project`, so a splice living there forces
+  those crates to write their own.
+
+  **The gate counts `file.literals`, not `file.production`.** Blanked source
+  has every string literal replaced by spaces, and a `# jails:` marker only
+  ever appears inside one — so a gate reading blanked source reports zero
+  whatever the code says.
+
+  It does not wrap a capability's `application.properties` settings; see the
+  per-key rule in the gotchas below. `Marked::indented` exists because a marker
+  at column zero inside a YAML mapping is a parse error rather than a misplaced
+  comment. There is no `replace` — nothing needs one, and `remove` then `add`
+  is the path `sync` takes.
 - `crates/jails-project/src/compose.rs` — the other user-owned file jails edits: `compose.yaml`.
   Marked service blocks so `add db` and `add kafka` stack, and `remove` can
   take one service out without touching the other. Also `start`/`stop`
@@ -711,11 +705,12 @@ Five things to know before touching it:
   capability `jails.toml` records it calls `add::plan_for` — planning is pure,
   no writes, no subprocesses — and reports any dependency, file, property or
   compose service the plan wants and the project lacks, with `fix: jails sync`.
-  Before it, `add` knew what a capability installs and `doctor` could not ask,
-  so a project whose generated file had been deleted reported nothing. The
-  hand-written checks stay: they cover projects with **no** recorded capability
-  list, where there is nothing to derive from, and they carry failure modes no
-  plan can express (two Jackson majors, podman's socket). Every `FAIL`
+  Deriving it is what lets `doctor` notice a generated file somebody deleted;
+  hand-written checks cannot, because only `add` knows what a capability
+  installs. The hand-written ones stay for the two things derivation cannot
+  cover: projects with **no** recorded capability list, where there is nothing
+  to derive from, and failure modes no plan can express (two Jackson majors,
+  podman's socket). Every `FAIL`
   carries a `fix:` line (an integration test asserts this), and a failure
   exits non-zero via an *empty* `Err` so `main` prints no redundant
   `jails: ` line.
@@ -766,20 +761,21 @@ Five things to know before touching it:
   the golden suite: the file went 6,624 → 5,517 lines and 4,596 lines became
   real Java an editor can check. `tests/architecture/` holds that at zero.
 
-  **It is no longer the biggest file here.** `plan.md` §6.5's split landed:
-  `crates/jails-generate/src/spring/workflow.rs` (usecase + its outbox half, transition, query),
-  `crates/jails-generate/src/spring/durable.rs` (job, durable-job), `crates/jails-generate/src/spring/http.rs` (client,
-  fetcher, http-workflow, http-sink) and `crates/jails-generate/src/spring/schema.rs` (association,
-  idempotency). `spring.rs` itself is down from 6,624 to 1,118 lines -- 558 of
-  them production, which is what the board counts -- and holds the shared
-  precondition, the shared helpers used by more than one kind, and the
-  capability slices. `transition` and `query` have since moved out of
-  `workflow.rs` into files of their own, and each then split again **by
-  secret**: `spring/query/proof.rs` and `spring/transition/proof.rs` hold what
-  jails writes to *prove* the recipe, because the fact a test turns on -- where
-  the request's values come from -- is one the route renderer already resolved
-  and the test renderer must not resolve again. `bugs.md` B48 was exactly that
-  drift.
+  **The kinds live in submodules; `spring.rs` holds only what they share.**
+  `spring/workflow.rs` (usecase and its outbox half), `spring/durable.rs` (job,
+  durable-job), `spring/http.rs` (client, fetcher, http-workflow, http-sink),
+  `spring/schema.rs` (association, idempotency), and `spring/transition/` and
+  `spring/query/` each in their own directory. `spring.rs` is 1,118 lines --
+  558 of them production, which is what the board counts -- and holds the
+  shared precondition, the helpers more than one kind uses, and the capability
+  slices.
+
+  **`transition` and `query` split again by secret.**
+  `spring/query/proof.rs` and `spring/transition/proof.rs` hold what jails
+  writes to *prove* the recipe, separately from the route renderer. The fact a
+  generated test turns on -- where the request's values come from -- is one the
+  route renderer has already resolved, and a test renderer that resolves it a
+  second time is free to disagree. `bugs.md` B48 is that drift.
 
   Two things the split needed and the next one will too: a child module reaches
   its parent's **private** items through `use super::*;`, but the parent needs
@@ -788,27 +784,23 @@ Five things to know before touching it:
   `include_str!` is relative to the *file*, so every template path in a moved
   block gains a `../`.
 
-  **It is no longer the largest module either, and neither is `generate.rs`.**
-  The board's *largest module* row is at 688 production lines and reads
-  `crates/jails-model/src/jdl/v1/parser.rs`; `generate.rs` is 723 raw lines.
-  `abstract.md` §3.2 called `generate.rs` Ousterhout's named anti-pattern
-  verbatim — parse → dispatch → write → side effects — and that shape is what
-  the splits above removed. The gate stays because it is on *whatever* the
-  largest module is, so a split cannot be satisfied by *moving* a monolith;
-  run the board rather than trusting the filename in this paragraph.
+  **The board's *largest module* row names whichever module is largest**, so a
+  split cannot be satisfied by *moving* a monolith. It sits at 688 production
+  lines on `crates/jails-model/src/jdl/v1/parser.rs`. Run the board rather than
+  trusting the filename in this paragraph. The shape it exists to keep out is
+  `abstract.md` §3.2's: parse → dispatch → write → side effects in one file.
 
   **Placement is a value, not six strings: `spring::Slice`.** Every generator
   and renderer here takes a `Slice` — a resolved `model::Project` plus the
   `--package` override — and asks it for `placed(Layer::X)` (this slice's own
   classes, honouring `--package`) or `owned(Layer::X)` (where an *existing*
-  resource lives, ignoring it). That distinction is load-bearing and used to
-  be restated at every call site as `place(layout::WEB)` versus
-  `subpackage(&base, config.layer(layout::DOMAIN))`. Sixteen functions took
-  eight to twelve positional parameters because of it; **no function in this
-  file now takes more than five**, and `tests/architecture/` fails if one
-  does. `Target`, `Defaults`, `Emission`, `Update` and `Projection` are the
-  other parameter objects that fell out — each one a group of values that is
-  computed together and consumed together.
+  resource lives, ignoring it). That distinction is load-bearing, and stating
+  it at each call site as `place(layout::WEB)` versus `subpackage(&base,
+  config.layer(layout::DOMAIN))` is what pushes these functions to eight and
+  twelve positional parameters. **No function in this file takes more than
+  five**, and `tests/architecture/` fails if one does. `Target`, `Defaults`,
+  `Emission`, `Update` and `Projection` are the other parameter objects — each
+  a group of values computed together and consumed together.
 
   `crates/jails-generate/src/spring/auth.rs` (`g auth`) and `crates/jails-generate/src/spring/sse.rs` (`add sse`) are the
   two most recent, and both exist because a default is wrong in a way nothing
@@ -847,18 +839,14 @@ Five things to know before touching it:
   compiler reproduces for the same manifest. **The legacy side is pinned**, at
   `reports: 21, tests: 57` in `tests/cli/examples.rs`; the canonical side is
   not pinned anywhere and has to be measured by compiling the minicom manifest.
-  It was 8 and 23 when the gap was first recorded and is 15 and 33 as of
-  `302d0b6` — **re-measure rather than quoting either**, because three commits
-  moved it in one afternoon.
+  **Re-measure it; do not quote a number from this file.** It moves whenever
+  the compiler gains coverage.
 
-  **What is no longer the blocker is worth knowing**, because the note used to
-  name it: the missing tests were the per-operation controller tests, and the
-  open question was whether the canonical `api` capability should emit them.
-  It does. Each controller carries a companion test issuing a real request,
-  and two facts that renderer must not work out for itself are decided once —
-  how the request binds (a query is `@ModelAttribute`, a command is
-  `@RequestBody`) and what the `Input` record declares. Two renderers reaching
-  that answer separately is `bugs.md` B48 twice more.
+  The canonical `api` capability does emit a companion test per controller,
+  issuing a real request. Two facts that renderer must not work out for itself
+  are decided once — how the request binds (a query is `@ModelAttribute`, a
+  command is `@RequestBody`) and what the `Input` record declares. Two
+  renderers reaching that answer separately is `bugs.md` B48.
 
   `new` must also seed its six default properties as `prop` declarations rather
   than reader-owned text, or a capability declaring the same key collides with
@@ -887,12 +875,13 @@ Five things to know before touching it:
   `app init` is the one subcommand that still refuses, because it writes the
   manifest rather than reading it.
 
-  It used to reconcile every capability a *second* time, because a generator
-  can create an integration point an already-installed capability needs — the
-  case being `add db` wiring a `@SpringBootTest` that a later row writes. That
-  is fixed where it belongs instead: the capability writing the test puts the
-  container import in itself (`route::support::with_test_support`), so there is
-  nothing for a second pass to catch and the formatter runs once.
+  **A capability wires its own integration points, so no second reconcile
+  pass is needed.** A generator can create something an already-installed
+  capability needs — `add db` wiring a `@SpringBootTest` that a later row
+  writes — and the answer is that the capability writing the test puts the
+  container import in itself (`route::support::with_test_support`). Reconciling
+  every capability a second time to catch it instead costs a duplicate
+  formatter run and leaves the ownership in the wrong place.
 - `.jails/ledger.toml` — the **one** file jails keeps its own bookkeeping in,
   and it is the transaction store's, not a module's. `jails-protocol`'s
   `envelope.rs` owns the file format (magic, schema number, checksum, and a
@@ -996,16 +985,14 @@ Five things to know before touching it:
   (`tests/cli/developer_tools.rs`), which scans every backticked `jails …` in a
   production message and checks the subcommand, the kind and the capability
   against it. research.md §0.2's theme is *oracles that disagree*, and the
-  commonest form is a `fix:` line naming something renamed elsewhere — the
-  frozen-conflict message was telling readers to run `jails continue`, which
-  has never existed.
+  commonest form is a `fix:` line naming a command that was renamed elsewhere
+  or never existed.
 - `jails.nvim/` — tracked in this repo, but Lua, not Rust: a thin `:Jails`
-  wrapper that shells out to the binary on PATH. **It no longer keeps its own
-  completion tables**: 160 lines of `SUBCOMMANDS`/`KINDS`/`CAPABILITIES`/
-  `OPTIONS` were deleted in favour of reading `jails commands --json` once per
-  session. They had drifted eight kinds and three capabilities behind the CLI,
-  and `tests/editor.rs` pinning them only caught it after the fact; that test
-  now asserts the tables have *not* come back. Every failure path — an older
+  wrapper that shells out to the binary on PATH. **It keeps no completion
+  tables of its own**: it reads `jails commands --json` once per session, and
+  a hand-maintained `SUBCOMMANDS`/`KINDS`/`CAPABILITIES`/`OPTIONS` list drifts
+  behind the CLI with nothing to stop it. `tests/editor.rs`
+  asserts no such tables exist. Every failure path — an older
   binary, `jails` off PATH, a malformed payload — degrades to an empty menu
   rather than raising, because a completer runs on every keystroke. The
   `<leader>J...` keymaps that drive it live in a *third* repo
@@ -1255,21 +1242,17 @@ moves whenever a test file is added, so take it from that line rather than
 from any number written down here or in the transcripts below — a `cargo test
 --workspace --no-run` artifact count is *not* the same number and gave 34.)
 
-It deliberately was not, and the entry that said so named G0's one answer to
-"is this green" as the reason. The real blocker was smaller and is fixed:
-`PermitPool` was a `Mutex` and a `Condvar`, which is the whole machine's Maven
-budget only while one binary runs at a time. Launch thirty-three and each
-believes it owns all six permits; five of them shell out to Maven, so four
-cores were being asked for thirty concurrent JVMs. That is why concurrency had
-only ever been worth 295.4s -> 281.7s -- the overlap was real and the
-oversubscription ate it. The budget is `flock` now, one lock file per permit
-under `target/`, shared however the suite is launched, and the run becomes as
-long as its slowest binary rather than the sum of all of them: 415.7s of
-per-binary time, 212.4s longest, 212.8s wall.
+**The Maven budget has to be a `flock` for this to work.** A `Mutex` and a
+`Condvar` are the whole machine's budget only while one binary runs at a time:
+launch every binary at once and each believes it owns all six permits, so four
+cores get asked for thirty concurrent JVMs and the oversubscription eats the
+overlap. One lock file per permit under `target/`, shared however the suite is
+launched, makes the run as long as its slowest binary rather than the sum of
+all of them -- 415.7s of per-binary time, 212.4s longest, 212.8s wall.
 
-It is still one answer to "is this green" -- the same binaries out of `cargo
-test --no-run`, the same filters, the same exit status. What it costs is a
-python3 dependency for the gate.
+It is still one answer to "is this green": the same binaries out of `cargo test
+--no-run`, the same filters, the same exit status. What it costs is a python3
+dependency for the gate.
 
 One thing it has to do that `cargo test` does for free: a proc-macro crate's test harness links
 `libstd` dynamically, so the runner puts the toolchain sysroot on
@@ -1804,35 +1787,29 @@ the noise floor is guesswork until it is. `workflow_dispatch` takes a
 dispatched run prints what every subprocess on the runner queued and cost,
 rather than inferring the runner from this machine.
 
-**Two gate runs at once corrupt each other, and the mechanism is one this
-repository has already paid for.** `cached_toolchain_dir_with_salt`
+**Run one gate at a time.** `cached_toolchain_dir_with_salt`
 (`tests/common/mod.rs`) shares one persistent fixture per label under
-`target/jails-e2e-cache`, and it has no lock at all:
+`target/jails-e2e-cache` and takes no lock:
 
 ```rust
 if root.exists() { fs::remove_dir_all(&root).unwrap(); }
 fs::create_dir_all(&root).unwrap();
 ```
 
-Two processes racing there fail in two different ways, and a concurrent run
-produced both. One is walking `remove_dir_all` while the other creates files
-underneath it, so the remove dies with `DirectoryNotEmpty` (errno 39) -- the
-panic is on the `unwrap` above. The other reads `.jails-generated-ready`,
-present because a *different* process wrote it before starting to fill the
-directory, returns "reuse this", and then runs against a half-built toolbox:
-`add kafka failed in the services Spring toolbox`.
+Two processes racing there fail in two ways. One walks `remove_dir_all` while
+the other creates files underneath it, and the remove dies `DirectoryNotEmpty`
+(errno 39) on that `unwrap`. Separately, `.jails-generated-ready` is written
+*before* the directory is filled, so a second process reads it, returns "reuse
+this", and runs against a half-built toolbox -- `add kafka failed in the
+services Spring toolbox`.
 
-**That is the `PermitPool` defect again**, one directory over. The Maven budget
-was a `Mutex` and a `Condvar` -- the whole machine's budget only while one
-binary runs at a time -- and is a `flock` now, shared however the suite is
-launched. The e2e cache is the state that did not get the same treatment, so
-the budget is process-safe and the fixture it protects is not.
+The Maven budget is a `flock` precisely so the suite can be launched however
+you like; this fixture is the shared state that is not, so the budget is
+process-safe and what it guards is not. `plan.md` P13.10 has the fix.
 
-Until it is locked the rule is operational: **run one gate at a time**, and if
-two have overlapped, `rm -rf target/jails-e2e-cache` before believing the next
-result -- a half-built toolbox is stamped ready and will be reused. The
-failures it produces are all in `capabilities::` and read exactly like real
-capability regressions.
+If two runs have overlapped, `rm -rf target/jails-e2e-cache` before believing
+the next result -- a half-built toolbox is stamped ready and will be reused.
+The failures read exactly like real `capabilities::` regressions.
 
 **A test that waits is worse than a test that works.** The single most
 expensive test in the suite was `run_starts_compose_services_only_when_
@@ -2058,10 +2035,10 @@ jails knows nothing about.
   on a JDK being present.** A JDK older than the target rejects
   `--release N` outright, so presence is not enough. Without the gate the
   suite goes red on any machine that hasn't installed the new JDK yet.
-- **`base_package()` falls back to the shallowest .java file.** It used to
-  require `*Application.java`, which only Spring projects have — `new-cli`
-  projects have `App.java`, so `add` failed on exactly the projects it's
-  most useful for.
+- **`base_package()` falls back to the shallowest .java file.** Requiring
+  `*Application.java` only works on Spring projects; `new-cli` projects have
+  `App.java`, and `add` would fail on exactly the projects it is most useful
+  for.
 - **`add json` is Jackson 3 (`tools.jackson`), and that is one artifact, not
   two.** java.time is built into core databind in 3.x, so
   `jackson-datatype-jsr310` is not merely unnecessary -- adding it drags in the
@@ -2106,15 +2083,15 @@ jails knows nothing about.
   runs, so a read-only home kills it with a non-zero exit indistinguishable
   from a failing build at the call site -- a retry there would re-run a
   genuinely broken build. `maven::mvnd_can_start` answers it up front instead.
-- **`java::types_annotated_with` is the one walk of `src/test/java`.** There
-  were three, two matching a raw substring -- which reads the
-  `@SpringBootTest` inside `TestcontainersConfig`'s own Javadoc example as a
-  declaration. That is how `doctor` came to name the wrong container config and
-  then report every other test as missing an import of it.
-- **The `@Import` splice lives in `jails-java`, not in `add`.** Two engines
-  perform it now -- `jails-engine/src/route/support.rs` and the V2 projection
-  -- and a second
-  copy of a surgical edit to a file the reader owns is a copy that drifts.
+- **`java::types_annotated_with` is the one walk of `src/test/java`.** A walk
+  that matches a raw substring reads the `@SpringBootTest` inside
+  `TestcontainersConfig`'s own Javadoc example as a declaration, which makes
+  `doctor` name the wrong container config and then report every other test as
+  missing an import of it.
+- **The `@Import` splice lives in `jails-codemod`, not in `add`.** Two engines
+  perform it -- `jails-engine/src/route/support.rs` and the canonical
+  projection -- and a second copy of a surgical edit to a file the reader owns
+  is a copy that drifts.
   `jails_java::annotate` is text in and text out: `splice_import`,
   `unsplice_import`, and `is_spring_boot_test`, which reads through
   `java::blanked()` so the `@SpringBootTest` in `TestcontainersConfig`'s own
@@ -2124,12 +2101,11 @@ jails knows nothing about.
   `@ServiceConnection` in `TestcontainersConfig` (not a
   `@Testcontainers`/`@Container` static field: Spring caches the context past
   the container's JUnit-managed lifetime, and later tests then fail against a
-  stopped container). It is `@Import`ed rather than registered globally --
-  jails used to list an `ApplicationContextInitializer` in test
-  `META-INF/spring.factories`, which gave every `@SpringBootTest` a DataSource
-  for free *and* made every pure slice and `@WebMvcTest` start a PostgreSQL it
-  never queried.
-  The reason the global version existed is still real: once the JDBC starter
+  stopped container). It is `@Import`ed rather than registered globally: an
+  `ApplicationContextInitializer` in test `META-INF/spring.factories` gives
+  every `@SpringBootTest` a DataSource for free *and* makes every pure slice
+  and `@WebMvcTest` start a PostgreSQL it never queries.
+  The pressure toward the global version is real, though: once the JDBC starter
   is present, auto-config demands a DataSource for **every** `@SpringBootTest`,
   including the `contextLoads` test that shipped with the project. So `add db`
   splices `@Import(TestcontainersConfig.class)` into the `@SpringBootTest`
@@ -2253,24 +2229,16 @@ jails knows nothing about.
   `actuate.autoconfigure` with no shim** — so the import is version-sniffed
   like `@AutoConfigureMockMvc` is. That is the part worth remembering.
 
-  **This entry used to justify the customizer with a claim that is false on
-  Boot 4**, and it is corrected rather than deleted because a wrong reason
-  sends the next reader to remove something that works. It said *"a property
-  cannot tag meters registered directly on the registry —
-  `management.metrics.tags.*` was removed in Boot 3, and its replacement
-  `management.observations.key-values.*` tags observations, which a plain
-  `Counter` is not."* Checked against `deps/spring-boot`, which is what this
-  file says to do: `MetricsProperties.tags` is alive in
+  **It is not the only thing that would work, and the reason matters if
+  somebody proposes replacing it.** `management.metrics.tags.*` does still tag
+  every meter: `MetricsProperties.tags` lives in
   `spring-boot-micrometer-metrics` ("Common tags that are applied to every
-  meter"), and `PropertiesMeterFilter` turns it into
-  `MeterFilter.commonTags(...)` on the registry — which applies to every
-  meter, hand-registered `Counter`s included. `management.observations.
-  key-values.*` is a *different* knob for observations, not a replacement.
-
-  The customizer is still the right thing to generate: it is code the project
+  meter") and `PropertiesMeterFilter` turns it into
+  `MeterFilter.commonTags(...)` on the registry, hand-registered `Counter`s
+  included. (`management.observations.key-values.*` is a *different* knob, for
+  observations.) The customizer is preferred anyway: it is code the project
   owns, it survives a property file being rewritten, and it does not depend on
-  which actuator modules happen to be present. It just is not the only thing
-  that works.
+  which actuator modules happen to be present.
 - **Exactly one repository adapter may carry `@Repository`.** Two make two
   beans qualify for one injection point and the scaffold compiles but cannot
   start — the ambiguity `jails beans` exists to report.
@@ -2300,13 +2268,14 @@ jails knows nothing about.
   load-bearing rather than taste: `g scaffold` writes an ArchUnit rule
   forbidding `org.springframework..` inside `domain..`, and the `@Component`
   on each implementation is the thing that puts it in the injected list. Two
-  first-party generators cannot disagree about where the domain boundary is,
-  and the disagreement was a red build on a clean generate. The port needs no
-  framework, so it stays; the beans move. Plain-Maven projects get the same
-  layout with no annotation, because one placement is easier to explain than
-  one that depends on the build file. `--on` and `--yields` reach the
-  implementations through `import_of`, which is what makes `--package` compile
-  at all -- it used to emit a signature naming types it never imported.
+  first-party generators disagreeing about where the domain boundary is means a
+  red build on a clean generate. The port needs no framework, so it belongs in
+  `domain`; the beans carry `@Component`, so they belong in `service`.
+  Plain-Maven projects get the same layout with no annotation, because one
+  placement is easier to explain than one that depends on the build file.
+  `--on` and `--yields` reach the implementations through `import_of`, which is
+  what makes `--package` compile: without it the signature names types it never
+  imports.
 
   **`--package` is part of an entity's identity, so `destroy` needs the same
   one.** Two resources of a name in two packages are two resources, which is
@@ -2465,25 +2434,21 @@ jails knows nothing about.
 
   Both merges go through `git::merge_file_argv`. They live in ladders that
   cannot see each other -- `jails-workspace` canonical, `jails-prepare` legacy
-  -- which is exactly how they came to pass the flag unconditionally from both,
-  and a board row now fails the build on a `--diff-algorithm` literal outside
-  `jails-support::git`.
-- **`cargo clippy` works here now**, and a `.githooks/pre-commit` runs
-  `cargo fmt --all --check` and `cargo clippy --workspace --all-targets` before every
-  commit, so
-  a lint is a *blocked commit* rather than a warning you can ignore. It used to
-  fail with E0514 (crate compiled by incompatible rustc) on a toolchain
-  mismatch, which is why this file said to skip it; that is no longer true, and
-  running it before staging saves a rejected commit. `cargo clippy --fix
+  -- so neither can reuse the other's call, and a board row fails the build on
+  a `--diff-algorithm` literal outside `jails-support::git`.
+- **`.githooks/pre-commit` runs `cargo fmt --all --check` and `cargo clippy
+  --workspace --all-targets` before every commit**, so a lint is a *blocked
+  commit* rather than a warning you can ignore. Running it before staging saves
+  a rejected commit. `cargo clippy --fix
   --allow-dirty --allow-staged --all-targets` handles the mechanical ones.
   `.githooks/` is tracked, so both hooks are the project's rather than this
   checkout's -- `core.hooksPath` has to point at it, which `git config
   core.hooksPath .githooks` does. **`pre-push` runs `mise run verify-rewrite`
   and nothing else**, per `simplify-sol.md`'s G0: one answer to "is this
-  green", so the hook and CI cannot drift. It used to run its own `cargo build
-  && cargo test` -- no `--workspace`, so the root package alone, and no
-  `JAILS_REQUIRE_TOOLCHAIN`, so a test that could not find its toolchain
-  skipped and counted as a pass.
+  green", so the hook and CI cannot drift. A hook running its own `cargo build
+  && cargo test` gets neither `--workspace` (so the root package alone) nor
+  `JAILS_REQUIRE_TOOLCHAIN` (so a test that cannot find its toolchain skips and
+  counts as a pass).
 - **The crate is on edition `"2024"`, deliberately** — edition 2026 doesn't
   exist yet, whatever the version number suggests. Leave it alone.
 - Install target is `~/.cargo/bin/jails` via `cargo install --path .`
@@ -2551,10 +2516,10 @@ by accident:
   point, which is the ambiguity `jails beans` reports.
 - **`Field.java_type` always holds the *inner* type**, with `Optionality`
   carrying the rest; `component_type` is the only place that wraps it back
-  into `Optional<...>`. `fields_from_record` used to store `Optional<String>`
-  there instead, so a template that worked for `parse_fields` input produced
-  uncompilable code for a record read off disk. Two representations of one
-  thing is how that happens.
+  into `Optional<...>`. Storing `Optional<String>` in `java_type` instead --
+  which is the tempting thing for `fields_from_record` to do -- gives one type
+  two representations, and a template that works for `parse_fields` input then
+  emits uncompilable code for a record read off disk.
 
 ## Anything that writes an `*IT` must also configure Failsafe
 

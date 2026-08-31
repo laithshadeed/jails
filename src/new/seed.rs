@@ -192,10 +192,9 @@ pub(super) fn seed_canonical_model(
     app: Option<&Path>,
     source: String,
 ) -> Result<()> {
-    // `--app` is seeded like any other project now. It used to be exempt,
-    // because `app apply` refused a canonical project and a seeded model would
-    // have left the manifest unappliable; a manifest replays into the model
-    // instead, and `seed_manifest` runs that replay against this tree's root.
+    // `--app` is seeded like any other project: a manifest replays into the
+    // model rather than being refused beside it, and `seed_manifest` runs that
+    // replay against this tree's root.
     let _ = app;
     tree.put_named(".jails/model.jdl", source, ".jails/model.jdl")?;
     crate::model_command::materialize_seed(tree.root())

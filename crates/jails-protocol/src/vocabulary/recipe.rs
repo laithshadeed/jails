@@ -325,11 +325,11 @@ pub(crate) fn argument_shape(recipe: ArtifactKind) -> ArgumentShape {
 
 /// Whether a recipe is a persistent, ownable, removable entity.
 ///
-/// The one owner of that question. It used to have three: `plan_recipe`
-/// refused `matches!(kind, Field | Cases | Migration)`, `route::artifact`
-/// listed the same three as match arms above a `_`, and `artifacts_for`
-/// carried three `unreachable!`s trusting both. `pending.md` §6.4 is the entry
-/// about that shape -- a closed set with holes cut in from the outside.
+/// **The one owner of that question**, and it must stay that way. Spreading it
+/// out gives `plan_recipe` a `matches!(kind, Field | Cases | Migration)`,
+/// `route::artifact` the same three as match arms above a `_`, and
+/// `artifacts_for` three `unreachable!`s trusting both. `pending.md` §6.4 is
+/// the entry about that shape -- a closed set with holes cut in from outside.
 pub fn is_persistent(recipe: ArtifactKind) -> bool {
     lifecycle(recipe) == LifecycleClass::PersistentIntent
 }

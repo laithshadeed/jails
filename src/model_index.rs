@@ -108,14 +108,13 @@ pub(crate) fn add(
         // either syntax, and they disagree about a constraint: v1's
         // `field_list` reads `index [ user_id, created_at desc ]` and allows
         // only `@id` and `@map`, while v0 takes parentheses and names the
-        // index with `@as`. This branched on the *filename* and always wrote
-        // the v0 form, so `resource index add` on a v1 model produced a
-        // declaration its own parser rejected -- "a constraint needs a
-        // bracketed field list", pointing at the entity's closing brace.
+        // index with `@as`. **Branch on the source, never the filename**: a
+        // `.jdl` file holds either syntax, so writing the v0 form for one
+        // produces a declaration its own parser rejects -- "a constraint needs
+        // a bracketed field list", pointing at the entity's closing brace.
         //
-        // Nothing caught it because the covering test's model is v0 syntax in
-        // a `.jdl` file, which is the one shape where the old branch was
-        // right.
+        // A test whose model is v0 syntax in a `.jdl` file cannot catch that;
+        // it is the one shape where branching on the filename is right.
         let member = match crate::model_generate_jdl::is_v1_source(&next_source) {
             true => format!(
                 "  index [{}] @id({})",

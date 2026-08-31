@@ -256,10 +256,8 @@ verbatim from `customer.js` and `admin.js`:
       - **CI existed nowhere.** `.github/workflows/verify-rewrite.yml` runs
         that one command and nothing else, on a runner given every tool a
         skip would otherwise hide -- JDK 26 and `jshell`, Maven, mvnd, Gradle
-        8.5 on JDK 21, git, and a container runtime. It has since run green on
-        a real runner many times over, and `CLAUDE.md` carries the phase-by-
-        phase cost and the two caching defects that were found by reading its
-        logs.
+        8.5 on JDK 21, git, and a container runtime. `CLAUDE.md` carries its
+        phase-by-phase cost and the caching rules its logs established.
       - **`.githooks/pre-push` ran its own `cargo build && cargo test`** -- no
         `--workspace`, so the root package alone, and no
         `JAILS_REQUIRE_TOOLCHAIN`, so a test that could not find its toolchain
@@ -549,7 +547,7 @@ verbatim from `customer.js` and `admin.js`:
         real `mvn compile` builds `JdbcNoteSearch.class`. Generated rather than
         a trigger, because a trigger has one silent failure: an UPDATE path
         that forgets it leaves the vector stale and the row stops matching a
-        search it used to match, with nothing erroring.
+        search that should find it, with nothing erroring.
 
         **That real compile found `bugs.md` B60**, which had nothing to do with
         search: the canonical Maven adapter inserted its block at the start of
@@ -613,18 +611,15 @@ verbatim from `customer.js` and `admin.js`:
       returns "reuse this", and runs against a half-built toolbox -- observed
       as `add kafka failed in the services Spring toolbox`.
 
-      **This is `PermitPool` one directory over.** That budget was a `Mutex`
-      and a `Condvar` -- the whole machine's budget only while one binary runs
-      at a time -- and is a `flock` now precisely so the suite can be launched
-      concurrently. The e2e cache is the shared state that did not get the same
-      treatment, so the guard is process-safe and what it guards is not.
+      **The Maven budget is a `flock` precisely so the suite can be launched
+      concurrently; this fixture is the shared state that is not.** So the
+      guard is process-safe and what it guards is not.
 
       The fix is the same shape: take a `flock` on the label directory for the
       whole build-or-reuse decision, and write `.jails-generated-ready` last.
-      Recorded rather than done because it is test infrastructure and the
-      operational rule is currently sufficient -- run one gate at a time, and
+      Until then the operational rule holds -- run one gate at a time, and
       `rm -rf target/jails-e2e-cache` if two have overlapped. What makes it
-      worth fixing anyway is that the failure is *silent about its cause*: a
+      worth fixing is that the failure is *silent about its cause*: a
       half-built toolbox is stamped ready, so the next clean run reuses it and
       the regression appears to persist.
 

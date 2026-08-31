@@ -216,10 +216,10 @@ pub(crate) fn scaffold_artifacts_from_fields(
     // **The DDL is planned unconditionally**, and where it lands is decided
     // once, in `generate::redirect_ddl_to_schema`: a Flyway migration, a
     // marked block in `schema.sql`, or nothing plus a report naming both
-    // fixes. This used to be conditional on `db/migration` already existing,
-    // which is `add db`'s directory -- so a Spring project initialising its
-    // datasource the way Spring documents got a repository, a JDBC adapter
-    // and an `IT` against a table that does not exist, silently.
+    // fixes. Making it conditional on `db/migration` already existing --
+    // which is `add db`'s directory -- silently hands a Spring project that
+    // initialises its datasource the way Spring documents a repository, a JDBC
+    // adapter and an `IT` against a table that does not exist.
     if !columns.is_empty() {
         let table = crate::sql::table_name(name);
         // Checked before it is written: a typo here fails at `flyway migrate`
@@ -494,9 +494,8 @@ pub(crate) fn json_sample(project: &Project, domain: &str, field: &Field) -> Opt
 ///
 /// **Only the ones it answers.** A scoped scaffold's controller is create-only
 /// -- every read has to be a `jails g query` with the tenant in its signature
-/// -- so the `### List` block this used to end with unconditionally answered
-/// 405 there. A reader sending it learns nothing about their project, only
-/// about this file.
+/// -- so an unconditional `### List` block answers 405 there. A reader sending
+/// it learns nothing about their project, only about this file.
 pub(crate) fn scaffold_requests(
     project: &Project,
     domain: &str,

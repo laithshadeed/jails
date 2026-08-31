@@ -6,8 +6,8 @@
 //! The trigger recipe is older and still widely copied, and it has a silent
 //! failure. Somebody adds an UPDATE path that does not fire it — a bulk fixup,
 //! a migration, a second service writing the same table — the row's text
-//! changes, the vector does not, and the row stops matching a search it used to
-//! match. Nothing errors, and nobody finds out until a customer says a record
+//! changes, the vector does not, and the row stops matching a search that
+//! should find it. Nothing errors, and nobody finds out until a customer says a record
 //! has vanished. `generated always as (…) stored` cannot drift from its inputs,
 //! because PostgreSQL maintains it.
 //!

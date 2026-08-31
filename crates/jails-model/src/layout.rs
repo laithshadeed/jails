@@ -81,12 +81,12 @@ impl Layer {
 
 /// The head segment of a package the compiler emits into.
 ///
-/// The distinction is which renames. It used to be silent: `package_for` looked
-/// every head up in the rename map, and a head with no entry passed through --
-/// so `repository` and `application` reading their own names back looked
-/// exactly like a layer whose rename happened to be absent. Saying it in the
-/// type is what makes `audit.md` A3.11 a list somebody can read rather than a
-/// property of a lookup miss.
+/// The distinction is which renames, and it is in the type rather than in a
+/// lookup miss. Looking every head up in the rename map and letting one with no
+/// entry pass through makes `repository` and `application` reading their own
+/// names back indistinguishable from a layer whose rename happens to be absent.
+/// Saying it in the type is what makes `audit.md` A3.11 a list somebody can
+/// read.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Head {
     /// A §9.7 layer. The project's `jails.toml` renames it.

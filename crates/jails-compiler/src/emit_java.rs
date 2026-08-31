@@ -204,9 +204,9 @@ fn lower_facet(model: &AppModel, entity: &Entity, facet: Facet) -> Result<Unit, 
             );
             (package, type_name, body, imports)
         }
-        // Three files rather than one, so it never reaches here. It used to
-        // fall through to the *factory's* arm: `use seed` linked, validated,
-        // and emitted `<Name>Factory.java` while reporting success
+        // Three files rather than one, so it never reaches here. Falling
+        // through to the *factory's* arm instead makes `use seed` link,
+        // validate, and emit `<Name>Factory.java` while reporting success
         // (`bugs.md` B59). A wrong artifact reported as written is a worse
         // failure than a missing one, because nothing looks wrong.
         Facet::Seed => unreachable!("seed has a multi-file backend"),

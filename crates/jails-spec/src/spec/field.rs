@@ -238,9 +238,9 @@ pub(crate) fn generic_argument<'a>(token: &'a str, name: &str) -> Option<&'a str
 /// One row per accepted spelling: the token, the Java type it resolves to, and
 /// the import that costs. Aliases are rows of their own (`string` and `text`,
 /// `int` and `integer`), so the list a refusal prints is derived from what is
-/// actually accepted rather than typed out beside it -- it used to be a literal
-/// in the error message, which is a second list that goes stale the first time
-/// somebody adds a type and does not scroll far enough.
+/// actually accepted rather than typed out beside it. A literal list in the
+/// error message is a second list, and it goes stale the first time somebody
+/// adds a type and does not scroll far enough.
 ///
 /// `pending.md` §1.3 is the entry about that: *"the JSON sample table and the
 /// field-type vocabulary are two spellings of one set. They were five apart,
@@ -336,11 +336,11 @@ pub fn builtin_by_java_name(ty: &str) -> Option<(&'static str, Option<&'static s
 /// **This is the half that is derivation rather than parsing**, and it is
 /// separate so it can have a second caller.
 /// `jails_protocol::declaration::FieldSpec` holds the same component in
-/// validated form, one layer up; it used to reach a `Field` by rendering
-/// itself back to a `name:type@marker` token and handing that to
-/// `parse_fields` — a value this program had just parsed, printed, and
-/// parsed again with the other of the two parsers. `FieldSpec::projected`
-/// calls this instead.
+/// validated form, one layer up, and reaches a `Field` through
+/// `FieldSpec::projected`, which calls this. Rendering itself back to a
+/// `name:type@marker` token and handing that to `parse_fields` instead would
+/// parse a value this program had just printed, with the other of the two
+/// parsers.
 ///
 /// `pending.md` §6.3: *"`java_type` and `imports` are derived facts computed by
 /// a function on `FieldSpec`, not a second parse result."* This is that

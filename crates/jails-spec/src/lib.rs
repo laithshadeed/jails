@@ -7,10 +7,11 @@
 //! - What is the conventional package for each layer ([`spec::layout`]).
 //! - What does a field spec mean ([`spec::field`]).
 //!
-//! All of it used to live in `generate.rs`, and every layer below the
-//! generators reached up into it: `model`, `config`, `compose`, `project` and
-//! `inspect` all did. That made twelve modules one strongly connected
-//! component, which is a boundary nothing can enforce.
+//! These live here rather than in `generate.rs` because everything below the
+//! generators needs them -- `model`, `config`, `compose`, `project` and
+//! `inspect` all ask at least one of the three. Answering from `generate.rs`
+//! makes those modules reach upward, and twelve of them become one strongly
+//! connected component with no boundary anything can enforce.
 //!
 //! [`build`] recognises a build file and never reads one. That is the line it
 //! does not cross, and it is why invoking Maven lives in `jails-project`

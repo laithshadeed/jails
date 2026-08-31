@@ -75,7 +75,7 @@ pub(super) fn derive_into(
         // `generated always as (...) stored`, not a trigger. A trigger is the
         // older recipe with one silent failure: somebody adds an UPDATE path
         // that forgets it, the row's text changes, the vector does not, and
-        // the row stops matching a search it used to match. Nothing errors.
+        // the row stops matching a search that should find it. Nothing errors.
         statements.push(format!(
             "alter table {table}\n    add column {COLUMN} tsvector\n    generated always as ({expression}) stored;"
         ));
@@ -125,8 +125,8 @@ use repo for Note\nuse search(fields: [title, body]) for Note\n";
 
     /// A declared search projection becomes a column and an index.
     ///
-    /// It used to become a port interface and nothing else, so the reader had
-    /// a type to inject and no way to answer a query with it.
+    /// Emitting a port interface and nothing else leaves the reader a type to
+    /// inject and no way to answer a query with it.
     #[test]
     fn a_search_projection_becomes_a_generated_column_and_a_gin_index() {
         let sql = migration();

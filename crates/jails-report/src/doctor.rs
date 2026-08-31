@@ -871,11 +871,11 @@ mod tests {
         let bare = base.join("bare");
         let checks = hot_reload_checks(&project_with_pom(&bare, &boot.replace("{deps}", "")));
         assert_eq!(checks[0].status, Status::Warn);
-        // The fix has to be runnable *here*. It used to name the coordinate
-        // and leave the reader to work out the command, and `run --watch`'s
-        // sibling message told them to `jails new` -- which is a command that
-        // exists, so the oracle over `fix:` lines passed it, and which creates
-        // a different project rather than repairing this one.
+        // The fix has to be runnable *here*: naming the coordinate and
+        // leaving the reader to work out the command is not a fix line, and
+        // neither is one naming `jails new` -- a command that exists, so the
+        // oracle over `fix:` lines accepts it, and which creates a different
+        // project rather than repairing this one.
         assert!(
             checks[0].fix.starts_with("jails add dependency"),
             "{}",

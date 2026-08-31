@@ -91,7 +91,7 @@ fn compose_block(service: &ComposeService) -> String {
 mod compose_block_tests {
     use super::*;
 
-    /// The bytes this used to write by hand, written by `Marked` instead.
+    /// The block is written by `Marked` rather than by hand here.
     ///
     /// Pinned because the two disagree in a way that reads as correct: the
     /// splice indents *every* line it is handed, so a body that already

@@ -231,12 +231,12 @@ pub(super) fn db_plan(slice: &Slice) -> Result<Change> {
 ///
 /// ## Why this is imported rather than registered globally
 ///
-/// jails used to register this from a test-classpath `spring.factories`, so
-/// that every `@SpringBootTest` got a DataSource without an annotation. That
-/// solved a real problem -- once `spring-boot-starter-jdbc` is present, JDBC
-/// auto-config demands a DataSource for *every* context, including a test
-/// that never queries -- and created a worse one: **every** test paid for a
-/// PostgreSQL container, including pure slices and `@WebMvcTest`s that have
+/// Registering it from a test-classpath `spring.factories` gives every
+/// `@SpringBootTest` a DataSource without an annotation. That solves a real
+/// problem -- once `spring-boot-starter-jdbc` is present, JDBC auto-config
+/// demands a DataSource for *every* context, including a test that never
+/// queries -- and creates a worse one: **every** test pays for a PostgreSQL
+/// container, including pure slices and `@WebMvcTest`s that have
 /// no business touching a database. A test suite that starts a database it
 /// does not use is slow in a way that is nobody's fault and never fixed.
 ///

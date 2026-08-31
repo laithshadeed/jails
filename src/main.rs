@@ -737,12 +737,11 @@ fn main() -> std::process::ExitCode {
 
 /// These two assert against jails' *real* CLI, so they live with it.
 ///
-/// They used to sit in `commands.rs` and reach for `crate::Cli`, which was one
-/// layer above that module — invisible while everything was one crate, and a
-/// cycle the moment the tooling became one. `commands` takes the
-/// `clap::Command` as an argument now and exposes its two walkers, so the
-/// property being tested is unchanged: this is the command that parses the
-/// arguments, not a fixture resembling it.
+/// They cannot live in `commands.rs`: reaching for `crate::Cli` from there is
+/// a cycle, since that module is one layer below the binary. `commands` takes
+/// the `clap::Command` as an argument and exposes its two walkers, so what is
+/// asserted here is the command that parses the arguments rather than a
+/// fixture resembling it.
 #[cfg(test)]
 mod tests {
     use super::*;

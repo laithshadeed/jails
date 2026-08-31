@@ -649,10 +649,9 @@ fn first_word(input: &str) -> &str {
 
 /// The stable label a pre-v1 name gets.
 ///
-/// **It is `naming::stable_fragment`, and it used to be a second copy.** The
-/// copy differed in one way that looks cosmetic and is not: it left every
-/// character that is neither a letter nor `-` alone, so a dot survived into
-/// the label. A label is the key of the intermediate TOML table *and* a model
+/// **It is `naming::stable_fragment`, and must not be copied.** A copy that
+/// differs by leaving every character which is neither a letter nor `-` alone
+/// -- which looks cosmetic -- lets a dot survive into the label. A label is the key of the intermediate TOML table *and* a model
 /// label, so `dependency org.apache.commons:commons-csv` -- any real Maven
 /// group -- and `setting server.port` -- the most ordinary setting there is --
 /// each produced a label the linker then refused. Neither parsed at all.

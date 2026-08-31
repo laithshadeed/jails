@@ -1296,10 +1296,10 @@ mod repository_test_generation_tests {
 
     /// The Javadoc names a component the record actually declares.
     ///
-    /// It used to print the *column* name, so a key called `customerId` was
-    /// announced as `customer_id` -- an accessor the reader then goes looking
-    /// for and does not find. `modern.md` §11.2's point exactly: generated
-    /// prose is asserted and never checked. plan.md P6.4.
+    /// Printing the *column* name instead announces a key called `customerId`
+    /// as `customer_id` -- an accessor the reader then goes looking for and
+    /// does not find. `modern.md` §11.2's point exactly: generated prose is
+    /// asserted and never checked. plan.md P6.4.
     #[test]
     fn the_key_javadoc_names_the_component_not_the_column() {
         let (root, _project) =

@@ -471,9 +471,9 @@ fn prometheus_rule_yaml(name: &str) -> String {
 
 /// The Java release, from the `Project` the caller already resolved.
 ///
-/// It used to read the pom again. That is `abstract.md` §2's Feature Envy in
-/// its smallest form: two answers to one question in one run, and the second
-/// one arrives after `add` may have spliced the pom.
+/// Reading the pom again here is `abstract.md` §2's Feature Envy in its
+/// smallest form: two answers to one question in one run, the second arriving
+/// after `add` may have spliced the pom.
 fn project_release(project: &crate::model::Project) -> Result<u32> {
     Ok(project.java_release().ok_or_else(|| {
         "pom.xml has no Java release; Jails cannot choose a compatible CI or container toolchain"

@@ -467,9 +467,8 @@ their exit codes, so `jails doctor --json && deploy` behaves like
   Compose is skipped in tests and without a DataSource Spring cannot pick a
   driver — so adding the capability and walking away would break the
   `contextLoads` test that came with the project. It is an `@Import` rather
-  than a global `spring.factories` registration (which jails used to write)
-  so that pure slices and `@WebMvcTest`s do not each start a PostgreSQL they
-  never query. JDBC would also
+  than a global `spring.factories` registration, so that pure slices and
+  `@WebMvcTest`s do not each start a PostgreSQL they never query. JDBC would also
   CGLIB-proxy every `@Repository`, which breaks `final` classes, so `add db`
   sets `spring.persistence.exceptiontranslation.enabled=false` (this
   capability is raw SQL, not JPA). `jails add` starts postgres immediately when Docker is
@@ -571,9 +570,8 @@ there the unit is a whole service block rather than a setting.)
   collection: `--method post --on ChatRequest --returns ChatReply --path
   /v1/chat/completions` generates one `@PostExchange` method taking and
   returning those types. Naming none of the three keeps the collection shape.
-  The three flags used to be accepted and silently discarded — the command
-  reported success for work it had not done, which is the failure class jails
-  is otherwise scrupulous about.
+  All three are applied or refused, never accepted and discarded: reporting
+  success for work not done is the failure class jails is scrupulous about.
 
   **Each client gets its own registration.** `@ImportHttpServices` carries one
   group name, so a single shared config scanned by package meant a second
@@ -685,7 +683,8 @@ there the unit is a whole service block rather than a setting.)
   `destroy` and a re-plan both know it; it is validated rather than passed
   through, because it is text jails writes into an annotation.
 
-  **`--order-by` and `--limit` say what the adapter used to decide silently.**
+  **`--order-by` and `--limit` say out loud what the adapter would otherwise
+  decide silently.**
   `--order-by 'sentAt desc, id'` names components of `--on` (or the columns
   they map to), each optionally `asc`/`desc` and nothing else — arbitrary SQL
   is refused here rather than recorded as trusted generated SQL, the same rule
@@ -738,8 +737,8 @@ there the unit is a whole service block rather than a setting.)
   search over a record that already exists. The `tsvector` is a **generated
   column**, not a trigger, and that is the whole kind: a trigger has one silent
   failure — somebody adds an UPDATE path that does not fire it, the row's text
-  changes, the vector does not, and the row stops matching a search it used to
-  match, with nothing erroring. `generated always as (…) stored` cannot drift,
+  changes, the vector does not, and the row silently stops matching a search
+  that should find it. `generated always as (…) stored` cannot drift,
   because PostgreSQL maintains it. Every column is wrapped in `coalesce(x, '')`
   (`||` with a NULL operand yields NULL, which would blank the whole vector),
   the text search configuration is named in the expression rather than left to
@@ -1610,10 +1609,11 @@ reimplements none of its project-generation logic.
 
 Most of jails never touches a build tool — `routes`, `beans`, `stats`,
 `notes`, `why`, `explain`, `rename`, `doctor` and most of `generate` read
-source and write source. They used to be refused anyway, because the door
-looked only for `pom.xml`. It now looks for any build marker it recognises
-(`pom.xml`, `build.gradle`, `build.gradle.kts`, `settings.gradle`, `build.xml`,
-`BUILD.bazel`), nearest wins.
+source and write source, and none of them needs Maven to answer. The door
+looks for any build marker it recognises (`pom.xml`, `build.gradle`,
+`build.gradle.kts`, `settings.gradle`, `build.xml`, `BUILD.bazel`), nearest
+wins — keying it on `pom.xml` alone refuses all of them on a foreign
+project.
 
 **A Groovy `build.gradle` is read and spliced, not merely recognised.**
 `add`, `generate`, `doctor`, `about`, `build`, `clean`, `check`, `test`, `run`
@@ -1681,10 +1681,8 @@ applies, and inferring it would have `sync` install things nobody asked for.
 
 Run `jails adopt --pretend` first.
 
-`jails model init` is the step after it, and the two used to refuse each other:
-`adopt` records a `jails.toml` layout row through the legacy engine, so a
-ledger exists, and `model init` read any ledger as a reason to refuse — while
-`model import`, the command it pointed at, had no declaration to carry. A
+`jails model init` is the step after it. `adopt` records a `jails.toml` layout
+row through the legacy engine, so a ledger exists afterwards — and a
 ledger is a reason to refuse only when it holds something the importer could
 carry. An unreadable one still refuses, and separately: it might hold
 declarations, and seeding a model beside them would strand the project's
@@ -1769,10 +1767,10 @@ whose message is about binding rather than about the value.
 
 ### `--consumes json|form`
 
-Every endpoint jails generated used to be `@Valid @RequestBody` — a JSON body.
 `$.post(url, {email})`, which is what a jQuery page and an HTML form send, is
-`application/x-www-form-urlencoded`, and a `@RequestBody` endpoint answers it
-**415** with a message about a content type rather than about the code.
+`application/x-www-form-urlencoded`. A `@Valid @RequestBody` endpoint — a JSON
+body — answers that **415**, with a message about a content type rather than
+about the code, so the binding has to be stated rather than assumed.
 
 ```
 jails g usecase Ping email:string! --on User --consumes form --path /customer_api/ping
@@ -1812,8 +1810,8 @@ Two places, and which one is decided by what the project already has:
   (`spring.sql.init`), when there is no Flyway. `jails destroy` takes exactly
   that block back out and leaves the tables you wrote alone.
 
-A project with **neither** is told so, by name, with both fixes. It used to get
-no DDL and no message — a repository, a JDBC adapter and an `IT` against a table
+A project with **neither** is told so, by name, with both fixes. Saying
+nothing leaves it with a repository, a JDBC adapter and an `IT` against a table
 that does not exist.
 
 ### `jails modernize` (alias `upgrade`)

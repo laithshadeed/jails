@@ -145,12 +145,12 @@ pub(crate) struct Cli {
     #[arg(long, global = true)]
     pub(crate) debug: bool,
 
-    // `--dry-run` is an alias, not a second flag. It used to be a per-command
-    // `bool` that dispatch OR'd with this one -- `dry_run || pretend` at five
-    // call sites, two names for one boolean reaching two different
-    // implementations. abstract.md §4.2 calls that connascence of meaning
-    // crossing a module boundary, and it is why `--pretend` and apply were
-    // able to disagree about what would be written. One flag, one value,
+    // `--dry-run` is an alias, not a second flag. A per-command `bool` that
+    // dispatch ORs with this one -- `dry_run || pretend` -- is two names for
+    // one boolean reaching two implementations, which abstract.md §4.2 calls
+    // connascence of meaning crossing a module boundary, and which lets
+    // `--pretend` and apply disagree about what would be written. One flag,
+    // one value,
     // every command -- and `--dry-run` now works on all of them rather than
     // on the three that happened to declare it.
     /// Run, but write nothing -- print what would change and stop.

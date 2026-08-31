@@ -506,11 +506,10 @@ impl FieldSpec {
     /// `Field` is what a template needs -- a Java type and the imports it
     /// costs. The second is *derived* from the first.
     ///
-    /// It used to be re-parsed from it. `route::field` rendered this value back
-    /// to a `name:type@marker` token with [`Self::canonical`] and handed the
-    /// string to `parse_fields`, so a field spec was parsed up to three times
-    /// per request and one of those parses read text this program had printed
-    /// a line earlier. `pending.md` §6.3 names that as the deepest seam between
+    /// **Derived, never re-parsed.** Rendering this value back to a
+    /// `name:type@marker` token with [`Self::canonical`] and handing the string
+    /// to `parse_fields` parses one field spec up to three times per request,
+    /// and one of those parses reads text this program printed a line earlier. `pending.md` §6.3 names that as the deepest seam between
     /// the two engines, and `declaration/field.rs`'s own header names why it
     /// matters: *"a rule enforced in one place and not another is the shape of
     /// every drift bug in this repository."*

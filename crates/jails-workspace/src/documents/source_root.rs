@@ -24,8 +24,8 @@ const MANAGED_SOURCE_PREFIX: &str = ".jails/generated/";
 /// Every generated source root, as one `build-helper-maven-plugin`.
 ///
 /// One marked block holding one `<plugin>` with an `<execution>` per root.
-/// It used to be a block per source set, each with its own complete plugin
-/// declaration, so a project with a main and a test root declared
+/// A block per source set, each with its own complete plugin declaration,
+/// makes a project with a main and a test root declare
 /// `org.codehaus.mojo:build-helper-maven-plugin` twice inside one `<plugins>`.
 /// Maven merges the executions -- checked against a real build, both roots
 /// compile -- but warns `'build.plugins.plugin.(groupId:artifactId)' must be

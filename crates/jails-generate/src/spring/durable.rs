@@ -559,13 +559,11 @@ mod durable_job_test_properties_tests {
 
     /// What the recipe states is what reaches the file.
     ///
-    /// This used to have a second half: the V1 installer wrote the block
-    /// directly, and the test compared its bytes with the stated ones, because
-    /// two spellings of one block is how a route and a direct call come to
-    /// produce projects that differ in a file neither of them owns. The
-    /// installer is gone -- `SemanticEdit::MarkedBlock` carries the stated
-    /// value to `projection.rs` and there is only one spelling left -- so what
-    /// remains is the statement itself and the rendering it implies.
+    /// One spelling of the block, so there is nothing to compare it against:
+    /// `SemanticEdit::MarkedBlock` carries the stated value to `projection.rs`
+    /// and nothing writes it directly. A second writer is how a route and a
+    /// direct call come to produce projects that differ in a file neither of
+    /// them owns.
     #[test]
     fn the_stated_block_is_the_block_that_gets_installed() {
         let block = durable_job_test_properties("ItemDispatcher");
