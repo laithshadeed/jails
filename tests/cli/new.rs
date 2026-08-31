@@ -180,30 +180,42 @@ fields = [\"id:uuid\", \"label:string!\"]
     let root = workspace.join("demo");
     // The manifest is seeded where `app apply` will find it next time...
     assert!(root.join(".jails/app.toml").is_file());
-    // ...and it is the *only* desired-state authority this project has.
+    // ...and the project it created is canonical, like every other project
+    // `new-cli` makes.
     //
-    // **The negative is the assertion.** `new-cli` seeds `.jails/model.jdl`,
-    // and `app apply` refuses to run beside one precisely so no project holds
-    // two editable sources -- but `new --app` reaches `app::apply_in` directly
-    // rather than through that guard, so seeding both produced exactly the
-    // state the refusal exists to prevent, silently: a model, a manifest, a
-    // legacy ledger, and every generated class outside the managed tree, with
-    // the next command taking the canonical path and seeing none of it.
-    // Asserting only what is present cannot catch that.
+    // **This assertion used to be its own negation**, and the reason it was is
+    // worth keeping: `app apply` refuses beside a model so that no project
+    // holds two editable sources, and `new --app` reached the apply directly
+    // rather than through that guard -- so seeding both produced exactly the
+    // state the refusal exists to prevent, silently. A manifest is not a
+    // second editable source once it replays *into* the model, which is what
+    // it does now, so the state the negative was guarding cannot arise: there
+    // is no ledger and nothing is written outside the managed tree.
     assert!(
-        !root.join(".jails/model.jdl").exists(),
-        "a manifest-driven project was also given a canonical model"
+        root.join(".jails/model.jdl").is_file(),
+        "a manifest-driven project should be canonical like any other"
     );
-    // ...and its intents are already applied, against the project that was
-    // just created rather than whatever encloses the process CWD.
     assert!(
-        root.join("src/main/java/com/example/demo/domain/Entry.java")
+        !root.join(".jails/ledger.toml").exists(),
+        "and must not also carry a legacy ledger"
+    );
+    // ...and its rows are already applied, against the project that was just
+    // created rather than whatever encloses the process CWD -- the edge this
+    // command has always been the one to hit.
+    assert!(
+        root.join(".jails/generated/main/java/com/example/demo/domain/Entry.java")
             .is_file(),
-        "the manifest's intent should have been applied"
+        "the manifest's row should have been applied into the managed tree"
     );
     assert!(
-        root.join("src/test/java/com/example/demo/domain/EntryTest.java")
+        root.join(".jails/generated/test/java/com/example/demo/domain/EntryTest.java")
             .is_file()
+    );
+    assert!(
+        !root
+            .join("src/main/java/com/example/demo/domain/Entry.java")
+            .exists(),
+        "and not into the reader's own sources"
     );
 }
 

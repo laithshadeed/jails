@@ -22,7 +22,7 @@
 
 use crate::{CompileError, emit_java};
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
-use jails_model::{AppModel, BuiltinType, Entity, Field, Package, StableId, TypeRef};
+use jails_model::{AppModel, Entity, Field, Package, StableId, TypeRef};
 use std::collections::BTreeSet;
 
 const JAVA_TEST_ROOT: &str = ".jails/generated/test/java";
@@ -98,11 +98,22 @@ fn enum_body(entity: &Entity, imports: &mut BTreeSet<String>) -> String {
 }
 
 /// The component a null is worth throwing at, if the record has one.
+/// The first component whose compact constructor rejects null.
+///
+/// **The predicate is the emitter's own**, `!primitive(ty, required)`, rather
+/// than a guess that happened to agree with it for one type. It was "a
+/// required `string`", which is a subset: `record Transaction(UUID id, long
+/// amount)` gets `Objects.requireNonNull(id, "id")` like every other
+/// non-primitive component, and the companion test shipped `@Disabled` --
+/// "state what Transaction guarantees, then assert it" -- over a project that
+/// had just been told what it guarantees. Three of them in one proof
+/// application, which is how it surfaced: the toolbox's own bar is that every
+/// Surefire test runs, and three did not.
 fn null_checked(entity: &Entity) -> Option<&Field> {
     entity
         .fields
         .iter()
-        .find(|field| field.required && matches!(field.ty, TypeRef::Builtin(BuiltinType::String)))
+        .find(|field| field.required && !crate::emit_java::primitive(&field.ty, field.required))
 }
 
 fn record_body(model: &AppModel, entity: &Entity, imports: &mut BTreeSet<String>) -> String {

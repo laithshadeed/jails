@@ -7,7 +7,7 @@ import com.example.demo.domain.Transaction;
 public final class DomesticEligibility implements Eligibility {
 
     @Override
-    public boolean matches(Transaction transaction) {
+    public boolean appliesTo(Transaction transaction) {
         return "GB".equalsIgnoreCase(transaction.country());
     }
 }

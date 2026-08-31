@@ -38,7 +38,7 @@ pub(super) fn run(mut args: GenerateArgs, invocation: Invocation) -> Result<()> 
         Vec::new()
     };
     let model_path = PathBuf::from(MODEL_PATH);
-    let current_source = read_model()?;
+    let current_source = read_model(&invocation)?;
     let current_model = parse(&current_source)?;
     if super::is_v1_source(&current_source) {
         reject_v1_options(&args, component_kind)?;

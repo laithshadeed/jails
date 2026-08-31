@@ -382,6 +382,17 @@ pub(crate) struct Invocation {
     pub(crate) plan_out: Option<std::path::PathBuf>,
     pub(crate) plan_in: Option<std::path::PathBuf>,
     pub(crate) command_path: Vec<String>,
+    /// The project this command acts on, when the caller knows it and the
+    /// process directory does not.
+    ///
+    /// `model_command::root` walks up from the *process* directory, which is
+    /// right for every command a reader types and wrong for `jails new --app`:
+    /// it stands in the parent of the project it is creating. The alternative
+    /// was an explicit root parameter on every canonical frontend -- nine of
+    /// them, on the one `abstract.md` §7 rung that exists to discourage a fact
+    /// re-derived from a primitive rather than read off a resolved value.
+    /// This *is* that resolved value; it was already threaded everywhere.
+    pub(crate) root: Option<std::path::PathBuf>,
 }
 
 impl Invocation {
@@ -393,6 +404,55 @@ impl Invocation {
         Self {
             pretend: true,
             ..self
+        }
+    }
+
+    /// The same invocation, acting on a project the caller has resolved.
+    pub(crate) fn at(self, root: std::path::PathBuf) -> Self {
+        Self {
+            root: Some(root),
+            ..self
+        }
+    }
+
+    /// Where this command acts: the caller's answer, or the walk up from the
+    /// process directory that every typed command wants.
+    pub(crate) fn root(&self) -> jails_support::Result<std::path::PathBuf> {
+        match &self.root {
+            Some(root) => Ok(root.clone()),
+            None => crate::model_command::root(),
+        }
+    }
+
+    /// The invocation for a command that does not take the global flags.
+    ///
+    /// `jails new` builds its own request from `--debug`/`--pretend` rather
+    /// than taking an `Invocation`, and `--app` now replays a manifest through
+    /// the canonical frontends, which do. Everything else is a presentation
+    /// flag with a sensible absence.
+    pub(crate) fn for_new(root: std::path::PathBuf, debug: bool) -> Self {
+        Self {
+            pretend: false,
+            debug,
+            output: Output::Human,
+            diff: false,
+            ast: false,
+            plan_out: None,
+            plan_in: None,
+            command_path: vec!["new".to_string()],
+            root: Some(root),
+        }
+    }
+
+    /// Does the project this command acts on author in JDL?
+    ///
+    /// A method rather than a free function taking a root, for this struct's
+    /// own reason: the answer is a fact about the project the invocation
+    /// already names.
+    pub(crate) fn owns_jdl(&self) -> bool {
+        match &self.root {
+            Some(root) => root.join(crate::model_command::JDL_PATH).is_file(),
+            None => crate::model_command::owns_jdl(),
         }
     }
 

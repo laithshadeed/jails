@@ -274,8 +274,21 @@ pub(crate) fn run(command: AppCommand, invocation: crate::Invocation) -> Result<
 /// applied. The legacy engine's own answer to that was the journal, and a
 /// canonical project has no journal by design.
 fn replay(requested: Option<&Path>, invocation: crate::Invocation) -> Result<()> {
-    let root = crate::model_command::root()?;
-    let path = manifest_path(&root, requested)?;
+    let root = invocation.root()?;
+    replay_at(&root, requested, invocation)
+}
+
+/// The same replay, against a project the caller has resolved.
+///
+/// `jails new --app` is the caller: it stands in the parent of the project it
+/// is creating, so `model_command::root` would walk to the wrong one.
+pub(crate) fn replay_at(
+    root: &Path,
+    requested: Option<&Path>,
+    invocation: crate::Invocation,
+) -> Result<()> {
+    let invocation = invocation.at(root.to_path_buf());
+    let path = manifest_path(root, requested)?;
     let (manifest, rows) = read_manifest(&path)?;
     // Every capability in one patch, then every row. The manifest already
     // parsed its capability list into the closed vocabulary, so there is no

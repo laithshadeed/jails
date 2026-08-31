@@ -64,7 +64,7 @@ impl Kind {
 pub(super) fn run(args: GenerateArgs, invocation: Invocation, kind: Kind) -> Result<()> {
     reject_unsupported_options(&args, kind)?;
     let model_path = PathBuf::from(MODEL_PATH);
-    let current_source = read_model()?;
+    let current_source = read_model(&invocation)?;
     let current_model = parse(&current_source)?;
     let label = java_to_label(&args.name);
     let entity_id = EntityId::parse(format!("ent_{label}"))

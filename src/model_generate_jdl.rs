@@ -85,7 +85,7 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     })?;
     model_generate::reject_unsupported_operation_options(&args, profile)?;
     let model_path = PathBuf::from(MODEL_PATH);
-    let current_source = read_model()?;
+    let current_source = read_model(&invocation)?;
     let v1 = is_v1_source(&current_source);
     let current_model = parse(&current_source)?;
     let on = args
@@ -295,7 +295,7 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
     args.name = java_type_name(&args.name);
     model_generate::validate_entity_args(&args)?;
     let model_path = PathBuf::from(MODEL_PATH);
-    let current_source = read_model()?;
+    let current_source = read_model(&invocation)?;
     let v1 = is_v1_source(&current_source);
     let current_model = parse(&current_source)?;
     let entity_label = java_to_label(&args.name);
@@ -426,8 +426,8 @@ fn same_entity_contribution(
             .all(|(id, index)| existing.indexes.get(id) == Some(index))
 }
 
-pub(crate) fn read_model() -> Result<String> {
-    crate::model_command::read_source(Path::new(MODEL_PATH))
+pub(crate) fn read_model(invocation: &Invocation) -> Result<String> {
+    crate::model_command::read_source_at(&invocation.root()?, Path::new(MODEL_PATH))
 }
 
 pub(crate) fn parse(source: &str) -> Result<jails_model::AppModel> {

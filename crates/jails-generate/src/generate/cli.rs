@@ -31,7 +31,15 @@ pub(super) fn command_test(pkg: &str, name: &str) -> String {
 pub fn cli_java(pkg: &str, class: &str, program: &str) -> String {
     crate::template::render(
         crate::template_here!("spring/cli_java.java"),
-        &[("pkg", pkg), ("class", class), ("program", program)],
+        // Empty here, and rendered from the model on the canonical path. This
+        // engine splices each registration in afterwards with
+        // `register_command`, so a freshly written dispatcher has none.
+        &[
+            ("pkg", pkg),
+            ("class", class),
+            ("program", program),
+            ("registrations", ""),
+        ],
     )
 }
 

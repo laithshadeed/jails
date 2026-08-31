@@ -200,7 +200,17 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // `collect_beans` are public, and their four callers in
                 // `add/tooling`, `doctor`, `why_subject` and `editor_command`
                 // do not all hold one.
-                ceiling: 79,
+                // 79 -> 81 for `read_source_at` and `replay_at`, which are the
+                // same containment boundary as the five above and exist for
+                // the same edge: `jails new --app` replays a manifest into the
+                // project it is creating, and `model_command::root` walks up
+                // from the process directory, which is that project's parent.
+                // They stop the walk; the root goes no further down, and it
+                // travels on `Invocation` from there -- a resolved value that
+                // was already threaded everywhere, which is this rung's own
+                // prescribed cure. Threading a parameter instead would have
+                // reached roughly nine frontend entry points.
+                ceiling: 81,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;

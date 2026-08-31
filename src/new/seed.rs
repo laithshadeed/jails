@@ -36,6 +36,21 @@ pub fn seed_manifest(
     })?;
     tree.put(".jails/app.toml", &source)?;
     println!("  manifest {}", manifest.display());
+    // A seeded model means the manifest replays into it through the same
+    // frontends `jails g` uses, at the root of the tree being published --
+    // never the process directory, which is this project's parent.
+    // `no_start` is not passed on because the canonical path has no external
+    // service effects to suppress; `sync` refuses the flag by name for the
+    // same reason.
+    if tree.root().join(crate::model_command::JDL_PATH).is_file() {
+        let _ = no_start;
+        crate::app::replay_at(
+            tree.root(),
+            None,
+            crate::Invocation::for_new(tree.root().to_path_buf(), debug),
+        )?;
+        return Ok(crate::app::Applied::Clean);
+    }
     crate::app::apply_in(tree.root(), no_start, debug)
 }
 
@@ -177,37 +192,11 @@ pub(super) fn seed_canonical_model(
     app: Option<&Path>,
     source: String,
 ) -> Result<()> {
-    // **`--app` keeps the project legacy, and the reason has changed.** It
-    // used to be that `app apply` refused a canonical project outright, so a
-    // seeded model would have left the manifest unappliable. That is no longer
-    // true: a manifest replays into the model row by row, through the same
-    // frontends `jails g` uses.
-    //
-    // What blocks it now is where those frontends look. `model_command::root`
-    // walks up from the *process* directory, and `jails new` stands in the
-    // parent of the project it is creating -- the same edge `compile_at`,
-    // `load_model_at`, `resolve_manifest_at` and `materialize_seed` exist to
-    // stop, one layer lower. Seeding a model here without extending that
-    // containment to the generate frontends would replay every row against
-    // whatever encloses the destination directory.
-    //
-    // And threading one is the wrong shape, which is worth recording so the
-    // next attempt does not start there: `read_source` and `finish_generation`
-    // are called from seventeen places across `model_generate_jdl` and its
-    // four submodules, so the parameter would reach roughly nine entry points
-    // -- every one of them a `root: &Path` the `abstract.md` §7 ladder counts,
-    // against a ceiling of 79. That rung exists to discourage exactly this,
-    // and the `_at` family is a *containment boundary* rather than a pattern
-    // to extend downward.
-    //
-    // The shape that fits is to lift declaration rendering out of the
-    // frontends, so a manifest's rows can be appended to the seed source and
-    // `materialize_seed` compiles the whole thing at the one root that is
-    // already explicit. That is the last thing holding `new --app` on the
-    // legacy engine, and it is a piece of work rather than a parameter.
-    if app.is_some() {
-        return Ok(());
-    }
+    // `--app` is seeded like any other project now. It used to be exempt,
+    // because `app apply` refused a canonical project and a seeded model would
+    // have left the manifest unappliable; a manifest replays into the model
+    // instead, and `seed_manifest` runs that replay against this tree's root.
+    let _ = app;
     tree.put_named(".jails/model.jdl", source, ".jails/model.jdl")?;
     crate::model_command::materialize_seed(tree.root())
 }

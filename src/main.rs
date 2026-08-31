@@ -74,6 +74,9 @@ fn main() -> std::process::ExitCode {
     let pretend = cli.pretend;
 
     let invocation = Invocation {
+        // The process directory, unless a caller resolves one: see
+        // `Invocation::at`.
+        root: None,
         pretend,
         debug,
         output: cli.output,

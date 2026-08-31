@@ -9,7 +9,7 @@ import java.util.Optional;
 public final class AmountAndDateMatchRule implements MatchRule {
 
     @Override
-    public Optional<MatchOutcome> apply(MatchCandidate candidate) {
+    public Optional<MatchOutcome> evaluate(MatchCandidate candidate) {
         if (candidate.sourceEntry().amount().equals(candidate.targetEntry().amount())
                 && candidate
                         .sourceEntry()

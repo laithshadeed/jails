@@ -9,7 +9,7 @@ import java.util.Optional;
 public final class ExactReferenceMatchRule implements MatchRule {
 
     @Override
-    public Optional<MatchOutcome> apply(MatchCandidate candidate) {
+    public Optional<MatchOutcome> evaluate(MatchCandidate candidate) {
         if (candidate.sourceEntry().reference().equals(candidate.targetEntry().reference())) {
             return Optional.of(MatchOutcome.MATCHED);
         }

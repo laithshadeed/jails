@@ -192,7 +192,10 @@ pub(crate) fn finish_generation_with_reader_paths(
         authored_migration,
     } = prepared;
     let canonical_model_path = model_path.to_string_lossy().replace('\\', "/");
-    let root = crate::model_command::root()?;
+    // The invocation's, so `jails new --app` can replay a manifest into the
+    // project it is creating rather than into whatever encloses the directory
+    // the reader is standing in.
+    let root = invocation.root()?;
     let mut next_model = current_model.clone();
     next_model
         .apply(patch.clone())

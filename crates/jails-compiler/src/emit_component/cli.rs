@@ -14,7 +14,7 @@
 
 use super::{Emitted, Package, java, package};
 use crate::CompileError;
-use jails_model::{AppModel, Component};
+use jails_model::{AppModel, Component, ComponentKind, ComponentReference};
 
 const CLI: &str = include_str!("../../../../templates/spring/cli_java.java");
 const TEST: &str = include_str!("../../../../templates/spring/cli_test_java.java");
@@ -33,7 +33,8 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             true,
             CLI.replace("{{pkg}}", &pkg)
                 .replace("{{class}}", &class)
-                .replace("{{program}}", &name.to_lowercase()),
+                .replace("{{program}}", &name.to_lowercase())
+                .replace("{{registrations}}", &registrations(model, component)),
         )?,
         java(
             component,
@@ -45,6 +46,37 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             TEST.replace("{{pkg}}", &pkg).replace("{{class}}", &class),
         )?,
     ])
+}
+
+/// One `commands.put(...)` per command that named this dispatcher.
+///
+/// **A dispatcher whose `commands()` is empty answers nothing**, and it says
+/// so only by exiting 2 at run time -- which is what a proof application's
+/// integration test found after `g command Greet --on LedgerCli` reported
+/// success. The legacy engine spliced a line into the file after the fact;
+/// here the registry is a projection of the model, so it is rendered rather
+/// than edited, and a command removed from the model leaves no line behind.
+///
+/// Only commands that named *this* dispatcher. A `new-cli` project's
+/// `App.java` is a reader file rather than a component, and a command with no
+/// `on` is registered there by the splice that has always done it -- claiming
+/// it here as well would register it twice.
+///
+/// `components` is a `BTreeMap`, so the order is the stable-ID order and the
+/// same model renders the same file.
+fn registrations(model: &AppModel, cli: &Component) -> String {
+    model
+        .components
+        .values()
+        .filter(|component| component.kind == ComponentKind::Command)
+        .filter(|command| command.on == Some(ComponentReference::Component(cli.id.clone())))
+        .map(|command| {
+            format!(
+                "        commands.put({0}Command.NAME, {0}Command::run);\n",
+                command.name
+            )
+        })
+        .collect()
 }
 
 /// The entry point this model's `cli` components may claim, if any.

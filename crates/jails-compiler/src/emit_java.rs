@@ -615,7 +615,7 @@ pub(crate) fn java_type_ref(
     }
 }
 
-fn primitive(ty: &TypeRef, required: bool) -> bool {
+pub(crate) fn primitive(ty: &TypeRef, required: bool) -> bool {
     required
         && matches!(ty, TypeRef::Builtin(builtin) if builtin.semantics().java_primitive.is_some())
 }

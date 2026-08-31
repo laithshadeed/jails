@@ -37,7 +37,7 @@ pub(crate) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     reject_unsupported_options(&args)?;
     let description = description(&args.name)?;
     let model_path = PathBuf::from(JDL_PATH);
-    let current_source = crate::model_generate_jdl::read_model()?;
+    let current_source = crate::model_generate_jdl::read_model(&invocation)?;
     let current_model = crate::model_generate_jdl::parse(&current_source)?;
     finish_generation(PreparedMutation {
         name: args.name.clone(),

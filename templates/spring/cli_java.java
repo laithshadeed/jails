@@ -47,7 +47,7 @@ public final class {{class}} {
      */
     public static SequencedMap<String, Command> commands() {
         var commands = new LinkedHashMap<String, Command>();
-        return commands;
+{{registrations}}        return commands;
     }
 
     /** Runs one invocation and returns the exit code the process should end with. */

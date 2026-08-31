@@ -338,9 +338,22 @@ static ZONE_ID: BuiltinSemantics = BuiltinSemantics {
     scopeable: false,
 };
 
+/// **`Currency` is deliberately not an alias**, which is why this row lists
+/// none while every neighbour lists its Java spelling.
+///
+/// The rule is the field syntax's: lowercase is jails' table, capitalised is a
+/// type the project owns, and `builtin_by_java_name` is the authority on the
+/// exceptions. `Currency` is not one of them, because an enum of the
+/// currencies a project deals in is an ordinary thing to generate -- and the
+/// alias made `currency:Currency` resolve to `java.util.Currency` in a project
+/// whose own `enum Currency` sits right beside it. That compiles the record
+/// against the wrong type and fails at the first use, which is how it
+/// surfaced: `incompatible types: com.example.demo.domain.Currency cannot be
+/// converted to java.util.Currency`, in a proof application that had declared
+/// both.
 static CURRENCY: BuiltinSemantics = BuiltinSemantics {
     token: "currency",
-    aliases: &["Currency"],
+    aliases: &[],
     java_boxed: "Currency",
     java_primitive: None,
     java_import: Some("java.util.Currency"),

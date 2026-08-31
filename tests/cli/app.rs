@@ -953,8 +953,13 @@ fn ledger_cli_manifest_builds_without_spring() {
 
     // The manifest names the dispatcher its command belongs to, so the
     // registration is part of what this gate proves rather than a note.
-    let dispatcher =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/cli/LedgerCli.java")).unwrap();
+    // Under `.jails/generated` since the toolbox became canonical: the
+    // dispatcher is compiler output, and this assertion is about what the
+    // compiler put in it.
+    let dispatcher = fs::read_to_string(
+        root.join(".jails/generated/main/java/com/example/demo/cli/LedgerCli.java"),
+    )
+    .unwrap();
     assert!(
         dispatcher.contains("ReconcileCommand::run"),
         "the manifest named its dispatcher, so the command must be registered in it: {dispatcher}"

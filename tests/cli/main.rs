@@ -121,9 +121,27 @@ fn overlay_plain_toolbox_completions(root: &Path) {
         "/tests/fixtures/plain-toolbox-completions"
     ));
 
+    // **Where the file lives has moved, and the fixture names it once.**
+    // These are hand-written completions for stubs the generator leaves
+    // empty, and they used to overlay a legacy project's `src/`. The toolbox
+    // is canonical now, so the file each one completes is under
+    // `.jails/generated` -- and copying it to `src/` as well is not an overlay
+    // but a second copy of the class, which javac reports as
+    // `duplicate class` for all seven at once.
+    //
+    // Mapped rather than renamed in `FILES`, so the fixture paths keep saying
+    // where the reader would find the file in a project that is not canonical.
+    let generated = root.join(".jails/model.jdl").is_file();
     for relative in FILES {
         let source = fixtures.join(relative);
-        let destination = root.join(relative);
+        let destination = match generated {
+            false => root.join(relative),
+            true => root.join(
+                relative
+                    .replace("src/main/java", ".jails/generated/main/java")
+                    .replace("src/test/java", ".jails/generated/test/java"),
+            ),
+        };
         fs::create_dir_all(destination.parent().unwrap()).unwrap();
         fs::copy(&source, &destination).unwrap_or_else(|error| {
             panic!(
@@ -278,8 +296,16 @@ fn verified_plain_toolbox(path: &str) -> &'static std::path::PathBuf {
         assert_eq!(
             surefire,
             MavenReportSummary {
+                // 89 -> 80 when this toolbox became canonical. The same 29
+                // test classes, and the compiler writes a smaller suite in
+                // some of them -- one companion test per shape rather than the
+                // legacy generator's several. `skipped: 0` is the property
+                // this assertion is for and it is unchanged: a generated test
+                // that does not run proves nothing, and three of them arrived
+                // `@Disabled` before `null_checked` was taught the emitter's
+                // own rule.
                 reports: 29,
-                tests: 89,
+                tests: 80,
                 failures: 0,
                 errors: 0,
                 skipped: 0,

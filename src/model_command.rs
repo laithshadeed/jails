@@ -62,7 +62,15 @@ pub(crate) fn root() -> Result<PathBuf> {
 /// reporting that the project has none -- the other half of `project_root`,
 /// and the reason that walk is safe to add.
 pub(crate) fn read_source(model_path: &Path) -> Result<String> {
-    std::fs::read_to_string(root()?.join(model_path)).map_err(|error| {
+    read_source_at(&root()?, model_path)
+}
+
+/// The same read, against a project the caller has resolved.
+///
+/// `jails new --app` replays a manifest into the project it is creating, and
+/// the process directory is that project's *parent*.
+pub(crate) fn read_source_at(root: &Path, model_path: &Path) -> Result<String> {
+    std::fs::read_to_string(root.join(model_path)).map_err(|error| {
         Failure::Told(format!(
             "could not read canonical model `{}`: {error}",
             model_path.display()

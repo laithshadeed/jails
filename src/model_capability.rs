@@ -42,9 +42,11 @@ pub(crate) fn add(
         .map(|capability| capability.label())
         .collect::<Vec<_>>()
         .join(", ");
-    let jdl = crate::model_command::owns_jdl();
+    let jdl = invocation.owns_jdl();
     let model_path = model_path(jdl);
-    let current_source = read_source(&model_path)?;
+    // Resolved against the invocation's project, so `jails new --app` can
+    // install a manifest's capabilities into the one it is creating.
+    let current_source = crate::model_command::read_source_at(&invocation.root()?, &model_path)?;
     let v1 = jdl && crate::model_generate_jdl::is_v1_source(&current_source);
     if v1 && package.is_some() {
         return Err(Failure::Told(
