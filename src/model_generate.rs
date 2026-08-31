@@ -410,11 +410,15 @@ pub(crate) fn reject_unsupported_operation_options(
         || !args.indexes.is_empty()
         || (args.on_conflict.is_some() && profile != OperationProfile::Command)
         || (args.via.is_some() && profile != OperationProfile::Query)
-        || args.select.is_some()
-        || !args.set.is_empty()
-        || args.if_match.is_some()
-        || !args.bind.is_empty()
-        || args.consumes.is_some()
+        || (args.select.is_some() && profile != OperationProfile::Transition)
+        || (!args.set.is_empty()
+            && !matches!(
+                profile,
+                OperationProfile::Transition | OperationProfile::Command
+            ))
+        || (args.if_match.is_some() && profile != OperationProfile::Transition)
+        || (!args.bind.is_empty() && profile == OperationProfile::Event)
+        || (args.consumes.is_some() && profile == OperationProfile::Event)
         || (args.order_by.is_some() && profile != OperationProfile::Query)
         || (args.limit.is_some() && profile != OperationProfile::Query)
         || (args.strategy_yields.is_some()

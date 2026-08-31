@@ -4,6 +4,7 @@ mod component;
 mod edit;
 pub(crate) mod facet;
 pub(crate) mod index;
+mod operation;
 mod relation;
 mod unit;
 pub(crate) use component::{component_kind, component_stem};
@@ -12,6 +13,7 @@ pub(crate) use edit::{
     insert_field, is_v1_source, jdl_edit_failure, remove_capability, remove_dependency,
     remove_entity, remove_operation, remove_setting, remove_unit, rename_entity, set_entity_active,
 };
+use operation::operation_declaration;
 
 use crate::cli::GenerateArgs;
 use crate::generate::ArtifactKind;
@@ -178,206 +180,6 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         patch_bytes,
         authored_migration: None,
     })
-}
-
-fn operation_declaration(
-    args: &GenerateArgs,
-    model: &jails_model::AppModel,
-    entity_label: &str,
-    fields: &[String],
-    v1: bool,
-) -> Result<String> {
-    let kind = match args.kind {
-        ArtifactKind::Usecase => "command",
-        ArtifactKind::Query => "query",
-        ArtifactKind::Transition => "transition",
-        ArtifactKind::Event => "event",
-        _ => unreachable!("operation generation accepts only operation kinds"),
-    };
-    let mut output = format!(
-        "  {kind} {}({}) @id(op_{}) {{\n",
-        args.name,
-        fields.join(", "),
-        java_to_label(&args.name)
-    );
-    if args.kind == ArtifactKind::Query {
-        if let Some(order_by) = &args.order_by {
-            let order_by = order_by
-                .split(',')
-                .map(str::trim)
-                // **`asc`/`desc` pass through.** `operation_order_list`
-                // has parsed a direction since the grammar existed --
-                // `order by [ timeStamp desc ]` -- and this refused to emit
-                // one, so a query whose whole point is "newest first" could
-                // not reach a canonical project. The field still goes through
-                // the checked resolver; only the direction rides beside it.
-                .map(|item| {
-                    let (field, direction) = match item.split_once(char::is_whitespace) {
-                        Some((field, rest)) => (field, rest.trim()),
-                        None => (item, ""),
-                    };
-                    if field.is_empty() {
-                        return Err(Failure::Told(
-                            "canonical query ordering needs a field name.\n       fix: give `--order-by` a comma-separated field list"
-                                .to_string(),
-                        ));
-                    }
-                    let direction = match direction {
-                        "" | "asc" => "",
-                        "desc" => " desc",
-                        other => {
-                            return Err(Failure::Told(format!(
-                                "`{other}` is not an ordering direction.\n       fix: use `asc` or `desc`"
-                            )));
-                        }
-                    };
-                    let label =
-                        model_generate::operation_field_label(model, entity_label, field)?;
-                    Ok(format!("{label}{direction}"))
-                })
-                .collect::<Result<Vec<_>>>()?;
-            if v1 {
-                output.push_str(&format!("    order by [{}]\n", order_by.join(", ")));
-            } else {
-                output.push_str(&format!("    orderBy: {}\n", order_by.join(", ")));
-            }
-        }
-        if let Some(limit) = args.limit {
-            if v1 {
-                output.push_str(&format!("    limit {limit}\n"));
-            } else {
-                output.push_str(&format!("    limit: {limit}\n"));
-            }
-        }
-    }
-    if args.kind == ArtifactKind::Usecase
-        && let Some(yields) = &args.strategy_yields
-    {
-        // `--yields` on a use case is the legacy spelling of *staged*
-        // delivery: it is what `g usecase --yields E` has always built an
-        // outbox for. Writing `emit` alone would honour the flag with direct
-        // publication, which is the weaker guarantee and the exact
-        // substitution `deliver` exists to make impossible.
-        let event = java_to_label(yields);
-        if v1 {
-            output.push_str(&format!("    emit {event}\n    deliver outbox\n"));
-        } else {
-            output.push_str(&format!("    emits: {event}\n    delivery: outbox\n"));
-        }
-    }
-    // `--via` is a `join`: `g query --via User` reads `users` alongside
-    // `messages`, on the `userId` the child already declares. The model has
-    // carried `Query.semantics.joins` and the JDL has parsed
-    // `join User as user on userId -> user.id` all along; only this frontend
-    // refused to translate the flag.
-    //
-    // The column is derived from the two entities rather than recorded, which
-    // is the legacy `join` module's rule: `<parent>Id` on the child, and the
-    // parent's own primary key on the other side. A reference the model does
-    // not declare is named rather than guessed at.
-    if args.kind == ArtifactKind::Query
-        && let Some(via) = &args.via
-    {
-        let parent = java_type_name(via);
-        let parent_label = java_to_label(&parent);
-        let parent_entity = model
-            .entities
-            .values()
-            .find(|entity| entity.label == parent_label)
-            .ok_or_else(|| {
-                Failure::Told(format!(
-                    "`{parent}` does not name a canonical entity.\n       fix: choose an entity declared in `{MODEL_PATH}`"
-                ))
-            })?;
-        let key = parent_entity
-            .fields
-            .iter()
-            .find(|field| field.primary_key)
-            .ok_or_else(|| {
-                Failure::Told(format!(
-                    "`{parent}` has no primary key, so nothing can join to it.\n       fix: declare one component `@pk`"
-                ))
-            })?;
-        let child = model
-            .entities
-            .values()
-            .find(|entity| entity.label == entity_label)
-            .and_then(|entity| {
-                entity
-                    .fields
-                    .iter()
-                    .find(|field| field.label == format!("{parent_label}_id"))
-            })
-            .ok_or_else(|| {
-                Failure::Told(format!(
-                    "`{}` declares no `{parent_label}_id` component, so it does not reference `{parent}`.\n       fix: add one, or drop `--via {parent}`",
-                    args.name
-                ))
-            })?;
-        let alias = &parent_label;
-        if v1 {
-            output.push_str(&format!(
-                "    join {parent} as {alias} on {} -> {alias}.{}\n",
-                child.label, key.label
-            ));
-        } else {
-            output.push_str(&format!(
-                "    via: {parent}\n    join_on: {} -> {}\n",
-                child.label, key.label
-            ));
-        }
-    }
-    // `--on-conflict` is `conflict on [field]`: one
-    // `insert ... on conflict (col) do nothing returning`, then a read of the
-    // row that was already there. The model has carried `conflict_key` and the
-    // JDL has parsed `conflict on [...]` all along; only this frontend refused
-    // to translate the flag, so `g usecase --on-conflict` could not reach a
-    // canonical project at all.
-    if args.kind == ArtifactKind::Usecase
-        && let Some(component) = &args.on_conflict
-    {
-        let label = model_generate::operation_field_label(model, entity_label, component)?;
-        if v1 {
-            output.push_str(&format!("    conflict on [{label}]\n"));
-        } else {
-            output.push_str(&format!("    conflict_on: {label}\n"));
-        }
-    }
-    if args.kind == ArtifactKind::Transition {
-        if v1 {
-            output.push_str(&format!("    update [{}]\n", fields.join(", ")));
-        } else {
-            output.push_str(&format!("    sets: {}\n", fields.join(", ")));
-        }
-        if let Some(yields) = &args.strategy_yields {
-            if v1 {
-                output.push_str(&format!("    emit {}\n", java_to_label(yields)));
-            } else {
-                output.push_str(&format!("    yields: {}\n", java_to_label(yields)));
-            }
-        }
-    }
-    if let Some(path) = &args.path {
-        let method = match args.kind {
-            ArtifactKind::Usecase => "POST".to_string(),
-            ArtifactKind::Query if fields.is_empty() => "GET".to_string(),
-            ArtifactKind::Query => "POST".to_string(),
-            ArtifactKind::Transition => args.method.map_or_else(
-                || "PUT".to_string(),
-                |method| method.label().to_ascii_uppercase(),
-            ),
-            _ => unreachable!("event paths are rejected during validation"),
-        };
-        if v1 {
-            let path = serde_json::to_string(path)
-                .map_err(|error| Failure::Told(format!("could not quote route path: {error}")))?;
-            output.push_str(&format!("    route {method} {path}\n"));
-        } else {
-            output.push_str(&format!("    route: {method} {path}\n"));
-        }
-    }
-    output.push_str("  }");
-    Ok(output)
 }
 
 /// A CLI name, as the Java type it names.

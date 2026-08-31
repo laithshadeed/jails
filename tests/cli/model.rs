@@ -13721,6 +13721,100 @@ entity Crate {
     );
 }
 
+/// Five more operation flags the canonical frontend refused to translate.
+///
+/// The same shape as `--via` and `--index` before them, and worth stating
+/// again because it is the pattern rather than the instance: the JDL parser
+/// has read `set x = 1`, `select [a]`, `if-match optional`,
+/// `bind p from form "wire"` and `consumes form` all along, and
+/// `TransitionSemantics` carries `select`, `assignments` and `precondition`.
+/// Only this frontend refused, so the `fix:` line told the reader to hand-edit
+/// `.jails/model.jdl` -- true, and useless.
+///
+/// **The selector is subtracted from the update**, which is the one part that
+/// is not a straight pass-through: a transition does not write the column it
+/// selects by, and naming a primary key in both is what the compiler refuses
+/// as rewriting a key.
+#[test]
+fn a_canonical_transition_carries_its_selector_pins_and_precondition() {
+    let root = jdl_project(
+        "jdl-v1-transition-flags",
+        r#"jdl 1
+app Shop {
+ pkg com.example.shop
+ java 26
+ platform spring
+ build maven
+ storage postgres
+}
+entity Note {
+ id: uuid @pk
+ seen: boolean
+ version: long @version
+ body: string
+ use repo
+}
+"#,
+    );
+    // The pom the canonical JDBC adapters need: `storage postgres` renders
+    // Spring JDBC, and refuses without a captured Spring Boot project.
+    write_spring_fixture(&root);
+    let synced = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    let applied = jails_cmd(&root, None)
+        .args([
+            "g",
+            "transition",
+            "MarkSeen",
+            "id:uuid",
+            "seen:boolean",
+            "version:long",
+            "--on",
+            "Note",
+            "--select",
+            "id",
+            "--set",
+            "seen=true",
+            "--if-match",
+            "optional",
+            "--consumes",
+            "form",
+            "--bind",
+            "id=note_id",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "the five flags should reach the model rather than be refused:\n{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    for expected in [
+        "select [id]",
+        "set seen = true",
+        "if-match optional",
+        "bind id from form \"note_id\"",
+        "consumes form",
+    ] {
+        assert!(
+            model.contains(expected),
+            "`{expected}` is missing from the model:\n{model}"
+        );
+    }
+    // Subtracted, not merely listed: `id` selects the row and `seen` is
+    // pinned, so neither is a caller-supplied update. The linker refuses the
+    // overlap by name, which is what makes the three roles distinct.
+    assert!(
+        !model.contains("update ["),
+        "with the selector pinned and the rest managed there is nothing to update:\n{model}"
+    );
+}
+
 /// Four operation flags the canonical frontend refused to translate, each of
 /// which the model, the JDL grammar and the compiler had supported all along.
 ///
