@@ -104,6 +104,20 @@
                 </executions>
             </plugin>
             <!-- /jails:generated-source-roots -->
+            <!-- jails:integration-tests -->
+            <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-failsafe-plugin</artifactId>
+            <executions>
+            <execution>
+            <goals>
+            <goal>integration-test</goal>
+            <goal>verify</goal>
+            </goals>
+            </execution>
+            </executions>
+            </plugin>
+            <!-- /jails:integration-tests -->
         </plugins>
     </build>
 </project>

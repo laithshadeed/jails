@@ -13,6 +13,7 @@ use jails_model::{
 };
 use std::collections::BTreeSet;
 
+pub(crate) const JAVA_TEST_ROOT: &str = ".jails/generated/test/java";
 pub(crate) const JAVA_ROOT: &str = ".jails/generated/main/java";
 
 pub(crate) fn lower_and_emit(
@@ -109,6 +110,16 @@ pub(crate) fn lower_and_emit(
             output
                 .insert(unit.path, unit.file)
                 .map_err(CompileError::new)?;
+            if let Some(unit) = repository::lower_db_repository_test(
+                model,
+                capability.id.as_str(),
+                entity,
+                spring_boot,
+            )? {
+                output
+                    .insert(unit.path, unit.file)
+                    .map_err(CompileError::new)?;
+            }
         }
         // The search port's only implementation, and it belongs here rather
         // than beside the port: searching is a JDBC concern and the port
@@ -486,6 +497,34 @@ fn import_declared_type(model: &AppModel, ty: &TypeRef, imports: &mut BTreeSet<S
 fn import_declared_types(model: &AppModel, fields: &[&Field], imports: &mut BTreeSet<String>) {
     for field in fields {
         import_declared_type(model, &field.ty, imports);
+    }
+}
+
+/// One field's value, converted for binding as a JDBC parameter.
+///
+/// **One owner, because every adapter binds and none of them converted.**
+/// pgjdbc refuses a value it has no type code for, at runtime, with a message
+/// naming neither the column nor the statement -- so `save` failed on any
+/// entity carrying an `instant`, which is every entity with `timestamps`.
+/// The conversion is a fact about the builtin and lives on its row beside
+/// `sql_postgres`; this applies it.
+///
+/// An optional component is unwrapped first, so the conversion sees the value
+/// rather than the `Optional` -- and a null one stays null, which is what the
+/// column takes.
+pub(crate) fn jdbc_param(field: &Field, accessor: &str) -> String {
+    let template = match &field.ty {
+        TypeRef::Builtin(builtin) => builtin.semantics().jdbc_write,
+        // A model-declared type reaches the column as `text`, and the only
+        // one `emit_sql` will render a column for is an enum -- anything else
+        // is refused there with "no declared SQL representation", so nothing
+        // else can reach a binding site. `name()` is the spelling the column
+        // holds and the row mapper reads back.
+        TypeRef::External(_) => Some("{}.name()"),
+    };
+    match template {
+        None => accessor.to_string(),
+        Some(template) => template.replace("{}", accessor),
     }
 }
 

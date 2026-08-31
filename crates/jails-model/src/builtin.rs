@@ -94,6 +94,25 @@ pub struct BuiltinSemantics {
     ///
     /// [`sample`]: Self::sample
     pub json: &'static str,
+    /// How a value of this type is bound as a JDBC parameter, when the driver
+    /// cannot infer it.
+    ///
+    /// `{}` is the accessor. `None` means the driver takes the Java value as
+    /// it stands, which is true of everything JDBC has had a type code for
+    /// since forever.
+    ///
+    /// **This exists because pgjdbc refuses what it cannot infer**, and it
+    /// refuses at runtime with `Can't infer the SQL type to use for an
+    /// instance of java.time.Instant` -- a message naming no column, no table
+    /// and no operation. Every canonical JDBC adapter bound its parameters
+    /// raw, so `save` failed on any entity carrying an `instant`, which is
+    /// every entity with `timestamps`. It compiled, and no integration test
+    /// ran to say otherwise.
+    ///
+    /// On this row rather than in the emitter for the reason `sql_postgres`
+    /// is: it is a fact about the type, and a second table somewhere else is
+    /// how the two stop agreeing.
+    pub jdbc_write: Option<&'static str>,
     /// The Postgres column type. One dialect on purpose: a second one is a
     /// column on this row, not a second table somewhere else.
     pub sql_postgres: &'static str,
@@ -119,6 +138,7 @@ static STRING: BuiltinSemantics = BuiltinSemantics {
     java_import: None,
     sample: "\"sample\"",
     json: "\"sample\"",
+    jdbc_write: None,
     alternate: Some("\"other\""),
     sql_postgres: "text",
     literal: LiteralKind::Text,
@@ -135,6 +155,7 @@ static INTEGER: BuiltinSemantics = BuiltinSemantics {
     java_import: None,
     sample: "1",
     json: "1",
+    jdbc_write: None,
     alternate: Some("7"),
     sql_postgres: "integer",
     literal: LiteralKind::Int32,
@@ -151,6 +172,7 @@ static LONG: BuiltinSemantics = BuiltinSemantics {
     java_import: None,
     sample: "1L",
     json: "1",
+    jdbc_write: None,
     alternate: Some("7L"),
     sql_postgres: "bigint",
     literal: LiteralKind::Int64,
@@ -167,6 +189,7 @@ static DOUBLE: BuiltinSemantics = BuiltinSemantics {
     java_import: None,
     sample: "1.0d",
     json: "1.0",
+    jdbc_write: None,
     alternate: Some("7.0d"),
     sql_postgres: "double precision",
     literal: LiteralKind::Fractional,
@@ -183,6 +206,7 @@ static DECIMAL: BuiltinSemantics = BuiltinSemantics {
     java_import: Some("java.math.BigDecimal"),
     sample: "BigDecimal.ONE",
     json: "1",
+    jdbc_write: None,
     alternate: Some("BigDecimal.TEN"),
     sql_postgres: "numeric",
     literal: LiteralKind::Fractional,
@@ -199,6 +223,7 @@ static BOOLEAN: BuiltinSemantics = BuiltinSemantics {
     java_import: None,
     sample: "false",
     json: "false",
+    jdbc_write: None,
     alternate: Some("true"),
     sql_postgres: "boolean",
     literal: LiteralKind::Boolean,
@@ -215,6 +240,7 @@ static UUID: BuiltinSemantics = BuiltinSemantics {
     java_import: Some("java.util.UUID"),
     sample: "UUID.fromString(\"00000000-0000-0000-0000-000000000001\")",
     json: "\"00000000-0000-0000-0000-000000000001\"",
+    jdbc_write: None,
     alternate: Some("UUID.fromString(\"00000000-0000-0000-0000-000000000007\")"),
     sql_postgres: "uuid",
     literal: LiteralKind::Text,
@@ -231,6 +257,7 @@ static DATE: BuiltinSemantics = BuiltinSemantics {
     java_import: Some("java.time.LocalDate"),
     sample: "LocalDate.parse(\"2026-01-01\")",
     json: "\"2026-01-01\"",
+    jdbc_write: None,
     alternate: Some("LocalDate.parse(\"2026-07-07\")"),
     sql_postgres: "date",
     literal: LiteralKind::Text,
@@ -247,6 +274,7 @@ static DATE_TIME: BuiltinSemantics = BuiltinSemantics {
     java_import: Some("java.time.LocalDateTime"),
     sample: "LocalDateTime.parse(\"2026-01-01T00:00:00\")",
     json: "\"2026-01-01T00:00:00\"",
+    jdbc_write: None,
     alternate: Some("LocalDateTime.parse(\"2026-07-07T07:07:07\")"),
     sql_postgres: "timestamp",
     literal: LiteralKind::Text,
@@ -263,6 +291,9 @@ static INSTANT: BuiltinSemantics = BuiltinSemantics {
     java_import: Some("java.time.Instant"),
     sample: "Instant.parse(\"2026-01-01T00:00:00Z\")",
     json: "\"2026-01-01T00:00:00Z\"",
+    // pgjdbc has no type code for `Instant`; `Timestamp` is the JDBC spelling
+    // of an absolute moment and converts back on the way out.
+    jdbc_write: Some("java.sql.Timestamp.from({})"),
     alternate: Some("Instant.parse(\"2026-07-07T07:07:07Z\")"),
     sql_postgres: "timestamptz",
     literal: LiteralKind::Text,
@@ -279,6 +310,7 @@ static DURATION: BuiltinSemantics = BuiltinSemantics {
     java_import: Some("java.time.Duration"),
     sample: "Duration.ofMinutes(1)",
     json: "\"PT1M\"",
+    jdbc_write: Some("{}.toString()"),
     alternate: Some("Duration.ofMinutes(7)"),
     sql_postgres: "interval",
     literal: LiteralKind::Text,
@@ -298,6 +330,7 @@ static URI: BuiltinSemantics = BuiltinSemantics {
     java_import: Some("java.net.URI"),
     sample: "URI.create(\"https://example.test\")",
     json: "\"https://example.test\"",
+    jdbc_write: Some("{}.toString()"),
     alternate: Some("URI.create(\"https://other.test\")"),
     sql_postgres: "text",
     literal: LiteralKind::Text,
@@ -314,6 +347,7 @@ static PATH: BuiltinSemantics = BuiltinSemantics {
     java_import: Some("java.nio.file.Path"),
     sample: "Path.of(\"sample\")",
     json: "\"sample\"",
+    jdbc_write: Some("{}.toString()"),
     alternate: Some("Path.of(\"other\")"),
     sql_postgres: "text",
     literal: LiteralKind::Text,
@@ -330,6 +364,7 @@ static ZONE_ID: BuiltinSemantics = BuiltinSemantics {
     java_import: Some("java.time.ZoneId"),
     sample: "ZoneId.of(\"UTC\")",
     json: "\"UTC\"",
+    jdbc_write: Some("{}.getId()"),
     alternate: Some("ZoneId.of(\"Europe/Paris\")"),
     sql_postgres: "text",
     literal: LiteralKind::Text,
@@ -359,6 +394,7 @@ static CURRENCY: BuiltinSemantics = BuiltinSemantics {
     java_import: Some("java.util.Currency"),
     sample: "Currency.getInstance(\"USD\")",
     json: "\"USD\"",
+    jdbc_write: Some("{}.getCurrencyCode()"),
     alternate: Some("Currency.getInstance(\"EUR\")"),
     sql_postgres: "text",
     literal: LiteralKind::Text,
@@ -377,6 +413,7 @@ static BYTES: BuiltinSemantics = BuiltinSemantics {
     java_import: None,
     sample: "new byte[]{1}",
     json: "\"AQ==\"",
+    jdbc_write: None,
     alternate: None,
     sql_postgres: "bytea",
     literal: LiteralKind::Opaque,

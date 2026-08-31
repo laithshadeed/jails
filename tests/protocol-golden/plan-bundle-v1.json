@@ -1,11 +1,11 @@
 {
   "blobs": {
-    "sha256:0d19d733e6df20f4f76cb30f409ef9c46d95c0d656f5f2b781134fb2c240f5ca": "<3640 bytes elided>",
     "sha256:18ea34aa716b8eb7bb5241cb3ec5741dec6ccc898e93fb13f6c20515e9107169": "<4356 bytes elided>",
     "sha256:1deb408b917ef4203507065a16b15a02c4dc609e1e58c88a8d35958ef8aa7719": "<212 bytes elided>",
     "sha256:2267fb068f044866204221f97e31d665c06256a60b22e72766889a9a0be7916d": "<541 bytes elided>",
+    "sha256:2f032afed41e58c6ba07d22756bd52744826cb7d173aeb959701c418e89c1856": "<4104 bytes elided>",
     "sha256:3f80839cbe1efb19fbac038cc86454ec7f6f1f22feb5a92f4fd93e4c490ed786": "<408 bytes elided>",
-    "sha256:40c5544537b5945cd679d2cc4cfe062129e041137f1aabc7cd2c49deb0b9d4e0": "<397818 bytes elided>",
+    "sha256:47b0f9c38980f30f9ede7090aba45479fa1197db754e05b6f43b3e9a40b3f94c": "<417475 bytes elided>",
     "sha256:4e36d12f5350523b6c055fdd2c3dd0b178f849bfea224aadc931b669598cb4a7": "<466 bytes elided>",
     "sha256:90003ea7c42be4787f2995ec883766f47af8d39e730368aa3faadbd99d1c375a": "<450 bytes elided>",
     "sha256:919e11accfaff23041309718f1e819c27d4e14bae0496d5c289890e61acd0031": "<1199 bytes elided>",
@@ -17,6 +17,7 @@
     "sha256:adcc82600e45bffc960f63aab205e2b0cd0e3a92f4449ea7572d6c2596f345cd": "<684 bytes elided>",
     "sha256:b8a6028aa511ad63378e73d28cca5747b5ecbbe0e97bb9c2553702cf2d3b7c53": "<3651 bytes elided>",
     "sha256:c32c3fdbe331d876055427a73bc08e9b59164737621f748c8ed793e8bafd36b1": "<1138 bytes elided>",
+    "sha256:c76c810a1c14723da2dedfd452cc6f3688819f86a9c167cfc1f2f80538f3f112": "<1313 bytes elided>",
     "sha256:c84a4e2549c20499ddd448fb86913ede0e61d11ae623b80e44a434b4915710ba": "<247 bytes elided>",
     "sha256:cff9298685969fea655f1d2ba8fbd9f72a260fc83c26da00aaa126517f7350cd": "<1064 bytes elided>",
     "sha256:d23d23e243ccb00d3e6bd6e4b9e8ed31791caf942581ed4453a6a7510448ea01": "<558 bytes elided>",
@@ -47,6 +48,7 @@
         ".jails/generated/main/java/com/example/notes/service/NotifierService.java": "Missing",
         ".jails/generated/test/java/com/example/notes/TestcontainersConfig.java": "Missing",
         ".jails/generated/test/java/com/example/notes/adapters/JsonTest.java": "Missing",
+        ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcNoteRepositoryIT.java": "Missing",
         ".jails/generated/test/java/com/example/notes/domain/NoteTest.java": "Missing",
         ".jails/generated/test/java/com/example/notes/domain/OutcomeTest.java": "Missing",
         ".jails/generated/test/java/com/example/notes/service/NotifierServiceTest.java": "Missing",
@@ -55,9 +57,9 @@
       }
     },
     "compiler": "jails.compiler.golden",
-    "digest": "sha256:47a1be4c1ea484aef855b389ea27db7ea10e5bc64c61f6e41857eeb76b370925",
+    "digest": "sha256:fe79e1afe5c9e34eaa35babebad01b9292ee8ede847caee43c311d0d33773fb1",
     "follow_up_effects": [],
-    "id": "sha256:47a1be4c1ea484aef855b389ea27db7ea10e5bc64c61f6e41857eeb76b370925",
+    "id": "sha256:fe79e1afe5c9e34eaa35babebad01b9292ee8ede847caee43c311d0d33773fb1",
     "input": {
       "bytes": [
         123,
@@ -85,7 +87,7 @@
     },
     "operations": [
       {
-        "after": "sha256:ae5f5eaf95ae0ee391077fca66602f9eecec95dfeb1b22803e1483a4a0584207",
+        "after": "sha256:6b7031edbee15f5ea26127c66bcc2daa55f8af3cac7dbc2070621143a8665d50",
         "before": null,
         "kind": "publish-merged-tree",
         "root": ".jails/generated"
@@ -111,8 +113,8 @@
       },
       {
         "after": {
-          "blob": "sha256:0d19d733e6df20f4f76cb30f409ef9c46d95c0d656f5f2b781134fb2c240f5ca",
-          "len": 3640,
+          "blob": "sha256:2f032afed41e58c6ba07d22756bd52744826cb7d173aeb959701c418e89c1856",
+          "len": 4104,
           "mode": "regular"
         },
         "before": {
@@ -135,8 +137,8 @@
       },
       {
         "after": {
-          "blob": "sha256:40c5544537b5945cd679d2cc4cfe062129e041137f1aabc7cd2c49deb0b9d4e0",
-          "len": 397818,
+          "blob": "sha256:47b0f9c38980f30f9ede7090aba45479fa1197db754e05b6f43b3e9a40b3f94c",
+          "len": 417475,
           "mode": "regular"
         },
         "before": null,
@@ -147,7 +149,7 @@
     "schema": "jails.plan.v1",
     "summary": {
       "effects": 0,
-      "managed_files": 20,
+      "managed_files": 21,
       "migrations": 1,
       "model_nodes": 20,
       "reader_document_intents": 6
@@ -155,7 +157,7 @@
   },
   "schema": "jails.plan-bundle.v1",
   "trees": {
-    "sha256:ae5f5eaf95ae0ee391077fca66602f9eecec95dfeb1b22803e1483a4a0584207": {
+    "sha256:6b7031edbee15f5ea26127c66bcc2daa55f8af3cac7dbc2070621143a8665d50": {
       "entries": {
         ".jails/generated/main/java/com/example/notes/adapters/Json.java": {
           "blob": "sha256:18ea34aa716b8eb7bb5241cb3ec5741dec6ccc898e93fb13f6c20515e9107169",
@@ -234,6 +236,11 @@
         },
         ".jails/generated/test/java/com/example/notes/adapters/JsonTest.java": {
           "blob": "sha256:b8a6028aa511ad63378e73d28cca5747b5ecbbe0e97bb9c2553702cf2d3b7c53",
+          "kind": "java-test",
+          "mode": "regular"
+        },
+        ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcNoteRepositoryIT.java": {
+          "blob": "sha256:c76c810a1c14723da2dedfd452cc6f3688819f86a9c167cfc1f2f80538f3f112",
           "kind": "java-test",
           "mode": "regular"
         },

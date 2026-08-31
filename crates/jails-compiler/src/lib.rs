@@ -275,6 +275,28 @@ impl Compiler {
             })
             .collect::<BTreeSet<_>>();
         build_features.extend(emit_capability::build_features(&next_model));
+        // **Keyed off the emitted bytes, because a rule each emitter has to
+        // remember is a rule that decays.** `*IT` is Failsafe's, and Failsafe
+        // is not in the Spring Boot parent's default build, so an integration
+        // test in a project without it never runs while `mvn verify` reports
+        // success -- the exact failure `CLAUDE.md` records the legacy
+        // `ensure_failsafe` as existing to prevent, arriving again on this
+        // side. It did: the `presence` component's `Jdbc<Port>IT` has been
+        // emitted all along, and nothing declared the plugin that runs it.
+        //
+        // The capability packs above still contribute their own, because a
+        // pack can declare an integration-test *resource* with no `*IT` class
+        // of its own. This is the backstop for everything emitted outside one.
+        if generated.files.iter().any(|(path, file)| {
+            file.kind == FileKind::JavaTest
+                && path
+                    .as_str()
+                    .rsplit('/')
+                    .next()
+                    .is_some_and(|name| name.ends_with("IT.java"))
+        }) {
+            build_features.insert(BuildFeature::IntegrationTests);
+        }
         let mut dependencies = next_model
             .dependencies
             .values()

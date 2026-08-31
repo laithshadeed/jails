@@ -200,10 +200,27 @@ pub(crate) fn constructor_call(
     entity: &Entity,
     imports: &mut BTreeSet<String>,
 ) -> Option<String> {
+    constructor_call_with(model, entity, imports, &std::collections::BTreeMap::new())
+}
+
+/// The same call with some components supplied by the caller.
+///
+/// A foreign key is the case: a sampled `1` for `Message.userId` names a
+/// `User` row that does not exist, and PostgreSQL rejects the insert. The
+/// caller saves the parent first and passes its assigned key in here.
+pub(crate) fn constructor_call_with(
+    model: &AppModel,
+    entity: &Entity,
+    imports: &mut BTreeSet<String>,
+    overrides: &std::collections::BTreeMap<jails_model::FieldId, String>,
+) -> Option<String> {
     let arguments = entity
         .fields
         .iter()
-        .map(|field| sample(model, field, imports))
+        .map(|field| match overrides.get(&field.id) {
+            Some(supplied) => Some(supplied.clone()),
+            None => sample(model, field, imports),
+        })
         .collect::<Option<Vec<_>>>()?;
     Some(format!(
         "new {}({})",

@@ -1886,7 +1886,7 @@ fn canonical_source_units_merge_every_main_and_test_file_and_wire_both_roots() {
     .unwrap();
     let before = snapshot_tree(&root);
     let planned = jails_cmd(&root, None)
-        .args(["model", "plan"])
+        .args(["model", "plan", "--bundle", "/tmp/jails-probe-bundle.json"])
         .output()
         .unwrap();
     assert!(
@@ -10368,7 +10368,12 @@ fn canonical_storage_preserve_removes_projections_and_revive_reuses_the_table() 
         .args(["model", "check", "--frozen"])
         .output()
         .unwrap();
-    assert!(frozen.status.success());
+    assert!(
+        frozen.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&frozen.stdout),
+        String::from_utf8_lossy(&frozen.stderr)
+    );
 }
 
 #[test]
@@ -14432,4 +14437,274 @@ app Demo {
             skipped: 0,
         }
     );
+}
+
+/// A canonical project that emits an integration test also configures the
+/// plugin that runs one.
+///
+/// **`*IT` is Failsafe's, and Failsafe is not in the Spring Boot parent's
+/// default build.** `CLAUDE.md` records the legacy engine generating
+/// integration tests for months that never ran once -- `mvn verify` completed,
+/// reported success, and executed none of them -- and the canonical backend
+/// had the same hole: `presence` has emitted `Jdbc<Port>IT` all along and
+/// nothing declared the plugin. A green build claiming it passed is worse than
+/// no test.
+///
+/// Keyed off the emitted bytes rather than off the capability, because a rule
+/// each emitter has to remember is a rule that decays. That is the same reason
+/// `ensure_failsafe` sits in the legacy *write path*.
+#[test]
+fn a_canonical_project_that_emits_an_integration_test_configures_failsafe() {
+    let root = jdl_project(
+        "jdl-v1-failsafe",
+        r#"jdl 1
+app Notes {
+  pkg com.example.notes
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+"#,
+    );
+    write_spring_fixture(&root);
+
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(
+        !pom.contains("maven-failsafe-plugin"),
+        "the fixture must not supply what the tool is supposed to supply:\n{pom}"
+    );
+
+    for arguments in [
+        vec!["add", "db"],
+        vec![
+            "g",
+            "scaffold",
+            "Note",
+            "id:long@pk",
+            "title:string!",
+            "seenAt:instant@default(now())",
+        ],
+    ] {
+        let output = jails_cmd(&root, None).args(&arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{arguments:?}:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    assert!(
+        root.join(
+            ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcNoteRepositoryIT.java"
+        )
+        .is_file(),
+        "the repository adapter shipped no integration test"
+    );
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("maven-failsafe-plugin"), "{pom}");
+    // Both goals: `integration-test` runs them and `verify` is what makes a
+    // failure fail the build.
+    assert!(pom.contains("integration-test"), "{pom}");
+    assert!(pom.contains("<goal>verify</goal>"), "{pom}");
+}
+
+/// The repository adapter's SQL is exercised against a real database, and the
+/// three defects that found are pinned.
+///
+/// The JDBC adapter is the one artifact a unit test cannot reach: its content
+/// is SQL PostgreSQL either accepts or does not. Nine adapters were emitted
+/// against one integration test, and that one never ran, so all three of these
+/// compiled and shipped:
+///
+/// - the insert wrote the `generated always as identity` key, which PostgreSQL
+///   refuses outright;
+/// - every parameter was bound raw, so pgjdbc rejected `Instant` with a
+///   message naming no column;
+/// - the sampled foreign key named a parent row that was never inserted.
+#[test]
+fn canonical_repository_integration_tests_round_trip_through_real_postgres() {
+    if !real_mvn_available() || !real_java_supports_target_release() {
+        common::skip("real Maven and a JDK that accepts TARGET_RELEASE");
+        return;
+    }
+    if !real_docker_available() {
+        common::skip("a running Docker-compatible container runtime is required");
+        return;
+    }
+    // The fixture's application class is `com.example.demo.DemoApplication`,
+    // and `@SpringBootTest` finds its `@SpringBootConfiguration` by searching
+    // packages *upwards* from the test -- so the model has to declare the
+    // package the fixture actually ships, or every integration test fails
+    // before it reaches the database.
+    let root = jdl_project(
+        "jdl-v1-repository-it",
+        r#"jdl 1
+app Demo {
+  pkg com.example.demo
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+"#,
+    );
+    write_spring_fixture(&root);
+
+    for arguments in [
+        vec!["add", "db"],
+        vec!["g", "enum", "Shelf", "OPEN", "ARCHIVED"],
+        vec![
+            "g",
+            "scaffold",
+            "Author",
+            "id:long@pk",
+            "email:string!@unique",
+        ],
+        vec![
+            "g",
+            "scaffold",
+            "Note",
+            "id:long@pk",
+            "authorId:long@index",
+            "title:string!",
+            "shelf:Shelf",
+            "seenAt:instant@default(now())",
+        ],
+        vec![
+            "g",
+            "association",
+            "NoteAuthor",
+            "authorId=id",
+            "--on",
+            "Note",
+            "--yields",
+            "Author",
+        ],
+    ] {
+        let output = jails_cmd(&root, None).args(&arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{arguments:?}:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let it = fs::read_to_string(root.join(
+        ".jails/generated/test/java/com/example/demo/adapters/jdbc/JdbcNoteRepositoryIT.java",
+    ))
+    .unwrap();
+    // The parent row is saved through its own repository and its assigned key
+    // is what the child carries.
+    assert!(it.contains("authorRepository.save(new Author("), "{it}");
+    assert!(it.contains("savedAuthor.id()"), "{it}");
+
+    let adapter =
+        fs::read_to_string(root.join(
+            ".jails/generated/main/java/com/example/demo/adapters/jdbc/JdbcNoteRepository.java",
+        ))
+        .unwrap();
+    // The database assigns the key, so the insert must not name it -- while
+    // the select and `returning` lists still read it back.
+    assert!(
+        !adapter.contains("insert into notes (id,"),
+        "the insert wrote the identity column:\n{adapter}"
+    );
+    assert!(adapter.contains("returning id,"), "{adapter}");
+    assert!(
+        adapter.contains("java.sql.Timestamp.from(value.seenAt())"),
+        "{adapter}"
+    );
+    assert!(adapter.contains("value.shelf().name()"), "{adapter}");
+
+    let verified = real_maven_cmd(&root, &real_path_without_mvnd())
+        .args(["-q", "-B", "verify"])
+        .output()
+        .unwrap();
+    assert!(
+        verified.status.success(),
+        "the generated repository integration tests failed real Maven:\n{}\n{}",
+        String::from_utf8_lossy(&verified.stdout),
+        String::from_utf8_lossy(&verified.stderr)
+    );
+    let summary = maven_report_summary(&root, "failsafe-reports");
+    assert_eq!(
+        summary,
+        MavenReportSummary {
+            reports: 2,
+            tests: 2,
+            failures: 0,
+            errors: 0,
+            skipped: 0,
+        }
+    );
+}
+
+/// A marked block jails owns stays where it is.
+///
+/// `ensure_maven_source_roots` strips its block and re-inserts it before
+/// `</plugins>`, which is position-stable only while it is the last thing in
+/// there -- and it was, until a build feature started landing beside it. After
+/// that every plan wanted to move one block past the other, so `jails model
+/// check --frozen` reported a pending operation on a project that had just
+/// been synchronised and the pom churned by a whole block on every run.
+///
+/// Two blocks is the smallest case that can show it, which is why this needs
+/// `db`: the integration-test plugin is the first thing jails has ever written
+/// into `<plugins>` beside the source roots.
+#[test]
+fn two_marked_build_blocks_keep_their_places_across_replans() {
+    let root = jdl_project(
+        "jdl-v1-marked-block-order",
+        r#"jdl 1
+app Demo {
+  pkg com.example.demo
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    for arguments in [
+        vec!["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
+        vec!["add", "db"],
+    ] {
+        let output = jails_cmd(&root, None).args(&arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{arguments:?}:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    let roots = pom.find("jails:generated-source-roots").unwrap();
+    let tests = pom.find("jails:integration-tests").unwrap();
+    assert!(roots < tests, "{pom}");
+
+    // Frozen on the *first* ask, not after a repairing sync: a plan that has
+    // to be applied before the tree matches the model is a plan that never
+    // settles.
+    let frozen = jails_cmd(&root, None)
+        .args(["model", "check", "--frozen"])
+        .output()
+        .unwrap();
+    assert!(
+        frozen.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&frozen.stdout),
+        String::from_utf8_lossy(&frozen.stderr)
+    );
+
+    // And a sync moves nothing, which is the same property from the other
+    // side.
+    let synced = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    assert_eq!(fs::read_to_string(root.join("pom.xml")).unwrap(), pom);
 }

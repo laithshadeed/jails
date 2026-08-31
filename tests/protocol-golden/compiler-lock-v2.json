@@ -845,6 +845,20 @@
           ]
         }
       },
+      ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcNoteRepositoryIT.java": {
+        "bytes": "<1313 bytes elided>",
+        "kind": "java-test",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_cap_db_ent_note_repository_test",
+          "compiler_pass": "capability-db-test",
+          "ejectable": true,
+          "semantic_ids": [
+            "cap_db",
+            "ent_note"
+          ]
+        }
+      },
       ".jails/generated/test/java/com/example/notes/domain/NoteTest.java": {
         "bytes": "<541 bytes elided>",
         "kind": "java-test",
@@ -1241,6 +1255,6 @@
     },
     "root": ".jails/generated"
   },
-  "projection_digest": "sha256:89b9b74042dee5bc929141cfe7861a28d1388d08cb07ed9994058863901cbede",
+  "projection_digest": "sha256:d660d8ac62cbe7e5267a0eb7fe7a3bfd5faf84d1a3be39bab1d9ef7c0d82ec77",
   "schema": "jails.compiler-lock.v2"
 }
