@@ -1798,15 +1798,39 @@ So the stamp stays on the mtime, and the workflow keeps deleting
 upload, download and storage for nothing. The cache is worth having *within* a
 machine's working session, which is what it was written for.
 
-**`tests/cli` is 147s here and 296s on the runner, and nothing in this file
-explains the gap.** Both are four cores, both have a warm `~/.m2` and a
-container engine, and an earlier measurement had them at 245s against 298s --
-so the local half has halved and the CI half has not moved. That is the open
-question worth answering before any further tuning, because every idea below
-the noise floor is guesswork until it is. `workflow_dispatch` takes a
-`profile` input for exactly this: it turns on `JAILS_TEST_PROFILE`, so one
-dispatched run prints what every subprocess on the runner queued and cost,
-rather than inferring the runner from this machine.
+**The runner is at a perfect four-core packing, and no scheduling change can
+improve it.** This was the open question -- `tests/cli` measured 147s here and
+296s there, and nothing local explained it -- and the always-on subprocess
+summary answered it on its first CI run, `33413442610`:
+
+```
+run-tests: 276.4s wall for 33 binaries
+run-tests: subprocess cost mvn 693.1s over 36, jails 275.6s over 171, docker 137.5s over 10
+run-tests: 1106.2s of subprocess work in 276.4s (mean concurrency 4.00), 33.6s queued for a permit
+```
+
+**1106.2s of work at concurrency 4.00 on four cores.** A perfect packing is
+276.6s; the observed wall is 276.4s. There is no idle to fill and no queue to
+drain -- 33.6s of permit waiting across 217 subprocesses is a rounding error --
+so ordering, thread counts, a larger permit budget and a cleverer work-stealer
+are all worth **zero** there. Do not spend time on any of them.
+
+**And the premise behind the gap was wrong.** The same summary on this machine
+the same afternoon: 1253.6s of work in 408.5s, concurrency **3.07**, with
+**234.1s** queued. The runner does *less* work, packs it *better*, and waits
+*less*; it is the developer machine that is slower and contended. The 147s
+that started this came from a session whose container was in better shape than
+the one measuring 408s, so the comparison was between two local environments
+rather than between a local one and CI. Take both halves from the same summary
+or the gap is an artefact.
+
+What follows from a perfect packing is arithmetic: wall clock is work over
+four, so **four seconds of subprocess work removed buys one second of wall**.
+Maven is 693.1s of the 1106.2s across 36 runs, averaging 19.3s, which makes
+`plan.md`'s batching item the only lever with the size to matter -- and prices
+it honestly. Collapsing 36 runs toward a dozen saves the per-run floor about
+twenty-four times, roughly 156s of work, which is **39s of wall**. Worth
+having, and nowhere near a minute and a half.
 
 **Run one gate at a time.** `cached_toolchain_dir_with_salt`
 (`tests/common/mod.rs`) shares one persistent fixture per label under
