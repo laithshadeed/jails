@@ -86,6 +86,7 @@ fn main() -> std::process::ExitCode {
         plan_out: cli.plan_out,
         plan_in: cli.plan_in,
         command_path: cli::command_path_from_env(),
+        force: false,
         // **Only `add` starts a service, and that is the CLI's own shape.**
         // `--no-start` exists on the commands that install or run something;
         // `jails g scaffold` on a project that already declares a database
@@ -203,7 +204,7 @@ fn main() -> std::process::ExitCode {
             package,
             undeclare,
         } => {
-            let _ = force;
+            let invocation = invocation.forcing(force);
             let result =
                 model_command::ensure_owned(invocation.clone()).and_then(|()| match undeclare {
                     None => model_capability::remove(capabilities, name, package, invocation),
@@ -284,11 +285,12 @@ fn main() -> std::process::ExitCode {
             migrate,
             datasource,
         } => {
-            // `force` and the migration flags are the legacy engine's
-            // vocabulary: canonical removal is model subtraction plus an
-            // explicit storage policy, and `--storage drop` is the
-            // confirmation `--force` used to stand in for.
-            let _ = force;
+            // The migration flags are the legacy engine's vocabulary:
+            // canonical removal is model subtraction plus an explicit storage
+            // policy, and `--storage drop` is the confirmation they stood in
+            // for. `--force` survives with a narrower meaning -- the reader
+            // saying that edits to the files being removed may go with them.
+            let invocation = invocation.forcing(force);
             let result = model_command::ensure_owned(invocation.clone()).and_then(|()| {
                 model_destroy::run(
                     model_destroy::Request {

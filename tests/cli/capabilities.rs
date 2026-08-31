@@ -218,18 +218,27 @@ fn generating_an_event_without_kafka_refuses_and_names_the_capability() {
     let root = temp_dir("event-without-kafka");
     write_spring_fixture(&root);
 
-    let refused = jails_cmd(&root, None)
+    let written = jails_cmd(&root, None)
         .args(["g", "event", "Shipped"])
         .output()
         .unwrap();
-    assert!(!refused.status.success());
-    let told = String::from_utf8_lossy(&refused.stderr);
-    assert!(told.contains("jails add kafka"), "{told}");
+    // **The compiler closes this the other way round.** An event declaration
+    // is a payload record and nothing else; the listener, the error handler
+    // and the dead-letter routing belong to the `kafka` capability, so a
+    // project without it gets no line of Spring Kafka rather than a refusal.
+    // The property is the same one and is now structural: there is no
+    // arrangement of commands that writes an import the build cannot resolve.
+    assert!(written.status.success(), "{written:?}");
+    let payload = common::read_generated(
+        &root,
+        "src/main/java/com/example/demo/domain/events/ShippedEvent.java",
+    );
+    assert!(!payload.contains("springframework.kafka"), "{payload}");
     assert!(
         !root
             .join("src/main/java/com/example/demo/messaging")
             .exists(),
-        "the refusal still wrote the messaging package"
+        "an event without the capability still wrote the messaging package"
     );
 
     // And it is a precondition, not a ban: with the capability installed the
@@ -1835,10 +1844,17 @@ fn add_records_what_it_applied_and_remove_takes_it_back_out() {
             .unwrap()
             .success()
     );
-    let manifest = fs::read_to_string(root.join("jails.toml")).unwrap();
+    // The model is the manifest: a canonical project declares what it is made
+    // of in the one editable source every later command reads, so there is no
+    // second list that can disagree with it.
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(
-        manifest.contains(r#"capabilities = ["csv"]"#),
-        "add did not record the capability it applied:\n{manifest}"
+        model.contains("cap csv @id(cap_csv)"),
+        "add did not record the capability it applied:\n{model}"
+    );
+    assert!(
+        !root.join("jails.toml").exists(),
+        "a canonical project must not grow a second capability list"
     );
 
     assert!(
@@ -1848,10 +1864,10 @@ fn add_records_what_it_applied_and_remove_takes_it_back_out() {
             .unwrap()
             .success()
     );
-    let manifest = fs::read_to_string(root.join("jails.toml")).unwrap();
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(
-        manifest.contains("capabilities = []"),
-        "remove left the capability declared, so the next sync would restore it:\n{manifest}"
+        !model.contains("csv"),
+        "remove left the capability declared, so the next sync would restore it:\n{model}"
     );
 }
 
@@ -2045,14 +2061,30 @@ fn dry_run_remove_names_edited_files() {
     )
     .unwrap();
 
-    let output = jails_cmd(&root, None)
+    // A dry run reports what would happen, and what would happen is a
+    // refusal: jails does not throw away bytes it did not write. The file is
+    // named, and so is the flag that authorises losing the edits.
+    let refused = jails_cmd(&root, None)
         .args(["remove", "csv", "--dry-run"])
         .output()
         .unwrap();
-    assert!(output.status.success());
+    assert!(!refused.status.success());
+    let told = String::from_utf8_lossy(&refused.stderr);
+    assert!(told.contains("CsvReader.java"), "{told}");
+    assert!(told.contains("`--force`"), "{told}");
+    assert!(generated.is_file(), "--dry-run deleted the file");
+
+    // And with the authorisation, the same dry run names it before it goes.
+    let output = jails_cmd(&root, None)
+        .args(["remove", "csv", "--dry-run", "--force"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let shown = String::from_utf8_lossy(&output.stdout);
-    // Named before it goes. Without `--force` the same list is what the
-    // confirmation puts to the reader, so an edit is never lost silently.
     assert!(shown.contains("delete "), "{shown}");
     assert!(shown.contains("CsvReader.java"), "{shown}");
     assert!(generated.is_file(), "--dry-run deleted the file");

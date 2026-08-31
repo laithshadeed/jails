@@ -238,9 +238,14 @@ fn reconcile_artifact(
             }
             (Some(base), Some(ours), None) if ours.bytes == base.bytes => None,
             (Some(_), Some(_), None) if ejected => None,
+            (Some(_), Some(_), None)
+                if restore == crate::materialize::Restore::EditedAndRemoved =>
+            {
+                None
+            }
             (Some(_), Some(_), None) => {
                 return Err(format!(
-                    "`{live_path}` was edited by you but removed by the generator\n       fix: move the custom code to reader source or keep the model component; nothing was written"
+                    "`{live_path}` was edited by you but removed by the generator\n       fix: move the custom code to reader source, keep the model component, or repeat with `--force` to discard the edits; nothing was written"
                 ));
             }
             // `resource repair` is the one plan that writes it back. A

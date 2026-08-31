@@ -380,6 +380,13 @@ impl From<TypeChangeStrategy> for jails_protocol::request::TypeChangeStrategy {
 pub(crate) struct Invocation {
     pub(crate) pretend: bool,
     pub(crate) debug: bool,
+    /// The reader has authorised discarding edits to files being removed.
+    ///
+    /// `--force` on `remove` and `destroy`. Presentation in the same sense as
+    /// `pretend`: it changes what the plan is allowed to do about one
+    /// divergence, not what the model says.
+    pub(crate) force: bool,
+
     /// Leave the plan's follow-up effects for the reader to start.
     ///
     /// Presentation in the same sense as `pretend`: the files are written
@@ -426,6 +433,11 @@ impl Invocation {
         Self { no_start, ..self }
     }
 
+    /// The same invocation, allowed to discard edits to what it removes.
+    pub(crate) fn forcing(self, force: bool) -> Self {
+        Self { force, ..self }
+    }
+
     /// The same invocation, acting on a project the caller has resolved.
     pub(crate) fn at(self, root: std::path::PathBuf) -> Self {
         Self {
@@ -460,6 +472,7 @@ impl Invocation {
             plan_in: None,
             command_path: vec!["new".to_string()],
             root: Some(root),
+            force: false,
             // `jails new --app` seeds a project rather than standing in one,
             // and its own `--no-start` is the request's, applied once the
             // whole manifest is in.

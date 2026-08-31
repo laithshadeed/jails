@@ -79,6 +79,20 @@ pub enum Restore {
     Refuse,
     /// Write the desired bytes back. `jails resource repair` only.
     Deleted,
+    /// Delete a managed file the reader edited, because they said to.
+    ///
+    /// **The other half of the same guard.** A file the compiler no longer
+    /// renders and the reader has edited is a refusal for the same reason a
+    /// deleted one is: jails does not throw away bytes it did not write. What
+    /// was missing is any command that could answer it -- `remove --force`
+    /// and `destroy --force` are the reader saying the edits can go, and
+    /// without this the refusal's fix line ("move the custom code to reader
+    /// source") was the only route out of a capability they had touched.
+    ///
+    /// It never widens beyond deletion: a *conflicting* merge still refuses,
+    /// because that is two sets of edits to reconcile rather than one set to
+    /// discard.
+    EditedAndRemoved,
 }
 
 pub fn materialize(

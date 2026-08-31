@@ -190,8 +190,11 @@ fn reconcile_managed_file(
             "managed project file `{path}` was deleted by you while the generator still needs it\n       fix: `jails resource repair` writes it back from the model, or remove the owning model component; nothing was written"
         )),
         (Some(base), Some(current), None) if current == base => Ok(ManagedFileMerge::Remove),
+        (Some(_), Some(_), None) if restore == crate::materialize::Restore::EditedAndRemoved => {
+            Ok(ManagedFileMerge::Remove)
+        }
         (Some(_), Some(_), None) => Err(format!(
-            "`{path}` was edited by you but removed by the generator\n       fix: move the custom content to another file or keep the model component; nothing was written"
+            "`{path}` was edited by you but removed by the generator\n       fix: move the custom content to another file, keep the model component, or repeat with `--force` to discard the edits; nothing was written"
         )),
         (Some(_), None, None) | (None, None, None) | (None, Some(_), None) => {
             Ok(ManagedFileMerge::Unchanged)

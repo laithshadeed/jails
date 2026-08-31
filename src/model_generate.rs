@@ -245,7 +245,11 @@ pub(crate) fn finish_generation_with_reader_paths(
             bytes: next_source.into_bytes(),
         }),
         jails_compiler::COMPILER_VERSION,
-        jails_workspace::Restore::Refuse,
+        if invocation.force {
+            jails_workspace::Restore::EditedAndRemoved
+        } else {
+            jails_workspace::Restore::Refuse
+        },
     )
     .map_err(|error| Failure::Told(format!("could not materialize exact plan: {error}")))?;
 
@@ -272,6 +276,17 @@ pub(crate) fn finish_generation_with_reader_paths(
                 execution.plan_digest.as_str(),
                 execution.files_written
             );
+            // **What went is named, even when nobody asked.** A written file
+            // announces itself -- it is there, in the tree, under a path the
+            // reader can open. A deleted one leaves nothing behind, and with
+            // `--force` it may have carried an afternoon of edits, so the
+            // only place it can be seen is here.
+            for line in crate::model_command::preview_lines(&bundle)
+                .iter()
+                .filter(|line| line.trim_start().starts_with("delete"))
+            {
+                println!("{line}");
+            }
         }
     } else {
         println!(
