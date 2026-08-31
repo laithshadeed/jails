@@ -363,13 +363,25 @@ impl TypeRef {
         if let Some(builtin) = BuiltinType::from_token(value) {
             return Ok(Self::Builtin(builtin));
         }
-        if value.rsplit('.').next().is_some_and(valid_java_type)
-            && value.split('.').all(valid_java_type)
+        // **Case is the rule, and it is what makes an unknown type an
+        // error.** A lowercase token names one of jails' own types, so a
+        // lowercase token that is not in that table is a misspelling --
+        // `value: nosuchtype` used to pass straight through as a project type
+        // and render `record Broken(nosuchtype value)`, which does not
+        // compile. A capitalised final segment is a type the project owns and
+        // jails is right not to know; the segments before it are its package.
+        let (package, name) = match value.rsplit_once('.') {
+            Some((package, name)) => (package, name),
+            None => ("", value),
+        };
+        if name.starts_with(|first: char| first.is_ascii_uppercase())
+            && valid_java_type(name)
+            && (package.is_empty() || package.split('.').all(valid_java_type))
         {
             return Ok(Self::External(value.to_string()));
         }
         Err(format!(
-            "`{value}` is neither a builtin type nor a Java type"
+            "`{value}` is not a type jails knows and is not a Java type name\n       fix: use one of jails' types, or name a type this project declares, which is capitalised"
         ))
     }
 

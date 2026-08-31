@@ -5,8 +5,6 @@ use std::path::PathBuf;
 
 #[derive(Subcommand)]
 pub(crate) enum ModelCommand {
-    /// Adopt supported legacy declarations and their live Java into the canonical compiler
-    Import,
     /// Write an application model for a project jails did not create
     Init,
     /// Parse, link, and type-check the application model without writing

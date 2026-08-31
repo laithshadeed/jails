@@ -432,16 +432,6 @@ pub(crate) fn relation_member_name(label: &str) -> String {
     out
 }
 
-pub(crate) fn entity_declaration(
-    java_name: &str,
-    entity_label: &str,
-    scaffold: bool,
-    fields: &[String],
-    v1: bool,
-) -> Result<String> {
-    entity_declaration_at(java_name, entity_label, scaffold, fields, v1, None)
-}
-
 /// The same declaration, with the collection route the reader pinned.
 ///
 /// **`--path` is a projection argument, not a new mechanism.** `use

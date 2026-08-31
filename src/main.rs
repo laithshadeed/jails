@@ -34,7 +34,6 @@ mod model_explain;
 mod model_field_evolution;
 mod model_generate;
 mod model_generate_jdl;
-mod model_import;
 mod model_index;
 mod model_init;
 mod model_migration;

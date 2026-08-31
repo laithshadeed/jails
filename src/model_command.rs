@@ -174,7 +174,6 @@ pub(crate) fn refuse_legacy_mutation(command: &str, fix: &str) -> Result<()> {
 
 pub(crate) fn run(command: ModelCommand, invocation: Invocation) -> Result<()> {
     match command {
-        ModelCommand::Import => crate::model_import::run(invocation),
         ModelCommand::Init => crate::model_init::run(invocation),
         ModelCommand::Check { manifest, frozen } => {
             let manifest = resolve_manifest(manifest.as_deref())?;
