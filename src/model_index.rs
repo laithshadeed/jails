@@ -54,7 +54,7 @@ pub(crate) fn add(
     package: Option<String>,
     invocation: Invocation,
 ) -> Result<()> {
-    let jdl = crate::model_command::owns_jdl();
+    let jdl = invocation.owns_jdl();
     if package.is_some() {
         return Err(Failure::Told(
             "canonical entities have one stable identity and do not accept a legacy package selector.\n       fix: remove `--package` and name the entity declared in the application model"
@@ -66,7 +66,7 @@ pub(crate) fn add(
     } else {
         crate::model_command::TOML_PATH
     });
-    let current_source = crate::model_command::read_source(&model_path)?;
+    let current_source = crate::model_command::read_source_at(&invocation.root()?, &model_path)?;
     let current_model = parse_model(&current_source, jdl)?;
     if !current_model
         .capabilities
@@ -104,15 +104,32 @@ pub(crate) fn add(
     let index_id = IndexId::parse(format!("idx_{model_label}_{suffix}")).map_err(Failure::Told)?;
     let mut next_source = current_source.clone();
     if jdl {
-        next_source = crate::model_generate_jdl::index::insert(
-            &next_source,
-            &entity_java_name,
-            &format!(
+        // **Two grammars, one file extension.** `.jails/model.jdl` may hold
+        // either syntax, and they disagree about a constraint: v1's
+        // `field_list` reads `index [ user_id, created_at desc ]` and allows
+        // only `@id` and `@map`, while v0 takes parentheses and names the
+        // index with `@as`. This branched on the *filename* and always wrote
+        // the v0 form, so `resource index add` on a v1 model produced a
+        // declaration its own parser rejected -- "a constraint needs a
+        // bracketed field list", pointing at the entity's closing brace.
+        //
+        // Nothing caught it because the covering test's model is v0 syntax in
+        // a `.jdl` file, which is the one shape where the old branch was
+        // right.
+        let member = match crate::model_generate_jdl::is_v1_source(&next_source) {
+            true => format!(
+                "  index [{}] @id({})",
+                canonical.join(", "),
+                index_id.as_str()
+            ),
+            false => format!(
                 "  index ({}) @id({}) @as({index_label})",
                 canonical.join(", "),
                 index_id.as_str()
             ),
-        )?;
+        };
+        next_source =
+            crate::model_generate_jdl::index::insert(&next_source, &entity_java_name, &member)?;
     } else {
         if !next_source.ends_with('\n') {
             next_source.push('\n');
@@ -160,7 +177,7 @@ pub(crate) fn remove(
     package: Option<String>,
     invocation: Invocation,
 ) -> Result<()> {
-    let jdl = crate::model_command::owns_jdl();
+    let jdl = invocation.owns_jdl();
     if package.is_some() {
         return Err(Failure::Told(
             "canonical entities have one stable identity and do not accept a legacy package selector.\n       fix: remove `--package` and name the entity declared in the application model"
@@ -172,7 +189,7 @@ pub(crate) fn remove(
     } else {
         crate::model_command::TOML_PATH
     });
-    let current_source = crate::model_command::read_source(&model_path)?;
+    let current_source = crate::model_command::read_source_at(&invocation.root()?, &model_path)?;
     let current_model = parse_model(&current_source, jdl)?;
     if !current_model
         .capabilities

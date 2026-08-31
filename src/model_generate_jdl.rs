@@ -357,9 +357,11 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
         "entity": entity,
     }))
     .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
+    let indexes = std::mem::take(&mut args.indexes);
+    let name = args.name.clone();
     finish_generation(PreparedMutation {
         name: args.name,
-        invocation,
+        invocation: invocation.clone(),
         model_path,
         current_source,
         current_model,
@@ -367,7 +369,21 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
         patch: ModelPatch::AddEntity(entity),
         patch_bytes,
         authored_migration: None,
-    })
+    })?;
+    // **`--index` is a second patch, not a flag on the first.** An index is a
+    // stable entity child with its own identity and its own forward
+    // migration, which is `resource index add`'s whole contract -- so the
+    // frontend that owns it is the one that applies it, rather than the entity
+    // renderer growing a copy. Refusing instead was what stopped a proof
+    // application's `g scaffold --index "user_id, time_stamp desc"` from
+    // reaching the canonical path at all.
+    //
+    // After the entity, necessarily: the columns are resolved against model
+    // field identity, and the fields do not exist until the patch above lands.
+    for columns in indexes {
+        crate::model_index::add(name.clone(), columns, None, invocation.clone())?;
+    }
+    Ok(())
 }
 
 fn declaration_entity(

@@ -13603,3 +13603,98 @@ fields = ["OPEN", "CLOSED"]
         "`app init` writes a second editable source and must still refuse"
     );
 }
+
+/// `resource index add` wrote a declaration its own parser rejects.
+///
+/// `.jails/model.jdl` may hold either syntax, and the two disagree about a
+/// constraint: v1 reads `index [ user_id, created_at desc ]` and allows only
+/// `@id` and `@map`, while v0 takes parentheses and names the index with
+/// `@as`. The renderer branched on the *filename*, so every v1 model got the
+/// v0 form and `resource index add` failed with "a constraint needs a
+/// bracketed field list" pointing at the entity's closing brace.
+///
+/// The covering test's model is v0 syntax in a `.jdl` file -- the one shape
+/// where the old branch was right -- so nothing exercised this until a proof
+/// application's `g scaffold --index` needed it.
+#[test]
+fn an_index_on_a_v1_model_uses_the_grammar_that_model_is_written_in() {
+    let root = jdl_project(
+        "jdl-v1-index-grammar",
+        r#"jdl 1
+app Depot {
+ pkg com.example.depot
+ java 26
+ platform spring
+ build maven
+ storage postgres
+}
+entity Crate {
+ id: uuid @pk
+ label: string
+ slot: int
+ use repo
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    let synced = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+
+    let added = jails_cmd(&root, None)
+        .args(["resource", "index", "add", "Crate", "label, slot desc"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "an index on a v1 model must use v1's own grammar:\n{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(
+        model.contains("index [label, slot desc]"),
+        "the bracketed field list is the v1 form:\n{model}"
+    );
+    assert!(
+        !model.contains("@as("),
+        "and a v1 index takes its label from its columns, so `@as` is rejected:\n{model}"
+    );
+
+    // One forward migration, which is the half that makes an index a stable
+    // entity child rather than a rendering.
+    let migrations = fs::read_dir(root.join("src/main/resources/db/migration"))
+        .unwrap()
+        .flatten()
+        .filter(|entry| entry.path().extension().is_some_and(|e| e == "sql"))
+        .count();
+    assert_eq!(migrations, 2, "create table, then add index");
+
+    // And `g scaffold --index` reaches the same node rather than refusing:
+    // the entity lands first, then the index, because the columns resolve
+    // against model field identity.
+    let scaffolded = jails_cmd(&root, None)
+        .args([
+            "g",
+            "scaffold",
+            "Bin",
+            "id:uuid@pk",
+            "code:string",
+            "--index",
+            "code",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        scaffolded.status.success(),
+        "`g scaffold --index` should apply the index rather than refuse:\n{}",
+        String::from_utf8_lossy(&scaffolded.stderr)
+    );
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(
+        model.contains("index [code]"),
+        "the scaffold's index should be in the model:\n{model}"
+    );
+}

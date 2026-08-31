@@ -667,10 +667,26 @@ fn sql_type(model: &AppModel, field: &Field) -> Result<&'static str, CompileErro
     }
     match &field.ty {
         TypeRef::Builtin(builtin) => Ok(builtin.semantics().sql_postgres),
+        // **A declared enum stores as its constant's name**, which is what the
+        // legacy generator has always emitted and what the Spring converter
+        // reads back. It is derivable in a way an arbitrary project type is
+        // not: the model holds the constants, so the column's domain is known
+        // rather than guessed, and no codec has to be declared for a fact the
+        // model already states.
+        TypeRef::External(name) if declares_enum(model, name) => Ok("text"),
         TypeRef::External(name) => Err(CompileError::new(format!(
             "project type `{name}` has no declared SQL representation\n       fix: declare a codec before storing this field"
         ))),
     }
+}
+
+/// Does the model declare `name` as an enum?
+///
+/// By Java type, because that is what a field's `External` type names.
+fn declares_enum(model: &AppModel, name: &str) -> bool {
+    model.entities.values().any(|entity| {
+        entity.names.java_type == name && entity.facets.contains(&jails_model::Facet::Enum)
+    })
 }
 
 fn sql_literal(field: &Field, value: &str) -> Result<String, CompileError> {
