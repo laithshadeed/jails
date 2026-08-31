@@ -614,8 +614,12 @@ fn verified_spring_db_toolbox(path: &str) -> &'static std::path::PathBuf {
                     "Note",
                     "id:long@pk",
                     "body:string!",
-                    "seen:boolean",
-                    "version:long",
+                    // Both carry a default, because a command that creates a
+                    // note supplies neither: `seen` is false until somebody
+                    // reads it, and the version is the optimistic lock the
+                    // transition below asserts against.
+                    "seen:boolean@default(false)",
+                    "version:long@version",
                 ][..],
                 &[
                     "generate",

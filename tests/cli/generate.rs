@@ -242,6 +242,15 @@ fn widening_an_enum_migrates_every_table_that_stores_it() {
 fn preserving_a_column_renames_the_component_and_writes_no_migration() {
     let root = temp_dir("resource-field-column-preserve");
     write_spring_fixture(&root);
+    // The JDBC adapter is what `storage postgres` renders; without a
+    // database there is an in-memory repository and nothing to bind SQL to.
+    assert!(
+        jails_cmd(&root, None)
+            .args(["add", "db", "--no-start"])
+            .status()
+            .unwrap()
+            .success()
+    );
     let migrations = root.join("src/main/resources/db/migration");
     fs::create_dir_all(&migrations).unwrap();
     let scaffold = jails_cmd(&root, None)
@@ -1023,6 +1032,17 @@ fn a_transition_can_take_its_key_from_the_url() {
             .success()
     );
 
+    // The route is served by the `api` capability, which is what emits a
+    // Spring controller for an operation. Declaring one without it leaves a
+    // linked route nothing answers.
+    assert!(
+        jails_cmd(&root, None)
+            .args(["add", "api", "--no-start"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
     let output = jails_cmd(&root, None)
         .args([
             "g",
@@ -1049,28 +1069,32 @@ fn a_transition_can_take_its_key_from_the_url() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // The command record no longer carries the key.
-    let command = common::read_generated(
+    // The input record no longer carries the key: it is addressed by the URL,
+    // and a value in two places is a value that can disagree with itself.
+    let transition = common::read_generated(
         &root,
-        "src/main/java/com/example/demo/service/SetStatusCommand.java",
+        "src/main/java/com/example/demo/application/transitions/SetStatusTransition.java",
     );
-    assert!(
-        command.contains("record SetStatusCommand(String status)"),
-        "{command}"
-    );
-    assert!(!command.contains("userId"), "{command}");
+    let declaration = transition
+        .split_once("record Input(")
+        .and_then(|(_, rest)| rest.split_once(')'))
+        .map(|(components, _)| components.to_string())
+        .unwrap_or_else(|| panic!("no Input record:\n{transition}"));
+    assert!(!declaration.contains("userId"), "{transition}");
 
     // Mounted *and* bound.
     let controller = common::read_generated(
         &root,
-        "src/main/java/com/example/demo/web/SetStatusController.java",
+        "src/main/java/com/example/demo/adapters/http/SetStatusController.java",
     );
+    // The route is on the mapping, and the key is bound out of the URL by
+    // name rather than read off a body component that is no longer there.
     assert!(
-        controller.contains("PATH = \"/admin_api/conversations/{userId}/status\""),
+        controller.contains("path = \"/admin_api/conversations/{userId}/status\""),
         "{controller}"
     );
     assert!(
-        controller.contains("@PathVariable Long userId"),
+        controller.contains("@PathVariable(\"userId\") long userId"),
         "{controller}"
     );
     assert!(
@@ -1078,43 +1102,30 @@ fn a_transition_can_take_its_key_from_the_url() {
         "{controller}"
     );
     assert!(
-        controller.contains("useCase.execute(userId, command, expected)"),
+        controller.contains("operation.execute(userId, input)"),
         "{controller}"
     );
-    assert!(controller.contains("@PatchMapping"), "{controller}");
+    assert!(controller.contains("RequestMethod.PATCH"), "{controller}");
 
-    // One port shape, and the SQL binds the key from the parameter rather than
-    // off a command component that is no longer there.
-    let port = common::read_generated(
-        &root,
-        "src/main/java/com/example/demo/service/SetStatusUseCase.java",
+    // One port shape: the selector is a parameter of `execute`, and the route
+    // it is addressed by is a constant on the port rather than a second
+    // spelling in the adapter.
+    assert!(
+        transition.contains("Conversation execute(long userId, Input input);"),
+        "{transition}"
     );
     assert!(
-        port.contains(
-            "Result execute(Long userId, SetStatusCommand command, long expectedVersion);"
-        ),
-        "{port}"
+        transition.contains("ROUTE = \"PATCH /admin_api/conversations/{userId}/status\""),
+        "{transition}"
     );
-    let adapter = common::read_generated(
-        &root,
-        "src/main/java/com/example/demo/adapters/JdbcSetStatusTransition.java",
-    );
-    assert!(adapter.contains("where user_id = :user_id"), "{adapter}");
-    assert!(adapter.contains(".param(\"user_id\", userId)"), "{adapter}");
-    assert!(!adapter.contains("command.userId()"), "{adapter}");
-    assert!(adapter.contains("Result.NotFound(userId)"), "{adapter}");
 
     // And the proof expands the variable, which is the half B48 dropped.
     let test = common::read_generated(
         &root,
-        "src/test/java/com/example/demo/web/SetStatusControllerTest.java",
+        "src/test/java/com/example/demo/adapters/http/SetStatusControllerTest.java",
     );
     assert!(
-        test.contains("mvc.patch().uri(SetStatusController.PATH, "),
-        "{test}"
-    );
-    assert!(
-        test.contains("(userId, command, expectedVersion) ->"),
+        test.contains(".uri(\"/admin_api/conversations/{userId}/status\", "),
         "{test}"
     );
     assert!(!test.contains("\"userId\":"), "{test}");
@@ -4571,6 +4582,15 @@ fn a_scaffold_with_database_types_compiles_including_its_derived_jdbc_adapter() 
     let path = real_path_without_mvnd();
     let root = temp_dir("real-scaffold-jdbc");
     write_spring_fixture(&root);
+    // The JDBC adapter is what `storage postgres` renders; without a
+    // database there is an in-memory repository and nothing to bind SQL to.
+    assert!(
+        jails_cmd(&root, None)
+            .args(["add", "db", "--no-start"])
+            .status()
+            .unwrap()
+            .success()
+    );
 
     // The enum has to exist before the record names it, or the mapping falls
     // back to "unmappable" and the interesting branch never runs.
@@ -4597,30 +4617,39 @@ fn a_scaffold_with_database_types_compiles_including_its_derived_jdbc_adapter() 
 
     let adapter = common::read_generated(
         &root,
-        "src/main/java/com/example/demo/adapters/JdbcPayoutRepository.java",
+        "src/main/java/com/example/demo/adapters/jdbc/JdbcPayoutRepository.java",
     );
     // Derived, not left as a TODO.
     assert!(
         !adapter.contains("UnsupportedOperationException"),
         "{adapter}"
     );
+    // The write expression bakes in the receiver rather than letting the
+    // caller prefix it: `Timestamp.from` puts the receiver in the middle, and
+    // gluing it on the front yields `value.Timestamp.from(paidAt())`, which
+    // reads fine and does not compile.
     assert!(
-        adapter.contains("Timestamp.from(payout.paidAt())"),
+        adapter.contains("Timestamp.from(value.paidAt())"),
+        "{adapter}"
+    );
+    // An Optional component is unwrapped on the way out; the way back in is
+    // the mapper's, and the round trip is proved against a real database by
+    // the integration test below rather than by reading the SQL.
+    assert!(adapter.contains("value.note().orElse(null)"), "{adapter}");
+    // One column list feeds the select, the insert and the upsert, so they
+    // cannot drift -- `amount` in one against `amount_minor` in another
+    // compiles and fails at run time.
+    let columns = "id, amount, currency, paid_at, note";
+    assert!(
+        adapter.contains(&format!("insert into payouts ({columns})")),
         "{adapter}"
     );
     assert!(
-        adapter.contains("Currency.valueOf(rows.getString(\"currency\"))"),
+        adapter.contains(&format!("select {columns} from payouts where id = :id")),
         "{adapter}"
     );
-    // An Optional component is unwrapped on the way out and rebuilt on the way in.
     assert!(
-        adapter.contains("Optional.ofNullable(rows.getString(\"note\"))"),
-        "{adapter}"
-    );
-    assert!(adapter.contains("payout.note().orElse(null)"), "{adapter}");
-    // The column list is shared by the select and the insert, so they agree.
-    assert!(
-        adapter.contains("insert into payouts (id, amount, currency, paid_at, note)"),
+        adapter.contains(&format!("returning {columns}")),
         "{adapter}"
     );
 
@@ -4688,7 +4717,7 @@ fn a_scaffold_emits_a_migration_whose_columns_match_the_adapter() {
     // The same column names the adapter selects and inserts.
     let adapter = common::read_generated(
         &root,
-        "src/main/java/com/example/demo/adapters/JdbcPayoutRepository.java",
+        "src/main/java/com/example/demo/adapters/jdbc/JdbcPayoutRepository.java",
     );
     for column in ["id", "amount", "paid_at", "note"] {
         assert!(migration.contains(column), "migration missing {column}");
@@ -4759,6 +4788,15 @@ fn pretend_is_global_and_reaches_destroy_too() {
 fn a_scaffold_writes_a_two_row_fixture_keyed_by_column_name() {
     let root = temp_dir("scaffold-fixture");
     write_spring_fixture(&root);
+    // The fixture is the `seed` projection, which needs a database to seed
+    // into -- so it is declared rather than implied by the profile.
+    assert!(
+        jails_cmd(&root, None)
+            .args(["add", "db", "--no-start"])
+            .status()
+            .unwrap()
+            .success()
+    );
     // `new`/`new-cli` seed this directory; `add testkit` writes the loader
     // that reads it.
     fs::create_dir_all(root.join("src/test/resources/fixtures")).unwrap();
@@ -4782,6 +4820,18 @@ fn a_scaffold_writes_a_two_row_fixture_keyed_by_column_name() {
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");
+    assert!(
+        jails_cmd(&root, None)
+            .args(["add", "json"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let seeded = jails_cmd(&root, None)
+        .args(["g", "seed", "Payout"])
+        .output()
+        .unwrap();
+    assert!(seeded.status.success(), "{seeded:?}");
 
     let fixture = common::read_generated(&root, "src/test/resources/fixtures/payouts.json");
     // Column names, not component names -- the fixture describes what the
@@ -6254,6 +6304,17 @@ fn a_query_path_may_address_its_filters_by_name() {
         .unwrap();
     assert!(status.success());
 
+    // The route is served by the `api` capability, which is what emits a
+    // Spring controller for an operation. Declaring one without it leaves a
+    // linked route nothing answers.
+    assert!(
+        jails_cmd(&root, None)
+            .args(["add", "api", "--no-start"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
     let output = jails_cmd(&root, None)
         .args([
             "g",
@@ -6275,7 +6336,7 @@ fn a_query_path_may_address_its_filters_by_name() {
     );
     let controller = common::read_generated(
         &root,
-        "src/main/java/com/example/demo/web/TicketsForQueryController.java",
+        "src/main/java/com/example/demo/adapters/http/TicketsForController.java",
     );
     // A GET with no body, and the variable actually bound.
     assert!(controller.contains("@GetMapping"), "{controller}");
@@ -6364,6 +6425,17 @@ fn a_form_bound_query_answers_a_get_and_reads_the_query_string() {
         .unwrap();
     assert!(status.success());
 
+    // The route is served by the `api` capability, which is what emits a
+    // Spring controller for an operation. Declaring one without it leaves a
+    // linked route nothing answers.
+    assert!(
+        jails_cmd(&root, None)
+            .args(["add", "api", "--no-start"])
+            .status()
+            .unwrap()
+            .success()
+    );
+
     let output = jails_cmd(&root, None)
         .args([
             "g",
@@ -6388,7 +6460,7 @@ fn a_form_bound_query_answers_a_get_and_reads_the_query_string() {
 
     let controller = common::read_generated(
         &root,
-        "src/main/java/com/example/demo/web/OpenTicketsQueryController.java",
+        "src/main/java/com/example/demo/adapters/http/OpenTicketsController.java",
     );
     assert!(controller.contains("@GetMapping"), "{controller}");
     assert!(

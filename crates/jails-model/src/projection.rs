@@ -216,6 +216,13 @@ fn expand(projection: source::Projection) -> Vec<source::Projection> {
         plain("repo"),
         plain("service"),
         plain("dto"),
+        // **`seed` is deliberately not here**, and the reason is a limit of
+        // this function rather than a judgement about fixtures: a profile
+        // expands before the app block is read, and `seed` needs `storage
+        // postgres`, so putting it in would refuse every scaffold on a
+        // project with no database. `plan.md` tracks giving a profile the
+        // project's own capabilities so it can offer what the project
+        // supports and no more.
         source::Projection {
             kind: "http".to_string(),
             fields: Vec::new(),

@@ -369,8 +369,9 @@ impl HttpMethod {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, ValueEnum)]
 #[value(rename_all = "lowercase")]
 pub enum ArtifactKind {
-    /// A REST resource that runs: record, port, JDBC + in-memory adapters,
-    /// DTOs, service, controller, migration, fixture and tests
+    /// A REST resource that runs: record, port, in-memory adapter, DTOs,
+    /// service, controller and tests -- plus the JDBC adapter and forward
+    /// migration when the model declares storage
     Scaffold,
     /// A Spring `@RestController` stub and its test
     Controller,
