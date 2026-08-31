@@ -344,11 +344,21 @@ fn operation_declaration(
         }
     }
     if args.kind == ArtifactKind::Transition {
-        if v1 {
-            output.push_str(&format!("    update [{}]\n", fields.join(", ")));
-        } else {
-            output.push_str(&format!("    sets: {}\n", fields.join(", ")));
-        }
+        // **No `update` list, deliberately.** The CLI has no flag for "update
+        // these columns", so the only list this frontend could ever write is
+        // every parameter -- which is the projection
+        // `jdl/v1/parser/operation.rs` records as the one that was wrong. An
+        // explicit list *overrides* the compiler's derivation, so writing it
+        // here put the row selector and the optimistic-lock version back into
+        // the `set` clause: `g transition MarkAsRead --fields "id:long,
+        // isRead:boolean,version:long"` refused with `attempts to rewrite
+        // primary key `id``, and a transition whose selector *is* updatable
+        // would have rewritten the key it was matching on.
+        //
+        // Omitted, `updates()` applies `jdl-sol.md` §12.4: every parameter
+        // minus the selector, the version, the `@updated` audit column and
+        // any `@scope` field. That is the answer this list was trying to
+        // spell and could not.
         if let Some(yields) = &args.strategy_yields {
             if v1 {
                 output.push_str(&format!("    emit {}\n", java_to_label(yields)));

@@ -13853,3 +13853,85 @@ entity Note {
         "and must not append a second relation under the same name:\n{model}"
     );
 }
+
+/// `g transition` naming the row selector and the version among its parameters
+/// is the ordinary shape, and it refused.
+///
+/// The frontend wrote an explicit `update [...]` holding *every* parameter,
+/// which overrides the compiler's derivation -- so the primary key and the
+/// optimistic-lock version landed in the `set` clause. `jdl-sol.md` §12.4 says
+/// the derivation is every parameter minus the selector, the version, the
+/// `@updated` audit column and any `@scope` field, and `jdl/v1/parser/
+/// operation.rs` already records the all-parameters projection as the one that
+/// was wrong. The list is gone; this pins that it stays gone.
+///
+/// Both halves matter. Refusing outright was the visible symptom, but a
+/// transition whose selector happens to be updatable would have compiled and
+/// rewritten the key it was matching on.
+#[test]
+fn a_transition_carrying_its_selector_and_version_updates_neither() {
+    let root = jdl_project(
+        "jdl-v1-transition-selector",
+        r#"jdl 1
+app Notes {
+  pkg com.example.notes
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    for arguments in [
+        vec![
+            "g",
+            "scaffold",
+            "Note",
+            "id:long@pk",
+            "title:string!",
+            "archived:boolean@default(false)",
+            "version:long@version@nonnegative",
+        ],
+        vec![
+            "g",
+            "transition",
+            "ArchiveNote",
+            "id:long",
+            "archived:boolean",
+            "--on",
+            "Note",
+        ],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // The declaration carries the parameters and no `update` list at all: the
+    // compiler owns the subtraction, and a list here would take it back.
+    let jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(
+        jdl.contains("transition ArchiveNote(id, archived)"),
+        "{jdl}"
+    );
+    assert!(!jdl.contains("update ["), "{jdl}");
+
+    let adapter = fs::read_to_string(root.join(
+        ".jails/generated/main/java/com/example/notes/adapters/jdbc/JdbcArchiveNoteTransition.java",
+    ))
+    .unwrap();
+    assert!(
+        adapter.contains("set archived = :archived"),
+        "the declared field is the one that changes:\n{adapter}"
+    );
+    // The selector is matched on, never assigned, and the version is the
+    // compiler's to increment.
+    assert!(!adapter.contains("set id ="), "{adapter}");
+    assert!(!adapter.contains(", id ="), "{adapter}");
+    assert!(adapter.contains("version = version + 1"), "{adapter}");
+    assert!(adapter.contains("id = :id"), "{adapter}");
+}
