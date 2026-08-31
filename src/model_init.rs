@@ -44,8 +44,8 @@ pub(crate) enum Announce {
 }
 
 pub(crate) fn run_as(invocation: Invocation, announce: Announce) -> Result<()> {
-    let root = crate::model_command::root()?;
-    let project = jails_project::model::Project::discover()?;
+    let root = invocation.root()?;
+    let project = jails_project::model::Project::load(&root)?;
     let source = derive(&project)?;
     // **Deriving the same model twice is a no-op, not a collision.** Every
     // other canonical frontend is idempotent -- a second `g record` with the

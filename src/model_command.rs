@@ -127,7 +127,12 @@ pub(crate) fn owns_at(root: &Path) -> bool {
 /// contents outside the model that now owns it. `--pretend` refuses too: a
 /// dry run must not write, and there is no model to plan against.
 pub(crate) fn ensure_owned(invocation: Invocation) -> Result<()> {
-    if owns() {
+    // **The invocation's project, not the process directory.** `jails new
+    // --app` stands in the *parent* of the project it is creating and replays
+    // the manifest through these same frontends, so asking the walk would ask
+    // about the wrong tree -- and answer "not canonical" about a project that
+    // was seeded a moment ago.
+    if owns_at(&invocation.root()?) {
         return Ok(());
     }
     // A dry run must not write, and it no longer has to: `load_model_at`

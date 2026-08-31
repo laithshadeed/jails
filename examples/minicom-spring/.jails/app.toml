@@ -20,7 +20,7 @@
 #   jails new spring --gradle --boot 2.7.18 --java 21 \
 #     --package com.intercom.spring \
 #     --jar-name gs-rest-service --jar-version 0.1.0 \
-#     --deps web,data-jdbc,h2 \
+#     --deps web,data-jdbc \
 #     --app examples/minicom-spring/.jails/app.toml
 schema = 1
 
@@ -42,17 +42,20 @@ fields = ["success:boolean"]
 
 # POST /foo
 #
-# `package = "controllers"` because the target puts them in
-# `com.intercom.spring.controllers` rather than jails' conventional `web`
-# layer. A project that wants this permanently sets `web = "controllers"`
-# under `[layout]` in `jails.toml` and drops the key here.
+# The target puts these in `com.intercom.spring.controllers` rather than
+# jails' conventional `web` layer, and that difference is now a *convention*
+# rather than a per-row override: the compiler derives every managed
+# destination, so a project that wants the target's name sets `web =
+# "controllers"` under `[layout]` in `jails.toml` once and every controller
+# follows. A row that named its own package could put two controllers of the
+# same resource in two places, which is the thing `jails model explain` exists
+# to make impossible.
 [[generate]]
 kind = "controller"
 name = "Foo"
 method = "post"
 on = "Verification"
 yields = "Verification"
-package = "controllers"
 
 # POST /bar
 [[generate]]
@@ -61,4 +64,3 @@ name = "Bar"
 method = "post"
 on = "Verification"
 yields = "Verification"
-package = "controllers"

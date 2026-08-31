@@ -303,8 +303,18 @@ fn verify_preconditions(root: &Path, bundle: &PlanBundle) -> Result<(), String> 
         if actual_matches_desired(actual.as_ref(), desired.get(path)) {
             continue;
         }
+        // **Say which way it diverged.** "no longer matches" is true of a file
+        // that appeared, one that vanished and one that was edited, and the
+        // three have different causes -- a concurrent command, a deletion, a
+        // hand edit between plan and apply. Naming the direction is what turns
+        // this from a puzzle into a sentence.
+        let observed = match (&actual, expected) {
+            (None, FilePrecondition::Present { .. }) => "it is gone",
+            (Some(_), FilePrecondition::Missing) => "it was created after the plan",
+            _ => "its bytes changed after the plan",
+        };
         return Err(format!(
-            "stale exact plan: `{path}` no longer matches its captured precondition"
+            "stale exact plan: `{path}` no longer matches its captured precondition -- {observed}"
         ));
     }
     for (path, expected) in &desired {

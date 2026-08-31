@@ -230,7 +230,11 @@ fn generated_unheld_gradle_example() -> &'static PathBuf {
                 "--jar-version",
                 "0.1.0",
                 "--deps",
-                "web,data-jdbc,h2",
+                // Not `h2`: the manifest declares it as a capability, and a
+                // dependency the reader's own build block also names is a
+                // second editable source for the same fact -- which the
+                // Gradle adapter refuses rather than adopting.
+                "web,data-jdbc",
                 "--no-devtools",
                 "--no-git",
                 // The manifest declares Compose services. Proving it

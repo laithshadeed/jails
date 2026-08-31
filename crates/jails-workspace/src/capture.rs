@@ -233,6 +233,15 @@ fn capture_model_state(
     let model_path = ProjectPath::parse(path_text(relative_model))?;
     let model_digest = digest(model_source)?;
     let mut files = BTreeMap::new();
+    // **Observed, not asserted.** The caller passes the model *source*, which
+    // is not the same question as whether the file is on disk: a project with
+    // no model reads as the seed `model init` would write, so every frontend
+    // now hands over bytes for a file that may not exist yet. Taking the
+    // caller's word for it recorded a `Present` precondition over nothing, and
+    // the executor then refused its own plan with "it is gone" -- a project
+    // that could not be created reporting a stale plan against a file jails
+    // was about to write.
+    let model_present = model_present && root.join(model_path.as_str()).is_file();
     let model_precondition = if model_present {
         files.insert(
             model_path.clone(),
