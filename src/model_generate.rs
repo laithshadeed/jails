@@ -268,6 +268,38 @@ pub(crate) fn finish_generation_with_reader_paths(
     Ok(())
 }
 
+/// The tests this plan writes that will not run.
+///
+/// **A test that does not run is worse than no test**, because the build is
+/// green either way and only one of the two says so. jails disables a
+/// companion it cannot honestly drive -- a component whose type it has no
+/// sample for, a request body it cannot construct -- rather than guessing a
+/// value that would not compile or emitting nothing and dropping the coverage
+/// silently. Saying which files, at plan time, is what keeps that a decision
+/// the reader saw rather than a surprise in the report.
+///
+/// Read off the rendered bytes rather than from a note beside them, so a
+/// renderer that starts or stops disabling something cannot forget to say so.
+pub(crate) fn disabled_tests(bundle: &jails_contracts::PlanBundle) -> Vec<String> {
+    let mut disabled = bundle
+        .trees
+        .values()
+        .flat_map(|tree| tree.entries.iter())
+        .filter(|(path, entry)| {
+            path.as_str().ends_with(".java")
+                && bundle
+                    .blobs
+                    .get(&entry.blob)
+                    .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                    .is_some_and(|source| source.contains("@Disabled"))
+        })
+        .map(|(path, _)| path.as_str().to_string())
+        .collect::<Vec<_>>();
+    disabled.sort();
+    disabled.dedup();
+    disabled
+}
+
 pub(crate) fn report_plan(
     bundle: &jails_contracts::PlanBundle,
     invocation: &Invocation,
@@ -289,6 +321,9 @@ pub(crate) fn report_plan(
             for operation in &bundle.plan.operations {
                 println!("  {operation:?}");
             }
+        }
+        for path in disabled_tests(bundle) {
+            println!("  test-disabled  {path}");
         }
     } else {
         println!(

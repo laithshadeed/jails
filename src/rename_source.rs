@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 pub(crate) fn run(old: &str, new: &str, force: bool, invocation: Invocation) -> Result<()> {
     validate(old, new)?;
     let root = crate::model_command::root()?;
-    refuse_declared(&root, old, new)?;
+    refuse_declared(&root.join(crate::model_command::JDL_PATH), old, new)?;
 
     let mut rewrites: BTreeMap<PathBuf, (String, PathBuf)> = BTreeMap::new();
     let mut occurrences = 0_usize;
@@ -104,14 +104,11 @@ pub(crate) fn run(old: &str, new: &str, force: bool, invocation: Invocation) -> 
     // Every write lands before any removal, so an interrupted rename leaves
     // the file readable under both names rather than under neither.
     for (updated, destination) in rewrites.values() {
-        if let Some(parent) = destination.parent() {
-            apply::ensure_directory(parent)?;
-        }
         apply::put_one_shot(destination, updated)?;
     }
     for (source, (_, destination)) in &rewrites {
         if source != destination {
-            apply::remove(source)?;
+            apply::remove_one_shot(source)?;
         }
     }
     println!("renamed {old} to {new}.");
@@ -124,9 +121,8 @@ pub(crate) fn run(old: &str, new: &str, force: bool, invocation: Invocation) -> 
 /// that is not a partial success but a divergence: the next compilation renders
 /// the old name back, and on a stored one the adapter would read
 /// `select ... from readers` while the schema history still creates `members`.
-fn refuse_declared(root: &Path, old: &str, new: &str) -> Result<()> {
-    let source = root.join(crate::model_command::JDL_PATH);
-    let source = match std::fs::read_to_string(&source) {
+fn refuse_declared(model_path: &Path, old: &str, new: &str) -> Result<()> {
+    let source = match std::fs::read_to_string(model_path) {
         Ok(source) => source,
         Err(_) => return Ok(()),
     };

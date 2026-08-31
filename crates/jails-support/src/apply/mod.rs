@@ -135,6 +135,7 @@ pub fn replace(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> 
 ///   already exists.
 /// - `jails sql generate` renders adapters for queries declared in the
 ///   reader's `.sql` manifest.
+/// - `jails rename <Old> <New>` rewrites the reader's own Java in place.
 ///
 /// Re-running is how each is refreshed, which is exactly why a transaction
 /// would buy nothing: there is no accepted state for the next run to diverge
@@ -142,6 +143,18 @@ pub fn replace(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> 
 /// nothing that writes a *managed* artifact should reach one by accident.
 pub fn put_one_shot(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
     put(path, contents)
+}
+
+/// Delete a file no transaction owns, for the same reason [`put_one_shot`]
+/// writes one.
+///
+/// `jails rename <Old> <New>` moves a reader's own source: the new name is
+/// written first and the old one removed after, so an interruption leaves the
+/// file readable under both names rather than under neither. Neither half is a
+/// managed artifact, so there is no accepted state for a transaction to
+/// protect -- and re-running is how a partial rename is finished.
+pub fn remove_one_shot(path: impl AsRef<Path>) -> Result<()> {
+    remove(path)
 }
 
 /// Write content that already accounts for whatever was there.

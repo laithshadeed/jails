@@ -1280,6 +1280,7 @@ pub(crate) fn executor_bypasses(src: &[Source]) -> usize {
                 // so in its own name and its doc lists all four; there is no
                 // accepted state for a transaction to protect.
                 "apply::put_one_shot",
+                "apply::remove_one_shot",
                 "apply::ensure_runtime_directory",
                 "apply::put_runtime_state",
                 "apply::remove_runtime_state",

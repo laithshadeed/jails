@@ -193,8 +193,48 @@ fn collect() -> Result<Vec<Check>> {
 
     checks.push(published_history(&root, &snapshot));
     checks.push(unwritten_migrations(&snapshot));
+    checks.push(disabled_tests(&snapshot));
     checks.extend(schema_lineage(&snapshot));
     Ok(checks)
+}
+
+/// Generated tests that are present and will not run.
+///
+/// A test that does not run is worse than no test: the build is green either
+/// way and only one of the two says so. jails disables a companion it cannot
+/// honestly drive rather than guessing a value that would not compile, and the
+/// plan names each one as it is written -- this is the same fact afterwards,
+/// for a reader who did not watch the plan go by.
+fn disabled_tests(snapshot: &jails_contracts::WorkspaceSnapshot) -> Check {
+    let Some(projection) = snapshot.accepted_projection.as_ref() else {
+        return Check::new(
+            Status::Skip,
+            "generated tests",
+            "nothing has been accepted into the managed tree yet",
+        );
+    };
+    let mut disabled = projection
+        .files
+        .iter()
+        .filter(|(path, file)| {
+            path.as_str().ends_with(".java")
+                && std::str::from_utf8(&file.bytes).is_ok_and(|source| source.contains("@Disabled"))
+        })
+        .map(|(path, _)| path.as_str().to_string())
+        .collect::<Vec<_>>();
+    if disabled.is_empty() {
+        return Check::new(Status::Ok, "generated tests", "every generated test runs");
+    }
+    disabled.sort();
+    Check::new(
+        Status::Warn,
+        "generated tests",
+        format!(
+            "{} disabled -- jails had no sample it could honestly send",
+            list(&disabled)
+        ),
+    )
+    .fix("write the case by hand, or declare a type jails can sample")
 }
 
 /// A migration file that carries no SQL at all.

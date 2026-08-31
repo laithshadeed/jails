@@ -466,8 +466,19 @@ fn a_read_only_directory_refuses_a_write(under: &std::path::Path) -> bool {
     refused
 }
 
+/// `bugs.md` B18, as the reproduction that found it: make one path unwritable
+/// and the write phase cannot finish.
+///
+/// **The canonical executor has no half-applied state to report**, which is a
+/// stronger answer than the one this test used to assert. Every write is
+/// staged under `.jails-staged-` and published under the lock, and a run that
+/// cannot finish leaves the project exactly as it was -- so `doctor` has
+/// nothing to say about a torn transaction, and the repair that used to adopt
+/// half-written files as the recorded truth has nothing to adopt. What the
+/// reader does is fix the permission and run the command again; the sweep
+/// removes its own debris and the transition converges.
 #[test]
-fn doctor_names_an_interrupted_transaction_and_repair_declines_to_adopt_it() {
+fn an_unwritable_path_leaves_the_project_exactly_as_it_was() {
     let root = temp_dir("doctor-interrupted");
     if !a_read_only_directory_refuses_a_write(&root) {
         // Root ignores the mode bits, and so do some filesystems. Probing is
@@ -480,8 +491,7 @@ fn doctor_names_an_interrupted_transaction_and_repair_declines_to_adopt_it() {
         return;
     }
     write_spring_fixture(&root);
-    let migrations = root.join("src/main/resources/db/migration");
-    fs::create_dir_all(&migrations).unwrap();
+    common::declare_storage(&root);
     assert!(
         jails_cmd(&root, None)
             .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
@@ -489,6 +499,8 @@ fn doctor_names_an_interrupted_transaction_and_repair_declines_to_adopt_it() {
             .unwrap()
             .success()
     );
+    let migrations = root.join("src/main/resources/db/migration");
+    let before = snapshot_tree(&root);
 
     let sealed = fs::metadata(&migrations).unwrap().permissions();
     let mut locked = sealed.clone();
@@ -498,51 +510,33 @@ fn doctor_names_an_interrupted_transaction_and_repair_declines_to_adopt_it() {
         .args(["resource", "field", "add", "Task", "priority:int?"])
         .output()
         .unwrap();
-    assert!(!torn.status.success(), "the write was not torn");
+    assert!(!torn.status.success(), "the write was not refused");
+
+    // Nothing published, including the model: the authoring source is written
+    // by the same plan, so a run that cannot append its migration cannot claim
+    // the column either.
+    fs::set_permissions(&migrations, sealed).unwrap();
+    assert_eq!(snapshot_tree(&root), before);
 
     let output = jails_cmd(&root, None).arg("doctor").output().unwrap();
     let report = String::from_utf8_lossy(&output.stdout);
-    assert!(!output.status.success(), "{report}");
-    assert!(report.contains("started and did not finish"), "{report}");
-    assert!(report.contains("run the same command again"), "{report}");
-    assert!(
-        report.contains("Do not run `jails resource repair`"),
-        "{report}"
-    );
+    assert!(!report.contains("did not finish"), "{report}");
+    assert!(report.contains("ok    sealed migrations"), "{report}");
 
-    // The advertised repair used to adopt the half-applied state as the
-    // recorded truth. It must not get that far: recovery is attempted first
-    // and cannot finish while the path is unwritable, so the command stops
-    // with the reason and the project is left exactly as it was.
-    let repair = jails_cmd(&root, None)
-        .args(["resource", "repair", "Task", "--strategy", "roll-forward"])
-        .output()
-        .unwrap();
-    assert!(!repair.status.success(), "{repair:?}");
-    let still = jails_cmd(&root, None).arg("doctor").output().unwrap();
-    let report = String::from_utf8_lossy(&still.stdout);
-    assert!(report.contains("started and did not finish"), "{report}");
-
-    // Unblocked, the ordinary next command finishes what was interrupted --
-    // an unrelated one, because the point is that nobody has to know which
-    // command was torn.
-    fs::set_permissions(&migrations, sealed).unwrap();
+    // And the same command, run again, converges.
     let again = jails_cmd(&root, None)
-        .args(["g", "record", "Note", "body:string!"])
+        .args(["resource", "field", "add", "Task", "priority:int?"])
         .output()
         .unwrap();
     assert!(again.status.success(), "{again:?}");
-    let said = String::from_utf8_lossy(&again.stdout);
-    assert!(said.contains("recovered"), "{said}");
     assert!(
         root.join("src/main/resources/db/migration/V002__add_priority_to_tasks.sql")
             .exists(),
-        "the interrupted transaction's migration was not published"
+        "the retried transition did not publish its migration"
     );
     let cleared = jails_cmd(&root, None).arg("doctor").output().unwrap();
     let report = String::from_utf8_lossy(&cleared.stdout);
     assert!(cleared.status.success(), "{report}");
-    assert!(!report.contains("did not finish"), "{report}");
 }
 
 /// A generated `@Disabled` test is honest about what it does not prove and
@@ -558,32 +552,37 @@ fn doctor_names_an_interrupted_transaction_and_repair_declines_to_adopt_it() {
 fn a_generated_disabled_test_is_named_when_it_is_written_and_afterwards() {
     let root = temp_dir("doctor-disabled-tests");
     write_spring_fixture(&root);
-    assert!(
-        jails_cmd(&root, None)
-            .args(["g", "record", "Post", "title:string!"])
-            .status()
-            .unwrap()
-            .success()
-    );
+    common::become_canonical(&root);
+    // A component whose type jails owns nothing about. It cannot spell a
+    // `SourceRef`, so the companion test is emitted whole and `@Disabled`
+    // rather than guessed at -- a guess would not compile, and emitting
+    // nothing would drop the coverage without saying so.
+    let pkg = root.join("src/main/java/com/example/demo");
+    fs::create_dir_all(&pkg).unwrap();
+    fs::write(
+        pkg.join("SourceRef.java"),
+        "package com.example.demo;\n\npublic record SourceRef(String value) {}\n",
+    )
+    .unwrap();
 
     let planned = jails_cmd(&root, None)
         .args([
             "g",
-            "strategy",
-            "PostRule",
-            "Featured",
-            "--on",
-            "Post",
+            "record",
+            "Clip",
+            "ref:com.example.demo.SourceRef",
             "--pretend",
         ])
         .output()
         .unwrap();
+    assert!(planned.status.success(), "{planned:?}");
     let plan = String::from_utf8_lossy(&planned.stdout);
     assert!(plan.contains("test-disabled"), "{plan}");
+    assert!(plan.contains("ClipTest.java"), "{plan}");
 
     assert!(
         jails_cmd(&root, None)
-            .args(["g", "strategy", "PostRule", "Featured", "--on", "Post"])
+            .args(["g", "record", "Clip", "ref:com.example.demo.SourceRef"])
             .status()
             .unwrap()
             .success()
@@ -591,7 +590,7 @@ fn a_generated_disabled_test_is_named_when_it_is_written_and_afterwards() {
     let output = jails_cmd(&root, None).arg("doctor").output().unwrap();
     let report = String::from_utf8_lossy(&output.stdout);
     assert!(report.contains("generated tests"), "{report}");
-    assert!(report.contains("FeaturedPostRuleTest.java"), "{report}");
+    assert!(report.contains("ClipTest.java"), "{report}");
     // A warning, not a failure: the file is exactly what jails meant to write.
     assert!(output.status.success(), "{report}");
 }

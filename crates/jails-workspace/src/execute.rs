@@ -67,6 +67,7 @@ pub fn execute(root: &Path, bundle: &PlanBundle) -> Result<Execution, String> {
     sweep_staged(root, bundle)?;
     verify_preconditions(root, bundle)?;
     crate::fault::trip(crate::fault::point::AFTER_PRECONDITIONS)?;
+    preflight_writable(root, bundle)?;
 
     let mut written = 0_usize;
     let mut deleted = 0_usize;
@@ -132,6 +133,69 @@ pub fn execute(root: &Path, bundle: &PlanBundle) -> Result<Execution, String> {
         files_written: written,
         files_deleted: deleted,
     })
+}
+
+/// Refuse before the first write if any destination cannot be written.
+///
+/// **`bugs.md` B18, closed at the only point that can close it.** The
+/// operation list is applied in order, so an unwritable *later* destination
+/// used to leave the earlier ones published: a read-only migration directory
+/// took `resource field add` from "add a column" to a managed tree whose
+/// insert names a column no migration creates, with the lock still describing
+/// the tree before it -- so `doctor` called jails' own output a reader edit
+/// and reported all clear. The transition converges when it is run again, but
+/// nobody knows to run it again.
+///
+/// One probe per directory, staged and dropped, because the question is
+/// exactly the one `write_atomic` asks: not "what do the mode bits say", which
+/// answers about the wrong subject on every unusual filesystem, but "can this
+/// process create a file here right now".
+fn preflight_writable(root: &Path, bundle: &PlanBundle) -> Result<(), String> {
+    fn parent_of(path: &ProjectPath) -> Option<std::path::PathBuf> {
+        std::path::Path::new(path.as_str())
+            .parent()
+            .map(std::path::Path::to_path_buf)
+    }
+    let mut parents = BTreeSet::new();
+    for operation in &bundle.plan.operations {
+        match operation {
+            PlannedOperation::PublishMergedTree {
+                root: managed_root,
+                after,
+                ..
+            } => {
+                let Some(tree) = bundle.trees.get(after) else {
+                    continue;
+                };
+                for path in tree.entries.keys() {
+                    parents.extend(parent_of(&managed_root.join(path.as_str())?));
+                }
+                parents.insert(std::path::PathBuf::from(managed_root.as_str()));
+            }
+            PlannedOperation::ReplaceModelFile { path, .. }
+            | PlannedOperation::ReplaceStateFile { path, .. }
+            | PlannedOperation::PatchReaderFile { path, .. }
+            | PlannedOperation::AppendMigration { path, .. }
+            | PlannedOperation::RemoveReaderFile { path, .. } => {
+                parents.extend(parent_of(path));
+            }
+        }
+    }
+    for parent in parents {
+        let absolute = root.join(&parent);
+        std::fs::create_dir_all(&absolute)
+            .map_err(|error| format!("could not create {}: {error}", absolute.display()))?;
+        tempfile::Builder::new()
+            .prefix(STAGED_PREFIX)
+            .tempfile_in(&absolute)
+            .map_err(|error| {
+                format!(
+                    "could not stage into {}: {error}\n       fix: make the directory writable, then run the same command again -- nothing was written",
+                    absolute.display()
+                )
+            })?;
+    }
+    Ok(())
 }
 
 /// The prefix [`write_atomic`] stages under, and the reason it is not

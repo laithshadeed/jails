@@ -33,10 +33,8 @@ fn owns_terminal_output(path: &Path) -> bool {
         || relative == "src/editor_command.rs"
         || relative == "src/contract_command.rs"
         || relative == "src/tool_command.rs"
-        || relative == "src/history_command.rs"
         || relative == "src/model_command.rs"
         || relative == "src/model_generate.rs"
-        || relative == "src/model_import.rs"
         // The other half of the same door. `model_import` carries a legacy
         // ledger across; this one gives a project jails never created its
         // first model, and saying so is part of the command: a reader who has
@@ -59,6 +57,10 @@ fn owns_terminal_output(path: &Path) -> bool {
         // legacy half is already allowed through `jails-report`.
         || relative == "src/model_status.rs"
         || relative == "src/parse_error.rs"
+        // The textual rename's whole contract is the list it prints before it
+        // asks for `--force`: every file it will edit and every one it will
+        // move, so `--dry-run` is a review rather than a promise.
+        || relative == "src/rename_source.rs"
         || relative.starts_with("src/new/")
         || relative == "crates/jails-support/src/lib.rs"
         || relative == "crates/jails-support/src/process.rs"
@@ -529,7 +531,6 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails", "editor_command", 9),
     ("jails", "contract_command", 9),
     ("jails", "tool_command", 9),
-    ("jails", "history_command", 9),
     ("jails", "model_command", 9),
     ("jails", "model_capability", 9),
     ("jails", "model_destroy", 9),
@@ -540,7 +541,6 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails", "model_field_parse", 9),
     ("jails", "model_generate", 9),
     ("jails", "model_generate_jdl", 9),
-    ("jails", "model_import", 9),
     ("jails", "model_init", 9),
     ("jails", "model_index", 9),
     ("jails", "model_jdl_edit", 9),
@@ -557,6 +557,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails", "cli", 9),
     ("jails", "dispatch", 9),
     ("jails", "plan_command", 9),
+    ("jails", "rename_source", 9),
     ("jails", "arguments", 9),
 ];
 

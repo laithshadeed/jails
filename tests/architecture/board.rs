@@ -212,7 +212,18 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // reached roughly nine frontend entry points.
                 // 81 -> 80: the legacy engine's deletion took one root-taking
                 // function with it.
-                ceiling: 80,
+                // 80 -> 83 for three canonical filesystem questions, all the
+                // shape the two rows above describe rather than this rung's
+                // disease. `execute::preflight_writable` asks whether each
+                // directory a plan writes into will accept a file *before* any
+                // of it is published -- there is no resolved `Project` below
+                // the executor and there must not be, since the compiler ladder
+                // may not observe one. `model_doctor::published_history` reads
+                // the migrations the lock sealed, which is a question about
+                // paths. `rename_source::display` shortens an absolute path for
+                // the list the reader reviews. None threads a root further
+                // down: each takes one, answers, and stops.
+                ceiling: 83,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;
@@ -969,7 +980,20 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // wrong owner -- so the guard belongs here rather than being
                 // paid for by a check that stays wrong. The reasoning lives on
                 // `Project::is_modelled`; these four lines are the branch.
-                ceiling: 1615,
+                //
+                // 1615 -> 1634 for two canonical checks a legacy project
+                // already had and a canonical one could not be told at all:
+                // whether a migration jails published has been edited or
+                // deleted, and whether a generated test is present and
+                // `@Disabled`. Both are the rung's own complaint pointed the
+                // other way -- `doctor` was silent about the tree the compiler
+                // writes, and silence about a question nobody can see you
+                // failed to ask is the worst answer available. The four lines
+                // of `test_source_roots` are the third: the container check
+                // read only `src/test/java` and so reported "no container
+                // config" about a project whose config sits in the managed
+                // tree the build file declares as a source root.
+                ceiling: 1634,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.
