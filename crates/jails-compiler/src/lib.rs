@@ -12,6 +12,7 @@ mod emit_factory;
 mod emit_http;
 mod emit_java;
 mod emit_operation;
+mod emit_resource_http;
 mod emit_seed;
 mod emit_sql;
 mod emit_unit;
@@ -397,10 +398,21 @@ impl Compiler {
                 dependencies.push(required);
             }
         }
+        // **Anything that serves HTTP declares the starter that serves it.**
+        // The `api` capability's operation controllers are one source; a
+        // scaffold's `http` facet is the other, and it emitted a
+        // `@RestController` into a project whose build had never heard of
+        // Spring Web -- `package org.springframework.web.bind.annotation does
+        // not exist`, on a file the reader did not write. `CLAUDE.md`'s rule
+        // is that a generator emitting code supplies the dependency it needs.
         if next_model
             .capabilities
             .values()
             .any(|capability| capability.kind == "api")
+            || (snapshot.project.spring_boot.is_some()
+                && next_model.entities.values().any(|entity| {
+                    entity.active && entity.facets.contains(&jails_model::Facet::Http)
+                }))
         {
             let required = BuildDependency {
                 group: "org.springframework.boot".to_string(),

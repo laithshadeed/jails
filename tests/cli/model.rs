@@ -4517,6 +4517,9 @@ fn model_plan_is_deterministic_and_writes_a_self_verifying_bundle() {
     assert_eq!(bundle.plan.operations.len(), 2);
     // Six, not five: every record and enum now ships its companion test, so
     // the entity in this model contributes two managed files rather than one.
+    // Still six with the `http` facet's controller and test in the product:
+    // this fixture is a plain Maven project, and only a Spring one gets a
+    // `@RestController`.
     assert_eq!(bundle.plan.summary.managed_files, 6);
     assert_eq!(bundle.plan.id, bundle.plan.digest.as_str());
 }
@@ -14426,12 +14429,14 @@ app Demo {
     // sample jails could have built would pass this run while asserting
     // nothing, which is the failure the whole companion-test rule exists to
     // prevent.
+    // Four, not three: `-Dtest=*ControllerTest` also matches the scaffold's
+    // own controller test now that the `http` facet serves the resource.
     let summary = maven_report_summary(&root, "surefire-reports");
     assert_eq!(
         summary,
         MavenReportSummary {
-            reports: 3,
-            tests: 3,
+            reports: 4,
+            tests: 4,
             failures: 0,
             errors: 0,
             skipped: 0,
@@ -14707,4 +14712,156 @@ app Demo {
         String::from_utf8_lossy(&synced.stderr)
     );
     assert_eq!(fs::read_to_string(root.join("pom.xml")).unwrap(), pom);
+}
+
+/// A canonical scaffold serves its resource.
+///
+/// **`scaffold` is supposed to produce a *running* resource**, and the
+/// canonical `http` facet emitted a one-method `interface <Name>HttpPort` with
+/// no implementation, no route and no caller -- so nothing served the entity
+/// while the legacy engine wrote a full CRUD controller for the same
+/// declaration. Compiling proved nothing: an unimplemented interface compiles.
+///
+/// It speaks the domain record rather than a request/response pair, which is
+/// the shape the canonical *operation* controllers already use -- one wire
+/// convention per project rather than two, and `scaffold` stays the four-facet
+/// profile it is documented to be.
+#[test]
+fn a_canonical_scaffold_serves_its_resource_over_http() {
+    let root = jdl_project(
+        "jdl-v1-scaffold-http",
+        r#"jdl 1
+app Demo {
+  pkg com.example.demo
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    for arguments in [
+        vec!["add", "db"],
+        vec!["g", "scaffold", "Note", "id:long@pk", "title:string!"],
+    ] {
+        let output = jails_cmd(&root, None).args(&arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{arguments:?}:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let web = root.join(".jails/generated/main/java/com/example/demo/web");
+    let controller = fs::read_to_string(web.join("NoteController.java")).unwrap();
+    assert!(controller.contains("@RestController"), "{controller}");
+    // The table name, not a second pluraliser: a route that does not match the
+    // table it reads is the drift `sql::table_name` has one owner to prevent.
+    assert!(
+        controller.contains("public static final String PATH = \"/notes\";"),
+        "{controller}"
+    );
+    for method in [
+        "public List<Note> list()",
+        "public ResponseEntity<Note> byId(@PathVariable(\"id\") long id)",
+        "public ResponseEntity<Note> create(@RequestBody Note request)",
+        "public ResponseEntity<Void> delete(@PathVariable(\"id\") long id)",
+    ] {
+        assert!(
+            controller.contains(method),
+            "missing {method}:\n{controller}"
+        );
+    }
+    // The repository port, because `service` is a one-method stub and the
+    // linker already refuses `http` on an entity without `repo`.
+    assert!(
+        controller.contains("NoteRepository repository"),
+        "{controller}"
+    );
+
+    // The port stays: it is managed ABI, whatever now serves the resource.
+    assert!(
+        root.join(".jails/generated/main/java/com/example/demo/ports/http/NoteHttpPort.java")
+            .is_file()
+    );
+
+    let test = fs::read_to_string(
+        root.join(".jails/generated/test/java/com/example/demo/web/NoteControllerTest.java"),
+    )
+    .unwrap();
+    // An anonymous class, not a lambda: the port has four methods and is not a
+    // functional interface.
+    assert!(test.contains("new NoteRepository() {"), "{test}");
+    assert!(
+        test.contains("MockMvcTester.of(new NoteController("),
+        "{test}"
+    );
+    assert!(!test.contains("@Disabled"), "{test}");
+}
+
+/// The scaffold's controller and its test compile and pass on real Maven.
+///
+/// The file-level assertions above cannot tell a controller Spring can
+/// dispatch from one it cannot: a wrong `@PathVariable` binding, a route that
+/// collides, a body Jackson will not serialise all compile. This drives the
+/// collection through the real dispatcher.
+#[test]
+fn canonical_scaffold_http_compiles_and_passes_on_real_maven() {
+    if !real_mvn_available() || !real_java_supports_target_release() {
+        common::skip("real Maven and a JDK that accepts TARGET_RELEASE");
+        return;
+    }
+    let root = jdl_project(
+        "jdl-v1-scaffold-http-maven",
+        r#"jdl 1
+app Demo {
+  pkg com.example.demo
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+"#,
+    );
+    write_spring_fixture(&root);
+    for arguments in [
+        vec!["add", "db"],
+        vec![
+            "g",
+            "scaffold",
+            "Note",
+            "id:long@pk",
+            "title:string!",
+            "seenAt:instant@default(now())",
+        ],
+    ] {
+        let output = jails_cmd(&root, None).args(&arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{arguments:?}:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let tested = real_maven_cmd(&root, &real_path_without_mvnd())
+        .args(["-q", "-B", "-Dtest=NoteControllerTest", "test"])
+        .output()
+        .unwrap();
+    assert!(
+        tested.status.success(),
+        "the generated scaffold controller failed real Maven:\n{}\n{}",
+        String::from_utf8_lossy(&tested.stdout),
+        String::from_utf8_lossy(&tested.stderr)
+    );
+    assert_eq!(
+        maven_report_summary(&root, "surefire-reports"),
+        MavenReportSummary {
+            reports: 1,
+            tests: 1,
+            failures: 0,
+            errors: 0,
+            skipped: 0,
+        }
+    );
 }
