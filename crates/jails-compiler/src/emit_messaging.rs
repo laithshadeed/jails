@@ -22,6 +22,8 @@ const TEST_ROOT: &str = ".jails/generated/test/java";
 
 const PUBLISHER: crate::Template = crate::template!("spring/publisher_java.java");
 const LISTENER: crate::Template = crate::template!("spring/listener_java.java");
+const HANDLER: crate::Template = crate::template!("spring/event_handler_java.java");
+const LISTENER_TEST: crate::Template = crate::template!("spring/listener_test_java.java");
 const IT: crate::Template = crate::template!("spring/messaging_it_java.java");
 
 pub(crate) fn lower_and_emit(
@@ -86,12 +88,32 @@ fn files(
         .replace("{{topic}}", &topic)
         .replace("{{name}}Event", &event_type)
         .replace("{{name}}", name);
+    // **The handler port is the reaction's home, and it lives beside the
+    // listener rather than in `ports.events`.** That package is the *outbound*
+    // publish port an entity's `events` facet emits; an inbound handler is the
+    // other direction, and filing both under one name would make
+    // `TaskEvents` and `ClosedHandler` look like halves of one interface.
+    let handler_type = format!("{name}Handler");
+    let handler = HANDLER
+        .resolve(templates)?
+        .replace("{{pkg}}", &messaging)
+        // The port names the payload type in its own signature, so it needs
+        // the import whenever the event record is not in this package.
+        .replace(
+            "{{event_import}}",
+            &match event_import.is_empty() {
+                true => String::new(),
+                false => format!("{event_import}\n"),
+            },
+        )
+        .replace("{{name}}Event", &event_type)
+        .replace("{{name}}", name);
     let listener = LISTENER
         .resolve(templates)?
         .replace("{{pkg}}", &messaging)
         .replace(
-            "import org.slf4j.Logger;",
-            &format!("{event_import}import org.slf4j.Logger;"),
+            "import java.util.List;",
+            &format!("{event_import}import java.util.List;"),
         )
         .replace("{{topic}}", &topic)
         .replace("{{name}}Event", &event_type)
@@ -112,6 +134,11 @@ fn files(
             publisher,
             FileKind::JavaMain,
         )?,
+        // Managed ABI: the listener's constructor names it, so ejecting the
+        // port would leave the compiler emitting a class against a type it no
+        // longer controls. The implementations the reader writes are theirs
+        // already -- jails never generates one.
+        port(operation, &messaging, &handler_type, handler)?,
         rendered(
             operation,
             "listener",
@@ -121,6 +148,53 @@ fn files(
             FileKind::JavaMain,
         )?,
     ];
+    let (arguments, disabled, sample_imports) =
+        crate::emit_component::http_sink::sample(model, operation)?;
+    let disabled_import = match disabled {
+        true => "import org.junit.jupiter.api.Disabled;\n",
+        false => "",
+    };
+    let disabled_annotation = match disabled {
+        true => "@Disabled(\"jails cannot construct a project-owned component of this payload\")\n",
+        false => "",
+    };
+
+    // **Both proofs construct the payload, so both need what constructing it
+    // names.** The sample is `UUID.fromString(..)`, `Instant.parse(..)` and
+    // the rest, and a test given only the event record's own import compiles
+    // exactly as long as every component happens to be a `String`.
+    let mut imports = sample_imports
+        .iter()
+        .map(|import| format!("import {import};\n"))
+        .collect::<Vec<_>>();
+    if !event_import.is_empty() {
+        imports.push(event_import.clone());
+    }
+    imports.sort();
+    let imports = imports.concat();
+
+    // **The listener test needs no broker and no `id`.** The proof below waits
+    // for a record to come back and matches it by id, so it is emitted only
+    // for a payload that has one; delegation to the port is a property of an
+    // ordinary object, so it is proved for every event.
+    let listener_test = LISTENER_TEST
+        .resolve(templates)?
+        .replace("{{pkg}}", &messaging)
+        .replace("{{event_imports}}", &imports)
+        .replace("{{disabled_import}}", disabled_import)
+        .replace("{{disabled}}", disabled_annotation)
+        .replace("{{event_args}}", &arguments)
+        .replace("{{name}}Event", &event_type)
+        .replace("{{name}}", name);
+    files.push(rendered(
+        operation,
+        "listener_test",
+        &messaging,
+        &format!("{name}ListenerTest"),
+        listener_test,
+        FileKind::JavaTest,
+    )?);
+
     if !crate::emit_java::event_component_names(
         model,
         match &operation.kind {
@@ -134,33 +208,12 @@ fn files(
         return Ok(files);
     }
 
-    let (arguments, disabled, sample_imports) =
-        crate::emit_component::http_sink::sample(model, operation)?;
-    let mut imports = sample_imports
-        .iter()
-        .map(|import| format!("import {import};\n"))
-        .collect::<Vec<_>>();
-    if !event_import.is_empty() {
-        imports.push(event_import.clone());
-    }
-    imports.sort();
-    let test = IT.resolve(templates)?
+    let test = IT
+        .resolve(templates)?
         .replace("{{pkg}}", &messaging)
-        .replace("{{event_imports}}", &imports.concat())
-        .replace(
-            "{{disabled_import}}",
-            match disabled {
-                true => "import org.junit.jupiter.api.Disabled;\n",
-                false => "",
-            },
-        )
-        .replace(
-            "{{disabled}}",
-            match disabled {
-                true => "@Disabled(\"jails cannot construct a project-owned component of this payload\")\n",
-                false => "",
-            },
-        )
+        .replace("{{event_imports}}", &imports)
+        .replace("{{disabled_import}}", disabled_import)
+        .replace("{{disabled}}", disabled_annotation)
         .replace(
             "{{kafka_testcontainers_import}}",
             &import(
@@ -169,7 +222,10 @@ fn files(
                 "KafkaTestcontainersConfig",
             ),
         )
-        .replace("{{KAFKA_TESTCONTAINERS_CONFIG}}", "KafkaTestcontainersConfig")
+        .replace(
+            "{{KAFKA_TESTCONTAINERS_CONFIG}}",
+            "KafkaTestcontainersConfig",
+        )
         .replace("{{event_args}}", &arguments)
         .replace("{{topic}}", &topic)
         .replace("{{name}}Event", &event_type)
@@ -253,6 +309,31 @@ fn import(user: &str, owner: &str, class: &str) -> String {
     }
 }
 
+/// The handler port, which is ABI rather than an adapter.
+///
+/// [`rendered`] marks everything it writes ejectable, and that is right for the
+/// publisher, the listener and the proof -- they are implementations a reader
+/// may take over. The port is not: the listener's constructor names it, so
+/// transferring ownership would leave the compiler emitting a class against a
+/// type it no longer controls. Same rule as a repository port.
+fn port(
+    operation: &Operation,
+    package: &str,
+    type_name: &str,
+    body: String,
+) -> Result<(ProjectPath, RenderedFile), CompileError> {
+    let (path, mut file) = rendered(
+        operation,
+        "handler",
+        package,
+        type_name,
+        body,
+        FileKind::JavaMain,
+    )?;
+    file.provenance.ejectable = false;
+    Ok((path, file))
+}
+
 fn rendered(
     operation: &Operation,
     suffix: &str,
@@ -289,4 +370,148 @@ fn rendered(
             },
         },
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use jails_contracts::{BuildSystem, WorkspaceSnapshot};
+
+    /// The Kafka slice for one event, with no `id` component anywhere in it.
+    ///
+    /// **The missing `id` is the point.** `docs/20-generated-java.md` P6.6 §8
+    /// is about the listener discarding the event, and fixing that surfaced a
+    /// second defect underneath: the listener logged `event.id()`
+    /// unconditionally, so an event declared without that component generated
+    /// a class that did not compile. The proof `MessagingIT` is gated on `id`
+    /// -- it matches the record it waits for by one -- so no test in the tree
+    /// had ever compiled this shape.
+    fn slice(source: &str) -> std::collections::BTreeMap<String, String> {
+        let model = jails_model::parse_jdl(source).unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.spring_boot = Some("4.1.0".to_string());
+        snapshot.project.build_system = BuildSystem::Maven;
+        crate::Compiler::compile(&snapshot, None)
+            .unwrap()
+            .generated
+            .files
+            .values()
+            .map(|file| {
+                (
+                    file.provenance.artifact_id.clone(),
+                    String::from_utf8(file.bytes.clone()).unwrap(),
+                )
+            })
+            .collect()
+    }
+
+    const NO_ID: &str = "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n\ncap kafka\n\nentity Task @id(ent_task) {\n  id: uuid @id(fld_task_id) @pk\n  title: string @id(fld_task_title)\n\n  event Closed(title) @id(op_closed)\n}\n";
+
+    /// An event whose sample needs imports: `UUID`, `Instant`, `URI`.
+    const RICH: &str = "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n\ncap kafka\n\nentity Page @id(ent_page) {\n  id: uuid @id(fld_page_id) @pk\n  title: string @id(fld_page_title)\n\n  event Discovered(id, url: uri, at: instant) @id(op_discovered)\n}\n";
+
+    /// **Constructing the payload is what a proof needs imports for.**
+    ///
+    /// The sample is `UUID.fromString(..)`, `URI.create(..)`,
+    /// `Instant.parse(..)` -- so a test handed only the event record's own
+    /// import compiles exactly as long as every component happens to be a
+    /// `String`, and the first payload with a real type does not. The broker
+    /// proof already assembled this list; the unit proof was written without
+    /// it and passed every check but a compiler.
+    #[test]
+    fn every_proof_imports_what_constructing_the_payload_names() {
+        let slice = slice(RICH);
+        let test = &slice["art_op_discovered_listener_test"];
+        for import in [
+            "import java.net.URI;",
+            "import java.time.Instant;",
+            "import java.util.UUID;",
+            "import com.example.notes.domain.events.DiscoveredEvent;",
+        ] {
+            assert!(
+                test.contains(import),
+                "the unit proof is missing `{import}`:\n{test}"
+            );
+        }
+        // Whatever the sample names, the two proofs name the same things: the
+        // broker proof is the one that had the list, and a second answer here
+        // is how they drift.
+        let broker = &slice["art_op_discovered_messaging_it"];
+        for import in ["import java.net.URI;", "import java.time.Instant;"] {
+            assert!(broker.contains(import), "{broker}");
+        }
+    }
+
+    /// The listener hands the record to a port instead of logging and dropping
+    /// it, and says so when no handler is registered.
+    #[test]
+    fn a_consumed_event_reaches_a_port_rather_than_the_log() {
+        let slice = slice(NO_ID);
+        let listener = &slice["art_op_closed_listener"];
+        assert!(
+            listener.contains("public ClosedListener(List<ClosedHandler> handlers)"),
+            "{listener}"
+        );
+        assert!(listener.contains("handler.handle(event);"), "{listener}");
+        // The empty case is warned about rather than being indistinguishable
+        // from a working consumer.
+        assert!(listener.contains("handlers.isEmpty()"), "{listener}");
+        assert!(listener.contains("log.warn("), "{listener}");
+        // The old body. A regression to it compiles and passes the broker
+        // proof, because that proof has its own probe listener and never
+        // observes this class at all.
+        assert!(!listener.contains("TODO: hand this to"), "{listener}");
+    }
+
+    /// The port is ABI: the listener's constructor names it.
+    #[test]
+    fn the_handler_port_is_managed_rather_than_ejectable() {
+        let model = jails_model::parse_jdl(NO_ID).unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.spring_boot = Some("4.1.0".to_string());
+        snapshot.project.build_system = BuildSystem::Maven;
+        let draft = crate::Compiler::compile(&snapshot, None).unwrap();
+        let handler = draft
+            .generated
+            .files
+            .values()
+            .find(|file| file.provenance.artifact_id == "art_op_closed_handler")
+            .expect("the handler port is emitted");
+        assert!(!handler.provenance.ejectable);
+        let source = String::from_utf8(handler.bytes.clone()).unwrap();
+        assert!(source.contains("interface ClosedHandler"), "{source}");
+        assert!(
+            source.contains("void handle(ClosedEvent event);"),
+            "{source}"
+        );
+        // It names the payload type, so it needs the import when the event
+        // record is not in the messaging package.
+        assert!(
+            source.contains("import com.example.notes.domain.events.ClosedEvent;"),
+            "{source}"
+        );
+    }
+
+    /// Nothing in the slice names a component the payload does not carry.
+    #[test]
+    fn an_event_without_an_id_still_emits_a_slice_that_compiles() {
+        let slice = slice(NO_ID);
+        for artifact in ["art_op_closed_listener", "art_op_closed_listener_test"] {
+            let source = &slice[artifact];
+            assert!(
+                !source.contains("event.id()"),
+                "`{artifact}` calls `id()` on a payload that has none:\n{source}"
+            );
+        }
+        // The broker proof waits for a record by id, so it is the one file
+        // that is correctly absent for this payload rather than emitted and
+        // broken.
+        assert!(!slice.contains_key("art_op_closed_messaging_it"));
+        // The unit proof needs no id and is emitted for every event.
+        let test = &slice["art_op_closed_listener_test"];
+        assert!(
+            test.contains("new ClosedListener(List.of(first::add"),
+            "{test}"
+        );
+        assert!(test.contains("doesNotThrowAnyException"), "{test}");
+    }
 }

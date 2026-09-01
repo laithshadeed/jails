@@ -2,18 +2,24 @@
 package com.example.demo.messaging;
 
 import com.example.demo.domain.events.TransactionSettledEvent;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
 /**
- * Consumes {@link TransactionSettledEvent}.
+ * Consumes {@link TransactionSettledEvent} and hands it to every {@link TransactionSettledHandler}.
  *
- * <p>The listener is deliberately thin: it hands the event to the application
- * and does nothing else. Business logic inside a listener is unreachable from
- * any test that does not start a broker, and unreusable from any other entry
- * point.
+ * <p>The listener is deliberately thin. Business logic inside a listener is
+ * unreachable from any test that does not start a broker, and unreusable from
+ * any other entry point -- so the reaction lives behind the handler port and
+ * this class only routes to it.
+ *
+ * <p>Spring injects every {@code @Component} implementing the port. With none
+ * registered the list is empty, and the first record says so at {@code WARN}
+ * rather than being logged as received and then dropped: a consumer that
+ * silently discards a topic is indistinguishable from one that is working.
  *
  * <p>Nothing here catches exceptions. That is the right default -- a thrown
  * exception means the offset is not committed, so the message is retried and
@@ -26,9 +32,23 @@ public class TransactionSettledListener {
 
     private static final Logger log = LoggerFactory.getLogger(TransactionSettledListener.class);
 
+    private final List<TransactionSettledHandler> handlers;
+
+    public TransactionSettledListener(List<TransactionSettledHandler> handlers) {
+        this.handlers = List.copyOf(handlers);
+    }
+
     @KafkaListener(topics = "${topics.transaction-settled:transaction-settled}")
     public void on(TransactionSettledEvent event) {
-        log.info("received {}", event.id());
-        // TODO: hand this to the application service that owns the reaction.
+        if (handlers.isEmpty()) {
+            // The whole record, not its id: an event is not required to carry
+            // one, and a listener that names a component the payload may not
+            // have is a listener that does not compile.
+            log.warn("no TransactionSettledHandler is registered: {} was consumed and discarded", event);
+            return;
+        }
+        for (TransactionSettledHandler handler : handlers) {
+            handler.handle(event);
+        }
     }
 }

@@ -152,7 +152,7 @@ tell the two apart.
 
 ## P6 — the generated Java, assessed against `java.md` and `backend.md`
 
-**P6.6** Six defects that survive a perfect field spec. Each was
+**P6.6** Five defects that survive a perfect field spec. Each was
 re-confirmed on 2026-08-27 against a project built from nothing but
 `jails new --offline` plus nine commands.
 
@@ -173,17 +173,13 @@ re-confirmed on 2026-08-27 against a project built from nothing but
   the wire type must not be the domain type; and `MAX_RESULTS = 100` is silent
   -- no cursor, no total, nothing in the response saying the list was
   truncated.
-- **§8 the generated Kafka listener discards the event.** It logs an id and
-  drops it, under a Javadoc saying it hands the event to the application. There
-  is nowhere to hand it: no port is generated. A project consuming a topic
-  discards every message and logs that it received them.
 - **§9 the generated tests mostly test the framework.** A service test that can
   only fail if Mockito breaks; an association IT that asks `pg_constraint`
   whether PostgreSQL recorded the FK the migration declared; every fixture
   value `"sample"`; and no concurrency test for the CAS the `version` column
   exists for.
 
-**Exit:** all six closed, or each recorded as a scope line in `README.md`'s
+**Exit:** all five closed, or each recorded as a scope line in `README.md`'s
 "Not yet". Do not close one by deleting the entry that is its only record.
 
 ## P8.11b — the generator half of P8.11
