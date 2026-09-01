@@ -123,6 +123,22 @@ const KAFKA_DEPENDENCIES: &[DependencySpec] = &[
         only_when_build_exists: false,
         boot: BootCondition::Plain,
     },
+    // **Declared on Spring too, and managed there.** The generated config
+    // imports `org.apache.kafka.common.TopicPartition` directly, and reaching
+    // it through `spring-kafka`'s transitive graph is a dependency this
+    // project has and does not state -- one exclusion or one starter swap
+    // away from a compile error in a file the reader did not write. The Boot
+    // parent manages the version, so stating it costs nothing and pins
+    // nothing.
+    DependencySpec {
+        group: "org.apache.kafka",
+        artifact: "kafka-clients",
+        version: None,
+        scope: DependencyScope::Compile,
+        spring_managed_version: true,
+        only_when_build_exists: false,
+        boot: BootCondition::Spring,
+    },
 ];
 
 const MAIL_DEPENDENCIES: &[DependencySpec] = &[

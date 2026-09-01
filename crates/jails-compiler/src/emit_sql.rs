@@ -46,9 +46,21 @@ pub(crate) fn derive(
         return Ok(rendered);
     }
     if previous_database && !next_database {
-        return Err(CompileError::new(
-            "removing canonical `db` would abandon accepted storage\n       fix: retire every table through an explicit schema policy before removing `db`",
-        ));
+        // **Only when there is storage to abandon.** A project that declared
+        // `db` and never scaffolded anything has no table, no accepted
+        // migration and nothing to retire -- refusing there made `add db` a
+        // one-way door on a project where the reader had simply changed their
+        // mind, and the fix line named a policy for tables that do not exist.
+        let stored = accepted
+            .iter()
+            .flat_map(|model| model.entities.values())
+            .any(|entity| entity.facets.contains(&Facet::Repository));
+        if stored || !snapshot.migration_history.records.is_empty() {
+            return Err(CompileError::new(
+                "removing canonical `db` would abandon accepted storage\n       fix: retire every table through an explicit schema policy before removing `db`",
+            ));
+        }
+        return Ok(rendered);
     }
 
     let empty = AppModel {

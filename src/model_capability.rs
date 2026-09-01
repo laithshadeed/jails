@@ -32,6 +32,12 @@ pub(crate) fn add(
     package: Option<String>,
     invocation: Invocation,
 ) -> Result<()> {
+    // **The CLI's sugar, resolved where the legacy path resolves it.** A
+    // reader types `--name transaction`; the model holds `java_name` to a real
+    // Java type name and is right to. Capitalising here is the same fold
+    // `jails g record transaction` does, and without it the same command
+    // produced a project on one engine and a diagnostic on the other.
+    let name = name.map(|name| crate::model_generate_jdl::java_type_name(&name));
     validate_request(&capabilities, name.as_deref(), package.as_deref())?;
     let requested = capabilities
         .iter()
