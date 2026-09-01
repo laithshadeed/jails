@@ -67,6 +67,14 @@ pub(crate) fn lower(
 ///
 /// `valueOf` throwing rather than returning null is the failure mode worth
 /// pinning, and the count catches a constant added twice.
+///
+/// **A wire name adds two more**, and they are the ones that matter: an enum
+/// declared `OPEN=open` renders `@JsonValue`, `fromWire` and a Spring
+/// `Converter`, so the name a caller sends is *not* the constant -- and a test
+/// that only asks `valueOf` proves the half nothing crosses the wire with.
+/// The round trip is asserted over every constant rather than the first,
+/// because a duplicated wire value resolves to whichever `fromWire` reaches
+/// first and reads as correct from either end.
 fn enum_body(entity: &Entity, imports: &mut BTreeSet<String>) -> String {
     imports.insert("org.junit.jupiter.api.Test".to_string());
     imports.insert("static org.junit.jupiter.api.Assertions.assertEquals".to_string());
@@ -78,6 +86,33 @@ fn enum_body(entity: &Entity, imports: &mut BTreeSet<String>) -> String {
         .map(|constant| constant.java_name.clone())
         .unwrap_or_else(|| "VALUE".to_string());
     let count = constants.len();
+    let wire = if constants
+        .iter()
+        .any(|constant| constant.wire_name.is_some())
+    {
+        let round_trip = constants
+            .iter()
+            .map(|constant| {
+                let value = constant
+                    .wire_name
+                    .as_deref()
+                    .unwrap_or(&constant.java_name);
+                format!(
+                    "        assertEquals(\"{value}\", {name}.{}.wire());\n        assertEquals({name}.{}, {name}.fromWire(\"{value}\"));",
+                    constant.java_name, constant.java_name
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "\n    @Test\n    void roundTripsEveryWireValue() {{\n{round_trip}\n    }}\n\n\
+             \x20   @Test\n    void rejectsAnUnknownWireValue() {{\n\
+             \x20       assertThrows(IllegalArgumentException.class, () -> {name}.fromWire(\"nope\"));\n\
+             \x20   }}\n"
+        )
+    } else {
+        String::new()
+    };
     format!(
         "class {name}Test {{\n\n\
          \x20   @Test\n\
@@ -93,7 +128,7 @@ fn enum_body(entity: &Entity, imports: &mut BTreeSet<String>) -> String {
          \x20   void declaresEveryConstantExactlyOnce() {{\n\
          \x20       assertEquals({count}, {name}.values().length);\n\
          \x20   }}\n\
-         }}"
+         {wire}}}"
     )
 }
 

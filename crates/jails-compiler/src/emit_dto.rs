@@ -110,6 +110,41 @@ fn assigned_value(
     }
 }
 
+/// Every value this row assigns more than once, in the order it first appears.
+fn duplicated(values: &[String]) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut twice = BTreeSet::new();
+    let mut order = Vec::new();
+    for value in values {
+        if !seen.insert(value.clone()) && twice.insert(value.clone()) {
+            order.push(value.clone());
+        }
+    }
+    order
+}
+
+/// What to call the local a repeated assignment is hoisted into.
+///
+/// **Only the clocks**, because they are the only assignments whose repetition
+/// changes the row: two `TimeOrderedUuid.next()` calls are two different
+/// columns that were always meant to differ. The name is the one a reader
+/// would write, and it steps aside for a component that already has it rather
+/// than shadowing the caller's own value.
+fn hoisted_name(value: &str, taken: &BTreeSet<&str>) -> Option<String> {
+    let name = match value {
+        "Instant.now()" => "now",
+        "LocalDate.now()" => "today",
+        "LocalDateTime.now()" => "localNow",
+        "OffsetDateTime.now()" => "offsetNow",
+        _ => return None,
+    };
+    Some(if taken.contains(name) {
+        format!("assigned{}{}", name[..1].to_uppercase(), &name[1..])
+    } else {
+        name.to_string()
+    })
+}
+
 fn request(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, CompileError> {
     let package = model.project.package_for(Package::Web);
     let type_name = format!("{}Request", entity.names.java_type);
@@ -125,23 +160,54 @@ fn request(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, Compile
         imports.insert("java.util.Optional".to_string());
     }
     let mut arguments = Vec::new();
+    let mut assigned = Vec::new();
     for field in &entity.fields {
         let name = &field.names.java_member;
         arguments.push(if !caller_supplied(field) {
-            format!(
-                "                {}",
-                assigned_value(model, field, &mut imports)?
-            )
+            let value = assigned_value(model, field, &mut imports)?;
+            assigned.push(value.clone());
+            format!("                {value}")
         } else if field.required {
             format!("                {name}")
         } else {
             format!("                Optional.ofNullable({name})")
         });
     }
+    // **One clock reading for the whole row.** `--timestamps` assigns
+    // `createdAt` and `updatedAt` from the same source, and two calls to
+    // `Instant.now()` are two readings: the row is born with an `updatedAt`
+    // later than its `createdAt`, so "has this ever been edited" answers yes
+    // for every row ever written. Hoisting is only for a value used more than
+    // once -- a single `TimeOrderedUuid.next()` reads better inline.
+    let mut locals = Vec::new();
+    let taken: BTreeSet<&str> = asked
+        .iter()
+        .map(|field| field.names.java_member.as_str())
+        .collect();
+    for value in duplicated(&assigned) {
+        let Some(local) = hoisted_name(&value, &taken) else {
+            continue;
+        };
+        let ty = value
+            .split_once('.')
+            .map_or(value.as_str(), |(ty, _)| ty)
+            .to_string();
+        locals.push(format!("        {ty} {local} = {value};"));
+        for argument in &mut arguments {
+            if argument.trim_end_matches(',') == format!("                {value}") {
+                *argument = format!("                {local}");
+            }
+        }
+    }
     let arguments = arguments.join(",\n");
+    let preamble = if locals.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", locals.join("\n"))
+    };
     let record = &entity.names.java_type;
     let body = format!(
-        "public record {type_name}(\n{components}\n) {{\n\n    /**\n     * The domain row this request describes, with every server-assigned\n     * value supplied here rather than taken from the caller.\n     */\n    public {record} toDomain() {{\n        return new {record}(\n{arguments});\n    }}\n}}"
+        "public record {type_name}(\n{components}\n) {{\n\n    /**\n     * The domain row this request describes, with every server-assigned\n     * value supplied here rather than taken from the caller.\n     */\n    public {record} toDomain() {{\n{preamble}        return new {record}(\n{arguments});\n    }}\n}}"
     );
     unit(
         package,

@@ -1244,23 +1244,38 @@ fn what_explain_says_about_a_query_is_what_a_query_does() {
     );
 
     // An optional filter widens rather than matching null, and the
-    // explanation says so instead of saying filters must be required.
+    // explanation says so instead of saying filters must be required. The
+    // predicate is *appended* when the caller sent a value rather than
+    // written as `cast(:settled as boolean) is null or ...`, so the index on
+    // that column is still usable for the request that names it.
     assert!(
-        adapter.contains("(cast(:settled as boolean) is null or settled = :settled)"),
+        adapter.contains("if (input.settled().isPresent())"),
         "{adapter}"
     );
-    assert!(explained.contains("is null or"), "{explained}");
+    assert!(
+        adapter.contains("predicates.add(\"settled = :settled\")"),
+        "{adapter}"
+    );
+    assert!(!adapter.contains("cast(:settled"), "{adapter}");
+    assert!(
+        explained.contains("only when the caller sent one"),
+        "{explained}"
+    );
 
     // The cap the caller cannot see from the response is stated where they
     // can see it.
     let cap = adapter
         .lines()
-        .find(|line| line.contains("MAX_RESULTS ="))
+        .find(|line| line.contains("limit "))
         .expect("the adapter bounds its result");
     let cap = cap
-        .rsplit('=')
+        .rsplit("limit ")
         .next()
-        .and_then(|rest| rest.trim().trim_end_matches(';').parse::<usize>().ok())
+        .and_then(|rest| {
+            rest.trim_matches(|c: char| !c.is_ascii_digit())
+                .parse::<usize>()
+                .ok()
+        })
         .expect("a numeric bound");
     assert!(
         explained.contains(&cap.to_string()),
@@ -3633,8 +3648,13 @@ fn scaffold_writes_http_requests_and_factory_builds_typed_test_data() {
         requests.contains("@id = 00000000-0000-0000-0000-000000000001"),
         "{requests}"
     );
+    // **A server-assigned column is not in the request body.** `createdAt`
+    // carries `@default(now())`, so the endpoint mints it and the request
+    // record has no component for it -- a collection that offered one would
+    // be teaching the reader to send a value the API ignores.
+    assert!(!requests.contains("createdAt"), "{requests}");
     assert!(
-        requests.contains("\"createdAt\": \"2026-01-01T00:00:00Z\""),
+        requests.contains("\"title\": \"sample-title\""),
         "{requests}"
     );
 
@@ -4682,13 +4702,19 @@ fn a_scaffold_emits_a_migration_whose_columns_match_the_adapter() {
     // An Instant needs a zone-aware column or it comes back reinterpreted.
     assert!(migration.contains("timestamptz not null"), "{migration}");
     // The nullable component is the only one without `not null`.
-    assert!(migration.contains("text,"), "{migration}");
+    assert!(migration.contains("note text\n"), "{migration}");
     assert_eq!(
         migration.matches("not null").count(),
         3,
         "only the nullable component may lack `not null`: {migration}"
     );
-    assert!(migration.contains("primary key (id)"), "{migration}");
+    // The key is declared on its own column rather than as a separate table
+    // constraint. A composite key would need the clause; a single-column one
+    // reads as what it is.
+    assert!(
+        migration.contains("id uuid not null primary key"),
+        "{migration}"
+    );
 
     // The same column names the adapter selects and inserts.
     let adapter = common::read_generated(
@@ -6863,17 +6889,22 @@ fn a_pinned_component_is_written_by_the_endpoint_and_not_by_the_caller() {
         );
     }
 
+    // **The pin is a literal in the insert, not a constant in Java.** It has
+    // one value for every call, so there is nothing for the adapter to bind
+    // and nothing for a caller to override -- the column is written by the
+    // statement and never leaves SQL. Its spelling is the enum's `name()`,
+    // which is what a bound `SenderType` would have been converted to anyway.
     let implementation = common::read_generated(
         &root,
         "src/main/java/com/example/demo/service/StoringSendAdminMessageUseCase.java",
     );
     assert!(
-        implementation.contains("SenderType.ADMIN"),
+        implementation.contains("sender_type) values (:user_id, :content, 'ADMIN')"),
         "{implementation}"
     );
     assert!(
-        implementation.contains("import com.example.demo.domain.SenderType;"),
-        "the pinned constant brings its own import: {implementation}"
+        !implementation.contains(".param(\"sender_type\""),
+        "a pinned column is not bound: {implementation}"
     );
 
     // And the request cannot carry it: a command component would be a way for
