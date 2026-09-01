@@ -46,6 +46,16 @@ pub enum ModelPatch {
     /// stricter parser, and `jails_model::upgrade` proves every stable ID and
     /// physical name survived before this variant is ever built.
     ReplaceModel(Box<crate::AppModel>),
+    /// The storage axis this project declares, as a SQL dialect.
+    ///
+    /// **A capability patch cannot carry it, and `add db` is both.** In JDL
+    /// v1 the storage kinds are an axis rather than a capability -- `storage
+    /// postgres` is what the reader declares and `cap db` is what the linker
+    /// materializes from it -- so `add db` edits the app header *and* adds a
+    /// capability. Without this the patch carried only the second half, and
+    /// `add db` on a project that already had entities compiled them against
+    /// `dialect none` and refused: "no SQL type backend".
+    SetDialect(String),
     AddCapability(Capability),
     RemoveCapability(CapabilityId),
     AddDependency(Dependency),

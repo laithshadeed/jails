@@ -69,13 +69,42 @@ pub(crate) fn preflight(
             capability.kind, capability.kind
         )));
     }
-    if let Some((kind, minimum, actual)) = next_model.capabilities.values().find_map(|capability| {
-        let minimum = emit_capability::minimum_boot(&capability.kind)?;
-        let actual = emit_capability::boot_major(snapshot.project.spring_boot.as_deref())?;
-        (actual < minimum).then_some((capability.kind.as_str(), minimum, actual))
-    }) {
+    if let Some((kind, minimum, needs, actual)) =
+        next_model.capabilities.values().find_map(|capability| {
+            let (minimum, needs) = emit_capability::minimum_boot(&capability.kind)?;
+            let actual = emit_capability::boot_major(snapshot.project.spring_boot.as_deref())?;
+            (actual < minimum).then_some((capability.kind.as_str(), minimum, needs, actual))
+        })
+    {
         return Err(CompileError::new(format!(
-            "canonical `{kind}` requires Spring Boot {minimum}+ but the captured project uses Boot {actual}\n       fix: raise the Spring Boot version or remove the `{kind}` capability"
+            "canonical `{kind}` writes `{needs}`, which needs Spring Boot {minimum}, and this is a Spring Boot {actual} project\n       fix: raise the Spring Boot version, or keep to what compiles there -- `jails g scaffold`, `jails g usecase`, `jails g enum` and `jails add cors` all do"
+        )));
+    }
+    // **An operation somebody injects needs something to implement it.** The
+    // compiler emits a port for every linked `command`, `query` and
+    // `transition` and a `JdbcClient` adapter behind it -- and only the `db`
+    // capability brings that adapter. Without one the port is a declaration
+    // nothing constructs, which is harmless until the `api` capability writes
+    // a controller that takes it: then the application compiles and fails to
+    // start on "no qualifying bean of type". A scaffold's in-memory repository
+    // is not the missing bean -- it stores rows, and an operation is a
+    // statement.
+    let capability_kinds = |kind: &str| {
+        next_model
+            .capabilities
+            .values()
+            .any(|capability| capability.kind == kind)
+    };
+    if capability_kinds("api")
+        && !capability_kinds("db")
+        && let Some(operation) = next_model
+            .operations
+            .values()
+            .find(|operation| !matches!(operation.kind, jails_model::OperationKind::Event(_)))
+    {
+        return Err(CompileError::new(format!(
+            "canonical operation `{}` answers a route through a `JdbcClient` adapter, and this model declares no SQL storage -- so nothing implements the port its controller takes\n       fix: run `jails add db`, or remove the `api` capability",
+            operation.label
         )));
     }
     if next_model.units.values().any(|unit| {

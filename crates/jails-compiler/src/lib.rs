@@ -2218,7 +2218,7 @@ route = "PATCH /notes/{id}"
             Compiler::compile(&snapshot, None)
         };
         let refused = compile("2.7.18").unwrap_err().to_string();
-        assert!(refused.contains("requires Spring Boot 3+"), "{refused}");
+        assert!(refused.contains("needs Spring Boot 3"), "{refused}");
 
         let modern = compile("4.1.0").unwrap();
         let classic = compile("3.4.0").unwrap();

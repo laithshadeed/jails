@@ -106,6 +106,20 @@ pub(crate) fn add(
                     next_source =
                         jails_model::set_jdl_app_property(&next_source, "storage", storage)
                             .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
+                    // **The patch has to carry the axis too.** The source is
+                    // what the model is re-read from next time; the patch is
+                    // what *this* transition compiles. Without it `add db` on a
+                    // project that already had entities lowered them against
+                    // `dialect none` and refused -- so the capability worked
+                    // only as the very first command in a project.
+                    let dialect = jails_model::parse_jdl(&next_source)
+                        .map_err(|diagnostics| {
+                            Failure::Told(diagnostics.to_string().trim_end().to_string())
+                        })?
+                        .project
+                        .dialect;
+                    patches.push(ModelPatch::SetDialect(dialect.clone()));
+                    encoded.push(json!({"kind": "set-dialect", "dialect": dialect}));
                 } else {
                     let declaration = format!(
                         "cap {label}{} @id({})",

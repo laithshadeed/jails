@@ -104,6 +104,9 @@ impl AppModel {
                     return Err(format!("component id `{id}` does not exist"));
                 }
             }
+            ModelPatch::SetDialect(dialect) => {
+                self.project.dialect = dialect;
+            }
             ModelPatch::AddCapability(capability) => {
                 let id = capability.id.clone();
                 if self.capabilities.contains_key(&id) {

@@ -144,7 +144,13 @@ struct Pack {
     build_features: &'static [BuildFeature],
     default_package: fn(&AppModel) -> String,
     package_overrides: &'static [PackageOverride],
-    minimum_boot: Option<u32>,
+    /// The Boot major this pack's *main* source needs, and the type that
+    /// needs it.
+    ///
+    /// **The type, because that is what the compiler would have said.** "this
+    /// project uses Boot 2" is true of everything jails refuses on an old
+    /// project; `ProblemDetail` is the one line a reader can act on.
+    minimum_boot: Option<(u32, &'static str)>,
 }
 
 const NO_RESOURCES: &[ResourceFile] = &[];
@@ -349,7 +355,7 @@ fn pack(kind: &str) -> Option<&'static Pack> {
     }
 }
 
-pub(crate) fn minimum_boot(kind: &str) -> Option<u32> {
+pub(crate) fn minimum_boot(kind: &str) -> Option<(u32, &'static str)> {
     pack(kind).and_then(|pack| pack.minimum_boot)
 }
 

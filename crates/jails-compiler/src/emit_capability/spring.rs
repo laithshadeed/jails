@@ -686,7 +686,7 @@ pub(super) const API_PACK: Pack = Pack {
     default_package: api_package,
     package_overrides: NO_PACKAGE_OVERRIDES,
     // `ProblemDetail` is Framework 6, which is Boot 3.
-    minimum_boot: Some(3),
+    minimum_boot: Some((3, "ProblemDetail")),
 };
 
 const API_DEPENDENCIES: &[DependencySpec] = &[DependencySpec {
@@ -739,7 +739,7 @@ pub(super) const SECURITY_PACK: Pack = Pack {
     build_features: NO_BUILD_FEATURES,
     default_package: root_package,
     package_overrides: NO_PACKAGE_OVERRIDES,
-    minimum_boot: Some(3),
+    minimum_boot: Some((3, "requestMatchers")),
 };
 
 pub(super) const SSE_PACK: Pack = Pack {

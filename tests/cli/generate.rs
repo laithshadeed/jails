@@ -1011,14 +1011,18 @@ fn a_transition_can_take_its_key_from_the_url() {
 
     // The route is served by the `api` capability, which is what emits a
     // Spring controller for an operation. Declaring one without it leaves a
-    // linked route nothing answers.
-    assert!(
-        jails_cmd(&root, None)
-            .args(["add", "api", "--no-start"])
-            .status()
-            .unwrap()
-            .success()
-    );
+    // linked route nothing answers -- and `db` is what implements the port
+    // that controller takes.
+    for capability in [["add", "db", "--no-start"], ["add", "api", "--no-start"]] {
+        assert!(
+            jails_cmd(&root, None)
+                .args(capability)
+                .status()
+                .unwrap()
+                .success(),
+            "{capability:?}"
+        );
+    }
 
     let output = jails_cmd(&root, None)
         .args([
@@ -6388,14 +6392,18 @@ fn a_query_path_may_address_its_filters_by_name() {
 
     // The route is served by the `api` capability, which is what emits a
     // Spring controller for an operation. Declaring one without it leaves a
-    // linked route nothing answers.
-    assert!(
-        jails_cmd(&root, None)
-            .args(["add", "api", "--no-start"])
-            .status()
-            .unwrap()
-            .success()
-    );
+    // linked route nothing answers -- and `db` is what implements the port
+    // that controller takes.
+    for capability in [["add", "db", "--no-start"], ["add", "api", "--no-start"]] {
+        assert!(
+            jails_cmd(&root, None)
+                .args(capability)
+                .status()
+                .unwrap()
+                .success(),
+            "{capability:?}"
+        );
+    }
 
     let output = jails_cmd(&root, None)
         .args([
@@ -6525,14 +6533,18 @@ fn a_form_bound_query_answers_a_get_and_reads_the_query_string() {
 
     // The route is served by the `api` capability, which is what emits a
     // Spring controller for an operation. Declaring one without it leaves a
-    // linked route nothing answers.
-    assert!(
-        jails_cmd(&root, None)
-            .args(["add", "api", "--no-start"])
-            .status()
-            .unwrap()
-            .success()
-    );
+    // linked route nothing answers -- and `db` is what implements the port
+    // that controller takes.
+    for capability in [["add", "db", "--no-start"], ["add", "api", "--no-start"]] {
+        assert!(
+            jails_cmd(&root, None)
+                .args(capability)
+                .status()
+                .unwrap()
+                .success(),
+            "{capability:?}"
+        );
+    }
 
     let output = jails_cmd(&root, None)
         .args([

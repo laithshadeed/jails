@@ -5490,6 +5490,16 @@ fn canonical_api_adapters_merge_then_eject_at_the_operation_boundary() {
     let root = model_project("model-api-operation-adapters", &source);
     write_spring_fixture(&root);
 
+    // `db` first: an operation's controller takes a port that only the JDBC
+    // adapter implements, so an `api` project without storage compiles and
+    // fails to start.
+    assert!(
+        jails_cmd(&root, None)
+            .args(["add", "db", "--no-start"])
+            .status()
+            .unwrap()
+            .success()
+    );
     let added = jails_cmd(&root, None)
         .args(["add", "api"])
         .output()
