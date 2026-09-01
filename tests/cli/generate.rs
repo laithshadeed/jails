@@ -1890,12 +1890,17 @@ fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
         ])
         .output()
         .unwrap();
+    // **Refused for the change, not for the seal.** Re-declaring the scaffold
+    // without `createdAt` and with `completed` is a rename, a drop and an add,
+    // or a type change, and each keeps the rows differently -- so it is
+    // refused before it can reach the published `V001` at all.
     assert!(!resync.status.success(), "{resync:?}");
+    let resync_stderr = String::from_utf8_lossy(&resync.stderr);
     assert!(
-        String::from_utf8_lossy(&resync.stderr).contains("migration-edited-after-seal"),
-        "{}",
-        String::from_utf8_lossy(&resync.stderr)
+        resync_stderr.contains("gained `completed` and lost `created_at`"),
+        "{resync_stderr}"
     );
+    assert!(resync_stderr.contains("fix:"), "{resync_stderr}");
     assert_eq!(snapshot_tree(&root), before_resync, "refusal wrote files");
 
     let before_retirement = snapshot_tree(&root);
@@ -1960,10 +1965,9 @@ fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
         .unwrap();
     assert!(status.status.success(), "{status:?}");
     let status_json = String::from_utf8(status.stdout).unwrap();
-    assert!(
-        status_json.contains("\"state\":\"retired-storage-present\""),
-        "{status_json}"
-    );
+    let parsed: serde_json::Value = serde_json::from_str(&status_json).unwrap();
+    assert_eq!(parsed["state"], "retired", "{status_json}");
+    assert_eq!(parsed["table"], "tasks", "{status_json}");
     assert!(
         status_json.contains("jails resource revive Task --table tasks"),
         "{status_json}"
@@ -2022,11 +2026,9 @@ fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
         .output()
         .unwrap();
     assert!(active_status.status.success(), "{active_status:?}");
-    assert!(
-        String::from_utf8_lossy(&active_status.stdout).contains("\"state\":\"consistent\""),
-        "{}",
-        String::from_utf8_lossy(&active_status.stdout)
-    );
+    let active_json = String::from_utf8_lossy(&active_status.stdout).to_string();
+    let parsed: serde_json::Value = serde_json::from_str(&active_json).unwrap();
+    assert_eq!(parsed["state"], "consistent", "{active_json}");
 }
 
 /// Regenerating a dropped resource revives its lifecycle, so the recovery

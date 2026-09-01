@@ -115,11 +115,32 @@ pub(crate) fn run(selector: &str, invocation: Invocation) -> Result<()> {
     Ok(())
 }
 
-/// Answer from the captured workspace. Pure once capture has happened, which
-/// is what lets the table below drive the tests rather than a live project.
-fn inspect(snapshot: &jails_contracts::WorkspaceSnapshot, selector: &str) -> Report {
-    let declared = &snapshot.model.model;
-    let Some(entity) = find(declared, selector) else {
+/// What became of a resource the model no longer declares.
+///
+/// **A confirmed drop leaves the model and leaves the history.** Removal is
+/// model subtraction, so nothing survives in the declaration to report -- and
+/// answering `unknown` about a resource whose table this project created and
+/// then dropped is the one question the migrations can answer exactly. The
+/// table name is derived rather than remembered, which is the same
+/// derivability that lets `destroy` find what `generate` wrote.
+fn retired(snapshot: &jails_contracts::WorkspaceSnapshot, selector: &str) -> Report {
+    let table = jails_model::plural_snake_case(&crate::model_resource::java_to_label(selector));
+    let mut migrations = Vec::new();
+    let mut created = false;
+    let mut dropped = false;
+    for record in &snapshot.migration_history.records {
+        let Some(captured) = snapshot.files.get(&record.path) else {
+            continue;
+        };
+        if !mentions_table(&captured.bytes, &table) {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&captured.bytes);
+        created |= text.contains(&format!("create table {table}"));
+        dropped |= text.contains(&format!("drop table {table}"));
+        migrations.push(record.version.clone());
+    }
+    if !(created && dropped) {
         return Report {
             resource: None,
             state: Consistency::Unknown,
@@ -135,6 +156,30 @@ fn inspect(snapshot: &jails_contracts::WorkspaceSnapshot, selector: &str) -> Rep
             }],
             next: vec![format!("jails g record {selector} <field>:<type>")],
         };
+    }
+    Report {
+        resource: Some(selector.to_string()),
+        state: Consistency::Retired,
+        declaration: Authority::Absent,
+        generated: Authority::Absent,
+        migration_history: Authority::Present,
+        table: Some(table.clone()),
+        generated_files: Vec::new(),
+        migrations,
+        findings: vec![Finding {
+            code: "resource-retired",
+            message: format!("`{table}` was created and dropped by this project's migrations"),
+        }],
+        next: vec![format!("jails g scaffold {selector} <field>:<type>")],
+    }
+}
+
+/// Answer from the captured workspace. Pure once capture has happened, which
+/// is what lets the table below drive the tests rather than a live project.
+fn inspect(snapshot: &jails_contracts::WorkspaceSnapshot, selector: &str) -> Report {
+    let declared = &snapshot.model.model;
+    let Some(entity) = find(declared, selector) else {
+        return retired(snapshot, selector);
     };
     let id = entity.id.as_str().to_string();
     let stored = entity.facets.contains(&jails_model::Facet::Repository);
@@ -266,6 +311,16 @@ fn inspect(snapshot: &jails_contracts::WorkspaceSnapshot, selector: &str) -> Rep
     }
     if !drifted.is_empty() {
         next.push("jails sync".to_string());
+    }
+    // **A preserved retirement has one way back, and it is exact.** The table
+    // is still there, so reviving it means naming that table -- and a reader
+    // looking at `state: retired` has no other way to learn which spelling the
+    // command insists on.
+    if !entity.active && stored {
+        next.push(format!(
+            "jails resource revive {} --table {}",
+            entity.names.java_type, entity.names.sql_table
+        ));
     }
     next.dedup();
 

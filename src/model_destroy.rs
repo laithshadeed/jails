@@ -490,6 +490,24 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
     })
 }
 
+/// The table this project created and then dropped for a resource it no longer
+/// declares, read off the migrations rather than remembered.
+fn dropped_table(_source: &str, selector: &str) -> Option<String> {
+    let table = jails_model::plural_snake_case(&java_to_label(selector));
+    let directory = std::path::Path::new("src/main/resources/db/migration");
+    let entries = std::fs::read_dir(directory).ok()?;
+    let mut created = false;
+    let mut dropped = false;
+    for entry in entries.flatten() {
+        let Ok(text) = std::fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        created |= text.contains(&format!("create table {table}"));
+        dropped |= text.contains(&format!("drop table {table}"));
+    }
+    (created && dropped).then_some(table)
+}
+
 pub(crate) fn revive(selector: String, table: String, invocation: Invocation) -> Result<()> {
     let jdl = crate::model_command::owns_jdl();
     let model_path = model_path(jdl);
@@ -501,6 +519,16 @@ pub(crate) fn revive(selector: String, table: String, invocation: Invocation) ->
         .values()
         .find(|entity| entity.label == label || entity.names.java_type == selector)
         .ok_or_else(|| {
+            // **A dropped table is not a preserved one.** `--storage drop`
+            // appends a forward migration and takes the declaration with it,
+            // so there is nothing to revive: the history says the table was
+            // created and dropped, and going back means declaring the resource
+            // again and creating a new one.
+            if let Some(table) = dropped_table(&current_source, &selector) {
+                return Failure::Told(format!(
+                    "`{selector}` had an append-only drop planned for `{table}`, so there is no preserved table to revive.\n       fix: declare it again with `jails g scaffold {selector} <field>:<type>`, which creates a new table"
+                ));
+            }
             Failure::Told(format!(
                 "canonical preserved entity `{selector}` does not exist.\n       fix: name an entity retired with `--storage preserve`"
             ))
