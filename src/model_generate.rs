@@ -496,6 +496,21 @@ pub(crate) fn validate_entity_args(args: &GenerateArgs) -> Result<()> {
             kind_name(args.kind)
         ))
     })?;
+    // **Checked before the identity is derived from it.** A stable id is a
+    // projection of the name, so `Bad!Name` fails there first -- and reports
+    // that `ent_bad!_name` is not a stable id, which is about a value the
+    // reader never typed. The linker says the same thing about the Java type
+    // and never gets the chance.
+    if let Some(bad) = args
+        .name
+        .chars()
+        .find(|character| !character.is_ascii_alphanumeric() && *character != '_')
+    {
+        return Err(Failure::Told(format!(
+            "`{bad}` is not valid in a Java identifier, and `{}` becomes one.\n       fix: name it with letters, digits and `_`",
+            args.name
+        )));
+    }
     reject_unsupported_options(args, profile)
 }
 

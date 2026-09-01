@@ -8,6 +8,129 @@ mod unit;
 
 use crate::ProjectIntent;
 
+/// The `java.lang` types every Java file imports without saying so.
+///
+/// Not the whole package: these are the ones a generated record or its
+/// components would plausibly be named, and a list nobody can complete is
+/// worse than a short one that is right. A name outside it that collides is
+/// caught by javac, which is the tier below this one.
+const JAVA_LANG_TYPES: &[&str] = &[
+    "Boolean",
+    "Byte",
+    "Character",
+    "Class",
+    "Double",
+    "Enum",
+    "Error",
+    "Exception",
+    "Float",
+    "Integer",
+    "Iterable",
+    "Long",
+    "Math",
+    "Module",
+    "Number",
+    "Object",
+    "Package",
+    "Process",
+    "Record",
+    "Runnable",
+    "Runtime",
+    "Short",
+    "String",
+    "System",
+    "Thread",
+    "Throwable",
+    "Void",
+];
+
+/// PostgreSQL words that cannot name a table or column unquoted.
+///
+/// The reserved half of the standard's list, which is what `create table`
+/// rejects. jails never quotes an identifier -- a quoted name is
+/// case-sensitive forever after, which is a trap rather than a fix -- so a
+/// derived name landing here is refused instead.
+const POSTGRES_RESERVED: &[&str] = &[
+    "all",
+    "analyse",
+    "analyze",
+    "and",
+    "any",
+    "array",
+    "as",
+    "asc",
+    "asymmetric",
+    "both",
+    "case",
+    "cast",
+    "check",
+    "collate",
+    "column",
+    "constraint",
+    "create",
+    "current_catalog",
+    "current_date",
+    "current_role",
+    "current_time",
+    "current_timestamp",
+    "current_user",
+    "default",
+    "deferrable",
+    "desc",
+    "distinct",
+    "do",
+    "else",
+    "end",
+    "except",
+    "false",
+    "fetch",
+    "for",
+    "foreign",
+    "from",
+    "grant",
+    "group",
+    "having",
+    "in",
+    "initially",
+    "intersect",
+    "into",
+    "is",
+    "lateral",
+    "leading",
+    "limit",
+    "localtime",
+    "localtimestamp",
+    "not",
+    "null",
+    "offset",
+    "on",
+    "only",
+    "or",
+    "order",
+    "placing",
+    "primary",
+    "references",
+    "returning",
+    "select",
+    "session_user",
+    "some",
+    "symmetric",
+    "table",
+    "then",
+    "to",
+    "trailing",
+    "true",
+    "union",
+    "unique",
+    "user",
+    "using",
+    "variadic",
+    "when",
+    "where",
+    "window",
+    "with",
+];
+
 /// The oldest Java a generated project may target.
 ///
 /// The bar is what the *generated code* needs rather than what jails defaults
@@ -537,8 +660,38 @@ impl Linker {
             self.problem(
                 "model-java-type",
                 path,
-                format!("`{value}` is not a Java type name"),
+                format!("`{value}` is not valid in a Java identifier"),
                 "use an upper-camel-case Java identifier",
+            );
+            return;
+        }
+        // **The variable name is derived, so it is jails' to get right.**
+        // Every generator writes `{Type} {variable} = ...`, and the
+        // lower-camel form of a type like `Class` is a Java keyword -- so the
+        // type validates, the table validates, and the code does not compile.
+        // Checked before the shadowing rule below because it is the more
+        // concrete failure for a name that trips both.
+        let variable = lower_camel_case(value);
+        if !valid_java_member(&variable) {
+            self.problem(
+                "model-java-variable",
+                path,
+                format!("`{value}` derives the Java variable `{variable}`, which is a keyword"),
+                "choose a name whose lower-camel-case form is a Java identifier",
+            );
+            return;
+        }
+        // **A package member outranks `java.lang`'s implicit import.**
+        // `record String(String value)` types its own component as *itself*
+        // and compiles, as does its generated test -- `bugs.md` B50, and the
+        // reason no tier caught it. Refused where the name is *declared*, not
+        // where one is referenced: a `value:String` is the ordinary case.
+        if JAVA_LANG_TYPES.contains(&value) {
+            self.problem(
+                "model-java-lang-shadow",
+                path,
+                format!("`{value}` is a type in `java.lang`, which every Java file imports"),
+                "choose another name -- a class here would outrank the one every file already has",
             );
         }
     }
@@ -593,6 +746,21 @@ impl Linker {
     }
 
     pub(crate) fn sql_identifier(&mut self, value: &str, path: &str) {
+        // **A reserved word has to be quoted, and jails does not quote.**
+        // `create table as (...)` is a syntax error, and the name is derived
+        // -- `A` pluralizes to `as` -- so the reader has no way to see it
+        // coming from what they typed.
+        if POSTGRES_RESERVED.contains(&value) {
+            self.problem(
+                "model-sql-reserved",
+                path,
+                format!(
+                    "`{value}` derives the PostgreSQL table `{value}`, which is a reserved word"
+                ),
+                "choose a name whose plural is not reserved, or pin the table with `@table`",
+            );
+            return;
+        }
         let mut chars = value.chars();
         let valid = chars
             .next()
