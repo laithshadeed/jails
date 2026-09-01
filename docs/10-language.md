@@ -219,18 +219,45 @@ only one of the two old front ends has an upgrade path:
 | pre-v1 JDL draft | `jails model upgrade --to 1`, source-to-source, identity proved by `jails_model::upgrade` |
 | `.jails/model.toml` | **none** -- `model upgrade` refuses it by name: *"the temporary compatibility input, not a JDL source; there is no in-place upgrade for it"* |
 
-So the order is: build the TOML route first, then delete the branches.
-§22 already says what it is -- "legacy TOML model state is imported into the
-same v1 AST through a separate one-shot command" -- and what it needs is a
-renderer from `AppModel` to v1 JDL, which does not exist. `jdl/render.rs`
-renders the *other* direction (parsed JDL down to the TOML boundary), and
-`upgrade()` rewrites pre-v1 JDL text rather than taking a model, so neither
-serves. That renderer is the real content of this item and it is a large
-piece: every v1 construct, emitted, and proved identity-preserving the way
-`preserves_identity` proves the JDL upgrade today.
+**And the route it did have is gone.** `jails model import` no longer exists
+-- `jails model --help` lists `init check upgrade fmt plan apply explain
+eject` -- so the exit condition below, and `docs/00-contracts.md` and
+`CLAUDE.md` where they say the same thing, all name a command that was
+removed. `model init` replaced it for a *foreign* project and writes the app
+block only; it is not a carry-across.
 
-**Exit:** `.jails/model.toml` and the pre-v1 draft are read by `model import`
-and by nothing else; `is_v1_source` has no callers.
+Reproduced 2026-09-01, and this is the state the contracts forbid, persisting
+because its way out was deleted:
+
+```
+$ mkdir -p p/.jails && printf 'schema = "jails.model.v1"\n\n[project]\n…' \
+    > p/.jails/model.toml
+$ cd p && jails model check
+model valid: .jails/model.toml (1 nodes, 0 entities, 0 operations)
+$ jails g record Note id:uuid@pk
+applied model patch for Note: sha256:676feabd… (5 files written)
+```
+
+A `.jails/model.toml` project is fully editable, and there is now no command
+that moves it to `jdl 1`. That is two editable model sources with no
+convergence, which `docs/00-contracts.md` says is never permitted.
+
+So the order is: build the TOML route first, then delete the branches.
+§22 says what it is -- "legacy TOML model state is imported into the same v1
+AST through a separate one-shot command" -- and what it needs is a renderer
+from `AppModel` to v1 JDL. **That renderer does not exist anywhere.**
+`jdl/render.rs` renders the *other* direction (parsed JDL down to the TOML
+boundary); `upgrade()` rewrites pre-v1 JDL text rather than taking a model;
+`model_generate_jdl/render.rs` renders an entity, an enum and a field line
+from CLI arguments, not a linked model, and nothing renders caps, deps,
+props, projections, relations, the four operation kinds or the 23 component
+kinds. Writing it means emitting every v1 construct and proving the round trip
+preserves identity the way `preserves_identity` proves the JDL upgrade today
+-- a feature, not a cleanup, and the real content of this item.
+
+**Exit (restated, because the old one cites a deleted command):**
+`.jails/model.toml` and the pre-v1 draft are read only by whatever one-shot
+command carries a project across; `is_v1_source` has no callers.
 
 ## Open items
 
@@ -238,6 +265,13 @@ and by nothing else; `is_v1_source` has no callers.
 them, while `rename resource` *requires* a `<slice>.<name>` selector. A project
 with no slices must keep working unchanged, with the unqualified name meaning
 what it means today.
+
+**Most of this is not in your paths.** `SliceSpecV1` and `SliceName` live in
+`jails-protocol`, which is C's under the ownership table. What is yours is the
+*language* half: whether a slice is a declaration in JDL v1 or only a selector
+at the CLI, and §4.2 does not say. Settle that with C before either of you
+reaches for the type, because the answer decides whether this is a grammar
+change or an argument parser.
 
 **This is the whole of what is left of §6.1's `generate scaffold` surface.**
 `--path` (§6.1 spelled it `--route`), `--index`, `--unique`, `--package` and
