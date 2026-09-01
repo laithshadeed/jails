@@ -614,6 +614,27 @@ impl Compiler {
                     arguments: BTreeMap::from([("service".to_string(), service)]),
                 })
                 .collect();
+        // **Formatting is an effect, not a rendering.** The wrapping a
+        // formatter chooses cannot be predicted from a template -- that is
+        // what a formatter is for -- so a project that declares `format` has
+        // to have one run over what was just written, or `jails check` fails
+        // on jails' own output. It rides on the plan for the same reason
+        // compose does: the reviewed transition says what is left to do.
+        if next_model
+            .capabilities
+            .values()
+            .any(|capability| capability.kind == "format")
+            && generated
+                .files
+                .keys()
+                .any(|path| path.as_str().ends_with(".java"))
+        {
+            follow_up_effects.push(jails_contracts::EffectIntent {
+                id: "effect_format".to_string(),
+                kind: "format".to_string(),
+                arguments: BTreeMap::new(),
+            });
+        }
         follow_up_effects.sort_by(|left, right| left.id.cmp(&right.id));
         follow_up_effects.dedup_by(|left, right| left.id == right.id);
         // **A resource with nowhere to keep its rows is worth saying out

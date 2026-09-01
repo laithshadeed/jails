@@ -355,6 +355,14 @@ pub(crate) fn replay_at(
     // `app plan` the command that turns a project canonical -- so what a plan
     // can honestly say here is what applying would declare, which is the whole
     // question somebody asks before running `apply` the first time.
+    // **A plan against a project with no model reports the manifest itself.**
+    // Each row is planned against the model on disk, and under `--pretend`
+    // nothing is written -- so row two would plan against a model that does
+    // not yet have row one's enum in it and refuse over a type the apply
+    // would have declared a moment earlier. What a plan can honestly say
+    // here is what applying would declare, which is the question somebody
+    // asks before running `apply` the first time. `plan.md` tracks threading
+    // the accumulated model through a dry replay so this can name files too.
     if invocation.pretend && !crate::model_command::owns_at(root) {
         println!(
             "  model   {} would be created",

@@ -398,6 +398,20 @@ pub(crate) fn run_follow_up_effects(
     bundle: &jails_contracts::PlanBundle,
     invocation: &Invocation,
 ) -> Result<()> {
+    // **The formatter runs over what was just written, before anything
+    // else.** A project that declares `format` fails `jails check` on jails'
+    // own output otherwise: the wrapping a formatter chooses cannot be
+    // predicted from a template, which is what a formatter is for. Best
+    // effort, like every other tool jails shells out to -- a machine with no
+    // Maven gets a note rather than a failed generation.
+    if bundle
+        .plan
+        .follow_up_effects
+        .iter()
+        .any(|effect| effect.kind == "format")
+    {
+        jails_drive::run::format_generated(root, invocation.debug);
+    }
     let services: Vec<&str> = bundle
         .plan
         .follow_up_effects

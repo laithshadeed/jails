@@ -1761,13 +1761,17 @@ class DemoApplicationTests {
 /// vacuously the moment it stopped being TOML. Encoding the needle the same
 /// way the payload is encoded is the smallest honest check: it proves the
 /// bytes are in there without decoding a format the test has no business
-/// knowing.
+/// Whether the project's own record names something.
+///
+/// **The record is the model plus the managed tree**, which is where a
+/// canonical project keeps what a legacy one kept in `.jails/ledger.toml`:
+/// the declaration, and the files it owns. The old spelling searched that
+/// file's hex-encoded payload, and on a project that has none it answered
+/// "no" about everything -- a check that cannot fail is a check that is not
+/// there.
 pub fn ledger_mentions(root: &std::path::Path, needle: &str) -> bool {
-    let Ok(text) = std::fs::read_to_string(root.join(".jails/ledger.toml")) else {
-        return false;
-    };
-    let hex: String = needle.bytes().map(|byte| format!("{byte:02x}")).collect();
-    text.contains(&hex)
+    let model = std::fs::read_to_string(root.join(".jails/model.jdl")).unwrap_or_default();
+    model.contains(needle) || managed_listing(root).contains(needle)
 }
 
 /// A minimal plain-Maven project: a pom with a release level and JUnit, and

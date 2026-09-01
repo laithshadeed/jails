@@ -62,11 +62,14 @@ fn app_manifest_plan_is_domain_blind_and_writes_nothing() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // The plan *is* the apply, stopped one step before the lock, so it names
-    // the files rather than restating the manifest rows: what it lists is
-    // exactly what an apply would then write.
-    assert!(stdout.contains("plan "), "{stdout}");
-    assert!(stdout.contains("CrawlRun.java"), "{stdout}");
+    // On a project with no model yet, the plan reports what applying would
+    // *declare*. It cannot name files: each row is planned against the model
+    // on disk, and under `--pretend` nothing is written, so row two would
+    // plan against a model missing row one's enum and refuse over a type the
+    // apply declares a moment earlier. Once the model exists, `app plan`
+    // names the files -- that is the case below.
+    assert!(stdout.contains("would be created"), "{stdout}");
+    assert!(stdout.contains("declare record CrawlRun"), "{stdout}");
     assert!(stdout.contains("nothing was written"), "{stdout}");
     assert!(!root.join("jails.toml").exists());
     assert!(!root.join(".jails/app-state-v1").exists());
@@ -424,7 +427,10 @@ fn app_manifest_merges_an_edited_intent_over_user_changes() {
     // generate record Note` from a walk of the intent list, which could not
     // see whether the file on disk actually differed.
     let shown = String::from_utf8_lossy(&plan.stdout);
-    assert!(shown.contains("replace "), "{shown}");
+    // The verb is `write`: the file is managed, it exists, and the plan is
+    // rewriting jails' own output over it. `replace` was the legacy engine's
+    // word for the same operation.
+    assert!(shown.contains("write "), "{shown}");
     assert!(shown.contains("Note.java"), "{shown}");
     let update = jails_cmd(&root, None)
         .args(["app", "apply", "--no-start"])
@@ -441,8 +447,9 @@ fn app_manifest_merges_an_edited_intent_over_user_changes() {
     assert!(merged.contains("userLabel()"), "{merged}");
     assert!(!merged.contains("<<<<<<<"), "{merged}");
     assert!(
-        common::ledger_mentions(&root, "record") && common::ledger_mentions(&root, "Note"),
-        "the applied intent is on the one ledger"
+        common::ledger_mentions(&root, "entity Note")
+            && common::ledger_mentions(&root, "Note.java"),
+        "the applied intent is in the model, and it owns the file"
     );
 
     let second = jails_cmd(&root, None)

@@ -539,6 +539,26 @@ pub fn format_project(debug: bool) -> Result<()> {
     run_inherited(cmd, debug)
 }
 
+/// The same formatter, over a project the caller has already resolved.
+///
+/// **Best effort, and silent about a machine that cannot run it.** This is
+/// called after a generation that wrote Java into a project declaring
+/// `format`, so the alternative to running it is `jails check` failing on
+/// jails' own output. A machine with no Maven is not a failed generation --
+/// the files are written and correct, just unwrapped -- so this reports and
+/// returns rather than turning somebody's `g record` into an error.
+pub fn format_generated(root: &Path, debug: bool) {
+    if crate::build::detect(root) != crate::build::Build::Maven {
+        return;
+    }
+    let mut cmd = Command::new(crate::maven::binary(root));
+    cmd.args(["spotless:apply", "-q"]).current_dir(root);
+    if let Err(error) = run_inherited(cmd, debug) {
+        eprintln!("jails: could not run the formatter over the generated tree: {error}");
+        eprintln!("       fix: run `jails fmt` when Maven is available -- the files are written");
+    }
+}
+
 /// Escape hatch for Maven features jails should not duplicate. Arguments are
 /// forwarded exactly; the project wrapper is still preferred.
 pub fn mvn(args: &[String], debug: bool) -> Result<()> {
