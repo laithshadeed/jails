@@ -213,7 +213,9 @@ fn main() -> std::process::ExitCode {
                             model_capability::remove_dependency(coordinate, invocation)
                         })
                     }
-                    Some(Undeclare::FastTest) => model_capability::remove_fast_test(invocation),
+                    Some(Undeclare::FastTest { force }) => {
+                        model_capability::remove_fast_test(invocation.forcing(force))
+                    }
                 });
             return dispatch::finish_invocation(result, failure_output, &failure_path);
         }

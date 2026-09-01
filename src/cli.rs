@@ -1151,7 +1151,16 @@ pub(crate) enum Undeclare {
     /// the other half: a dependency nothing can name and nothing can remove is
     /// the failure the ownership model exists to prevent.
     #[command(name = "fast-test")]
-    FastTest,
+    FastTest {
+        /// Skip the confirmation prompt
+        ///
+        /// Its own flag rather than the parent's: clap resolves `--force`
+        /// against the subcommand once one is named, so `jails remove
+        /// fast-test --force` never reaches `Remove::force` and a caller who
+        /// cannot answer the prompt has no way to consent.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[cfg(test)]

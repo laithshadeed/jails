@@ -3719,7 +3719,7 @@ fn planning_pretending_and_inspecting_leave_machine_state_byte_for_byte() {
     // would make a project that has never been touched look like one that has.
     let arguments = [
         vec!["app", "plan"],
-        vec!["destroy", "record", "Note", "--pretend"],
+        vec!["destroy", "record", "Note", "--pretend", "--force"],
         vec!["generate", "record", "Other", "title:string!", "--pretend"],
         vec!["routes"],
     ];
@@ -4745,7 +4745,7 @@ fn pretend_is_global_and_reaches_destroy_too() {
     assert!(file.is_file());
 
     let output = jails_cmd(&root, None)
-        .args(["destroy", "record", "Payout", "--pretend"])
+        .args(["destroy", "record", "Payout", "--pretend", "--force"])
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");

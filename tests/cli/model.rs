@@ -1565,11 +1565,11 @@ app Notes {
     }
 
     for command in [
-        vec!["destroy", "factory", "Task"],
-        vec!["destroy", "class", "Clock"],
-        vec!["destroy", "sealed", "Outcome"],
-        vec!["destroy", "cases", "acceptance.md"],
-        vec!["remove", "fake"],
+        vec!["destroy", "factory", "Task", "--force"],
+        vec!["destroy", "class", "Clock", "--force"],
+        vec!["destroy", "sealed", "Outcome", "--force"],
+        vec!["destroy", "cases", "acceptance.md", "--force"],
+        vec!["remove", "fake", "--force"],
         vec!["remove", "dependency", "org.jsoup:jsoup"],
         vec!["unset", "server.port"],
     ] {
@@ -5614,7 +5614,7 @@ fn canonical_destroy_is_model_subtraction_and_whole_tree_recompilation() {
     let before = snapshot_tree(&root);
 
     let preview = jails_cmd(&root, None)
-        .args(["d", "scaffold", "Note", "--pretend"])
+        .args(["d", "scaffold", "Note", "--pretend", "--force"])
         .output()
         .unwrap();
     assert!(
@@ -5627,7 +5627,7 @@ fn canonical_destroy_is_model_subtraction_and_whole_tree_recompilation() {
     let plan_directory = temp_dir("model-destroy-plan");
     let plan = plan_directory.join("destroy.json");
     let planned = jails_cmd(&root, None)
-        .args(["d", "scaffold", "Note", "--plan-out"])
+        .args(["d", "scaffold", "Note", "--plan-out", "--force"])
         .arg(&plan)
         .output()
         .unwrap();
@@ -5693,7 +5693,7 @@ fn canonical_destroy_refuses_while_operations_reference_the_entity() {
     }
     let before = snapshot_tree(&root);
     let refused = jails_cmd(&root, None)
-        .args(["d", "scaffold", "Note"])
+        .args(["d", "scaffold", "Note", "--force"])
         .output()
         .unwrap();
     assert!(!refused.status.success());
@@ -5703,7 +5703,7 @@ fn canonical_destroy_refuses_while_operations_reference_the_entity() {
     assert_eq!(snapshot_tree(&root), before, "refusal mutated the project");
 
     let removed_query = jails_cmd(&root, None)
-        .args(["d", "query", "OpenNotes"])
+        .args(["d", "query", "OpenNotes", "--force"])
         .output()
         .unwrap();
     assert!(
@@ -5717,7 +5717,7 @@ fn canonical_destroy_refuses_while_operations_reference_the_entity() {
             .exists()
     );
     let removed_entity = jails_cmd(&root, None)
-        .args(["d", "scaffold", "Note"])
+        .args(["d", "scaffold", "Note", "--force"])
         .output()
         .unwrap();
     assert!(
@@ -10179,7 +10179,7 @@ fn canonical_storage_preserve_removes_projections_and_revive_reuses_the_table() 
     let record = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
 
     let retired = jails_cmd(&root, None)
-        .args(["d", "scaffold", "Note", "--storage", "preserve"])
+        .args(["d", "scaffold", "Note", "--storage", "preserve", "--force"])
         .output()
         .unwrap();
     assert!(

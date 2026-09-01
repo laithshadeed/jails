@@ -979,7 +979,7 @@ fn remove_without_force_prompts_and_aborts_on_no() {
     );
 
     let mut child = jails_cmd(&root, None)
-        .args(["remove", "csv"])
+        .args(["remove", "csv", "--force"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
