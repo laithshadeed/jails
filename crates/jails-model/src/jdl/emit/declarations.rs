@@ -178,6 +178,44 @@ pub(super) fn write_enums(model: &AppModel, out: &mut String) {
     }
 }
 
+/// Refuse an entity whose facets are not carried by its projections.
+///
+/// **The two front ends disagree about which is authoritative, and this is
+/// where that shows.** `.jails/model.toml` sets `facets` directly; `jdl 1`
+/// materialises projections from `use` and *derives* facets from them. So a
+/// TOML model can arrive with `facets = ["record", "repository", "http"]` and
+/// no projections at all -- and inventing the `use` lines here would render a
+/// model that links back with projections the input did not have, which is a
+/// semantic change smuggled into a renderer.
+///
+/// Refusing instead puts it where §22 says it belongs: the upgrade
+/// materialises the projections, says so in its notes, and hands this
+/// function a model that already agrees with itself.
+fn refuse_facets_without_projections(
+    entity: &crate::Entity,
+    uses: &[String],
+    refusals: &mut Vec<Diagnostic>,
+) {
+    for facet in &entity.facets {
+        let Some(kind) = super::projection_for_facet(*facet) else {
+            continue;
+        };
+        let kind = kind.label();
+        if uses
+            .iter()
+            .any(|used| used == kind || used.starts_with(&format!("{kind}(")))
+        {
+            continue;
+        }
+        refuse(
+            refusals,
+            format!("$.entities.{}.facets", entity.label),
+            &format!("a `{facet:?}` facet with no `{kind}` projection to carry it"),
+            &format!("declare `use {kind}` on the entity before rendering it as v1"),
+        );
+    }
+}
+
 pub(super) fn write_entities(model: &AppModel, out: &mut String, refusals: &mut Vec<Diagnostic>) {
     let projections = projections_by_entity(model);
     for entity in model
@@ -200,10 +238,10 @@ pub(super) fn write_entities(model: &AppModel, out: &mut String, refusals: &mut 
             entity.names.java_type,
             entity.id.as_str()
         );
-        if let Some(kinds) = projections.get(&entity.id) {
-            for kind in kinds {
-                let _ = writeln!(out, "  use {kind}");
-            }
+        let uses = projections.get(&entity.id).cloned().unwrap_or_default();
+        refuse_facets_without_projections(entity, &uses, refusals);
+        for kind in &uses {
+            let _ = writeln!(out, "  use {kind}");
         }
         let _ = writeln!(out, "  table {}", json(&entity.names.sql_table));
         for field in &entity.fields {
@@ -256,7 +294,7 @@ pub(super) fn write_entities(model: &AppModel, out: &mut String, refusals: &mut 
         }
         for operation in model.operations.values() {
             if owner(&operation.kind) == Some(&entity.id) {
-                write_operation(model, operation, out, "  ");
+                write_operation(model, operation, out, "  ", refusals);
             }
         }
         out.push_str("}\n\n");

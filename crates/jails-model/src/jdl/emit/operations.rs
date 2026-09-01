@@ -24,12 +24,57 @@ pub(super) fn owner(kind: &OperationKind) -> Option<&EntityId> {
     }
 }
 
-pub(super) fn write_top_level_operations(model: &AppModel, out: &mut String) {
+pub(super) fn write_top_level_operations(
+    model: &AppModel,
+    out: &mut String,
+    refusals: &mut Vec<crate::Diagnostic>,
+) {
     for operation in model.operations.values() {
         if owner(&operation.kind).is_none() {
-            write_operation(model, operation, out, "");
+            write_operation(model, operation, out, "", refusals);
             out.push('\n');
         }
+    }
+}
+
+/// The flat input list a `.jails/model.toml` operation may state instead of
+/// parameters, when it is the only thing stating them.
+///
+/// **v1 has one spelling and it is the parameter list.** The compatibility
+/// front end lets an operation say `fields = ["title"]` with no `parameters`
+/// at all, and `emit_java::input` reads that list when the rich one is empty
+/// -- so it is authority, not a projection, and a renderer that emitted
+/// `command CreateNote()` would drop the request's whole shape. On a v1 source
+/// the same field is *derived* from the parameters, which is why the test is
+/// "flat non-empty while rich is empty" rather than "flat non-empty".
+///
+/// Refused rather than translated, for the reason [`super::storage_capability`]
+/// and [`super::projection_for_facet`] are refused: inventing parameters is a
+/// change to the model, and the renderer's contract is that it states what it
+/// was given. `jails model upgrade` materialises them and says so.
+fn unstated_flat_inputs(operation: &crate::Operation) -> Option<&'static str> {
+    let (flat, parameters) = match &operation.kind {
+        OperationKind::Command(command) => (
+            !command.fields.is_empty(),
+            command.semantics.parameters.is_empty(),
+        ),
+        OperationKind::Query(query) => (
+            !query.filters.is_empty(),
+            query.semantics.parameters.is_empty(),
+        ),
+        OperationKind::Transition(transition) => (
+            !transition.fields.is_empty(),
+            transition.semantics.parameters.is_empty(),
+        ),
+        OperationKind::Event(event) => (
+            !event.fields.is_empty(),
+            event.semantics.parameters.is_empty(),
+        ),
+    };
+    match &operation.kind {
+        OperationKind::Query(_) if flat && parameters => Some("filters"),
+        _ if flat && parameters => Some("fields"),
+        _ => None,
     }
 }
 
@@ -38,7 +83,19 @@ pub(super) fn write_operation(
     operation: &crate::Operation,
     out: &mut String,
     indent: &str,
+    refusals: &mut Vec<crate::Diagnostic>,
 ) {
+    if let Some(flat) = unstated_flat_inputs(operation) {
+        super::refuse(
+            refusals,
+            format!("$.operations.{}.{flat}", operation.label),
+            &format!(
+                "a `{flat}` list with no parameters to carry it (`{}`)",
+                operation.label
+            ),
+            "declare the operation's parameters before rendering it as v1",
+        );
+    }
     let (keyword, parameters, internal) = match &operation.kind {
         OperationKind::Command(command) => (
             "command",

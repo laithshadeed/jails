@@ -14387,11 +14387,28 @@ dialect = "none"
         .unwrap();
     assert!(generated.status.success(), "{generated:?}");
 
+    // **An operation whose inputs only the flat list states.** The TOML front
+    // end lets `fields` stand in for parameters and `emit_java::input` reads
+    // it, so it is the request's whole shape -- and JDL v1 has no flat
+    // spelling for it. The renderer refuses it by name and the upgrade
+    // materialises the parameters, which is the only reason a project with a
+    // command can be carried across at all.
+    let mut source = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    source.push_str(
+        "\n[operations.create_note]\nkind = \"command\"\nid = \"op_create_note\"\non = \"note\"\nfields = [\"title\"]\n",
+    );
+    fs::write(root.join(".jails/model.toml"), source).unwrap();
+
     let upgraded = jails_cmd(&root, None)
         .args(["model", "upgrade", "--to", "1"])
         .output()
         .unwrap();
     assert!(upgraded.status.success(), "{upgraded:?}");
+    let told = String::from_utf8_lossy(&upgraded.stdout);
+    assert!(
+        told.contains("create_note` states its inputs as parameters"),
+        "the translation was silent:\n{told}"
+    );
 
     assert!(
         !root.join(".jails/model.toml").exists(),
@@ -14404,9 +14421,21 @@ dialect = "none"
         "the axes were guessed:\n{jdl}"
     );
     assert!(jdl.contains("build maven"), "the axes were guessed:\n{jdl}");
-    for id in ["project_demo", "ent_note", "fld_note_id", "fld_note_title"] {
+    for id in [
+        "project_demo",
+        "ent_note",
+        "fld_note_id",
+        "fld_note_title",
+        "op_create_note",
+    ] {
         assert!(jdl.contains(id), "stable id `{id}` did not survive:\n{jdl}");
     }
+    // Named for the Java member the flat list rendered, so the request field
+    // an existing caller sends is the one it still sends.
+    assert!(
+        jdl.contains("command CreateNote(title)"),
+        "the flat input list was dropped:\n{jdl}"
+    );
 
     // And the project keeps working on the source it was moved to.
     let after = jails_cmd(&root, None)

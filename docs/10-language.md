@@ -231,10 +231,31 @@ defect caught by running it:
   `spring`/`maven` -- so the first version marked a `new-cli` project
   `platform spring`. §22 says these are inspected once and "never guessed",
   so the upgrade reads them the way the JDL path already did.
+- **The flat input list becomes parameters, and that is what makes the route
+  reach a project with an operation in it at all.** The TOML front end lets an
+  operation state its inputs as `fields = ["title"]` with no parameters, and
+  `emit_java::input` reads exactly that list when the rich one is empty -- so
+  it is the request's whole shape rather than a projection of it, and v1 has
+  one spelling, the parameter list. The renderer refused it as
+  `$.operations.<label>.fields`; before that refusal existed the round trip
+  caught it as an unactionable "does not reproduce its operations", which is
+  the same defect wearing a worse message. The parameter is named for the
+  field's **Java member**, not its label, because the two paths render
+  different component names -- `createdAt` against `created_at` -- and
+  `render_parameter` writes the difference back out as `created_at as
+  createdAt`, so a caller's request field does not move under it.
+- **`projection_for_facet` returns a `ProjectionKind`, not a `use` spelling.**
+  Handing back the label made the upgrade map six strings back to the four
+  values that can reach it, which needs an arm for a case that cannot happen
+  -- a refusal with no next step to name, about a mistake the reader did not
+  make. The R3.4 ratchet caught it.
 
-`a_toml_project_upgrades_onto_jdl_v1_and_the_toml_is_retired_with_it` pins all
-four: the JDL is written, the TOML is retired, every stable id survives, and
-the axes are the project's.
+`a_toml_project_upgrades_onto_jdl_v1_and_the_toml_is_retired_with_it` pins
+five: the JDL is written, the TOML is retired, every stable id survives, the
+axes are the project's, and the command's flat inputs arrive as
+`command CreateNote(title)`.
+`a_flat_input_list_with_no_parameters_refuses_by_name` pins the renderer's
+half, including that the same model *with* parameters renders.
 
 **What is left is deleting the branches.** 31 `is_v1_source` sites, and the
 test surface that reaches them: ~43 references to `.jails/model.toml` in

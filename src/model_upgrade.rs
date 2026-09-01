@@ -168,6 +168,64 @@ fn carry_toml_across(invocation: Invocation) -> Result<()> {
         gained = Some(kind);
     }
 
+    // **The second translation that means something.** The TOML front end sets
+    // `facets` directly; v1 derives them from `use` projections. So a TOML
+    // entity with `facets = ["repository", "http"]` and no projections becomes
+    // a v1 entity with two `use` lines, and the renderer refuses to invent
+    // them rather than change the model behind the reader. They are
+    // materialised here, where the note can say so.
+    let mut projected = Vec::new();
+    for entity in current_model.entities.values() {
+        for facet in &entity.facets {
+            let Some(kind) = jails_model::projection_for_facet(*facet) else {
+                continue;
+            };
+            if current_model.projections.values().any(|projection| {
+                projection.entity == entity.id && projection.kind.label() == kind.label()
+            }) {
+                continue;
+            }
+            projected.push((entity.id.clone(), entity.label.clone(), kind));
+        }
+    }
+    for (entity, label, kind) in &projected {
+        let id = jails_model::ProjectionId::parse(format!(
+            "prj_{}_{}",
+            jails_model::StableId::as_str(entity),
+            kind.label()
+        ))
+        .map_err(|error| Failure::Told(format!("could not assign projection id: {error}")))?;
+        rendered_from
+            .apply(jails_model::ModelPatch::AddProjection(
+                jails_model::Projection {
+                    id,
+                    entity: entity.clone(),
+                    kind: kind.clone(),
+                },
+            ))
+            .map_err(|error| {
+                Failure::Told(format!(
+                    "could not materialize `use {}` on `{label}`: {error}",
+                    kind.label()
+                ))
+            })?;
+    }
+
+    // **The third translation that means something.** `.jails/model.toml` may
+    // state an operation's inputs as a flat `fields`/`filters` list with no
+    // parameters at all, and `emit_java::input` reads that list when the rich
+    // one is empty -- so it is the request's whole shape, and v1 has no
+    // spelling for it. The renderer refuses rather than invent one; they are
+    // materialised here, where the note can say so.
+    //
+    // **The parameter is named for the Java member, not for the label.** The
+    // flat path renders a component called `createdAt` and the parameter path
+    // renders one called by the parameter's name, so materialising
+    // `created_at` would rename a request field on a project that had not
+    // asked for it. `render_parameter` writes the alias back out as
+    // `created_at as createdAt`, which links to the same pair.
+    let carried = materialize_flat_inputs(&mut rendered_from)?;
+
     // Rendered from the linked model, and `render_jdl_v1` parses and links
     // what it wrote before returning it -- so a construct it cannot state
     // refuses here rather than producing a model that quietly lost a field.
@@ -177,6 +235,17 @@ fn carry_toml_across(invocation: Invocation) -> Result<()> {
         .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
     if invocation.output == crate::Output::Human {
         println!("note: `{TOML_PATH}` is retired by this plan; `{JDL_PATH}` replaces it");
+        for label in &carried {
+            println!(
+                "note: `{label}` states its inputs as parameters, which JDL v1 has no flat spelling for"
+            );
+        }
+        for (_, label, kind) in &projected {
+            println!(
+                "note: `{label}` gains `use {}`, which its facets already implied",
+                kind.label()
+            );
+        }
         if let Some(kind) = gained {
             println!(
                 "note: `storage {}` materializes the `{kind}` capability, which this model did not declare",
@@ -236,6 +305,95 @@ pub(crate) fn axes(build: BuildSystem, spring_boot: Option<&str>) -> Result<JdlA
         },
         build,
     })
+}
+
+/// Every operation whose inputs only the flat list states, given parameters.
+///
+/// Returns the labels it changed, so the command can say which operations
+/// moved. An operation that already declares parameters is left alone: the
+/// rich form wins wherever both are present, which is the rule the linker
+/// applies to `order` and `limit` too.
+fn materialize_flat_inputs(model: &mut jails_model::AppModel) -> Result<Vec<String>> {
+    let mut carried = Vec::new();
+    let mut materialized = Vec::new();
+    for operation in model.operations.values() {
+        let (owner, flat, empty) = match &operation.kind {
+            jails_model::OperationKind::Command(command) => (
+                Some(&command.on),
+                &command.fields,
+                command.semantics.parameters.is_empty(),
+            ),
+            jails_model::OperationKind::Query(query) => (
+                Some(&query.on),
+                &query.filters,
+                query.semantics.parameters.is_empty(),
+            ),
+            jails_model::OperationKind::Transition(transition) => (
+                Some(&transition.on),
+                &transition.fields,
+                transition.semantics.parameters.is_empty(),
+            ),
+            jails_model::OperationKind::Event(event) => (
+                event.on.as_ref(),
+                &event.fields,
+                event.semantics.parameters.is_empty(),
+            ),
+        };
+        if flat.is_empty() || !empty {
+            continue;
+        }
+        let Some(owner) = owner else {
+            return Err(Failure::Told(format!(
+                "`{}` states input fields without an entity to read them from.\n       fix: give the operation an `on` entity, or state its parameters",
+                operation.label
+            )));
+        };
+        let Some(entity) = model.entities.get(owner) else {
+            continue;
+        };
+        let mut parameters = Vec::new();
+        for id in flat {
+            let Some(field) = entity.fields.iter().find(|field| &field.id == id) else {
+                continue;
+            };
+            parameters.push(jails_model::OperationParameter {
+                name: field.names.java_member.clone(),
+                source: jails_model::ParameterSource::Field(jails_model::VisibleField {
+                    entity: owner.clone(),
+                    field: field.id.clone(),
+                    qualifier: None,
+                }),
+                required: true,
+                optional_filter: false,
+                constraints: jails_model::ParameterConstraints::default(),
+            });
+        }
+        if parameters.is_empty() {
+            continue;
+        }
+        materialized.push((operation.id.clone(), parameters));
+        carried.push(operation.label.clone());
+    }
+    for (id, parameters) in materialized {
+        let Some(operation) = model.operations.get_mut(&id) else {
+            continue;
+        };
+        match &mut operation.kind {
+            jails_model::OperationKind::Command(command) => {
+                command.semantics.parameters = parameters;
+            }
+            jails_model::OperationKind::Query(query) => {
+                query.semantics.parameters = parameters;
+            }
+            jails_model::OperationKind::Transition(transition) => {
+                transition.semantics.parameters = parameters;
+            }
+            jails_model::OperationKind::Event(event) => {
+                event.semantics.parameters = parameters;
+            }
+        }
+    }
+    Ok(carried)
 }
 
 #[cfg(test)]

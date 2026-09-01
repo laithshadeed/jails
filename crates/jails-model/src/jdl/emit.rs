@@ -129,6 +129,35 @@ pub(super) fn refuse(
     ));
 }
 
+/// The projection that carries a facet, where one does.
+///
+/// **One authority, two callers** -- the same shape as
+/// [`storage_capability`]. The renderer refuses an entity whose facets its
+/// projections do not carry; the upgrade off `.jails/model.toml` materialises
+/// those projections, because the TOML front end sets facets directly and v1
+/// derives them. `Record` is every entity's by default and `Enum` is not an
+/// entity facet, so neither needs one; `Search` and `Events` return `None`
+/// because a facet carries neither a field list nor an operation set.
+///
+/// **Typed rather than a label**, so the upgrade can hand the answer straight
+/// to `AddProjection`. Returning the `use` spelling made the caller map it
+/// back, and a match over six strings that only four values can reach needs a
+/// refusal arm for a case that cannot happen -- a message with no next step to
+/// name, about a mistake the reader did not make.
+pub fn projection_for_facet(facet: crate::Facet) -> Option<crate::ProjectionKind> {
+    match facet {
+        crate::Facet::Repository => Some(crate::ProjectionKind::Repository),
+        crate::Facet::Service => Some(crate::ProjectionKind::Service),
+        crate::Facet::Http => Some(crate::ProjectionKind::Http { path: None }),
+        crate::Facet::Dto => Some(crate::ProjectionKind::Dto),
+        crate::Facet::Factory => Some(crate::ProjectionKind::Factory),
+        crate::Facet::Seed => Some(crate::ProjectionKind::Seed),
+        crate::Facet::Record | crate::Facet::Enum | crate::Facet::Search | crate::Facet::Events => {
+            None
+        }
+    }
+}
+
 /// The capability a primary storage axis materialises, if any.
 ///
 /// **One authority, two callers.** JDL v1 reads `storage postgres` as a `db`
@@ -148,7 +177,7 @@ fn write_document(model: &AppModel, refusals: &mut Vec<Diagnostic>) -> String {
     write_project_declarations(model, &mut out, refusals);
     write_enums(model, &mut out);
     write_entities(model, &mut out, refusals);
-    write_top_level_operations(model, &mut out);
+    write_top_level_operations(model, &mut out, refusals);
     write_components(model, &mut out, refusals);
     for ejection in model.ejections.values() {
         let _ = writeln!(
@@ -307,6 +336,78 @@ component service Pricing
         let model =
             super::super::parse(&example).expect("§4 links once its one recorded gap is removed");
         render(&model).expect("the specification's own example must round trip");
+    }
+
+    /// **The compatibility spelling that is authority, not a projection.**
+    /// `.jails/model.toml` may state an operation's inputs as a flat `fields`
+    /// list with no parameters, and `emit_java::input` reads exactly that list
+    /// when the rich one is empty -- so a renderer that emitted
+    /// `command CreateNote()` would drop the request's whole shape and the
+    /// round trip would catch it as an unhelpful "does not reproduce its
+    /// operations". It refuses by name instead, and `jails model upgrade`
+    /// materialises the parameters where the change can be said out loud.
+    #[test]
+    fn a_flat_input_list_with_no_parameters_refuses_by_name() {
+        const TOML: &str = r#"
+schema = "jails.model.v1"
+
+[project]
+id = "project_notes"
+name = "Notes"
+base_package = "com.example.notes"
+java_release = 26
+dialect = "none"
+
+[entities.note]
+id = "ent_note"
+facets = ["record"]
+
+[entities.note.fields.id]
+id = "fld_note_id"
+type = "uuid"
+primary_key = true
+
+[entities.note.fields.title]
+id = "fld_note_title"
+type = "string"
+
+[operations.create_note]
+kind = "command"
+id = "op_create_note"
+on = "note"
+fields = ["title"]
+"#;
+        let model = crate::parse_toml(TOML).expect("the compatibility input links");
+        let refused = render(&model).expect_err("a flat input list has no v1 spelling");
+        let told = refused.to_string();
+        assert!(
+            told.contains("$.operations.create_note.fields"),
+            "the refusal does not name the construct:\n{told}"
+        );
+        assert!(
+            told.contains("no parameters to carry it"),
+            "the refusal does not say why:\n{told}"
+        );
+        // The same model with parameters is renderable, so the refusal is
+        // about the flat spelling rather than about the operation.
+        let mut stated = model.clone();
+        if let Some(operation) = stated.operations.values_mut().next()
+            && let crate::OperationKind::Command(command) = &mut operation.kind
+        {
+            command.semantics.parameters = vec![crate::OperationParameter {
+                name: "title".to_string(),
+                source: crate::ParameterSource::Field(crate::VisibleField {
+                    entity: command.on.clone(),
+                    field: command.fields[0].clone(),
+                    qualifier: None,
+                }),
+                required: true,
+                optional_filter: false,
+                constraints: crate::ParameterConstraints::default(),
+            }];
+        }
+        let rendered = render(&stated).expect("parameters are statable");
+        assert!(rendered.contains("command CreateNote(title)"), "{rendered}");
     }
 
     #[test]
