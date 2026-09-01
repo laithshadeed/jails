@@ -48,22 +48,24 @@ depends = ["lint"]
 # test; this one does both, and a compile error still stops the run at the
 # first error, in the same place it did before.
 #
-# **The suite's thirty-three binaries run concurrently now**, through
-# `scripts/run-tests.py`. `cargo test` runs them one after another -- the sum
-# of the per-target times was within four seconds of the whole run's wall
-# clock -- and on CI `cli` is 202s while the other thirty-two are 74s that
-# could have finished inside it.
+# **The binaries run one after another, and that is the measured answer rather
+# than a limitation.** They ran concurrently for a while, through a python
+# runner that started sixteen at a time; that bought a real overlap while no
+# single binary dominated, and stopped buying one once `cli` grew to be
+# essentially the whole run. What it never stopped costing was memory -- its
+# budget counted Maven processes and never their footprint -- and it was
+# SIGKILLed by the OOM killer 179s into a run capped at 10 GB, where plain
+# `cargo test --workspace` finishes the same 1991 tests in 275.7s inside 8 GB.
+# It is deleted; CLAUDE.md's "How the suite stays fast" carries the numbers.
 #
-# This was deliberately *not* the gate until now, and the reason it could not
-# be is fixed rather than waived: the Maven permit budget was a `Mutex` and a
-# `Condvar`, so each binary believed it owned all six permits and thirty-three
-# of them oversubscribed the machine. It is a `flock` budget shared across
-# processes now (`tests/common/mod.rs`), so the whole run has one budget
-# however it is launched.
+# The Maven permit budget stays a `flock` shared across processes
+# (`tests/common/mod.rs`). It is no longer needed to stop one runner
+# oversubscribing the machine, but it is what keeps the budget true when a
+# second shell runs the suite while the first still is -- which an in-process
+# `Mutex` cannot see.
 #
-# It is still one answer to "is this green": same binaries from `cargo test
-# --no-run`, same filters, same exit status. What it adds is a python3
-# dependency for the gate, which is the cost this trade accepts.
+# It is one answer to "is this green", and now with no python3 dependency for
+# the gate at all.
 #
 # **One command, and the Gradle example no longer needs a second.** It used to
 # be skipped here and then run by a `cargo test` of its own under
