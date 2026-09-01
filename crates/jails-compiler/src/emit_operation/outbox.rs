@@ -40,6 +40,7 @@ const MAIN_ROOT: &str = ".jails/generated/main/java";
 
 const STORE: &str = include_str!("../../../../templates/spring/outbox_store_java.java");
 const SINK: &str = include_str!("../../../../templates/spring/outbox_sink_java.java");
+const KAFKA_SINK: &str = include_str!("../../../../templates/spring/outbox_kafka_sink_java.java");
 const LOGGING_SINK: &str =
     include_str!("../../../../templates/spring/outbox_logging_sink_java.java");
 const WORKER: &str = include_str!("../../../../templates/spring/outbox_worker_java.java");
@@ -235,7 +236,39 @@ fn files(
         .replace("{{usecase}}", usecase)
         .replace("{{property}}", &property);
 
-    Ok(vec![
+    // **The broker is a destination, not the relay's business.** The worker
+    // walks the sink chain and knows nothing about Kafka; declaring the
+    // capability is what puts a Kafka sink in that chain, and a project
+    // without one keeps the logging sink and its WARN.
+    let mut files = Vec::new();
+    if model
+        .capabilities
+        .values()
+        .any(|capability| capability.kind == "kafka")
+    {
+        let messaging = model.project.package_for(Package::Messaging);
+        let publisher = format!("{}Publisher", event.names.java_type);
+        let kafka = KAFKA_SINK
+            .replace("{{pkg}}", &jobs)
+            .replace("{{event_import}}", &event_import)
+            .replace(
+                "{{publisher_import}}",
+                &import(&jobs, &messaging, &publisher),
+            )
+            .replace("{{usecase}}", usecase)
+            .replace("{{event}}Publisher", &publisher)
+            .replace("{{event}}Event", &event_type);
+        files.push(rendered(
+            operation,
+            "outbox_kafka_sink",
+            &jobs,
+            &format!("{usecase}KafkaOutboxSink"),
+            kafka,
+            true,
+        )?);
+    }
+
+    files.extend([
         rendered(
             operation,
             "outbox_store",
@@ -270,7 +303,8 @@ fn files(
             worker,
             true,
         )?,
-    ])
+    ]);
+    Ok(files)
 }
 
 /// Refuse when a capability the rendered Java names is not in the model.

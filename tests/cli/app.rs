@@ -961,13 +961,28 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         )
         .is_file()
     );
+    // **One bean, one transaction.** The legacy generator wrapped the use case
+    // in a second `Outbox<X>UseCase` that delegated to a storing one and
+    // staged afterwards, because it had already written a service it could not
+    // reach inside. Here the command *port* is the ABI and `Jdbc<X>Command` is
+    // its one implementation, so staging goes in the statement's own method
+    // under `@Transactional` -- with no `@Primary` deciding which of two
+    // implementations Spring injects.
     assert!(
-        common::generated(
+        !common::generated(
             &root,
             "src/main/java/com/example/demo/service/OutboxReceiveMessageUseCase.java"
         )
-        .is_file()
+        .exists(),
+        "the outbox must not be a second bean in front of the command"
     );
+    let command = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/jdbc/JdbcReceiveMessageCommand.java",
+    ))
+    .unwrap();
+    assert!(command.contains("@Transactional"), "{command}");
+    assert!(command.contains("outbox.stage("), "{command}");
     let outbox = fs::read_to_string(common::generated(
         &root,
         "src/main/java/com/example/demo/jobs/JdbcReceiveMessageOutbox.java",
@@ -988,10 +1003,12 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         )
         .is_file()
     );
+    // The port, not a service in front of it: `application/transitions` is the
+    // ABI every adapter and controller names.
     assert!(
         common::generated(
             &root,
-            "src/main/java/com/example/demo/service/ChangeConversationStatusUseCase.java"
+            "src/main/java/com/example/demo/application/transitions/ChangeConversationStatusTransition.java"
         )
         .is_file()
     );
@@ -1005,8 +1022,11 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         transition.contains("public class JdbcChangeConversationStatusTransition"),
         "{transition}"
     );
+    // `:scope_` prefixes the bound claim rather than the column name, so a
+    // scoped entity that also has a `workspaceId` *field* binds two distinct
+    // parameters instead of one that silently wins.
     assert!(
-        transition.contains("workspace_id = :workspace_id"),
+        transition.contains("workspace_id = :scope_workspace_id"),
         "{transition}"
     );
     assert!(
@@ -1026,7 +1046,7 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         "{assignment_transition}"
     );
     assert!(
-        assignment_transition.contains("workspace_id = :workspace_id"),
+        assignment_transition.contains("workspace_id = :scope_workspace_id"),
         "{assignment_transition}"
     );
     assert!(
@@ -1083,31 +1103,67 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         "src/main/java/com/example/demo/web/ContactsByWorkspaceQueryController.java",
     ))
     .unwrap();
-    assert!(contacts.contains("scopeAuthorizer.require"), "{contacts}");
+    // The claim reaches the query as an `ExecutionContext` entry rather than
+    // as an authorization call the controller makes and discards: the scoped
+    // predicate is in the statement, so the value has to travel to it.
+    assert!(
+        contacts.contains(r#"scopes.claim(authentication, "workspaceId")"#),
+        "{contacts}"
+    );
+    assert!(contacts.contains("ExecutionContext"), "{contacts}");
+    // One controller per operation, so a scoped creation endpoint cannot
+    // accidentally also serve a read the model never declared.
     let contact_controller = fs::read_to_string(common::generated(
         &root,
-        "src/main/java/com/example/demo/web/ContactController.java",
+        "src/main/java/com/example/demo/web/CreateContactController.java",
     ))
     .unwrap();
-    assert!(contact_controller.contains("Scope-safe creation endpoint"));
     assert!(
-        !contact_controller.contains("@GetMapping"),
+        contact_controller.contains("RequestMethod.POST"),
+        "{contact_controller}"
+    );
+    assert!(
+        !contact_controller.contains("RequestMethod.GET"),
         "{contact_controller}"
     );
     assert!(root.join("Dockerfile").is_file());
     assert!(root.join(".github/workflows/ci.yml").is_file());
+    // One forward migration per change rather than one per replayed row: a
+    // table, each of its indexes, and each declared relation's foreign key are
+    // separate statements with separate names, so a history reads as a list of
+    // what happened rather than as `evolve_application_schema` twenty times.
+    let migrations = fs::read_dir(root.join("src/main/resources/db/migration"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    let inbox = migrations
+        .iter()
+        .find(|name| name.ends_with("__create_inboxes.sql"))
+        .expect("the inbox table has its own migration");
     let inbox_migration =
-        fs::read_to_string(root.join("src/main/resources/db/migration/V003__create_inboxes.sql"))
-            .unwrap();
+        fs::read_to_string(root.join("src/main/resources/db/migration").join(inbox)).unwrap();
     assert!(
         inbox_migration.contains("create table inboxes"),
         "{inbox_migration}"
     );
+    // Eight entity tables plus the outbox, eight indexes, ten foreign keys.
     assert_eq!(
-        fs::read_dir(root.join("src/main/resources/db/migration"))
-            .unwrap()
-            .count(),
-        20
+        (
+            migrations
+                .iter()
+                .filter(|name| name.contains("__create_"))
+                .count(),
+            migrations
+                .iter()
+                .filter(|name| name.contains("__add_idx_"))
+                .count(),
+            migrations
+                .iter()
+                .filter(|name| name.contains("__add_fk_"))
+                .count(),
+        ),
+        (9, 8, 10),
+        "{migrations:?}"
     );
 }
 

@@ -980,8 +980,14 @@ fn verified_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::P
                 // project no unit test can observe, so a mapping written
                 // backwards read exactly like a correct one. Twelve relations
                 // across the three applications.
-                reports: 53,
-                tests: 68,
+                //
+                // **53 -> 56 when a declared event gained its Kafka slice.**
+                // The publisher and the listener are a contract nothing
+                // executed either: `MessagingIT` publishes through a real
+                // broker and waits for the record to come back, matched by id
+                // so it cannot pass on a neighbour's message.
+                reports: 56,
+                tests: 71,
                 failures: 0,
                 errors: 0,
                 skipped: 0,

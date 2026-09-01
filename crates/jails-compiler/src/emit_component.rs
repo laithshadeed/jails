@@ -32,7 +32,7 @@ mod command;
 mod durable_job;
 mod fetcher;
 mod handler;
-mod http_sink;
+pub(crate) mod http_sink;
 mod http_workflow;
 mod idempotency;
 mod job;

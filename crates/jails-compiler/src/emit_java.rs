@@ -527,6 +527,34 @@ fn import_declared_types(model: &AppModel, fields: &[&Field], imports: &mut BTre
     }
 }
 
+/// The component names an event's record declares, in order.
+///
+/// **The same two sources the record body reads**, so a caller asking which
+/// component carries an entity's identity cannot get an answer the record
+/// disagrees with. `sample` in `emit_component::http_sink` walks the
+/// parameters for the same reason.
+pub(crate) fn event_component_names(
+    model: &AppModel,
+    event: &jails_model::Event,
+) -> Result<Vec<String>, CompileError> {
+    if !event.semantics.parameters.is_empty() {
+        return Ok(event
+            .semantics
+            .parameters
+            .iter()
+            .map(|parameter| parameter.name.clone())
+            .collect());
+    }
+    let Some(entity_id) = event.on.as_ref() else {
+        return Ok(Vec::new());
+    };
+    let owner = entity(model, entity_id)?;
+    Ok(fields(owner, &event.fields)?
+        .into_iter()
+        .map(|field| field.names.java_member.clone())
+        .collect())
+}
+
 fn parameter_components<'a>(
     model: &'a AppModel,
     parameters: &'a [OperationParameter],

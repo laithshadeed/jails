@@ -12,6 +12,7 @@ mod emit_enum;
 mod emit_factory;
 mod emit_http;
 mod emit_java;
+mod emit_messaging;
 mod emit_operation;
 mod emit_relation;
 mod emit_resource_http;

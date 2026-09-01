@@ -191,7 +191,7 @@ fn staging_command<'a>(
 /// project-owned type is one jails cannot construct, and emitting a guess
 /// would produce a test that does not compile while emitting nothing would
 /// drop the coverage silently.
-fn sample(
+pub(crate) fn sample(
     model: &AppModel,
     event: &Operation,
 ) -> Result<(String, bool, BTreeSet<String>), CompileError> {

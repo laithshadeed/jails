@@ -1706,10 +1706,23 @@ fn add_kafka_and_generate_event_compile_against_real_spring() {
         &root,
         "src/main/java/com/example/demo/messaging/PayoutSettledEvent.java",
     );
-    assert!(
-        event.contains(
-            "record PayoutSettledEvent(UUID id, UUID payoutId, BigDecimal amount, Instant occurredAt)"
-        ),
+    // One component per line, in declaration order: a Java record's positional
+    // constructor is ABI, so the order is what the assertion is about.
+    let components = event
+        .lines()
+        .skip_while(|line| !line.starts_with("public record PayoutSettledEvent("))
+        .skip(1)
+        .take_while(|line| !line.starts_with(')'))
+        .map(|line| line.trim().trim_end_matches(',').to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        components,
+        [
+            "UUID id",
+            "UUID payoutId",
+            "BigDecimal amount",
+            "Instant occurredAt"
+        ],
         "{event}"
     );
 
