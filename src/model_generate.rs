@@ -456,7 +456,7 @@ fn reject_unsupported_options(args: &GenerateArgs, profile: &EntityProfile) -> R
         ),
         (args.strategy_on.is_some(), "--on", "operations"),
         (args.strategy_yields.is_some(), "--yields", "operations"),
-        (args.via.is_some(), "--via", "queries"),
+        (args.via.is_some(), "--via", "a query or a use case"),
         (args.order_by.is_some(), "--order-by", "queries"),
         (args.limit.is_some(), "--limit", "queries"),
         (args.on_conflict.is_some(), "--on-conflict", "use cases"),
@@ -466,7 +466,7 @@ fn reject_unsupported_options(args: &GenerateArgs, profile: &EntityProfile) -> R
             "the kinds that answer a route",
         ),
         (args.select.is_some(), "--select", "transitions"),
-        (!args.set.is_empty(), "--set", "transitions"),
+        (!args.set.is_empty(), "--set", "a use case or a transition"),
         (args.if_match.is_some(), "--if-match", "transitions"),
         (!args.bind.is_empty(), "--bind", "a controller"),
         (

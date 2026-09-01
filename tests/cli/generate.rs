@@ -7266,12 +7266,10 @@ fn a_transition_insists_on_the_precondition_unless_it_was_asked_not_to() {
         .unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    // The refusal names the field and the two roles it cannot hold at once.
-    assert!(stderr.contains("fld_note_id"), "{stderr}");
-    assert!(
-        stderr.contains("also appears in select or update"),
-        "{stderr}"
-    );
+    // The refusal names the field and the two roles it cannot hold at once,
+    // in the reader's spelling rather than the linker's stable id.
+    assert!(stderr.contains("`id` identifies the row"), "{stderr}");
+    assert!(stderr.contains("fix:"), "{stderr}");
 }
 
 /// A form-bound endpoint's own generated test passes.

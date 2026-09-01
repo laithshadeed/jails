@@ -326,10 +326,51 @@ pub(super) fn operation_declaration(
                     java_to_label(&parent_type)
                 ))
             })?;
-        for field in fields {
-            let Some((_, member)) = field.split_once('.') else {
-                continue;
-            };
+        // **Which component identifies the parent is the reader's to state,
+        // and jails' to refuse when they have not.** A qualified
+        // `Author.email` says it outright; an unqualified list says it by
+        // naming exactly one component the parent has. Zero and two are both
+        // failures with an answer, and the compiler's own refusal -- "cannot
+        // construct required field `author_id`" -- names a column the reader
+        // never typed.
+        // **The caller states which component identifies the parent, and the
+        // field list says so by resolving against it.** A field the child does
+        // not declare is qualified with the parent's alias on the way in --
+        // `author.email` -- so the lookup is whichever fields did that. Zero
+        // and two are both failures with an answer, and the compiler's own
+        // refusals name a column (`author_id`) or a uniqueness rule the reader
+        // never typed.
+        let lookups = fields
+            .iter()
+            .filter_map(|field| field.split_once('.'))
+            .map(|(_, member)| member.split(':').next().unwrap_or(member).to_string())
+            .collect::<Vec<_>>();
+        let candidates = parent
+            .fields
+            .iter()
+            .filter(|field| !field.primary_key)
+            .map(|field| format!("`{}`", field.names.java_member))
+            .collect::<Vec<_>>()
+            .join(", ");
+        match lookups.len() {
+            1 => {}
+            0 => {
+                return Err(Failure::Told(format!(
+                    "`--via {parent_type}` resolves the foreign key from a component the caller states, and none of its fields names a component of {parent_type}.\n       fix: carry one of {candidates}"
+                )));
+            }
+            count => {
+                return Err(Failure::Told(format!(
+                    "`--via {parent_type}` resolves one foreign key, and this use case names {count} components of {parent_type}.\n       fix: keep one of {}",
+                    lookups
+                        .iter()
+                        .map(|member| format!("`{member}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )));
+            }
+        }
+        for member in lookups {
             output.push_str(&format!(
                 "    resolve {} from {parent_type}.{} where {parent_type}.{member} = {member}\n",
                 foreign_key.label, parent_key.label
@@ -423,12 +464,31 @@ pub(super) fn operation_declaration(
         }
     }
     if v1 {
+        let target = model
+            .entities
+            .values()
+            .find(|candidate| candidate.label == entity_label);
         for assignment in &args.set {
             let (component, value) = assignment.split_once('=').ok_or_else(|| {
                 Failure::Told(format!(
                     "`{assignment}` is not a pinned component\n       fix: write `<component>=<value>`, for example `seen=true`"
                 ))
             })?;
+            // **Refused before any type is consulted.** A pin is a constant
+            // this project declares, and anything an expression could hide in
+            // never reaches a type at all -- so the message is about the value
+            // rather than about the component whose type it failed to be.
+            if let Some(character) = value
+                .chars()
+                .find(|character| "()\\\"'`;{}<>".contains(*character) || character.is_control())
+            {
+                return Err(Failure::Told(format!(
+                    "`{value}` contains `{character}`, so it is not a literal.\n       fix: pin a constant -- a number, `true`, `false`, a plain string, or an enum constant"
+                )));
+            }
+            if let Some(target) = target {
+                refuse_unpinnable(model, target, &args.fields, component, value)?;
+            }
             output.push_str(&format!(
                 "    set {} = {}\n",
                 java_to_label(component),
@@ -612,6 +672,120 @@ pub(super) fn operation_declaration(
 /// `true`, `false` and a number are bare; anything else is a quoted string.
 /// The grammar's `take_literal` draws the same line, and quoting a boolean
 /// would make `set seen = "true"` a text assignment to a boolean column.
+/// Everything a pin can be wrong about, refused before anything is written.
+///
+/// **The literal is resolved against the component's declared type**, which is
+/// the whole reason `--set` is not a passthrough: `senderType=SHOUTING` is
+/// text that renders and Java that does not compile, in a file the reader did
+/// not write. The model already holds the type and the enum's constants, so
+/// none of this is read off disk.
+fn refuse_unpinnable(
+    model: &jails_model::AppModel,
+    target: &jails_model::Entity,
+    declared: &[String],
+    component: &str,
+    value: &str,
+) -> Result<()> {
+    let label = java_to_label(component);
+    let Some(field) = target.fields.iter().find(|field| field.label == label) else {
+        return Err(Failure::Told(format!(
+            "`{}` has no component with that name.\n       fix: pin one of {}",
+            target.names.java_type,
+            target
+                .fields
+                .iter()
+                .map(|field| format!("`{}`", field.names.java_member))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    };
+    // A pin the caller can override is not a pin, so one of the two has to
+    // go. Checked against what the reader typed rather than the filtered
+    // parameter list, which has already had the pinned components taken out of
+    // it -- so the collision would never be visible there.
+    if declared
+        .iter()
+        .any(|field| java_to_label(field.split(':').next().unwrap_or(field)) == label)
+    {
+        // The primary key is the sharper case of the same mistake: it selects
+        // the row rather than being written to it, so a pin of it is a value
+        // that would have to be two things at once.
+        if field.primary_key {
+            return Err(Failure::Told(format!(
+                "`{component}` identifies the row, so it cannot also be a value this endpoint writes.\n       fix: drop the `--set`, and change a component that is not the key"
+            )));
+        }
+        return Err(Failure::Told(format!(
+            "this endpoint both accepts `{component}` and pins it, and a pin the caller can override is not one.\n       fix: drop `{component}` from the field list, or drop the `--set`"
+        )));
+    }
+    match &field.ty {
+        // A pinned instant is a timestamp frozen at generation time, which is
+        // never what anyone means. `@default(now())` is the declaration that
+        // says "when the row was written".
+        jails_model::TypeRef::Builtin(builtin) if temporal(*builtin) => {
+            Err(Failure::Told(format!(
+                "`{component}` is a moment in time, and a pin is a constant this project declares -- not a value with a lifetime of its own.\n       fix: declare it `@default(now())`, or carry it in the request"
+            )))
+        }
+        jails_model::TypeRef::Builtin(jails_model::BuiltinType::Boolean)
+            if !matches!(value, "true" | "false") =>
+        {
+            Err(Failure::Told(format!(
+                "`{component}` is a boolean and `{value}` is not one.\n       fix: pin `true` or `false`"
+            )))
+        }
+        jails_model::TypeRef::Builtin(builtin)
+            if numeric(*builtin) && value.parse::<f64>().is_err() =>
+        {
+            Err(Failure::Told(format!(
+                "`{component}` is a number and `{value}` is not one.\n       fix: write a number"
+            )))
+        }
+        jails_model::TypeRef::External(name) => {
+            let Some(declared) = model
+                .entities
+                .values()
+                .find(|entity| &entity.names.java_type == name)
+                .filter(|entity| entity.facets.contains(&jails_model::Facet::Enum))
+            else {
+                return Err(Failure::Told(format!(
+                    "`{component}` is a `{name}`, and the only project type jails can resolve a constant of is an enum it declares.\n       fix: declare `{name}` with `jails g enum`, or carry `{component}` in the request"
+                )));
+            };
+            if declared
+                .enum_constants
+                .iter()
+                .any(|constant| constant.java_name == value)
+            {
+                return Ok(());
+            }
+            Err(Failure::Told(format!(
+                "`{value}` is not a constant of {name}.\n       fix: pin one of {}",
+                declared
+                    .enum_constants
+                    .iter()
+                    .map(|constant| constant.java_name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Whether this builtin carries a moment rather than a value.
+fn temporal(builtin: jails_model::BuiltinType) -> bool {
+    use jails_model::BuiltinType::{Date, DateTime, Instant};
+    matches!(builtin, Instant | Date | DateTime)
+}
+
+/// Whether a pin of this builtin has to parse as a number.
+fn numeric(builtin: jails_model::BuiltinType) -> bool {
+    use jails_model::BuiltinType::{Decimal, Double, Integer, Long};
+    matches!(builtin, Integer | Long | Double | Decimal)
+}
+
 fn literal(value: &str) -> String {
     if matches!(value, "true" | "false") || value.parse::<f64>().is_ok() {
         return value.to_string();
