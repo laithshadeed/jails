@@ -77,9 +77,9 @@ are replacing it; `jails-protocol/src/vocabulary/coordinate.rs` reads a plugin
 block as a protocol value. Four of the five are the strangler migration, so the
 duplication is deliberate until the cutover -- and the ratchet exists so a
 *sixth* answer cannot appear while it is going on, which is the failure a
-migration invites. `jails-project/src/junit.rs` is deliberately below the bar:
-it matches one element to read one artifact's version, which is a lookup rather
-than an opinion about structure.
+migration invites. `jails-workspace/src/capture/observe.rs`'s `junit_version`
+is deliberately below the bar: it matches one element to read one artifact's
+version, which is a lookup rather than an opinion about structure.
 
 **Exit:** delete `pom.rs` once the document backend is trusted. This is the
 cutover decision, not a refactor.

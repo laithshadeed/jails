@@ -891,11 +891,15 @@ pub(crate) const BUILTIN_RS: &str = "jails-model/src/builtin.rs";
 /// tree -- `jails-workspace/src/{capture,documents}.rs` and
 /// `documents/build_feature.rs`.
 ///
-/// `jails-project/src/junit.rs` is deliberately *below* the bar: it matches on
-/// one element to read one artifact's version, which is a lookup rather than a
-/// scanner. Two distinct elements is what separates "asks the pom a question"
-/// from "has an opinion about its structure", and it is the second that
-/// duplicates.
+/// `jails-workspace/src/capture/observe.rs`'s `junit_version` is deliberately
+/// *below* the bar: it matches on one element to read one artifact's version,
+/// which is a lookup rather than a scanner. Two distinct elements is what
+/// separates "asks the pom a question" from "has an opinion about its
+/// structure", and it is the second that duplicates.
+///
+/// It used to be `jails-project/src/junit.rs`, which was a second copy of that
+/// rule with no callers left and is deleted. The exemption belongs to the
+/// question, not to the file that happened to ask it.
 pub(crate) const MAVEN_XML_PARSERS: usize = 5;
 
 /// `# jails:` marker literals outside the crate that owns the format.
