@@ -328,7 +328,35 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
                     args.name
                 )));
             }
-            if added.is_empty() || !unchanged {
+            // **A projection the entity has not got is an addition too.**
+            // `g record Post` then `g scaffold Post` asks for the repository,
+            // service, DTO and HTTP facets over the record that is already
+            // there, which is the order a reader types them in.
+            if unchanged
+                && let Some((next_source, patches)) =
+                    facet::add_facets(&current_source, existing, &requested.facets)?
+            {
+                let patch = ModelPatch::Batch(patches);
+                let patch_bytes = serde_json::to_vec(&serde_json::json!({
+                    "kind": "add-facets",
+                    "entity": entity_id,
+                }))
+                .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
+                finish_generation(PreparedMutation {
+                    name: args.name.clone(),
+                    invocation: invocation.clone(),
+                    model_path: model_path.clone(),
+                    current_source: current_source.clone(),
+                    current_model: current_model.clone(),
+                    next_source,
+                    patch,
+                    patch_bytes,
+                    authored_migration: None,
+                })?;
+                if added.is_empty() {
+                    return Ok(());
+                }
+            } else if added.is_empty() || !unchanged {
                 return Err(Failure::Told(format!(
                     "canonical entity `{}` is already declared with a different shape.\n       fix: evolve it with `jails g field`, `jails resource field`, or `jails rename resource`",
                     args.name

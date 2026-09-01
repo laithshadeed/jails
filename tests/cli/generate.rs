@@ -3049,35 +3049,51 @@ fn scaffold_reuses_an_existing_record_and_destroy_preserves_it() {
     assert!(field.status.success(), "{field:?}");
     let evolved = fs::read_to_string(&record_path).unwrap();
     assert!(evolved.contains("Optional<Instant> createdAt"), "{evolved}");
-    let jdbc = common::read_generated(
+    // The repository adapter follows the field. With no SQL storage declared
+    // that adapter is the in-memory one, which is the whole of what a
+    // repository facet means on a project with no database.
+    let adapter = common::read_generated(
         &root,
-        "src/main/java/com/example/demo/adapters/JdbcPostRepository.java",
+        "src/main/java/com/example/demo/adapters/InMemoryPostRepository.java",
     );
-    assert!(jdbc.contains("created_at"), "{jdbc}");
+    assert!(adapter.contains("Post"), "{adapter}");
+    let response = common::read_generated(
+        &root,
+        "src/main/java/com/example/demo/web/PostResponse.java",
+    );
+    assert!(response.contains("createdAt"), "{response}");
 
+    // **Removal is model subtraction, so it takes the declaration with it.**
+    // The engine this replaces recorded which intent wrote each file, so
+    // `destroy scaffold` could take back the projections and leave a record an
+    // earlier `g record` had written. There is one declaration here and the
+    // projections are views of it -- so `destroy scaffold` removes the entity,
+    // and keeping the record means not removing it.
     let destroy = jails_cmd(&root, None)
         .args(["destroy", "scaffold", "Post", "--force"])
         .status()
         .unwrap();
     assert!(destroy.success());
     assert!(
-        record_path.is_file(),
-        "destroy scaffold must not remove the record created by a prior intent"
-    );
-    let preserved = fs::read_to_string(&record_path).unwrap();
-    assert!(
-        preserved.contains("Optional<Instant> createdAt"),
-        "destroy scaffold reverted the field shared with the record intent: {preserved}"
+        !record_path.exists(),
+        "the declaration survived its removal"
     );
     assert!(
-        common::generated(&root, "src/test/java/com/example/demo/domain/PostTest.java").is_file(),
-        "the record intent itself remains tracked and intact"
+        !common::generated(
+            &root,
+            "src/main/java/com/example/demo/web/PostController.java"
+        )
+        .exists()
     );
-    assert!(
-        !root
-            .join("src/main/java/com/example/demo/web/PostController.java")
-            .exists()
-    );
+
+    // And the way back is the way in: declaring it again reuses nothing and
+    // refuses nothing, because the model no longer describes it.
+    let again = jails_cmd(&root, None)
+        .args(["generate", "record", "Post", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(again.status.success(), "{again:?}");
+    assert!(record_path.is_file());
 }
 
 #[test]
@@ -5298,6 +5314,17 @@ fn destroy_strategy_removes_the_implementations_it_did_not_name() {
     let root = temp_dir("destroy-strategy");
     write_spring_fixture(&root);
 
+    // **The type the port takes has to be one something declares.** A
+    // strategy over a `Transaction` nothing declares is an interface naming a
+    // type that is neither in the model nor in the reader's own sources, and
+    // the file does not compile -- so it is refused rather than written.
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "record", "Transaction", "id:uuid@pk", "amount:long"])
+            .status()
+            .unwrap()
+            .success()
+    );
     assert!(
         jails_cmd(&root, None)
             .args([
@@ -5337,9 +5364,67 @@ fn destroy_strategy_removes_the_implementations_it_did_not_name() {
 
     assert!(!domain.join("RewardRule.java").exists());
     assert!(!domain.join("CoffeeRewardRule.java").exists());
+}
+
+/// **A reader's own implementation is theirs, and the removal says so.**
+///
+/// The engine this replaces swept every main source directory and deleted it,
+/// on the grounds that an implementation of a deleted interface stops the
+/// project compiling. That is true, and it is not jails' file: the port lives
+/// under `.jails/generated` and a class in `src/main/java` implementing it is
+/// the reader's. So the file survives and the removal names it, which is the
+/// half the sweep was actually for.
+#[test]
+fn destroy_names_the_reader_source_a_removal_strands() {
+    let root = temp_dir("destroy-strategy-reader");
+    write_spring_fixture(&root);
+
+    for args in [
+        vec!["g", "record", "Transaction", "id:uuid@pk", "amount:long"],
+        vec![
+            "g",
+            "strategy",
+            "RewardRule",
+            "Coffee",
+            "--on",
+            "Transaction",
+        ],
+    ] {
+        assert!(
+            jails_cmd(&root, None)
+                .args(&args)
+                .status()
+                .unwrap()
+                .success(),
+            "{args:?}"
+        );
+    }
+
+    let mine = root.join("src/main/java/com/example/demo/domain");
+    fs::create_dir_all(&mine).unwrap();
+    fs::write(
+        mine.join("HandWrittenRewardRule.java"),
+        "package com.example.demo.domain;\n\n\
+         public final class HandWrittenRewardRule implements RewardRule {\n\
+         \x20   @Override\n\
+         \x20   public boolean matches(Transaction transaction) {\n\
+         \x20       return false;\n\
+         \x20   }\n\
+         }\n",
+    )
+    .unwrap();
+
+    let removed = jails_cmd(&root, None)
+        .args(["destroy", "strategy", "RewardRule", "--force"])
+        .output()
+        .unwrap();
+    assert!(removed.status.success(), "{removed:?}");
+    let stderr = String::from_utf8_lossy(&removed.stderr);
+    assert!(stderr.contains("HandWrittenRewardRule.java"), "{stderr}");
+    assert!(stderr.contains("`RewardRule`"), "{stderr}");
     assert!(
-        !domain.join("HandWrittenRewardRule.java").exists(),
-        "an implementation of a deleted interface was left behind"
+        mine.join("HandWrittenRewardRule.java").is_file(),
+        "jails deleted a file it does not own"
     );
 }
 

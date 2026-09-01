@@ -264,6 +264,64 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation, kind: Kind) -> Res
 /// Separate from [`set_marker`] because only this direction can take an
 /// argument: removing `use search(fields: [...])` names the projection, not
 /// its fields.
+/// Add every facet an entity does not already carry, as one transition.
+///
+/// **A scaffold over an existing record is an addition**, the same way one
+/// more field is: `g record Post` then `g scaffold Post` asks for the four
+/// projections the record has not got, and refusing it as "already declared
+/// with a different shape" made the two commands unusable in the order a
+/// reader would type them.
+pub(super) fn add_facets(
+    source: &str,
+    entity: &jails_model::Entity,
+    wanted: &std::collections::BTreeSet<Facet>,
+) -> Result<Option<(String, Vec<ModelPatch>)>> {
+    let missing = wanted
+        .iter()
+        .filter(|facet| !entity.facets.contains(facet))
+        .copied()
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return Ok(None);
+    }
+    let mut next = source.to_string();
+    let mut patches = Vec::new();
+    // **`service` and `http` have no marker of their own**, because a scaffold
+    // is the one profile that declares them -- so a request that wants either
+    // is asking for `use scaffold`, which supplies the rest of the profile it
+    // does not already have.
+    let profile = missing
+        .iter()
+        .any(|facet| matches!(facet, Facet::Service | Facet::Http));
+    if profile {
+        next = set_projection(&next, &entity.names.java_type, "@scaffold", "")?;
+    }
+    for facet in missing {
+        if !profile && let Some(marker) = marker_of(facet) {
+            next = set_projection(&next, &entity.names.java_type, marker, "")?;
+        }
+        patches.push(ModelPatch::AddFacet {
+            entity: entity.id.clone(),
+            facet,
+        });
+    }
+    Ok(Some((next, patches)))
+}
+
+/// The `use` marker that declares one facet, where a marker declares it.
+fn marker_of(facet: Facet) -> Option<&'static str> {
+    match facet {
+        Facet::Repository => Some("@repository"),
+        Facet::Service => Some("@service"),
+        Facet::Http => Some("@http"),
+        Facet::Dto => Some("@dto"),
+        Facet::Factory => Some("@factory"),
+        Facet::Seed => Some("@seed"),
+        Facet::Search => Some("@search"),
+        Facet::Record | Facet::Enum | Facet::Events => None,
+    }
+}
+
 fn set_projection(
     source: &str,
     entity_java_name: &str,
@@ -296,8 +354,12 @@ fn v1_projection(marker: &str) -> Result<&'static str> {
         "@repository" => Ok("repo"),
         "@seed" => Ok("seed"),
         "@search" => Ok("search"),
+        // The one profile marker: it declares the repository, the service, the
+        // DTO and the HTTP surface together, which is what makes `service` and
+        // `http` reachable at all.
+        "@scaffold" => Ok("scaffold"),
         _ => Err(Failure::Told(format!(
-            "unsupported JDL v1 projection marker `{marker}`.\n       fix: use factory, dto, repository, seed, or search through its typed frontend"
+            "unsupported JDL v1 projection marker `{marker}`.\n       fix: use scaffold, factory, dto, repository, seed, or search through its typed frontend"
         ))),
     }
 }

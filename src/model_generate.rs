@@ -289,6 +289,7 @@ pub(crate) fn finish_generation_with_reader_paths(
     if let Some(refusal) = refuse_unconfirmed_deletions(&bundle, &invocation) {
         return refusal;
     }
+    let stranded = report::stranded_reader_references(&root, &snapshot.model.model, &next_model);
     // **Said only once the model exists, and only if it does.** The on-ramp
     // used to be a transition of its own that ran before the mutation, so a
     // refused command announced a conversion it had then abandoned. Reading
@@ -312,6 +313,9 @@ pub(crate) fn finish_generation_with_reader_paths(
         );
     }
     if invocation.output == Output::Human {
+        for line in &stranded {
+            eprintln!("{line}");
+        }
         // **"Nothing happened" and "everything happened and changed nothing"
         // are different answers**, and only the second has files to name. A
         // second `jails add csv` is the first, and a reader who cannot tell

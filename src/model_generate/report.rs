@@ -163,3 +163,112 @@ pub(crate) fn write_bundle(path: &Path, bundle: &jails_contracts::PlanBundle) ->
         .map_err(|error| Failure::Told(format!("could not encode exact plan: {error}")))?;
     jails_support::apply::put_outside_project_private_atomic(path, encoded)
 }
+
+/// Reader sources that name a managed type this transition removes.
+///
+/// **jails does not delete a file it does not own**, and the engine it
+/// replaces did: `destroy strategy` swept every main source directory for
+/// implementations, on the grounds that one left behind stops the project
+/// compiling. That is true and it is not jails' file. The reader is told
+/// instead, by name, at the moment it becomes their problem -- which is the
+/// half the sweep was actually for.
+///
+/// Matched on the whole identifier, the same rule `rename` follows, and read
+/// out of the captured reader tree rather than off disk so it agrees with the
+/// snapshot every other decision here was made from.
+pub(crate) fn stranded_reader_references(
+    root: &std::path::Path,
+    current_model: &jails_model::AppModel,
+    next_model: &jails_model::AppModel,
+) -> Vec<String> {
+    let surviving: std::collections::BTreeSet<&str> = declared_types(next_model).collect();
+    let removed: Vec<&str> = declared_types(current_model)
+        .filter(|name| !surviving.contains(name))
+        .collect();
+    if removed.is_empty() {
+        return Vec::new();
+    }
+    let mut lines = Vec::new();
+    // Read from the tree rather than from the capture: which reader
+    // directories a plan captures follows from what it needs to *write*, and
+    // this needs to look everywhere the reader keeps Java.
+    for tree in ["src/main/java", "src/test/java"] {
+        for path in java_sources(&root.join(tree)) {
+            let Ok(source) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let blanked = jails_java::java::blanked(&source);
+            let relative = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            for name in &removed {
+                if !names_identifier(&blanked, name) {
+                    continue;
+                }
+                lines.push(format!(
+                    "  note    {relative} still names `{name}`, which this removes -- it is your file, so jails left it alone"
+                ));
+            }
+        }
+    }
+    lines
+}
+
+/// Every `.java` file under a directory, deepest order unimportant.
+fn java_sources(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path
+                .extension()
+                .is_some_and(|extension| extension == "java")
+            {
+                found.push(path);
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// Every Java type name this model declares.
+fn declared_types(model: &jails_model::AppModel) -> impl Iterator<Item = &str> {
+    model
+        .entities
+        .values()
+        .map(|entity| entity.names.java_type.as_str())
+        .chain(
+            model
+                .components
+                .values()
+                .map(|component| component.name.as_str()),
+        )
+        .chain(
+            model
+                .operations
+                .values()
+                .map(|operation| operation.names.java_type.as_str()),
+        )
+        .chain(model.units.values().map(|unit| unit.java_type.as_str()))
+}
+
+/// Whether this source names the identifier, rather than merely containing its
+/// letters: `RewardRule` is in `HandWrittenRewardRule` and means nothing there.
+fn names_identifier(source: &str, name: &str) -> bool {
+    let boundary = |character: Option<char>| {
+        character.is_none_or(|character| !character.is_alphanumeric() && character != '_')
+    };
+    source.match_indices(name).any(|(index, _)| {
+        boundary(source[..index].chars().next_back())
+            && boundary(source[index + name.len()..].chars().next())
+    })
+}
