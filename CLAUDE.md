@@ -1054,7 +1054,9 @@ mise run verify-rewrite && cargo install --path .       # before pushing
 container, no build tool -- and is **38.3s / 2005 tests inside a 2 GB cap**
 here, on a machine already at load 18. `mise run verify-rewrite` sets
 `JAILS_TOOLCHAIN=1`, which switches the real-toolchain tier on and turns
-anything it then cannot run into a failure naming what was missing.
+anything it then cannot run into a failure naming what was missing -- **165.6s
+/ 2005 tests / 925 MB peak** here, with `JAILS_TEST_MAX_TOOLCHAIN_PROCESSES=4`
+holding the JVM count down on a desktop that was already busy.
 
 **That default is inverted from what it used to be, and inverting it is what
 fixed three separate complaints at once.** The tier used to run whenever the
