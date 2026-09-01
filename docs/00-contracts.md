@@ -394,6 +394,14 @@ many-to-many relations or ORM navigation collections; migration history in the
 desired-state file; plugin-defined unnamespaced keywords; automatic reverse
 adoption of ejected code; multi-file partial declaration merging.
 
+**No second spelling of a fact the language already states.** `@audit` and
+`--with-audit` are `--timestamps`, which on a `jdl 1` source writes
+`@default(now())` and `@updated`; `n:int=0` is `@default(0)`; `--with-events`
+is `jails g event`; `status:enum.PENDING.PAID` is `jails g enum` plus
+`status:Status`. Each was a documented proposal (`research.md` §4.1, whose own
+note called two ways to say one thing "the drift generator this repository has
+paid for twice") and each is refused for that reason, not for cost.
+
 These omissions keep name resolution, ownership, diffs and safety review
 deterministic. Repetition that proves common should become a typed projection
 or component kind in the shared registry first. A capability that cannot be

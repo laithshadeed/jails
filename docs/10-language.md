@@ -115,12 +115,12 @@ them, while `rename resource` *requires* a `<slice>.<name>` selector. A project
 with no slices must keep working unchanged, with the unqualified name meaning
 what it means today.
 
-
-**P9.4 §4.1 — the extended field grammar**, then §6.1's `generate scaffold`
-surface. All four extensions refuse today: `status:enum.PENDING.PAID` (the
-package segment `enum` is a Java reserved word), `n:int=0` (unknown field
-type), and two more. **Ordering dependency:** decide whether `@audit` is a
-spelling of the existing `--timestamps` before adding it, or the two overlap.
+**This is the whole of what is left of §6.1's `generate scaffold` surface.**
+`--path` (§6.1 spelled it `--route`), `--index`, `--unique`, `--package` and
+`--timestamps` all ship and materialize into the model; `--index` needs a
+declared storage, because it is written into the migration. The
+`Slice.Entity` selector is the one part of that surface with nothing behind
+it.
 
 
 ## The one item you share with B
