@@ -966,6 +966,10 @@ fn remove_is_the_inverse_of_add_csv() {
     assert!(!pom.contains("commons-csv"), "{pom}");
 }
 
+/// **The prompt names the files, and `--force` is what skips it.**
+///
+/// It used to be asked with `--force` supplied, which is the one spelling that
+/// means "do not ask" -- so the `n` went nowhere and the removal went through.
 #[test]
 fn remove_without_force_prompts_and_aborts_on_no() {
     let root = temp_dir("remove-prompt");
@@ -977,9 +981,14 @@ fn remove_without_force_prompts_and_aborts_on_no() {
             .unwrap()
             .success()
     );
+    let reader = common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/CsvReader.java",
+    );
+    let written = fs::read_to_string(&reader).unwrap();
 
     let mut child = jails_cmd(&root, None)
-        .args(["remove", "csv", "--force"])
+        .args(["remove", "csv"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -989,14 +998,22 @@ fn remove_without_force_prompts_and_aborts_on_no() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("aborted"), "{stdout}");
-    assert!(
-        common::generated(
-            &root,
-            "src/main/java/com/example/demo/adapters/CsvReader.java"
-        )
-        .is_file(),
-        "aborted remove must leave the files"
+    assert!(stdout.contains("CsvReader.java"), "{stdout}");
+    assert_eq!(
+        fs::read_to_string(&reader).unwrap(),
+        written,
+        "an aborted remove must leave the files"
     );
+
+    // And `--force` is what does not ask.
+    assert!(
+        jails_cmd(&root, None)
+            .args(["remove", "csv", "--force"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(!reader.exists(), "the forced removal left its file");
 }
 
 /// Capabilities have to compose: adding all three must leave one pom with
@@ -1310,8 +1327,11 @@ fn add_db_upgrades_an_out_of_date_properties_block() {
         next.contains("spring.docker.compose.enabled=false"),
         "{next}"
     );
-    // The block is replaced, not duplicated.
-    assert_eq!(next.matches("# jails:db").count(), 1, "{next}");
+    // **The markers dissolve.** A capability's properties are claimed one key
+    // at a time now, so the block the engine wrote around them is adopted and
+    // its comment lines go -- and the key inside it is written once, by the
+    // capability that owns it, rather than twice.
+    assert!(!next.contains("# jails:db"), "{next}");
     assert_eq!(
         next.matches("spring.persistence.exceptiontranslation.enabled=false")
             .count(),

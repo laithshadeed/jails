@@ -2,9 +2,22 @@
 
 use super::*;
 
+/// A project with one route, canonical.
+///
+/// **The model is what makes it a project rather than a directory.** `contract
+/// emit` reads the routes off the tree either way; the assertion that it
+/// leaves a lock and no receipts is about a canonical project, and a skeleton
+/// with no `.jails/model.jdl` is neither.
 fn web_fixture(label: &str) -> PathBuf {
     let root = temp_dir(label);
     write_project_skeleton(&root);
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "record", "Note", "id:uuid@pk", "title:string!"])
+            .status()
+            .unwrap()
+            .success()
+    );
     fs::create_dir_all(common::generated(
         &root,
         "src/main/java/com/example/demo/web",
