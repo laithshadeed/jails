@@ -18,26 +18,47 @@ is worth less than working when the project is the one you are actually in,
 which is why `add`, `check`, `test`, `build` and `run` all work on a Gradle
 project rather than declining.
 
-**Every idea, roadmap item and open design question lives in `new.md`.**
-This file describes what the code *is* and the traps in it; `new.md` is the
+**Every idea, roadmap item and open design question lives under `docs/`.**
+This file describes what the code *is* and the traps in it; `docs/` is the
 design, the measured state, and the working checklist of what is not done and
 why. Do not add proposals here.
 
-**`new.md` replaced twelve documents on 2026-09-01.** `jdl-sol.md`, `jdl.md`,
-`simplify-sol.md`, `simplify-gemini.md`, `simplify-opus.md`, `simplify-glm.md`,
-`plan.md`, `audit.md`, `bugs.md`, `missing.md`, `modern.md` and `research.md`
-were one system described twelve times, and they had begun to disagree with
-each other and with the tree -- two of them named a differential harness under
-a filename it had not had for days, and a third described a gate under a
-function name that no longer existed. Twelve documents is twelve places to
-update and eleven that will not be.
+**Twelve design documents became one on 2026-09-01, and that one became six.**
+`jdl-sol.md`, `jdl.md`, `simplify-sol.md`, `simplify-gemini.md`,
+`simplify-opus.md`, `simplify-glm.md`, `plan.md`, `audit.md`, `bugs.md`,
+`missing.md`, `modern.md` and `research.md` were one system described twelve
+times, and they had begun to disagree with each other and with the tree -- two
+of them named a differential harness under a filename it had not had for days,
+and a third described a gate under a function name that no longer existed.
+Twelve documents is twelve places to update and eleven that will not be.
 
-**Every identifier survived the merge**, deliberately: `P<phase>.<item>`,
+**The six are not a second attempt at organising prose.** `new.md` was correct
+and was one queue: four agents working at once had to read all of it and then
+edit the same file. The six split the *work* rather than the subject, so each
+names the paths it owns and the paths it must not touch:
+
+| file | workstream | owns |
+|---|---|---|
+| `docs/00-contracts.md` | — read first by everyone | the contracts, the deletion map, the identifier map, the ownership table |
+| `docs/01-jdl-v1.md` | — normative reference | JDL v1, section numbering unchanged |
+| `docs/10-language.md` | A | `crates/jails-model`, the JDL front ends |
+| `docs/20-generated-java.md` | B | `crates/jails-compiler`, `templates/` |
+| `docs/30-cutover.md` | C | `crates/jails-workspace`, `jails-project`, the legacy crates |
+| `docs/40-gates-and-ci.md` | D | `.github/`, `mise.toml`, `scripts/`, `tests/common`, `tests/architecture` |
+
+**Every identifier survived both merges**, deliberately: `P<phase>.<item>`,
 `A<section>.<item>`, `B<n>`, `M<n>`, `research.md §N`, `modern.md §N` and
-`jdl-sol.md §N` all still resolve, because `new.md` carries them rather than
-renumbering. Read `<file>.md <id>` as "the entry with that id, in `new.md`".
-Part 2 of that file is the JDL specification with its section numbering
-unchanged, which is what the `jdl-sol.md §N` citations index.
+`jdl-sol.md §N` all still resolve, because the identifier travelled rather than
+being renumbered. Read `<file>.md <id>` as "the entry with that id", and
+`docs/00-contracts.md` carries the table saying which of the six holds it.
+`docs/01-jdl-v1.md` is the JDL specification with its section numbering
+unchanged, which is what the `jdl-sol.md §N` citations index --
+`the_specification_complete_example_links_except_its_one_recorded_gap` extracts
+its §4 and links it, so that file cannot rot into prose.
+
+**Only P8.11 was split**, into `P8.11a` (adoption, in `30-cutover.md`) and
+`P8.11b` (generators, in `20-generated-java.md`), because its four bullets
+belonged to two different agents. Nothing else was renumbered.
 
 Every citation count in this section is
 `grep -rIoh --include='*.rs' '<doc>\.md' crates/*/src src tests | wc -l`, and
@@ -46,7 +67,7 @@ one**; they are recorded to show the order of magnitude that makes leaving the
 citations in place cheaper than stripping them, not as facts to cite.
 
 **A closed item is *deleted*, never marked done**, in the commit that closes
-it. `git log -p -- new.md` is where a closed item and the measurement that
+it. `git log -p -- docs/` is where a closed item and the measurement that
 closed it live. Item and section numbers are stable and never reused, which is
 what makes the deletions safe.
 

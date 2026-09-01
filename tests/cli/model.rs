@@ -14300,7 +14300,7 @@ app Demo {
     );
 }
 
-/// **`new.md` §21's first conformance family: the §4 complete example is a
+/// **`docs/01-jdl-v1.md` §21's first conformance family: the §4 complete example is a
 /// fixture, not prose.**
 ///
 /// §21 says the complete example "is an executable conformance fixture" and
@@ -14311,7 +14311,7 @@ app Demo {
 /// transition that guards on it is `if-match required`, which the linker
 /// rejected as a set target for months.
 ///
-/// **The example is read out of `new.md` rather than pasted here**, which is
+/// **The example is read out of `docs/01-jdl-v1.md` rather than pasted here**, which is
 /// the whole point -- a copy is a second document that drifts silently, and a
 /// test asserting a copy links proves nothing about what a reader sees.
 ///
@@ -14326,13 +14326,14 @@ app Demo {
 /// test is how you find out the first one can absorb it.
 #[test]
 fn the_specification_complete_example_links_except_its_one_recorded_gap() {
-    let document = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("new.md"))
-        .expect("new.md is checked in");
+    let document =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/01-jdl-v1.md"))
+            .expect("docs/01-jdl-v1.md is checked in");
     let section = document
         .split("## 4. Complete example")
         .nth(1)
         .and_then(|rest| rest.split("\n## 5.").next())
-        .expect("new.md still has a §4 complete example");
+        .expect("docs/01-jdl-v1.md still has a §4 complete example");
     let example = section
         .split("```jdl\n")
         .nth(1)
@@ -14358,7 +14359,7 @@ fn the_specification_complete_example_links_except_its_one_recorded_gap() {
     assert!(
         !refused.status.success() && said.contains("model-ejection-target"),
         "§16.4's readable boundary path resolves now -- delete this half and the \
-         `known_targets` note in `new.md` §16.4's entry:\n{said}"
+         `known_targets` note in `docs/01-jdl-v1.md` §16.4's entry:\n{said}"
     );
     assert!(
         said.matches("] $.").count() == 1,
