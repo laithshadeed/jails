@@ -285,7 +285,12 @@ fn entity_header(line_number: usize, line: &str) -> Result<EntityDraft, Diagnost
     let dto = rest.split_whitespace().any(|word| word == "@dto");
     let repository = rest.split_whitespace().any(|word| word == "@repository");
     let mut facets = if rest.split_whitespace().any(|word| word == "@scaffold") {
-        vec!["record", "repository", "service", "http"]
+        // **The same four v1's `use scaffold` expands to**, `dto` included.
+        // Leaving it out made `model upgrade` a semantic change: the pre-v1
+        // scaffold bound the domain row at its HTTP boundary and the upgraded
+        // one bound a request record, so a projection the upgrade promises to
+        // leave byte-identical moved.
+        vec!["record", "repository", "service", "dto", "http"]
     } else if let Some(values) = annotation(rest, "facets") {
         values
             .split(',')

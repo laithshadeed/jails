@@ -1527,7 +1527,10 @@ app Notes {
     for declaration in [
         "use scaffold",
         "use factory",
-        "use dto",
+        // No `use dto`: the scaffold profile carries `Facet::Dto`, so `g dto`
+        // on a scaffolded entity declares nothing it does not already have.
+        // Recording it again would give one facet two spellings in one
+        // entity, and the second is the one nothing removes.
         "component class Clock @id(cmp_class_clock)",
         "component interface TaskPort @id(cmp_interface_task_port)",
         "component service Billing @id(cmp_service_billing)",
@@ -5957,8 +5960,12 @@ fn dependency_reconciliation_crosses_the_kotlin_gradle_binary_boundary() {
         build.contains("testImplementation(\"org.jsoup:jsoup:1.18.3\")"),
         "{build}"
     );
+    // **No source root, because nothing is generated.** This project declares
+    // one dependency and no Java, and a source root for a directory that may
+    // stay empty is an edit to the reader's build with nothing behind it --
+    // and one that then outlives every reason for it.
     assert!(
-        build.contains("java.srcDir(\".jails/generated/main/java\")"),
+        !build.contains("java.srcDir(\".jails/generated/main/java\")"),
         "{build}"
     );
 
@@ -13447,7 +13454,10 @@ fields = ["OPEN", "CLOSED"]
         .unwrap();
     let again = String::from_utf8_lossy(&again.stdout).to_string();
     assert!(
-        again.matches("(0 files written)").count() >= 3,
+        again
+            .matches("nothing to do, the project already matches the model")
+            .count()
+            >= 3,
         "a second replay declares nothing new:\n{again}"
     );
 
