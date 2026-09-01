@@ -15,13 +15,13 @@
 mod generate_args;
 pub(crate) use generate_args::GenerateArgs;
 
-use crate::add::Capability;
+use crate::ArtifactKind;
+use crate::Capability;
 use crate::app;
 use crate::arguments;
 use crate::compose::Runtime;
-use crate::generate::ArtifactKind;
+use crate::kafka;
 use crate::pom;
-use crate::{generate, kafka};
 use clap::{Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use std::path::PathBuf;
@@ -1086,7 +1086,7 @@ pub(crate) enum Command {
     /// The generated Javadoc carries this reasoning for whoever reads the file.
     /// This is for whoever is deciding whether to generate it -- and for an
     /// agent, which otherwise "fixes" the deliberate asymmetries.
-    Explain { kind: generate::ArtifactKind },
+    Explain { kind: ArtifactKind },
     /// Print every subcommand, generator kind, capability and flag jails accepts
     ///
     /// Derived from the same clap definition that parses the arguments, so it

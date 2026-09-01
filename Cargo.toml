@@ -74,6 +74,14 @@ jails-drive.workspace = true
 jails-report.workspace = true
 jails-commit.workspace = true
 jails-prepare.workspace = true
+jails-codemod.workspace = true
+# The last edge into the legacy generator, and it is `jails new`'s: `new`,
+# `new-cli` and the Gradle project all write through `generate::write_new_file`
+# -- the write path that normalises imports, plans `package-info.java` and
+# supplies Failsafe and AssertJ from the emitted bytes. Making `new` seed a
+# canonical model is what removes it, and that is the cutover's first step
+# rather than a re-pointing: every other consumer in this binary was taking a
+# symbol `jails-spec`, `jails-protocol` or `jails-codemod` already owns.
 jails-generate.workspace = true
 jails-project.workspace = true
 jails-spec.workspace = true

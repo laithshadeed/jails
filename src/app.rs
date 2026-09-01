@@ -15,9 +15,9 @@
 mod manifest;
 use manifest::*;
 
-use crate::add::Capability;
+use crate::ArtifactKind;
+use crate::Capability;
 use crate::cli::GenerateArgs;
-use crate::generate::{self, ArtifactKind};
 use clap::{Subcommand, ValueEnum};
 use jails_support::Result;
 use std::collections::HashSet;
@@ -175,7 +175,7 @@ fn recipe_of(intent: &GenerateArgs) -> String {
 
 /// The name the ledger row carries, which is what the duplicate check keys on.
 fn recorded_name_of(intent: &GenerateArgs) -> String {
-    generate::recorded_name(intent.kind, &intent.name)
+    crate::recorded_name(intent.kind, &intent.name)
 }
 
 /// Identity **and** content, as one string.

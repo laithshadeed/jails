@@ -1,7 +1,7 @@
 //! Canonical capability frontends and compiler-owned capability profiles.
 
+use crate::Capability as CliCapability;
 use crate::Invocation;
-use crate::add::Capability as CliCapability;
 use crate::model_generate::{PreparedMutation, finish_generation};
 use jails_model::{CapabilityId, DependencyId, DependencyScope, ModelPatch, StableId};
 use jails_support::codec::{hex, sha256};

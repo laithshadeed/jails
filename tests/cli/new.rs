@@ -20,8 +20,42 @@ fn new_cli_creates_expected_project_layout() {
         )),
         "{pom}"
     );
-    assert!(common::generated(&root, "src/main/java/com/example/demo/App.java").is_file());
-    assert!(common::generated(&root, "src/test/java/com/example/demo/AppTest.java").is_file());
+    // The entry point is a dispatcher, not a Hello World stub -- otherwise
+    // `generate command` has nothing to register into, which is the whole point
+    // of `new-cli`. Asserted against the bytes `new-cli` actually writes: the
+    // same assertions used to live beside a *second* renderer of this template
+    // in the legacy generator, which production stopped calling, so they held
+    // while proving nothing about what ships.
+    let app = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/App.java",
+    ))
+    .unwrap();
+    assert!(app.contains("package com.example.demo;"), "{app}");
+    assert!(
+        app.contains("public static void main(String[] args)"),
+        "{app}"
+    );
+    assert!(app.contains("public final class App"), "{app}");
+    assert!(
+        app.contains("usage: demo <command> [args]"),
+        "the program name should be the project's: {app}"
+    );
+    assert!(
+        jails_codemod::dispatch::is_dispatcher(&app),
+        "`generate command` must be able to find this: {app}"
+    );
+    let app_test = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/AppTest.java",
+    ))
+    .unwrap();
+    assert!(
+        app_test.contains("import org.junit.jupiter.api.Test;"),
+        "{app_test}"
+    );
+    assert!(app_test.contains("class AppTest"), "{app_test}");
+    assert!(app_test.contains("App.run("), "{app_test}");
     let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
     assert!(agents.contains("jails check"), "{agents}");
     assert!(agents.contains("@MockBean"), "{agents}");

@@ -5,9 +5,9 @@ use super::component::{
     v1_declaration,
 };
 use super::{MODEL_PATH, append_declaration, parse, read_model};
+use crate::ArtifactKind;
 use crate::Invocation;
 use crate::cli::GenerateArgs;
-use crate::generate::ArtifactKind;
 use crate::model_generate::{PreparedMutation, finish_generation};
 use crate::model_resource::java_to_label;
 use jails_model::{ComponentId, ModelPatch, StableId, UnitId, UnitKind};

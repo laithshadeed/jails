@@ -18,8 +18,8 @@
 //! built for: making the next clap variant a compile error until its
 //! ownership is decided.
 
-use crate::add::Capability;
-use crate::generate::ArtifactKind;
+use crate::ArtifactKind;
+use crate::Capability;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Support {

@@ -209,6 +209,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "fs2",
+ "jails-codemod",
  "jails-commit",
  "jails-compiler",
  "jails-contracts",

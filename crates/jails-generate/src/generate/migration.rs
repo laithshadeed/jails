@@ -230,37 +230,6 @@ pub fn next_migration_version(dir: &Path) -> Result<u32> {
         .ok_or_else(|| "migration version overflow".to_string())?)
 }
 
-pub fn sql_name(value: &str) -> Result<String> {
-    let mut out = String::new();
-    let mut previous_was_lower_or_digit = false;
-    for ch in value.trim().chars() {
-        if ch.is_ascii_alphanumeric() {
-            if ch.is_ascii_uppercase() && previous_was_lower_or_digit && !out.ends_with('_') {
-                out.push('_');
-            }
-            out.push(ch.to_ascii_lowercase());
-            previous_was_lower_or_digit = ch.is_ascii_lowercase() || ch.is_ascii_digit();
-        } else if matches!(ch, '-' | '_' | ' ') {
-            if !out.is_empty() && !out.ends_with('_') {
-                out.push('_');
-            }
-            previous_was_lower_or_digit = false;
-        } else {
-            return Err(format!("'{value}' is not a usable SQL migration name").into());
-        }
-    }
-    while out.ends_with('_') {
-        out.pop();
-    }
-    if out.is_empty() {
-        Err(jails_support::Failure::Told(
-            "a migration needs a description, e.g. `jails g migration create_rewards`".to_string(),
-        ))
-    } else {
-        Ok(out)
-    }
-}
-
 // ---- cases: a markdown checklist in, a pending JUnit class out. ----
 
 /// Turn a brief's checklist into a `@Disabled` test class -- the todo list you

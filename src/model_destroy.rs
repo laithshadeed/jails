@@ -1,8 +1,8 @@
 //! Canonical deletion is model subtraction followed by ordinary compilation.
 
+use crate::ArtifactKind;
 use crate::Invocation;
 use crate::cli::StoragePolicy;
-use crate::generate::ArtifactKind;
 use crate::model_generate::{PreparedMutation, finish_generation};
 use crate::model_resource::java_to_label;
 use jails_model::{Facet, ModelPatch, OperationKind, StableId, StorageRetirementPolicy, UnitKind};
@@ -385,7 +385,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             ArtifactKind::Controller => ("controller", UnitKind::Controller),
             _ => unreachable!(),
         };
-        let stem = jails_generate::generate::strip_redundant_suffix(request.kind, &request.name);
+        let stem = crate::strip_redundant_suffix(request.kind, &request.name);
         let label = java_to_label(&stem);
         let unit = current_model
             .units
