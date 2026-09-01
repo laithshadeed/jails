@@ -130,22 +130,7 @@ pub(crate) fn materialize(
     }
 
     for (path, after_bytes) in documents {
-        let before_file = snapshot.files.get(&path);
-        if before_file.is_some_and(|file| file.bytes == after_bytes)
-            || before_file.is_none() && after_bytes.is_empty()
-        {
-            continue;
-        }
-        let mode = before_file.map_or(FileMode::Regular, captured_mode);
-        let before = before_file
-            .map(|file| crate::materialize::file_image(&file.bytes, mode, blobs))
-            .transpose()?;
-        let after = crate::materialize::file_image(&after_bytes, mode, blobs)?;
-        operations.push(PlannedOperation::PatchReaderFile {
-            path,
-            before,
-            after,
-        });
+        crate::materialize::plan_reader_document(snapshot, operations, blobs, path, after_bytes)?;
     }
     Ok(())
 }

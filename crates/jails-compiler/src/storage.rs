@@ -41,21 +41,23 @@ pub(crate) fn storage_dependencies(spring_boot: Option<&str>) -> Vec<BuildDepend
     /// Both Flyway artifacts, pinned to one version. Verified in
     /// `add/database.rs`, which is the only other place this number lives.
     const FLYWAY_PIN: &str = "12.8.1";
+    /// The driver, for a project with no parent managing it. Verified in
+    /// `add/database.rs`, which is the only other place this number lives.
+    const POSTGRES_PIN: &str = "42.7.11";
     let version = boot_version(spring_boot);
     let managed_flyway = version.is_some_and(|version| version >= (3, 3));
-    let flyway_version = (!managed_flyway).then(|| FLYWAY_PIN.to_string());
+    let flyway_version = (!managed_flyway || spring_boot.is_none()).then(|| FLYWAY_PIN.to_string());
+    // **A plain Maven project gets the same database and none of the Spring.**
+    // `java.sql` is in the JDK, so the driver and Flyway are the whole of what
+    // `storage postgres` needs there; the JDBC *starter* is Spring's and
+    // naming it would drag in a framework the project did not ask for. Every
+    // version is pinned for the reason this module exists: with no parent to
+    // manage it, a versionless dependency makes Maven refuse to read the pom.
     let mut dependencies = vec![
-        BuildDependency {
-            group: "org.springframework.boot".to_string(),
-            artifact: "spring-boot-starter-jdbc".to_string(),
-            version: None,
-            scope: DependencyScope::Compile,
-            optional: false,
-        },
         BuildDependency {
             group: "org.postgresql".to_string(),
             artifact: "postgresql".to_string(),
-            version: None,
+            version: spring_boot.is_none().then(|| POSTGRES_PIN.to_string()),
             scope: DependencyScope::Runtime,
             optional: false,
         },
@@ -74,6 +76,15 @@ pub(crate) fn storage_dependencies(spring_boot: Option<&str>) -> Vec<BuildDepend
             optional: false,
         },
     ];
+    if spring_boot.is_some() {
+        dependencies.push(BuildDependency {
+            group: "org.springframework.boot".to_string(),
+            artifact: "spring-boot-starter-jdbc".to_string(),
+            version: None,
+            scope: DependencyScope::Compile,
+            optional: false,
+        });
+    }
     if version.is_some_and(|version| version >= (4, 0)) {
         dependencies.push(BuildDependency {
             group: "org.springframework.boot".to_string(),

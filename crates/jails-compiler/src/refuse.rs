@@ -43,10 +43,10 @@ pub(crate) fn preflight(
         && snapshot.project.spring_boot.is_none()
     {
         return Err(CompileError::new(
-            "canonical `api` adapters require a captured Spring Boot project\n       fix: add Spring Boot to the build or remove the `api` capability",
+            "`api` is a Spring Boot capability and this project has no Spring Boot parent\n       fix: add Spring Boot to the build, or `jails add http` for a framework-free HTTP client",
         ));
     }
-    if next_model.capabilities.values().any(|capability| {
+    let spring_only = next_model.capabilities.values().find(|capability| {
         matches!(
             capability.kind.as_str(),
             "h2" | "actuator"
@@ -58,11 +58,16 @@ pub(crate) fn preflight(
                 | "redis"
                 | "mail"
         )
-    }) && snapshot.project.spring_boot.is_none()
+    });
+    if let Some(capability) = spring_only
+        && snapshot.project.spring_boot.is_none()
     {
-        return Err(CompileError::new(
-            "canonical Spring capability packs require a captured Spring Boot project\n       fix: add the capability to a Spring project or remove it from the model",
-        ));
+        // Named, because a command listing several capabilities refuses over
+        // one of them and a reader cannot retry what the message will not say.
+        return Err(CompileError::new(format!(
+            "`{}` is a Spring Boot capability and this project has no Spring Boot parent\n       fix: add Spring Boot to the build, or remove `{}` from the model",
+            capability.kind, capability.kind
+        )));
     }
     if let Some((kind, minimum, actual)) = next_model.capabilities.values().find_map(|capability| {
         let minimum = emit_capability::minimum_boot(&capability.kind)?;
@@ -152,43 +157,53 @@ pub(crate) fn preflight(
             component.kind.label()
         )));
     }
-    // The database backend renders `JdbcClient` adapters annotated
-    // `@Repository`, so it is Spring-only in the same way `api` and the
-    // Spring capability packs are. Without this it emitted that Java into
-    // a project that cannot compile it, *and* spliced four versionless
-    // dependencies into a pom with no parent to manage them -- which
-    // Maven refuses to read at all, `validate` included.
+    // **The database itself is not Spring's; the adapters for it are.**
+    // `java.sql` is in the JDK, so `storage postgres` on a plain Maven project
+    // is the driver, Flyway and a compose service -- all pinned, because with
+    // no parent to manage a version Maven refuses to read the pom at all,
+    // `validate` included. What needs Spring is the *repository adapter*,
+    // which is a `JdbcClient` class annotated `@Repository`, so the refusal is
+    // about the entity that asks for one rather than about the storage axis.
     if next_model
         .capabilities
         .values()
         .any(|capability| capability.kind == "db")
     {
-        let Some(version) = snapshot.project.spring_boot.as_deref() else {
-            return Err(CompileError::new(
-                "canonical `storage postgres` renders Spring JDBC adapters and requires a captured Spring Boot project\n       fix: add Spring Boot to the build, or choose `storage none` and write the persistence by hand",
-            ));
-        };
-        // **The floor is 3.1, and below it the refusal has to name the
-        // module.** `spring-boot-testcontainers` and
-        // `spring-boot-docker-compose` arrived there; on an older project the
-        // coordinates this capability declares resolve to nothing and the
-        // build stops resolving at all -- worse than the state before the
-        // command ran. The legacy engine has said so by name since
-        // `add/database.rs`; a canonical project that merely said "requires a
-        // captured Spring Boot project" would be telling a Boot 2.7 reader to
-        // add the Spring Boot they already have.
-        if let Some((major, minor)) = boot_major_minor(version)
-            && (major, minor) < (3, 1)
-        {
-            return Err(CompileError::new(format!(
-                "`db` wires Testcontainers through `spring-boot-testcontainers`, and this project \
+        match snapshot.project.spring_boot.as_deref() {
+            None => {
+                if let Some(entity) = next_model.entities.values().find(|entity| {
+                    entity.active && entity.facets.contains(&jails_model::Facet::Repository)
+                }) {
+                    return Err(CompileError::new(format!(
+                        "`{}` asks for a repository adapter, which the compiler renders as a Spring `JdbcClient` bean, and this project has no Spring Boot parent\n       fix: add Spring Boot to the build, or drop the `repository` facet and write the persistence against `java.sql` by hand",
+                        entity.label
+                    )));
+                }
+            }
+            Some(version) => {
+                // **The floor is 3.1, and below it the refusal has to name the
+                // module.** `spring-boot-testcontainers` and
+                // `spring-boot-docker-compose` arrived there; on an older project the
+                // coordinates this capability declares resolve to nothing and the
+                // build stops resolving at all -- worse than the state before the
+                // command ran. The legacy engine has said so by name since
+                // `add/database.rs`; a canonical project that merely said "requires a
+                // captured Spring Boot project" would be telling a Boot 2.7 reader to
+                // add the Spring Boot they already have.
+                if let Some((major, minor)) = boot_major_minor(version)
+                    && (major, minor) < (3, 1)
+                {
+                    return Err(CompileError::new(format!(
+                        "`db` wires Testcontainers through `spring-boot-testcontainers`, and this project \
                  is Spring Boot {major}.{minor}.\n       \
                  That module and `spring-boot-docker-compose` arrived in Spring Boot 3.1; on this \
                  project the spliced coordinates would resolve to nothing and the build would \
                  stop resolving altogether -- a worse state than before the command ran.\n       \
                  fix: `jails add sqlite`, `jails add h2`, `jails g migration` and `jails g repo` \
                  work on this project. Raising the Boot version is the other way."
-            )));
+                    )));
+                }
+            }
         }
     }
     if next_model

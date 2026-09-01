@@ -252,6 +252,18 @@ impl Compiler {
             ProjectPath::parse(".jails/generated/test/resources").map_err(CompileError::new)?;
         let main_resource_root =
             ProjectPath::parse(".jails/generated/main/resources").map_err(CompileError::new)?;
+        // **A source root is declared only for a tree that has something in
+        // it**, main included. Declaring the main root the moment a project
+        // becomes canonical edits the reader's build file for a directory that
+        // may stay empty -- `jails add dependency` declares no Java at all --
+        // and the edit then outlives every reason for it, so retiring the last
+        // declaration could not restore the pom it started from. The adapter
+        // removes the block when no root is wanted, which makes this the whole
+        // of the inverse.
+        let has_main_sources = generated
+            .files
+            .values()
+            .any(|file| file.kind == FileKind::JavaMain);
         let has_test_sources = generated
             .files
             .values()
@@ -456,10 +468,13 @@ impl Compiler {
         dependencies.sort();
         let mut reader_document_intents = match snapshot.project.build_system {
             BuildSystem::Maven => {
-                let mut roots = vec![jails_contracts::MavenSourceRoot {
-                    source_set: JavaSourceSet::Main,
-                    path: main_source_root,
-                }];
+                let mut roots = Vec::new();
+                if has_main_sources {
+                    roots.push(jails_contracts::MavenSourceRoot {
+                        source_set: JavaSourceSet::Main,
+                        path: main_source_root,
+                    });
+                }
                 if has_test_sources {
                     roots.push(jails_contracts::MavenSourceRoot {
                         source_set: JavaSourceSet::Test,
@@ -487,10 +502,13 @@ impl Compiler {
                 intents
             }
             BuildSystem::Gradle => {
-                let mut intents = vec![DocumentIntent::EnsureGradleSourceRoot {
-                    path: main_source_root,
-                    source_set: JavaSourceSet::Main,
-                }];
+                let mut intents = Vec::new();
+                if has_main_sources {
+                    intents.push(DocumentIntent::EnsureGradleSourceRoot {
+                        path: main_source_root,
+                        source_set: JavaSourceSet::Main,
+                    });
+                }
                 if has_test_sources {
                     intents.push(DocumentIntent::EnsureGradleSourceRoot {
                         path: test_source_root,

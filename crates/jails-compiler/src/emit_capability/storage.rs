@@ -7,7 +7,7 @@
 //! packs whose identity comes from the `app` block rather than from a
 //! declaration, which is also why their absence was invisible for so long.
 
-use super::spring::property;
+use super::spring::spring_property;
 use super::*;
 use jails_model::Package;
 
@@ -193,29 +193,29 @@ const DB_DEPENDENCIES: &[DependencySpec] = &[
 /// compose itself in `run` and `start`, and Boot's module shells out with
 /// Docker Compose v2 syntax that podman-compose rejects, killing startup.
 const DB_PROPERTIES: &[PropertySpec] = &[
-    property("spring.persistence.exceptiontranslation.enabled", "false"),
-    property(
+    spring_property("spring.persistence.exceptiontranslation.enabled", "false"),
+    spring_property(
         "spring.datasource.url",
         "jdbc:postgresql://localhost:5432/app",
     ),
-    property("spring.datasource.username", "app"),
-    property("spring.datasource.password", "app"),
-    property("spring.datasource.hikari.pool-name", "primary"),
-    property("spring.datasource.hikari.maximum-pool-size", "20"),
-    property("spring.datasource.hikari.connection-timeout", "1000"),
-    property("spring.datasource.hikari.initialization-fail-timeout", "1"),
-    property(
+    spring_property("spring.datasource.username", "app"),
+    spring_property("spring.datasource.password", "app"),
+    spring_property("spring.datasource.hikari.pool-name", "primary"),
+    spring_property("spring.datasource.hikari.maximum-pool-size", "20"),
+    spring_property("spring.datasource.hikari.connection-timeout", "1000"),
+    spring_property("spring.datasource.hikari.initialization-fail-timeout", "1"),
+    spring_property(
         "spring.datasource.hikari.transaction-isolation",
         "TRANSACTION_READ_COMMITTED",
     ),
     // Refuse a read replica now, instead of failing on the first write.
-    property(
+    spring_property(
         "spring.datasource.hikari.connection-init-sql",
         "SELECT 1/(1-pg_is_in_recovery()::int)",
     ),
-    property("server.shutdown", "graceful"),
-    property("spring.lifecycle.timeout-per-shutdown-phase", "30s"),
-    property("spring.docker.compose.enabled", "false"),
+    spring_property("server.shutdown", "graceful"),
+    spring_property("spring.lifecycle.timeout-per-shutdown-phase", "30s"),
+    spring_property("spring.docker.compose.enabled", "false"),
 ];
 
 const DB_COMPOSE: &[ComposeService] = &[ComposeService {

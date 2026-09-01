@@ -58,8 +58,12 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
         linker.problem(
             "model-java-release",
             "$.project.java_release",
+            // Named as *this project's* release rather than as a bare
+            // number: a reader who did not choose 17 -- an adopted pom, a
+            // parent they inherit -- has to be told which fact of theirs is
+            // being refused before "use 21" is actionable.
             format!(
-                "Java {} is below the supported release floor",
+                "this project targets Java {}, below the supported release floor",
                 document.project.java_release
             ),
             "use Java 21 or newer",

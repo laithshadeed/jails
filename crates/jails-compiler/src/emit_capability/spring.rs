@@ -594,6 +594,21 @@ const SSE_PACKAGE_OVERRIDES: &[PackageOverride] = &[PackageOverride {
     project_subpackage: Package::Web,
 }];
 
+/// A setting that only means something under Spring Boot.
+///
+/// Every `spring.*` key is one: `storage postgres` works on a plain Maven
+/// project -- `java.sql` is in the JDK -- and writing Boot's datasource keys
+/// into its `application.properties` would leave a file full of settings
+/// nothing reads.
+pub(super) const fn spring_property(key: &'static str, value: &'static str) -> PropertySpec {
+    PropertySpec {
+        key,
+        value,
+        target: SettingTarget::Main,
+        boot: BootCondition::Spring,
+    }
+}
+
 pub(super) const fn property(key: &'static str, value: &'static str) -> PropertySpec {
     PropertySpec {
         key,

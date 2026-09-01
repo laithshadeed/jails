@@ -527,51 +527,7 @@ fn materialize_document_intents(
     }
 
     for (path, after_bytes) in desired {
-        let before_file = snapshot.files.get(&path);
-        if before_file.is_some_and(|file| file.bytes == after_bytes)
-            || before_file.is_none() && after_bytes.is_empty()
-        {
-            continue;
-        }
-        // **A reconcile that empties a document removes it.** `remove db`
-        // retires the last property jails owns in
-        // `src/main/resources/application.properties`, and a project that
-        // never had that file is not left holding an empty one -- the inverse
-        // of `add` has to reach the file's existence, not only its contents.
-        // Anything the reader put there, a bare comment included, survives
-        // reconciliation and keeps the file, so emptiness is the proof that
-        // nothing but jails' own settings was ever in it.
-        if let Some(before_file) = before_file
-            && after_bytes.iter().all(u8::is_ascii_whitespace)
-        {
-            let before = file_image(
-                &before_file.bytes,
-                if before_file.executable {
-                    FileMode::Executable
-                } else {
-                    FileMode::Regular
-                },
-                blobs,
-            )?;
-            operations.push(PlannedOperation::RemoveReaderFile { path, before });
-            continue;
-        }
-        let mode = before_file.map_or(FileMode::Regular, |file| {
-            if file.executable {
-                FileMode::Executable
-            } else {
-                FileMode::Regular
-            }
-        });
-        let before = before_file
-            .map(|file| file_image(&file.bytes, mode, blobs))
-            .transpose()?;
-        let after = file_image(&after_bytes, mode, blobs)?;
-        operations.push(PlannedOperation::PatchReaderFile {
-            path,
-            before,
-            after,
-        });
+        plan_reader_document(snapshot, operations, blobs, path, after_bytes)?;
     }
     for (source, target) in removals {
         let before_file = snapshot.files.get(&source).ok_or_else(|| {
@@ -658,6 +614,61 @@ fn gradle_build_file(snapshot: &WorkspaceSnapshot) -> Result<(ProjectPath, bool)
                 .to_string(),
         ),
     }
+}
+
+/// One reader document's transition, as the operation that expresses it.
+///
+/// **Three outcomes, and the third is the one that has to be written down.**
+/// A document that already agrees is not an operation at all; one that differs
+/// is a patch; one that reconciles to *nothing* is a removal, because `remove`
+/// has to reach a file's existence and not only its contents. A project that
+/// never had `src/main/resources/application.properties` is not left holding
+/// an empty one after the capability that created it goes, and a `compose.yaml`
+/// whose last service was retired is not left holding a bare `services:`.
+///
+/// Anything the reader put in the file -- a bare comment included -- survives
+/// reconciliation and keeps it, so emptiness is the proof that nothing but
+/// jails' own content was ever there.
+///
+/// Shared by the document adapters and the reader facets because it is one
+/// rule: two copies of it went out of step the first time, and the half that
+/// forgot was the half nobody was looking at.
+pub(crate) fn plan_reader_document(
+    snapshot: &WorkspaceSnapshot,
+    operations: &mut Vec<PlannedOperation>,
+    blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
+    path: ProjectPath,
+    after_bytes: Vec<u8>,
+) -> Result<(), String> {
+    let before_file = snapshot.files.get(&path);
+    if before_file.is_some_and(|file| file.bytes == after_bytes)
+        || before_file.is_none() && after_bytes.is_empty()
+    {
+        return Ok(());
+    }
+    let mode = before_file.map_or(FileMode::Regular, |file| {
+        if file.executable {
+            FileMode::Executable
+        } else {
+            FileMode::Regular
+        }
+    });
+    let before = before_file
+        .map(|file| file_image(&file.bytes, mode, blobs))
+        .transpose()?;
+    if let Some(before) = before.clone()
+        && after_bytes.iter().all(u8::is_ascii_whitespace)
+    {
+        operations.push(PlannedOperation::RemoveReaderFile { path, before });
+        return Ok(());
+    }
+    let after = file_image(&after_bytes, mode, blobs)?;
+    operations.push(PlannedOperation::PatchReaderFile {
+        path,
+        before,
+        after,
+    });
+    Ok(())
 }
 
 pub(crate) fn file_image(
