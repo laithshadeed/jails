@@ -3,6 +3,7 @@ create table notes (
     id bigint generated always as identity not null primary key,
     author_id bigint not null,
     body text not null check (length(btrim(body)) > 0),
-    sender_type text not null
+    sender_type text not null,
+    constraint notes_sender_type_allowed check (sender_type in ('CUSTOMER', 'ADMIN'))
 );
 create index idx_notes_author_id on notes (author_id);

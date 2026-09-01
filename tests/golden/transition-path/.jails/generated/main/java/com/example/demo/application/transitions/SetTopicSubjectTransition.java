@@ -7,7 +7,7 @@ import java.util.Objects;
 public interface SetTopicSubjectTransition {
     String ROUTE = "PATCH /admin_api/topics/{userId}/subject";
 
-    Topic execute(long userId, Input input);
+    Topic execute(long userId, Input input, long expectedVersion);
 
     public record Input(
         String subject

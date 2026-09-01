@@ -7,7 +7,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 public interface OpenTicketsQuery {
-    String ROUTE = "POST /admin_api/tickets";
+    String ROUTE = "GET /admin_api/tickets";
 
     List<Ticket> execute(Input input);
 

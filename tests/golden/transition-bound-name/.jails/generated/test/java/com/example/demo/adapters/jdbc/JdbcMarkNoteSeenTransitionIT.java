@@ -27,11 +27,22 @@ class JdbcMarkNoteSeenTransitionIT {
     @Test
     void writesThroughTheRealDatabase() {
         Note stored = repository.save(new Note(1L, "sample", false, 1L));
-        Note answered = operation.execute(stored.id(), new MarkNoteSeenTransition.Input(1L));
+        Note answered = operation.execute(stored.id(), new MarkNoteSeenTransition.Input(), stored.version());
 
-        // `returning` answers with the row the statement wrote, so a null
-        // here means it matched none -- which is the failure worth catching.
+        // `returning` answers with the row the statement wrote, so an empty
+        // answer here means it matched none -- which is the failure worth
+        // catching.
         assertThat(answered).isNotNull();
+    }
+
+    @Test
+    void aCallerThatSendsNoPreconditionAppliesUnconditionallyAndCanRepeat() {
+        Note stored = repository.save(new Note(1L, "sample", false, 1L));
+        Note first = operation.execute(stored.id(), new MarkNoteSeenTransition.Input(), null);
+        Note again = operation.execute(stored.id(), new MarkNoteSeenTransition.Input(), null);
+
+        assertThat(first).isNotNull();
+        assertThat(again).isNotNull();
     }
 
     // Reader-owned cases belong below this stable boundary.

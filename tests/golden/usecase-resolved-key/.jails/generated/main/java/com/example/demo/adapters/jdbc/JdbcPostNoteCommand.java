@@ -3,6 +3,7 @@ package com.example.demo.adapters.jdbc;
 
 import com.example.demo.application.commands.PostNoteCommand;
 import com.example.demo.domain.Note;
+import java.util.Optional;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -16,14 +17,10 @@ public class JdbcPostNoteCommand implements PostNoteCommand {
     }
 
     @Override
-    public Note execute(PostNoteCommand.Input input) {
-        long resolved_authorId = jdbc.sql("select id from authors where email = :resolve_author_id_0")
-                .param("resolve_author_id_0", input.email())
-                .query(long.class)
-                .single();
-        JdbcClient.StatementSpec statement = jdbc.sql("insert into notes (author_id, body, sender_type) values (:author_id, :body, 'CUSTOMER') returning id, author_id, body, sender_type");
-        statement = statement.param("author_id", resolved_authorId);
+    public Optional<Note> execute(PostNoteCommand.Input input) {
+        JdbcClient.StatementSpec statement = jdbc.sql("insert into notes (author_id, body, sender_type) select authors.id, :body, 'CUSTOMER' from authors where authors.email = :resolve_author_id_0 returning id, author_id, body, sender_type");
+        statement = statement.param("resolve_author_id_0", input.email());
         statement = statement.param("body", input.body());
-        return statement.query(Note.class).single();
+        return statement.query(Note.class).optional();
     }
 }

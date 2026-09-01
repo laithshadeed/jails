@@ -107,6 +107,29 @@ impl Subject {
     }
 }
 
+/// The frozen legacy binary to compare against, when there is one.
+///
+/// `None` on an ordinary run: `verify-rewrite` does not build a second binary,
+/// so the differential half of G1/G5 is exercised by
+/// `scripts/verify-rewrite-g1-canary.sh` and not by the gate. Absent is the
+/// honest answer there -- a "legacy" subject that is the binary under test
+/// compares it with itself and passes whatever either does.
+///
+/// The same value as `CARGO_BIN_EXE_jails` is refused rather than accepted for
+/// that reason: it is the one setting that makes this suite look like it is
+/// doing twice the work it is.
+fn legacy_binary() -> Option<OsString> {
+    let named = std::env::var_os("JAILS_LEGACY_BIN")?;
+    assert_ne!(
+        Path::new(&named).canonicalize().ok(),
+        Path::new(env!("CARGO_BIN_EXE_jails")).canonicalize().ok(),
+        "JAILS_LEGACY_BIN names the binary under test, so the differential \
+         subjects would be one binary compared with itself.\n       \
+         fix: point it at a binary built from an earlier revision, or unset it"
+    );
+    Some(named)
+}
+
 fn subjects(label: &str) -> [Subject; 1] {
     subjects_with_fixture(label, false)
 }
@@ -2918,6 +2941,15 @@ fn the_corpus_policy_covers_every_checked_in_project() {
 
 /// Every corpus project, through both implementations.
 ///
+/// **"Both" is one binary unless `JAILS_LEGACY_BIN` names a second**, which
+/// only `scripts/verify-rewrite-g1-canary.sh` does. This used to fall back to
+/// `CARGO_BIN_EXE_jails` for the legacy side, so an ordinary run built two
+/// subjects from the same binary and compared it with itself: every assertion
+/// passed and none of them meant anything. That is the exact vacuity the canary
+/// script refuses when `JAILS_LEGACY_REVISION` resolves to `HEAD`, arriving by
+/// the other route. The legacy subject is now absent rather than fake, and
+/// [`legacy_binary`] refuses a value that is the binary under test.
+///
 /// **The corpus is bytes rather than a Rust table, and that is the point.**
 /// `write_adopted_fixture` covers one adopted shape and cannot grow without
 /// somebody escaping a project into string literals; this grows by dropping a
@@ -2934,24 +2966,24 @@ fn the_corpus_policy_covers_every_checked_in_project() {
 fn every_corpus_project_is_treated_the_same() {
     for entry in corpus_policy() {
         let source = corpus_root().join(&entry.name);
-        let subjects = [
-            (
-                "legacy",
-                std::env::var_os("JAILS_LEGACY_BIN")
-                    .unwrap_or_else(|| OsString::from(env!("CARGO_BIN_EXE_jails"))),
-            ),
-            ("canonical", OsString::from(env!("CARGO_BIN_EXE_jails"))),
-        ]
-        .map(|(name, binary)| {
-            let root = temp_dir(&format!("corpus-{}-{name}", entry.name));
-            copy_corpus(&source, &root);
-            Subject {
-                name,
-                binary,
-                record: root.join("pom.xml"),
-                root,
-            }
-        });
+        let subjects = legacy_binary()
+            .into_iter()
+            .map(|binary| ("legacy", binary))
+            .chain(std::iter::once((
+                "canonical",
+                OsString::from(env!("CARGO_BIN_EXE_jails")),
+            )))
+            .map(|(name, binary)| {
+                let root = temp_dir(&format!("corpus-{}-{name}", entry.name));
+                copy_corpus(&source, &root);
+                Subject {
+                    name,
+                    binary,
+                    record: root.join("pom.xml"),
+                    root,
+                }
+            })
+            .collect::<Vec<_>>();
 
         for subject in &subjects {
             let before = reader_tree(&subject.root);

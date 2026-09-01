@@ -20,12 +20,13 @@ public class JdbcSetTopicSubjectTransition implements SetTopicSubjectTransition 
 
     @Override
     @Transactional
-    public Topic execute(long userId, SetTopicSubjectTransition.Input input) {
-        var predicates = new ArrayList<>(List.of("user_id = :user_id"));
+    public Topic execute(long userId, SetTopicSubjectTransition.Input input, long expectedVersion) {
+        var predicates = new ArrayList<String>(List.of("user_id = :user_id", "version = :expected_version"));
         var sql = "update topics set subject = :subject, version = version + 1 where " + String.join(" and ", predicates) + " returning id, user_id, subject, version";
         JdbcClient.StatementSpec statement = jdbc.sql(sql);
         statement = statement.param("user_id", userId);
         statement = statement.param("subject", input.subject());
+        statement = statement.param("expected_version", expectedVersion);
         return statement.query(Topic.class).single();
     }
 }

@@ -3234,8 +3234,16 @@ entity Metric {
                 .contains("score = :score, version = version + 1, updated_at = current_timestamp"),
             "{transition}"
         );
+        // `if-match required` binds the version through the optimistic-lock
+        // parameter, not through the ordinary `guard_<column>` equality path a
+        // plain version parameter takes. Asserting the guard spelling here read
+        // as correct and pinned the wrong one of the two.
         assert!(
-            transition.contains("version = :guard_version"),
+            transition.contains("version = :expected_version"),
+            "{transition}"
+        );
+        assert!(
+            transition.contains(r#"statement.param("expected_version", expectedVersion)"#),
             "{transition}"
         );
     }
@@ -3335,7 +3343,8 @@ entity Task {
         );
         assert!(
             transition.contains(
-                "execute(ExecutionContext context, UUID id, RenameTransition.Input input)"
+                "execute(ExecutionContext context, UUID id, RenameTransition.Input input, \
+                 long expectedVersion)"
             ),
             "{transition}"
         );

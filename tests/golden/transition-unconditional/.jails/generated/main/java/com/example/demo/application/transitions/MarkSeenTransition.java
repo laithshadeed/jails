@@ -6,10 +6,8 @@ import com.example.demo.domain.Note;
 public interface MarkSeenTransition {
     String ROUTE = "PUT /customer_api/seen";
 
-    Note execute(long id, Input input);
+    Note execute(long id, Input input, Long expectedVersion);
 
-    public record Input(
-        long version
-    ) {
+    public record Input() {
     }
 }

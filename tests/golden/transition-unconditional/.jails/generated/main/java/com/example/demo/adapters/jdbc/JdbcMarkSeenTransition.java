@@ -20,12 +20,12 @@ public class JdbcMarkSeenTransition implements MarkSeenTransition {
 
     @Override
     @Transactional
-    public Note execute(long id, MarkSeenTransition.Input input) {
-        var predicates = new ArrayList<>(List.of("id = :id", "version = :guard_version"));
+    public Note execute(long id, MarkSeenTransition.Input input, Long expectedVersion) {
+        var predicates = new ArrayList<String>(List.of("id = :id", "version = coalesce(:expected_version, version)"));
         var sql = "update notes set seen = true, version = version + 1 where " + String.join(" and ", predicates) + " returning id, body, seen, version";
         JdbcClient.StatementSpec statement = jdbc.sql(sql);
         statement = statement.param("id", id);
-        statement = statement.param("guard_version", input.version());
+        statement = statement.param("expected_version", expectedVersion);
         return statement.query(Note.class).single();
     }
 }

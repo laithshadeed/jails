@@ -107,6 +107,28 @@ pub struct BuiltinSemantics {
     /// Whether it can carry a request scope -- a value proved against a
     /// same-named JWT claim, so it has to be something a claim can hold.
     pub scopeable: bool,
+    /// One value of this builtin **as SQL**, for a generated proof row.
+    ///
+    /// Not [`sample`], which is a Java expression: these go into a statement
+    /// rather than a record, so a `uuid` is quoted and a `boolean` is bare.
+    /// It lives on this row for the reason every other projection does -- a
+    /// second exhaustive match over the enum is a second answer, and the
+    /// compiler cannot say which one is stale because both compile.
+    ///
+    /// The digits start at 7 so a seeded proof row cannot collide with a
+    /// hand-written fixture on a unique column.
+    ///
+    /// [`sample`]: Self::sample
+    pub sql_sample: &'static str,
+    /// A *second* SQL value, for the row a proof needs to be distinguishable
+    /// from [`sql_sample`] -- the parent key that is deliberately absent.
+    ///
+    /// Equal to `sql_sample` for the three builtins whose domain cannot supply
+    /// a second value worth distinguishing (`boolean`, `zone`, `currency`).
+    /// None of them is a foreign key, which is the only thing that reads it.
+    ///
+    /// [`sql_sample`]: Self::sql_sample
+    pub sql_alternate: &'static str,
 }
 
 use crate::model::BuiltinType;
@@ -125,6 +147,8 @@ static STRING: BuiltinSemantics = BuiltinSemantics {
     defaults: &[],
     numeric: false,
     scopeable: true,
+    sql_sample: "'sample-7'",
+    sql_alternate: "'sample-8'",
 };
 
 static INTEGER: BuiltinSemantics = BuiltinSemantics {
@@ -141,6 +165,8 @@ static INTEGER: BuiltinSemantics = BuiltinSemantics {
     defaults: &["identity"],
     numeric: true,
     scopeable: true,
+    sql_sample: "7",
+    sql_alternate: "8",
 };
 
 static LONG: BuiltinSemantics = BuiltinSemantics {
@@ -157,6 +183,8 @@ static LONG: BuiltinSemantics = BuiltinSemantics {
     defaults: &["identity"],
     numeric: true,
     scopeable: true,
+    sql_sample: "7",
+    sql_alternate: "8",
 };
 
 static DOUBLE: BuiltinSemantics = BuiltinSemantics {
@@ -173,6 +201,8 @@ static DOUBLE: BuiltinSemantics = BuiltinSemantics {
     defaults: &[],
     numeric: true,
     scopeable: false,
+    sql_sample: "7.0",
+    sql_alternate: "8.0",
 };
 
 static DECIMAL: BuiltinSemantics = BuiltinSemantics {
@@ -189,6 +219,8 @@ static DECIMAL: BuiltinSemantics = BuiltinSemantics {
     defaults: &[],
     numeric: true,
     scopeable: false,
+    sql_sample: "7.0",
+    sql_alternate: "8.0",
 };
 
 static BOOLEAN: BuiltinSemantics = BuiltinSemantics {
@@ -205,6 +237,8 @@ static BOOLEAN: BuiltinSemantics = BuiltinSemantics {
     defaults: &[],
     numeric: false,
     scopeable: false,
+    sql_sample: "false",
+    sql_alternate: "false",
 };
 
 static UUID: BuiltinSemantics = BuiltinSemantics {
@@ -221,6 +255,8 @@ static UUID: BuiltinSemantics = BuiltinSemantics {
     defaults: &["uuid7"],
     numeric: false,
     scopeable: true,
+    sql_sample: "'00000000-0000-0000-0000-000000000007'",
+    sql_alternate: "'00000000-0000-0000-0000-000000000008'",
 };
 
 static DATE: BuiltinSemantics = BuiltinSemantics {
@@ -237,6 +273,8 @@ static DATE: BuiltinSemantics = BuiltinSemantics {
     defaults: &["today"],
     numeric: false,
     scopeable: false,
+    sql_sample: "'2026-01-07'",
+    sql_alternate: "'2026-01-08'",
 };
 
 static DATE_TIME: BuiltinSemantics = BuiltinSemantics {
@@ -253,6 +291,8 @@ static DATE_TIME: BuiltinSemantics = BuiltinSemantics {
     defaults: &["now"],
     numeric: false,
     scopeable: false,
+    sql_sample: "'2026-01-07T00:00:00Z'",
+    sql_alternate: "'2026-01-08T00:00:00Z'",
 };
 
 static INSTANT: BuiltinSemantics = BuiltinSemantics {
@@ -269,6 +309,8 @@ static INSTANT: BuiltinSemantics = BuiltinSemantics {
     defaults: &["now"],
     numeric: false,
     scopeable: false,
+    sql_sample: "'2026-01-07T00:00:00Z'",
+    sql_alternate: "'2026-01-08T00:00:00Z'",
 };
 
 static DURATION: BuiltinSemantics = BuiltinSemantics {
@@ -285,6 +327,8 @@ static DURATION: BuiltinSemantics = BuiltinSemantics {
     defaults: &[],
     numeric: false,
     scopeable: false,
+    sql_sample: "'PT7S'",
+    sql_alternate: "'PT8S'",
 };
 
 /// `text`, not a URI column type: Postgres has none, and jails does not invent
@@ -304,6 +348,8 @@ static URI: BuiltinSemantics = BuiltinSemantics {
     defaults: &[],
     numeric: false,
     scopeable: false,
+    sql_sample: "'https://example.invalid/7'",
+    sql_alternate: "'https://example.invalid/8'",
 };
 
 static PATH: BuiltinSemantics = BuiltinSemantics {
@@ -320,6 +366,8 @@ static PATH: BuiltinSemantics = BuiltinSemantics {
     defaults: &[],
     numeric: false,
     scopeable: false,
+    sql_sample: "'/sample/7'",
+    sql_alternate: "'/sample/8'",
 };
 
 static ZONE_ID: BuiltinSemantics = BuiltinSemantics {
@@ -336,6 +384,8 @@ static ZONE_ID: BuiltinSemantics = BuiltinSemantics {
     defaults: &[],
     numeric: false,
     scopeable: false,
+    sql_sample: "'UTC'",
+    sql_alternate: "'UTC'",
 };
 
 /// **`Currency` is deliberately not an alias**, which is why this row lists
@@ -365,6 +415,8 @@ static CURRENCY: BuiltinSemantics = BuiltinSemantics {
     defaults: &[],
     numeric: false,
     scopeable: false,
+    sql_sample: "'GBP'",
+    sql_alternate: "'GBP'",
 };
 
 /// `byte[]` is an array, not a class, so it takes no import and has no boxed
@@ -383,6 +435,8 @@ static BYTES: BuiltinSemantics = BuiltinSemantics {
     defaults: &[],
     numeric: false,
     scopeable: false,
+    sql_sample: "'\\x07'",
+    sql_alternate: "'\\x08'",
 };
 
 /// Every builtin, for the lookups that scan by token or alias.

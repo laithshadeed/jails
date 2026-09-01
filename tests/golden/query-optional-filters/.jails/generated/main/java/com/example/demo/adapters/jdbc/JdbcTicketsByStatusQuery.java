@@ -20,7 +20,7 @@ public final class JdbcTicketsByStatusQuery implements TicketsByStatusQuery {
     @Override
     public List<Ticket> execute(TicketsByStatusQuery.Input input) {
         var sql = new StringBuilder("select id, status, category from tickets");
-        var predicates = new ArrayList<>(List.of("status = :status"));
+        var predicates = new ArrayList<String>(List.of("status = :status"));
         if (input.category().isPresent()) {
             predicates.add("category = :category");
         }

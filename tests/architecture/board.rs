@@ -244,7 +244,15 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // `refuse_reader_sql`, `refuse_declared` -- and a refusal about
                 // what is on disk is a question about paths, which is the same
                 // exemption `preflight_writable` records above.
-                ceiling: 93,
+                // 93 -> 95. The canonical executor grew two more readers whose
+                // subject *is* a path and which run where no `Project` exists:
+                // the staged-temporary sweep that a crash between staging and
+                // rename leaves behind, and the managed-tree verification that
+                // reads it. Both are the exemption this row already records
+                // twice -- a question about what is on disk, asked before there
+                // is a resolved project to hold the answer -- rather than a
+                // parameter object that was not passed.
+                ceiling: 95,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;
@@ -1280,7 +1288,28 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // `jdl/v1/parser.rs` at 688, one line above, having grown with
                 // typed field semantics. A one-line rise is not worth
                 // splitting a parser for; the next rise there is.
-                ceiling: 688,
+                //
+                // 688 -> 797, and the file is `jails-model/src/linker.rs`. The
+                // canonical tree arrived with four modules over this ceiling and
+                // the ladder was never moved, so the row read as held while the
+                // thing it measures had roughly doubled. One of the four is
+                // fixed rather than recorded: `model_generate_jdl.rs` was 811
+                // and is 485, because *how a JDL declaration is spelled* is a
+                // different secret from *which mutation an invocation means* --
+                // `model_generate_jdl/render.rs` holds the first, and only the
+                // parser and the formatter have to agree with it.
+                //
+                // `linker.rs` is the one left, and it is a raise rather than a
+                // second split because its seam is a design decision and not a
+                // mechanical one: it already has `linker/{component, enum_type,
+                // field, operation, unit}.rs`, so what is left in the parent is
+                // the part that has to see every declaration class at once --
+                // id derivation, the cross-node rules, and the assembly of
+                // `AppModel`. Cutting that badly produces two files that both
+                // need the whole picture, which is worse than one that admits
+                // it. The next rise here is that split, and it is named in
+                // `new.md` rather than left to be rediscovered.
+                ceiling: 797,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
                       decomposing one, so this asks the question the split is actually for: \

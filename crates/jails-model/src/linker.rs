@@ -1078,8 +1078,12 @@ route = "PATCH /notes/{id}"
         let error = model
             .apply(crate::ModelPatch::RemoveEntity(entity))
             .unwrap_err();
-        assert!(error.contains("create_note"), "{error}");
-        assert!(error.contains("open_notes"), "{error}");
+        // `refuse_dependents` names each dependent the way a reader wrote it in
+        // the model -- `operation CreateNote` -- rather than by its stable-id
+        // label. Asserting the label spelling pinned a rendering the refusal no
+        // longer uses.
+        assert!(error.contains("operation CreateNote"), "{error}");
+        assert!(error.contains("operation OpenNotes"), "{error}");
     }
 
     #[test]

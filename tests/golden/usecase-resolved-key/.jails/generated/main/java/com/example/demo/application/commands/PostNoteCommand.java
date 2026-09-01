@@ -3,11 +3,12 @@ package com.example.demo.application.commands;
 
 import com.example.demo.domain.Note;
 import java.util.Objects;
+import java.util.Optional;
 
 public interface PostNoteCommand {
     String ROUTE = "POST /customer_api/notes";
 
-    Note execute(Input input);
+    Optional<Note> execute(Input input);
 
     public record Input(
         String email,

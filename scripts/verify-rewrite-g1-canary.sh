@@ -44,4 +44,4 @@ CARGO_TARGET_DIR="$legacy_target" cargo build \
 
 echo "[verify-rewrite-g1-canary] comparing legacy and canonical product loops"
 JAILS_LEGACY_BIN="$legacy_target/debug/jails" \
-  cargo test --test differential -- --nocapture
+  cargo test --test product_loop -- --nocapture

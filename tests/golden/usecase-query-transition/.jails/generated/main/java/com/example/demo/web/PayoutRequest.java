@@ -9,8 +9,7 @@ import java.time.Instant;
 
 public record PayoutRequest(
     long amount,
-    @NotNull PayoutStatus status,
-    long version
+    @NotNull PayoutStatus status
 ) {
 
     /**
@@ -22,7 +21,7 @@ public record PayoutRequest(
                 TimeOrderedUuid.next(),
                 amount,
                 status,
-                version,
+                0L,
                 Instant.now());
     }
 }

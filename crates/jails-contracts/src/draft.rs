@@ -265,7 +265,7 @@ pub enum DocumentIntent {
     /// registry type plus the `return commands;` anchor — so both `App.java`
     /// from `new-cli` and a `<Name>Cli.java` from `g cli` are found, and a
     /// class that merely happens to be called `App` is not. Like
-    /// [`Self::EnsureSpringTestImport`] it names no path: which file is the
+    /// [`Self::ReconcileSpringTestImport`] it names no path: which file is the
     /// dispatcher is an observation, so the snapshot carries the candidates.
     ///
     /// Nothing is written when there is no dispatcher, or when there is more

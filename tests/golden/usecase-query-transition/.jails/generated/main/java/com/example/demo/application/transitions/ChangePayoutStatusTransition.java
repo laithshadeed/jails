@@ -8,18 +8,14 @@ import java.util.UUID;
 
 public interface ChangePayoutStatusTransition {
 
-    Payout execute(UUID id, Input input);
+    Payout execute(UUID id, Input input, long expectedVersion);
 
     public record Input(
-        PayoutStatus status,
-        long version
+        PayoutStatus status
     ) {
 
         public Input {
             Objects.requireNonNull(status, "status");
-            if (version < 0) {
-                throw new IllegalArgumentException("version must be nonnegative");
-            }
         }
     }
 }

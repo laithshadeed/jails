@@ -77,7 +77,7 @@
       },
       "http-route:op_note_open": {
         "rule_id": "convention.http-route",
-        "value": "POST /queries/open"
+        "value": "GET /queries/open"
       },
       "http-route:op_note_rename": {
         "rule_id": "convention.http-route",
@@ -500,7 +500,7 @@
               ],
               "route": {
                 "consumes": null,
-                "method": "post",
+                "method": "get",
                 "path": "/queries/open"
               }
             }
@@ -627,7 +627,7 @@
       }
     }
   },
-  "model_digest": "sha256:c8e1bd819cec86177ded20d964f6afb3dae5960eac3d3b007d9c719846608f95",
+  "model_digest": "sha256:f6326c6f134d195a7c76d7502486c9f5d196601eeb2c2b20e077f1b0af5e9d30",
   "projection": {
     "files": {
       ".jails/generated/main/java/com/example/notes/adapters/Json.java": {
@@ -674,7 +674,7 @@
         }
       },
       ".jails/generated/main/java/com/example/notes/adapters/jdbc/JdbcOpenQuery.java": {
-        "bytes": "<1138 bytes elided>",
+        "bytes": "<1144 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -689,7 +689,7 @@
         }
       },
       ".jails/generated/main/java/com/example/notes/adapters/jdbc/JdbcRenameTransition.java": {
-        "bytes": "<1212 bytes elided>",
+        "bytes": "<1218 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -849,7 +849,7 @@
         }
       },
       ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcCreateCommandIT.java": {
-        "bytes": "<1176 bytes elided>",
+        "bytes": "<1196 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
         "provenance": {
@@ -894,7 +894,7 @@
         }
       },
       ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcRenameTransitionIT.java": {
-        "bytes": "<1450 bytes elided>",
+        "bytes": "<1470 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
         "provenance": {
@@ -1321,6 +1321,6 @@
     },
     "root": ".jails/generated"
   },
-  "projection_digest": "sha256:3c35b17d1824f5ac95695c95bb1963a26bb561883906e47041b71e959da2c6bb",
+  "projection_digest": "sha256:7fa308fa16ea201b46520450c8d73ab5b79a511f09a70fbf60274cdfd3b3b281",
   "schema": "jails.compiler-lock.v3"
 }
