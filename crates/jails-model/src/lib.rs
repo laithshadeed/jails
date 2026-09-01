@@ -62,6 +62,7 @@ pub use jdl::v1::{
     set_jdl_app_property, set_jdl_entity_attribute, set_jdl_projection_path,
 };
 pub use layout::{Head, Layer, Layout, Package};
+pub use linker::JAVA_RELEASE_FLOOR;
 pub use model::{
     AppModel, BuiltinType, Capability, Dependency, DependencyScope, Ejection, Entity, EntityNames,
     Facet, Field, FieldDefault, FieldNames, FieldScope, FieldSemantics, Index, IndexColumn,

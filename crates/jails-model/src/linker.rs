@@ -7,6 +7,14 @@ mod operation;
 mod unit;
 
 use crate::ProjectIntent;
+
+/// The oldest Java a generated project may target.
+///
+/// The bar is what the *generated code* needs rather than what jails defaults
+/// new projects to: 17 has no records-with-sealed-switch, and 21 is where the
+/// templates land. It is also the release a project that states none is read
+/// as targeting -- see `model_init::derive` -- so the two cannot disagree.
+pub const JAVA_RELEASE_FLOOR: u16 = 21;
 use crate::diagnostic::{Diagnostic, Diagnostics};
 use crate::id::{
     CapabilityId, ComponentId, ComponentVariantId, ConstraintId, DependencyId, EjectionId,
@@ -54,7 +62,7 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
     let project_id = linker.stable_id::<ProjectId>(&document.project.id, "$.project.id");
     linker.java_type(&document.project.name, "$.project.name");
     linker.java_package(&document.project.base_package, "$.project.base_package");
-    if document.project.java_release < 21 {
+    if document.project.java_release < JAVA_RELEASE_FLOOR {
         linker.problem(
             "model-java-release",
             "$.project.java_release",

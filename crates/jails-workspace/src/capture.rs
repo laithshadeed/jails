@@ -343,7 +343,7 @@ fn capture_model_state(
         java_release: model.project.java_release,
         spring_boot: spring_boot_version(root, build_system),
         base_package: model.project.base_package.clone(),
-        dependencies: BTreeSet::new(),
+        dependencies: declared_dependencies(root, build_system),
         maven_wrapper: root.join("mvnw").is_file(),
         layout,
         junit: junit_version(root, build_system),
@@ -539,6 +539,95 @@ fn spring_boot_version(root: &Path, build_system: BuildSystem) -> Option<String>
 /// platform `1.y.z`. Under a Spring Boot parent the version is managed and
 /// nothing here needs to answer; on a plain build this is what makes the
 /// capability declarable instead of refused.
+/// Every `group:artifact` this project's build file declares.
+///
+/// **Observed once, here, because the compiler may not read a build file.**
+/// What it is for is the pair of questions the model cannot answer on its own:
+/// whether an artifact the compiler would otherwise splice is already the
+/// reader's, and whether a type the generated Java names -- `JdbcClient`, from
+/// `spring-jdbc` -- is on the classpath at all. A project that declares
+/// `spring-boot-starter-data-jdbc` and no `db` capability still has JDBC, and
+/// a generator that decides otherwise emits an in-memory bean into a project
+/// with a database.
+///
+/// Coordinates only: no versions, no scopes, no resolution. jails does not
+/// understand a build, and reading one artifact name out of it is not
+/// understanding one -- which is why an unparseable build yields an empty set
+/// rather than a guess, and every caller must treat "not declared here" as
+/// "unknown" rather than as "absent".
+fn declared_dependencies(root: &Path, build_system: BuildSystem) -> BTreeSet<String> {
+    let Some(path) = build_file(root, build_system) else {
+        return BTreeSet::new();
+    };
+    let Ok(source) = std::fs::read_to_string(path) else {
+        return BTreeSet::new();
+    };
+    // **jails' own block is not the reader's**, and reading it back as though
+    // it were would make the compiler drop every dependency it had just
+    // written: the next compile would see them declared already, decline to
+    // declare them, and empty the block it owns.
+    let marker = crate::documents::DEPENDENCY_MARKER;
+    let (open, close) = match build_system {
+        BuildSystem::Gradle => (format!("// {marker}"), format!("// /{marker}")),
+        _ => (format!("<!-- {marker} -->"), format!("<!-- /{marker} -->")),
+    };
+    let source = match (source.find(&open), source.find(&close)) {
+        (Some(start), Some(end)) if end > start => {
+            format!("{}{}", &source[..start], &source[end + close.len()..])
+        }
+        _ => source,
+    };
+    match build_system {
+        BuildSystem::Maven => {
+            let mut found = BTreeSet::new();
+            let mut rest = source.as_str();
+            while let Some(at) = rest.find("<dependency>") {
+                let Some(block) = between(&rest[at..], "<dependency>", "</dependency>") else {
+                    break;
+                };
+                if let (Some(group), Some(artifact)) = (
+                    between(block, "<groupId>", "</groupId>"),
+                    between(block, "<artifactId>", "</artifactId>"),
+                ) {
+                    found.insert(format!("{}:{}", group.trim(), artifact.trim()));
+                }
+                rest = &rest[at + "<dependency>".len()..];
+            }
+            found
+        }
+        // A Gradle script states each one as a quoted coordinate on its own
+        // line, with or without a version.
+        BuildSystem::Gradle => source
+            .lines()
+            // The coordinate is the quoted run, whatever configuration name
+            // precedes it: `implementation '...'`, `testImplementation("...")`.
+            .filter_map(|line| {
+                let at = line.find(['\'', '"'])?;
+                quoted(&line[at..])
+            })
+            .filter_map(|coordinate| {
+                let mut parts = coordinate.split(':');
+                let group = parts.next()?;
+                let artifact = parts.next()?;
+                (!group.is_empty() && !artifact.is_empty()).then(|| format!("{group}:{artifact}"))
+            })
+            .collect(),
+        BuildSystem::Unknown => BTreeSet::new(),
+    }
+}
+
+/// This project's build script, whichever dialect it is written in.
+fn build_file(root: &Path, build_system: BuildSystem) -> Option<std::path::PathBuf> {
+    match build_system {
+        BuildSystem::Maven => Some(root.join("pom.xml")),
+        BuildSystem::Gradle if root.join("build.gradle.kts").is_file() => {
+            Some(root.join("build.gradle.kts"))
+        }
+        BuildSystem::Gradle => Some(root.join("build.gradle")),
+        BuildSystem::Unknown => None,
+    }
+}
+
 fn junit_version(root: &Path, build_system: BuildSystem) -> Option<String> {
     let path = match build_system {
         BuildSystem::Maven => root.join("pom.xml"),

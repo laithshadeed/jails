@@ -112,6 +112,7 @@ impl Compiler {
             spring_boot: snapshot.project.spring_boot.as_deref(),
             compose_path: &compose_path,
             maven_wrapper: snapshot.project.maven_wrapper,
+            jdbc: jdbc_on_classpath(snapshot),
         };
         let baseline_model = snapshot.accepted_model.as_ref().or_else(|| {
             snapshot
@@ -304,6 +305,21 @@ impl Compiler {
         {
             build_features.insert(BuildFeature::IntegrationTests);
         }
+        // **What the reader's build already declares is already satisfied.**
+        // Everything the compiler adds below is *implied* -- by a capability,
+        // a component, an entity facet -- rather than declared, so an artifact
+        // the project states for itself answers the requirement and must not
+        // be declared a second time. Without this a Gradle project carrying
+        // `spring-boot-starter-web` of its own was refused outright the moment
+        // an entity gained an HTTP facet, over a dependency it already had.
+        //
+        // It does not cover `next_model.dependencies`: those the reader
+        // declared *through jails*, so a copy outside the marked block is two
+        // owners for one coordinate and the adapter is right to refuse it.
+        let observed = &snapshot.project.dependencies;
+        let satisfied = |required: &BuildDependency| {
+            observed.contains(&format!("{}:{}", required.group, required.artifact))
+        };
         let mut dependencies = next_model
             .dependencies
             .values()
@@ -320,16 +336,20 @@ impl Compiler {
             snapshot.project.spring_boot.as_deref(),
             snapshot.project.build_system != BuildSystem::Unknown,
         ) {
-            if !dependencies.iter().any(|declared| {
-                declared.group == required.group && declared.artifact == required.artifact
-            }) {
+            if !satisfied(&required)
+                && !dependencies.iter().any(|declared| {
+                    declared.group == required.group && declared.artifact == required.artifact
+                })
+            {
                 dependencies.push(required);
             }
         }
         for required in emit_component::dependencies(&next_model) {
-            if !dependencies.iter().any(|declared| {
-                declared.group == required.group && declared.artifact == required.artifact
-            }) {
+            if !satisfied(&required)
+                && !dependencies.iter().any(|declared| {
+                    declared.group == required.group && declared.artifact == required.artifact
+                })
+            {
                 dependencies.push(required);
             }
         }
@@ -345,9 +365,11 @@ impl Compiler {
                 scope: DependencyScope::Compile,
                 optional: false,
             };
-            if !dependencies.iter().any(|declared| {
-                declared.group == required.group && declared.artifact == required.artifact
-            }) {
+            if !satisfied(&required)
+                && !dependencies.iter().any(|declared| {
+                    declared.group == required.group && declared.artifact == required.artifact
+                })
+            {
                 dependencies.push(required);
             }
         }
@@ -360,9 +382,11 @@ impl Compiler {
             && snapshot.project.build_system != BuildSystem::Unknown
         {
             let required = emit_architecture::dependency();
-            if !dependencies.iter().any(|declared| {
-                declared.group == required.group && declared.artifact == required.artifact
-            }) {
+            if !satisfied(&required)
+                && !dependencies.iter().any(|declared| {
+                    declared.group == required.group && declared.artifact == required.artifact
+                })
+            {
                 dependencies.push(required);
             }
         }
@@ -372,9 +396,11 @@ impl Compiler {
             .any(|capability| capability.kind == "db")
         {
             for required in storage::storage_dependencies(snapshot.project.spring_boot.as_deref()) {
-                if !dependencies.iter().any(|declared| {
-                    declared.group == required.group && declared.artifact == required.artifact
-                }) {
+                if !satisfied(&required)
+                    && !dependencies.iter().any(|declared| {
+                        declared.group == required.group && declared.artifact == required.artifact
+                    })
+                {
                     dependencies.push(required);
                 }
             }
@@ -401,9 +427,11 @@ impl Compiler {
                 scope: DependencyScope::Test,
                 optional: false,
             };
-            if !dependencies.iter().any(|declared| {
-                declared.group == required.group && declared.artifact == required.artifact
-            }) {
+            if !satisfied(&required)
+                && !dependencies.iter().any(|declared| {
+                    declared.group == required.group && declared.artifact == required.artifact
+                })
+            {
                 dependencies.push(required);
             }
         }
@@ -427,9 +455,11 @@ impl Compiler {
                 scope: DependencyScope::Test,
                 optional: false,
             };
-            if !dependencies.iter().any(|declared| {
-                declared.group == required.group && declared.artifact == required.artifact
-            }) {
+            if !satisfied(&required)
+                && !dependencies.iter().any(|declared| {
+                    declared.group == required.group && declared.artifact == required.artifact
+                })
+            {
                 dependencies.push(required);
             }
         }
@@ -459,9 +489,11 @@ impl Compiler {
                 scope: DependencyScope::Compile,
                 optional: false,
             };
-            if !dependencies.iter().any(|declared| {
-                declared.group == required.group && declared.artifact == required.artifact
-            }) {
+            if !satisfied(&required)
+                && !dependencies.iter().any(|declared| {
+                    declared.group == required.group && declared.artifact == required.artifact
+                })
+            {
                 dependencies.push(required);
             }
         }
@@ -734,6 +766,24 @@ impl Compiler {
 /// `cap http` ejects fine -- so the failure reads as a property of the
 /// capability rather than of this function. The caller observes the version
 /// the same way `capture` does.
+/// Whether `JdbcClient` can be resolved in this project.
+///
+/// Spring's `spring-jdbc` is what declares it, and three starters bring it in:
+/// the JDBC starter, the data-JDBC starter, and the JPA starter above them.
+/// Named rather than matched on `jdbc` appearing anywhere in a coordinate, so
+/// a project's own `com.example:jdbc-utils` is not read as Spring's.
+fn jdbc_on_classpath(snapshot: &WorkspaceSnapshot) -> bool {
+    const PROVIDERS: [&str; 4] = [
+        "org.springframework:spring-jdbc",
+        "org.springframework.boot:spring-boot-starter-jdbc",
+        "org.springframework.boot:spring-boot-starter-data-jdbc",
+        "org.springframework.boot:spring-boot-starter-data-jpa",
+    ];
+    PROVIDERS
+        .iter()
+        .any(|provider| snapshot.project.dependencies.contains(*provider))
+}
+
 pub fn implementation_paths(
     model: &jails_model::AppModel,
     ejection_id: &str,
@@ -750,6 +800,12 @@ pub fn implementation_paths(
             spring_boot,
             compose_path: &compose_path,
             maven_wrapper,
+            // This renders only to work out which files an ejection would
+            // move, and both adapters are ejectable whichever one is the bean.
+            jdbc: model
+                .capabilities
+                .values()
+                .any(|capability| capability.kind == "db"),
         },
     )?;
     Ok(generated

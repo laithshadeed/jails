@@ -75,15 +75,14 @@ pub(crate) fn read_source_at(root: &Path, model_path: &Path) -> Result<String> {
         // The same rule as `load_model_at`: a project with no model reads as
         // the model `model init` would write, so the first mutation patches a
         // real seed rather than refusing over the file it is about to create.
+        // **The derive's own refusal is what the reader needs**, not a report
+        // that a file jails was about to create is missing. Discarding it said
+        // "could not read `.jails/model.jdl`: No such file or directory" about
+        // a project whose base package could not be read, which names neither
+        // the problem nor anything to do about it.
         Err(error) if error.kind() == std::io::ErrorKind::NotFound && !owns_at(root) => {
             jails_project::model::Project::load(root)
                 .and_then(|project| crate::model_init::derive(&project))
-                .map_err(|_| {
-                    Failure::Told(format!(
-                        "could not read canonical model `{}`: {error}",
-                        model_path.display()
-                    ))
-                })
         }
         Err(error) => Err(Failure::Told(format!(
             "could not read canonical model `{}`: {error}",

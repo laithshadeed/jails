@@ -19,8 +19,9 @@ pub(crate) const JAVA_ROOT: &str = ".jails/generated/main/java";
 pub(crate) fn lower_and_emit(
     model: &AppModel,
     output: &mut RenderedTree,
-    spring_boot: Option<&str>,
+    observed: &crate::emit::Observed<'_>,
 ) -> Result<(), CompileError> {
+    let spring_boot = observed.spring_boot;
     crate::emit_unit::lower_and_emit(model, output, spring_boot)?;
     if let Some(unit) = execution_context::lower(model)? {
         output
@@ -107,10 +108,18 @@ pub(crate) fn lower_and_emit(
         .capabilities
         .values()
         .find(|capability| capability.kind == "fake");
-    let stored = model
+    // **Declared, or already on the classpath.** A project that states
+    // `spring-boot-starter-data-jdbc` in its own build has JDBC whether or not
+    // the model declares `db`, and the bean has to be the adapter that talks
+    // to it -- see `Observed::jdbc`. Emitting the in-memory one as the bean
+    // there gave a project with a real database a `LinkedHashMap` beside a
+    // query adapter reading from PostgreSQL: two answers to one question, and
+    // the wrong one wired in.
+    let declared = model
         .capabilities
         .values()
-        .any(|capability| capability.kind == "db");
+        .find(|capability| capability.kind == "db");
+    let stored = observed.jdbc || declared.is_some();
     if fake.is_some() || !stored {
         let owner = fake.map_or("cap_scaffold_default", |capability| capability.id.as_str());
         for entity in model
@@ -129,25 +138,25 @@ pub(crate) fn lower_and_emit(
                 .map_err(CompileError::new)?;
         }
     }
-    if let Some(capability) = model
-        .capabilities
-        .values()
-        .find(|capability| capability.kind == "db")
+    // The owner is the `db` capability where there is one; where JDBC is only
+    // an observation, the adapter belongs to the scaffold that asked for the
+    // port, the same way the in-memory one does when nothing declares `fake`.
+    if let Some(owner) = declared
+        .map(|capability| capability.id.as_str())
+        .or_else(|| observed.jdbc.then_some("cap_scaffold_default"))
     {
         for entity in model
             .entities
             .values()
             .filter(|entity| entity.active && entity.facets.contains(&Facet::Repository))
         {
-            let unit = repository::lower_db_repository(model, capability.id.as_str(), entity)?;
+            let unit = repository::lower_db_repository(model, owner, entity)?;
             output
                 .insert(unit.path, unit.file)
                 .map_err(CompileError::new)?;
             // The tier that answers the question the adapter exists for. See
             // `lower_db_repository_it`.
-            if let Some(unit) =
-                repository::lower_db_repository_it(model, capability.id.as_str(), entity)?
-            {
+            if let Some(unit) = repository::lower_db_repository_it(model, owner, entity)? {
                 output
                     .insert(unit.path, unit.file)
                     .map_err(CompileError::new)?;
@@ -162,7 +171,7 @@ pub(crate) fn lower_and_emit(
             .values()
             .filter(|entity| entity.active && entity.facets.contains(&Facet::Search))
         {
-            let unit = repository::lower_search_adapter(model, capability.id.as_str(), entity)?;
+            let unit = repository::lower_search_adapter(model, owner, entity)?;
             output
                 .insert(unit.path, unit.file)
                 .map_err(CompileError::new)?;

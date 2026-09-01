@@ -15,7 +15,7 @@ pub(crate) use spring_test::{
     remove_spring_test_import, set_maven_main_class, spring_boot_test_targets,
 };
 
-const DEPENDENCY_MARKER: &str = "jails:dependencies";
+pub(crate) const DEPENDENCY_MARKER: &str = "jails:dependencies";
 
 pub(crate) fn reconcile_properties(
     text: &str,

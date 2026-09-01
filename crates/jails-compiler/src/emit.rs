@@ -26,6 +26,16 @@ pub(crate) struct Observed<'a> {
     /// Whether the project ships `mvnw`, so generated CI and container builds
     /// invoke the build the way the project actually offers it.
     pub maven_wrapper: bool,
+    /// Whether Spring's JDBC is on this project's classpath.
+    ///
+    /// **A model can say `storage none` over a project that has a database.**
+    /// The repository port always gets exactly one bean, and which adapter it
+    /// is depends on whether `JdbcClient` -- from `spring-jdbc`, which the JDBC
+    /// and data-JDBC starters both bring -- can be resolved at all. Reading it
+    /// off the declared `db` capability alone gave a Gradle project carrying
+    /// `spring-boot-starter-data-jdbc` an in-memory bean beside a query adapter
+    /// talking to its real database.
+    pub jdbc: bool,
 }
 
 pub(crate) fn emit(
@@ -34,7 +44,7 @@ pub(crate) fn emit(
     observed: &Observed<'_>,
 ) -> Result<(), CompileError> {
     emit_capability::lower_and_emit(model, output, observed)?;
-    emit_java::lower_and_emit(model, output, observed.spring_boot)?;
+    emit_java::lower_and_emit(model, output, observed)?;
     emit_operation::lower_and_emit(model, output)?;
     emit_operation::outbox::lower_and_emit(model, output)?;
     emit_component::lower_and_emit(model, output)?;

@@ -147,12 +147,18 @@ pub(crate) fn derive(project: &jails_project::model::Project) -> Result<String> 
                 .to_string(),
         ));
     }
-    let java = project.java_release().ok_or_else(|| {
-        Failure::Told(
-            "could not read this project's Java release from its build.\n       fix: declare a Maven release/source level or a Gradle toolchain, then retry"
-                .to_string(),
-        )
-    })?;
+    // **A build that states no release is read as targeting the floor.** An
+    // ordinary Gradle script declares neither a toolchain nor a
+    // `sourceCompatibility` and compiles with whatever JDK Gradle is running
+    // on, so there is no configured release to keep -- and refusing there put
+    // `jails g` out of reach of the commonest build file there is. The floor
+    // is the safe reading: generated code compiles on every release jails
+    // supports, and a project that *does* state one keeps it, because
+    // generation must never rewrite an adopted release merely because jails'
+    // own default advanced.
+    let java = project
+        .java_release()
+        .unwrap_or(u32::from(jails_model::JAVA_RELEASE_FLOOR));
     let platform = match project.flavor() {
         jails_project::pom::Flavor::SpringBoot => "spring",
         jails_project::pom::Flavor::PlainMaven => "plain",

@@ -6533,21 +6533,23 @@ fn a_gradle_projects_dependencies_are_read_from_its_gradle_file() {
 
     let jdbc = common::read_generated(
         &root,
-        "src/main/java/com/example/demo/adapters/JdbcTicketRepository.java",
+        "src/main/java/com/example/demo/adapters/jdbc/JdbcTicketRepository.java",
     );
-    let memory = common::read_generated(
-        &root,
-        "src/main/java/com/example/demo/adapters/InMemoryTicketRepository.java",
-    );
-    // Exactly one of them is the bean, and it is the one that talks to the
-    // database the query adapter also reads.
-    assert!(jdbc.contains("@Component"), "{jdbc}");
+    // The port has exactly one implementation and it is the one that talks to
+    // the database the query adapter also reads. `@Repository` rather than
+    // `@Component`: both halves of that annotation are true here -- it is a
+    // bean, and persistence-exception translation has a `SQLException` to
+    // translate.
+    assert!(jdbc.contains("@Repository"), "{jdbc}");
     assert!(jdbc.contains("JdbcClient"), "{jdbc}");
+    // **The in-memory double is not emitted beside it.** Two implementations
+    // of one port is the ambiguity `jails beans` reports, and the compiler
+    // resolves it by writing one: `jails add fake` is how a project asks for
+    // the double, and then the real adapter keeps the annotation.
     assert!(
-        !memory
-            .lines()
-            .any(|line| line.trim_start().starts_with("@Component")),
-        "{memory}"
+        !common::managed_listing(&root).contains("InMemoryTicketRepository"),
+        "{}",
+        common::managed_listing(&root)
     );
 }
 
