@@ -399,15 +399,17 @@ impl TypeRef {
         {
             return Ok(Self::External(value.to_string()));
         }
-        // A reserved word is a different mistake from a misspelling, and only
-        // one of the two has `jails g enum` as its answer. Naming it is D3:
-        // a refusal that does not say what to do next is a defect.
+        // A reserved word is a different mistake from a misspelling, and
+        // "capitalise it" is not the answer to it -- so it gets its own
+        // sentence naming the segment. **No `fix:` line here**: every caller
+        // already supplies one, and two `fix:` lines under one diagnostic is
+        // the defect D3 is about, not twice the help.
         if let Some(reserved) = segments()
             .chain(std::iter::once(name))
             .find(|segment| crate::naming::is_java_keyword(segment))
         {
             return Err(format!(
-                "`{value}` cannot be a Java type: `{reserved}` is a reserved word, so the import it would need does not parse\n       fix: declare the type with `jails g enum <Name> <CONSTANT>...` or `jails g record`, then reference it by name"
+                "`{value}` cannot be a Java type: `{reserved}` is a reserved word, so the import it would need does not parse"
             ));
         }
         Err(format!(
@@ -465,7 +467,9 @@ mod tests {
                 message.contains("is a reserved word"),
                 "`{reserved}` should name the reserved word: {message}"
             );
-            assert!(message.contains("fix:"), "`{reserved}`: {message}");
+            // No `fix:` here on purpose: the linker call sites carry one,
+            // and two under a single diagnostic reads as a defect.
+            assert!(!message.contains("fix:"), "`{reserved}`: {message}");
         }
 
         // The misspelling message is a different mistake and keeps its own
