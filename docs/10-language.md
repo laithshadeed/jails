@@ -209,88 +209,42 @@ others: the second front end goes away by *upgrading* projects onto the first,
 never by supporting both, because `docs/00-contracts.md` forbids two editable
 model sources. That rule is what fixes the order of this work.
 
-**This item is not the branch-deletion it reads as, and starting it that way
-strands projects.** `is_v1_source` has 31 call sites and each is a two-armed
-`if`, so deleting the pre-v1 arm looks like the whole job. It is not, because
-only one of the two old front ends has an upgrade path:
+**The route exists now.** `jails model upgrade --to 1` moves a project off
+`.jails/model.toml`: it links the TOML, renders v1 with `render_jdl_v1`, and
+writes `.jails/model.jdl` **while retiring the TOML in the same exact plan** --
+because writing one without the other leaves two editable model sources, and a
+crash between two plans would leave that state permanently. It is a
+`RemoveReaderFile` beside the `ReplaceModelFile` rather than a seventh
+operation: a model source that stops being the model is reader-owned source,
+and widening the vocabulary for one caller costs every executor and verifier.
 
-| front end | route onto `jdl 1` |
-|---|---|
-| pre-v1 JDL draft | `jails model upgrade --to 1`, source-to-source, identity proved by `jails_model::upgrade` |
-| `.jails/model.toml` | **none** -- `model upgrade` refuses it by name: *"the temporary compatibility input, not a JDL source; there is no in-place upgrade for it"* |
+Two things it does that a naive version would not, and the second was a real
+defect caught by running it:
 
-**And the route it did have is gone.** `jails model import` no longer exists
--- `jails model --help` lists `init check upgrade fmt plan apply explain
-eject` -- so the exit condition below, and `docs/00-contracts.md` and
-`CLAUDE.md` where they say the same thing, all name a command that was
-removed. `model init` replaced it for a *foreign* project and writes the app
-block only; it is not a carry-across.
+- **The `db` capability is materialised out loud.** v1 reads `storage
+  postgres` as a `db` capability and the TOML `dialect` is not one, so the
+  upgrade genuinely gains a JDBC adapter -- which is §22's reason for
+  requiring review. `render_jdl_v1` refuses to add it silently; the upgrade
+  adds it and prints a note. One mapping, `storage_capability`, read by both.
+- **The axes are observed, not defaulted.** `.jails/model.toml` carries
+  neither `platform` nor `build`, and `ProjectIntent` defaults them to
+  `spring`/`maven` -- so the first version marked a `new-cli` project
+  `platform spring`. §22 says these are inspected once and "never guessed",
+  so the upgrade reads them the way the JDL path already did.
 
-Reproduced 2026-09-01, and this is the state the contracts forbid, persisting
-because its way out was deleted:
+`a_toml_project_upgrades_onto_jdl_v1_and_the_toml_is_retired_with_it` pins all
+four: the JDL is written, the TOML is retired, every stable id survives, and
+the axes are the project's.
 
-```
-$ mkdir -p p/.jails && printf 'schema = "jails.model.v1"\n\n[project]\n…' \
-    > p/.jails/model.toml
-$ cd p && jails model check
-model valid: .jails/model.toml (1 nodes, 0 entities, 0 operations)
-$ jails g record Note id:uuid@pk
-applied model patch for Note: sha256:676feabd… (5 files written)
-```
+**What is left is deleting the branches.** 31 `is_v1_source` sites, and the
+test surface that reaches them: ~43 references to `.jails/model.toml` in
+`tests/cli/model.rs`, most of them exercising a mutating command *through* the
+TOML front end. Those become `jdl_project` fixtures. Nothing is blocked any
+more -- every project can be carried across first.
 
-A `.jails/model.toml` project is fully editable, and there is now no command
-that moves it to `jdl 1`. That is two editable model sources with no
-convergence, which `docs/00-contracts.md` says is never permitted.
-
-So the order is: build the TOML route first, then delete the branches.
-
-**The renderer that route needs is now built.** `jails_model::render_jdl_v1`
-takes a linked `AppModel` and writes JDL v1 -- `jdl/emit.rs`, and the thing
-that makes it safe to point at somebody's project is that it refuses twice:
-every construct it cannot express refuses by name, and then it parses and
-links what it just wrote and compares that to the model it was given. A
-renderer that silently drops a field is how a one-shot migration corrupts a
-project, and the round trip is the only check that catches the case nobody
-enumerated. It caught three:
-
-- an operation route the *linker derived* was being re-emitted as though the
-  author had written it, which turns a convention into a declaration and
-  stops `model explain` reporting it as derived;
-- `deliver outbox` was missing from the emitted statement vocabulary, because
-  the survey that built it read an older tree -- the same drift the counts
-  above are dated against;
-- component parameters kept only `@default`, so `name: string @notBlank` on a
-  `durable-job` lost its check. Two copies of one renderer, which is the
-  defect shape this branch has now hit three times.
-
-Proven three ways, because the first one alone is weaker than it reads. The
-61 models in `tests/golden` are every generator kind and capability the tool
-*emits*; §4's complete example is the specification's own flagship; and a
-fixture covers the twelve constructs that appear in **no** golden -- `dep`,
-`prop`, `eject`, a composite `unique`, `@scope(claim:)`, `@updated`,
-`@length`, `@retired`, `@internal`, `partition by`, `use value` and an enum
-wire value. The corpus is what the tool writes; the language is larger, and a
-renderer has to survive both.
-
-The §4 proof needed fixing before it was one: it bailed out when the example
-failed to link, which it does because of A3.15's recorded ejection gap -- so
-it asserted nothing and reported green, the exact shape this repository's own
-workflow notes warn about. It removes that one line now, the way
-`tests/cli`'s pin of the same gap does, and runs.
-
-**What is left is one plan operation, and it is not yours.** The upgrade has
-to write `.jails/model.jdl` *and* retire `.jails/model.toml` in the same exact
-plan, or the project ends with two editable sources -- the state this whole
-item exists to remove. `PlannedOperation` is `ReplaceModelFile`,
-`PublishMergedTree`, `AppendMigration`, `ReplaceStateFile`, `PatchReaderFile`
-and `RemoveReaderFile`: there is no way to retire a model file, and
-`materialize_with_model` takes exactly one `ModelFileUpdate`. Both are
-`jails-workspace`, which is C's. Agree the operation with C, then the command
-is a small frontend over the renderer.
-
-**Exit (restated, because the old one cites a deleted command):**
-`.jails/model.toml` and the pre-v1 draft are read only by whatever one-shot
-command carries a project across; `is_v1_source` has no callers.
+**Exit:** `.jails/model.toml` and the pre-v1 draft are read only by
+`jails model upgrade`, the one-shot that carries a project across;
+`is_v1_source` has no callers.
 
 ## Open items
 

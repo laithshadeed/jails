@@ -48,6 +48,18 @@ impl CanonicalModelPatch {
 pub struct ModelFileUpdate {
     pub path: ProjectPath,
     pub bytes: Vec<u8>,
+    /// Authoring sources this update replaces, retired in the same plan.
+    ///
+    /// **A model source that stops being the model is reader-owned source.**
+    /// The one caller is the upgrade that moves a project off
+    /// `.jails/model.toml`: writing `.jails/model.jdl` without retiring the
+    /// TOML in the *same* exact plan leaves two editable model sources, which
+    /// is the state `docs/00-contracts.md` forbids and the whole reason the
+    /// upgrade exists. It is a `RemoveReaderFile` rather than a new operation
+    /// because that is exactly what it is once it is no longer the model, and
+    /// inventing a seventh operation for one caller would widen the vocabulary
+    /// every executor and verifier has to cover.
+    pub retire: Vec<ProjectPath>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

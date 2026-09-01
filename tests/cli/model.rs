@@ -14341,3 +14341,78 @@ fn the_specification_complete_example_links_except_its_one_recorded_gap() {
     );
     fs::remove_dir_all(&root).ok();
 }
+
+/// A project on `.jails/model.toml` has a route to `jdl 1`, and takes it once.
+///
+/// **This is A4.4's exit, and the state it removes is the one
+/// `docs/00-contracts.md` forbids.** Before this, `model check` accepted a
+/// TOML model, `jails g record` applied patches to it, and `model upgrade`
+/// refused it by name -- so the compatibility input was a second *editable*
+/// model source with no convergence at all. `model import`, which used to be
+/// the way across, no longer exists.
+///
+/// Three things are asserted because each has its own way of going wrong: the
+/// JDL is written, the TOML is **retired in the same plan** (leaving both is
+/// the forbidden state, and a crash between two plans would make it
+/// permanent), and every stable id survives -- an upgrade that renumbered
+/// `ent_note` would silently orphan the generated tree it names.
+///
+/// The axes are the fourth: `.jails/model.toml` carries neither `platform` nor
+/// `build`, and `ProjectIntent` defaults them to `spring`/`maven`. §22 says
+/// they are observed and "never guessed", so a plain project must come out
+/// `platform plain`. It did not, the first time this was run by hand.
+#[test]
+fn a_toml_project_upgrades_onto_jdl_v1_and_the_toml_is_retired_with_it() {
+    let root = temp_dir("toml-carry-across");
+    common::write_plain_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.toml"),
+        r#"
+schema = "jails.model.v1"
+
+[project]
+id = "project_demo"
+name = "Demo"
+base_package = "com.example.demo"
+java_release = 26
+dialect = "none"
+"#,
+    )
+    .unwrap();
+
+    let generated = jails_cmd(&root, None)
+        .args(["g", "record", "Note", "id:uuid@pk", "title:string"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success(), "{generated:?}");
+
+    let upgraded = jails_cmd(&root, None)
+        .args(["model", "upgrade", "--to", "1"])
+        .output()
+        .unwrap();
+    assert!(upgraded.status.success(), "{upgraded:?}");
+
+    assert!(
+        !root.join(".jails/model.toml").exists(),
+        "the compatibility input outlived the plan that replaced it"
+    );
+    let jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(jdl.starts_with("jdl 1"), "{jdl}");
+    assert!(
+        jdl.contains("platform plain"),
+        "the axes were guessed:\n{jdl}"
+    );
+    assert!(jdl.contains("build maven"), "the axes were guessed:\n{jdl}");
+    for id in ["project_demo", "ent_note", "fld_note_id", "fld_note_title"] {
+        assert!(jdl.contains(id), "stable id `{id}` did not survive:\n{jdl}");
+    }
+
+    // And the project keeps working on the source it was moved to.
+    let after = jails_cmd(&root, None)
+        .args(["g", "record", "Tag", "id:uuid@pk"])
+        .output()
+        .unwrap();
+    assert!(after.status.success(), "{after:?}");
+    fs::remove_dir_all(&root).ok();
+}

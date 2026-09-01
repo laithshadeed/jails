@@ -114,6 +114,7 @@ fn bundle_for(root: &Path, current: &str, next: &str) -> PlanBundle {
         CanonicalModelPatch::reconcile(),
         draft,
         Some(ModelFileUpdate {
+            retire: Vec::new(),
             path: ProjectPath::parse(MODEL_PATH).unwrap(),
             bytes: next.as_bytes().to_vec(),
         }),

@@ -72,6 +72,7 @@ fn run_as(invocation: Invocation) -> Result<()> {
         },
         draft,
         Some(jails_contracts::ModelFileUpdate {
+            retire: Vec::new(),
             path: jails_contracts::ProjectPath::parse(crate::model_command::JDL_PATH)
                 .map_err(Failure::Told)?,
             bytes: source.into_bytes(),

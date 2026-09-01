@@ -37,6 +37,10 @@ use jails_support::codec::{hex, sha256};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
+mod authoring_source;
+
+use authoring_source::publish_authoring_source;
+
 const COMPILER_LOCK_SCHEMA: &str = "jails.compiler-lock.v3";
 
 #[derive(Serialize)]
@@ -194,33 +198,7 @@ pub fn materialize_with_model(
         &mut blobs,
         &mut operations,
     )?;
-    if let Some(update) = model_update {
-        let before = snapshot.files.get(&update.path).map(|file| {
-            let blob = digest(&file.bytes)?;
-            blobs.insert(blob.clone(), file.bytes.clone());
-            Ok::<_, String>(FileImageRef {
-                blob,
-                len: file.bytes.len() as u64,
-                mode: if file.executable {
-                    FileMode::Executable
-                } else {
-                    FileMode::Regular
-                },
-            })
-        });
-        let before = before.transpose()?;
-        let after_blob = digest(&update.bytes)?;
-        blobs.insert(after_blob.clone(), update.bytes.clone());
-        operations.push(PlannedOperation::ReplaceModelFile {
-            path: update.path,
-            before,
-            after: FileImageRef {
-                blob: after_blob,
-                len: update.bytes.len() as u64,
-                mode: FileMode::Regular,
-            },
-        });
-    }
+    publish_authoring_source(snapshot, model_update, &mut blobs, &mut operations)?;
     // The compiler lock is the acceptance/merge-base commit marker. Publish
     // it only after every reproducible artifact, append-only migration,
     // reader patch, and authoring-source update. If the process stops before

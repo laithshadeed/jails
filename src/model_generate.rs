@@ -238,12 +238,40 @@ impl Stopwatch {
 }
 
 pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
-    finish_generation_with_reader_paths(prepared, &[])
+    finish(prepared, &[], None)
 }
 
 pub(crate) fn finish_generation_with_reader_paths(
     prepared: PreparedMutation,
     reader_paths: &[ProjectPath],
+) -> Result<()> {
+    finish(prepared, reader_paths, None)
+}
+
+/// Where an upgraded authoring source goes, and what it replaces.
+///
+/// **One caller, and a parameter rather than a `PreparedMutation` field.**
+/// Thirty-nine sites build a `PreparedMutation` and exactly one of them writes
+/// its result somewhere other than where it read it, so a field would be
+/// `retire: Vec::new()` thirty-eight times. This is the shape
+/// `finish_generation_with_reader_paths` already established beside it.
+pub(crate) struct CarryAcross {
+    /// The path the new source is written to.
+    pub(crate) writes_to: PathBuf,
+    /// The authoring sources retired in the same plan, so the project is
+    /// never left with two.
+    pub(crate) retires: Vec<ProjectPath>,
+}
+
+/// Move a project's authoring source to a new file, retiring the old one.
+pub(crate) fn finish_carry_across(prepared: PreparedMutation, carry: CarryAcross) -> Result<()> {
+    finish(prepared, &[], Some(carry))
+}
+
+fn finish(
+    prepared: PreparedMutation,
+    reader_paths: &[ProjectPath],
+    carry: Option<CarryAcross>,
 ) -> Result<()> {
     let PreparedMutation {
         name,
@@ -258,7 +286,13 @@ pub(crate) fn finish_generation_with_reader_paths(
     } = prepared;
     report::refuse_legacy_envelope(&invocation)?;
     let mut clock = Stopwatch::start(invocation.debug);
-    let canonical_model_path = model_path.to_string_lossy().replace('\\', "/");
+    // The path the source is *read* from is `model_path`; the path it is
+    // written to is the same unless this is a carry-across.
+    let write_path = carry
+        .as_ref()
+        .map_or_else(|| model_path.clone(), |carry| carry.writes_to.clone());
+    let retires = carry.map(|carry| carry.retires).unwrap_or_default();
+    let canonical_model_path = write_path.to_string_lossy().replace('\\', "/");
     // The invocation's, so `jails new --app` can replay a manifest into the
     // project it is creating rather than into whatever encloses the directory
     // the reader is standing in.
@@ -318,6 +352,7 @@ pub(crate) fn finish_generation_with_reader_paths(
         Some(ModelFileUpdate {
             path: ProjectPath::parse(canonical_model_path).map_err(Failure::Told)?,
             bytes: next_source.into_bytes(),
+            retire: retires,
         }),
         jails_compiler::COMPILER_VERSION,
         if invocation.force {

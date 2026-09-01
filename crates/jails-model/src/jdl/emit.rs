@@ -129,6 +129,18 @@ pub(super) fn refuse(
     ));
 }
 
+/// The capability a primary storage axis materialises, if any.
+///
+/// **One authority, two callers.** JDL v1 reads `storage postgres` as a `db`
+/// capability, so the renderer must not emit a redundant `cap db` -- and the
+/// upgrade off `.jails/model.toml` must *add* one, because the TOML dialect is
+/// not a capability and §22 records that difference as a note the reviewer
+/// reads. Both need the same mapping, and a second copy of it is how a project
+/// upgrades into a model with a JDBC adapter nobody mentioned.
+pub fn storage_capability(dialect: &str) -> Option<&'static str> {
+    declarations::derived_capability(dialect)
+}
+
 fn write_document(model: &AppModel, refusals: &mut Vec<Diagnostic>) -> String {
     let mut out = String::new();
     out.push_str("jdl 1\n\n");

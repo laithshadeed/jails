@@ -20,6 +20,27 @@ use std::fmt::Write as _;
 
 pub(super) fn write_app(model: &AppModel, out: &mut String, refusals: &mut Vec<Diagnostic>) {
     let project = &model.project;
+    // **Rendering must not add a capability the reader never declared.** v1
+    // materialises one from `storage`, so a model whose storage implies `db`
+    // and which does not have it cannot be written as v1 without gaining a
+    // JDBC adapter. That is a real semantic change and belongs in an
+    // upgrade's reviewed notes, not inside a renderer.
+    if let Some(implied) = derived_capability(&project.dialect)
+        && !model
+            .capabilities
+            .values()
+            .any(|capability| capability.kind == implied)
+    {
+        refuse(
+            refusals,
+            "$.capabilities",
+            &format!(
+                "a `{}` storage axis without the `{implied}` capability it materialises",
+                project.dialect
+            ),
+            &format!("add the `{implied}` capability to the model before rendering it as v1"),
+        );
+    }
     if project.layout != crate::Layout::default() {
         refuse(
             refusals,
@@ -54,7 +75,7 @@ pub(super) fn write_app(model: &AppModel, out: &mut String, refusals: &mut Vec<D
 
 /// The storage axis materialises its own capability, so re-declaring it would
 /// be a second spelling of one fact -- and the linker would then see two.
-fn derived_capability(dialect: &str) -> Option<&'static str> {
+pub(super) fn derived_capability(dialect: &str) -> Option<&'static str> {
     match dialect {
         "postgresql" => Some("db"),
         "h2" => Some("h2"),
