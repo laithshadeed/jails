@@ -75,6 +75,8 @@ fn assigned_value(
     {
         match name.as_str() {
             "uuid7" => {
+                // `TimeOrderedUuid` is the project's, not this entity's, so
+                // it stays in the domain layer however a slice is packaged.
                 imports.insert(format!(
                     "{}.TimeOrderedUuid",
                     model.project.package_for(Package::Domain)
@@ -151,7 +153,7 @@ fn request(
     entity: &Entity,
     spring_boot: Option<&str>,
 ) -> Result<emit_java::Unit, CompileError> {
-    let package = model.project.package_for(Package::Web);
+    let package = crate::emit_java::entity_package(model, entity, Package::Web);
     let type_name = format!("{}Request", entity.names.java_type);
     let artifact_id = format!("art_{}_dto_request", entity.id.as_str());
     let mut imports = BTreeSet::from([emit_java::domain_import(model, entity)]);
@@ -234,7 +236,7 @@ fn request(
 }
 
 fn response(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, CompileError> {
-    let package = model.project.package_for(Package::Web);
+    let package = crate::emit_java::entity_package(model, entity, Package::Web);
     let type_name = format!("{}Response", entity.names.java_type);
     let artifact_id = format!("art_{}_dto_response", entity.id.as_str());
     let mut imports = BTreeSet::from([emit_java::domain_import(model, entity)]);
@@ -270,7 +272,7 @@ fn response(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, Compil
 }
 
 fn contract_test(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, CompileError> {
-    let package = model.project.package_for(Package::Web);
+    let package = crate::emit_java::entity_package(model, entity, Package::Web);
     let record = &entity.names.java_type;
     let type_name = format!("{record}DtoTest");
     let artifact_id = format!("art_{}_dto_test", entity.id.as_str());

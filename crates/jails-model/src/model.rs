@@ -202,6 +202,17 @@ pub struct Entity {
     pub id: EntityId,
     pub label: String,
     pub names: EntityNames,
+    /// Fully resolved Java package for every class this entity projects.
+    ///
+    /// **A pinned projection, not a second identity.** Identity is
+    /// [`Entity::id`]; the package is one of the names the convention derives,
+    /// and this is the author pinning it -- the same relationship
+    /// `Capability::java_package` has to its backend's conventional package.
+    /// `None` selects the layer packages, which is what almost every entity
+    /// wants; `Some` collapses the whole slice into one package, which is how
+    /// a vertical slice is spelled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub java_package: Option<String>,
     #[serde(default = "crate::facet::active_entity")]
     pub active: bool,
     pub facets: BTreeSet<Facet>,

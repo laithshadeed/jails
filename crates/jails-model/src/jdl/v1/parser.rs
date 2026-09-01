@@ -45,6 +45,8 @@ struct EntityDraft {
     name: String,
     id: String,
     active: bool,
+    /// The `@package(...)` override, relative to the base package.
+    package: Option<String>,
     table: Option<String>,
     facets: BTreeSet<Facet>,
     fields: BTreeMap<String, source::Field>,

@@ -332,7 +332,7 @@ fn operation_context(model: &AppModel, entity: &Entity, imports: &mut BTreeSet<S
     {
         imports.insert(format!(
             "{}.ExecutionContext",
-            model.project.package_for(Package::Application)
+            crate::emit_java::entity_package(model, entity, Package::Application)
         ));
         "ExecutionContext context, ".to_string()
     } else {
@@ -384,10 +384,26 @@ fn fields<'a>(entity: &'a Entity, ids: &[FieldId]) -> Result<Vec<&'a Field>, Com
         .collect()
 }
 
+/// Where this entity's classes go: its pinned package, or the layer's.
+///
+/// **One function, because a slice is only a slice if every part of it moves
+/// together.** `--package com.example.demo.billing` collapses the record, the
+/// repository, the service, the DTOs and the controller into one package; a
+/// call site that reached for `project.package_for` directly would leave its
+/// artifact behind in `domain` or `web`, and the import that used to be
+/// implicit would then be missing rather than wrong -- a file that does not
+/// compile, in a slice that looked like it worked.
+pub(crate) fn entity_package(model: &AppModel, entity: &Entity, slot: Package) -> String {
+    entity
+        .java_package
+        .clone()
+        .unwrap_or_else(|| model.project.package_for(slot))
+}
+
 pub(crate) fn domain_import(model: &AppModel, entity: &Entity) -> String {
     format!(
         "{}.{}",
-        model.project.package_for(Package::Domain),
+        crate::emit_java::entity_package(model, entity, Package::Domain),
         entity.names.java_type
     )
 }
@@ -508,14 +524,17 @@ pub(crate) fn import_declared_type(model: &AppModel, ty: &TypeRef, imports: &mut
     if name.contains('.') {
         return;
     }
-    if model
+    // **The package the named entity is in, not this one's.** A slice that
+    // pinned its own package still refers to types outside it, and importing
+    // them from where the *referrer* lives names a class that is not there.
+    if let Some(owner) = model
         .entities
         .values()
-        .any(|entity| &entity.names.java_type == name)
+        .find(|entity| &entity.names.java_type == name)
     {
         imports.insert(format!(
             "{}.{name}",
-            model.project.package_for(Package::Domain)
+            entity_package(model, owner, Package::Domain)
         ));
     }
 }

@@ -39,7 +39,7 @@ pub(crate) fn lower(
         jails_model::Facet::Record => record_body(model, entity, &mut imports),
         _ => return Ok(None),
     };
-    let package = model.project.package_for(Package::Domain);
+    let package = crate::emit_java::entity_package(model, entity, Package::Domain);
     let type_name = format!("{}Test", entity.names.java_type);
     let artifact_id = format!("art_{}_test", entity.id.as_str());
     let rendered = emit_java::render(&package, &imports, &body, &artifact_id);

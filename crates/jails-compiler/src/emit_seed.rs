@@ -37,9 +37,9 @@ pub(crate) fn lower(
 ) -> Result<Vec<(ProjectPath, RenderedFile)>, CompileError> {
     let reader = json_reader(model, entity)?;
     let name = &entity.names.java_type;
-    let adapters = model.project.package_for(Package::Adapters);
-    let domain = model.project.package_for(Package::Domain);
-    let repository = model.project.package_for(Package::Repository);
+    let adapters = crate::emit_java::entity_package(model, entity, Package::Adapters);
+    let domain = crate::emit_java::entity_package(model, entity, Package::Domain);
+    let repository = crate::emit_java::entity_package(model, entity, Package::Repository);
     let resource = format!("db/seeds/{}.json", entity.names.sql_table);
     let rows = [row(model, entity, true), row(model, entity, false)];
     let imports = format!(

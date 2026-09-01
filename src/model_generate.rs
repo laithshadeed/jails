@@ -500,7 +500,9 @@ fn reject_unsupported_options(args: &GenerateArgs, profile: &EntityProfile) -> R
             "--unique",
             "the kinds that own a table",
         ),
-        (args.package.is_some(), "--package", "capabilities"),
+        // `--package` is an entity's too: it pins the package the whole slice
+        // projects into, which is the same relationship a capability's has to
+        // its backend's conventional one.
         (
             args.default_literal.is_some(),
             "--default-literal",

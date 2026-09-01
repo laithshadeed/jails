@@ -15,7 +15,7 @@ pub(super) fn lower_facet(
     facet: Facet,
     spring_boot: Option<&str>,
 ) -> Result<Unit, CompileError> {
-    let domain_package = model.project.package_for(Package::Domain);
+    let domain_package = crate::emit_java::entity_package(model, entity, Package::Domain);
     let (package, type_name, body, mut imports) = match facet {
         Facet::Enum => (
             domain_package.clone(),
@@ -36,7 +36,7 @@ pub(super) fn lower_facet(
         Facet::Factory => unreachable!("factory has a test-source backend"),
         Facet::Dto => unreachable!("dto has a multi-file backend"),
         Facet::Repository => {
-            let package = model.project.package_for(Package::Repository);
+            let package = crate::emit_java::entity_package(model, entity, Package::Repository);
             let primary_key = primary_key(entity)?;
             let mut imports = BTreeSet::from([
                 "java.util.List".to_string(),
@@ -68,7 +68,7 @@ pub(super) fn lower_facet(
         // a project without one has to touch every call site in the web layer.
         // The scaffold is code the reader grows; the boundary is the point.
         Facet::Service => {
-            let package = model.project.package_for(Package::Service);
+            let package = crate::emit_java::entity_package(model, entity, Package::Service);
             let primary_key = primary_key(entity)?;
             let type_name = format!("{}Service", entity.names.java_type);
             let record = &entity.names.java_type;
@@ -79,7 +79,7 @@ pub(super) fn lower_facet(
                 format!("{domain_package}.{record}"),
                 format!(
                     "{}.{record}Repository",
-                    model.project.package_for(Package::Repository)
+                    crate::emit_java::entity_package(model, entity, Package::Repository)
                 ),
             ]);
             let key_type = java_type(primary_key, &mut imports);
@@ -126,7 +126,7 @@ pub(super) fn lower_facet(
         // loop above routes the facet there before reaching this.
         Facet::Http => unreachable!("http has a multi-file backend"),
         Facet::Events => {
-            let package = model.project.package_for(Package::PortsEvents);
+            let package = crate::emit_java::entity_package(model, entity, Package::PortsEvents);
             let type_name = format!("{}Events", entity.names.java_type);
             let imports = BTreeSet::from([format!("{domain_package}.{}", entity.names.java_type)]);
             let body = format!(
@@ -142,7 +142,7 @@ pub(super) fn lower_facet(
         // failure than a missing one, because nothing looks wrong.
         Facet::Seed => unreachable!("seed has a multi-file backend"),
         Facet::Search => {
-            let package = model.project.package_for(Package::PortsSearch);
+            let package = crate::emit_java::entity_package(model, entity, Package::PortsSearch);
             let type_name = format!("{}Search", entity.names.java_type);
             let record = &entity.names.java_type;
             let imports = BTreeSet::from([

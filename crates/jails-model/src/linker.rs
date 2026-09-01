@@ -253,6 +253,18 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
         linker.register_id(&entity.id, &format!("{path}.id"));
         let id = linker.stable_id::<EntityId>(&entity.id, &format!("{path}.id"));
 
+        // **Resolved against the base, and validated once.** A capability's
+        // `@package` reads the same way, so a reader who has seen one has
+        // seen both -- and an empty override means the base package itself,
+        // which is how "put the whole slice at the top" is spelled.
+        let java_package = entity.package.as_ref().map(|package| {
+            let resolved = match package.is_empty() {
+                true => document.project.base_package.clone(),
+                false => format!("{}.{package}", document.project.base_package),
+            };
+            linker.java_package(&resolved, &format!("{path}.package"));
+            resolved
+        });
         let java_type = entity.java_name.unwrap_or_else(|| upper_camel_case(&label));
         // Pluralized, per §9.7. `@table` still wins: a contract pin is the
         // reader saying what the database already calls it.
@@ -451,6 +463,7 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
             entities.insert(
                 id.clone(),
                 Entity {
+                    java_package,
                     id,
                     label,
                     names: EntityNames {

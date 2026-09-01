@@ -31,11 +31,11 @@ pub(super) fn lower_fake_repository(
     bean: bool,
 ) -> Result<Unit, CompileError> {
     let primary_key = primary_key(entity)?;
-    let package = model.project.package_for(Package::AdaptersMemory);
+    let package = crate::emit_java::entity_package(model, entity, Package::AdaptersMemory);
     let type_name = format!("InMemory{}Repository", entity.names.java_type);
     let repository = format!(
         "{}.{}Repository",
-        model.project.package_for(Package::Repository),
+        crate::emit_java::entity_package(model, entity, Package::Repository),
         entity.names.java_type
     );
     let mut imports = BTreeSet::from([
@@ -103,11 +103,11 @@ pub(super) fn lower_db_repository(
     entity: &Entity,
 ) -> Result<Unit, CompileError> {
     let primary_key = primary_key(entity)?;
-    let package = model.project.package_for(Package::AdaptersJdbc);
+    let package = crate::emit_java::entity_package(model, entity, Package::AdaptersJdbc);
     let type_name = format!("Jdbc{}Repository", entity.names.java_type);
     let repository = format!(
         "{}.{}Repository",
-        model.project.package_for(Package::Repository),
+        crate::emit_java::entity_package(model, entity, Package::Repository),
         entity.names.java_type
     );
     let mut imports = BTreeSet::from([
@@ -255,14 +255,14 @@ pub(super) fn lower_db_repository_it(
     entity: &Entity,
 ) -> Result<Option<Unit>, CompileError> {
     let primary_key = primary_key(entity)?;
-    let package = model.project.package_for(Package::AdaptersJdbc);
+    let package = crate::emit_java::entity_package(model, entity, Package::AdaptersJdbc);
     let type_name = format!("Jdbc{}RepositoryIT", entity.names.java_type);
     let record = &entity.names.java_type;
     let mut imports = BTreeSet::from([
         domain_import(model, entity),
         format!(
             "{}.{record}Repository",
-            model.project.package_for(Package::Repository)
+            crate::emit_java::entity_package(model, entity, Package::Repository)
         ),
         "org.junit.jupiter.api.Test".to_string(),
         "org.springframework.beans.factory.annotation.Autowired".to_string(),
@@ -330,12 +330,12 @@ pub(super) fn lower_search_adapter(
     capability_id: &str,
     entity: &Entity,
 ) -> Result<Unit, CompileError> {
-    let package = model.project.package_for(Package::AdaptersJdbc);
+    let package = crate::emit_java::entity_package(model, entity, Package::AdaptersJdbc);
     let record = &entity.names.java_type;
     let type_name = format!("Jdbc{record}Search");
     let port = format!(
         "{}.{record}Search",
-        model.project.package_for(Package::PortsSearch)
+        crate::emit_java::entity_package(model, entity, Package::PortsSearch)
     );
     let imports = BTreeSet::from([
         port,
