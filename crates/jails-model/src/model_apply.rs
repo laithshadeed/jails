@@ -240,10 +240,32 @@ fn remove_entity(model: &mut AppModel, id: EntityId) -> Result<(), String> {
     if !references.is_empty() {
         return Err(refuse_dependents(id.as_str(), &references, "removing"));
     }
-    if model.entities.remove(&id).is_none() {
+    if !forget_entity(model, &id) {
         return Err(format!("entity id `{id}` does not exist"));
     }
     Ok(())
+}
+
+/// Take an entity out of the model, and its projections with it.
+///
+/// **A projection is the entity's child, not a dependent of it.** `use repo`
+/// says something about `note` and has no meaning without it, so `dependents`
+/// deliberately does not count one -- which left the patched model carrying
+/// projections pointing at an entity that was gone. Nothing read them, so the
+/// emitted tree was right and the *accepted* model was not: `model check
+/// --frozen` then reported the project as diverged from its own source,
+/// permanently, because re-linking the source yields no projections and the
+/// lock had three.
+///
+/// One function rather than two lines at each site, because there are two
+/// removals -- `RemoveEntity` and `RetireEntity` with a confirmed drop -- and
+/// only one of them had the second line.
+fn forget_entity(model: &mut AppModel, id: &EntityId) -> bool {
+    let removed = model.entities.remove(id).is_some();
+    model
+        .projections
+        .retain(|_, projection| &projection.entity != id);
+    removed
 }
 
 fn retire_entity(
@@ -280,7 +302,7 @@ fn retire_entity(
                     target.names.sql_table, target.label, target.names.sql_table
                 ));
             }
-            model.entities.remove(&entity);
+            forget_entity(model, &entity);
         }
     }
     Ok(())

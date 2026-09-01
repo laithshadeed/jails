@@ -594,6 +594,58 @@ route = "PATCH /notes/{id}"
         assert!(error.contains("operation OpenNotes"), "{error}");
     }
 
+    /// **A projection is the entity's child, not a dependent of it.**
+    ///
+    /// `dependents` deliberately does not count one -- `use repo` says
+    /// something about `note` and has no meaning without it -- so removal
+    /// used to leave the patched model carrying projections pointing at an
+    /// entity that was gone. Nothing read them, so the emitted tree was right
+    /// and the *accepted* model was not, and `model check --frozen` then
+    /// reported the project as diverged from its own source, permanently:
+    /// re-linking the source yields no projections and the lock had three.
+    #[test]
+    fn removing_an_entity_removes_the_projections_that_are_its_children() {
+        const SOURCE: &str = r#"jdl 1
+
+app Notes @id(project_notes) {
+  pkg com.example.notes
+  java 26
+  platform spring
+  build maven
+  storage none
+}
+
+entity Note @id(ent_note) {
+  use repo
+  use service
+  use http
+
+  id: uuid @id(fld_note_id) @pk
+}
+"#;
+        for patch in [
+            crate::ModelPatch::RemoveEntity(EntityId::parse("ent_note").unwrap()),
+            // The other removal, and the one that had the bug for longer: a
+            // confirmed storage drop takes the entity out too.
+            crate::ModelPatch::RetireEntity {
+                entity: EntityId::parse("ent_note").unwrap(),
+                policy: crate::StorageRetirementPolicy::Drop {
+                    confirmed_table: "notes".to_string(),
+                },
+            },
+        ] {
+            let mut model = crate::parse_jdl(SOURCE).unwrap();
+            assert_eq!(model.projections.len(), 3);
+            model.apply(patch).unwrap();
+            assert!(model.entities.is_empty());
+            assert!(
+                model.projections.is_empty(),
+                "projections outlived their entity: {:?}",
+                model.projections
+            );
+        }
+    }
+
     #[test]
     fn ejection_is_a_semantic_ownership_edge() {
         let source = format!(

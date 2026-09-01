@@ -1,38 +1,12 @@
 use super::*;
 
-const MODEL: &str = r#"
-schema = "jails.model.v1"
-
-[project]
-id = "project_notes"
-name = "Notes"
-base_package = "com.example.notes"
-java_release = 26
-dialect = "postgresql"
-
-[entities.note]
-id = "ent_note"
-facets = ["record", "repository", "http"]
-
-[entities.note.fields.id]
-id = "fld_note_id"
-type = "uuid"
-primary_key = true
-
-[entities.note.fields.title]
-id = "fld_note_title"
-type = "string"
-non_blank = true
-
-[operations.create_note]
-kind = "command"
-id = "op_create_note"
-on = "note"
-fields = ["title"]
-route = "POST /notes"
-"#;
-
-const EMPTY_MODEL: &str = r#"
+/// The compatibility input, kept for the one test whose subject is that two
+/// editable model sources refuse rather than one of them winning.
+///
+/// **Every other fixture here is `jdl 1`.** `docs/10-language.md` A4.4 is
+/// removing the TOML front end, and a test that exercises a mutating command
+/// *through* it is testing the front end being deleted rather than the command.
+const TOML_MODEL: &str = r#"
 schema = "jails.model.v1"
 
 [project]
@@ -61,10 +35,41 @@ const DEMO_JDL: &str = "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example
 const NOTES_JDL: &str = "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  \
      java 26\n  platform spring\n  build maven\n  storage none\n}\n";
 
+/// A canonical project seeded with one of the two model fixtures below.
+///
+/// It wrote `.jails/model.jdl` until `docs/10-language.md` A4.4 started
+/// removing that front end; it is [`jdl_project`] now, which is the same
+/// project one dialect later.
 fn model_project(label: &str, source: &str) -> PathBuf {
-    let root = temp_dir(label);
-    fs::create_dir_all(root.join(".jails")).unwrap();
-    fs::write(root.join(".jails/model.toml"), source).unwrap();
+    jdl_project(label, source)
+}
+
+/// [`NOTES_JDL`] with the resource these tests mutate.
+///
+/// **`use repo`, `use service` and `use http` rather than `use scaffold`**,
+/// because the TOML fixture this replaced declared `facets = ["record",
+/// "repository", "http"]` and the linker derives `service` from `http`.
+/// `scaffold` would add a DTO nothing here asked for.
+const MODEL: &str = "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  \
+     java 26\n  platform spring\n  build maven\n  storage none\n}\n\n\
+     entity Note @id(ent_note) {\n  use repo\n  use service\n  use http\n\n  \
+     id: uuid @id(fld_note_id) @pk\n  title: string @id(fld_note_title) @notBlank\n\n  \
+     command CreateNote(title) @id(op_create_note) {\n    route POST \"/notes\"\n  }\n}\n";
+
+/// The same project with no resource in it, for the tests that declare their
+/// own. Identical to [`NOTES_JDL`], and named for what it is used as.
+const EMPTY_MODEL: &str = NOTES_JDL;
+
+/// The same project with a Gradle build instead of Maven.
+///
+/// **The pom has to go rather than be joined by a second build file.** Capture
+/// refuses a module with both by name, and the model's `build` axis has to
+/// name what is on disk or the dependency adapter reconciles into a file the
+/// project does not have.
+fn gradle_model_project(label: &str, source: &str, build_file: &str, build: &str) -> PathBuf {
+    let root = model_project(label, &source.replace("build maven", "build gradle"));
+    fs::remove_file(root.join("pom.xml")).unwrap();
+    fs::write(root.join(build_file), build).unwrap();
     root
 }
 
@@ -168,8 +173,7 @@ fn model_explain_shows_which_rule_produced_each_derived_name() {
 }
 
 fn eject_model_project(label: &str) -> PathBuf {
-    let source = format!("{MODEL}\n[capabilities.fake]\nid = \"cap_fake\"\nkind = \"fake\"\n");
-    model_project(label, &source)
+    model_project(label, &format!("{MODEL}\ncap fake @id(cap_fake)\n"))
 }
 
 fn apply_canonical_model(root: &Path, label: &str) {
@@ -3500,12 +3504,9 @@ fn model_check_links_the_real_model_through_the_binary() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("model valid: .jails/model.jdl"), "{stdout}");
     assert!(
-        stdout.contains("model valid: .jails/model.toml"),
-        "{stdout}"
-    );
-    assert!(
-        stdout.contains("5 nodes, 1 entities, 1 operations"),
+        stdout.contains("8 nodes, 1 entities, 1 operations"),
         "{stdout}"
     );
     assert_eq!(
@@ -3585,7 +3586,7 @@ enum Status @id(ent_status) {
 #[test]
 fn two_editable_model_sources_refuse_instead_of_choosing_an_authority() {
     let root = jdl_project("model-two-sources", NOTES_JDL);
-    fs::write(root.join(".jails/model.toml"), EMPTY_MODEL).unwrap();
+    fs::write(root.join(".jails/model.toml"), TOML_MODEL).unwrap();
     let before = snapshot_tree(&root);
     let refused = jails_cmd(&root, None).args(["sync"]).output().unwrap();
     assert!(!refused.status.success());
@@ -4075,9 +4076,9 @@ fn canonical_sync_recompiles_model_state_without_the_legacy_store() {
         ),
     )
     .unwrap();
-    let model_path = root.join(".jails/model.toml");
+    let model_path = root.join(".jails/model.jdl");
     let mut source = fs::read_to_string(&model_path).unwrap();
-    source.push_str("\n[capabilities.fake]\nid = \"cap_fake\"\nkind = \"fake\"\n");
+    source.push_str("\ncap fake @id(cap_fake)\n");
     fs::write(&model_path, source).unwrap();
 
     let synced = jails_cmd(&root, None).arg("sync").output().unwrap();
@@ -4128,9 +4129,11 @@ fn canonical_fast_test_is_model_owned_and_never_journaled() {
         "{}",
         String::from_utf8_lossy(&installed.stderr)
     );
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
-    assert!(model.contains("[capabilities.fast_test]"), "{model}");
-    assert!(model.contains("kind = \"fast-test\""), "{model}");
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(
+        model.contains("cap fast-test @id(cap_fast_test)"),
+        "{model}"
+    );
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
     assert!(pom.contains("junit-platform-console"), "{pom}");
     for legacy in ["objects", "receipts", "journal", "state"] {
@@ -4147,7 +4150,7 @@ fn canonical_fast_test_is_model_owned_and_never_journaled() {
         String::from_utf8_lossy(&removed.stderr)
     );
     assert!(
-        !fs::read_to_string(root.join(".jails/model.toml"))
+        !fs::read_to_string(root.join(".jails/model.jdl"))
             .unwrap()
             .contains("fast-test")
     );
@@ -4276,9 +4279,12 @@ fn model_check_json_exposes_the_resolved_stable_id_world() {
 
 #[test]
 fn model_check_reports_all_semantic_failures_as_one_json_document() {
+    // A field the entity does not declare, and an operation whose id is the
+    // entity's: one unresolved reference and one collision, so the report has
+    // to carry both rather than stopping at the first.
     let invalid = MODEL
-        .replace("fields = [\"title\"]", "fields = [\"missing\"]")
-        .replace("id = \"op_create_note\"", "id = \"ent_note\"");
+        .replace("CreateNote(title)", "CreateNote(missing)")
+        .replace("@id(op_create_note)", "@id(ent_note)");
     let root = model_project("model-invalid", &invalid);
     let output = jails_cmd(&root, None)
         .args(["--output", "json", "model", "check"])
@@ -4335,15 +4341,18 @@ fn model_plan_is_deterministic_and_writes_a_self_verifying_bundle() {
     let bundle: jails_contracts::PlanBundle =
         serde_json::from_slice(&fs::read(&first).unwrap()).unwrap();
     jails_workspace::verify_bundle(&bundle).unwrap();
-    assert_eq!(bundle.plan.operations.len(), 2);
-    // Twelve: the record and its companion test, the repository port, the
+    assert_eq!(bundle.plan.operations.len(), 3);
+    // Fifteen: the record and its companion test, the repository port, the
     // in-memory adapter that implements it -- without which the service has a
     // port no bean satisfies -- that adapter's own test and the repository
     // contract they share, the service the controller delegates to, the HTTP
     // port, the controller and its test, and the project's `ArchitectureTest`
     // with the `archunit.properties` that points its freeze store at a
-    // baseline the reader has to create deliberately.
-    assert_eq!(bundle.plan.summary.managed_files, 12);
+    // baseline the reader has to create deliberately. Then the three the
+    // operation brings: its `Command` ABI, the `TimeOrderedUuid` its `uuid`
+    // key is minted with, and the `.http` request file its route is callable
+    // from.
+    assert_eq!(bundle.plan.summary.managed_files, 15);
     assert_eq!(bundle.plan.id, bundle.plan.digest.as_str());
 }
 
@@ -4414,7 +4423,7 @@ fn model_apply_rejects_a_stale_plan_before_writing() {
         .unwrap();
     assert!(planned.status.success());
     fs::write(
-        root.join(".jails/model.toml"),
+        root.join(".jails/model.jdl"),
         format!("{MODEL}\n# changed\n"),
     )
     .unwrap();
@@ -4440,7 +4449,7 @@ fn model_eject_transfers_generated_java_once_and_reader_edits_survive() {
     let reader =
         root.join("src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java");
     let generated_bytes = fs::read(&generated).unwrap();
-    let model_before = fs::read(root.join(".jails/model.toml")).unwrap();
+    let model_before = fs::read(root.join(".jails/model.jdl")).unwrap();
 
     let preview = jails_cmd(&root, None)
         .args([
@@ -4458,7 +4467,7 @@ fn model_eject_transfers_generated_java_once_and_reader_edits_survive() {
         String::from_utf8_lossy(&preview.stderr)
     );
     assert_eq!(
-        fs::read(root.join(".jails/model.toml")).unwrap(),
+        fs::read(root.join(".jails/model.jdl")).unwrap(),
         model_before
     );
     assert_eq!(fs::read(&generated).unwrap(), generated_bytes);
@@ -4475,10 +4484,9 @@ fn model_eject_transfers_generated_java_once_and_reader_edits_survive() {
     );
     assert!(!generated.exists());
     assert_eq!(fs::read(&reader).unwrap(), generated_bytes);
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
-    assert!(model.contains("[ejections.eject_"), "{model}");
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(
-        model.contains("target = \"art_ent_note_repository_memory\""),
+        model.contains("eject art_ent_note_repository_memory @id(eject_"),
         "{model}"
     );
     assert!(
@@ -4677,7 +4685,7 @@ fn model_eject_plan_refuses_a_destination_created_after_review() {
         "{}",
         String::from_utf8_lossy(&planned.stderr)
     );
-    let model_before = fs::read(root.join(".jails/model.toml")).unwrap();
+    let model_before = fs::read(root.join(".jails/model.jdl")).unwrap();
     let generated = root.join(
         ".jails/generated/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
     );
@@ -4699,7 +4707,7 @@ fn model_eject_plan_refuses_a_destination_created_after_review() {
     let stderr = String::from_utf8(applied.stderr).unwrap();
     assert!(stderr.contains("stale exact plan"), "{stderr}");
     assert_eq!(
-        fs::read(root.join(".jails/model.toml")).unwrap(),
+        fs::read(root.join(".jails/model.jdl")).unwrap(),
         model_before
     );
     assert!(generated.exists());
@@ -4730,7 +4738,7 @@ fn familiar_record_generation_is_a_model_patch_in_canonical_projects() {
         String::from_utf8_lossy(&preview.stderr)
     );
     assert_eq!(
-        fs::read_to_string(root.join(".jails/model.toml")).unwrap(),
+        fs::read_to_string(root.join(".jails/model.jdl")).unwrap(),
         EMPTY_MODEL
     );
     assert!(!root.join(".jails/generated").exists());
@@ -4751,10 +4759,9 @@ fn familiar_record_generation_is_a_model_patch_in_canonical_projects() {
         "{}",
         String::from_utf8_lossy(&applied.stderr)
     );
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
-    assert!(model.contains("[entities.note]"), "{model}");
-    assert!(model.contains("id = \"ent_note\""), "{model}");
-    assert!(model.contains("id = \"fld_note_title\""), "{model}");
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(model.contains("entity Note @id(ent_note)"), "{model}");
+    assert!(model.contains("@id(fld_note_title)"), "{model}");
 
     let source = fs::read_to_string(
         root.join(".jails/generated/main/java/com/example/notes/domain/Note.java"),
@@ -4852,12 +4859,10 @@ fn canonical_enum_frontend_writes_a_typed_wire_vocabulary() {
         "{}",
         String::from_utf8_lossy(&generated.stderr)
     );
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
-    assert!(model.contains("facets = [\"enum\"]"), "{model}");
-    assert!(
-        model.contains("values = [\"OPEN\", \"IN_PROGRESS=in_progress\"]"),
-        "{model}"
-    );
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(model.contains("enum Status @id(ent_status)"), "{model}");
+    assert!(model.contains("  OPEN\n"), "{model}");
+    assert!(model.contains(r#"IN_PROGRESS = "in_progress""#), "{model}");
     let source = fs::read_to_string(
         root.join(".jails/generated/main/java/com/example/notes/domain/Status.java"),
     )
@@ -4913,17 +4918,16 @@ fn canonical_preserve_table_rename_moves_artifacts_and_keeps_hand_edits() {
     let source = fs::read_to_string(&new).unwrap();
     assert!(source.contains("public record WorkItem("), "{source}");
     assert!(source.contains("handWritten()"), "{source}");
-    let model =
-        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
-            .unwrap();
+    let model = jails_model::parse_jdl(&fs::read_to_string(root.join(".jails/model.jdl")).unwrap())
+        .unwrap();
     let entity = model.entities.values().next().unwrap();
     assert_eq!(entity.id.to_string(), "ent_task");
     assert_eq!(entity.names.java_type, "WorkItem");
     assert_eq!(entity.names.sql_table, "tasks");
     assert!(
-        fs::read_to_string(root.join(".jails/model.toml"))
+        fs::read_to_string(root.join(".jails/model.jdl"))
             .unwrap()
-            .contains("java_name = \"WorkItem\"")
+            .contains("entity WorkItem @id(ent_task)")
     );
 }
 
@@ -5075,13 +5079,10 @@ fn familiar_scaffold_generation_is_one_semantic_entity_profile() {
         String::from_utf8_lossy(&applied.stderr)
     );
 
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
-    assert!(
-        model.contains("facets = [\"record\", \"repository\", \"service\", \"http\"]"),
-        "{model}"
-    );
-    assert!(model.contains("id = \"fld_note_created_at\""), "{model}");
-    assert!(model.contains("id = \"fld_note_updated_at\""), "{model}");
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(model.contains("use scaffold"), "{model}");
+    assert!(model.contains("@id(fld_note_created_at)"), "{model}");
+    assert!(model.contains("@id(fld_note_updated_at)"), "{model}");
 
     for relative in [
         "domain/Note.java",
@@ -5177,30 +5178,20 @@ fn scaffold_profile_preserves_the_legacy_domain_and_repository_contracts() {
 
 #[test]
 fn every_operation_kind_lowers_to_a_typed_managed_abi() {
-    let source = format!(
-        "{MODEL}\n\
-         [operations.note_created]\n\
-         kind = \"event\"\n\
-         id = \"op_note_created\"\n\
-         java_name = \"NoteCreated\"\n\
-         on = \"note\"\n\
-         fields = [\"id\", \"title\"]\n\n\
-         [operations.open_notes]\n\
-         kind = \"query\"\n\
-         id = \"op_open_notes\"\n\
-         on = \"note\"\n\
-         filters = [\"title\"]\n\
-         order_by = [\"id\"]\n\
-         limit = 50\n\
-         route = \"GET /notes\"\n\n\
-         [operations.rename_note]\n\
-         kind = \"transition\"\n\
-         id = \"op_rename_note\"\n\
-         on = \"note\"\n\
-         fields = [\"title\"]\n\
-         sets = [\"title\"]\n\
-         yields = \"note_created\"\n\
-         route = \"PATCH /notes/{{id}}\"\n"
+    // One of every routed kind beside [`MODEL`]'s command, plus the event the
+    // transition emits.
+    let source = MODEL.replace(
+        "  }\n}\n",
+        "  }\n\n  \
+         event NoteCreated(id, title) @id(op_note_created) {\n  }\n\n  \
+         query OpenNotes(title) @id(op_open_notes) {\n    order by [id]\n    limit 50\n    \
+         route GET \"/notes\"\n  }\n\n  \
+         transition RenameNote(title) @id(op_rename_note) {\n    select [id]\n    \
+         update [title]\n    emit note_created\n    route PATCH \"/notes/{id}\"\n  }\n}\n",
+    );
+    assert_ne!(
+        source, MODEL,
+        "the entity block moved and this splice missed it"
     );
     let root = model_project("model-operation-abi", &source);
     let plan = root.join("plan.json");
@@ -5311,16 +5302,16 @@ fn familiar_operation_commands_are_model_patches_not_legacy_routes() {
         );
     }
 
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     for declaration in [
-        "[operations.note_created]",
-        "[operations.create_note]",
-        "[operations.open_notes]",
-        "[operations.rename_note]",
-        "route = \"POST /notes\"",
-        "route = \"GET /notes/search\"",
-        "route = \"PATCH /notes/{id}\"",
-        "yields = \"note_created\"",
+        "event NoteCreated",
+        "command CreateNote",
+        "query OpenNotes",
+        "transition RenameNote",
+        r#"route POST "/notes""#,
+        r#"route GET "/notes/search""#,
+        r#"route PATCH "/notes/{id}""#,
+        "emit note_created",
     ] {
         assert!(
             model.contains(declaration),
@@ -5433,21 +5424,18 @@ fn familiar_operation_commands_edit_nested_jdl_and_compile_typed_abis() {
 
 #[test]
 fn canonical_api_adapters_merge_then_eject_at_the_operation_boundary() {
-    let source = format!(
-        "{MODEL}\n\
-         [operations.open_notes]\n\
-         kind = \"query\"\n\
-         id = \"op_open_notes\"\n\
-         on = \"note\"\n\
-         filters = [\"title\"]\n\
-         route = \"GET /notes/search\"\n\n\
-         [operations.rename_note]\n\
-         kind = \"transition\"\n\
-         id = \"op_rename_note\"\n\
-         on = \"note\"\n\
-         fields = [\"title\"]\n\
-         sets = [\"title\"]\n\
-         route = \"PATCH /notes/{{id}}\"\n"
+    // [`MODEL`]'s command, and a query and a transition beside it, so the
+    // `api` capability has one operation of each routed kind to adapt.
+    let source = MODEL.replace(
+        "  }\n}\n",
+        "  }\n\n  \
+         query OpenNotes(title) @id(op_open_notes) {\n    route GET \"/notes/search\"\n  }\n\n  \
+         transition RenameNote(title) @id(op_rename_note) {\n    select [id]\n    \
+         update [title]\n    route PATCH \"/notes/{id}\"\n  }\n}\n",
+    );
+    assert_ne!(
+        source, MODEL,
+        "the entity block moved and this splice missed it"
     );
     let root = model_project("model-api-operation-adapters", &source);
     write_spring_fixture(&root);
@@ -5651,7 +5639,7 @@ fn canonical_destroy_is_model_subtraction_and_whole_tree_recompilation() {
         "{}",
         String::from_utf8_lossy(&applied.stderr)
     );
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(!model.contains("[entities.note]"), "{model}");
     assert!(
         !root
@@ -5753,9 +5741,8 @@ fn fake_capability_is_a_global_compiler_profile_and_remove_is_recompilation() {
         "{}",
         String::from_utf8_lossy(&added.stderr)
     );
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
-    assert!(model.contains("[capabilities.fake]"), "{model}");
-    assert!(model.contains("id = \"cap_fake\""), "{model}");
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(model.contains("cap fake @id(cap_fake)"), "{model}");
     let adapter_path = root.join(
         ".jails/generated/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
     );
@@ -5789,7 +5776,7 @@ fn fake_capability_is_a_global_compiler_profile_and_remove_is_recompilation() {
     // adapter to a project that has no storage -- it is already there -- and
     // what removal takes back is the declaration.
     assert!(adapter_path.exists());
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(!model.contains("[capabilities.fake]"), "{model}");
     let frozen = jails_cmd(&root, None)
         .args(["model", "check", "--frozen"])
@@ -5848,11 +5835,9 @@ fn dependency_is_semantic_model_data_and_one_exact_maven_projection() {
         "{}",
         String::from_utf8_lossy(&added.stderr)
     );
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
-    assert!(model.contains("[dependencies.dep_"), "{model}");
-    assert!(model.contains("group = \"org.jsoup\""), "{model}");
-    assert!(model.contains("artifact = \"jsoup\""), "{model}");
-    assert!(model.contains("scope = \"runtime\""), "{model}");
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(model.contains("dep org.jsoup:jsoup @id(dep_"), "{model}");
+    assert!(model.contains("@scope(runtime)"), "{model}");
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
     assert!(pom.contains("<!-- reader-owned -->"), "{pom}");
     assert!(pom.contains("<!-- jails:dependencies -->"), "{pom}");
@@ -5888,7 +5873,7 @@ fn dependency_is_semantic_model_data_and_one_exact_maven_projection() {
         "{}",
         String::from_utf8_lossy(&removed.stderr)
     );
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(!model.contains("org.jsoup"), "{model}");
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
     assert!(pom.contains("<!-- reader-owned -->"), "{pom}");
@@ -5907,8 +5892,12 @@ fn dependency_is_semantic_model_data_and_one_exact_maven_projection() {
 
 #[test]
 fn dependency_reconciliation_crosses_the_kotlin_gradle_binary_boundary() {
-    let root = model_project("model-dependency-gradle", EMPTY_MODEL);
-    fs::write(root.join("build.gradle.kts"), "plugins { java }\n").unwrap();
+    let root = gradle_model_project(
+        "model-dependency-gradle",
+        EMPTY_MODEL,
+        "build.gradle.kts",
+        "plugins { java }\n",
+    );
     let added = jails_cmd(&root, None)
         .args([
             "add",
@@ -5966,10 +5955,23 @@ fn dependency_reconciliation_crosses_the_kotlin_gradle_binary_boundary() {
 
 #[test]
 fn unsupported_capabilities_refuse_before_the_legacy_engine_can_write() {
-    let root = model_project("model-capability-refusal", EMPTY_MODEL);
+    // **`format` on Gradle, because it is the one capability the canonical
+    // backend still cannot install.** Spotless needs its plugin entry inside
+    // `plugins { }`, which is legal only as the script's first statement, and
+    // the Gradle backend's whole contract is that it appends a marked block
+    // and touches nothing else. This test used to reach the same refusal
+    // through `add db` on `.jails/model.toml` -- the compatibility input could
+    // not state a storage axis -- which is a front end rather than a
+    // capability, and `docs/10-language.md` A4.4 is removing it.
+    let root = gradle_model_project(
+        "model-capability-refusal",
+        EMPTY_MODEL,
+        "build.gradle",
+        "plugins { id 'java' }\n",
+    );
     let before = snapshot_tree(&root);
     let refused = jails_cmd(&root, None)
-        .args(["add", "db", "--no-start"])
+        .args(["add", "format"])
         .output()
         .unwrap();
     assert!(!refused.status.success());
@@ -6126,8 +6128,12 @@ fn maven_source_root_is_an_exact_reader_patch_and_converges() {
 
 #[test]
 fn gradle_source_root_is_an_exact_reader_patch_and_converges() {
-    let root = model_project("model-gradle-source-root", MODEL);
-    fs::write(root.join("build.gradle"), "plugins { id 'java' }\n").unwrap();
+    let root = gradle_model_project(
+        "model-gradle-source-root",
+        MODEL,
+        "build.gradle",
+        "plugins { id 'java' }\n",
+    );
     let plan = root.join("plan.json");
     let planned = jails_cmd(&root, None)
         .args(["model", "plan", "--bundle"])
@@ -6246,7 +6252,7 @@ fn canonical_settings_preview_update_reconcile_and_unset_end_to_end() {
         String::from_utf8_lossy(&added.stderr)
     );
     let first_model =
-        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
+        jails_model::parse_jdl(&fs::read_to_string(root.join(".jails/model.jdl")).unwrap())
             .unwrap();
     let first = first_model.settings.values().next().unwrap();
     let stable_id = first.id.clone();
@@ -6268,7 +6274,7 @@ fn canonical_settings_preview_update_reconcile_and_unset_end_to_end() {
         String::from_utf8_lossy(&updated.stderr)
     );
     let updated_model =
-        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
+        jails_model::parse_jdl(&fs::read_to_string(root.join(".jails/model.jdl")).unwrap())
             .unwrap();
     let updated_setting = updated_model.settings.values().next().unwrap();
     assert_eq!(updated_setting.id, stable_id);
@@ -6300,7 +6306,7 @@ fn canonical_settings_preview_update_reconcile_and_unset_end_to_end() {
         "# reader\nreader.key=keep\n"
     );
     let final_model =
-        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
+        jails_model::parse_jdl(&fs::read_to_string(root.join(".jails/model.jdl")).unwrap())
             .unwrap();
     assert!(final_model.settings.is_empty());
     let frozen = jails_cmd(&root, None)
@@ -6335,9 +6341,8 @@ fn canonical_test_setting_creates_the_additive_config_overlay() {
         fs::read_to_string(root.join("src/test/resources/config/application.properties")).unwrap(),
         "spring.datasource.url=jdbc:h2:mem:test\n"
     );
-    let model =
-        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
-            .unwrap();
+    let model = jails_model::parse_jdl(&fs::read_to_string(root.join(".jails/model.jdl")).unwrap())
+        .unwrap();
     let setting = model.settings.values().next().unwrap();
     assert_eq!(setting.target, jails_model::SettingTarget::Test);
 }
@@ -6377,7 +6382,7 @@ fn canonical_setting_plan_is_stale_if_a_missing_reader_file_appears() {
         "{}",
         String::from_utf8_lossy(&planned.stderr)
     );
-    let model_before = fs::read(root.join(".jails/model.toml")).unwrap();
+    let model_before = fs::read(root.join(".jails/model.jdl")).unwrap();
     let properties = root.join("src/main/resources/application.properties");
     fs::create_dir_all(properties.parent().unwrap()).unwrap();
     fs::write(&properties, "reader.key=late\n").unwrap();
@@ -6394,7 +6399,7 @@ fn canonical_setting_plan_is_stale_if_a_missing_reader_file_appears() {
         "{stderr}"
     );
     assert_eq!(
-        fs::read(root.join(".jails/model.toml")).unwrap(),
+        fs::read(root.join(".jails/model.jdl")).unwrap(),
         model_before,
         "stale setting plan changed the model"
     );
@@ -6448,11 +6453,17 @@ fn maven_build_compiles_the_managed_source_root_end_to_end() {
         String::from_utf8_lossy(&fake.stderr)
     );
 
-    let mut model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
-    model.push_str(
-        "\n[operations.create_note]\nkind = \"command\"\nid = \"op_create_note\"\non = \"note\"\nfields = [\"title\"]\nroute = \"POST /notes\"\n\n[operations.open_notes]\nkind = \"query\"\nid = \"op_open_notes\"\non = \"note\"\nfilters = [\"title\"]\nlimit = 25\nroute = \"GET /notes\"\n\n[operations.rename_note]\nkind = \"transition\"\nid = \"op_rename_note\"\non = \"note\"\nfields = [\"title\"]\nsets = [\"title\"]\nroute = \"PATCH /notes/{id}\"\n\n[operations.note_created]\nkind = \"event\"\nid = \"op_note_created\"\non = \"note\"\nfields = [\"id\", \"title\"]\n",
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    let with_operations = model.replace(
+        "\n}\n",
+        "\n  command CreateNote(title) @id(op_create_note) {\n    route POST \"/notes\"\n  }\n\n  \
+         query OpenNotes(title) @id(op_open_notes) {\n    limit 25\n    route GET \"/notes\"\n  }\n\n  \
+         transition RenameNote(title) @id(op_rename_note) {\n    select [id]\n    \
+         update [title]\n    route PATCH \"/notes/{id}\"\n  }\n\n  \
+         event NoteCreated(id, title) @id(op_note_created) {\n  }\n}\n",
     );
-    fs::write(root.join(".jails/model.toml"), model).unwrap();
+    assert_ne!(with_operations, model, "the entity block moved");
+    fs::write(root.join(".jails/model.jdl"), with_operations).unwrap();
     let operation_plan = root.join("operations.json");
     let planned = jails_cmd(&root, None)
         .args(["model", "plan", "--bundle"])
@@ -8924,9 +8935,8 @@ fn canonical_preserve_table_rename_keeps_the_accepted_database_projection() {
     );
     assert!(!old.exists());
     assert!(new.exists());
-    let model =
-        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
-            .unwrap();
+    let model = jails_model::parse_jdl(&fs::read_to_string(root.join(".jails/model.jdl")).unwrap())
+        .unwrap();
     let entity = model.entities.values().next().unwrap();
     assert_eq!(entity.id.to_string(), "ent_note");
     assert_eq!(entity.names.java_type, "Memo");
@@ -8977,8 +8987,8 @@ fn canonical_database_and_safe_field_evolution_are_one_exact_compiler_path() {
         "{}",
         String::from_utf8_lossy(&db.stderr)
     );
-    let model = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
-    assert!(model.contains("[capabilities.db]"), "{model}");
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(model.contains("storage postgres"), "{model}");
     let initial = root.join("src/main/resources/db/migration/V001__create_notes.sql");
     let initial_sql = fs::read_to_string(&initial).unwrap();
     assert!(initial_sql.contains("create table notes"), "{initial_sql}");
@@ -9403,7 +9413,7 @@ fn canonical_migration_plan_refuses_a_concurrent_history_append_without_writes()
         jails_contracts::PlannedOperation::ReplaceStateFile { path, .. }
             if path.as_str() == ".jails/compiler.lock.json"
     )));
-    let model_before = fs::read(root.join(".jails/model.toml")).unwrap();
+    let model_before = fs::read(root.join(".jails/model.jdl")).unwrap();
     let generated_before =
         fs::read(root.join(".jails/generated/main/java/com/example/notes/domain/Note.java"))
             .unwrap();
@@ -9422,7 +9432,7 @@ fn canonical_migration_plan_refuses_a_concurrent_history_append_without_writes()
     assert!(stderr.contains("stale exact plan"), "{stderr}");
     assert!(stderr.contains("directory"), "{stderr}");
     assert_eq!(
-        fs::read(root.join(".jails/model.toml")).unwrap(),
+        fs::read(root.join(".jails/model.jdl")).unwrap(),
         model_before
     );
     assert_eq!(
@@ -9473,7 +9483,7 @@ fn canonical_reader_sql_is_exact_plan_input_and_stale_changes_refuse_all_writes(
         String::from_utf8_lossy(&bundle.plan.input.bytes).contains("reader-owned-sql"),
         "reader SQL policy was not represented in canonical input"
     );
-    let model_before = fs::read(root.join(".jails/model.toml")).unwrap();
+    let model_before = fs::read(root.join(".jails/model.jdl")).unwrap();
     let record = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
     let record_before = fs::read(&record).unwrap();
     fs::write(
@@ -9493,7 +9503,7 @@ fn canonical_reader_sql_is_exact_plan_input_and_stale_changes_refuse_all_writes(
         String::from_utf8_lossy(&stale.stderr)
     );
     assert_eq!(
-        fs::read(root.join(".jails/model.toml")).unwrap(),
+        fs::read(root.join(".jails/model.jdl")).unwrap(),
         model_before
     );
     assert_eq!(fs::read(&record).unwrap(), record_before);
@@ -9774,21 +9784,20 @@ fn canonical_composite_index_is_model_data_and_one_forward_migration() {
             path.file_name()
                 .unwrap()
                 .to_string_lossy()
-                .starts_with("V002__add_idx_notes_index_")
+                .starts_with("V002__add_idx_notes_title_id_desc")
         })
         .expect("canonical index migration");
     let migration = fs::read_to_string(migration_path).unwrap();
     assert!(
-        migration.contains("create index idx_notes_index_"),
+        migration.contains("create index idx_notes_title_id_desc"),
         "{migration}"
     );
     assert!(
         migration.contains(" on notes (title, id desc);"),
         "{migration}"
     );
-    let model =
-        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
-            .unwrap();
+    let model = jails_model::parse_jdl(&fs::read_to_string(root.join(".jails/model.jdl")).unwrap())
+        .unwrap();
     let entity = model.entities.values().next().unwrap();
     let index = entity.indexes.values().next().unwrap();
     assert_eq!(index.columns.len(), 2);
@@ -10086,9 +10095,8 @@ fn canonical_storage_preserve_removes_projections_and_revive_reuses_the_table() 
             .join("src/main/resources/db/migration/V002__drop_notes.sql")
             .exists()
     );
-    let model =
-        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
-            .unwrap();
+    let model = jails_model::parse_jdl(&fs::read_to_string(root.join(".jails/model.jdl")).unwrap())
+        .unwrap();
     let entity = model.entities.values().next().unwrap();
     assert!(!entity.active);
     assert_eq!(entity.names.sql_table, "notes");
@@ -10139,9 +10147,8 @@ fn canonical_storage_preserve_removes_projections_and_revive_reuses_the_table() 
         1,
         "revive must not recreate preserved storage"
     );
-    let model =
-        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
-            .unwrap();
+    let model = jails_model::parse_jdl(&fs::read_to_string(root.join(".jails/model.jdl")).unwrap())
+        .unwrap();
     assert!(model.entities.values().next().unwrap().active);
     let frozen = jails_cmd(&root, None)
         .args(["model", "check", "--frozen"])
@@ -10197,9 +10204,8 @@ fn canonical_storage_drop_needs_exact_confirmation_and_appends_one_drop_table() 
         migration,
         "-- Generated by jails from the accepted semantic schema.\ndrop table notes;\n"
     );
-    let model =
-        jails_model::parse_toml(&fs::read_to_string(root.join(".jails/model.toml")).unwrap())
-            .unwrap();
+    let model = jails_model::parse_jdl(&fs::read_to_string(root.join(".jails/model.jdl")).unwrap())
+        .unwrap();
     assert!(model.entities.is_empty());
     assert!(
         !root
@@ -10487,7 +10493,7 @@ entity Task {
 /// `audit.md` A2.2, second attempt. Keeping declaration order made `AddField`
 /// positional, and the first version guessed the position by reading the
 /// existing order: "already sorted by label" was taken to mean "the source
-/// states no order". That is true for `.jails/model.toml` and for the pre-v1
+/// states no order". That is true for `.jails/model.jdl` and for the pre-v1
 /// JDL draft, which reaches the linker by rendering that same TOML -- and
 /// false for a JDL v1 entity that happens to be declared alphabetically.
 /// Appending `delta` to `alpha, beta, gamma` then put it third in the model
