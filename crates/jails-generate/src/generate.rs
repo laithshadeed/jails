@@ -557,7 +557,7 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    use jails_testkit::CWD_LOCK;
+    use jails_testkit::hold_cwd;
 
     fn scratch(label: &str) -> PathBuf {
         jails_support::scratch::ScratchDir::in_temp(&format!("jails-generate-test-{label}"))
@@ -685,7 +685,7 @@ mod tests {
 
     #[test]
     fn find_project_root_walks_up_to_pom_xml() {
-        let _guard = CWD_LOCK.lock().unwrap();
+        let _guard = hold_cwd();
         let root = scratch("project-root");
         fs::write(root.join("pom.xml"), "<project/>").unwrap();
         let nested = root.join("src/main/java/com/example");

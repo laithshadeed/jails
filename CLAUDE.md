@@ -355,8 +355,8 @@ module belongs to** — this one is the prose, and prose is what goes stale.
 
 | crate | what belongs in it |
 |---|---|
-| `jails-support` | **write, run, encode, and name.** Nothing here knows what a Java project is — `codemod` moved to `jails-project` and `CWD_LOCK` to `jails-testkit` when that rule was applied honestly, and `runner` is `hermetic`, named for the contract that separates it from `process`. `Result`, `Failure` and `debug_cmd` live here, and so do `identity` and `identifier` — see the note below the table. |
-| `jails-testkit` | one `CWD_LOCK`, taken as a `[dev-dependency]`. Test infrastructure that cannot be `#[cfg(test)]`, because a dependent crate's tests cannot see one. |
+| `jails-support` | **write, run, encode, and name.** Nothing here knows what a Java project is — `codemod` moved to `jails-project` and the working-directory lock to `jails-testkit` when that rule was applied honestly, and `runner` is `hermetic`, named for the contract that separates it from `process`. `Result`, `Failure` and `debug_cmd` live here, and so do `identity` and `identifier` — see the note below the table. |
+| `jails-testkit` | one `hold_cwd()`, taken as a `[dev-dependency]`. Test infrastructure that cannot be `#[cfg(test)]`, because a dependent crate's tests cannot see one. |
 | `jails-java` | reading Java (`java`, `classfile`) and rendering templates into it (`template`). |
 | `jails-spec` | where a project is and how it is laid out (`build`, `spec::paths`, `spec::layout`), what a field spec means (`spec::field`), and the closed CLI vocabularies (`spec::kind`). |
 | `jails-state` | **jails' own machine state, read and classified**: `compat` (absent / current / unreadable, never a fourth answer that quietly repairs something) and `listing` (what a directory holds). Below the Java project on purpose — `jails-commit` needs both and neither is about Java. |
@@ -2484,11 +2484,15 @@ jails knows nothing about.
   the test suite.
 - **Each crate gets its own test binary**, so `#[cfg(test)]` modules within
   one crate share a process and one process-global current directory. Any test
-  that calls `std::env::set_current_dir` MUST hold `CWD_LOCK` for the duration,
-  or parallel tests race on it. The lock lives in `jails-support` and is
-  deliberately **not** `#[cfg(test)]`: the crates that need it are not the
-  crate that defines it, and one instance per dependent test binary is exactly
-  the scope it has to cover.
+  that calls `std::env::set_current_dir` MUST hold `jails_testkit::hold_cwd()`
+  for the duration, or parallel tests race on it. The lock lives in
+  `jails-testkit` and is deliberately **not** `#[cfg(test)]`: the crates that
+  need it are not the crate that defines it, and one instance per dependent
+  test binary is exactly the scope it has to cover. **Take it through
+  `hold_cwd()` and never with `.lock().unwrap()`**: a holder that panicked
+  poisons the mutex, and the next test to ask for it then fails with a
+  `PoisonError` naming neither the panic nor its cause. That is how a full
+  `/tmp` came to be reported as two unrelated `new-cli` failures.
 - **`#[cfg(test)]` in a library crate means "when *this* crate is under
   test".** A dependent crate's tests cannot see it. That killed
   `parse_fields_for_test`, a `#[cfg(test)]` helper `sql.rs` and `spring.rs`

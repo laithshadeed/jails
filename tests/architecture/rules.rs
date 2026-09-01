@@ -1323,7 +1323,38 @@ fn both_pluralizers_answer_the_same_for_every_specified_rule() {
     );
 }
 
-/// Every `cargo test --test <target>` a checked-in script runs is a real target.
+/// Every file that runs this project's automation: scripts, hooks, workflows.
+///
+/// One scan, because the three rot the same way. Each names Rust targets,
+/// other scripts and `mise` tasks in plain text, and a rename carries to none
+/// of them.
+fn automation_files() -> Vec<(std::path::PathBuf, String)> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut found = Vec::new();
+    for directory in ["scripts", ".githooks", ".github/workflows"] {
+        let Ok(entries) = std::fs::read_dir(root.join(directory)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            found.push((path, text));
+        }
+    }
+    // A scanner that has lost the tree reports exactly what a clean one does.
+    assert!(
+        found.len() > 4,
+        "the automation scan found only {} files -- it has stopped reading them",
+        found.len()
+    );
+    found
+}
+
+/// Every `cargo test --test <target>` this project's automation runs is a real
+/// target.
 ///
 /// `scripts/verify-rewrite-g1-canary.sh` ran `--test differential` for as long
 /// as that harness was called `differential`. It was renamed to `product_loop`
@@ -1335,7 +1366,9 @@ fn both_pluralizers_answer_the_same_for_every_specified_rule() {
 ///
 /// A shell script naming a Rust target is exactly the kind of edge `cargo`
 /// cannot check and a rename does not carry, which is why it is checked here
-/// rather than left to be noticed the next time somebody runs the canary.
+/// rather than left to be noticed the next time somebody runs the canary. The
+/// workflows are read for the same reason and it is a sharper one: a scheduled
+/// job is read by nobody until it has already not run.
 #[test]
 fn every_test_target_a_script_names_exists() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -1359,17 +1392,7 @@ fn every_test_target_a_script_names_exists() {
     );
 
     let mut missing = Vec::new();
-    let mut scanned = 0;
-    for entry in std::fs::read_dir(root.join("scripts"))
-        .expect("scripts/ exists")
-        .flatten()
-    {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let text = std::fs::read_to_string(&path).unwrap_or_default();
-        scanned += 1;
+    for (path, text) in automation_files() {
         for (at, _) in text.match_indices("--test ") {
             let named: String = text[at + "--test ".len()..]
                 .chars()
@@ -1380,12 +1403,71 @@ fn every_test_target_a_script_names_exists() {
             }
         }
     }
-    assert!(scanned > 0, "no scripts were read");
     assert!(
         missing.is_empty(),
-        "these scripts run a cargo test target that does not exist:\n  {}\n\n\
+        "these run a cargo test target that does not exist:\n  {}\n\n\
          Rename the reference with the harness, or the script silently stops \
          testing anything.",
+        missing.join("\n  ")
+    );
+}
+
+/// Every script and `mise` task this project's automation names exists.
+///
+/// The same defect as the one above, one level out: `.githooks/pre-push` and
+/// both workflows are three files that reach the suite by *name* rather than
+/// by a path `cargo` resolves. A renamed script or a renamed task fails them
+/// at the moment they run, which for a weekly scheduled job is a week later
+/// and for a hook is on somebody else's push.
+///
+/// Only references this repository owns are checked. A `mise` task is matched
+/// against `mise.toml`'s own `[tasks.<name>]` headers, so the two cannot
+/// disagree about which tasks exist.
+#[test]
+fn every_script_and_task_the_automation_names_exists() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest = std::fs::read_to_string(root.join("mise.toml")).expect("mise.toml exists");
+    let tasks: std::collections::BTreeSet<&str> = manifest
+        .lines()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix("[tasks.")
+                .and_then(|rest| rest.strip_suffix(']'))
+        })
+        .collect();
+    assert!(
+        tasks.contains("verify-rewrite"),
+        "the task scan found {tasks:?} -- it has stopped reading mise.toml"
+    );
+
+    let mut missing = Vec::new();
+    for (path, text) in automation_files() {
+        for (at, _) in text.match_indices("mise run ") {
+            let named: String = text[at + "mise run ".len()..]
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
+                .collect();
+            if !named.is_empty() && !tasks.contains(named.as_str()) {
+                missing.push(format!("{}: mise run {named}", path.display()));
+            }
+        }
+        for (at, _) in text.match_indices("scripts/") {
+            let named: String = text[at + "scripts/".len()..]
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.'))
+                .collect();
+            // A bare `scripts/` in prose names no file; only a reference that
+            // looks like one is a reference.
+            if named.contains('.') && !root.join("scripts").join(&named).is_file() {
+                missing.push(format!("{}: scripts/{named}", path.display()));
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "these name a script or a mise task that does not exist:\n  {}\n\n\
+         A hook or a scheduled workflow reaches the suite by name, so a rename \
+         that misses one is only reported the next time it runs.",
         missing.join("\n  ")
     );
 }

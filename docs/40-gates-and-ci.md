@@ -149,19 +149,30 @@ array shape was kept so a case that stops holding still says which subject it
 was about. `every_corpus_project_is_treated_the_same` is the one that takes a
 second binary, from `JAILS_LEGACY_BIN`.
 
-Nothing sets that variable except `scripts/verify-rewrite-g1-canary.sh`, and
-**CI does not run the canary** -- the workflow runs `verify-rewrite` and
-nothing else. So on every run that actually happens, G1's differential half is
-a canonical-only regression suite.
+Nothing sets that variable except `scripts/verify-rewrite-g1-canary.sh`, which
+`.github/workflows/verify-rewrite-g1-canary.yml` runs weekly and on demand.
+**The per-commit gate still does not run it** -- `verify-rewrite.yml` runs
+`mise run verify-rewrite` and nothing else, which is the property that keeps
+hook, CI and this file from disagreeing about what passing means. So on every run
+against a commit, G1's differential half is a canonical-only regression suite;
+what the schedule buys is that the differential claim is at worst a week stale
+rather than untested. The canary sets `JAILS_REQUIRE_TOOLCHAIN=1` and the
+empty `JAILS_GIT_DIFF_ALGORITHM` itself, for the two reasons the gate does: a
+comparison that skips reports green having compared nothing, and a merge whose
+algorithm comes from the distribution underneath is not a comparison either.
 
 Two things now stop that from being invisible. The corpus test's legacy subject
 is *absent* rather than a second copy of the binary under test, and a
 `JAILS_LEGACY_BIN` equal to that binary is refused -- previously it fell back
 to `CARGO_BIN_EXE_jails`, so an ordinary run compared the binary with itself
 and every assertion passed meaning nothing. And
-`every_test_target_a_script_names_exists` fails when a script names a cargo
-test target that does not exist, which is how the canary came to be running
-`--test differential` months after that harness was renamed.
+`every_test_target_a_script_names_exists` fails when a cargo test target named
+in `scripts/`, `.githooks/` or `.github/workflows/` does not exist, which is
+how the canary came to be naming a harness that had been renamed months
+earlier. `every_script_and_task_the_automation_names_exists` beside it checks
+the other direction -- the scripts and `mise` tasks those same files name as
+strings. A hook and a scheduled job both reach the suite by name, and a name
+is exactly what a rename does not carry.
 
 **Restoring a real legacy subject across the 38 scenarios is open work**, and
 it is not mechanical: the legacy binary predates JDL v1, seeds a ledger rather
@@ -367,16 +378,23 @@ Three things, and all three are somebody's decision rather than a tuning pass:
 ## Open items
 
 **P13.11 G1 has no legacy subject.** *What "both implementations"
-currently means* above measures this. The 38 product-loop
-scenarios each run one canonical subject; only the corpus test takes a second
-binary, and only under `scripts/verify-rewrite-g1-canary.sh`, which CI does not
-run. Restoring a real legacy subject is not mechanical: the frozen binary
-predates JDL v1, seeds a ledger rather than `.jails/model.jdl`, and writes Java
-to `src/main/java` rather than below the managed root, so `Subject` needs a
+currently means* above measures this. The 38 product-loop scenarios each run
+one canonical subject; only the corpus test takes a second binary. Restoring a
+real legacy subject is not mechanical: the frozen binary predates JDL v1,
+seeds a ledger rather than `.jails/model.jdl`, and writes Java to
+`src/main/java` rather than below the managed root, so `Subject` needs a
 per-subject seed and record path.
 
-**Exit:** the canary runs in CI on a schedule, or the differential claim is
-withdrawn from this file and the harness renamed to what it is.
+The scheduling half is done and the running half is not.
+`.github/workflows/verify-rewrite-g1-canary.yml` runs the canary weekly, and
+the script it runs no longer refuses on a runner: the branch point was asked
+for as `main`, which a checkout has only as `origin/main`, so it resolved on a
+developer box and refused on the one machine a schedule uses. **No scheduled
+run has happened yet**, so the workflow is checked for structure and for the
+resolution it got wrong, and not against a real runner.
+
+**Exit:** a scheduled canary run is green -- and then the 38 scenarios get a
+legacy subject, or the differential claim is withdrawn from this file.
 
 
 **P13.7 The suite is `tests/cli` and nothing else.** 122.6s of a 122.6s test
@@ -394,18 +412,22 @@ size* above.
 measurement that makes it unreachable. It is currently the second of those.
 
 
-**P13.9 A full tmpfs reports itself as a product bug**, and the one-hour
-fixture sweep does not bound a burst. Two `new-cli` unit tests failed with
-`PoisonError` and *"failed to create a scratch directory"*, which reads as a
-jails defect and is a disk.
+**P13.9 A full tmpfs still reports itself as a product bug from one place.**
+The harness half is closed: `temp_dir` names the disk, counts the fixtures
+holding it and carries a `fix:` line, and only for a storage error -- blaming
+the disk for a permission error is the same defect facing the other way.
+`jails_testkit::hold_cwd` closed the half that made the run unreadable: the
+first panic poisoned the working-directory lock, so the two `new-cli` tests
+behind it failed with `PoisonError`, naming neither the panic nor the disk.
+Recovering is sound because that mutex guards no data and every holder sets
+the directory it needs.
 
+What is left is not the harness's: `jails_support::scratch::reserve` leads
+with *"failed to create a scratch directory"*, which is a sentence about
+jails, and it is production prose on workstream C's path. It already names
+the parent and the OS error, so this is a wording handover rather than a
+defect -- with the reproduction: fill `/tmp`, run `cargo test -p jails`.
 
-**P13.10 The Maven budget is shared across processes and the fixture it
-protects is not.** `cached_toolchain_dir_with_salt` shares one persistent
-fixture per label under `target/jails-e2e-cache` and takes no lock, so two gate
-runs at once corrupt each other and produce `capabilities::` failures that read
-exactly like capability regressions. **Run one gate at a time** until this is
-fixed.
 
 ---
 
