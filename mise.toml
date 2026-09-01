@@ -111,7 +111,8 @@ depends = ["lint"]
 # worse trade than catching a stale link one push later.
 run = [
   "RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps",
-  "JAILS_GIT_DIFF_ALGORITHM= JAILS_TOOLCHAIN=1 cargo test --workspace",
+  "rm -rf target/jails-test-profile",
+  "JAILS_GIT_DIFF_ALGORITHM= JAILS_TOOLCHAIN=1 cargo test --workspace; status=$?; ./scripts/subprocess-summary.sh; exit $status",
 ]
 
 [tasks.test]
