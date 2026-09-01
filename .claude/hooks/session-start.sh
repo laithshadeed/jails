@@ -54,6 +54,89 @@ log "installing the pinned toolchain"
 # it can run inside the ordinary suite rather than in a second `cargo test`.
 mise install java@21
 
+# --- the same toolchain outside the repository ------------------------------
+#
+# **A mise shim resolves its version from the *current directory*, and the
+# tests do not run in this one.** `mise.toml` pins the toolchain for
+# `/home/user/jails`; a tier-3 test generates a project into a scratch
+# directory and runs `mvn`, `mvnd` and `java` *there*, where there is no
+# `mise.toml` and the shim falls back to the global config -- empty, in a
+# session whose hook installed everything per-project. `CLAUDE.md` records
+# what that costs, and the three failures differ enough that none of them
+# names the cause:
+#
+#   * `mvnd` exits with `mise ERROR No version is set for shim: mvnd`.
+#   * `mvn` *passes*, on whatever system Maven is on PATH -- 3.9.11 here
+#     against the pinned 3.9.16 -- so the suite silently tests the wrong one.
+#   * `java` is the dangerous one: `jails testd` compiles its daemon with the
+#     single-file source launcher, so a wrong JDK is an
+#     `UnsupportedClassVersionError` inside a process whose output nobody
+#     reads, surfacing as four `tooling::` tests failing with an empty report.
+#
+# The versions are read back out of the project rather than repeated here, so
+# this cannot drift from `mise.toml` the way a second copy of a pinned version
+# always does. `mise use -g` rewrites the global config in place and is safe to
+# repeat.
+log "pinning the same toolchain globally, for the scratch directories"
+(cd "$project" && mise ls --current --json) | python3 -c '
+import json, sys
+for tool, entries in json.load(sys.stdin).items():
+    for entry in entries:
+        if entry.get("active"):
+            print(tool + "@" + entry["requested_version"])
+            break
+' | while read -r pin; do
+  mise use -g "$pin" >/dev/null 2>&1 || log "could not pin $pin globally"
+done
+# The Gradle example needs JDK 21 and finds it through `mise which java@21`,
+# which is a lookup rather than a default -- so 21 is deliberately *not* global.
+# Pinning it here would hand every scratch directory a JDK that cannot compile
+# `--release 26`, which is the failure this whole section exists to remove.
+
+# --- the Gradle example's dependencies, fetched once --------------------------
+#
+# **Maven Central answers 429 through the sandbox proxy, and Gradle is the one
+# consumer with a cold cache.** `~/.m2` arrives warm enough that the Maven tier
+# passes; `~/.gradle` does not, so
+# `unheld_gradle_example_manifest_builds_on_its_pinned_toolchain` spends its
+# only attempt resolving `spring-boot-gradle-plugin` and
+# `spring-boot-dependencies` from Central and fails on
+# `Received status code 429 from server: Too Many Requests`. That reads as a
+# broken build and is a rate limit.
+#
+# Resolving them here moves that fetch into the hook, whose container state is
+# cached, so the suite finds them locally and the next session does not fetch
+# them at all. **Best-effort by construction**: a failure here logs and the
+# session continues, because a warm cache is an optimisation and the test can
+# still reach the network itself.
+#
+# The Boot version is read out of the example's own README rather than written
+# down again -- this repository's rule is that a pinned version has one owner,
+# and a second copy in a provisioning script is exactly the copy nobody updates.
+boot_version="$(grep -o -- '--boot [0-9][^ ]*' \
+  "$project/examples/minicom-spring/README.md" 2>/dev/null | head -1 | awk '{print $2}')"
+if [ -n "$boot_version" ] && [ ! -d "$HOME/.gradle/caches/modules-2/files-2.1/org.springframework.boot" ]; then
+  log "warming the Gradle cache for Boot $boot_version"
+  warm_dir="$(mktemp -d)"
+  printf "rootProject.name = 'warm'\n" > "$warm_dir/settings.gradle"
+  cat > "$warm_dir/build.gradle" <<GRADLE
+buildscript {
+  repositories { mavenCentral() }
+  dependencies { classpath "org.springframework.boot:spring-boot-gradle-plugin:$boot_version" }
+}
+repositories { mavenCentral() }
+configurations { warm }
+dependencies { warm platform("org.springframework.boot:spring-boot-dependencies:$boot_version") }
+tasks.register('warmUp') { doLast { configurations.warm.resolve() } }
+GRADLE
+  # The example's own toolchain: Gradle 8.5 on JDK 21, which is what resolves
+  # the 2.7.x line. Running it under the repository default would warm the
+  # cache for a Gradle the test never uses.
+  (cd "$warm_dir" && mise x java@21 gradle@8.5 -- gradle --no-daemon --quiet warmUp) \
+    >/dev/null 2>&1 || log "could not warm the Gradle cache; the example test will fetch it itself"
+  rm -rf "$warm_dir"
+fi
+
 # --- a JDK that trusts the sandbox's TLS proxy ------------------------------
 #
 # **The whole bundle, diffed by fingerprint -- not the two-certificate file
