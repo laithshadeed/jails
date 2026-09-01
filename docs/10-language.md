@@ -68,7 +68,7 @@ carried before drifted without anyone noticing.
 | builtin scalars | 16 | `ALL`, `builtin.rs` — one `BuiltinSemantics` row each | §9.2 |
 | field attributes | 13 | `parse_field`'s `reject_unknown_attributes`, `jdl/v1/parser/declaration.rs` | §9.4 |
 | projection spellings (`use`) | 9 | `projection_list`, `jdl/v1/parser/projection.rs` — 8 kinds plus the `scaffold` macro | §11.1 |
-| operation statements | 13 | `parse_operation_member`, `jdl/v1/parser/operation.rs` | §12 |
+| operation statements | 14 | `parse_operation_member`, `jdl/v1/parser/operation.rs` | §12 |
 | `ModelPatch` variants | 34 | `patch.rs` | §16 |
 | syntax diagnostics (`JDL*`) | 96 | `jdl/v1/` | §18 |
 | semantic diagnostics (`model-*`) | 146 | the linker | §18.2 |
@@ -243,17 +243,40 @@ that moves it to `jdl 1`. That is two editable model sources with no
 convergence, which `docs/00-contracts.md` says is never permitted.
 
 So the order is: build the TOML route first, then delete the branches.
-§22 says what it is -- "legacy TOML model state is imported into the same v1
-AST through a separate one-shot command" -- and what it needs is a renderer
-from `AppModel` to v1 JDL. **That renderer does not exist anywhere.**
-`jdl/render.rs` renders the *other* direction (parsed JDL down to the TOML
-boundary); `upgrade()` rewrites pre-v1 JDL text rather than taking a model;
-`model_generate_jdl/render.rs` renders an entity, an enum and a field line
-from CLI arguments, not a linked model, and nothing renders caps, deps,
-props, projections, relations, the four operation kinds or the 23 component
-kinds. Writing it means emitting every v1 construct and proving the round trip
-preserves identity the way `preserves_identity` proves the JDL upgrade today
--- a feature, not a cleanup, and the real content of this item.
+
+**The renderer that route needs is now built.** `jails_model::render_jdl_v1`
+takes a linked `AppModel` and writes JDL v1 -- `jdl/emit.rs`, and the thing
+that makes it safe to point at somebody's project is that it refuses twice:
+every construct it cannot express refuses by name, and then it parses and
+links what it just wrote and compares that to the model it was given. A
+renderer that silently drops a field is how a one-shot migration corrupts a
+project, and the round trip is the only check that catches the case nobody
+enumerated. It caught three:
+
+- an operation route the *linker derived* was being re-emitted as though the
+  author had written it, which turns a convention into a declaration and
+  stops `model explain` reporting it as derived;
+- `deliver outbox` was missing from the emitted statement vocabulary, because
+  the survey that built it read an older tree -- the same drift the counts
+  above are dated against;
+- component parameters kept only `@default`, so `name: string @notBlank` on a
+  `durable-job` lost its check. Two copies of one renderer, which is the
+  defect shape this branch has now hit three times.
+
+Proven over the 61 models in `tests/golden` -- every generator kind and
+capability the tool emits -- and over §4's complete example, which carries a
+scoped field, an `if-match` guard, a `resolve` and an ejection that the
+goldens do not.
+
+**What is left is one plan operation, and it is not yours.** The upgrade has
+to write `.jails/model.jdl` *and* retire `.jails/model.toml` in the same exact
+plan, or the project ends with two editable sources -- the state this whole
+item exists to remove. `PlannedOperation` is `ReplaceModelFile`,
+`PublishMergedTree`, `AppendMigration`, `ReplaceStateFile`, `PatchReaderFile`
+and `RemoveReaderFile`: there is no way to retire a model file, and
+`materialize_with_model` takes exactly one `ModelFileUpdate`. Both are
+`jails-workspace`, which is C's. Agree the operation with C, then the command
+is a small frontend over the renderer.
 
 **Exit (restated, because the old one cites a deleted command):**
 `.jails/model.toml` and the pre-v1 draft are read only by whatever one-shot

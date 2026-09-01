@@ -6,6 +6,7 @@
 use crate::{AppModel, Diagnostics, EndpointMethod, RequestFormat};
 
 mod declaration;
+pub mod emit;
 mod operation;
 mod render;
 pub mod upgrade;

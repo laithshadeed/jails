@@ -50,6 +50,7 @@ pub use id::{
     EntityId, FieldId, IndexId, OperationId, ProjectId, ProjectionId, RelationId, SettingId,
     StableId, UnitId,
 };
+pub use jdl::emit::render as render_jdl_v1;
 pub use jdl::parse as parse_jdl;
 pub use jdl::upgrade::{
     Axes as JdlAxes, Build as JdlBuild, Platform as JdlPlatform, upgrade as upgrade_jdl,
