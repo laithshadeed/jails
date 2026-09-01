@@ -228,7 +228,11 @@ pub(crate) fn derive(
                         old.id.as_str().to_string(),
                         old_field.id.as_str().to_string(),
                     ]);
-                    descriptions.push(format!("evolve_{}", old_field.names.sql_column));
+                    // **Named for the change, not for the fact that one
+                    // happened.** A column relaxed and then made required
+                    // again produces two migrations, and `evolve_description`
+                    // twice is a history nobody can read.
+                    descriptions.push(evolution::describe(old_field, current_field, policy));
                 }
             }
         }

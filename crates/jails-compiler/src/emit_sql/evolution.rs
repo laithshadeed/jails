@@ -112,6 +112,24 @@ pub(super) fn unsupported_change(entity: &Entity, before: &Field) -> CompileErro
     ))
 }
 
+/// The migration filename's descriptive half, for one field change.
+///
+/// One word per policy, so a reader scanning `db/migration` sees what each
+/// file did rather than that something did.
+pub(super) fn describe(before: &Field, after: &Field, policy: &FieldEvolutionPolicy) -> String {
+    let column = &before.names.sql_column;
+    match policy {
+        FieldEvolutionPolicy::Rename { .. } => {
+            format!("rename_{column}_to_{}", after.names.sql_column)
+        }
+        FieldEvolutionPolicy::ChangeType { .. } => format!("retype_{column}"),
+        FieldEvolutionPolicy::SetNullability { .. } => match after.required {
+            true => format!("make_{column}_required"),
+            false => format!("make_{column}_nullable"),
+        },
+    }
+}
+
 pub(super) fn evolve_field(
     model: &AppModel,
     entity: &Entity,
@@ -123,6 +141,15 @@ pub(super) fn evolve_field(
         FieldEvolutionPolicy::Rename { column } => {
             let mut expected = before.clone();
             expected.names.java_member = after.names.java_member.clone();
+            // **The label follows the declaration; the stable id is identity.**
+            // JDL v1 derives a field's label from the name it is declared
+            // under and carries `@id(...)` for identity, so a rename moves the
+            // label by construction and there is no attribute that would pin
+            // it. What must not move is everything else -- the type, the
+            // optionality, the semantics, and under `preserve` the column,
+            // which the editor pins with `@map`. Comparing the label as well
+            // made every v1 preserve-rename refuse as an unexplained change.
+            expected.label = after.label.clone();
             match column {
                 ColumnRenamePolicy::Preserve => {}
                 ColumnRenamePolicy::SingleCutover => {
