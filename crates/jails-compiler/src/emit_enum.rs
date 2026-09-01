@@ -56,11 +56,14 @@ pub(crate) fn lower_converter(
     model: &AppModel,
     entity: &Entity,
 ) -> Result<(ProjectPath, RenderedFile), CompileError> {
-    let package = model.project.package_for(Package::Web);
+    let package = crate::emit_java::entity_package(model, entity, Package::Web);
     let type_name = format!("{}Converter", entity.names.java_type);
     let enum_type = &entity.names.java_type;
     let imports = BTreeSet::from([
-        format!("{}.{enum_type}", model.project.package_for(Package::Domain)),
+        format!(
+            "{}.{enum_type}",
+            crate::emit_java::entity_package(model, entity, Package::Domain)
+        ),
         "org.springframework.core.convert.converter.Converter".to_string(),
         "org.springframework.stereotype.Component".to_string(),
     ]);

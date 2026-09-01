@@ -15,6 +15,7 @@ pub(crate) use edit::{
     remove_entity, remove_operation, remove_setting, remove_unit, rename_entity, set_entity_active,
 };
 use operation::operation_declaration;
+pub(crate) use render::{EntityDeclaration, normalize_package};
 use render::{entity_declaration_at, enum_declaration, field_label_of, quoted_list};
 pub(crate) use render::{
     java_type_name, relation_member_name, render_field_line, render_v1_field_line,
@@ -248,6 +249,16 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
             ]
         });
     }
+    // **Normalized, so both spellings mean one place.** A reader types the
+    // package they see in their editor -- `com.example.demo.billing` -- and
+    // the model states it relative to the base, so an absolute one has the
+    // base stripped rather than appended: without this the entity landed in
+    // `com/example/demo/com/example/demo/billing`.
+    let package = args
+        .package
+        .as_deref()
+        .map(|package| normalize_package(&current_model.project.base_package, package))
+        .transpose()?;
     let declaration = match args.kind {
         ArtifactKind::Enum => enum_declaration(&args.name, &entity_label, &fields, v1)?,
         ArtifactKind::Record | ArtifactKind::Value | ArtifactKind::Scaffold => {
@@ -261,6 +272,7 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
                     v1,
                     path: args.path.as_deref(),
                     uniques: &args.uniques,
+                    package: package.as_deref(),
                 },
             )?
         }
@@ -631,17 +643,4 @@ fn refuse_unstorable_components(
         )));
     }
     Ok(())
-}
-
-/// One entity declaration's inputs, together because they are decided
-/// together: what to call it, what it holds, and which dialect it is written
-/// in.
-pub(crate) struct EntityDeclaration<'a> {
-    pub(crate) java_name: &'a str,
-    pub(crate) entity_label: &'a str,
-    pub(crate) scaffold: bool,
-    pub(crate) fields: &'a [String],
-    pub(crate) v1: bool,
-    pub(crate) path: Option<&'a str>,
-    pub(crate) uniques: &'a [String],
 }

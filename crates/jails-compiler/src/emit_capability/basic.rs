@@ -5,7 +5,7 @@ use super::*;
 const CSV_FILES: &[JavaFile] = &[
     JavaFile {
         suffix: "main",
-        template: include_str!("../../../../templates/add/csv_reader_java.java"),
+        template: crate::template!("add/csv_reader_java.java"),
         before_boot: None,
         source_set: SourceSet::Main,
         class_name: csv_class,
@@ -13,7 +13,7 @@ const CSV_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "test",
-        template: include_str!("../../../../templates/add/csv_reader_test_java.java"),
+        template: crate::template!("add/csv_reader_test_java.java"),
         before_boot: None,
         source_set: SourceSet::Test,
         class_name: csv_test_class,
@@ -24,7 +24,7 @@ const CSV_FILES: &[JavaFile] = &[
 const JSON_FILES: &[JavaFile] = &[
     JavaFile {
         suffix: "main",
-        template: include_str!("../../../../templates/add/json_java.java"),
+        template: crate::template!("add/json_java.java"),
         before_boot: None,
         source_set: SourceSet::Main,
         class_name: json_class,
@@ -32,7 +32,7 @@ const JSON_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "test",
-        template: include_str!("../../../../templates/add/json_test_java.java"),
+        template: crate::template!("add/json_test_java.java"),
         before_boot: None,
         source_set: SourceSet::Test,
         class_name: json_test_class,
@@ -43,7 +43,7 @@ const JSON_FILES: &[JavaFile] = &[
 const HTTP_FILES: &[JavaFile] = &[
     JavaFile {
         suffix: "main",
-        template: include_str!("../../../../templates/add/http_server_java.java"),
+        template: crate::template!("add/http_server_java.java"),
         before_boot: None,
         source_set: SourceSet::Main,
         class_name: http_class,
@@ -51,7 +51,7 @@ const HTTP_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "test",
-        template: include_str!("../../../../templates/add/http_server_test_java.java"),
+        template: crate::template!("add/http_server_test_java.java"),
         before_boot: None,
         source_set: SourceSet::Test,
         class_name: http_test_class,
@@ -62,7 +62,7 @@ const HTTP_FILES: &[JavaFile] = &[
 const FAKE_FILES: &[JavaFile] = &[
     JavaFile {
         suffix: "script",
-        template: include_str!("../../../../templates/add/scripted_java.java"),
+        template: crate::template!("add/scripted_java.java"),
         before_boot: None,
         source_set: SourceSet::Test,
         class_name: fake_class,
@@ -70,7 +70,7 @@ const FAKE_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "script_test",
-        template: include_str!("../../../../templates/add/scripted_test_java.java"),
+        template: crate::template!("add/scripted_test_java.java"),
         before_boot: None,
         source_set: SourceSet::Test,
         class_name: fake_test_class,
@@ -81,7 +81,7 @@ const FAKE_FILES: &[JavaFile] = &[
 const TOXIPROXY_FILES: &[JavaFile] = &[
     JavaFile {
         suffix: "faults",
-        template: include_str!("../../../../templates/add/faults_java.java"),
+        template: crate::template!("add/faults_java.java"),
         before_boot: None,
         source_set: SourceSet::Test,
         class_name: faults_class,
@@ -89,7 +89,7 @@ const TOXIPROXY_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "faults_test",
-        template: include_str!("../../../../templates/add/faults_test_java.java"),
+        template: crate::template!("add/faults_test_java.java"),
         before_boot: None,
         source_set: SourceSet::Test,
         class_name: faults_test_class,
@@ -100,7 +100,7 @@ const TOXIPROXY_FILES: &[JavaFile] = &[
 const TESTKIT_FILES: &[JavaFile] = &[
     JavaFile {
         suffix: "clocks",
-        template: include_str!("../../../../templates/add/clocks_java.java"),
+        template: crate::template!("add/clocks_java.java"),
         before_boot: None,
         source_set: SourceSet::Test,
         class_name: clocks_class,
@@ -108,7 +108,7 @@ const TESTKIT_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "ids",
-        template: include_str!("../../../../templates/add/ids_java.java"),
+        template: crate::template!("add/ids_java.java"),
         before_boot: None,
         source_set: SourceSet::Test,
         class_name: ids_class,
@@ -116,7 +116,7 @@ const TESTKIT_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "fixtures",
-        template: include_str!("../../../../templates/add/fixtures_java.java"),
+        template: crate::template!("add/fixtures_java.java"),
         before_boot: None,
         source_set: SourceSet::Test,
         class_name: fixtures_class,
@@ -124,7 +124,7 @@ const TESTKIT_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "cli",
-        template: include_str!("../../../../templates/add/testkit_cli_java.java"),
+        template: crate::template!("add/testkit_cli_java.java"),
         before_boot: None,
         source_set: SourceSet::Test,
         class_name: cli_class,
@@ -132,7 +132,7 @@ const TESTKIT_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "test",
-        template: include_str!("../../../../templates/add/testkit_test_java.java"),
+        template: crate::template!("add/testkit_test_java.java"),
         before_boot: None,
         source_set: SourceSet::Test,
         class_name: testkit_test_class,
@@ -150,7 +150,7 @@ const TESTKIT_RESOURCES: &[ResourceFile] = &[ResourceFile {
 const SQLITE_FILES: &[JavaFile] = &[
     JavaFile {
         suffix: "database",
-        template: include_str!("../../../../templates/add/database_java.java"),
+        template: crate::template!("add/database_java.java"),
         before_boot: None,
         source_set: SourceSet::Main,
         class_name: sqlite_database_class,
@@ -158,7 +158,7 @@ const SQLITE_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "migrations",
-        template: include_str!("../../../../templates/add/migrations_java.java"),
+        template: crate::template!("add/migrations_java.java"),
         before_boot: None,
         source_set: SourceSet::Main,
         class_name: sqlite_migrations_class,
@@ -166,7 +166,7 @@ const SQLITE_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "test",
-        template: include_str!("../../../../templates/add/database_test_java.java"),
+        template: crate::template!("add/database_test_java.java"),
         before_boot: None,
         source_set: SourceSet::Test,
         class_name: sqlite_test_class,

@@ -5,6 +5,8 @@ import com.example.demo.application.transitions.SetTopicSubjectTransition;
 import com.example.demo.domain.Topic;
 import java.util.ArrayList;
 import java.util.List;
+import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,6 +29,16 @@ public class JdbcSetTopicSubjectTransition implements SetTopicSubjectTransition 
         statement = statement.param("user_id", userId);
         statement = statement.param("subject", input.subject());
         statement = statement.param("expected_version", expectedVersion);
-        return statement.query(Topic.class).single();
+        var applied = statement.query(Topic.class).optional();
+        if (applied.isEmpty()) {
+            throw jdbc.sql("select 1 from topics where user_id = :user_id")
+                    .param("user_id", userId)
+                    .query(Integer.class)
+                    .optional()
+                    .<RuntimeException>map(row -> new OptimisticLockingFailureException(
+                            "the resource has changed since the version you sent"))
+                    .orElseGet(() -> new EmptyResultDataAccessException(1));
+        }
+        return applied.get();
     }
 }

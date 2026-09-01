@@ -211,6 +211,73 @@ pub(super) fn build_artifact_id(root: &Path, build_system: BuildSystem) -> Optio
     }
 }
 
+/// Every template this workspace overrides, machine tier first.
+///
+/// **The later insert wins, which is the documented order**: a project's
+/// override beats the machine's, because the file in the repository is the
+/// one a colleague can see. Names are relative to the override directory --
+/// exactly how the built-ins are named -- so `.jails/templates/generate/
+/// command_test.java` replaces `templates/generate/command_test.java`.
+///
+/// A file that is not UTF-8 is skipped rather than refused: it cannot be a
+/// Java template, and refusing here would make an unrelated stray file break
+/// every command in the project.
+pub(super) fn template_overrides(root: &Path) -> jails_contracts::TemplateOverrides {
+    let mut found = jails_contracts::TemplateOverrides::default();
+    for base in [machine_templates(), Some(root.join(".jails/templates"))]
+        .into_iter()
+        .flatten()
+    {
+        collect_overrides(&base, &base, &mut found);
+    }
+    found
+}
+
+fn machine_templates() -> Option<std::path::PathBuf> {
+    let base = match std::env::var_os("XDG_CONFIG_HOME") {
+        Some(value) if !value.is_empty() => std::path::PathBuf::from(value),
+        _ => std::path::PathBuf::from(std::env::var_os("HOME")?).join(".config"),
+    };
+    Some(base.join("jails/templates"))
+}
+
+fn collect_overrides(base: &Path, dir: &Path, found: &mut jails_contracts::TemplateOverrides) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_overrides(base, &path, found);
+            continue;
+        }
+        let (Ok(text), Ok(relative)) = (std::fs::read_to_string(&path), path.strip_prefix(base))
+        else {
+            continue;
+        };
+        found.files.insert(
+            relative.to_string_lossy().replace('\\', "/"),
+            jails_contracts::TemplateOverride {
+                origin: path.to_string_lossy().replace('\\', "/"),
+                text,
+            },
+        );
+    }
+}
+
+/// The version `junit-platform-console` must be declared at, or `None` when
+/// something already manages it.
+///
+/// **This is not the version the project declares, and pinning that is the
+/// bug it exists to stop.** Confirmed in `deps/junit-framework` rather than
+/// from memory: `junit-bom` constrains every mavenized artifact to the single
+/// root `version` from JUnit 6 on, so jupiter and platform share one number
+/// there -- but JUnit 5 paired jupiter `5.y.z` with platform `1.y.z`, and a
+/// console pinned at `5.11.4` does not resolve at all. Under a Spring Boot
+/// parent or an imported `junit-bom` the version is managed and a redundant
+/// pin is the *other* half of the same failure: it holds the launcher still
+/// while the BOM moves the engine, which dies at run time with a
+/// `NoSuchMethodError` wrapped in "versions not properly aligned".
 pub(super) fn junit_version(root: &Path, build_system: BuildSystem) -> Option<String> {
     let path = match build_system {
         BuildSystem::Maven => root.join("pom.xml"),
@@ -221,27 +288,40 @@ pub(super) fn junit_version(root: &Path, build_system: BuildSystem) -> Option<St
         BuildSystem::Unknown => return None,
     };
     let source = std::fs::read_to_string(path).ok()?;
-    match build_system {
+    if source.contains("junit-bom") {
+        return None;
+    }
+    let declared = match build_system {
         BuildSystem::Maven => {
-            let mut rest = source.as_str();
-            while let Some(at) = rest.find("<artifactId>junit-") {
-                let block_start = rest[..at].rfind("<dependency>")?;
-                let block = between(&rest[block_start..], "<dependency>", "</dependency>")?;
-                if let Some(version) = between(block, "<version>", "</version>") {
-                    return Some(version.trim().to_string());
-                }
-                rest = &rest[at + 1..];
-            }
-            None
+            let at = source.find("<artifactId>junit-jupiter</artifactId>")?;
+            let block_start = source[..at].rfind("<dependency>")?;
+            between(&source[block_start..], "<version>", "</version>")?
+                .trim()
+                .to_string()
         }
         // A Gradle project states it as a coordinate on one line.
         BuildSystem::Gradle => source
             .lines()
             .find(|line| line.contains("org.junit.jupiter:junit-jupiter"))
             .and_then(|line| line.rsplit_once(':'))
-            .and_then(|(_, version)| quoted(version.trim())),
-        BuildSystem::Unknown => None,
+            .and_then(|(_, version)| quoted(version.trim()))?,
+        BuildSystem::Unknown => return None,
+    };
+    console_version(&declared)
+}
+
+/// JUnit's own versioning scheme, as one function.
+fn console_version(declared: &str) -> Option<String> {
+    let mut parts = declared.split('.');
+    let major: u32 = parts.next().and_then(|part| part.parse().ok())?;
+    if major >= 6 {
+        return Some(declared.to_string());
     }
+    let rest: Vec<&str> = parts.collect();
+    if rest.is_empty() {
+        return None;
+    }
+    Some(format!("1.{}", rest.join(".")))
 }
 
 fn gradle_spring_boot_version(source: &str) -> Option<String> {

@@ -28,18 +28,19 @@ const JAVA_MAIN_ROOT: &str = ".jails/generated/main/java";
 const JAVA_TEST_ROOT: &str = ".jails/generated/test/java";
 const RESOURCE_ROOT: &str = ".jails/generated/main/resources";
 
-const SEEDER: &str = include_str!("../../../templates/spring/seeder_java.java");
-const TEST: &str = include_str!("../../../templates/spring/seeder_test_java.java");
+const SEEDER: crate::Template = crate::template!("spring/seeder_java.java");
+const TEST: crate::Template = crate::template!("spring/seeder_test_java.java");
 
 pub(crate) fn lower(
     model: &AppModel,
     entity: &Entity,
+    templates: &jails_contracts::TemplateOverrides,
 ) -> Result<Vec<(ProjectPath, RenderedFile)>, CompileError> {
     let reader = json_reader(model, entity)?;
     let name = &entity.names.java_type;
-    let adapters = model.project.package_for(Package::Adapters);
-    let domain = model.project.package_for(Package::Domain);
-    let repository = model.project.package_for(Package::Repository);
+    let adapters = crate::emit_java::entity_package(model, entity, Package::Adapters);
+    let domain = crate::emit_java::entity_package(model, entity, Package::Domain);
+    let repository = crate::emit_java::entity_package(model, entity, Package::Repository);
     let resource = format!("db/seeds/{}.json", entity.names.sql_table);
     let rows = [row(model, entity, true), row(model, entity, false)];
     let imports = format!(
@@ -51,13 +52,14 @@ pub(crate) fn lower(
         import(&adapters, &adapters, &reader),
     );
     let seeder = SEEDER
+        .resolve(templates)?
         .replace("{{pkg}}", &adapters)
         .replace("{{imports}}", &imports)
         .replace("{{resource}}", &resource)
         .replace("{{json}}", &reader)
         .replace("{{name}}", name);
     let disabled = rows[0].is_none() || rows[1].is_none();
-    let test = TEST
+    let test = TEST.resolve(templates)?
         .replace("{{pkg}}", &adapters)
         .replace("{{imports}}", &import(&adapters, &domain, name))
         .replace("{{resource}}", &resource)
@@ -139,7 +141,16 @@ fn row(model: &AppModel, entity: &Entity, first: bool) -> Option<String> {
                 return Some(format!("    \"{}\": null", field.names.java_member));
             }
             let value = match &field.ty {
-                TypeRef::Builtin(builtin) => builtin.semantics().json.to_string(),
+                // **The second row's values differ, not only its absences.**
+                // Two identical rows are a duplicate key the moment the entity
+                // has one, and a seed file that fails to bind is worse than no
+                // seed file at all.
+                TypeRef::Builtin(builtin) => if first {
+                    builtin.semantics().json
+                } else {
+                    builtin.semantics().json_alternate
+                }
+                .to_string(),
                 // **An enum is the one project type jails can sample**, and by
                 // its wire value: the record's converter reads that, and the
                 // Java constant is what it refuses. Leaving it out made every

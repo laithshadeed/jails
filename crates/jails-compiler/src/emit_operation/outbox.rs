@@ -38,12 +38,11 @@ use std::collections::BTreeSet;
 
 const MAIN_ROOT: &str = ".jails/generated/main/java";
 
-const STORE: &str = include_str!("../../../../templates/spring/outbox_store_java.java");
-const SINK: &str = include_str!("../../../../templates/spring/outbox_sink_java.java");
-const KAFKA_SINK: &str = include_str!("../../../../templates/spring/outbox_kafka_sink_java.java");
-const LOGGING_SINK: &str =
-    include_str!("../../../../templates/spring/outbox_logging_sink_java.java");
-const WORKER: &str = include_str!("../../../../templates/spring/outbox_worker_java.java");
+const STORE: crate::Template = crate::template!("spring/outbox_store_java.java");
+const SINK: crate::Template = crate::template!("spring/outbox_sink_java.java");
+const KAFKA_SINK: crate::Template = crate::template!("spring/outbox_kafka_sink_java.java");
+const LOGGING_SINK: crate::Template = crate::template!("spring/outbox_logging_sink_java.java");
+const WORKER: crate::Template = crate::template!("spring/outbox_worker_java.java");
 
 /// Every command in this model that delivers through an outbox.
 pub(crate) fn commands(model: &AppModel) -> Vec<&Operation> {
@@ -95,9 +94,10 @@ pub(crate) fn mints_identity(model: &AppModel) -> bool {
 pub(crate) fn lower_and_emit(
     model: &AppModel,
     output: &mut RenderedTree,
+    observed: &crate::emit::Observed<'_>,
 ) -> Result<(), CompileError> {
     for operation in commands(model) {
-        for (path, file) in files(model, operation)? {
+        for (path, file) in files(model, operation, observed.templates)? {
             output.insert(path, file).map_err(CompileError::new)?;
         }
     }
@@ -199,6 +199,7 @@ pub(crate) fn relayed<'a>(
 fn files(
     model: &AppModel,
     operation: &Operation,
+    templates: &jails_contracts::TemplateOverrides,
 ) -> Result<Vec<(ProjectPath, RenderedFile)>, CompileError> {
     let event = relayed(model, operation)?;
     require(model, "db", operation, "a table to stage events in")?;
@@ -214,6 +215,7 @@ fn files(
     let property = property(operation);
 
     let store = STORE
+        .resolve(templates)?
         .replace("{{pkg}}", &jobs)
         .replace("{{json_import}}", &import(&jobs, &adapters, "Json"))
         .replace("{{event_import}}", &event_import)
@@ -222,16 +224,19 @@ fn files(
         .replace("{{event}}Event", &event_type)
         .replace("{{table}}", &table);
     let sink = SINK
+        .resolve(templates)?
         .replace("{{pkg}}", &jobs)
         .replace("{{event_import}}", &event_import)
         .replace("{{usecase}}", usecase)
         .replace("{{event}}Event", &event_type);
     let logging = LOGGING_SINK
+        .resolve(templates)?
         .replace("{{pkg}}", &jobs)
         .replace("{{event_import}}", &event_import)
         .replace("{{usecase}}", usecase)
         .replace("{{event}}Event", &event_type);
     let worker = WORKER
+        .resolve(templates)?
         .replace("{{pkg}}", &jobs)
         .replace("{{usecase}}", usecase)
         .replace("{{property}}", &property);
@@ -249,6 +254,7 @@ fn files(
         let messaging = model.project.package_for(Package::Messaging);
         let publisher = format!("{}Publisher", event.names.java_type);
         let kafka = KAFKA_SINK
+            .resolve(templates)?
             .replace("{{pkg}}", &jobs)
             .replace("{{event_import}}", &event_import)
             .replace(
@@ -382,5 +388,7 @@ fn rendered(
 /// `create table` never had, found by `flyway migrate` in a project that was
 /// working yesterday.
 fn migration(table: &str) -> String {
-    include_str!("../../../../templates/sql/outbox.sql").replace("{{table}}", table)
+    crate::template!("sql/outbox.sql")
+        .built_in
+        .replace("{{table}}", table)
 }

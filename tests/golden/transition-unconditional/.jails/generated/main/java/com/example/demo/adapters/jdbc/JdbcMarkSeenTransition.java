@@ -5,6 +5,8 @@ import com.example.demo.application.transitions.MarkSeenTransition;
 import com.example.demo.domain.Note;
 import java.util.ArrayList;
 import java.util.List;
+import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,6 +28,16 @@ public class JdbcMarkSeenTransition implements MarkSeenTransition {
         JdbcClient.StatementSpec statement = jdbc.sql(sql);
         statement = statement.param("id", id);
         statement = statement.param("expected_version", expectedVersion);
-        return statement.query(Note.class).single();
+        var applied = statement.query(Note.class).optional();
+        if (applied.isEmpty()) {
+            throw jdbc.sql("select 1 from notes where id = :id")
+                    .param("id", id)
+                    .query(Integer.class)
+                    .optional()
+                    .<RuntimeException>map(row -> new OptimisticLockingFailureException(
+                            "the resource has changed since the version you sent"))
+                    .orElseGet(() -> new EmptyResultDataAccessException(1));
+        }
+        return applied.get();
     }
 }

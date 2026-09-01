@@ -20,13 +20,14 @@ use std::collections::BTreeSet;
 const MAIN_ROOT: &str = ".jails/generated/main/java";
 const TEST_ROOT: &str = ".jails/generated/test/java";
 
-const PUBLISHER: &str = include_str!("../../../templates/spring/publisher_java.java");
-const LISTENER: &str = include_str!("../../../templates/spring/listener_java.java");
-const IT: &str = include_str!("../../../templates/spring/messaging_it_java.java");
+const PUBLISHER: crate::Template = crate::template!("spring/publisher_java.java");
+const LISTENER: crate::Template = crate::template!("spring/listener_java.java");
+const IT: crate::Template = crate::template!("spring/messaging_it_java.java");
 
 pub(crate) fn lower_and_emit(
     model: &AppModel,
     output: &mut RenderedTree,
+    observed: &crate::emit::Observed<'_>,
 ) -> Result<(), CompileError> {
     if !model
         .capabilities
@@ -39,7 +40,7 @@ pub(crate) fn lower_and_emit(
         if !matches!(operation.kind, OperationKind::Event(_)) {
             continue;
         }
-        for (path, file) in files(model, operation)? {
+        for (path, file) in files(model, operation, observed.templates)? {
             output.insert(path, file).map_err(CompileError::new)?;
         }
     }
@@ -57,6 +58,7 @@ pub(crate) fn topic(operation: &Operation) -> String {
 fn files(
     model: &AppModel,
     operation: &Operation,
+    templates: &jails_contracts::TemplateOverrides,
 ) -> Result<Vec<(ProjectPath, RenderedFile)>, CompileError> {
     let name = &operation.names.java_type;
     let event_type = crate::emit_java::with_suffix(name, "Event");
@@ -67,6 +69,7 @@ fn files(
     let key = partition_key(model, operation)?;
 
     let publisher = PUBLISHER
+        .resolve(templates)?
         .replace("{{pkg}}", &messaging)
         .replace(
             "import java.util.concurrent.CompletableFuture;",
@@ -84,6 +87,7 @@ fn files(
         .replace("{{name}}Event", &event_type)
         .replace("{{name}}", name);
     let listener = LISTENER
+        .resolve(templates)?
         .replace("{{pkg}}", &messaging)
         .replace(
             "import org.slf4j.Logger;",
@@ -140,7 +144,7 @@ fn files(
         imports.push(event_import.clone());
     }
     imports.sort();
-    let test = IT
+    let test = IT.resolve(templates)?
         .replace("{{pkg}}", &messaging)
         .replace("{{event_imports}}", &imports.concat())
         .replace(

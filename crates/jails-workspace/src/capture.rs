@@ -36,7 +36,10 @@ use std::path::Path;
 
 mod observe;
 
-use observe::{build_artifact_id, declared_dependencies, junit_version, spring_boot_version};
+use observe::{
+    build_artifact_id, declared_dependencies, junit_version, spring_boot_version,
+    template_overrides,
+};
 pub use observe::{observe_build_system, observe_spring_boot};
 
 const MANAGED_ROOT: &str = ".jails/generated";
@@ -77,6 +80,14 @@ struct CompilerLockV3 {
     projection: RenderedTree,
     #[serde(default)]
     migrations: BTreeMap<ProjectPath, ContentDigest>,
+    /// The published bytes, so an edited migration can be put back.
+    ///
+    /// `#[serde(default)]` rather than a fourth lock schema: a lock written
+    /// before this existed still decodes and still verifies, and the only
+    /// thing it cannot do is restore a migration -- which is exactly what it
+    /// could not do before either.
+    #[serde(default)]
+    migration_bytes: BTreeMap<ProjectPath, Vec<u8>>,
 }
 
 #[derive(Debug)]
@@ -85,6 +96,7 @@ struct AcceptedCompilerState {
     projection: Option<RenderedTree>,
     compiler: Option<String>,
     migrations: BTreeMap<ProjectPath, ContentDigest>,
+    migration_bytes: BTreeMap<ProjectPath, Vec<u8>>,
 }
 
 pub fn capture(
@@ -371,7 +383,9 @@ fn capture_model_state(
         snapshot.accepted_projection = accepted.projection;
         snapshot.accepted_compiler = accepted.compiler;
         snapshot.accepted_migrations = accepted.migrations;
+        snapshot.accepted_migration_bytes = accepted.migration_bytes;
     }
+    snapshot.template_overrides = template_overrides(root);
     snapshot.project = project;
     snapshot.migration_history = capture_migration_history(root, &mut files, &mut preconditions)?;
     snapshot.preconditions = preconditions;
@@ -563,6 +577,7 @@ fn decode_compiler_lock(bytes: &[u8]) -> Result<AcceptedCompilerState, String> {
                 projection: None,
                 compiler: None,
                 migrations: BTreeMap::new(),
+                migration_bytes: BTreeMap::new(),
             })
         }
         COMPILER_LOCK_SCHEMA_V2 => {
@@ -581,6 +596,7 @@ fn decode_compiler_lock(bytes: &[u8]) -> Result<AcceptedCompilerState, String> {
                 projection: Some(lock.projection),
                 compiler: Some(lock.compiler),
                 migrations: BTreeMap::new(),
+                migration_bytes: BTreeMap::new(),
             })
         }
         COMPILER_LOCK_SCHEMA_V3 => {
@@ -599,6 +615,7 @@ fn decode_compiler_lock(bytes: &[u8]) -> Result<AcceptedCompilerState, String> {
                 projection: Some(lock.projection),
                 compiler: Some(lock.compiler),
                 migrations: lock.migrations,
+                migration_bytes: lock.migration_bytes,
             })
         }
         other => Err(format!(

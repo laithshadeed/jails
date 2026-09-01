@@ -991,16 +991,16 @@ there the unit is a whole service block rather than a setting.)
   mentions it skipped. Neovim's `grn` (jdt.ls) is scope-aware and better where
   it works — this is for when the language server is not attached or the
   project does not currently compile.
-- `jails rename resource <Slice.Current> <New> --strategy
-  preserve-table|single-cutover|rolling` — coordinate the durable entity,
-  generated Java, table binding, migration history, and owned SQL literals.
-  `preserve-table` is the safe default shape: it changes the logical Java name
-  while retaining the physical table and external route. `single-cutover`
-  appends one forward PostgreSQL migration and refuses reader-owned SQL,
-  opaque routines/views/triggers, or unowned storage-object names. `rolling`
-  records a durable campaign and requires the exact reported
-  `rename storage ... --old-version-retired` attestation before it appends the
-  physical cutover.
+- `jails rename resource <Current> <New> --strategy
+  preserve-table|single-cutover` — coordinate the declaration, the generated
+  Java, the table binding, the migration history, and owned SQL literals in
+  one reviewed plan. `preserve-table` is the safe shape: it changes the
+  logical Java name while retaining the physical table and external route.
+  `single-cutover` appends one forward PostgreSQL migration and refuses
+  reader-owned SQL, opaque routines/views/triggers, or unowned storage-object
+  names. `--strategy rolling` is refused by name: a rolling or
+  expand/contract rename is a *campaign* of ordinary plans run as the readers
+  are ready, and the tool will not own the waiting between them.
 - Every mutating command accepts `--pretend --plan-out <file>`. The named plan
   is atomically written mode 0600 outside the project transaction and contains
   the exact prepared bytes plus root, generation, protocol, toolchain,

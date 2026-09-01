@@ -16,11 +16,15 @@ use jails_contracts::RenderedMigration;
 use jails_model::{AppModel, Component, ComponentKind, StableId};
 use std::collections::BTreeSet;
 
-const PORT: &str = include_str!("../../../../templates/spring/presence_port_java.java");
-const STORE: &str = include_str!("../../../../templates/spring/presence_store_java.java");
-const IT: &str = include_str!("../../../../templates/spring/presence_it_java.java");
+const PORT: crate::Template = crate::template!("spring/presence_port_java.java");
+const STORE: crate::Template = crate::template!("spring/presence_store_java.java");
+const IT: crate::Template = crate::template!("spring/presence_it_java.java");
 
-pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitted>, CompileError> {
+pub(super) fn files(
+    model: &AppModel,
+    component: &Component,
+    templates: &jails_contracts::TemplateOverrides,
+) -> Result<Vec<Emitted>, CompileError> {
     if !super::has_database(model) {
         return Err(CompileError::new(format!(
             "component presence `{}` needs PostgreSQL/JDBC: presence held in one process's memory is correct on one node and wrong on two, with nothing to say which\n       fix: declare `storage postgres` in the model, or run `jails add db`",
@@ -55,7 +59,9 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             false,
             // The port is managed ABI: the store and every caller name it.
             false,
-            PORT.replace("{{app}}", &app).replace("{{name}}", name),
+            PORT.resolve(templates)?
+                .replace("{{app}}", &app)
+                .replace("{{name}}", name),
         )?,
         java(
             component,
@@ -65,6 +71,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             false,
             true,
             STORE
+                .resolve(templates)?
                 .replace("{{adapters}}", &adapters)
                 .replace("{{name}}", name)
                 .replace("{{table}}", &table)
@@ -78,7 +85,8 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             &format!("Jdbc{port}IT"),
             true,
             true,
-            IT.replace("{{adapters}}", &adapters)
+            IT.resolve(templates)?
+                .replace("{{adapters}}", &adapters)
                 .replace("{{name}}", name)
                 .replace("{{table}}", &table)
                 .replace("{{container_import}}", &support.import)

@@ -633,10 +633,17 @@ fn compile_at(
 /// That was a dead end -- `sync` refuses on the same deleted file, so the two
 /// commands pointed at each other and neither wrote anything. It takes no
 /// `--strategy`: there is one strategy, and it is the model.
-pub(crate) fn repair(invocation: Invocation) -> Result<()> {
+pub(crate) fn repair(datasource: Option<&str>, invocation: Invocation) -> Result<()> {
     let root = root()?;
     let manifest = resolve_manifest_at(&root, None)?;
     let (source, model) = load_model_at(&root, &manifest, invocation.output)?;
+    // **The database has the last word on a migration that already ran.**
+    // Repair restores a sealed migration byte-for-byte from the lock, which is
+    // right when the file was edited after being applied and *wrong* when a
+    // different image is what actually ran: Flyway would then refuse on the
+    // checksum for ever, about a file jails had just "repaired". Asked, the
+    // database says which of the two happened; unasked, this stays a question
+    // about files and the reader is told nothing it cannot see.
     let bundle = compile_at(
         &root,
         &manifest,
@@ -644,6 +651,9 @@ pub(crate) fn repair(invocation: Invocation) -> Result<()> {
         model,
         Repair::DeletedManagedFiles,
     )?;
+    if let Some(datasource) = datasource {
+        crate::schema_command::refuse_divergent_flyway_history(&bundle, datasource, &invocation)?;
+    }
     let execution = jails_workspace::execute(&root, &bundle)
         .map_err(|error| Failure::Told(format!("could not repair managed output: {error}")))?;
     if invocation.output == Output::Human {

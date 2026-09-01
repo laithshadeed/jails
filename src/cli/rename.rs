@@ -8,6 +8,15 @@
 //! shape — preserve keeps an inactive semantic node, drop appends a forward
 //! migration — so the caller says which, and jails never guesses which of two
 //! irreversible readings was meant.
+//!
+//! **`rename storage --complete <campaign>` is gone**, and `Rolling` stays.
+//! The subcommand completed the physical stage of a rolling rename against a
+//! durable campaign the legacy engine kept beside the model; the compiler
+//! plans one reviewed transition, so there is no campaign to complete and the
+//! command could only ever refuse. The *strategy* survives because refusing it
+//! by name is useful — a reader who asks for a rolling rename is told it is a
+//! sequence of ordinary plans and which two strategies exist — where dropping
+//! the variant would leave clap saying "invalid value" instead.
 
 use clap::Subcommand;
 
@@ -70,20 +79,6 @@ pub(crate) enum RenameCommand {
         /// Target route prefix; valid only with `--api rename`
         #[arg(long, requires = "api")]
         route: Option<String>,
-        /// Skip the confirmation prompt
-        #[arg(long)]
-        force: bool,
-    },
-    /// Complete the physical-storage stage of a rolling rename
-    Storage {
-        /// Current `<slice>.<resource>` identity
-        resource: String,
-        /// Exact durable campaign identifier
-        #[arg(long)]
-        complete: String,
-        /// Attest that no old application version can access the old table
-        #[arg(long)]
-        old_version_retired: bool,
         /// Skip the confirmation prompt
         #[arg(long)]
         force: bool,

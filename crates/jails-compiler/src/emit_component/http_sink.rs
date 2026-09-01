@@ -31,10 +31,14 @@ use std::collections::BTreeSet;
 pub(super) const DEPENDENCIES: &[(&str, &str)] =
     &[("org.springframework.boot", "spring-boot-starter-actuator")];
 
-const SINK: &str = include_str!("../../../../templates/spring/http_outbox_sink_java.java");
-const TEST: &str = include_str!("../../../../templates/spring/http_outbox_sink_test_java.java");
+const SINK: crate::Template = crate::template!("spring/http_outbox_sink_java.java");
+const TEST: crate::Template = crate::template!("spring/http_outbox_sink_test_java.java");
 
-pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitted>, CompileError> {
+pub(super) fn files(
+    model: &AppModel,
+    component: &Component,
+    templates: &jails_contracts::TemplateOverrides,
+) -> Result<Vec<Emitted>, CompileError> {
     let command = staging_command(model, component)?;
     let event = crate::emit_operation::outbox::relayed(model, command)?;
     if let Some(declared) = component.yields.as_ref() {
@@ -73,6 +77,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
     let value = |key: &str, default: &str| format!("${{{property}.{key}{default}}}");
 
     let sink = SINK
+        .resolve(templates)?
         .replace("{{pkg}}", &pkg)
         .replace(
             "import {{adapters}}.Json;\n",
@@ -106,7 +111,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
         .iter()
         .map(|import| format!("import {import};\n"))
         .collect::<String>();
-    let test = TEST
+    let test = TEST.resolve(templates)?
         .replace("{{pkg}}", &pkg)
         .replace(
             "import {{messaging}}.{{event}}Event;\n",

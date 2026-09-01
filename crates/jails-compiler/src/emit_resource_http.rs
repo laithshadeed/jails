@@ -133,7 +133,7 @@ fn requests(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
 /// Unchanged, and kept for that reason: it is a port, and a port is ABI even
 /// when the thing that now serves the resource does not implement it.
 fn port(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
-    let package = model.project.package_for(Package::PortsHttp);
+    let package = crate::emit_java::entity_package(model, entity, Package::PortsHttp);
     let type_name = format!("{}HttpPort", entity.names.java_type);
     let imports = BTreeSet::from([domain_import(model, entity)]);
     let record = &entity.names.java_type;
@@ -234,7 +234,7 @@ fn controller(
     entity: &Entity,
     spring_boot: Option<&str>,
 ) -> Result<Unit, CompileError> {
-    let package = model.project.package_for(Package::Web);
+    let package = crate::emit_java::entity_package(model, entity, Package::Web);
     let type_name = with_suffix(&entity.names.java_type, "Controller");
     let record = &entity.names.java_type;
     let key = primary_key(entity)?;
@@ -270,7 +270,7 @@ fn controller(
         // the boundary is.
         format!(
             "{}.{record}Service",
-            model.project.package_for(Package::Service)
+            crate::emit_java::entity_package(model, entity, Package::Service)
         ),
         "java.net.URI".to_string(),
         "org.springframework.http.ResponseEntity".to_string(),
@@ -380,7 +380,7 @@ fn controller_test(
     entity: &Entity,
     spring_boot: Option<&str>,
 ) -> Result<Option<Unit>, CompileError> {
-    let package = model.project.package_for(Package::Web);
+    let package = crate::emit_java::entity_package(model, entity, Package::Web);
     let controller = with_suffix(&entity.names.java_type, "Controller");
     let type_name = format!("{controller}Test");
     let record = &entity.names.java_type;
@@ -389,14 +389,14 @@ fn controller_test(
         domain_import(model, entity),
         format!(
             "{}.{record}Repository",
-            model.project.package_for(Package::Repository)
+            crate::emit_java::entity_package(model, entity, Package::Repository)
         ),
         // The real service over a stub port: it is four forwards, so
         // substituting a second stub for it would assert that the test's own
         // fake forwards correctly.
         format!(
             "{}.{record}Service",
-            model.project.package_for(Package::Service)
+            crate::emit_java::entity_package(model, entity, Package::Service)
         ),
         "java.util.List".to_string(),
         "java.util.Optional".to_string(),

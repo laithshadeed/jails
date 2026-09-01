@@ -249,32 +249,29 @@ fn main() -> std::process::ExitCode {
                 let result = rename_source::run(&old, &new, force, invocation);
                 return dispatch::finish_invocation(result, failure_output, &failure_path);
             }
-            let result = model_command::ensure_owned(invocation.clone()).and_then(|()| match command {
-                Some(cli::RenameCommand::Resource {
-                    from,
-                    to,
-                    strategy,
-                    table,
-                    api,
-                    route,
-                    force: _,
-                }) => model_rename::run(
-                    model_rename::Request {
+            let result =
+                model_command::ensure_owned(invocation.clone()).and_then(|()| match command {
+                    Some(cli::RenameCommand::Resource {
                         from,
                         to,
                         strategy,
                         table,
                         api,
                         route,
-                    },
-                    invocation,
-                ),
-                Some(cli::RenameCommand::Storage { .. }) => model_command::refuse_legacy_mutation(
-                    "rename storage",
-                    "use a supported single-cutover field/entity policy; multi-release storage campaigns are not canonical yet",
-                ),
-                None => unreachable!("the textual rename is dispatched above"),
-            });
+                        force: _,
+                    }) => model_rename::run(
+                        model_rename::Request {
+                            from,
+                            to,
+                            strategy,
+                            table,
+                            api,
+                            route,
+                        },
+                        invocation,
+                    ),
+                    None => unreachable!("the textual rename is dispatched above"),
+                });
             return dispatch::finish_invocation(result, failure_output, &failure_path);
         }
         Command::Destroy {
@@ -323,23 +320,23 @@ fn main() -> std::process::ExitCode {
             // there is. A caller who passed one is told that rather than
             // having it silently ignored.
             //
-            // A selector or a datasource is refused rather than ignored:
-            // compilation is whole-model, so scoping it to one resource is not
-            // something this can honour, and evidence from a live database
-            // answers a question about recorded state a canonical project does
-            // not keep.
+            // A selector is refused rather than ignored: compilation is
+            // whole-model, so scoping it to one resource is not something this
+            // can honour. `--datasource` *is* honoured, and asks the one
+            // question the files cannot answer -- whether the image Flyway
+            // actually applied is the one the seal would restore.
             ResourceCommand::Repair {
                 selector,
                 strategy: _,
                 datasource,
             } => {
-                if selector.is_some() || datasource.is_some() {
+                if selector.is_some() {
                     Err(jails_support::Failure::Told(
-                        "canonical `resource repair` repairs the whole managed tree and takes no selector or `--datasource`: it renders `.jails/generated` from the model.\n       fix: run `jails resource repair` with no arguments".to_string(),
+                        "canonical `resource repair` repairs the whole managed tree and takes no selector: it renders `.jails/generated` from the model.\n       fix: run `jails resource repair` with no selector".to_string(),
                     ))
                 } else {
                     model_command::ensure_owned(invocation.clone())
-                        .and_then(|()| model_command::repair(invocation))
+                        .and_then(|()| model_command::repair(datasource.as_deref(), invocation))
                 }
             }
             ResourceCommand::Index { command } => model_index::run(command, invocation),

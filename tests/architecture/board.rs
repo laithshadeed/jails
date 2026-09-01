@@ -244,15 +244,27 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // `refuse_reader_sql`, `refuse_declared` -- and a refusal about
                 // what is on disk is a question about paths, which is the same
                 // exemption `preflight_writable` records above.
-                // 93 -> 95. The canonical executor grew two more readers whose
-                // subject *is* a path and which run where no `Project` exists:
-                // the staged-temporary sweep that a crash between staging and
-                // rename leaves behind, and the managed-tree verification that
-                // reads it. Both are the exemption this row already records
-                // twice -- a question about what is on disk, asked before there
-                // is a resolved project to hold the answer -- rather than a
-                // parameter object that was not passed.
-                ceiling: 95,
+                //
+                // 93 -> 94 for `stranded_reader_references`, which is the same
+                // shape once more and is worth recording for the half that is
+                // *not*. It names the reader's own files that still mention a
+                // type a removal takes away -- jails does not delete a file it
+                // does not own, so the reader is told instead -- and it reads
+                // the tree rather than the capture on purpose: which reader
+                // directories a plan captures follows from what it needs to
+                // write, while this has to look everywhere the reader keeps
+                // Java. Its walker took a second `root` for a value that was
+                // never a project root but `src/main/java`, and renaming that
+                // parameter is what kept the rise at one rather than two.
+                //
+                // Two more of the same shape arrived on the canonical executor
+                // in parallel and are already inside that 94: the
+                // staged-temporary sweep a crash between staging and rename
+                // leaves behind, and the managed-tree verification that reads
+                // it. Both run where no `Project` exists and neither threads a
+                // root further down, which is the exemption this row records
+                // three times over now.
+                ceiling: 94,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;
@@ -1289,27 +1301,34 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // typed field semantics. A one-line rise is not worth
                 // splitting a parser for; the next rise there is.
                 //
-                // 688 -> 797, and the file is `jails-model/src/linker.rs`. The
-                // canonical tree arrived with four modules over this ceiling and
-                // the ladder was never moved, so the row read as held while the
-                // thing it measures had roughly doubled. One of the four is
-                // fixed rather than recorded: `model_generate_jdl.rs` was 811
-                // and is 485, because *how a JDL declaration is spelled* is a
-                // different secret from *which mutation an invocation means* --
-                // `model_generate_jdl/render.rs` holds the first, and only the
-                // parser and the formatter have to agree with it.
+                // 688 -> 671, and it took seven splits rather than one. The
+                // canonical cutover's own growth had put *six* files above the
+                // ceiling at once -- the JDL frontend, the linker, the Java
+                // emitter, the generate frontend, the schema command and the
+                // compiler root -- so the board was measuring the worst of a
+                // crowd rather than one outlier. Each was split by the secret
+                // it had accreted rather than by size: `declaration` (how a
+                // declaration is spelled), `linker/validate` (whether one
+                // string may be a Java or SQL name), `emit_java/input` (what
+                // an `Input` record declares and how a request binds to it --
+                // `bugs.md` B48's own subject), `model_generate/profile`
+                // (which options a kind accepts), `schema_command/render`
+                // (the two shapes a snapshot is printed in), `ejectable`
+                // (which files an ejection would move) and `parser/attribute`
+                // (reading one `@name(...)`). The parser rise this row
+                // predicted is the last of them.
                 //
-                // `linker.rs` is the one left, and it is a raise rather than a
-                // second split because its seam is a design decision and not a
-                // mechanical one: it already has `linker/{component, enum_type,
-                // field, operation, unit}.rs`, so what is left in the parent is
-                // the part that has to see every declaration class at once --
-                // id derivation, the cross-node rules, and the assembly of
-                // `AppModel`. Cutting that badly produces two files that both
-                // need the whole picture, which is worse than one that admits
-                // it. The next rise here is that split, and it is named in
-                // `new.md` rather than left to be rediscovered.
-                ceiling: 797,
+                // `linker.rs` looked like the one that had to be a raise
+                // rather than a split -- it already has `linker/{component,
+                // enum_type, field, operation, unit}.rs`, so what is left in
+                // the parent is the part that has to see every declaration
+                // class at once, and cutting *that* badly gives two files
+                // which both need the whole picture. The seam is not there. It
+                // is between the walk and the checks the walk calls: whether
+                // one string may be a Java type, a package, a SQL identifier
+                // or a route is a question with nothing to do with the shape
+                // of the document, and it was 370 lines of the file.
+                ceiling: 671,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
                       decomposing one, so this asks the question the split is actually for: \

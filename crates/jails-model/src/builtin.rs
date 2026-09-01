@@ -94,6 +94,17 @@ pub struct BuiltinSemantics {
     ///
     /// [`sample`]: Self::sample
     pub json: &'static str,
+    /// The same value as [`alternate`], spelled as JSON.
+    ///
+    /// A seed file writes two rows so the loader is proved to read more than
+    /// one, and the rows have to *differ*: an entity whose key is `@pk` gets a
+    /// duplicate-key failure at start-up from two identical ones, which is a
+    /// file that fails to bind rather than a file that seeds. `bytes` has no
+    /// Java alternate -- arrays compare by identity, so a second one proves
+    /// nothing -- but on the wire it is an ordinary distinct string.
+    ///
+    /// [`alternate`]: Self::alternate
+    pub json_alternate: &'static str,
     /// The Postgres column type. One dialect on purpose: a second one is a
     /// column on this row, not a second table somewhere else.
     pub sql_postgres: &'static str,
@@ -141,14 +152,15 @@ static STRING: BuiltinSemantics = BuiltinSemantics {
     java_import: None,
     sample: "\"sample\"",
     json: "\"sample\"",
+    json_alternate: "\"other\"",
     alternate: Some("\"other\""),
     sql_postgres: "text",
+    sql_sample: "'sample'",
+    sql_alternate: "'other'",
     literal: LiteralKind::Text,
     defaults: &[],
     numeric: false,
     scopeable: true,
-    sql_sample: "'sample-7'",
-    sql_alternate: "'sample-8'",
 };
 
 static INTEGER: BuiltinSemantics = BuiltinSemantics {
@@ -159,14 +171,15 @@ static INTEGER: BuiltinSemantics = BuiltinSemantics {
     java_import: None,
     sample: "1",
     json: "1",
+    json_alternate: "7",
     alternate: Some("7"),
     sql_postgres: "integer",
+    sql_sample: "1",
+    sql_alternate: "7",
     literal: LiteralKind::Int32,
     defaults: &["identity"],
     numeric: true,
     scopeable: true,
-    sql_sample: "7",
-    sql_alternate: "8",
 };
 
 static LONG: BuiltinSemantics = BuiltinSemantics {
@@ -177,14 +190,15 @@ static LONG: BuiltinSemantics = BuiltinSemantics {
     java_import: None,
     sample: "1L",
     json: "1",
+    json_alternate: "7",
     alternate: Some("7L"),
     sql_postgres: "bigint",
+    sql_sample: "1",
+    sql_alternate: "7",
     literal: LiteralKind::Int64,
     defaults: &["identity"],
     numeric: true,
     scopeable: true,
-    sql_sample: "7",
-    sql_alternate: "8",
 };
 
 static DOUBLE: BuiltinSemantics = BuiltinSemantics {
@@ -195,14 +209,15 @@ static DOUBLE: BuiltinSemantics = BuiltinSemantics {
     java_import: None,
     sample: "1.0d",
     json: "1.0",
+    json_alternate: "7.0",
     alternate: Some("7.0d"),
     sql_postgres: "double precision",
+    sql_sample: "1.5",
+    sql_alternate: "7.5",
     literal: LiteralKind::Fractional,
     defaults: &[],
     numeric: true,
     scopeable: false,
-    sql_sample: "7.0",
-    sql_alternate: "8.0",
 };
 
 static DECIMAL: BuiltinSemantics = BuiltinSemantics {
@@ -213,14 +228,15 @@ static DECIMAL: BuiltinSemantics = BuiltinSemantics {
     java_import: Some("java.math.BigDecimal"),
     sample: "BigDecimal.ONE",
     json: "1",
+    json_alternate: "10",
     alternate: Some("BigDecimal.TEN"),
     sql_postgres: "numeric",
+    sql_sample: "1.50",
+    sql_alternate: "7.50",
     literal: LiteralKind::Fractional,
     defaults: &[],
     numeric: true,
     scopeable: false,
-    sql_sample: "7.0",
-    sql_alternate: "8.0",
 };
 
 static BOOLEAN: BuiltinSemantics = BuiltinSemantics {
@@ -231,14 +247,15 @@ static BOOLEAN: BuiltinSemantics = BuiltinSemantics {
     java_import: None,
     sample: "false",
     json: "false",
+    json_alternate: "true",
     alternate: Some("true"),
     sql_postgres: "boolean",
+    sql_sample: "true",
+    sql_alternate: "false",
     literal: LiteralKind::Boolean,
     defaults: &[],
     numeric: false,
     scopeable: false,
-    sql_sample: "false",
-    sql_alternate: "false",
 };
 
 static UUID: BuiltinSemantics = BuiltinSemantics {
@@ -249,14 +266,15 @@ static UUID: BuiltinSemantics = BuiltinSemantics {
     java_import: Some("java.util.UUID"),
     sample: "UUID.fromString(\"00000000-0000-0000-0000-000000000001\")",
     json: "\"00000000-0000-0000-0000-000000000001\"",
+    json_alternate: "\"00000000-0000-0000-0000-000000000007\"",
     alternate: Some("UUID.fromString(\"00000000-0000-0000-0000-000000000007\")"),
     sql_postgres: "uuid",
+    sql_sample: "'00000000-0000-0000-0000-000000000001'",
+    sql_alternate: "'00000000-0000-0000-0000-000000000002'",
     literal: LiteralKind::Text,
     defaults: &["uuid7"],
     numeric: false,
     scopeable: true,
-    sql_sample: "'00000000-0000-0000-0000-000000000007'",
-    sql_alternate: "'00000000-0000-0000-0000-000000000008'",
 };
 
 static DATE: BuiltinSemantics = BuiltinSemantics {
@@ -267,14 +285,15 @@ static DATE: BuiltinSemantics = BuiltinSemantics {
     java_import: Some("java.time.LocalDate"),
     sample: "LocalDate.parse(\"2026-01-01\")",
     json: "\"2026-01-01\"",
+    json_alternate: "\"2026-07-07\"",
     alternate: Some("LocalDate.parse(\"2026-07-07\")"),
     sql_postgres: "date",
+    sql_sample: "'2026-01-01'",
+    sql_alternate: "'2026-01-02'",
     literal: LiteralKind::Text,
     defaults: &["today"],
     numeric: false,
     scopeable: false,
-    sql_sample: "'2026-01-07'",
-    sql_alternate: "'2026-01-08'",
 };
 
 static DATE_TIME: BuiltinSemantics = BuiltinSemantics {
@@ -285,14 +304,15 @@ static DATE_TIME: BuiltinSemantics = BuiltinSemantics {
     java_import: Some("java.time.LocalDateTime"),
     sample: "LocalDateTime.parse(\"2026-01-01T00:00:00\")",
     json: "\"2026-01-01T00:00:00\"",
+    json_alternate: "\"2026-07-07T07:07:07\"",
     alternate: Some("LocalDateTime.parse(\"2026-07-07T07:07:07\")"),
     sql_postgres: "timestamp",
+    sql_sample: "'2026-01-01T00:00:00'",
+    sql_alternate: "'2026-01-02T00:00:00'",
     literal: LiteralKind::Text,
     defaults: &["now"],
     numeric: false,
     scopeable: false,
-    sql_sample: "'2026-01-07T00:00:00Z'",
-    sql_alternate: "'2026-01-08T00:00:00Z'",
 };
 
 static INSTANT: BuiltinSemantics = BuiltinSemantics {
@@ -303,14 +323,15 @@ static INSTANT: BuiltinSemantics = BuiltinSemantics {
     java_import: Some("java.time.Instant"),
     sample: "Instant.parse(\"2026-01-01T00:00:00Z\")",
     json: "\"2026-01-01T00:00:00Z\"",
+    json_alternate: "\"2026-07-07T07:07:07Z\"",
     alternate: Some("Instant.parse(\"2026-07-07T07:07:07Z\")"),
     sql_postgres: "timestamptz",
+    sql_sample: "'2026-01-01T00:00:00Z'",
+    sql_alternate: "'2026-01-02T00:00:00Z'",
     literal: LiteralKind::Text,
     defaults: &["now"],
     numeric: false,
     scopeable: false,
-    sql_sample: "'2026-01-07T00:00:00Z'",
-    sql_alternate: "'2026-01-08T00:00:00Z'",
 };
 
 static DURATION: BuiltinSemantics = BuiltinSemantics {
@@ -321,14 +342,15 @@ static DURATION: BuiltinSemantics = BuiltinSemantics {
     java_import: Some("java.time.Duration"),
     sample: "Duration.ofMinutes(1)",
     json: "\"PT1M\"",
+    json_alternate: "\"PT7M\"",
     alternate: Some("Duration.ofMinutes(7)"),
     sql_postgres: "interval",
+    sql_sample: "'PT1S'",
+    sql_alternate: "'PT7S'",
     literal: LiteralKind::Text,
     defaults: &[],
     numeric: false,
     scopeable: false,
-    sql_sample: "'PT7S'",
-    sql_alternate: "'PT8S'",
 };
 
 /// `text`, not a URI column type: Postgres has none, and jails does not invent
@@ -342,14 +364,15 @@ static URI: BuiltinSemantics = BuiltinSemantics {
     java_import: Some("java.net.URI"),
     sample: "URI.create(\"https://example.test\")",
     json: "\"https://example.test\"",
+    json_alternate: "\"https://other.test\"",
     alternate: Some("URI.create(\"https://other.test\")"),
     sql_postgres: "text",
+    sql_sample: "'https://example.invalid/1'",
+    sql_alternate: "'https://example.invalid/2'",
     literal: LiteralKind::Text,
     defaults: &[],
     numeric: false,
     scopeable: false,
-    sql_sample: "'https://example.invalid/7'",
-    sql_alternate: "'https://example.invalid/8'",
 };
 
 static PATH: BuiltinSemantics = BuiltinSemantics {
@@ -360,14 +383,15 @@ static PATH: BuiltinSemantics = BuiltinSemantics {
     java_import: Some("java.nio.file.Path"),
     sample: "Path.of(\"sample\")",
     json: "\"sample\"",
+    json_alternate: "\"other\"",
     alternate: Some("Path.of(\"other\")"),
     sql_postgres: "text",
+    sql_sample: "'/sample/1'",
+    sql_alternate: "'/sample/2'",
     literal: LiteralKind::Text,
     defaults: &[],
     numeric: false,
     scopeable: false,
-    sql_sample: "'/sample/7'",
-    sql_alternate: "'/sample/8'",
 };
 
 static ZONE_ID: BuiltinSemantics = BuiltinSemantics {
@@ -378,14 +402,15 @@ static ZONE_ID: BuiltinSemantics = BuiltinSemantics {
     java_import: Some("java.time.ZoneId"),
     sample: "ZoneId.of(\"UTC\")",
     json: "\"UTC\"",
+    json_alternate: "\"Europe/Paris\"",
     alternate: Some("ZoneId.of(\"Europe/Paris\")"),
     sql_postgres: "text",
+    sql_sample: "'UTC'",
+    sql_alternate: "'Europe/London'",
     literal: LiteralKind::Text,
     defaults: &[],
     numeric: false,
     scopeable: false,
-    sql_sample: "'UTC'",
-    sql_alternate: "'UTC'",
 };
 
 /// **`Currency` is deliberately not an alias**, which is why this row lists
@@ -409,14 +434,15 @@ static CURRENCY: BuiltinSemantics = BuiltinSemantics {
     java_import: Some("java.util.Currency"),
     sample: "Currency.getInstance(\"USD\")",
     json: "\"USD\"",
+    json_alternate: "\"EUR\"",
     alternate: Some("Currency.getInstance(\"EUR\")"),
     sql_postgres: "text",
+    sql_sample: "'GBP'",
+    sql_alternate: "'EUR'",
     literal: LiteralKind::Text,
     defaults: &[],
     numeric: false,
     scopeable: false,
-    sql_sample: "'GBP'",
-    sql_alternate: "'GBP'",
 };
 
 /// `byte[]` is an array, not a class, so it takes no import and has no boxed
@@ -429,14 +455,15 @@ static BYTES: BuiltinSemantics = BuiltinSemantics {
     java_import: None,
     sample: "new byte[]{1}",
     json: "\"AQ==\"",
+    json_alternate: "\"Ag==\"",
     alternate: None,
     sql_postgres: "bytea",
+    sql_sample: "'\\x01'",
+    sql_alternate: "'\\x02'",
     literal: LiteralKind::Opaque,
     defaults: &[],
     numeric: false,
     scopeable: false,
-    sql_sample: "'\\x07'",
-    sql_alternate: "'\\x08'",
 };
 
 /// Every builtin, for the lookups that scan by token or alias.

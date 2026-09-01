@@ -60,7 +60,7 @@ class ItemOwnerAssociationIT {
     @Test
     void aRowNamingNoParentIsRejected() {
         assertThatThrownBy(() -> db.sql(
-                        "insert into items (id, owner_id, name, created_at) values ('00000000-0000-0000-0000-000000000007', '00000000-0000-0000-0000-000000000008', 'sample-7', '2026-01-07T00:00:00Z')")
+                        "insert into items (id, owner_id, name, created_at) values ('00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002', 'sample', '2026-01-01T00:00:00Z')")
                 .update())
                 .isInstanceOf(DataAccessException.class)
                 .rootCause()

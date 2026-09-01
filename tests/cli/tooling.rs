@@ -1878,7 +1878,11 @@ fn a_timed_warm_run_cancels_the_request_and_recycles_the_daemon() {
         .output()
         .unwrap();
     if !prepared.status.success() {
-        skip("could not prepare the timed warm-test fixture");
+        skip(&format!(
+            "could not prepare the timed warm-test fixture: {}{}",
+            String::from_utf8_lossy(&prepared.stdout),
+            String::from_utf8_lossy(&prepared.stderr)
+        ));
         return;
     }
 
@@ -1999,7 +2003,11 @@ fn testd_refuses_stale_classes_and_sees_a_recompile_after_it_started() {
         .output()
         .unwrap();
     if !prepared.status.success() {
-        skip("could not prepare the fixture with `test --fast`");
+        skip(&format!(
+            "could not prepare the fixture with `test --fast`: {}{}",
+            String::from_utf8_lossy(&prepared.stdout),
+            String::from_utf8_lossy(&prepared.stderr)
+        ));
         return;
     }
 
@@ -2113,7 +2121,11 @@ fn testd_affected_selects_transitively_and_widens_when_it_cannot_know() {
         .output()
         .unwrap();
     if !prepared.status.success() {
-        skip("could not prepare the fixture with `test --fast`");
+        skip(&format!(
+            "could not prepare the fixture with `test --fast`: {}{}",
+            String::from_utf8_lossy(&prepared.stdout),
+            String::from_utf8_lossy(&prepared.stderr)
+        ));
         return;
     }
 

@@ -90,6 +90,21 @@ pub(crate) fn relation_member_name(label: &str) -> String {
     out
 }
 
+/// One entity declaration's inputs, together because they are decided
+/// together: what to call it, what it holds, and which dialect it is written
+/// in.
+pub(crate) struct EntityDeclaration<'a> {
+    pub(crate) java_name: &'a str,
+    pub(crate) entity_label: &'a str,
+    pub(crate) scaffold: bool,
+    pub(crate) fields: &'a [String],
+    pub(crate) v1: bool,
+    pub(crate) path: Option<&'a str>,
+    pub(crate) uniques: &'a [String],
+    /// `--package`, already normalized against the base package.
+    pub(crate) package: Option<&'a str>,
+}
+
 pub(crate) fn entity_declaration_at(
     model: &jails_model::AppModel,
     declaration: &EntityDeclaration<'_>,
@@ -102,6 +117,7 @@ pub(crate) fn entity_declaration_at(
         v1,
         path,
         uniques,
+        package: _,
     } = *declaration;
     let mut labels = BTreeSet::new();
     let mut parsed = Vec::new();
@@ -159,7 +175,11 @@ pub(crate) fn entity_declaration_at(
         refuse_unstorable_identity(&parsed, java_name)?;
         refuse_unstorable_components(model, &parsed, java_name)?;
     }
-    let mut output = format!("entity {java_name} @id(ent_{entity_label}) {{\n");
+    let package = match declaration.package {
+        Some(package) if v1 => format!(" @package({package})"),
+        _ => String::new(),
+    };
+    let mut output = format!("entity {java_name} @id(ent_{entity_label}){package} {{\n");
     if scaffold {
         if v1 {
             match path {
@@ -354,4 +374,38 @@ pub(crate) fn render_v1_field_line(entity_label: &str, field: &ParsedField) -> S
         output.push_str(&format!(" @map({column})"));
     }
     output
+}
+
+/// `--package` as the model states it: relative to the application's base.
+///
+/// **Both spellings are accepted and mean one place.** A reader types what
+/// their editor shows -- `com.example.demo.billing` -- while the model stores
+/// what a capability's `@package` stores, the part below the base. Appending
+/// the absolute form to the base produced
+/// `com.example.demo.com.example.demo.billing`, which is a directory nobody
+/// asked for and a package nothing imports.
+pub(crate) fn normalize_package(base: &str, package: &str) -> Result<String> {
+    let package = package.trim();
+    if package == base {
+        return Ok(String::new());
+    }
+    if let Some(relative) = package
+        .strip_prefix(base)
+        .and_then(|rest| rest.strip_prefix('.'))
+    {
+        return Ok(relative.to_string());
+    }
+    // A package naming a *different* base is refused rather than nested under
+    // this one: `--package com.other.billing` in a `com.example.demo` project
+    // is either a typo or a request jails cannot honour, and silently writing
+    // `com.example.demo.com.other.billing` answers neither reading.
+    if package.contains('.') && package.split('.').count() > 1 && package.starts_with("com.")
+        || package.starts_with("org.")
+        || package.starts_with("net.")
+    {
+        return Err(Failure::Told(format!(
+            "`--package {package}` names a package outside this application's base `{base}`.\n       fix: pass a package below the base, or the base itself"
+        )));
+    }
+    Ok(package.to_string())
 }

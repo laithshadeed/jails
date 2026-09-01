@@ -68,6 +68,15 @@ enum Consistency {
     Pending,
     Drifted,
     Retired,
+    /// Everything jails owns agrees and the database has not caught up.
+    ///
+    /// **The one state a project can be in while every file is correct.** The
+    /// model declares the entity, the managed tree matches the lock, and the
+    /// migration that creates the table is on disk and unapplied -- so every
+    /// authority jails can read on its own says "consistent" and the
+    /// application still fails on its first query. It is only reachable with
+    /// `--datasource`, which is the point of asking.
+    RuntimeSchemaBehind,
     Unknown,
 }
 
@@ -78,6 +87,7 @@ impl Consistency {
             Self::Pending => "pending",
             Self::Drifted => "drifted",
             Self::Retired => "retired",
+            Self::RuntimeSchemaBehind => "runtime-schema-behind",
             Self::Unknown => "unknown",
         }
     }
@@ -94,6 +104,8 @@ struct Report {
     declaration: Authority,
     generated: Authority,
     migration_history: Authority,
+    /// What the database itself holds, or `Unknown` when it was not asked.
+    live: Authority,
     table: Option<String>,
     generated_files: Vec<String>,
     migrations: Vec<String>,
@@ -101,13 +113,13 @@ struct Report {
     next: Vec<String>,
 }
 
-pub(crate) fn run(selector: &str, invocation: Invocation) -> Result<()> {
+pub(crate) fn run(selector: &str, live: Option<Live>, invocation: Invocation) -> Result<()> {
     let manifest = crate::model_command::resolve_manifest(None)?;
     let (source, model) = crate::model_command::load_model(&manifest, invocation.output)?;
     let root = crate::model_command::root()?;
     let snapshot = jails_workspace::capture(&root, &manifest, source.as_bytes(), model)
         .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
-    let report = inspect(&snapshot, selector);
+    let report = inspect(&snapshot, selector, live.as_ref());
     match invocation.output {
         Output::Human => print!("{}", render_human(&report)),
         _ => crate::model_command::print_json(&render_json(&report))?,
@@ -147,6 +159,7 @@ fn retired(snapshot: &jails_contracts::WorkspaceSnapshot, selector: &str) -> Rep
             declaration: Authority::Absent,
             generated: Authority::Unknown,
             migration_history: Authority::Unknown,
+            live: Authority::Unknown,
             table: None,
             generated_files: Vec::new(),
             migrations: Vec::new(),
@@ -163,6 +176,7 @@ fn retired(snapshot: &jails_contracts::WorkspaceSnapshot, selector: &str) -> Rep
         declaration: Authority::Absent,
         generated: Authority::Absent,
         migration_history: Authority::Present,
+        live: Authority::Unknown,
         table: Some(table.clone()),
         generated_files: Vec::new(),
         migrations,
@@ -176,7 +190,23 @@ fn retired(snapshot: &jails_contracts::WorkspaceSnapshot, selector: &str) -> Rep
 
 /// Answer from the captured workspace. Pure once capture has happened, which
 /// is what lets the table below drive the tests rather than a live project.
-fn inspect(snapshot: &jails_contracts::WorkspaceSnapshot, selector: &str) -> Report {
+/// What the database itself holds, when a `--datasource` was named.
+///
+/// **Two facts, because a table can be there for the wrong reason.** The
+/// catalogue says whether the table exists and Flyway's own history says which
+/// migrations the database has run -- so a table created by hand and a table
+/// created by the migration jails wrote are told apart, and a project whose
+/// history is behind is named as such rather than reported `drifted`.
+pub(crate) struct Live {
+    pub tables: std::collections::BTreeSet<String>,
+    pub applied: std::collections::BTreeSet<String>,
+}
+
+fn inspect(
+    snapshot: &jails_contracts::WorkspaceSnapshot,
+    selector: &str,
+    live: Option<&Live>,
+) -> Report {
     let declared = &snapshot.model.model;
     let Some(entity) = find(declared, selector) else {
         return retired(snapshot, selector);
@@ -324,11 +354,52 @@ fn inspect(snapshot: &jails_contracts::WorkspaceSnapshot, selector: &str) -> Rep
     }
     next.dedup();
 
+    // **The database is asked last and can only widen the answer.** Everything
+    // above is a question about files this project owns; the live authority is
+    // a question about a machine somewhere else, and a project whose files are
+    // all correct can still be running against a schema that has not caught up.
+    let live_state = live.map(|live| match stored {
+        false => Authority::Absent,
+        true => match live.tables.contains(&entity.names.sql_table) {
+            true => Authority::Present,
+            false => Authority::Absent,
+        },
+    });
+    if let (Some(live), Some(Authority::Absent)) = (live, live_state)
+        && stored
+    {
+        let unapplied = migrations
+            .iter()
+            .filter(|version| !live.applied.contains(*version))
+            .cloned()
+            .collect::<Vec<_>>();
+        findings.push(Finding {
+            code: "live-table-missing",
+            message: match unapplied.is_empty() {
+                true => format!(
+                    "the database has no `{}`, and every migration that would create it is already recorded as applied",
+                    entity.names.sql_table
+                ),
+                false => format!(
+                    "the database has no `{}`; migration(s) {} are on disk and not applied",
+                    entity.names.sql_table,
+                    unapplied.join(", ")
+                ),
+            },
+        });
+        next.push("jails migrate".to_string());
+    }
+    next.dedup();
+    let live = live_state.unwrap_or(Authority::Unknown);
+
     let state = match (entity.active, accepted_matches, drifted.is_empty()) {
         (false, _, _) => Consistency::Retired,
         (true, false, _) => Consistency::Pending,
         (true, true, false) => Consistency::Drifted,
-        (true, true, true) => Consistency::Consistent,
+        (true, true, true) => match live {
+            Authority::Absent if stored => Consistency::RuntimeSchemaBehind,
+            _ => Consistency::Consistent,
+        },
     };
 
     Report {
@@ -337,6 +408,7 @@ fn inspect(snapshot: &jails_contracts::WorkspaceSnapshot, selector: &str) -> Rep
         declaration: Authority::Present,
         generated,
         migration_history,
+        live,
         table: stored.then(|| entity.names.sql_table.clone()),
         generated_files,
         migrations,
@@ -378,10 +450,11 @@ fn render_human(report: &Report) -> String {
         report.state.label()
     );
     out.push_str(&format!(
-        "declaration: {}\ngenerated: {}\nmigration-history: {}\n",
+        "declaration: {}\ngenerated: {}\nmigration-history: {}\nlive: {}\n",
         report.declaration.label(),
         report.generated.label(),
-        report.migration_history.label()
+        report.migration_history.label(),
+        report.live.label()
     ));
     if let Some(table) = &report.table {
         out.push_str(&format!("table: {table}\n"));
@@ -409,6 +482,7 @@ fn render_json(report: &Report) -> serde_json::Value {
         "declaration": report.declaration.label(),
         "generated": report.generated.label(),
         "migrationHistory": report.migration_history.label(),
+        "live": report.live.label(),
         "table": report.table,
         "files": report.generated_files,
         "migrations": report.migrations,

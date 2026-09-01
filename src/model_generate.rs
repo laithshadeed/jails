@@ -4,6 +4,7 @@
 mod field_parse;
 pub(crate) use field_parse::{normalize_type, parse_field};
 
+mod profile;
 mod render;
 
 mod effects;
@@ -13,6 +14,10 @@ pub(crate) use effects::run_follow_up_effects;
 use report::refuse_unconfirmed_deletions;
 pub(crate) use report::{report_plan, write_bundle};
 
+pub(crate) use profile::{
+    EntityProfile, OperationProfile, entity_profile, operation_profile,
+    reject_unsupported_operation_options, reject_unsupported_options, validate_entity_args,
+};
 use render::operation_declaration;
 pub(crate) use render::{entity_declaration, enum_declaration, field_declaration};
 
@@ -193,6 +198,45 @@ pub(crate) fn report_already_declared(name: &str) {
     println!("{name} is already declared (0 files written)");
 }
 
+/// Where the wall clock went, under `--debug`.
+///
+/// **Named for the canonical pipeline, because that is what runs.** The legacy
+/// engine's phases were `discover / observe / parse / project / prepare /
+/// verify`; the compiler's are the five contracts -- capture the workspace,
+/// apply the patch to the model, compile it, materialize the exact plan, and
+/// execute it. A timing list naming steps the binary no longer has is worse
+/// than none, because it sends the reader looking for the wrong thing.
+///
+/// `execute` is absent on a preview, and that absence is the point: it is how
+/// a reader confirms `--pretend` stopped before the only step that writes.
+#[derive(Default)]
+struct Stopwatch {
+    phases: Vec<(&'static str, std::time::Duration)>,
+    since: Option<std::time::Instant>,
+}
+
+impl Stopwatch {
+    fn start(enabled: bool) -> Self {
+        Self {
+            phases: Vec::new(),
+            since: enabled.then(std::time::Instant::now),
+        }
+    }
+
+    fn mark(&mut self, phase: &'static str) {
+        if let Some(since) = self.since {
+            self.phases.push((phase, since.elapsed()));
+            self.since = Some(std::time::Instant::now());
+        }
+    }
+
+    fn report(&self) {
+        for (phase, elapsed) in &self.phases {
+            println!("  timing  {phase:<12}{:>8.1?}", elapsed);
+        }
+    }
+}
+
 pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
     finish_generation_with_reader_paths(prepared, &[])
 }
@@ -212,6 +256,8 @@ pub(crate) fn finish_generation_with_reader_paths(
         patch_bytes,
         authored_migration,
     } = prepared;
+    report::refuse_legacy_envelope(&invocation)?;
+    let mut clock = Stopwatch::start(invocation.debug);
     let canonical_model_path = model_path.to_string_lossy().replace('\\', "/");
     // The invocation's, so `jails new --app` can replay a manifest into the
     // project it is creating rather than into whatever encloses the directory
@@ -234,6 +280,7 @@ pub(crate) fn finish_generation_with_reader_paths(
         &capture_paths,
     )
     .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
+    clock.mark("capture");
     // **The refusal says the whole request was abandoned.** A command naming
     // several things -- `jails add csv security` -- plans all of them and
     // applies all of them or none, and a reader who is not told that has to
@@ -248,6 +295,7 @@ pub(crate) fn finish_generation_with_reader_paths(
     // `PreparedMutation::authored_migration`. It is still the plan's, not a
     // side effect -- the materializer allocates its version from the observed
     // history and refuses if the path it lands on already exists.
+    clock.mark("compile");
     draft.migrations.extend(authored_migration);
     // **What the compiler noticed but would not refuse over.** A warning that
     // stays inside the draft is a warning nobody reads; these are the shapes
@@ -279,12 +327,17 @@ pub(crate) fn finish_generation_with_reader_paths(
         },
     )
     .map_err(|error| Failure::Told(format!("could not materialize exact plan: {error}")))?;
+    clock.mark("materialize");
 
     if let Some(path) = &invocation.plan_out {
         write_bundle(path, &bundle)?;
     }
     if invocation.pretend || invocation.plan_out.is_some() {
-        return report_plan(&bundle, &invocation);
+        report_plan(&bundle, &invocation)?;
+        if invocation.output == Output::Human {
+            clock.report();
+        }
+        return Ok(());
     }
     if let Some(refusal) = refuse_unconfirmed_deletions(&bundle, &invocation) {
         return refusal;
@@ -305,6 +358,7 @@ pub(crate) fn finish_generation_with_reader_paths(
         });
     let execution = jails_workspace::execute(&root, &bundle)
         .map_err(|error| Failure::Told(format!("could not apply exact plan: {error}")))?;
+    clock.mark("execute");
     if converted {
         eprintln!("  create  {}", crate::model_command::JDL_PATH);
         eprintln!(
@@ -354,275 +408,11 @@ pub(crate) fn finish_generation_with_reader_paths(
                 .map_err(|error| Failure::Told(format!("could not encode execution: {error}")))?
         );
     }
+    report::report_review(&bundle, &invocation);
+    if invocation.output == Output::Human {
+        clock.report();
+    }
     run_follow_up_effects(&root, &bundle, &invocation)
-}
-
-const RECORD_FACETS: &[Facet] = &[Facet::Record];
-const ENUM_FACETS: &[Facet] = &[Facet::Enum];
-const SCAFFOLD_FACETS: &[Facet] = &[
-    Facet::Record,
-    Facet::Repository,
-    Facet::Service,
-    Facet::Http,
-];
-
-struct EntityProfile {
-    facets: &'static [Facet],
-    timestamps: bool,
-    /// Whether this profile puts a table behind the entity.
-    ///
-    /// Only `scaffold` does, which is what makes `--unique` meaningful: a
-    /// composite unique is a constraint on columns, and a profile with no
-    /// columns has nowhere to put one.
-    table: bool,
-    /// Whether `--path` pins this profile's collection route.
-    ///
-    /// Only `scaffold` has one: it is the profile that carries `Facet::Http`,
-    /// and a route on a kind that serves nothing would be a flag with nowhere
-    /// to land.
-    route: bool,
-}
-
-fn entity_profile(kind: ArtifactKind) -> Option<&'static EntityProfile> {
-    static RECORD: EntityProfile = EntityProfile {
-        facets: RECORD_FACETS,
-        timestamps: false,
-        table: false,
-        route: false,
-    };
-    static ENUM: EntityProfile = EntityProfile {
-        facets: ENUM_FACETS,
-        timestamps: false,
-        table: false,
-        route: false,
-    };
-    static SCAFFOLD: EntityProfile = EntityProfile {
-        facets: SCAFFOLD_FACETS,
-        timestamps: true,
-        table: true,
-        route: true,
-    };
-    match kind {
-        ArtifactKind::Record | ArtifactKind::Value => Some(&RECORD),
-        ArtifactKind::Enum => Some(&ENUM),
-        ArtifactKind::Scaffold => Some(&SCAFFOLD),
-        _ => None,
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum OperationProfile {
-    Command,
-    Query,
-    Transition,
-    Event,
-}
-
-pub(crate) fn operation_profile(kind: ArtifactKind) -> Option<OperationProfile> {
-    match kind {
-        ArtifactKind::Usecase => Some(OperationProfile::Command),
-        ArtifactKind::Query => Some(OperationProfile::Query),
-        ArtifactKind::Transition => Some(OperationProfile::Transition),
-        ArtifactKind::Event => Some(OperationProfile::Event),
-        _ => None,
-    }
-}
-
-/// Which of the supplied flags this profile has nowhere to put.
-///
-/// **Named, one at a time, with what it does apply to.** "does not represent
-/// one or more supplied flags" is true of every one of these and useful for
-/// none: a reader who typed `g record Thing --path /thing` needs to be told
-/// that `--path` is for the kinds that answer a route, not to re-read the
-/// command looking for which flag was the wrong one.
-fn reject_unsupported_options(args: &GenerateArgs, profile: &EntityProfile) -> Result<()> {
-    let unsupported: &[(bool, &str, &str)] = &[
-        (
-            args.timestamps && !profile.timestamps,
-            "--timestamps",
-            "the kinds that own a table",
-        ),
-        (
-            !args.uniques.is_empty() && !profile.table,
-            "--unique",
-            "the kinds that own a table",
-        ),
-        (args.package.is_some(), "--package", "capabilities"),
-        (
-            args.default_literal.is_some(),
-            "--default-literal",
-            "`resource field` commands",
-        ),
-        (
-            args.backfill_file.is_some(),
-            "--backfill-file",
-            "`resource field nullability`",
-        ),
-        (args.strategy_on.is_some(), "--on", "operations"),
-        (args.strategy_yields.is_some(), "--yields", "operations"),
-        (args.via.is_some(), "--via", "a query or a use case"),
-        (args.order_by.is_some(), "--order-by", "queries"),
-        (args.limit.is_some(), "--limit", "queries"),
-        (args.on_conflict.is_some(), "--on-conflict", "use cases"),
-        (
-            args.path.is_some() && !profile.route,
-            "--path",
-            "the kinds that answer a route",
-        ),
-        (args.select.is_some(), "--select", "transitions"),
-        (!args.set.is_empty(), "--set", "a use case or a transition"),
-        (args.if_match.is_some(), "--if-match", "transitions"),
-        (!args.bind.is_empty(), "--bind", "a controller"),
-        (
-            args.method.is_some(),
-            "--method",
-            "the kinds that answer a route",
-        ),
-        (
-            args.consumes.is_some(),
-            "--consumes",
-            "the kinds that answer a route",
-        ),
-    ];
-    if let Some((_, flag, applies)) = unsupported.iter().find(|(supplied, _, _)| *supplied) {
-        return Err(Failure::Told(format!(
-            "`{flag}` applies to {applies}, and `{}` is not one of them.\n       fix: drop `{flag}`, or generate a kind that carries it",
-            kind_name(args.kind)
-        )));
-    }
-    Ok(())
-}
-
-pub(crate) fn validate_entity_args(args: &GenerateArgs) -> Result<()> {
-    let profile = entity_profile(args.kind).ok_or_else(|| {
-        Failure::Told(format!(
-            "`{}` is not an entity declaration",
-            kind_name(args.kind)
-        ))
-    })?;
-    // **Checked before the identity is derived from it.** A stable id is a
-    // projection of the name, so `Bad!Name` fails there first -- and reports
-    // that `ent_bad!_name` is not a stable id, which is about a value the
-    // reader never typed. The linker says the same thing about the Java type
-    // and never gets the chance.
-    if let Some(bad) = args
-        .name
-        .chars()
-        .find(|character| !character.is_ascii_alphanumeric() && *character != '_')
-    {
-        return Err(Failure::Told(format!(
-            "`{bad}` is not valid in a Java identifier, and `{}` becomes one.\n       fix: name it with letters, digits and `_`",
-            args.name
-        )));
-    }
-    reject_unsupported_options(args, profile)
-}
-
-pub(crate) fn reject_unsupported_operation_options(
-    args: &GenerateArgs,
-    profile: OperationProfile,
-) -> Result<()> {
-    // **Name the flag, and say which kind it belongs to.** "does not
-    // represent one or more supplied flags" is true of every one of these and
-    // useful for none: the reader has to guess which of the eight they typed
-    // is the problem, and the answer is usually that the flag belongs to a
-    // sibling kind. One row per flag, so the refusal reads like the sentence
-    // somebody would say out loud.
-    let kind = kind_name(args.kind);
-    let entity_only = "an entity declaration";
-    let unsupported: &[(bool, &str, &str)] = &[
-        (args.timestamps, "--timestamps", entity_only),
-        (args.package.is_some(), "--package", entity_only),
-        (args.default_literal.is_some(), "--default", entity_only),
-        (args.backfill_file.is_some(), "--backfill", entity_only),
-        (!args.indexes.is_empty(), "--index", entity_only),
-        (!args.uniques.is_empty(), "--unique", entity_only),
-        (
-            args.on_conflict.is_some() && profile != OperationProfile::Command,
-            "--on-conflict",
-            "a command",
-        ),
-        (
-            args.via.is_some()
-                && !matches!(profile, OperationProfile::Query | OperationProfile::Command),
-            "--via",
-            "a query or a command",
-        ),
-        (
-            args.select.is_some() && profile != OperationProfile::Transition,
-            "--select",
-            "a transition",
-        ),
-        (
-            !args.set.is_empty()
-                && !matches!(
-                    profile,
-                    OperationProfile::Transition | OperationProfile::Command
-                ),
-            "--set",
-            "a transition or a command",
-        ),
-        (
-            args.if_match.is_some() && profile != OperationProfile::Transition,
-            "--if-match",
-            "a transition",
-        ),
-        (
-            args.consumes.is_some() && profile == OperationProfile::Event,
-            "--consumes",
-            "an operation with a request boundary",
-        ),
-        (
-            args.order_by.is_some() && profile != OperationProfile::Query,
-            "--order-by",
-            "a query",
-        ),
-        (
-            args.limit.is_some() && profile != OperationProfile::Query,
-            "--limit",
-            "a query",
-        ),
-        (
-            args.strategy_yields.is_some()
-                && !matches!(
-                    profile,
-                    OperationProfile::Transition | OperationProfile::Command
-                ),
-            "--yields",
-            "a transition or a command",
-        ),
-        // **A query's and a command's verb follows its request**, so
-        // `--method` there is not a preference jails declines to honour -- it
-        // is a claim about the request that contradicts the request.
-        (
-            args.method.is_some() && profile != OperationProfile::Transition,
-            "--method",
-            "a transition; every other operation's verb follows its request",
-        ),
-        (
-            args.path.is_some() && profile == OperationProfile::Event,
-            "--path",
-            "an operation with a route",
-        ),
-    ];
-    if let Some((_, flag, applies_to)) = unsupported.iter().find(|(hit, _, _)| *hit) {
-        return Err(Failure::Told(format!(
-            "`{flag}` applies to {applies_to}, and `{kind}` is not one.\n       fix: drop `{flag}`, or generate the kind it belongs to"
-        )));
-    }
-    // **An event may stand on its own, and the grammar has always said so.**
-    // `parse_operation(None)` accepts a top-level `event`, the linker gives it
-    // `on: None`, and the compiler emits its payload record from the declared
-    // parameters -- so a domain event that is nobody's row (`PageDiscovered`,
-    // carrying its own id and the moment it happened) was refused only by this
-    // frontend. Every other operation writes or reads a row and needs one.
-    if args.strategy_on.is_none() && profile != OperationProfile::Event {
-        return Err(Failure::Told(format!(
-            "canonical `{}` needs the entity it operates on.\n       fix: pass `--on <Entity>`",
-            kind_name(args.kind)
-        )));
-    }
-    Ok(())
 }
 
 pub(crate) fn operation_field_labels(

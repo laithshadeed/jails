@@ -1,5 +1,8 @@
 {
   "compiler": "jails.compiler.golden",
+  "migration_bytes": {
+    "src/main/resources/db/migration/V001__create_notes.sql": "<247 bytes elided>"
+  },
   "migrations": {
     "src/main/resources/db/migration/V001__create_notes.sql": "sha256:c84a4e2549c20499ddd448fb86913ede0e61d11ae623b80e44a434b4915710ba"
   },

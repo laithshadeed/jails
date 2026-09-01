@@ -290,6 +290,7 @@ impl Parser<'_> {
                 id,
                 active: true,
                 java_name: Some(name.clone()),
+                package: None,
                 table: None,
                 facets: BTreeSet::from([Facet::Enum]),
                 values,
@@ -310,13 +311,22 @@ impl Parser<'_> {
         self.expect("entity", "JDL0500", "expected an entity declaration")?;
         let name = self.take_word("entity name")?;
         let attributes = self.attributes()?;
-        reject_unknown_attributes(&attributes, &["id", "retired"], self)?;
+        reject_unknown_attributes(&attributes, &["id", "retired", "package"], self)?;
         let label = stable_fragment(&name);
         let id = one_arg(&attributes, "id")?.unwrap_or_else(|| format!("ent_{label}"));
+        // **Relative to the base, exactly as a capability's is.** The whole
+        // slice goes here instead of the layer packages, and an empty
+        // `@package()` means the base itself -- which is how "everything
+        // flat" is spelled.
+        let package = match has_attribute(&attributes, "package") {
+            true => Some(one_arg(&attributes, "package")?.unwrap_or_default()),
+            false => None,
+        };
         let mut entity = EntityDraft {
             name: name.clone(),
             id,
             active: !has_attribute(&attributes, "retired"),
+            package,
             table: None,
             facets: BTreeSet::from([Facet::Record]),
             fields: BTreeMap::new(),
@@ -370,6 +380,7 @@ impl Parser<'_> {
                 id: entity.id,
                 active: entity.active,
                 java_name: Some(entity.name),
+                package: entity.package,
                 table: entity.table,
                 facets: entity.facets,
                 values: Vec::new(),

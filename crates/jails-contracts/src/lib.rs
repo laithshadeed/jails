@@ -7,6 +7,7 @@ mod draft;
 mod path;
 mod plan;
 mod snapshot;
+mod templates;
 
 pub use draft::{
     BuildDependency, BuildFeature, CompilerDiagnostic, DiagnosticSeverity, DocumentIntent,
@@ -25,3 +26,4 @@ pub use snapshot::{
     ExternalTypeIndex, FilePrecondition, MigrationHistory, MigrationRecord, OwnedPatchState,
     ProjectFacts, SnapshotPreconditions, VersionedModel, WorkspaceSnapshot,
 };
+pub use templates::{TemplateOverride, TemplateOverrides};

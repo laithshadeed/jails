@@ -15,11 +15,15 @@ use super::{Emitted, Package, java, package};
 use crate::CompileError;
 use jails_model::{AppModel, Component};
 
-const CONFIG: &str = include_str!("../../../../templates/spring/auth_config_java.java");
-const TOKENS: &str = include_str!("../../../../templates/spring/auth_tokens_java.java");
-const TEST: &str = include_str!("../../../../templates/spring/auth_tokens_test_java.java");
+const CONFIG: crate::Template = crate::template!("spring/auth_config_java.java");
+const TOKENS: crate::Template = crate::template!("spring/auth_tokens_java.java");
+const TEST: crate::Template = crate::template!("spring/auth_tokens_test_java.java");
 
-pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitted>, CompileError> {
+pub(super) fn files(
+    model: &AppModel,
+    component: &Component,
+    templates: &jails_contracts::TemplateOverrides,
+) -> Result<Vec<Emitted>, CompileError> {
     // The encoder, the decoder and the filter chain that reads the token are
     // one story, and `cap security` is where the other two live. Checked
     // against the model rather than the pom: in one transition the capability
@@ -37,11 +41,12 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
     let name = &component.name;
     let pkg = package(model, Package::Base);
     let issuer = format!("urn:{}", model.project.base_package);
-    let substitute = |template: &str| {
-        template
+    let substitute = |template: crate::Template| -> Result<String, CompileError> {
+        let template = template.resolve(templates)?;
+        Ok(template
             .replace("{{pkg}}", &pkg)
             .replace("{{name}}", name)
-            .replace("{{issuer}}", &issuer)
+            .replace("{{issuer}}", &issuer))
     };
     Ok(vec![
         java(
@@ -51,7 +56,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             &format!("{name}TokenConfig"),
             false,
             true,
-            substitute(CONFIG),
+            substitute(CONFIG)?,
         )?,
         java(
             component,
@@ -60,7 +65,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             &format!("{name}Tokens"),
             false,
             true,
-            substitute(TOKENS),
+            substitute(TOKENS)?,
         )?,
         java(
             component,
@@ -69,7 +74,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             &format!("{name}TokensTest"),
             true,
             true,
-            substitute(TEST),
+            substitute(TEST)?,
         )?,
     ])
 }

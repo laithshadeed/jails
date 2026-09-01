@@ -177,6 +177,14 @@ pub(crate) struct Entity {
     pub(crate) active: bool,
     pub(crate) java_name: Option<String>,
     pub(crate) table: Option<String>,
+    /// Where this entity's Java goes, instead of the layer packages.
+    ///
+    /// Relative to the application's base package, exactly as a capability's
+    /// is, and empty means the base itself. A slice that wants its record,
+    /// repository, service and controller together says so once here rather
+    /// than in each generator's call site.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) package: Option<String>,
     #[serde(default)]
     pub(crate) facets: BTreeSet<Facet>,
     #[serde(default)]

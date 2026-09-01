@@ -4,6 +4,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 {{duplicate_key_import}}
+{{precondition_import}}
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import org.springframework.test.web.servlet.setup.StandaloneMockMvcBuilder;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -42,6 +43,7 @@ class ApiExceptionHandlerTest {
     }
 
 {{duplicate_key_test}}
+{{precondition_test}}
     @Test
     void aDomainRejectionBecomesA422() {
         // 422, not 400: the request was read successfully and the domain said
@@ -64,6 +66,7 @@ class ApiExceptionHandlerTest {
         }
 
 {{duplicate_key_route}}
+{{precondition_route}}
         @GetMapping("/boom/rejected")
         String rejected() {
             throw new ApiException.Rejected("amount must be positive");

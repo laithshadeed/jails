@@ -136,24 +136,51 @@ pub(super) fn lower(
         &transition.semantics.emits,
         &mut imports,
     )?;
-    let (event_member, event_parameter, event_assignment, result) = if publications.is_empty() {
-        (
-            "",
-            "",
-            "",
-            format!(
-                "        return statement.query({}.class).single();",
-                target.names.java_type
-            ),
+    // **Zero rows has two causes and they are different answers.** A stated
+    // `If-Match` that no longer matches is a 412 and a row that is not there
+    // is a 404; `.single()` cannot tell them apart and raises one unclassified
+    // failure that Spring reports as a 500 -- which alerting pages on and
+    // client libraries retry, and the retry can never succeed. So the update
+    // runs `.optional()` and, only when it comes back empty, asks whether the
+    // key exists at all. Two statements, one `@Transactional` method, and the
+    // second one runs on the failure path only.
+    //
+    // Both exceptions are Spring's own, from `spring-dao`, which is on the
+    // classpath the moment the JDBC starter is: the `api` capability's advice
+    // maps them, and a hand-written adapter that raises the same pair gets the
+    // same answer for free.
+    let outcome = precondition.as_ref().map(|_| {
+        imports.insert("org.springframework.dao.EmptyResultDataAccessException".to_string());
+        imports.insert("org.springframework.dao.OptimisticLockingFailureException".to_string());
+        format!(
+            "        var applied = statement.query({}.class).optional();\n        if (applied.isEmpty()) {{\n            throw jdbc.sql(\"select 1 from {} where {} = :{}\")\n                    .param(\"{}\", {})\n                    .query(Integer.class)\n                    .optional()\n                    .<RuntimeException>map(row -> new OptimisticLockingFailureException(\n                            \"the resource has changed since the version you sent\"))\n                    .orElseGet(() -> new EmptyResultDataAccessException(1));\n        }}\n",
+            target.names.java_type,
+            target.names.sql_table,
+            selector[0].names.sql_column,
+            selector[0].names.sql_column,
+            selector[0].names.sql_column,
+            key_member,
         )
+    });
+    let (unwrap, take) = match &outcome {
+        Some(_) => ("applied.get()", "applied.get()"),
+        None => (
+            "statement.query(_TYPE_.class).single()",
+            "statement.query(_TYPE_.class).single()",
+        ),
+    };
+    let unwrap = unwrap.replace("_TYPE_", &target.names.java_type);
+    let take = take.replace("_TYPE_", &target.names.java_type);
+    let probe = outcome.unwrap_or_default();
+    let (event_member, event_parameter, event_assignment, result) = if publications.is_empty() {
+        ("", "", "", format!("{probe}        return {unwrap};"))
     } else {
         (
             "\n    private final ApplicationEventPublisher events;",
             ", ApplicationEventPublisher events",
             "\n        this.events = events;",
             format!(
-                "        var result = statement.query({}.class).single();{}\n        return result;",
-                target.names.java_type,
+                "{probe}        var result = {take};{}\n        return result;",
                 publications.concat()
             ),
         )

@@ -32,16 +32,19 @@ use jails_model::{
 };
 use std::collections::BTreeSet;
 
-const QUEUE: &str = include_str!("../../../../templates/spring/durable_queue_port_java.java");
-const STORE: &str = include_str!("../../../../templates/spring/durable_store_jdbc_java.java");
-const WORKER: &str =
-    include_str!("../../../../templates/spring/durable_worker_canonical_java.java");
-const CONTROLLER: &str =
-    include_str!("../../../../templates/spring/durable_controller_canonical_java.java");
-const TEST: &str = include_str!("../../../../templates/spring/durable_job_canonical_it_java.java");
-const MIGRATION: &str = include_str!("../../../../templates/sql/durable_job.sql");
+const QUEUE: crate::Template = crate::template!("spring/durable_queue_port_java.java");
+const STORE: crate::Template = crate::template!("spring/durable_store_jdbc_java.java");
+const WORKER: crate::Template = crate::template!("spring/durable_worker_canonical_java.java");
+const CONTROLLER: crate::Template =
+    crate::template!("spring/durable_controller_canonical_java.java");
+const TEST: crate::Template = crate::template!("spring/durable_job_canonical_it_java.java");
+const MIGRATION: crate::Template = crate::template!("sql/durable_job.sql");
 
-pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitted>, CompileError> {
+pub(super) fn files(
+    model: &AppModel,
+    component: &Component,
+    templates: &jails_contracts::TemplateOverrides,
+) -> Result<Vec<Emitted>, CompileError> {
     let command = queued(model, component)?;
     let target = produced(model, component)?;
     if !super::has_database(model) {
@@ -93,11 +96,13 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
         .collect::<String>();
 
     let queue = QUEUE
+        .resolve(templates)?
         .replace("{{pkg}}", &jobs)
         .replace("{{input_import}}", &input(&jobs))
         .replace("{{name}}", name)
         .replace("{{usecase}}Command", &port);
     let store = STORE
+        .resolve(templates)?
         .replace("{{pkg}}", &jobs)
         .replace("{{json_import}}", &import(&jobs, &adapters, "Json"))
         .replace("{{input_import}}", &input(&jobs))
@@ -114,6 +119,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
     // without one did not compile at all.
     let (context, context_import) = worker_context(model, command, target)?;
     let worker = WORKER
+        .resolve(templates)?
         .replace("{{pkg}}", &jobs)
         .replace("{{input_import}}", &input(&jobs))
         .replace("{{repository_import}}", &repository_import(&jobs))
@@ -124,6 +130,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
         .replace("{{target}}", &target.names.java_type)
         .replace("{{property}}", &property);
     let controller = CONTROLLER
+        .resolve(templates)?
         .replace("{{web}}", &web)
         .replace(
             "{{queue_import}}",
@@ -134,6 +141,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
         .replace("{{usecase}}Command", &port)
         .replace("{{path}}", &path);
     let test = TEST
+        .resolve(templates)?
         .replace("{{pkg}}", &jobs)
         .replace("{{input_import}}", &input(&jobs))
         .replace("{{repository_import}}", &repository_import(&jobs))
@@ -211,7 +219,7 @@ pub(super) fn migrations(accepted: Option<&AppModel>, next: &AppModel) -> Vec<Re
             let table = table(component);
             RenderedMigration {
                 logical_name: format!("create_{table}"),
-                bytes: MIGRATION.replace("{{table}}", &table).into_bytes(),
+                bytes: MIGRATION.built_in.replace("{{table}}", &table).into_bytes(),
                 semantic_ids: BTreeSet::from([component.id.as_str().to_string()]),
             }
         })
