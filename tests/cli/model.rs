@@ -2955,7 +2955,7 @@ fn canonical_loadtest_merges_every_project_file_and_refuses_route_overlap_atomic
     fs::write(&api_path, clean_api).unwrap();
     let before_remove = snapshot_tree(&root);
     let edited_remove = jails_cmd(&root, None)
-        .args(["remove", "loadtest", "--force"])
+        .args(["remove", "loadtest"])
         .output()
         .unwrap();
     assert!(!edited_remove.status.success());
@@ -3264,9 +3264,23 @@ fn canonical_dto_evolves_three_merge_managed_abi_files_without_losing_reader_edi
     assert!(rerun.status.success());
     assert_eq!(snapshot_tree(&root), stable, "DTO rerun changed bytes");
 
+    // **Edited on the line the next render moves.** The component has to be
+    // one the request record declares and the change has to reach its Java:
+    // `id` is server-assigned and no longer appears in a request at all, and
+    // widening a `string` renders the same `String`, so neither had anything
+    // for the merge to conflict over. Relaxing `title` turns `@NotBlank
+    // String title` into an `Optional<String>`, which is the line the reader
+    // renamed.
+    assert!(
+        request_with_reader_edits.contains("@NotBlank String title"),
+        "{request_with_reader_edits}"
+    );
     fs::write(
         &request,
-        request_with_reader_edits.replace("int id", "int readerOwnedId"),
+        request_with_reader_edits.replace(
+            "@NotBlank String title",
+            "@NotBlank String readerOwnedTitle",
+        ),
     )
     .unwrap();
     let before = snapshot_tree(&root);
@@ -3274,13 +3288,10 @@ fn canonical_dto_evolves_three_merge_managed_abi_files_without_losing_reader_edi
         .args([
             "resource",
             "field",
-            "type",
+            "nullability",
             "Task",
-            "id",
-            "--to",
-            "long",
-            "--strategy",
-            "safe",
+            "title",
+            "--nullable",
         ])
         .output()
         .unwrap();
@@ -3312,8 +3323,10 @@ fn canonical_dto_evolves_three_merge_managed_abi_files_without_losing_reader_edi
         "{}",
         String::from_utf8_lossy(&changed.stderr)
     );
+    // `id` is server-assigned and so is not a request component; what the
+    // widening reaches in this file is `toDomain`, which mints it.
     let changed_request = fs::read_to_string(&request).unwrap();
-    assert!(changed_request.contains("long id"), "{changed_request}");
+    assert!(changed_request.contains("0L"), "{changed_request}");
     assert!(
         changed_request.contains("readerRequestMethod"),
         "{changed_request}"
@@ -5627,7 +5640,7 @@ fn canonical_destroy_is_model_subtraction_and_whole_tree_recompilation() {
     let plan_directory = temp_dir("model-destroy-plan");
     let plan = plan_directory.join("destroy.json");
     let planned = jails_cmd(&root, None)
-        .args(["d", "scaffold", "Note", "--plan-out", "--force"])
+        .args(["d", "scaffold", "Note", "--force", "--plan-out"])
         .arg(&plan)
         .output()
         .unwrap();
@@ -6736,7 +6749,7 @@ fn canonical_data_capability_packs_keep_the_iterative_loop_and_eject_as_one_boun
 
     let before_edited_remove = snapshot_tree(&root);
     let refused_remove = jails_cmd(&root, None)
-        .args(["remove", "json", "--force"])
+        .args(["remove", "json"])
         .output()
         .unwrap();
     assert!(!refused_remove.status.success());
@@ -10236,9 +10249,13 @@ fn canonical_storage_preserve_removes_projections_and_revive_reuses_the_table() 
     );
     assert!(record.exists());
     assert_eq!(fs::read(&initial).unwrap(), initial_bytes);
+    // Migrations, not directory entries: `add db` puts a `.gitkeep` beside
+    // them so an empty history survives a clone.
     assert_eq!(
         fs::read_dir(root.join("src/main/resources/db/migration"))
             .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "sql"))
             .count(),
         1,
         "revive must not recreate preserved storage"
@@ -10285,6 +10302,7 @@ fn canonical_storage_drop_needs_exact_confirmation_and_appends_one_drop_table() 
             "drop",
             "--confirm-table",
             "notes",
+            "--force",
         ])
         .output()
         .unwrap();
