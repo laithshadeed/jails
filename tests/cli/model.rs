@@ -4370,13 +4370,14 @@ fn model_plan_is_deterministic_and_writes_a_self_verifying_bundle() {
         serde_json::from_slice(&fs::read(&first).unwrap()).unwrap();
     jails_workspace::verify_bundle(&bundle).unwrap();
     assert_eq!(bundle.plan.operations.len(), 2);
-    // Ten: the record and its companion test, the repository port, the
+    // Twelve: the record and its companion test, the repository port, the
     // in-memory adapter that implements it -- without which the service has a
-    // port no bean satisfies -- the service the controller delegates to, the
-    // HTTP port, the controller and its test, and the project's
-    // `ArchitectureTest` with the `archunit.properties` that points its freeze
-    // store at a baseline the reader has to create deliberately.
-    assert_eq!(bundle.plan.summary.managed_files, 10);
+    // port no bean satisfies -- that adapter's own test and the repository
+    // contract they share, the service the controller delegates to, the HTTP
+    // port, the controller and its test, and the project's `ArchitectureTest`
+    // with the `archunit.properties` that points its freeze store at a
+    // baseline the reader has to create deliberately.
+    assert_eq!(bundle.plan.summary.managed_files, 12);
     assert_eq!(bundle.plan.id, bundle.plan.digest.as_str());
 }
 
@@ -10813,8 +10814,13 @@ fn jdl_upgrade_moves_a_pre_v1_draft_onto_v1_without_re_identifying_anything() {
     // adapter is the bean that keeps a scaffold able to start, and once the
     // JDBC adapter carries `@Repository` a second implementation of the same
     // port would make two beans qualify for one injection point.
-    let replaced_by_the_jdbc_bean =
-        |path: &str| path.ends_with("adapters/memory/InMemoryTaskRepository.java");
+    // Its companion goes with it, and not as a second exception: a test whose
+    // subject is no longer emitted has nothing to construct. The contract it
+    // called stays, because the JDBC proof that replaces it calls the same one.
+    let replaced_by_the_jdbc_bean = |path: &str| {
+        path.ends_with("adapters/memory/InMemoryTaskRepository.java")
+            || path.ends_with("adapters/memory/InMemoryTaskRepositoryTest.java")
+    };
     for (path, bytes) in &before {
         let Some(upgraded) = after.get(path) else {
             assert!(

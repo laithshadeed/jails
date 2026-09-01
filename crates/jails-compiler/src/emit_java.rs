@@ -127,6 +127,24 @@ pub(crate) fn lower_and_emit(
         .values()
         .find(|capability| capability.kind == "db");
     let stored = observed.jdbc || declared.is_some();
+    // **One contract, emitted once, whichever adapters the project has.** A
+    // repository entity always gets at least one -- the in-memory adapter
+    // stands in until `db` is declared -- so the contract always has a caller,
+    // and it refuses on the same unsampleable entity they do rather than
+    // shipping a test class nothing calls. `docs/20-generated-java.md` P9.1.
+    for entity in model
+        .entities
+        .values()
+        .filter(|entity| entity.active && entity.facets.contains(&Facet::Repository))
+    {
+        if let Some(unit) =
+            repository::lower_repository_contract(model, entity, observed.templates)?
+        {
+            output
+                .insert(unit.path, unit.file)
+                .map_err(CompileError::new)?;
+        }
+    }
     if fake.is_some() || !stored {
         let owner = fake.map_or("cap_scaffold_default", |capability| capability.id.as_str());
         for entity in model
@@ -143,6 +161,15 @@ pub(crate) fn lower_and_emit(
             output
                 .insert(unit.path, unit.file)
                 .map_err(CompileError::new)?;
+            // The fake shipped with no test at all, so it could drift from the
+            // adapter it stands in for and every test using it stayed green.
+            if let Some(unit) =
+                repository::lower_fake_repository_test(model, owner, entity, observed.templates)?
+            {
+                output
+                    .insert(unit.path, unit.file)
+                    .map_err(CompileError::new)?;
+            }
         }
     }
     // The owner is the `db` capability where there is one; where JDBC is only

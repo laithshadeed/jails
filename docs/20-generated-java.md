@@ -148,65 +148,12 @@ tell the two apart.
 
 ---
 
-# Open items
-
-## P6 — the generated Java, assessed against `java.md` and `backend.md`
-
-**P6.6** Four defects that survive a perfect field spec. Each was
-re-confirmed on 2026-08-27 against a project built from nothing but
-`jails new --offline` plus nine commands.
-
-- **§6.3 capability files land in the root package.** `AppMetrics`,
-  `CorsConfig` and `MetricsConfig`: a capability's files decide nothing, so
-  nothing places them, while every *kind* goes through `generate::layout`.
-- **§6.5 two API styles in one service.** REST for the scaffold, RPC-over-POST
-  for the generated operations, including a `POST` that reads, chosen by which
-  command wrote the route rather than by a decision. Half closed: `g scaffold
-  --path` is accepted, so a project *can* be made consistent. What is left is
-  that consistency is something the reader must ask for on every command.
-- **§7 two read-side defects.** The service-layer criteria record is bound
-  directly as `@RequestBody` in a project whose own generated Javadoc argues
-  the wire type must not be the domain type; and `MAX_RESULTS = 100` is silent
-  -- no cursor, no total, nothing in the response saying the list was
-  truncated.
-- **§9 the generated tests mostly test the framework.** A service test that can
-  only fail if Mockito breaks; an association IT that asks `pg_constraint`
-  whether PostgreSQL recorded the FK the migration declared; every fixture
-  value `"sample"`; and no concurrency test for the CAS the `version` column
-  exists for.
-
-**Exit:** all four closed, or each recorded as a scope line in `README.md`'s
-"Not yet". Do not close one by deleting the entry that is its only record.
-
-## P8.11b — the generator half of P8.11
-
-Split from P8.11 when these documents did; the adoption half is `P8.11a` in
-`docs/30-cutover.md`.
-
-- **`jails g action <Name> --on <Controller>`** splices a handler method and
-  its test into an existing controller. Today `g controller` always creates a
-  new standalone file, which is not how related routes live in Spring
-  projects.
-- **M18 is a decision, not work.** jails generates a REST surface and no
-  operator surface, which is the one thing every Django port gets free. Either
-  build the back-office generator or record the scope line in `README.md`'s
-  "Not yet".
-- **Dual-format `consumes = [json, form]`.** Each works alone; a single
-  endpoint accepting both is unexpressible.
-- **In-memory room-based presence.** `g presence` generates PostgreSQL
-  cluster-backed presence, and a lightweight `socket-presence` recipe does not
-  exist.
-
-**P9.1 §4.6 — the repository contract test.** One contract interface executed
-once against the fake and once against `JdbcOrderRepository`, so semantic drift
-becomes a failing test. Today the two adapters can diverge silently.
-
+## P9 — the research item that is this workstream's
 
 **P9.5 §4.7 — policy and contract matrices, closed form only.** No expression
 string, no SpEL passthrough -- the same rule that keeps `@check(...)` out of
 the field spec. `@scope` and `require_scope_authorizer` already cover the
 tenancy half.
-
 
 ## The one item you share with A
 

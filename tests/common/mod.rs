@@ -1448,13 +1448,22 @@ fn test_profile_epoch() -> &'static Instant {
 /// now, with six kept as the floor because that is the number the suite was
 /// tuned against, and twelve as the ceiling because these are JVMs -- Surefire
 /// forks again underneath each one, so the limit is memory and disk rather than
-/// cores, and past about eight concurrent builds this machine stopped getting
-/// faster. Measured on 16 cores: `tests/cli` 113.2s at six, 106.3s at twelve.
+/// cores. Measured on 16 cores: `tests/cli` 113.2s at six, 106.3s at twelve.
+///
+/// **Half the cores was too few, and the gate's own profile said so.** At the
+/// old `cores / 2` -- eight, here -- the full gate spent **159.7s queued for a
+/// permit** and ran in 150s; at twelve the queue is **0s** and it runs in 142s.
+/// Three quarters reaches the ceiling on this machine and leaves a four-core
+/// runner exactly where it was, on the floor of six.
+///
+/// Sixteen was measured too and is identical to twelve (142s), which is the
+/// evidence for keeping the ceiling: past twelve there is no queue left to
+/// drain, and these are JVMs.
 ///
 /// `JAILS_TEST_MAX_TOOLCHAIN_PROCESSES` still overrides it.
 fn default_max_toolchain_processes() -> usize {
     std::thread::available_parallelism()
-        .map(|cores| (cores.get() / 2).clamp(6, 12))
+        .map(|cores| (cores.get() * 3 / 4).clamp(6, 12))
         .unwrap_or(6)
 }
 const MAX_INFRASTRUCTURE_START_PROCESSES: usize = 2;
