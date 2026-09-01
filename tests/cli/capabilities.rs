@@ -434,8 +434,15 @@ fn add_sqlite_writes_a_first_migration_and_both_classes() {
         )
         .is_file()
     );
+    // **One migration naming rule across the tool**, `V<version>__<what>.sql`,
+    // which is what lets the materializer allocate the next version from the
+    // history it observed rather than from a name a capability chose. sqlite's
+    // runner is jails' own `Migrations`, which sorts by filename and does not
+    // care -- but Flyway, which `storage postgres` uses, reads only that shape,
+    // and two conventions in one `db/migration` directory is how a migration
+    // comes to sit there being ignored.
     assert!(
-        root.join("src/main/resources/db/migration/001_init.sql")
+        root.join("src/main/resources/db/migration/V001__sqlite_init.sql")
             .is_file()
     );
 }

@@ -346,7 +346,7 @@ fn finish_spring_project(
     super::seed::seed_canonical_model(
         tree,
         seed.app,
-        seed_model(seed.name, seed.package, seed.java, major),
+        seed_model(seed.name, seed.package, seed.java, major, "maven"),
     )?;
     write_devtools_defaults(tree)
 }
@@ -371,13 +371,19 @@ pub(super) struct Seed<'a> {
 /// prose, and a default the reader cannot see the reason for is worth less
 /// than a default the compiler owns. `jails model explain` is where the
 /// reasoning has to go if it is wanted back.
-pub(super) fn seed_model(name: &str, package: &str, java: &str, boot_major: u32) -> String {
+pub(super) fn seed_model(
+    name: &str,
+    package: &str,
+    java: &str,
+    boot_major: u32,
+    build: &str,
+) -> String {
     let mut source = super::seed::app_node(
         &crate::new::camel_case(name),
         package,
         java,
         "spring",
-        "maven",
+        build,
     );
     source.push('\n');
     for (_, property, applies) in default_properties(boot_major) {
@@ -512,67 +518,6 @@ pub(super) fn add_jspecify(tree: &publish::Tree<'_>) -> Result<()> {
         tree.put_named("pom.xml", updated, "pom.xml")?;
     }
     Ok(())
-}
-
-/// Settings both persona files call the default posture, and which an empty
-/// `application.properties` leaves off.
-///
-/// None is discoverable from a failure: an unbounded execution model can
-/// quietly overload a downstream pool, abrupt shutdown drops in-flight work,
-/// and problem-details absent means clients learn Boot's ad-hoc error map.
-///
-/// **Keyed by the project's Boot major, because a property that does not exist
-/// is silent.** Boot binds what it recognises and ignores the rest, so writing
-/// Boot 3 spellings into a Boot 2.7 project produces a file that reads as
-/// configured and configures nothing -- the confident wrong answer, in the one
-/// place nothing checks. Every entry below is dated from Boot's own
-/// `additional-spring-configuration-metadata.json` under `deps/spring-boot`,
-/// which records `server.max-http-header-size` as replaced by
-/// `server.max-http-request-header-size` at 3.0.0.
-pub(super) fn write_default_properties(tree: &publish::Tree<'_>, boot_major: u32) -> Result<()> {
-    let path = tree
-        .root()
-        .join("src/main/resources/application.properties");
-    let existing = fs::read_to_string(&path).unwrap_or_default();
-    let defaults = default_properties(boot_major);
-    let mut addition = String::new();
-    for (comment, property, applies) in defaults {
-        if !applies {
-            continue;
-        }
-        let key = property.split('=').next().unwrap_or(property);
-        if existing.contains(key) {
-            continue;
-        }
-        addition.push('\n');
-        addition.push_str(comment);
-        addition.push('\n');
-        addition.push_str(property);
-        addition.push('\n');
-    }
-    if addition.is_empty() {
-        return Ok(());
-    }
-    // `trim_start` on the addition when there was nothing before it: the
-    // separator blank line exists to keep jails' block off the end of somebody
-    // else's last property, and a file that did not exist has no last property
-    // to keep off. Without this the Gradle path, which writes this file from
-    // nothing, opened every project with two blank lines.
-    let mut next = existing.trim_end().to_string();
-    if next.is_empty() {
-        return write_properties(tree, &path, addition.trim_start().to_string());
-    }
-    next.push('\n');
-    next.push_str(&addition);
-    write_properties(tree, &path, next)
-}
-
-fn write_properties(tree: &publish::Tree<'_>, path: &Path, body: String) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        tree.ensure_directory_at(parent)
-            .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
-    }
-    tree.put_at(path, body)
 }
 
 /// The six default settings, as one table.

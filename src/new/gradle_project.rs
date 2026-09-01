@@ -574,7 +574,17 @@ pub(super) fn create(request: &super::Request<'_>, deps: &str, boot: &str) -> Re
         ),
     )?;
     super::write_fixtures_dir(&tree)?;
-    super::write_default_properties(&tree, major)?;
+    // **The same seeding the Maven path does, for the same reason.** A Gradle
+    // project that only got `write_default_properties` was not canonical at
+    // all, and its six defaults sat in `application.properties` as reader-owned
+    // bytes -- so the first `jails add db`, which declares `server.shutdown`
+    // too, refused over a key `jails new` had written seconds earlier. As `prop`
+    // declarations the compiler owns them and writes the file itself.
+    super::seed::seed_canonical_model(
+        &tree,
+        request.app,
+        super::spring::seed_model(name, &package, java, major, "gradle"),
+    )?;
     super::write_devtools_defaults(&tree)?;
     add_jspecify_to_gradle(&plan, &tree)?;
     super::write_mise(&tree, java)?;

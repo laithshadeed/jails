@@ -26,7 +26,7 @@ pub use plain::new_cli;
 pub use spring::new;
 
 use seed::{git_init, previewed, reported, seed, write_agents, write_fixtures_dir, write_mise};
-use spring::{write_default_properties, write_devtools_defaults};
+use spring::write_devtools_defaults;
 
 use jails_support::Result;
 use std::fs;
