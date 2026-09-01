@@ -164,11 +164,11 @@ pub(super) fn query(
 /// one, a command writes one, a transition changes one. Written per kind they
 /// would disagree about which parents exist, and the disagreement only shows
 /// up against a real database.
-struct Fixtures {
-    setup: String,
-    autowired: String,
+pub(crate) struct Fixtures {
+    pub(crate) setup: String,
+    pub(crate) autowired: String,
     /// The child's foreign-key components, by the parent key they read.
-    substitutions: BTreeMap<FieldId, String>,
+    pub(crate) substitutions: BTreeMap<FieldId, String>,
 }
 
 fn parent_fixtures(
@@ -176,6 +176,23 @@ fn parent_fixtures(
     operation: &Operation,
     target: &Entity,
     joins: &[Join],
+    imports: &mut BTreeSet<String>,
+) -> Result<Option<Fixtures>, CompileError> {
+    ancestor_fixtures(model, target, joins, &operation.label, imports)
+}
+
+/// Every row that has to exist before this entity's can be stored.
+///
+/// **Not only an operation's, which is why it takes a label rather than
+/// one.** A repository's own integration test stores the same row through the
+/// same foreign keys, and a `Member` written without its `Workspace` fails on
+/// the constraint before anything is proved. The rest of the doc comment
+/// above applies unchanged.
+pub(crate) fn ancestor_fixtures(
+    model: &AppModel,
+    target: &Entity,
+    joins: &[Join],
+    label: &str,
     imports: &mut BTreeSet<String>,
 ) -> Result<Option<Fixtures>, CompileError> {
     // The row the query has to find. Every filter is bound to the *same*
@@ -200,8 +217,7 @@ fn parent_fixtures(
         }
         let parent = model.entities.get(&entity_id).ok_or_else(|| {
             CompileError::new(format!(
-                "linked query `{}` references missing entity `{entity_id}`",
-                operation.label
+                "linked query `{label}` references missing entity `{entity_id}`"
             ))
         })?;
         let mut inherited = BTreeMap::new();
@@ -601,7 +617,7 @@ struct ParentRow {
 }
 
 /// Every component of an entity, sampled. `None` when one cannot be.
-fn record_arguments(
+pub(crate) fn record_arguments(
     model: &AppModel,
     entity: &Entity,
     substitutions: &BTreeMap<jails_model::FieldId, String>,

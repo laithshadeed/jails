@@ -237,6 +237,94 @@ pub(super) fn lower_db_repository(
 ///
 /// **The query is a bind parameter.** It is text PostgreSQL parses, not SQL it
 /// executes, so there is no injection surface and no escaping to get right.
+/// The integration test for the adapter above.
+///
+/// **The only tier that answers the question this adapter exists for.** A
+/// `JdbcClient` statement is a string until something runs it: a column list
+/// that drifted, a type PostgreSQL will not accept, a `returning` clause that
+/// names a column the insert does not write -- every one of them compiles, and
+/// every one of them fails on the first real call. The unit tiers cannot see
+/// any of it, and the adapter shipped with no test at all.
+///
+/// `None` when the entity has a component jails cannot sample: a guessed value
+/// would not compile, and a test that constructs nothing proves nothing. That
+/// is the same rule the record's own companion follows.
+pub(super) fn lower_db_repository_it(
+    model: &AppModel,
+    capability_id: &str,
+    entity: &Entity,
+) -> Result<Option<Unit>, CompileError> {
+    let primary_key = primary_key(entity)?;
+    let package = model.project.package_for(Package::AdaptersJdbc);
+    let type_name = format!("Jdbc{}RepositoryIT", entity.names.java_type);
+    let record = &entity.names.java_type;
+    let mut imports = BTreeSet::from([
+        domain_import(model, entity),
+        format!(
+            "{}.{record}Repository",
+            model.project.package_for(Package::Repository)
+        ),
+        "org.junit.jupiter.api.Test".to_string(),
+        "org.springframework.beans.factory.annotation.Autowired".to_string(),
+        "org.springframework.boot.test.context.SpringBootTest".to_string(),
+        "org.springframework.transaction.annotation.Transactional".to_string(),
+        "static org.assertj.core.api.Assertions.assertThat".to_string(),
+    ]);
+    // **Its ancestors first.** A `Member` stored without its `Workspace` fails
+    // on the foreign key before anything about the adapter is proved, so the
+    // same fixture builder the operation proofs use writes the rows this one
+    // references -- deepest first, shared, and bound to the same key the child
+    // carries.
+    let Some(fixtures) =
+        crate::emit_operation::proof::ancestor_fixtures(model, entity, &[], record, &mut imports)?
+    else {
+        return Ok(None);
+    };
+    let Some(arguments) = crate::emit_operation::proof::record_arguments(
+        model,
+        entity,
+        &fixtures.substitutions,
+        &mut imports,
+    ) else {
+        return Ok(None);
+    };
+    let (setup, autowired) = (fixtures.setup, fixtures.autowired);
+    let key = &primary_key.names.java_member;
+    let body = format!(
+        "@SpringBootTest\n@Transactional\nclass {type_name} {{\n\n    @Autowired\n    private {record}Repository repository;\n\n{autowired}    @Test\n    void savesReadsAndDeletesThroughTheRealDatabase() {{\n{setup}        // The *stored* row, not the argument: with a database-assigned key the\n        // two differ by exactly the column the insert did not write.\n        {record} stored = repository.save(new {record}({arguments}));\n\n        assertThat(repository.findById(stored.{key}())).contains(stored);\n        assertThat(repository.findAll()).contains(stored);\n        assertThat(repository.deleteById(stored.{key}())).isTrue();\n        assertThat(repository.findById(stored.{key}())).isEmpty();\n        // A second delete is not a failure: the row is already gone, which is\n        // what the caller asked for, and it is `false` rather than an error.\n        assertThat(repository.deleteById(stored.{key}())).isFalse();\n    }}\n\n    // Reader-owned cases belong below this stable boundary.\n}}"
+    );
+    let artifact_id = format!("art_{capability_id}_{}_repository_it", entity.id.as_str());
+    let rendered = crate::emit_capability::imported_test_container(
+        model,
+        &package,
+        render(&package, &imports, &body, &artifact_id),
+    );
+    let path = ProjectPath::parse(format!(
+        "{}/{}/{type_name}.java",
+        crate::emit_companion_test::JAVA_TEST_ROOT,
+        package.replace('.', "/")
+    ))
+    .map_err(CompileError::new)?;
+    Ok(Some(Unit {
+        path,
+        file: RenderedFile {
+            kind: FileKind::JavaTest,
+            mode: FileMode::Regular,
+            bytes: rendered.into_bytes(),
+            provenance: Provenance {
+                artifact_id,
+                ejection_id: Some(capability_id.to_string()),
+                ejectable: true,
+                semantic_ids: BTreeSet::from([
+                    capability_id.to_string(),
+                    entity.id.as_str().to_string(),
+                ]),
+                compiler_pass: "java-facets".to_string(),
+            },
+        },
+    }))
+}
+
 pub(super) fn lower_search_adapter(
     model: &AppModel,
     capability_id: &str,

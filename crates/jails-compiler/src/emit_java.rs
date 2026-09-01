@@ -143,6 +143,15 @@ pub(crate) fn lower_and_emit(
             output
                 .insert(unit.path, unit.file)
                 .map_err(CompileError::new)?;
+            // The tier that answers the question the adapter exists for. See
+            // `lower_db_repository_it`.
+            if let Some(unit) =
+                repository::lower_db_repository_it(model, capability.id.as_str(), entity)?
+            {
+                output
+                    .insert(unit.path, unit.file)
+                    .map_err(CompileError::new)?;
+            }
         }
         // The search port's only implementation, and it belongs here rather
         // than beside the port: searching is a JDBC concern and the port

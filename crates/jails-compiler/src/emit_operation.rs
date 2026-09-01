@@ -2,7 +2,7 @@
 
 mod command;
 pub(crate) mod outbox;
-mod proof;
+pub(crate) mod proof;
 mod query;
 mod transition;
 

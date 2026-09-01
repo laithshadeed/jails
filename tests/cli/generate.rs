@@ -683,7 +683,7 @@ fn an_index_can_be_added_to_a_table_that_already_exists() {
     let migration = fs::read_dir(root.join("src/main/resources/db/migration"))
         .unwrap()
         .map(|entry| entry.unwrap().path())
-        .find(|path| path.to_string_lossy().contains("index_messages"))
+        .find(|path| path.to_string_lossy().contains("idx_messages"))
         .expect("the index migration was not written");
     let sql = fs::read_to_string(&migration).unwrap();
     // The columns the table has, not the components jails records.
@@ -704,9 +704,12 @@ fn an_index_can_be_added_to_a_table_that_already_exists() {
         ])
         .output()
         .unwrap();
+    // The identity is the entity plus the ordered column list, so the second
+    // attempt is refused by that id rather than writing a duplicate migration
+    // Flyway would run twice.
     assert!(!again.status.success());
     assert!(
-        String::from_utf8_lossy(&again.stderr).contains("already declares an index"),
+        String::from_utf8_lossy(&again.stderr).contains("already exists on `ent_message`"),
         "{}",
         String::from_utf8_lossy(&again.stderr)
     );
@@ -719,7 +722,7 @@ fn an_index_can_be_added_to_a_table_that_already_exists() {
         .unwrap();
     assert!(!typo.status.success());
     assert!(
-        String::from_utf8_lossy(&typo.stderr).contains("not a declared field"),
+        String::from_utf8_lossy(&typo.stderr).contains("does not exist on `message`"),
         "{}",
         String::from_utf8_lossy(&typo.stderr)
     );
@@ -1356,6 +1359,15 @@ fn a_second_client_keeps_the_first_one_registered() {
 fn generate_scaffold_writes_a_raw_jdbc_slice() {
     let root = temp_dir("scaffold-files");
     write_spring_fixture(&root);
+    // The JDBC half is `storage postgres`': without it a scaffold gets the
+    // in-memory adapter and nothing to bind SQL to.
+    assert!(
+        jails_cmd(&root, None)
+            .args(["add", "db", "--no-start"])
+            .status()
+            .unwrap()
+            .success()
+    );
 
     let status = jails_cmd(&root, None)
         .args([
@@ -1370,18 +1382,27 @@ fn generate_scaffold_writes_a_raw_jdbc_slice() {
         .unwrap();
     assert!(status.success());
 
-    let pkg = common::generated(&root, "src/main/java/com/example/demo");
-    assert!(pkg.join("domain/Post.java").is_file());
-    assert!(pkg.join("app/PostRepository.java").is_file());
-    assert!(pkg.join("adapters/JdbcPostRepository.java").is_file());
-    assert!(pkg.join("service/PostService.java").is_file());
-    assert!(pkg.join("web/PostController.java").is_file());
+    for file in [
+        "src/main/java/com/example/demo/domain/Post.java",
+        "src/main/java/com/example/demo/repository/PostRepository.java",
+        "src/main/java/com/example/demo/adapters/jdbc/JdbcPostRepository.java",
+        "src/main/java/com/example/demo/service/PostService.java",
+        "src/main/java/com/example/demo/web/PostController.java",
+    ] {
+        assert!(
+            common::generated(&root, file).is_file(),
+            "{file} is missing:\n{}",
+            common::managed_listing(&root)
+        );
+    }
     assert!(
         common::generated(
             &root,
-            "src/test/java/com/example/demo/adapters/JdbcPostRepositoryIT.java"
+            "src/test/java/com/example/demo/adapters/jdbc/JdbcPostRepositoryIT.java"
         )
-        .is_file()
+        .is_file(),
+        "{}",
+        common::managed_listing(&root)
     );
     assert!(
         common::generated(
