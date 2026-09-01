@@ -22,12 +22,17 @@ use jails_contracts::{ProjectPath, WorkspaceSnapshot};
 const TEST_SOURCE_ROOT: &str = "src/test/java/";
 const READER_MAIN_ROOT: &str = "src/main/java/";
 
-/// Every captured `@SpringBootTest` that does not already import `class`.
+/// Every captured `@SpringBootTest` this transition has to edit.
+///
+/// With `wanted`, that is the tests missing the import; without it, the ones
+/// still carrying an import the model has retired. Either way the set is empty
+/// once the project already agrees, so a converged plan writes nothing.
 ///
 /// Ordered by path, so a plan built twice from one snapshot is one plan.
 pub(crate) fn spring_boot_test_targets(
     snapshot: &WorkspaceSnapshot,
     class: &str,
+    wanted: bool,
 ) -> Vec<ProjectPath> {
     snapshot
         .files
@@ -41,8 +46,8 @@ pub(crate) fn spring_boot_test_targets(
             // `@SpringBootTest`, so it cannot select itself -- but a reader
             // who wrote their own is excluded by name as well.
             (jails_codemod::annotate::is_spring_boot_test(text)
-                && !text.contains(&format!("@Import({class}.class)")))
-            .then(|| path.clone())
+                && text.contains(&format!("@Import({class}.class)")) != wanted)
+                .then(|| path.clone())
         })
         .collect()
 }
@@ -62,6 +67,18 @@ pub(crate) fn ensure_spring_test_import(text: &str, class: &str, package: &str) 
         format!("import {package}.{class};\n")
     };
     jails_codemod::annotate::splice_import(text, class, &extra).unwrap_or_else(|| text.to_string())
+}
+
+/// One test, with the annotation and its import taken back out.
+///
+/// The inverse of [`ensure_spring_test_import`], and exact for the same
+/// reason: the annotation names the class, so nothing has to be remembered
+/// between the two calls. Unchanged source when the annotation is not there,
+/// which `spring_boot_test_targets` has already ruled out.
+pub(crate) fn remove_spring_test_import(text: &str, class: &str, package: &str) -> String {
+    let extra = format!("import {package}.{class};");
+    jails_codemod::annotate::unsplice_import(text, class, &extra)
+        .unwrap_or_else(|| text.to_string())
 }
 
 /// The one dispatcher this project has, or `None` when it has none or several.

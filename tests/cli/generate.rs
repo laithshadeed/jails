@@ -7183,7 +7183,7 @@ fn a_form_bound_endpoint_is_proved_by_a_form_post() {
     // And the transition's second test names the answer rather than a status
     // it could reach for another reason.
     let proof = common::read_generated(
-        &root,
+        root,
         &format!(
             "src/test/java/com/example/demo/web/{}",
             "MarkNoteSeenControllerTest.java"

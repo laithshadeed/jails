@@ -391,16 +391,26 @@ fn materialize_document_intents(
                     )
                 })?;
             }
-            DocumentIntent::EnsureSpringTestImport { class, package } => {
-                // Every captured `@SpringBootTest`, in path order so the plan
-                // is deterministic. `spring_boot_test_targets` reads the
-                // snapshot rather than the disk -- the whole point of the
-                // capture is that this set was observed once.
-                for path in crate::documents::spring_boot_test_targets(snapshot, class) {
+            DocumentIntent::ReconcileSpringTestImport {
+                class,
+                package,
+                wanted,
+            } => {
+                // Every captured `@SpringBootTest` that disagrees with the
+                // model, in path order so the plan is deterministic.
+                // `spring_boot_test_targets` reads the snapshot rather than
+                // the disk -- the whole point of the capture is that this set
+                // was observed once.
+                for path in crate::documents::spring_boot_test_targets(snapshot, class, *wanted) {
                     update_document(snapshot, &mut desired, path, |text| {
-                        Ok(crate::documents::ensure_spring_test_import(
-                            text, class, package,
-                        ))
+                        Ok(match wanted {
+                            true => {
+                                crate::documents::ensure_spring_test_import(text, class, package)
+                            }
+                            false => {
+                                crate::documents::remove_spring_test_import(text, class, package)
+                            }
+                        })
                     })?;
                 }
             }
@@ -521,6 +531,29 @@ fn materialize_document_intents(
         if before_file.is_some_and(|file| file.bytes == after_bytes)
             || before_file.is_none() && after_bytes.is_empty()
         {
+            continue;
+        }
+        // **A reconcile that empties a document removes it.** `remove db`
+        // retires the last property jails owns in
+        // `src/main/resources/application.properties`, and a project that
+        // never had that file is not left holding an empty one -- the inverse
+        // of `add` has to reach the file's existence, not only its contents.
+        // Anything the reader put there, a bare comment included, survives
+        // reconciliation and keeps the file, so emptiness is the proof that
+        // nothing but jails' own settings was ever in it.
+        if let Some(before_file) = before_file
+            && after_bytes.iter().all(u8::is_ascii_whitespace)
+        {
+            let before = file_image(
+                &before_file.bytes,
+                if before_file.executable {
+                    FileMode::Executable
+                } else {
+                    FileMode::Regular
+                },
+                blobs,
+            )?;
+            operations.push(PlannedOperation::RemoveReaderFile { path, before });
             continue;
         }
         let mode = before_file.map_or(FileMode::Regular, |file| {

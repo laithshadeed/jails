@@ -188,6 +188,19 @@ pub struct BuildDependency {
     pub artifact: String,
     pub version: Option<String>,
     pub scope: jails_model::DependencyScope,
+    /// The artifact is on this project's classpath and is not passed on to
+    /// anything that depends on it.
+    ///
+    /// Maven spells that `<optional>true</optional>`, and Boot's own starters
+    /// mark `spring-boot-docker-compose` and devtools that way -- Spring
+    /// Initializr copies them, so a generated pom that omits it differs from
+    /// the one the same choices produce on start.spring.io. **Gradle needs
+    /// nothing**: `implementation` and `runtimeOnly` are already non-transitive
+    /// for a consumer's compile classpath, which is exactly what the Maven flag
+    /// buys, so its renderer reads this field and has nothing to add. It is
+    /// carried on the dependency rather than decided inside the Maven adapter
+    /// because which dependencies are optional is a fact about the capability.
+    pub optional: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -230,11 +243,21 @@ pub enum DocumentIntent {
     /// build, JDBC auto-configuration demands a `DataSource` for *every*
     /// `@SpringBootTest` -- including the `contextLoads` test that shipped
     /// with the project and never touches a database.
-    EnsureSpringTestImport {
+    ReconcileSpringTestImport {
         /// The `@TestConfiguration` class to import.
         class: String,
         /// Its package, so a test in another one gets the import statement.
         package: String,
+        /// Whether the model still wants it.
+        ///
+        /// **`false` is why this reconciles rather than ensures.** The splice
+        /// is an edit to a file the reader owns, so `remove db` has to take it
+        /// back out -- a `@SpringBootTest` left importing a
+        /// `TestcontainersConfig` that no longer exists does not compile. The
+        /// annotation names the class, so the inverse is exact and needs no
+        /// marker; what it needs is for the compiler to keep emitting the
+        /// intent after the capability is gone, which an *ensure* would not.
+        wanted: bool,
     },
     /// Register a generated command in the project's CLI dispatcher.
     ///

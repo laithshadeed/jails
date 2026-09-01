@@ -26,24 +26,10 @@ use jails_support::{Failure, Result};
 use std::path::Path;
 
 pub(crate) fn run(invocation: Invocation) -> Result<()> {
-    run_as(invocation, Announce::Command)
+    run_as(invocation)
 }
 
-/// Who asked for the model.
-///
-/// **The on-ramp is a side note, not the answer to the question.** A reader
-/// who typed `jails test --fast` on a project jails had not touched yet gets
-/// their model created on the way past; saying so belongs on stderr, beside
-/// every other advisory, because stdout is the command's own output and a
-/// caller piping it did not ask for this. `jails model init` is the case
-/// where creating the model *is* the answer.
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub(crate) enum Announce {
-    Command,
-    OnRamp,
-}
-
-pub(crate) fn run_as(invocation: Invocation, announce: Announce) -> Result<()> {
+fn run_as(invocation: Invocation) -> Result<()> {
     let root = invocation.root()?;
     let project = jails_project::model::Project::load(&root)?;
     let source = derive(&project)?;
@@ -57,10 +43,7 @@ pub(crate) fn run_as(invocation: Invocation, announce: Announce) -> Result<()> {
         && existing == source
     {
         if invocation.output == Output::Human {
-            say(
-                announce,
-                format!("  exists  {}", crate::model_command::JDL_PATH),
-            );
+            println!("  exists  {}", crate::model_command::JDL_PATH);
         }
         return Ok(());
     }
@@ -99,10 +82,7 @@ pub(crate) fn run_as(invocation: Invocation, announce: Announce) -> Result<()> {
     .map_err(|error| Failure::Told(format!("could not materialize the new model: {error}")))?;
     if invocation.pretend {
         if invocation.output == Output::Human {
-            say(
-                announce,
-                format!("--pretend: would create {}", crate::model_command::JDL_PATH),
-            );
+            println!("--pretend: would create {}", crate::model_command::JDL_PATH);
         }
         return Ok(());
     }
@@ -110,30 +90,18 @@ pub(crate) fn run_as(invocation: Invocation, announce: Announce) -> Result<()> {
         Failure::Told(format!("could not write the application model: {error}"))
     })?;
     if invocation.output == Output::Human {
-        say(
-            announce,
-            format!("  create  {}", crate::model_command::JDL_PATH),
-        );
-        say(
-            announce,
+        println!("  create  {}", crate::model_command::JDL_PATH);
+        println!(
             "This project is canonical now: `jails g` renders through the compiler into \
-             `.jails/generated`, and your own sources under `src/` stay yours."
-                .to_string(),
+             `.jails/generated`, and your own sources under `src/` stay yours.",
         );
     }
     Ok(())
 }
 
 /// Where this line goes: stdout when the reader asked, stderr when they did not.
-fn say(announce: Announce, line: String) {
-    match announce {
-        Announce::Command => println!("{line}"),
-        Announce::OnRamp => eprintln!("{line}"),
-    }
-}
-
 /// One editable source, which is the rule the whole cutover turns on.
-fn refuse_if_modelled(root: &Path) -> Result<()> {
+pub(crate) fn refuse_if_modelled(root: &Path) -> Result<()> {
     for existing in [
         crate::model_command::JDL_PATH,
         crate::model_command::TOML_PATH,

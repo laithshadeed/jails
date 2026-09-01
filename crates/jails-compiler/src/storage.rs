@@ -50,24 +50,28 @@ pub(crate) fn storage_dependencies(spring_boot: Option<&str>) -> Vec<BuildDepend
             artifact: "spring-boot-starter-jdbc".to_string(),
             version: None,
             scope: DependencyScope::Compile,
+            optional: false,
         },
         BuildDependency {
             group: "org.postgresql".to_string(),
             artifact: "postgresql".to_string(),
             version: None,
             scope: DependencyScope::Runtime,
+            optional: false,
         },
         BuildDependency {
             group: "org.flywaydb".to_string(),
             artifact: "flyway-core".to_string(),
             version: flyway_version.clone(),
             scope: DependencyScope::Compile,
+            optional: false,
         },
         BuildDependency {
             group: "org.flywaydb".to_string(),
             artifact: "flyway-database-postgresql".to_string(),
             version: flyway_version,
             scope: DependencyScope::Runtime,
+            optional: false,
         },
     ];
     if version.is_some_and(|version| version >= (4, 0)) {
@@ -76,6 +80,7 @@ pub(crate) fn storage_dependencies(spring_boot: Option<&str>) -> Vec<BuildDepend
             artifact: "spring-boot-flyway".to_string(),
             version: None,
             scope: DependencyScope::Compile,
+            optional: false,
         });
     }
     dependencies

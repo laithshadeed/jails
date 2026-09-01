@@ -67,6 +67,7 @@ const KAFKA_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Compile,
         spring_managed_version: true,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Spring,
     },
     DependencySpec {
@@ -76,6 +77,7 @@ const KAFKA_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Compile,
         spring_managed_version: true,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Spring,
     },
     DependencySpec {
@@ -85,6 +87,7 @@ const KAFKA_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Test,
         spring_managed_version: true,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Spring,
     },
     DependencySpec {
@@ -94,6 +97,7 @@ const KAFKA_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Test,
         spring_managed_version: false,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Spring,
     },
     DependencySpec {
@@ -103,6 +107,7 @@ const KAFKA_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Test,
         spring_managed_version: false,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Spring,
     },
     DependencySpec {
@@ -112,6 +117,7 @@ const KAFKA_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Test,
         spring_managed_version: true,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Spring,
     },
     DependencySpec {
@@ -121,6 +127,7 @@ const KAFKA_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Compile,
         spring_managed_version: false,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Plain,
     },
     // **Declared on Spring too, and managed there.** The generated config
@@ -137,6 +144,7 @@ const KAFKA_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Compile,
         spring_managed_version: true,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Spring,
     },
 ];
@@ -289,6 +297,7 @@ const fn dependency(
         scope,
         spring_managed_version,
         only_when_build_exists: false,
+        optional: false,
         boot,
     }
 }

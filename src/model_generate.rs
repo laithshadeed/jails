@@ -226,8 +226,16 @@ pub(crate) fn finish_generation_with_reader_paths(
         &capture_paths,
     )
     .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
-    let mut draft = jails_compiler::Compiler::compile(&snapshot, Some(patch))
-        .map_err(|error| Failure::Told(format!("could not compile model patch: {error}")))?;
+    // **The refusal says the whole request was abandoned.** A command naming
+    // several things -- `jails add csv security` -- plans all of them and
+    // applies all of them or none, and a reader who is not told that has to
+    // work out by hand which half to retry. Nothing has been written at this
+    // point by construction: the executor has not run.
+    let mut draft = jails_compiler::Compiler::compile(&snapshot, Some(patch)).map_err(|error| {
+        Failure::Told(format!(
+            "could not compile model patch: {error}\n       nothing was written"
+        ))
+    })?;
     // After the compile, because it is not derived from the model: see
     // `PreparedMutation::authored_migration`. It is still the plan's, not a
     // side effect -- the materializer allocates its version from the observed
@@ -273,8 +281,28 @@ pub(crate) fn finish_generation_with_reader_paths(
     if let Some(refusal) = refuse_unconfirmed_deletions(&bundle, &invocation) {
         return refusal;
     }
+    // **Said only once the model exists, and only if it does.** The on-ramp
+    // used to be a transition of its own that ran before the mutation, so a
+    // refused command announced a conversion it had then abandoned. Reading
+    // the plan for a model file with no before-image says the same thing at
+    // the one moment it is true. It goes to stderr because stdout is the
+    // command's own output and a caller piping it did not ask for this.
+    let converted = invocation.output == Output::Human
+        && bundle.plan.operations.iter().any(|operation| {
+            matches!(
+                operation,
+                jails_contracts::PlannedOperation::ReplaceModelFile { before: None, .. }
+            )
+        });
     let execution = jails_workspace::execute(&root, &bundle)
         .map_err(|error| Failure::Told(format!("could not apply exact plan: {error}")))?;
+    if converted {
+        eprintln!("  create  {}", crate::model_command::JDL_PATH);
+        eprintln!(
+            "This project is canonical now: `jails g` renders through the compiler into \
+             `.jails/generated`, and your own sources under `src/` stay yours."
+        );
+    }
     if invocation.output == Output::Human {
         // **"Nothing happened" and "everything happened and changed nothing"
         // are different answers**, and only the second has files to name. A
@@ -393,6 +421,107 @@ fn refuse_unconfirmed_deletions(
 /// are not up, and the message says the project itself is complete. Exiting 0
 /// would be worse -- `for c in db api; do jails add $c || fail; done` is how
 /// people write this, and a silent half-install is what it would hide.
+/// The compiled shadow of every source this transition deleted.
+///
+/// **A `.class` outlives its source, and the build does not notice.** `mvn
+/// test` is incremental: a class left under `target/test-classes` after its
+/// `.java` is gone goes on being loaded and run, so a `remove db` that took
+/// `TestcontainersConfig.java` away leaves every `@SpringBootTest` still
+/// starting a container -- and the removal looks like it did not happen, on a
+/// green build.
+///
+/// It is not in the plan because it is not a project write: `apply::
+/// remove_derived` refuses any path outside `target/` or `build/`, so the
+/// exemption is checked rather than promised. Best effort, and silent -- a
+/// project that has never been compiled has nothing here, which is the common
+/// case rather than a failure.
+fn drop_compiled_shadows(root: &std::path::Path, bundle: &jails_contracts::PlanBundle) {
+    // Where javac put it, per build tool and source set. Both are swept
+    // because which one this project uses is not worth a second observation
+    // for a directory that either exists or does not.
+    const OUTPUTS: [(&str, &str); 4] = [
+        ("main", "target/classes"),
+        ("test", "target/test-classes"),
+        ("main", "build/classes/java/main"),
+        ("test", "build/classes/java/test"),
+    ];
+    for path in crate::model_command::deleted_paths(bundle) {
+        let text = path.as_str();
+        let Some(name) = text.strip_suffix(".java") else {
+            continue;
+        };
+        // The package path, however the file was addressed: jails' own managed
+        // tree, or a reader source it adopted.
+        let Some(relative) = [
+            ".jails/generated/main/java/",
+            ".jails/generated/test/java/",
+            "src/main/java/",
+            "src/test/java/",
+        ]
+        .iter()
+        .find_map(|prefix| name.strip_prefix(prefix)) else {
+            continue;
+        };
+        let set = if text.contains("/test/") {
+            "test"
+        } else {
+            "main"
+        };
+        for (source_set, output) in OUTPUTS {
+            if source_set != set {
+                continue;
+            }
+            let compiled = root.join(output).join(relative);
+            let _ = jails_support::apply::remove_derived(compiled.with_extension("class"));
+            // Nested and anonymous classes compile to siblings named
+            // `Outer$Inner.class`, and one left behind is as loadable as the
+            // outer class would have been.
+            let (Some(directory), Some(stem)) = (compiled.parent(), compiled.file_name()) else {
+                continue;
+            };
+            let prefix = format!("{}$", stem.to_string_lossy());
+            let Ok(entries) = std::fs::read_dir(directory) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let nested = entry.file_name();
+                let nested = nested.to_string_lossy();
+                if nested.starts_with(&prefix) && nested.ends_with(".class") {
+                    let _ = jails_support::apply::remove_derived(entry.path());
+                }
+            }
+        }
+    }
+}
+
+/// The exact compose document this plan wrote, on disk outside the project.
+///
+/// `None` when the bundle does not carry it, which is the caller's cue to fall
+/// back to the live file rather than to skip the services.
+fn stage_compose_document(
+    bundle: &jails_contracts::PlanBundle,
+    path: &str,
+) -> Option<jails_support::scratch::ScratchDir> {
+    use jails_contracts::PlannedOperation as Op;
+    let digest = bundle
+        .plan
+        .operations
+        .iter()
+        .find_map(|operation| match operation {
+            Op::PatchReaderFile {
+                path: target,
+                after,
+                ..
+            } if target.as_str() == path => Some(after.blob.clone()),
+            _ => None,
+        })?;
+    let bytes = bundle.blobs.get(&digest)?;
+    let staged = jails_support::scratch::ScratchDir::in_temp("compose").ok()?;
+    let file = staged.path().join("compose.yaml");
+    jails_support::apply::put_in_scratch(&file, bytes).ok()?;
+    Some(staged)
+}
+
 pub(crate) fn run_follow_up_effects(
     root: &std::path::Path,
     bundle: &jails_contracts::PlanBundle,
@@ -404,6 +533,7 @@ pub(crate) fn run_follow_up_effects(
     // predicted from a template, which is what a formatter is for. Best
     // effort, like every other tool jails shells out to -- a machine with no
     // Maven gets a note rather than a failed generation.
+    drop_compiled_shadows(root, bundle);
     if bundle
         .plan
         .follow_up_effects
@@ -412,11 +542,14 @@ pub(crate) fn run_follow_up_effects(
     {
         jails_drive::run::format_generated(root, invocation.debug);
     }
-    let services: Vec<&str> = bundle
+    let compose: Vec<&jails_contracts::EffectIntent> = bundle
         .plan
         .follow_up_effects
         .iter()
         .filter(|effect| effect.kind == "compose-up")
+        .collect();
+    let services: Vec<&str> = compose
+        .iter()
         .filter_map(|effect| effect.arguments.get("service").map(String::as_str))
         .collect();
     if services.is_empty() {
@@ -432,7 +565,26 @@ pub(crate) fn run_follow_up_effects(
         }
         return Ok(());
     }
-    if jails_project::compose::up(root, &services, invocation.debug) {
+    // **Against the bytes this transition published, not the live file.**
+    // Between the commit and this call somebody may edit `compose.yaml`, and
+    // running against what they wrote would start services the reviewed plan
+    // never described. The document is staged outside the project so it is not
+    // mistaken for one of its files; `--project-directory` keeps every
+    // relative path in it resolving against the project. When the bundle does
+    // not carry the document -- an older plan, or an export read back --
+    // falling back to the live file is better than not starting at all.
+    let staged = compose
+        .iter()
+        .filter_map(|effect| effect.arguments.get("document"))
+        .next()
+        .and_then(|path| stage_compose_document(bundle, path));
+    let started = match staged.as_ref() {
+        Some(staged) => {
+            jails_project::compose::up_document(root, staged.path(), &services, invocation.debug)
+        }
+        None => jails_project::compose::up(root, &services, invocation.debug),
+    };
+    if started {
         return Ok(());
     }
     if invocation.output == Output::Human {

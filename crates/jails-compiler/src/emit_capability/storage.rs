@@ -32,6 +32,7 @@ const H2_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Compile,
         spring_managed_version: true,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Any,
     },
     DependencySpec {
@@ -41,6 +42,7 @@ const H2_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Runtime,
         spring_managed_version: true,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Any,
     },
     DependencySpec {
@@ -50,6 +52,7 @@ const H2_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Compile,
         spring_managed_version: true,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::AtLeast(4),
     },
 ];
@@ -134,6 +137,7 @@ const DB_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Runtime,
         spring_managed_version: true,
         only_when_build_exists: false,
+        optional: true,
         boot: BootCondition::Spring,
     },
     // Contributes `TestcontainersLifecycleApplicationContextInitializer` from
@@ -145,6 +149,7 @@ const DB_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Test,
         spring_managed_version: true,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Spring,
     },
     // Pinned, because Testcontainers 2.0 renamed every module
@@ -157,6 +162,7 @@ const DB_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Test,
         spring_managed_version: false,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Spring,
     },
     DependencySpec {
@@ -166,6 +172,7 @@ const DB_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Test,
         spring_managed_version: false,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Spring,
     },
 ];

@@ -12,7 +12,7 @@ pub(crate) use build_feature::{reconcile_gradle_build_features, reconcile_maven_
 pub(crate) use source_root::{ensure_gradle_source_root, ensure_maven_source_roots};
 pub(crate) use spring_test::{
     command_dispatcher, ensure_command_registration, ensure_spring_test_import,
-    set_maven_main_class, spring_boot_test_targets,
+    remove_spring_test_import, set_maven_main_class, spring_boot_test_targets,
 };
 
 const DEPENDENCY_MARKER: &str = "jails:dependencies";
@@ -433,6 +433,9 @@ pub fn maven_dependency_block(dependencies: &[jails_contracts::BuildDependency])
             "    <scope>{}</scope>\n",
             dependency_scope(dependency.scope)
         ));
+        if dependency.optional {
+            block.push_str("    <optional>true</optional>\n");
+        }
         block.push_str("</dependency>\n");
     }
     block.push_str(&format!("<!-- /{DEPENDENCY_MARKER} -->\n"));
@@ -473,6 +476,12 @@ fn gradle_dependency_block(
             Some(version) => format!("{}:{}:{version}", dependency.group, dependency.artifact),
             None => format!("{}:{}", dependency.group, dependency.artifact),
         };
+        // `BuildDependency::optional` needs no rendering here: every
+        // configuration below is already non-transitive for a consumer's
+        // compile classpath, which is the whole of what Maven's
+        // `<optional>true</optional>` buys. `developmentOnly` would say
+        // something else -- keep it out of the artifact entirely -- and exists
+        // only once the Spring Boot Gradle plugin is applied.
         let configuration = match dependency.scope {
             jails_model::DependencyScope::Compile => "implementation",
             jails_model::DependencyScope::Runtime => "runtimeOnly",
@@ -699,6 +708,7 @@ mod tests {
             artifact: artifact.to_string(),
             version: version.map(str::to_string),
             scope,
+            optional: false,
         }
     }
 

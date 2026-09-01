@@ -300,6 +300,7 @@ impl Compiler {
                 artifact: dependency.artifact.clone(),
                 version: dependency.version.clone(),
                 scope: dependency.scope,
+                optional: false,
             })
             .collect::<Vec<_>>();
         for required in emit_capability::dependencies(
@@ -330,6 +331,7 @@ impl Compiler {
                 artifact: "spring-boot-starter-validation".to_string(),
                 version: None,
                 scope: DependencyScope::Compile,
+                optional: false,
             };
             if !dependencies.iter().any(|declared| {
                 declared.group == required.group && declared.artifact == required.artifact
@@ -385,6 +387,7 @@ impl Compiler {
                     None => snapshot.project.junit.clone(),
                 },
                 scope: DependencyScope::Test,
+                optional: false,
             };
             if !dependencies.iter().any(|declared| {
                 declared.group == required.group && declared.artifact == required.artifact
@@ -410,6 +413,7 @@ impl Compiler {
                 artifact: "spring-boot-starter-webmvc-test".to_string(),
                 version: None,
                 scope: DependencyScope::Test,
+                optional: false,
             };
             if !dependencies.iter().any(|declared| {
                 declared.group == required.group && declared.artifact == required.artifact
@@ -441,6 +445,7 @@ impl Compiler {
                 artifact: "spring-boot-starter-web".to_string(),
                 version: None,
                 scope: DependencyScope::Compile,
+                optional: false,
             };
             if !dependencies.iter().any(|declared| {
                 declared.group == required.group && declared.artifact == required.artifact
@@ -554,15 +559,21 @@ impl Compiler {
         // cannot enumerate `src/test/java` and must not, so the snapshot
         // carries those files and the materializer picks the ones that carry
         // the annotation.
-        if snapshot.project.spring_boot.is_some()
-            && next_model
-                .capabilities
-                .values()
-                .any(|capability| capability.kind == "db")
-        {
-            reader_document_intents.push(DocumentIntent::EnsureSpringTestImport {
+        //
+        // **It is emitted whether or not `db` is declared**, because the edit
+        // has to come back out when the capability goes: a `@SpringBootTest`
+        // importing a `TestcontainersConfig` that no longer exists does not
+        // compile, and `remove db` is exactly when the model stops mentioning
+        // it. The adapter's target set is empty once the project agrees, so a
+        // converged plan writes nothing either way.
+        if snapshot.project.spring_boot.is_some() {
+            reader_document_intents.push(DocumentIntent::ReconcileSpringTestImport {
                 class: "TestcontainersConfig".to_string(),
                 package: next_model.project.package_for(jails_model::Package::Base),
+                wanted: next_model
+                    .capabilities
+                    .values()
+                    .any(|capability| capability.kind == "db"),
             });
         }
         // The dispatcher registration for every command in the model. Like the
@@ -590,7 +601,7 @@ impl Compiler {
                 .iter()
                 .filter_map(|(id, facet)| match &facet.kind {
                     jails_contracts::ReaderFacetKind::ComposeService { service, .. } => {
-                        Some((id.clone(), service.clone()))
+                        Some((id.clone(), (service.clone(), facet.path.clone())))
                     }
                     _ => None,
                 })
@@ -608,10 +619,18 @@ impl Compiler {
                 .into_iter()
                 .filter(|(id, service)| accepted.get(id) != Some(service))
                 .map(|(_, service)| service)
-                .map(|service| jails_contracts::EffectIntent {
+                // **The document travels with the service.** The effect runs
+                // after the commit publishes, so the live `compose.yaml` is no
+                // longer proof of what this transition described -- naming the
+                // file here is what lets apply run against the exact bytes it
+                // wrote instead of whatever is on disk by then.
+                .map(|(service, document)| jails_contracts::EffectIntent {
                     id: format!("effect_compose_up_{service}"),
                     kind: "compose-up".to_string(),
-                    arguments: BTreeMap::from([("service".to_string(), service)]),
+                    arguments: BTreeMap::from([
+                        ("service".to_string(), service),
+                        ("document".to_string(), document.as_str().to_string()),
+                    ]),
                 })
                 .collect();
         // **Formatting is an effect, not a rendering.** The wrapping a

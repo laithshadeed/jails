@@ -134,23 +134,28 @@ pub(crate) fn ensure_owned(invocation: Invocation) -> Result<()> {
     // the manifest through these same frontends, so asking the walk would ask
     // about the wrong tree -- and answer "not canonical" about a project that
     // was seeded a moment ago.
-    if owns_at(&invocation.root()?) {
+    let root = invocation.root()?;
+    if owns_at(&root) {
         return Ok(());
     }
-    // A dry run must not write, and it no longer has to: `load_model_at`
-    // derives this same seed in memory, so the plan reported is the real one.
-    // Saying the model would be created is still worth a line -- it is the
-    // half of the transition the reader has not seen yet.
-    if invocation.pretend {
-        if invocation.output == Output::Human {
-            eprintln!("--pretend: would create {JDL_PATH}");
-        }
-        return Ok(());
-    }
-    // `model_init` prints what it did and what changes for the reader; saying
-    // it twice would be noise, and saying it here as well as there is how the
-    // two go out of step.
-    crate::model_init::run_as(invocation, crate::model_init::Announce::OnRamp)
+    // **Nothing is written here, and that is the point.** This used to run
+    // `model init` as its own transition before the command that needed it, so
+    // `jails add csv security` on a plain Maven project created the model,
+    // spliced the pom, and only *then* refused `security` -- leaving a project
+    // half-converted by a command that failed. The seed is derived in memory
+    // by `load_model_at`, and the mutation's own plan carries it as an
+    // ordinary `ReplaceModelFile` with no before-image, so a refusal anywhere
+    // in that plan writes nothing at all and a success creates the model in
+    // the same reviewed transition. What is left here is the one refusal that
+    // has to come first, because it is about a model this jails cannot read
+    // rather than about the mutation.
+    crate::model_init::refuse_if_modelled(&root)?;
+    // **That this is a Java project at all is still asked here.** The seed is
+    // derived from the project -- its package, its build file, its release --
+    // so a directory that is not one has no model to derive and no mutation to
+    // apply, and saying so before planning is what turns a report about a
+    // missing `.jails/model.jdl` into the answer the reader needs.
+    jails_project::model::Project::load(&root).map(|_| ())
 }
 
 /// Does this project author its model in JDL?
@@ -185,6 +190,13 @@ pub(crate) fn sync(no_start: bool, invocation: Invocation) -> Result<()> {
 /// wrapper already takes an explicit root -- `capture_*`, `materialize*` and
 /// `execute` all do -- so this only stops the walk from happening.
 pub(crate) fn sync_at(root: &Path, invocation: Invocation) -> Result<()> {
+    // **`jails.toml` is still read, and a name it gets wrong is still an
+    // error.** The model is what sync applies now, so nothing here acts on
+    // that file's capability list -- but a `postgress` sitting in it looks
+    // applied and never will be, which is the exact failure a manifest exists
+    // to remove. Parsing it is also how `[layout]` is validated, so the read
+    // is one the project needs either way.
+    jails_project::config::Config::load(root)?;
     let manifest = resolve_manifest_at(root, None)?;
     let (source, model) = load_model_at(root, &manifest, invocation.output)?;
     let bare = model.capabilities.is_empty();
@@ -208,16 +220,6 @@ pub(crate) fn sync_at(root: &Path, invocation: Invocation) -> Result<()> {
         // answer worth saying rather than three zeroes.
         if execution.files_written == 0 && execution.files_deleted == 0 {
             println!("nothing to do, the project already matches the model");
-            // **A project that has nothing to sync is usually a project that
-            // has not declared anything yet**, and "nothing to do" on its own
-            // reads as a tool that did not work. Saying which command puts
-            // something in the model costs one line and answers the question
-            // the reader is actually about to ask.
-            if bare {
-                println!(
-                    "       no capabilities are declared: `jails add <capability>` declares one"
-                );
-            }
         } else {
             println!(
                 "synchronized {}: {} operations, {} files written, {} files deleted",
@@ -232,6 +234,16 @@ pub(crate) fn sync_at(root: &Path, invocation: Invocation) -> Result<()> {
             {
                 println!("{line}");
             }
+        }
+        // **A project that has nothing to sync is usually a project that has
+        // not declared anything yet**, and the report on its own reads as a
+        // tool that did not work. Saying which command puts something in the
+        // model costs one line and answers the question the reader is actually
+        // about to ask. It is said whether or not files moved: the sync that
+        // creates the model on a foreign project writes two and still has an
+        // empty model to show for it.
+        if bare {
+            println!("       no capabilities are declared: `jails add <capability>` declares one");
         }
     } else {
         let value = serde_json::to_value(execution)
@@ -431,6 +443,37 @@ fn check(manifest: &Path, frozen: bool, output: Output) -> Result<()> {
 /// exactly the thing that changed, and the tree manifest is already in the
 /// bundle -- no filesystem read, and nothing here can disagree with what
 /// apply will write.
+/// Every path this bundle removes, managed tree entries included.
+///
+/// Shared with [`preview_lines`] so the sweep of compiled shadows cannot
+/// disagree with the deletions the reader was shown.
+pub(crate) fn deleted_paths(
+    bundle: &jails_contracts::PlanBundle,
+) -> Vec<jails_contracts::ProjectPath> {
+    use jails_contracts::PlannedOperation as Op;
+    let mut paths = Vec::new();
+    for operation in &bundle.plan.operations {
+        match operation {
+            Op::PublishMergedTree { before, after, .. } => {
+                let entries = |digest: &jails_contracts::ContentDigest| {
+                    bundle
+                        .trees
+                        .get(digest)
+                        .map(|tree| tree.entries.keys().cloned().collect())
+                        .unwrap_or_default()
+                };
+                let was: std::collections::BTreeSet<_> =
+                    before.as_ref().map(entries).unwrap_or_default();
+                let now: std::collections::BTreeSet<_> = entries(after);
+                paths.extend(was.difference(&now).cloned());
+            }
+            Op::RemoveReaderFile { path, .. } => paths.push(path.clone()),
+            _ => {}
+        }
+    }
+    paths
+}
+
 pub(crate) fn preview_lines(bundle: &jails_contracts::PlanBundle) -> Vec<String> {
     use jails_contracts::PlannedOperation as Op;
     let mut lines = Vec::new();

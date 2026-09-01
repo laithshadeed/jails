@@ -213,6 +213,7 @@ const SQLITE_DEPENDENCIES: &[DependencySpec] = &[dependency(
 )];
 const ASSERTJ_DEPENDENCIES: &[DependencySpec] = &[DependencySpec {
     only_when_build_exists: true,
+    optional: false,
     ..dependency(
         "org.assertj",
         "assertj-core",
@@ -286,6 +287,7 @@ const fn dependency(
         scope,
         spring_managed_version,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Any,
     }
 }

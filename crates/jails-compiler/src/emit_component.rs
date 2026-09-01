@@ -151,6 +151,7 @@ pub(crate) fn dependencies(model: &AppModel) -> Vec<BuildDependency> {
             artifact: (*artifact).to_string(),
             version: None,
             scope: DependencyScope::Compile,
+            optional: false,
         }));
     }
     dependencies

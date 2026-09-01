@@ -188,6 +188,19 @@ impl ReaderTrees {
                 .any(|capability| capability.kind == "db"),
         }
     }
+
+    /// Every tree either model needs.
+    ///
+    /// Installing a capability and retiring one edit the same reader files, so
+    /// the read set is the union of what the accepted model wanted and what
+    /// the intended one wants -- narrowing to the intended model alone is what
+    /// left `remove db`'s splice behind.
+    fn union(self, other: Self) -> Self {
+        Self {
+            main: self.main || other.main,
+            test: self.test || other.test,
+        }
+    }
 }
 
 /// Capture a project before its one-way canonical model is published.
@@ -266,6 +279,20 @@ fn capture_model_state(
     if managed.exists() {
         capture_tree(root, &managed, &mut files, &mut preconditions)?;
     }
+    // **The accepted model is read before the reader trees are chosen**,
+    // because retiring a capability edits the same tree that installing it
+    // did. `remove db` produces an intended model with no `db` in it, and a
+    // plan built from that alone reads no test tree -- so the
+    // `@Import(TestcontainersConfig.class)` it spliced has no before-image,
+    // cannot be named in the plan, and stays behind importing a class the same
+    // transition deletes. The lock is already in `files` from the managed walk
+    // above, so this costs a decode, not a second traversal.
+    capture_optional_file(root, COMPILER_LOCK, &mut files, &mut preconditions)?;
+    let accepted = accepted_compiler_state(&files)?;
+    let trees = match accepted.as_ref() {
+        Some(state) => trees.union(ReaderTrees::of(&state.model)),
+        None => trees,
+    };
     // **The reader's own sources, when the model's plan may edit them.**
     //
     // The dispatcher `g command` registers into and the `@SpringBootTest`
@@ -297,7 +324,6 @@ fn capture_model_state(
         "compose.yml",
         "docker-compose.yml",
         "docker-compose.yaml",
-        COMPILER_LOCK,
     ] {
         capture_optional_file(root, reader_file, &mut files, &mut preconditions)?;
     }
@@ -322,7 +348,6 @@ fn capture_model_state(
         layout,
         junit: junit_version(root, build_system),
     };
-    let accepted = accepted_compiler_state(&files)?;
     let accepted_reader_paths = accepted
         .as_ref()
         .and_then(|state| state.projection.as_ref())

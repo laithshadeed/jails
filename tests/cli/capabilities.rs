@@ -449,7 +449,7 @@ fn add_db_installs_postgres_flyway_and_testcontainers_without_an_orm() {
     write_fake_maven(&fake, &["docker"], &log);
 
     let output = jails_cmd(&root, Some(&fake))
-        .args(["add", "db", "--no-start"])
+        .args(["add", "db"])
         .output()
         .unwrap();
     assert!(
@@ -499,9 +499,19 @@ fn add_db_installs_postgres_flyway_and_testcontainers_without_an_orm() {
         invocation.contains(&format!("--project-directory {}", root.display())),
         "expected the project directory: {invocation}"
     );
+    // The frozen document is staged *outside* the project. A canonical project
+    // has no `.jails/objects` -- that is the legacy store, and creating one
+    // here would be the cutover leaking backwards -- so what is checked is the
+    // property rather than the old location: whatever `--file` names, it is not
+    // the live `compose.yaml` this transition just published.
+    let live = format!("--file {}", root.join("compose.yaml").display());
     assert!(
-        invocation.contains(".jails/objects/"),
+        !invocation.contains(&live),
         "expected the frozen document rather than the live compose.yaml: {invocation}"
+    );
+    assert!(
+        !root.join(".jails/objects").exists(),
+        "a canonical project must not grow a legacy object store"
     );
 }
 

@@ -44,6 +44,7 @@ pub(crate) fn dependency() -> BuildDependency {
         artifact: "archunit-junit5".to_string(),
         version: Some("1.5.0".to_string()),
         scope: DependencyScope::Test,
+        optional: false,
     }
 }
 

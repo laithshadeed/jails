@@ -190,6 +190,7 @@ pub(super) fn seed_dependencies() -> Vec<jails_contracts::BuildDependency> {
             artifact: artifact.to_string(),
             version: Some(version.to_string()),
             scope,
+            optional: false,
         };
     vec![
         dependency(

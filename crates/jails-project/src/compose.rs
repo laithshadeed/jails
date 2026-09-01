@@ -468,6 +468,44 @@ pub fn up(root: &Path, names: &[&str], debug: bool) -> bool {
     }
 }
 
+/// `docker compose up -d` for an *exact* document, rather than for whatever
+/// `compose.yaml` says by the time the effect runs.
+///
+/// **`--file` is the committed object and `--project-directory` is the
+/// project**, and both halves are load-bearing. The effect is attempted after
+/// the transition publishes, so between the two somebody may edit the live
+/// file; running against what they wrote would start services this transition
+/// never described, and a retry would not repeat what the first attempt did.
+/// An explicit file list is also what disables compose's implicit override
+/// discovery, so `compose.override.yaml` is not read. Pointing the project
+/// directory at the object instead would silently relocate every relative bind
+/// mount in it.
+///
+/// Best-effort like [`up`]: the files are the capability, the daemon is a
+/// convenience.
+pub fn up_document(root: &Path, document: &Path, names: &[&str], debug: bool) -> bool {
+    let mut args: Vec<&str> = vec![
+        "--project-directory",
+        match root.to_str() {
+            Some(text) => text,
+            None => return false,
+        },
+        "--file",
+        match document.to_str() {
+            Some(text) => text,
+            None => return false,
+        },
+    ];
+    args.extend(up_args(names));
+    match invoke_compose(root, args, debug) {
+        Ok(()) => true,
+        Err(err) => {
+            eprintln!("jails: {err}");
+            false
+        }
+    }
+}
+
 /// `jails start [db|kafka]...` -- require compose.yaml and Docker. No args
 /// starts every service in the file.
 pub fn start(services: &[Runtime], debug: bool) -> Result<()> {

@@ -295,6 +295,7 @@ const ACTUATOR_DEPENDENCIES: &[DependencySpec] = &[DependencySpec {
     scope: DependencyScope::Compile,
     spring_managed_version: true,
     only_when_build_exists: false,
+    optional: false,
     boot: BootCondition::Any,
 }];
 
@@ -306,6 +307,7 @@ const CACHE_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Compile,
         spring_managed_version: true,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Any,
     },
     DependencySpec {
@@ -315,6 +317,7 @@ const CACHE_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Compile,
         spring_managed_version: true,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Any,
     },
 ];
@@ -326,6 +329,7 @@ const CORS_DEPENDENCIES: &[DependencySpec] = &[DependencySpec {
     scope: DependencyScope::Test,
     spring_managed_version: true,
     only_when_build_exists: false,
+    optional: false,
     boot: BootCondition::AtLeast(4),
 }];
 
@@ -337,6 +341,7 @@ const OBSERVABILITY_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Compile,
         spring_managed_version: true,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Any,
     },
     DependencySpec {
@@ -346,6 +351,7 @@ const OBSERVABILITY_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Compile,
         spring_managed_version: true,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Any,
     },
 ];
@@ -358,6 +364,7 @@ const SECURITY_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Compile,
         spring_managed_version: true,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Any,
     },
     DependencySpec {
@@ -367,6 +374,7 @@ const SECURITY_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Compile,
         spring_managed_version: true,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Any,
     },
     DependencySpec {
@@ -376,6 +384,7 @@ const SECURITY_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Test,
         spring_managed_version: true,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Any,
     },
     DependencySpec {
@@ -385,6 +394,7 @@ const SECURITY_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Test,
         spring_managed_version: true,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::AtLeast(4),
     },
 ];
@@ -396,6 +406,7 @@ const SSE_DEPENDENCIES: &[DependencySpec] = &[DependencySpec {
     scope: DependencyScope::Compile,
     spring_managed_version: true,
     only_when_build_exists: false,
+    optional: false,
     boot: BootCondition::Any,
 }];
 
@@ -407,6 +418,7 @@ const REDIS_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Compile,
         spring_managed_version: true,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Any,
     },
     DependencySpec {
@@ -416,6 +428,7 @@ const REDIS_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Test,
         spring_managed_version: false,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Any,
     },
     DependencySpec {
@@ -425,6 +438,7 @@ const REDIS_DEPENDENCIES: &[DependencySpec] = &[
         scope: DependencyScope::Test,
         spring_managed_version: true,
         only_when_build_exists: false,
+        optional: false,
         boot: BootCondition::Any,
     },
 ];
@@ -667,6 +681,7 @@ const API_DEPENDENCIES: &[DependencySpec] = &[DependencySpec {
     scope: DependencyScope::Compile,
     spring_managed_version: true,
     only_when_build_exists: false,
+    optional: false,
     boot: BootCondition::Spring,
 }];
 

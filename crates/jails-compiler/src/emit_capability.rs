@@ -63,6 +63,11 @@ struct DependencySpec {
     scope: DependencyScope,
     spring_managed_version: bool,
     only_when_build_exists: bool,
+    /// Maven's `<optional>true</optional>`. Boot's own starters mark
+    /// `spring-boot-docker-compose` and devtools this way and Spring
+    /// Initializr copies them, so a pom that omits it differs from the one the
+    /// same choices produce on start.spring.io.
+    optional: bool,
     boot: BootCondition,
 }
 
@@ -170,6 +175,7 @@ pub(crate) fn dependencies(
                 .filter(|_| spring_boot.is_none() || !dependency.spring_managed_version)
                 .map(str::to_string),
             scope: dependency.scope,
+            optional: dependency.optional,
         })
         .collect::<BTreeSet<_>>()
         .into_iter()
