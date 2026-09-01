@@ -264,7 +264,9 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // it. Both run where no `Project` exists and neither threads a
                 // root further down, which is the exemption this row records
                 // three times over now.
-                ceiling: 94,
+                // 94 -> 88 when the legacy generator stack went: six of the
+                // remaining root-taking readers were in `add` and `spring`.
+                ceiling: 88,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;
@@ -310,18 +312,6 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                         .any(|(declared, _)| declared == name)
                 })
                 .count(),
-        ),
-        (
-            Ratchet {
-                name: "functions in `spring.rs` taking over 5 parameters",
-                rung: "1 — Introduce Parameter Object (`Layers`)",
-                ceiling: 0,
-                target: 0,
-                why: "The layer packages travel one at a time because `Layers` is not a \
-                      value: a Data Clump producing connascence of position at degree 12, \
-                      which is the highest-cost coupling in Page-Jones's ranking.",
-            },
-            over_five_params(src, SPRING_RS),
         ),
         (
             Ratchet {
@@ -1034,7 +1024,11 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // read only `src/test/java` and so reported "no container
                 // config" about a project whose config sits in the managed
                 // tree the build file declares as a source root.
-                ceiling: 1634,
+                // 1634 -> 1522: `capability_drift_checks` re-planned every
+                // recorded capability through the legacy `add::plan_for`, and
+                // it was that planner's last caller. A modelled project always
+                // skipped it, and every project jails mutates is modelled.
+                ceiling: 1522,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.
@@ -1055,122 +1049,6 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 })
                 .map(production_lines)
                 .sum(),
-        ),
-        (
-            Ratchet {
-                name: "`spring.rs` lines",
-                rung: "10–11 — Extract Class; split by secret",
-                // Re-baselined once, from 3449, when the row below reached 0.
-                // While Java still lived inline, `blank` erased those bodies and
-                // this number could not see them -- so it flattered the file.
-                // With every body in `templates/spring/*.java`, what remains is
-                // genuinely Rust: the `render` call and its key list. The raw
-                // file fell 6,624 -> 5,517 in the same change and 4,596 lines
-                // became real Java an editor can check. This number is now
-                // honest, and only rung 11's split moves it.
-                // Closed by rung 11's split: `workflow`, `durable`, `http` and
-                // `schema` are now their own modules under `src/spring/`, and
-                // what is left here is the shared precondition plus the
-                // capability slices. The row below guards against the obvious
-                // way to cheat this one -- moving a monolith rather than
-                // decomposing it.
-                // 1,268 -> 688 when rung 11 finished: `dto.rs`, `messaging.rs`
-                // and `security.rs` left, and what remains is the shared
-                // preconditions plus the three small capabilities that have no
-                // second reader.
-                // 666 -> 479: `resource.rs` left, holding the Spring artifacts
-                // `g scaffold` emits -- the service, both controller shapes,
-                // their tests and the in-memory adapter. One secret nothing
-                // else here shares; `scope_controller_parts` stayed because
-                // `g query` reads it too.
-                // 479 -> 478: `add actuator` stopped writing
-                // `info.app.description=@project.description@`, a generated
-                // line whose value is always the empty string.
-                //
-                // 478 -> 480 for `add h2`, and the two lines are the `mod h2;`
-                // and `pub use h2::*;` that declare it. The capability itself
-                // is `spring/h2.rs`; this file gains exactly the fixed cost of
-                // a split, which is the shape this ratchet is asking for.
-                // 480 -> 488 for `require_mockmvc_tester`. `spring.rs`'s stated
-                // job after the split is "the shared precondition and the
-                // helpers used by more than one kind", and this is the second
-                // precondition beside `require_spring`: seven generators write
-                // a test against an API that is Spring Framework 6.2, and
-                // `jails new --gradle --boot 2.x` made older projects reachable
-                // for the first time. Putting it anywhere else would give two
-                // owners to "is this project new enough".
-                //
-                // 489 -> 522 for §1.1: `handles_duplicate_keys`, the two
-                // rendered blocks and their reasons. It belongs here for the
-                // same reason `mockmvc_template` does -- it is a question about
-                // *this project* that more than one template asks -- and the
-                // row is at a fifth of its target, so this is growth the gate
-                // is meant to allow rather than absorb.
-                //
-                // 522 -> 531 for §1.2, which *deleted* more of this file than
-                // it added: `require_mockmvc_tester`, the refusal seven
-                // generators made on a Boot 2 project, is gone because all nine
-                // of those tests have a classic `MockMvc` form now.
-                // `mockmvc_template` replaced it at about the same size, and
-                // the rise is the two render call sites it made multi-line.
-                // Most of what left was doc comment, which this row does not
-                // count.
-                //
-                // 531 -> 543 once §1.2's Boot 2 run said what the floor
-                // actually is. `require_mockmvc_tester` came back as
-                // `require_jakarta_spring` -- narrower, three kinds instead of
-                // seven, and named for `ProblemDetail`, `requestMatchers` and
-                // `JdbcClient` rather than for a test entry point -- beside
-                // `mockmvc_template` and `validation_package`, which is a third
-                // version question about *this project* that more than one
-                // template asks. Three such questions in one file is the
-                // logical cohesion this row's `why` describes rather than a
-                // regression; the row is at a fifth of its target.
-                //
-                // 545 -> 547 for `mod socket;`, 547 -> 549 for `mod presence;`,
-                // 549 -> 551 for `mod seed;` and 551 -> 553 for
-                // `mod endpoint;`, each with its re-export -- the same two
-                // lines a new submodule always costs here. 553 -> 554 for
-                // `mod support;`, which needs no re-export: `TestSupport` is
-                // named by three generators in this crate, and asking where a
-                // project's container config lives is a question about test
-                // wiring rather than a thing `require_spring` gates. `Endpoint` went
-                // into a module rather than into this file precisely because
-                // this row asked: as three lines of struct plus an impl it
-                // took the number to 564. The row is a
-                // measure of what `spring.rs` *holds*, and it holds nothing
-                // more than it did.
-                //
-                // 556 -> 558 for `mod join;` and its re-export: which component
-                // of a child references a parent is one question, and it was
-                // answered inside `query` while `usecase --via` needed the
-                // same answer from the other side. Two copies of a derivation
-                // is two derivations, and the one that differs is the one
-                // nobody tested. Two lines for a shared secret, again.
-                //
-                // 554 -> 556 for `mod pin;` and its re-export: resolving a
-                // `--set` literal against the declared type of the component
-                // it pins is a secret of its own -- two recipes ask it, and
-                // the answer needs the enum on disk rather than the request.
-                // The same two lines every submodule costs here, and the same
-                // shape this row wants rather than the one it stops.
-                // 543 -> 545 for `mod identity;` and its re-export. That is
-                // the *cure* this row asks for showing up as two lines: the
-                // time-ordered identifier is a new secret and it went into
-                // its own module rather than into this file. A submodule
-                // declaration costing two lines is not the growth the gate
-                // exists to stop.
-                ceiling: 558,
-                target: 2500,
-                why: "Logical cohesion: one file for everything sharing the `require_spring` \
-                      precondition. abstract.md §6.2 says turning that precondition into data \
-                      dissolves the file along real seams. Counted as lines of *decisions*: \
-                      test modules are blanked, which is the number plan.md §6.2 C sets its \
-                      2,500 target against.",
-            },
-            src.iter()
-                .find(|file| file.path.ends_with(SPRING_RS))
-                .map_or(0, production_lines),
         ),
         (
             Ratchet {
@@ -1359,17 +1237,6 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       added to a compatibility projection read as an accepted design.",
             },
             modules_without_a_module_doc(src),
-        ),
-        (
-            Ratchet {
-                name: "inline Java bodies in `spring.rs` (`r#\"package `)",
-                rung: "10 — templates out of `spring.rs`",
-                ceiling: 0,
-                target: 0,
-                why: "Every brace doubled, and no editor or compiler can check it. This is \
-                      the exact tax `src/template.rs` exists to remove.",
-            },
-            inline_java_bodies(src),
         ),
         (
             Ratchet {

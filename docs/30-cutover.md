@@ -70,6 +70,24 @@ quoting it as a differential.
 
 # Open items
 
+**The legacy generator stack is deleted.** `jails-generate` was 23,809 lines
+across `generate`'s per-kind recipes, `spring`'s Boot-only kinds and
+capabilities, and `add`'s capability planner; it is 1,324, and what survives is
+not a generator -- the write path's byte-keyed rules and the field spec's SQL
+projection, which the binary and `jails-report`'s schema lineage still call.
+
+**The anchor was `doctor`, not `jails g`.** Every advertised kind has compiled
+through `jails-compiler` for some time and `Command::Generate` has no legacy
+branch, but rustc cannot see across a crate boundary: a `pub` item in a library
+is never dead code, so the twenty-nine ratchets that police this tree were
+blind to all of it. What kept it *genuinely* reachable was one call --
+`doctor::capability_drift_checks` re-planning each recorded capability through
+`add::plan_for`. That branch returns early for a modelled project, and `jails
+add`, `add dependency` and `sync` all seed a model before they act, so it could
+only fire on a project this jails can no longer produce. Removing it made the
+whole stack unreachable, and then the in-crate dead-code pass named the rest.
+
+
 **P13.2 Five production files parse Maven XML; the design asks for one.**
 `jails-project/src/pom.rs` is the path being replaced;
 `jails-workspace/src/{capture,documents}.rs` and `documents/build_feature.rs`

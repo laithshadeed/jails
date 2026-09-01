@@ -84,7 +84,6 @@ fn owns_terminal_output(path: &Path) -> bool {
         || relative == "crates/jails-project/src/inspect.rs"
         || relative == "crates/jails-project/src/project.rs"
         || relative == "crates/jails-generate/src/generate.rs"
-        || relative == "crates/jails-generate/src/generate/recipes.rs"
         || relative.starts_with("crates/jails-drive/src/")
         || relative.starts_with("crates/jails-report/src/")
         // The two commands that run *before* a project has a model. Both
@@ -221,7 +220,6 @@ fn every_path_a_gate_names_is_a_file_the_scanner_found() {
     for (constant, path) in [
         ("BUILTIN_RS", BUILTIN_RS),
         ("WIRE_RS", WIRE_RS),
-        ("SPRING_RS", SPRING_RS),
         ("CODEMOD_RS", CODEMOD_RS),
         ("GIT_RS", GIT_RS),
         ("DOCTOR_RS", DOCTOR_RS),
@@ -481,11 +479,8 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-project", "generated_files", 5),
     ("jails-project", "inspect", 5),
     // jails-generate: everything that decides what Java to write.
-    ("jails-generate", "architecture", 6),
     ("jails-generate", "sql", 6),
     ("jails-generate", "generate", 6),
-    ("jails-generate", "spring", 6),
-    ("jails-generate", "add", 6),
     // jails-prepare: turning desire into an exact executable transition.
     ("jails-prepare", "command", 6),
     ("jails-prepare", "desire", 6),
@@ -923,29 +918,6 @@ const DEFAULT_BRANCH_IS_EXECUTED: &[(&str, &str)] = &[
     (
         "crates/jails-compiler/src/emit_resource_http.rs",
         "canonical_scaffold_http_compiles_and_passes_on_real_maven",
-    ),
-    (
-        "crates/jails-generate/src/generate/recipes.rs",
-        "generate_scaffold_produces_a_project_that_compiles_and_passes_tests",
-    ),
-    (
-        "crates/jails-generate/src/generate/web.rs",
-        "generate_scaffold_produces_a_project_that_compiles_and_passes_tests",
-    ),
-    (
-        "crates/jails-generate/src/spring.rs",
-        "standalone_generators_companion_tests_compile_and_pass",
-    ),
-    // Both capabilities are installed into the same Boot 4 toolbox that test
-    // asserts against, and `add h2`'s default branch is a console module that
-    // exists only on Boot 4.
-    (
-        "crates/jails-generate/src/spring/h2.rs",
-        "add_cors_on_the_default_boot_version_compiles_and_runs_its_own_test",
-    ),
-    (
-        "crates/jails-generate/src/spring/security.rs",
-        "add_cors_on_the_default_boot_version_compiles_and_runs_its_own_test",
     ),
     (
         "crates/jails-project/src/gradle.rs",

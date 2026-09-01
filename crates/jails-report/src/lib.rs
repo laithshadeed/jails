@@ -49,7 +49,6 @@ pub mod why_subject;
 // project has no `.jails/ledger.toml` to read. There is no canonical report to
 // write first: the canonical answers are `jails model status`, `model doctor`
 // and `model explain`, and they already exist.
-pub(crate) use jails_generate::add;
 pub(crate) use jails_java::{java, template};
 pub(crate) use jails_project::{compose, inspect, maven, model, pom};
 pub(crate) use jails_spec::build;

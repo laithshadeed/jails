@@ -508,19 +508,6 @@ pub(crate) fn count_matches(src: &[Source], needle: &str) -> usize {
         .sum()
 }
 
-/// Count `fn` declarations in one file whose parameter list exceeds five.
-pub(crate) fn over_five_params(src: &[Source], file_suffix: &str) -> usize {
-    src.iter()
-        .filter(|file| file.path.ends_with(file_suffix))
-        .map(|file| {
-            fn_param_counts(&file.production)
-                .into_iter()
-                .filter(|(_, count)| *count > 5)
-                .count()
-        })
-        .sum()
-}
-
 /// Every `fn` in blanked Rust, with the number of top-level parameters.
 pub(crate) fn fn_param_counts(blanked: &str) -> Vec<(String, usize)> {
     let bytes = blanked.as_bytes();
@@ -1103,16 +1090,6 @@ pub(crate) const WIRE_RS: &str = "jails-support/src/codec/wire.rs";
 /// "target withdrawn" already says.
 pub(crate) const HAND_WRITTEN_CODECS: usize = 90;
 
-/// The `spring.rs` these two rows are about.
-///
-/// The **path**, not the basename. `src/new/spring.rs` is a different file --
-/// `jails new`'s Spring half, split out under `pending.md` §8.1 -- and a gate
-/// matching `ends_with("spring.rs")` counted its functions against
-/// `jails-generate`'s ceiling the moment it appeared. Two rows went red for a
-/// file neither of them is about, which is the same failure `module_of`
-/// carried until §10.3: a name is not an identity.
-pub(crate) const SPRING_RS: &str = "jails-generate/src/spring.rs";
-
 /// The other three files a gate here names. Paths for the same reason: a
 /// second `doctor.rs` or `codemod.rs` anywhere in the workspace would silently
 /// join or leave the set its gate measures, and the gate would report a number
@@ -1178,7 +1155,11 @@ pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 // type the way it had.
 // 375 -> 369, the same consequence: six more unknown-tag refusals that named
 // no next step went with the codecs that built them.
-pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 369;
+// 369 -> 325: the legacy generator stack went, and forty-four of its refusals
+// with it -- a `g scaffold` that cannot map a field type, an `add` that cannot
+// plan a capability, a recipe refusing a flag combination. None of them can be
+// reached now that every kind and capability compiles.
+pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 325;
 
 /// A refusal that builds a message and does not say what to do next.
 ///
@@ -1458,20 +1439,6 @@ pub(crate) fn modules_without_a_module_doc(src: &[Source]) -> usize {
             !text.trim_start_matches(['\u{feff}']).starts_with("//!")
         })
         .count()
-}
-
-pub(crate) fn inline_java_bodies(src: &[Source]) -> usize {
-    // Counted on the *raw* source: `blank` deliberately erases these bodies,
-    // which is what makes them invisible to every other measurement here.
-    src.iter()
-        .filter(|file| file.path.ends_with(SPRING_RS))
-        .map(|file| {
-            fs::read_to_string(&file.path)
-                .expect("spring.rs was read once already")
-                .matches("r#\"package ")
-                .count()
-        })
-        .sum()
 }
 
 /// How much of the Java jails writes is comment, as a percentage of the

@@ -17,17 +17,6 @@ use jails_support::Result;
 use jails_support::apply::Tree;
 use std::path::Path;
 
-/// Whether this change writes an integration test and therefore needs the
-/// Failsafe plugin. Derived from the planned files so a recipe cannot forget.
-pub(crate) fn writes_an_it(artifacts: &[Artifact]) -> bool {
-    artifacts.iter().any(|a| {
-        a.path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.ends_with("IT.java"))
-    })
-}
-
 /// The Boot 4 package `@WebMvcTest` and `@AutoConfigureMockMvc` moved to.
 ///
 /// Matched in the *bytes about to be written* rather than per generator, for
@@ -43,13 +32,6 @@ pub fn writes_a_webmvc_test(artifacts: &[Artifact]) -> bool {
     artifacts
         .iter()
         .any(|artifact| artifact.contents.contains(WEBMVC_TEST_PACKAGE))
-}
-
-/// Did this batch write anything under `src/test`?
-pub(crate) fn writes_a_test(artifacts: &[Artifact]) -> bool {
-    artifacts
-        .iter()
-        .any(|a| a.path.to_string_lossy().contains("src/test/java"))
 }
 
 /// Write a file jails is creating, into the staging tree of a project being
@@ -157,58 +139,6 @@ package {pkg};
 import org.jspecify.annotations.NullMarked;
 "#
     )
-}
-
-/// The `package-info.java` files this artifact list would cause to be
-/// written, as artifacts in their own right.
-///
-/// `write_new_file` creates these as a side effect of writing a class, which
-/// made them **invisible**: `--pretend` listed two files and `generate` then
-/// wrote three. A preview that does not name every write is not a preview,
-/// and it is the one command whose entire job is to tell you what will
-/// happen.
-///
-/// Planning them here rather than teaching the preview to predict the side
-/// effect is the point -- a second piece of code guessing what the first will
-/// do is exactly the drift this costs elsewhere. They are prepended to the
-/// plan so each lands before the class that needed it, at which point
-/// `ensure_package_info` finds the file present and does nothing.
-pub(crate) fn planned_package_infos(
-    root: &Path,
-    pom: &str,
-    artifacts: &[Artifact],
-) -> Vec<Artifact> {
-    if !jspecify_available(pom) {
-        return Vec::new();
-    }
-    let mut planned = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    for artifact in artifacts {
-        if artifact.path.extension().is_none_or(|e| e != "java") {
-            continue;
-        }
-        let Some(dir) = artifact.path.parent() else {
-            continue;
-        };
-        // Main sources only: a nullness contract on tests buys nothing and
-        // would put one of these in every test package.
-        if !dir.to_string_lossy().contains("src/main/java") {
-            continue;
-        }
-        let info = dir.join("package-info.java");
-        if info.exists() || !seen.insert(info.clone()) {
-            continue;
-        }
-        let Some(pkg) = package_of_dir(root, dir) else {
-            continue;
-        };
-        planned.push(Artifact {
-            kind: "package-info",
-            path: info,
-            contents: package_info_java(&pkg),
-        });
-    }
-    planned
 }
 
 /// Whether `org.jspecify:jspecify` is a declared dependency.

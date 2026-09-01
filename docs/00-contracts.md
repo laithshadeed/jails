@@ -394,14 +394,17 @@ the kernel lost 5,104 lines to the wire-format deletions, and its replacement
 gained 919. A ratio between a column being deleted and a column being built
 moves on its own. Cite the mechanism, not the multiple.
 
-**A4.2 — the generation simplification has not happened, and the honest
-measurement of that is the canonical side against itself.** 619 production
-lines per generator-or-capability when this was written, over 41 units
-covered; **585 over 64** today. The per-unit cost fell 5% while coverage rose
-by half, which is the right direction and nowhere near the claim. The cause is
-unchanged and is A3.14: moving string assembly into a new crate does not make
-it cheaper. The one place a real IR exists -- `Pack` -- is also the one place
-legacy and canonical share templates and cannot drift.
+**A4.2 — the per-unit cost is still the honest measurement, but half the
+tree it was measured against is gone.** 619 production lines per
+generator-or-capability when this was written over 41 units covered; **585 over
+64** before the legacy stack was deleted. That per-unit figure was never the
+whole claim, because both implementations were still being counted: the legacy
+`jails-generate` was 23,809 lines and is **1,324**, since the compiler emits
+every kind and capability and `doctor` was the legacy planner's last caller.
+The cause A3.14 names is unchanged for the canonical side -- moving string
+assembly into a new crate does not make it cheaper -- and the one place a real
+IR exists is `Pack`. What changed is that there is no second renderer to add
+to it.
 
 **Do not restate this as a legacy-versus-canonical comparison**, which is what
 it was and what the numbers no longer support. Per unit the legacy generation

@@ -12981,7 +12981,7 @@ entity Visit {
     let recorded = jails_cmd(&root, None).arg("doctor").output().unwrap();
     let recorded = String::from_utf8_lossy(&recorded.stdout).to_string();
     assert!(
-        recorded.contains("declared in the model, not `jails.toml`"),
+        recorded.contains("declared in the model"),
         "the capability row must not claim a model-declared capability is absent:\n{recorded}"
     );
     assert!(

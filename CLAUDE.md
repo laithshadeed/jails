@@ -358,10 +358,13 @@ never route a canonical project through the legacy property ledger.
 
 ## Legacy workspace during cutover
 
-Thirteen legacy crates coexist with the four canonical crates above, plus two
+Twelve legacy crates coexist with the four canonical crates above, plus two
 leaf crates that belong to neither ladder: `jails-codec-derive` (the
 `#[derive(Codec)]` proc macro) and `jails-codemod` (the marked block, with no
-dependencies at all). Nineteen in total. A crate
+dependencies at all). **Eighteen in total, and the count is the news**:
+`jails-engine` is gone, and `jails-generate` is a tenth of its former size --
+what is left of it is the write path and the SQL projection, not a generator.
+A crate
 may only depend on one below it, and Cargo enforces that;
 `no_module_depends_on_a_layer_above_its_own` in
 `tests/architecture/` enforces the same rule for module-level edges the
@@ -378,7 +381,7 @@ module belongs to** — this one is the prose, and prose is what goes stale.
 | `jails-state` | **jails' own machine state, read and classified**: `compat` (absent / current / unreadable, never a fourth answer that quietly repairs something) and `listing` (what a directory holds). Below the Java project on purpose — `jails-commit` needs both and neither is about Java. |
 | `jails-protocol` | **the plan/transition/effect vocabulary** — `Recipe`, `FieldSpec`, `EntityId`, `ResourceKey` and the intent, durable and observation values above them. One constructor per type, and every wire decoder calls it, so a value rejected at the CLI cannot arrive through a recovered journal instead. 43 modules under five heads (`vocabulary`, `intent`, `durable`, `observe`, `compatibility`); §7.4 of `pending.md` groups them. The validating newtypes are one crate lower, in `jails-support` — see below. |
 | `jails-project` | one resolved `model::Project`, plus every file jails writes *about* a project — the reader's (`config`, `compose`, `pom`, `gradle`) and the read-only `projection` of jails' own. `compat` is `jails-state`'s, one row up; this said both. |
-| `jails-generate` | everything that decides what Java to write: `generate`, `spring`, `add`, `sql`. Its planning half (`plan_for`, `artifacts_for`) is what the engine calls and is pure. |
+| `jails-generate` | **1,324 lines of what is left**: the write path's byte-keyed rules (`generate::write_new_file`) and `sql`, the field spec's SQL/JDBC projection. `generate`'s dispatch, `spring` and `add` are deleted -- the compiler emits every kind and capability, and `doctor` was the legacy planner's last caller. |
 | `jails-prepare` | **turning semantic desire into an exact executable transition**: `desire`, `reconcile`, `pipeline`, `merge`, `sandbox`, `report`. Plan-only — nothing here creates `.jails/` or commits anything. Everything a commit needs to *decide* is decided here, so the executor applies a value rather than re-deriving one. |
 | `jails-commit` | **making a prepared transition durable, and recovering one**: `store`, `journal`, `execute`, `activate`, `recover`, `gc`. Crash recovery rolls a fully persisted, validated journal *forward*; preimages exist for a guarded explicit abort and for audit, not as the crash policy. That is what keeps this crate small — there is one direction to finish in. |
 | `jails-report` | commands that **answer a question**: `doctor`, `why`, `explain`, `source`, `commands`. Read-only by contract, and the contract is structural — this crate sits *below* `jails-drive`, so a reporting command that started something would not compile. |
@@ -745,16 +748,17 @@ Five things to know before touching it:
   stop or write anything, so it stays safe to run mid-debug. (`jails setup` is
   a different command and does write, to `~/.testcontainers.properties`, which
   is why it goes through `apply::put_outside_project`.)
-  **`capability_drift_checks` re-plans rather than re-derives**: for every
-  capability `jails.toml` records it calls `add::plan_for` — planning is pure,
-  no writes, no subprocesses — and reports any dependency, file, property or
-  compose service the plan wants and the project lacks, with `fix: jails sync`.
-  Deriving it is what lets `doctor` notice a generated file somebody deleted;
-  hand-written checks cannot, because only `add` knows what a capability
-  installs. The hand-written ones stay for the two things derivation cannot
-  cover: projects with **no** recorded capability list, where there is nothing
-  to derive from, and failure modes no plan can express (two Jackson majors,
-  podman's socket). Every `FAIL`
+  **`capability_drift_checks` is one `Skip` now, and that is the cutover.** It
+  re-planned every capability `jails.toml` recorded through `add::plan_for`,
+  which is what let `doctor` notice a generated file somebody deleted. A
+  *modelled* project always skipped it, and `jails add`, `add dependency` and
+  `sync` all seed a model before they do anything -- so the branch could only
+  fire on a project this jails can no longer produce, while being the last
+  caller of the legacy capability planner. Deleting it took `add`, `spring` and
+  the per-kind generators with it. Drift in a modelled project is the model's
+  question, answered by compiling: `jails sync`. The hand-written checks stay
+  for the failure modes no plan could express (two Jackson majors, podman's
+  socket). Every `FAIL`
   carries a `fix:` line (an integration test asserts this), and a failure
   exits non-zero via an *empty* `Err` so `main` prints no redundant
   `jails: ` line.

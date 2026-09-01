@@ -213,171 +213,28 @@ fn template_override_checks() -> Vec<Check> {
     ]
 }
 
-/// Every capability `jails.toml` records, re-planned against today's project.
+/// Capability drift is the model's business now.
 ///
-/// This is the check `doctor` could not write for its whole life, and the
-/// reason is structural rather than an oversight: `add` knew which dependency,
-/// property, file and compose service each capability installs, and `doctor`
-/// could not reach that knowledge, so it re-encoded the parts it needed by
-/// reading the project back off disk. abstract.md §4.2 names it Feature Envy
-/// at module scale, and points out the sharp consequence -- the drift
-/// `tests/agreement.rs` catches between `generate` and `destroy` has an exact
-/// sibling between `add` and `doctor` that **nothing** catches, because there
-/// was no shared value to compare.
+/// This check existed because `add` knew what each capability installs and
+/// `doctor` did not, so it re-derived the parts it needed by reading the
+/// project back off disk -- abstract.md §4.2's Feature Envy at module scale.
+/// It was answered by re-planning each recorded capability through
+/// `add::plan_for`.
 ///
-/// `add::plan_for` is that shared value. Planning is pure, so asking it what a
-/// capability *would* install costs nothing and writes nothing, and the delta
-/// against what is actually there is the report.
-///
-/// What this deliberately does **not** do is replace the hand-written checks.
-/// A derived check knows a dependency is missing; it does not know that two
-/// Jackson majors on one classpath is a silent disaster, or that podman's
-/// socket is somewhere Testcontainers will not look. Those are environment and
-/// interaction facts no plan can carry, and abstract.md §6.2 says exactly that:
-/// what survives is the checks that probe the environment.
+/// **There is nothing left to re-plan.** `jails add`, `add dependency` and
+/// `sync` all seed a model before they do anything, so every project jails
+/// mutates records its capabilities in the model rather than in
+/// `[project] capabilities`, and `jails sync` reconciles them by compiling.
+/// The branch that read `jails.toml` could only fire on a project this jails
+/// can no longer produce, and it was the last caller of the legacy capability
+/// planner.
 fn capability_drift_checks(project: &Project) -> Vec<Check> {
-    use clap::ValueEnum as _;
-
-    // This check reads `jails.toml`, and a modelled project records its
-    // capabilities in the model. See `Project::is_modelled`.
-    if project.is_modelled() {
-        let detail = "declared in the model, not `jails.toml` -- reconciled by `jails sync`";
-        return vec![Check::new(Status::Skip, "capabilities", detail)];
-    }
-    let recorded = project.capabilities();
-    if recorded.is_empty() {
-        return vec![Check::new(
-            Status::Skip,
-            "capabilities",
-            "jails.toml records none -- nothing to reconcile",
-        )];
-    }
-
-    let properties = std::fs::read_to_string(
-        project
-            .root()
-            .join("src/main/resources/application.properties"),
-    )
-    .unwrap_or_default();
-    let compose = std::fs::read_to_string(project.root().join("compose.yaml")).unwrap_or_default();
-
-    let mut checks = Vec::new();
-    for label in recorded {
-        let Some(capability) = crate::Capability::value_variants()
-            .iter()
-            .find(|candidate| candidate.label() == label)
-        else {
-            checks.push(
-                Check::new(
-                    Status::Warn,
-                    "capability",
-                    format!("jails.toml records `{label}`, which this jails does not know"),
-                )
-                .fix(format!(
-                    "remove it from [project] capabilities, or upgrade jails: jails remove {label}"
-                )),
-            );
-            continue;
-        };
-
-        // A capability that no longer *plans* is a finding in itself: it was
-        // applied to a project that has since changed shape under it.
-        let plan = match crate::add::plan_for(*capability, project) {
-            Ok(plan) => plan,
-            Err(error) => {
-                checks.push(
-                    Check::new(
-                        Status::Fail,
-                        format!("capability {label}"),
-                        format!("recorded, but can no longer be planned: {error}"),
-                    )
-                    .fix(format!("jails remove {label}")),
-                );
-                continue;
-            }
-        };
-
-        let mut missing = Vec::new();
-        for dep in &plan.deps {
-            // `Some(false)` only. A build file jails cannot read fully answers
-            // `None`, and reporting that as a missing dependency would be
-            // doctor inventing a defect -- the failure mode this check exists
-            // to catch, pointed the wrong way. Silence is the honest report
-            // for a question that cannot be answered.
-            if project.declares_dependency(dep.group_id, dep.artifact_id) == Some(false) {
-                missing.push(format!("dependency {}:{}", dep.group_id, dep.artifact_id));
-            }
-        }
-        for file in &plan.files {
-            if !file.path.exists() {
-                missing.push(format!(
-                    "file {}",
-                    file.path
-                        .strip_prefix(project.root())
-                        .unwrap_or(&file.path)
-                        .display()
-                ));
-            }
-        }
-        for property in &plan.properties {
-            // A capability's property block is prose *and* settings: `add
-            // cors` writes a line saying never to pair `*` with credentials,
-            // and `add db` one saying jails starts compose itself. Reading a
-            // comment as a required key made `doctor` demand a property whose
-            // name was an English sentence, and no amount of `app apply`
-            // could satisfy it.
-            let line = property.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let key = line.split('=').next().unwrap_or_default().trim();
-            // Only whole keys, and only outside comments: a commented example
-            // naming the key is not the key being set.
-            if !key.is_empty()
-                && !properties.lines().any(|line| {
-                    let line = line.trim();
-                    !line.starts_with('#')
-                        && line
-                            .split('=')
-                            .next()
-                            .is_some_and(|current| current.trim() == key)
-                })
-            {
-                missing.push(format!("property {key}"));
-            }
-        }
-        for service in &plan.compose {
-            if !compose.contains(&format!("{}:", service.name)) {
-                missing.push(format!("compose service {}", service.name));
-            }
-        }
-
-        if missing.is_empty() {
-            checks.push(Check::new(
-                Status::Ok,
-                format!("capability {label}"),
-                "everything it installs is present",
-            ));
-        } else {
-            let shown = missing.len().min(3);
-            let more = missing.len() - shown;
-            let detail = format!(
-                "{} missing: {}{}",
-                missing.len(),
-                missing[..shown].join(", "),
-                if more > 0 {
-                    format!(", and {more} more")
-                } else {
-                    String::new()
-                }
-            );
-            checks.push(
-                Check::new(Status::Fail, format!("capability {label}"), detail)
-                    .fix("jails sync".to_string()),
-            );
-        }
-    }
-    checks
+    let _ = project;
+    vec![Check::new(
+        Status::Skip,
+        "capabilities",
+        "declared in the model -- reconciled by `jails sync`",
+    )]
 }
 
 fn project_check(project: &Project) -> Check {
@@ -732,41 +589,6 @@ mod tests {
                 check.detail
             );
         }
-    }
-
-    /// The drift class that had no test because it had no shared value.
-    ///
-    /// `add` knew what `json` installs; `doctor` could not ask. So a project
-    /// whose `jails.toml` still lists a capability while its dependency or its
-    /// generated file has gone reported nothing at all. Now `doctor` re-plans
-    /// the capability through `add::plan_for` and diffs.
-    #[test]
-    fn a_recorded_capability_missing_its_own_output_is_reported() {
-        let root = jails_support::scratch::ScratchDir::in_temp("jails-doctor-drift")
-            .unwrap()
-            .keep();
-        std::fs::create_dir_all(root.join("src/main/java/com/example/demo")).unwrap();
-        std::fs::write(
-            root.join("src/main/java/com/example/demo/App.java"),
-            "package com.example.demo;\npublic final class App {}\n",
-        )
-        .unwrap();
-        std::fs::write(root.join("pom.xml"), "<project></project>").unwrap();
-        // Recorded as installed, with none of it actually present.
-        std::fs::write(
-            root.join("jails.toml"),
-            "[project]\ncapabilities = [\"json\"]\n",
-        )
-        .unwrap();
-
-        let project = Project::inspect(&root).unwrap();
-        let checks = capability_drift_checks(&project);
-        assert_eq!(checks.len(), 1, "{}", checks.len());
-        assert_eq!(checks[0].status, Status::Fail);
-        assert!(checks[0].detail.contains("missing"), "{}", checks[0].detail);
-        assert_eq!(checks[0].fix, "jails sync");
-
-        std::fs::remove_dir_all(&root).ok();
     }
 
     /// A project that records nothing has nothing to reconcile, and saying so
