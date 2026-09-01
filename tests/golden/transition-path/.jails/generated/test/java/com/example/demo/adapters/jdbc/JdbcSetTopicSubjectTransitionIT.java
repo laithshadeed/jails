@@ -27,10 +27,11 @@ class JdbcSetTopicSubjectTransitionIT {
     @Test
     void writesThroughTheRealDatabase() {
         Topic stored = repository.save(new Topic(1L, 1L, "sample", 1L));
-        Topic answered = operation.execute(stored.userId(), new SetTopicSubjectTransition.Input("sample"));
+        Topic answered = operation.execute(stored.userId(), new SetTopicSubjectTransition.Input("sample"), stored.version());
 
-        // `returning` answers with the row the statement wrote, so a null
-        // here means it matched none -- which is the failure worth catching.
+        // `returning` answers with the row the statement wrote, so an empty
+        // answer here means it matched none -- which is the failure worth
+        // catching.
         assertThat(answered).isNotNull();
     }
 

@@ -27,19 +27,24 @@ pub(super) const DEPENDENCIES: &[(&str, &str)] = &[
     ("org.springframework.boot", "spring-boot-starter-actuator"),
 ];
 
-const PORT: &str = include_str!("../../../../templates/spring/fetcher_port_java.java");
-const ADAPTER: &str = include_str!("../../../../templates/spring/safe_fetcher_java.java");
-const TEST: &str = include_str!("../../../../templates/spring/safe_fetcher_test_java.java");
+const PORT: crate::Template = crate::template!("spring/fetcher_port_java.java");
+const ADAPTER: crate::Template = crate::template!("spring/safe_fetcher_java.java");
+const TEST: crate::Template = crate::template!("spring/safe_fetcher_test_java.java");
 
-pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitted>, CompileError> {
+pub(super) fn files(
+    model: &AppModel,
+    component: &Component,
+    templates: &jails_contracts::TemplateOverrides,
+) -> Result<Vec<Emitted>, CompileError> {
     let name = &component.name;
     let pkg = package(model, Package::Clients);
     let property = component.label.replace('_', "-");
-    let substitute = |template: &str| {
-        template
+    let substitute = |template: crate::Template| -> Result<String, CompileError> {
+        let template = template.resolve(templates)?;
+        Ok(template
             .replace("{{pkg}}", &pkg)
             .replace("{{name}}", name)
-            .replace("{{property}}", &property)
+            .replace("{{property}}", &property))
     };
     Ok(vec![
         java(
@@ -50,7 +55,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             false,
             // The port is managed ABI: every generated caller names it.
             false,
-            substitute(PORT),
+            substitute(PORT)?,
         )?,
         java(
             component,
@@ -59,7 +64,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             &format!("Safe{name}Fetcher"),
             false,
             true,
-            substitute(ADAPTER),
+            substitute(ADAPTER)?,
         )?,
         java(
             component,
@@ -68,7 +73,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             &format!("Safe{name}FetcherTest"),
             true,
             true,
-            substitute(TEST),
+            substitute(TEST)?,
         )?,
     ])
 }

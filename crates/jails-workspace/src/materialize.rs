@@ -1144,6 +1144,17 @@ primary_key = true
                 }
             }
         }
+        // A sealed migration's bytes are elided for the same reason, and the
+        // digest beside them in `migrations` is what this golden is about.
+        if let Some(sealed) = parsed
+            .get_mut("migration_bytes")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            for bytes in sealed.values_mut() {
+                let length = bytes.as_array().map_or(0, Vec::len);
+                *bytes = serde_json::json!(format!("<{length} bytes elided>"));
+            }
+        }
         let encoded = serde_json::to_string_pretty(&parsed).unwrap() + "\n";
 
         if std::env::var_os("UPDATE_GOLDEN").is_some() {

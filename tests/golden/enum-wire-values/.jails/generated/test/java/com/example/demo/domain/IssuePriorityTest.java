@@ -22,4 +22,19 @@ class IssuePriorityTest {
     void declaresEveryConstantExactlyOnce() {
         assertEquals(3, IssuePriority.values().length);
     }
+
+    @Test
+    void roundTripsEveryWireValue() {
+        assertEquals("-", IssuePriority.NONE.wire());
+        assertEquals(IssuePriority.NONE, IssuePriority.fromWire("-"));
+        assertEquals("!", IssuePriority.HIGH.wire());
+        assertEquals(IssuePriority.HIGH, IssuePriority.fromWire("!"));
+        assertEquals("!!", IssuePriority.URGENT.wire());
+        assertEquals(IssuePriority.URGENT, IssuePriority.fromWire("!!"));
+    }
+
+    @Test
+    void rejectsAnUnknownWireValue() {
+        assertThrows(IllegalArgumentException.class, () -> IssuePriority.fromWire("nope"));
+    }
 }

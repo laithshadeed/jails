@@ -6,7 +6,7 @@ use jails_model::Package;
 const KAFKA_FILES: &[JavaFile] = &[
     JavaFile {
         suffix: "config",
-        template: include_str!("../../../../templates/spring/kafka_config_java.java"),
+        template: crate::template!("spring/kafka_config_java.java"),
         before_boot: None,
         source_set: SourceSet::Main,
         class_name: kafka_config_class,
@@ -14,7 +14,7 @@ const KAFKA_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "non_retryable",
-        template: include_str!("../../../../templates/spring/non_retryable_exception_java.java"),
+        template: crate::template!("spring/non_retryable_exception_java.java"),
         before_boot: None,
         source_set: SourceSet::Main,
         class_name: non_retryable_exception_class,
@@ -22,7 +22,7 @@ const KAFKA_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "config_test",
-        template: include_str!("../../../../templates/spring/kafka_config_test_java.java"),
+        template: crate::template!("spring/kafka_config_test_java.java"),
         before_boot: None,
         source_set: SourceSet::Test,
         class_name: kafka_config_test_class,
@@ -30,9 +30,7 @@ const KAFKA_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "testcontainers_config",
-        template: include_str!(
-            "../../../../templates/spring/kafka_testcontainers_config_java.java"
-        ),
+        template: crate::template!("spring/kafka_testcontainers_config_java.java"),
         before_boot: None,
         source_set: SourceSet::Test,
         class_name: kafka_testcontainers_config_class,
@@ -43,7 +41,7 @@ const KAFKA_FILES: &[JavaFile] = &[
 const MAIL_FILES: &[JavaFile] = &[
     JavaFile {
         suffix: "mailer",
-        template: include_str!("../../../../templates/spring/mailer_java.java"),
+        template: crate::template!("spring/mailer_java.java"),
         before_boot: None,
         source_set: SourceSet::Main,
         class_name: mailer_class,
@@ -51,7 +49,7 @@ const MAIL_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "mailer_it",
-        template: include_str!("../../../../templates/spring/mailer_it_java.java"),
+        template: crate::template!("spring/mailer_it_java.java"),
         before_boot: None,
         source_set: SourceSet::IntegrationTest,
         class_name: mailer_it_class,

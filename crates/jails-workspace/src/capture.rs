@@ -36,7 +36,10 @@ use std::path::Path;
 
 mod observe;
 
-use observe::{build_artifact_id, declared_dependencies, junit_version, spring_boot_version};
+use observe::{
+    build_artifact_id, declared_dependencies, junit_version, spring_boot_version,
+    template_overrides,
+};
 pub use observe::{observe_build_system, observe_spring_boot};
 
 const MANAGED_ROOT: &str = ".jails/generated";
@@ -382,6 +385,7 @@ fn capture_model_state(
         snapshot.accepted_migrations = accepted.migrations;
         snapshot.accepted_migration_bytes = accepted.migration_bytes;
     }
+    snapshot.template_overrides = template_overrides(root);
     snapshot.project = project;
     snapshot.migration_history = capture_migration_history(root, &mut files, &mut preconditions)?;
     snapshot.preconditions = preconditions;

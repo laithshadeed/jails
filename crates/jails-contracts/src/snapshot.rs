@@ -87,12 +87,15 @@ pub struct ProjectFacts {
     pub layout: Layout,
     /// The JUnit version this project declares, if it declares one.
     ///
-    /// **`test --fast` needs it and cannot guess it.** The console launcher's
-    /// artifact must be the same version as the project's own JUnit: a
-    /// mismatch resolves fine and dies at run time with `NoSuchMethodError`
-    /// wrapped in "versions not properly aligned". Under a Spring Boot parent
-    /// the version is managed and this stays `None`; on a plain build it is
-    /// the only thing that makes the capability declarable at all.
+    /// **`test --fast` needs it and cannot guess it.** It is the version
+    /// `junit-platform-console` must be declared at, which is *not* always the
+    /// version the project declares: JUnit 5 paired jupiter `5.y.z` with
+    /// platform `1.y.z`, and from JUnit 6 `junit-bom` gives them one number.
+    /// Getting it wrong either fails to resolve or dies at run time with a
+    /// `NoSuchMethodError` wrapped in "versions not properly aligned". Under a
+    /// Spring Boot parent or an imported `junit-bom` something else manages
+    /// it and this stays `None`; on a plain build it is the only thing that
+    /// makes the capability declarable at all.
     #[serde(default)]
     pub junit: Option<String>,
     /// The identity this project's build declares for itself.
@@ -225,6 +228,13 @@ pub struct WorkspaceSnapshot {
     pub owned_patches: OwnedPatchState,
     pub preconditions: SnapshotPreconditions,
     pub files: BTreeMap<ProjectPath, CapturedFile>,
+    /// Reader-authored replacements for jails' own Java templates.
+    ///
+    /// Observed at the capture boundary because the compiler may not read the
+    /// filesystem, and `#[serde(default)]` because a snapshot written before
+    /// they were captured is a snapshot with none.
+    #[serde(default)]
+    pub template_overrides: crate::TemplateOverrides,
 }
 
 impl WorkspaceSnapshot {
@@ -244,6 +254,7 @@ impl WorkspaceSnapshot {
             external_types: ExternalTypeIndex::default(),
             migration_history: MigrationHistory::default(),
             owned_patches: OwnedPatchState::default(),
+            template_overrides: crate::TemplateOverrides::default(),
             preconditions: SnapshotPreconditions::default(),
             files: BTreeMap::new(),
         }

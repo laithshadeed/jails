@@ -17,7 +17,7 @@ fn h2_test_class(_: &Capability) -> String {
 
 const H2_FILES: &[JavaFile] = &[JavaFile {
     suffix: "test",
-    template: include_str!("../../../../templates/spring/h2_database_test_java.java"),
+    template: crate::template!("spring/h2_database_test_java.java"),
     before_boot: None,
     source_set: SourceSet::Test,
     class_name: h2_test_class,
@@ -109,7 +109,7 @@ const H2_PROPERTIES: &[PropertySpec] = &[
 /// suitable driver class".
 const DB_FILES: &[JavaFile] = &[JavaFile {
     suffix: "testcontainers_config",
-    template: include_str!("../../../../templates/add/testcontainers_config_java.java"),
+    template: crate::template!("add/testcontainers_config_java.java"),
     before_boot: None,
     source_set: SourceSet::Test,
     class_name: db_testcontainers_config_class,

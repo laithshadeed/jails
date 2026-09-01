@@ -104,14 +104,12 @@ mod compose_block_tests {
             name: "postgres",
             body: "image: postgres:17\nports:\n  - \"5432:5432\"",
         };
+        // Built from the same `Marked` the production path uses: spelling the
+        // markers here would be a second answer to what a `# jails:` block is.
         assert_eq!(
             compose_block(&service),
-            "  # jails:db\n  \
-             postgres:\n    \
-             image: postgres:17\n    \
-             ports:\n      \
-             - \"5432:5432\"\n  \
-             # /jails:db\n"
+            jails_codemod::marked::Marked::indented("db", "  ")
+                .render("postgres:\n  image: postgres:17\n  ports:\n    - \"5432:5432\"\n")
         );
     }
 }

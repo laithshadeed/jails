@@ -244,7 +244,19 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // `refuse_reader_sql`, `refuse_declared` -- and a refusal about
                 // what is on disk is a question about paths, which is the same
                 // exemption `preflight_writable` records above.
-                ceiling: 93,
+                //
+                // 93 -> 94 for `stranded_reader_references`, which is the same
+                // shape once more and is worth recording for the half that is
+                // *not*. It names the reader's own files that still mention a
+                // type a removal takes away -- jails does not delete a file it
+                // does not own, so the reader is told instead -- and it reads
+                // the tree rather than the capture on purpose: which reader
+                // directories a plan captures follows from what it needs to
+                // write, while this has to look everywhere the reader keeps
+                // Java. Its walker took a second `root` for a value that was
+                // never a project root but `src/main/java`, and renaming that
+                // parameter is what kept the rise at one rather than two.
+                ceiling: 94,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;
@@ -1280,7 +1292,24 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // `jdl/v1/parser.rs` at 688, one line above, having grown with
                 // typed field semantics. A one-line rise is not worth
                 // splitting a parser for; the next rise there is.
-                ceiling: 688,
+                //
+                // 688 -> 671, and it took seven splits rather than one. The
+                // canonical cutover's own growth had put *six* files above the
+                // ceiling at once -- the JDL frontend, the linker, the Java
+                // emitter, the generate frontend, the schema command and the
+                // compiler root -- so the board was measuring the worst of a
+                // crowd rather than one outlier. Each was split by the secret
+                // it had accreted rather than by size: `declaration` (how a
+                // declaration is spelled), `linker/validate` (whether one
+                // string may be a Java or SQL name), `emit_java/input` (what
+                // an `Input` record declares and how a request binds to it --
+                // `bugs.md` B48's own subject), `model_generate/profile`
+                // (which options a kind accepts), `schema_command/render`
+                // (the two shapes a snapshot is printed in), `ejectable`
+                // (which files an ejection would move) and `parser/attribute`
+                // (reading one `@name(...)`). The parser rise this row
+                // predicted is the last of them.
+                ceiling: 671,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
                       decomposing one, so this asks the question the split is actually for: \

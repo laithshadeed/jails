@@ -14,11 +14,15 @@ use jails_model::{AppModel, Component};
 pub(super) const DEPENDENCIES: &[(&str, &str)] =
     &[("org.springframework.boot", "spring-boot-starter-websocket")];
 
-const HANDLER: &str = include_str!("../../../../templates/spring/socket_handler_java.java");
-const CONFIG: &str = include_str!("../../../../templates/spring/socket_config_java.java");
-const TEST: &str = include_str!("../../../../templates/spring/socket_handler_test_java.java");
+const HANDLER: crate::Template = crate::template!("spring/socket_handler_java.java");
+const CONFIG: crate::Template = crate::template!("spring/socket_config_java.java");
+const TEST: crate::Template = crate::template!("spring/socket_handler_test_java.java");
 
-pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitted>, CompileError> {
+pub(super) fn files(
+    model: &AppModel,
+    component: &Component,
+    templates: &jails_contracts::TemplateOverrides,
+) -> Result<Vec<Emitted>, CompileError> {
     let name = &component.name;
     let pkg = package(model, Package::Web);
     let path = component
@@ -26,11 +30,12 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
         .as_ref()
         .map(|route| route.path.clone())
         .unwrap_or_else(|| format!("/ws/{}", component.label.replace('_', "-")));
-    let substitute = |template: &str| {
-        template
+    let substitute = |template: crate::Template| -> Result<String, CompileError> {
+        let template = template.resolve(templates)?;
+        Ok(template
             .replace("{{pkg}}", &pkg)
             .replace("{{name}}", name)
-            .replace("{{path}}", &path)
+            .replace("{{path}}", &path))
     };
     Ok(vec![
         java(
@@ -40,7 +45,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             &format!("{name}SocketHandler"),
             false,
             true,
-            substitute(HANDLER),
+            substitute(HANDLER)?,
         )?,
         java(
             component,
@@ -49,7 +54,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             &format!("{name}SocketConfig"),
             false,
             true,
-            substitute(CONFIG),
+            substitute(CONFIG)?,
         )?,
         java(
             component,
@@ -58,7 +63,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             &format!("{name}SocketHandlerTest"),
             true,
             true,
-            substitute(TEST),
+            substitute(TEST)?,
         )?,
     ])
 }

@@ -6,8 +6,7 @@ Content-Type: application/json
 
 {
   "amount": 1,
-  "status": "PENDING",
-  "version": 1
+  "status": "PENDING"
 }
 
 ### List Payout

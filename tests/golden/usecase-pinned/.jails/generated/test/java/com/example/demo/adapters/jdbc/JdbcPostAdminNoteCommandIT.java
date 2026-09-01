@@ -24,8 +24,9 @@ class JdbcPostAdminNoteCommandIT {
     void writesThroughTheRealDatabase() {
         Note answered = operation.execute(new PostAdminNoteCommand.Input(1L, "sample"));
 
-        // `returning` answers with the row the statement wrote, so a null
-        // here means it matched none -- which is the failure worth catching.
+        // `returning` answers with the row the statement wrote, so an empty
+        // answer here means it matched none -- which is the failure worth
+        // catching.
         assertThat(answered).isNotNull();
     }
 

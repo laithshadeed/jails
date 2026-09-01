@@ -49,8 +49,8 @@ enum SourceSet {
 
 struct JavaFile {
     suffix: &'static str,
-    template: &'static str,
-    before_boot: Option<(u32, &'static str)>,
+    template: crate::Template,
+    before_boot: Option<(u32, crate::Template)>,
     source_set: SourceSet,
     class_name: fn(&Capability) -> String,
     template_class: fn(&Capability) -> String,
@@ -296,7 +296,7 @@ pub(crate) fn lower_and_emit(
                         file.source_set,
                         &package,
                         render(
-                            template_for(file, boot_major),
+                            template_for(file, boot_major).resolve(observed.templates)?,
                             &package,
                             &default_package,
                             &template_class,
@@ -484,7 +484,7 @@ pub(crate) fn imported_test_container(model: &AppModel, package: &str, body: Str
     jails_codemod::annotate::splice_import(&body, "TestcontainersConfig", &extra).unwrap_or(body)
 }
 
-fn template_for(file: &JavaFile, boot_major: Option<u32>) -> &'static str {
+fn template_for(file: &JavaFile, boot_major: Option<u32>) -> crate::Template {
     match file.before_boot {
         Some((limit, template)) if boot_major.is_some_and(|major| major < limit) => template,
         _ => file.template,

@@ -14,6 +14,6 @@ entity Ticket @id(ent_ticket) {
   subject: string @id(fld_ticket_subject) @notBlank
   status: string? @id(fld_ticket_status)
   query OpenTickets(status?) @id(op_open_tickets) {
-    route POST "/admin_api/tickets" consumes form
+    route GET "/admin_api/tickets" consumes form
   }
 }

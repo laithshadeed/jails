@@ -17,10 +17,14 @@ use super::{Emitted, Package, java, package};
 use crate::CompileError;
 use jails_model::{AppModel, Component};
 
-const COMMAND: &str = include_str!("../../../../templates/spring/command_java.java");
-const TEST: &str = include_str!("../../../../templates/generate/command_test.java");
+const COMMAND: crate::Template = crate::template!("spring/command_java.java");
+const TEST: crate::Template = crate::template!("generate/command_test.java");
 
-pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitted>, CompileError> {
+pub(super) fn files(
+    model: &AppModel,
+    component: &Component,
+    templates: &jails_contracts::TemplateOverrides,
+) -> Result<Vec<Emitted>, CompileError> {
     let name = &component.name;
     let pkg = package(model, Package::Cli);
     Ok(vec![
@@ -32,6 +36,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             false,
             true,
             COMMAND
+                .resolve(templates)?
                 .replace("{{pkg}}", &pkg)
                 .replace("{{name}}", name)
                 .replace("{{word}}", &name.to_lowercase()),
@@ -43,7 +48,9 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             &format!("{name}CommandTest"),
             true,
             true,
-            TEST.replace("{{pkg}}", &pkg).replace("{{name}}", name),
+            TEST.resolve(templates)?
+                .replace("{{pkg}}", &pkg)
+                .replace("{{name}}", name),
         )?,
     ])
 }

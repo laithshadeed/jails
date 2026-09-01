@@ -22,11 +22,15 @@ use super::{Emitted, Package, java, package};
 use crate::CompileError;
 use jails_model::{AppModel, Component};
 
-const VERIFIER: &str = include_str!("../../../../templates/spring/webhook_verifier_java.java");
-const CONTROLLER: &str = include_str!("../../../../templates/spring/webhook_controller_java.java");
-const TEST: &str = include_str!("../../../../templates/spring/webhook_verifier_test_java.java");
+const VERIFIER: crate::Template = crate::template!("spring/webhook_verifier_java.java");
+const CONTROLLER: crate::Template = crate::template!("spring/webhook_controller_java.java");
+const TEST: crate::Template = crate::template!("spring/webhook_verifier_test_java.java");
 
-pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitted>, CompileError> {
+pub(super) fn files(
+    model: &AppModel,
+    component: &Component,
+    templates: &jails_contracts::TemplateOverrides,
+) -> Result<Vec<Emitted>, CompileError> {
     let name = &component.name;
     // The verifier is framework-free, so it goes in the base package; the
     // controller is an inbound HTTP surface and goes in `web`.
@@ -54,6 +58,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             false,
             true,
             VERIFIER
+                .resolve(templates)?
                 .replace("{{pkg}}", &base)
                 .replace("{{name}}", name)
                 .replace("{{property}}", &property),
@@ -66,6 +71,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             false,
             true,
             CONTROLLER
+                .resolve(templates)?
                 .replace("{{web}}", &web)
                 .replace("{{name}}", name)
                 .replace("{{verifier_import}}", &verifier_import)
@@ -80,7 +86,9 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             &format!("{name}VerifierTest"),
             true,
             true,
-            TEST.replace("{{pkg}}", &base).replace("{{name}}", name),
+            TEST.resolve(templates)?
+                .replace("{{pkg}}", &base)
+                .replace("{{name}}", name),
         )?,
     ])
 }

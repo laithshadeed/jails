@@ -20,7 +20,7 @@ final class PayoutDtoTest {
      */
     @Test
     void theRequestAsksOnlyForCallerSuppliedComponents() {
-        assertEquals(List.of("amount", "status", "version"), componentNames(PayoutRequest.class));
+        assertEquals(List.of("amount", "status"), componentNames(PayoutRequest.class));
     }
 
     private static List<String> componentNames(Class<?> type) {

@@ -30,13 +30,16 @@ use std::collections::BTreeSet;
 pub(super) const DEPENDENCIES: &[(&str, &str)] =
     &[("org.springframework.boot", "spring-boot-starter-actuator")];
 
-const WORKFLOW: &str = include_str!("../../../../templates/spring/http_workflow_java.java");
-const CONTROLLER: &str =
-    include_str!("../../../../templates/spring/http_workflow_controller_java.java");
-const TEST: &str = include_str!("../../../../templates/spring/http_workflow_it_java.java");
-const MIGRATION: &str = include_str!("../../../../templates/sql/http_workflow.sql");
+const WORKFLOW: crate::Template = crate::template!("spring/http_workflow_java.java");
+const CONTROLLER: crate::Template = crate::template!("spring/http_workflow_controller_java.java");
+const TEST: crate::Template = crate::template!("spring/http_workflow_it_java.java");
+const MIGRATION: crate::Template = crate::template!("sql/http_workflow.sql");
 
-pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitted>, CompileError> {
+pub(super) fn files(
+    model: &AppModel,
+    component: &Component,
+    templates: &jails_contracts::TemplateOverrides,
+) -> Result<Vec<Emitted>, CompileError> {
     let fetcher = fetcher(model, component)?;
     if !super::has_database(model) {
         return Err(CompileError::new(format!(
@@ -51,15 +54,16 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
     let clients = package(model, Package::Clients);
     let table = table(component);
     let property = component.label.replace('_', "-");
-    let substitute = |template: &str| {
-        template
+    let substitute = |template: crate::Template| -> Result<String, CompileError> {
+        let template = template.resolve(templates)?;
+        Ok(template
             .replace("{{pkg}}", &jobs)
             .replace("{{web}}", &web)
             .replace("{{clients}}", &clients)
             .replace("{{name}}", name)
             .replace("{{fetcher}}", &fetcher.name)
             .replace("{{table}}", &table)
-            .replace("{{property}}", &property)
+            .replace("{{property}}", &property))
     };
     Ok(vec![
         java(
@@ -69,7 +73,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             &format!("{name}Workflow"),
             false,
             true,
-            substitute(WORKFLOW),
+            substitute(WORKFLOW)?,
         )?,
         java(
             component,
@@ -78,7 +82,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             &format!("{name}WorkflowController"),
             false,
             true,
-            substitute(CONTROLLER),
+            substitute(CONTROLLER)?,
         )?,
         java(
             component,
@@ -87,7 +91,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             &format!("{name}WorkflowIT"),
             true,
             true,
-            substitute(TEST),
+            substitute(TEST)?,
         )?,
     ])
 }
@@ -104,7 +108,7 @@ pub(super) fn migrations(accepted: Option<&AppModel>, next: &AppModel) -> Vec<Re
             let table = table(component);
             RenderedMigration {
                 logical_name: format!("create_{table}_workflow"),
-                bytes: MIGRATION.replace("{{table}}", &table).into_bytes(),
+                bytes: MIGRATION.built_in.replace("{{table}}", &table).into_bytes(),
                 semantic_ids: BTreeSet::from([component.id.as_str().to_string()]),
             }
         })

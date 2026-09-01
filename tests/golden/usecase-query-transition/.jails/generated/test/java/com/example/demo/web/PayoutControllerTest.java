@@ -44,8 +44,7 @@ class PayoutControllerTest {
             """
             {
               "amount": 1,
-              "status": "PENDING",
-              "version": 1
+              "status": "PENDING"
             }""";
 
     private final MockMvcTester mvc = MockMvcTester.of(new PayoutController(new PayoutService(REPOSITORY)));

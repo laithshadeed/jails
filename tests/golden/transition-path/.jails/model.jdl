@@ -14,9 +14,10 @@ entity Topic @id(ent_topic) {
   userId: long @id(fld_topic_user_id)
   subject: string @id(fld_topic_subject) @notBlank
   version: long @id(fld_topic_version) @version
-  transition SetTopicSubject(user_id, subject) @id(op_set_topic_subject) {
+  transition SetTopicSubject(user_id, subject, version) @id(op_set_topic_subject) {
     select [user_id]
     update [subject]
+    if-match required
     route PATCH "/admin_api/topics/{userId}/subject"
   }
 }

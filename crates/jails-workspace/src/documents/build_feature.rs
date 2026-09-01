@@ -475,9 +475,23 @@ mod tests {
         let edited = once.replace("<minimum>0.80</minimum>", "<minimum>0.75</minimum>");
         let error = reconcile_maven_build_features(&edited, &coverage(), false).unwrap_err();
         assert!(error.contains("coverage block was edited"), "{error}");
+        // **Removal takes back what jails owns, and the container is not it.**
+        // `<build><plugins>` is created outside the markers on purpose -- the
+        // marked block holds one `<plugin>` -- so removal leaves the empty
+        // nest standing. Sweeping it would delete an element the reader may
+        // have written themselves, which is the one thing a lossless reader
+        // adapter may not do; an empty `<plugins>` is inert to Maven.
+        let removed = reconcile_maven_build_features(&once, &BTreeSet::new(), false).unwrap();
+        assert!(!removed.contains("jails:coverage"), "{removed}");
+        assert!(!removed.contains("jacoco"), "{removed}");
+        assert!(removed.contains("<!-- reader -->"), "{removed}");
         assert_eq!(
-            reconcile_maven_build_features(&once, &BTreeSet::new(), false).unwrap(),
-            pom
+            removed,
+            "<project>\n    <!-- reader -->\n    <build>\n        <plugins>\n        </plugins>\n    </build>\n</project>\n"
+        );
+        assert_eq!(
+            reconcile_maven_build_features(&removed, &BTreeSet::new(), false).unwrap(),
+            removed
         );
     }
 

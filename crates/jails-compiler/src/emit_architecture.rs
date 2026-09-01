@@ -61,7 +61,11 @@ pub(crate) fn applies(model: &AppModel) -> bool {
         .any(|entity| entity.active && entity.facets.contains(&Facet::Http))
 }
 
-pub(crate) fn lower(model: &AppModel, output: &mut RenderedTree) -> Result<(), CompileError> {
+pub(crate) fn lower(
+    model: &AppModel,
+    output: &mut RenderedTree,
+    templates: &jails_contracts::TemplateOverrides,
+) -> Result<(), CompileError> {
     if !applies(model) {
         return Ok(());
     }
@@ -82,8 +86,9 @@ pub(crate) fn lower(model: &AppModel, output: &mut RenderedTree) -> Result<(), C
         ("clients", model.project.package_for(Package::Clients)),
         ("jobs", model.project.package_for(Package::Jobs)),
     ];
-    let mut body =
-        include_str!("../../../templates/spring/architecture_test_java.java").to_string();
+    let mut body = crate::template!("spring/architecture_test_java.java")
+        .resolve(templates)?
+        .to_string();
     for (key, value) in &packages {
         body = body.replace(&format!("{{{{{key}}}}}"), value);
     }

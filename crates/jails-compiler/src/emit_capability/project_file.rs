@@ -12,36 +12,36 @@ const EDITORCONFIG_PATH: &str = ".editorconfig";
 const DOCKER_PATHS: [&str; 3] = ["Dockerfile", ".dockerignore", ".github/workflows/image.yml"];
 
 /// The Helm chart, as (suffix, path, template).
-const K8S_FILES: [(&str, &str, &str); 6] = [
+const K8S_FILES: [(&str, &str, crate::Template); 6] = [
     (
         "chart",
         "deploy/chart/Chart.yaml",
-        include_str!("../../../../templates/add/k8s_chart.yaml"),
+        crate::template!("add/k8s_chart.yaml"),
     ),
     (
         "values",
         "deploy/chart/values.yaml",
-        include_str!("../../../../templates/add/k8s_values.yaml"),
+        crate::template!("add/k8s_values.yaml"),
     ),
     (
         "deployment",
         "deploy/chart/templates/deployment.yaml",
-        include_str!("../../../../templates/add/k8s_deployment.yaml"),
+        crate::template!("add/k8s_deployment.yaml"),
     ),
     (
         "service",
         "deploy/chart/templates/service.yaml",
-        include_str!("../../../../templates/add/k8s_service.yaml"),
+        crate::template!("add/k8s_service.yaml"),
     ),
     (
         "configmap",
         "deploy/chart/templates/configmap.yaml",
-        include_str!("../../../../templates/add/k8s_configmap.yaml"),
+        crate::template!("add/k8s_configmap.yaml"),
     ),
     (
         "prometheus-rule",
         "deploy/chart/templates/prometheus-rule.yaml",
-        include_str!("../../../../templates/add/k8s_prometheus_rule.yaml"),
+        crate::template!("add/k8s_prometheus_rule.yaml"),
     ),
 ];
 
@@ -51,31 +51,31 @@ const K8S_FILES: [(&str, &str, &str); 6] = [
 const CHECKOUT_SHA: &str = "de0fac2e4500dabe0009e67214ff5f5447ce83dd"; // v6.0.2
 const SETUP_JAVA_SHA: &str = "03ad4de0992f5dab5e18fcb136590ce7c4a0ac95"; // v5.6.0
 
-const LOADTEST_PATHS: &[(&str, &str, &str)] = &[
+const LOADTEST_PATHS: &[(&str, &str, crate::Template)] = &[
     (
         "runner",
         "load-tests/load-test.js",
-        include_str!("../../../../templates/add/loadtest_load_test.js"),
+        crate::template!("add/loadtest_load_test.js"),
     ),
     (
         "payload",
         "load-tests/payload-builder.js",
-        include_str!("../../../../templates/add/loadtest_payload_builder.js"),
+        crate::template!("add/loadtest_payload_builder.js"),
     ),
     (
         "token",
         "load-tests/token-cache.js",
-        include_str!("../../../../templates/add/loadtest_token_cache.js"),
+        crate::template!("add/loadtest_token_cache.js"),
     ),
     (
         "makefile",
         "load-tests/Makefile",
-        include_str!("../../../../templates/add/loadtest_makefile"),
+        crate::template!("add/loadtest_makefile"),
     ),
     (
         "readme",
         "load-tests/README.md",
-        include_str!("../../../../templates/add/loadtest_readme.md"),
+        crate::template!("add/loadtest_readme.md"),
     ),
 ];
 
@@ -129,11 +129,11 @@ pub(super) fn lower_and_emit(
     observed: &crate::emit::Observed<'_>,
 ) -> Result<(), CompileError> {
     match capability.kind.as_str() {
-        "loadtest" => lower_loadtest(model, capability, output),
-        "ci" => lower_ci(model, capability, output, observed),
-        "docker" => lower_docker(model, capability, output, observed),
-        "k8s" => lower_k8s(model, capability, output),
-        "format" => lower_format(capability, output),
+        "loadtest" => lower_loadtest(model, capability, output, observed.templates),
+        "ci" => lower_ci(model, capability, output, observed, observed.templates),
+        "docker" => lower_docker(model, capability, output, observed, observed.templates),
+        "k8s" => lower_k8s(model, capability, output, observed.templates),
+        "format" => lower_format(capability, output, observed.templates),
         // **One keep file, whichever storage declared it.** Both storage
         // capabilities fill the same directory, and two facets targeting one
         // path is a collision the executor refuses -- correctly, since it
@@ -186,8 +186,10 @@ fn lower_ci(
     capability: &Capability,
     output: &mut RenderedTree,
     observed: &crate::emit::Observed<'_>,
+    templates: &jails_contracts::TemplateOverrides,
 ) -> Result<(), CompileError> {
-    let workflow = include_str!("../../../../templates/add/ci_workflow.yml")
+    let workflow = crate::template!("add/ci_workflow.yml")
+        .resolve(templates)?
         .replace("{{CHECKOUT_SHA}}", CHECKOUT_SHA)
         .replace("{{SETUP_JAVA_SHA}}", SETUP_JAVA_SHA)
         .replace("{{RELEASE}}", &model.project.java_release.to_string())
@@ -220,31 +222,37 @@ fn lower_docker(
     capability: &Capability,
     output: &mut RenderedTree,
     observed: &crate::emit::Observed<'_>,
+    templates: &jails_contracts::TemplateOverrides,
 ) -> Result<(), CompileError> {
     let release = model.project.java_release.to_string();
     let build = if observed.maven_wrapper {
-        include_str!("../../../../templates/add/dockerfile_build_wrapper")
+        crate::template!("add/dockerfile_build_wrapper")
     } else {
-        include_str!("../../../../templates/add/dockerfile_build_maven")
+        crate::template!("add/dockerfile_build_maven")
     }
+    .resolve(templates)?
     .replace("{{RELEASE}}", &release);
     let files = [
         (
             "dockerfile",
             DOCKER_PATHS[0],
-            include_str!("../../../../templates/add/dockerfile")
+            crate::template!("add/dockerfile")
+                .resolve(templates)?
                 .replace("{{BUILD_STAGE}}", &build)
                 .replace("{{RELEASE}}", &release),
         ),
         (
             "dockerignore",
             DOCKER_PATHS[1],
-            include_str!("../../../../templates/add/dockerignore").to_string(),
+            crate::template!("add/dockerignore")
+                .resolve(templates)?
+                .to_string(),
         ),
         (
             "image-workflow",
             DOCKER_PATHS[2],
-            include_str!("../../../../templates/add/image_workflow.yml")
+            crate::template!("add/image_workflow.yml")
+                .resolve(templates)?
                 .replace("{{CHECKOUT_SHA}}", CHECKOUT_SHA),
         ),
     ];
@@ -265,13 +273,18 @@ fn lower_docker(
 ///
 /// Spotless enforces Java; `.editorconfig` is what stops an editor fighting it
 /// in every other file, and it is the same bytes the legacy engine writes.
-fn lower_format(capability: &Capability, output: &mut RenderedTree) -> Result<(), CompileError> {
+fn lower_format(
+    capability: &Capability,
+    output: &mut RenderedTree,
+    templates: &jails_contracts::TemplateOverrides,
+) -> Result<(), CompileError> {
     reader_facet::emit_managed_file(
         output,
         capability,
         "editorconfig",
         ProjectPath::parse(EDITORCONFIG_PATH).map_err(CompileError::new)?,
-        include_str!("../../../../templates/add/editorconfig")
+        crate::template!("add/editorconfig")
+            .resolve(templates)?
             .as_bytes()
             .to_vec(),
         FileMode::Regular,
@@ -295,6 +308,7 @@ fn lower_k8s(
     model: &AppModel,
     capability: &Capability,
     output: &mut RenderedTree,
+    templates: &jails_contracts::TemplateOverrides,
 ) -> Result<(), CompileError> {
     for (kind, fix) in [
         ("actuator", "jails add actuator"),
@@ -314,7 +328,10 @@ fn lower_k8s(
             capability,
             suffix,
             ProjectPath::parse(path).map_err(CompileError::new)?,
-            template.replace("{{NAME}}", &name).into_bytes(),
+            template
+                .resolve(templates)?
+                .replace("{{NAME}}", &name)
+                .into_bytes(),
             FileMode::Regular,
         )?;
     }
@@ -346,6 +363,7 @@ fn lower_loadtest(
     model: &AppModel,
     capability: &Capability,
     output: &mut RenderedTree,
+    templates: &jails_contracts::TemplateOverrides,
 ) -> Result<(), CompileError> {
     let routes = routes(model);
     if routes.is_empty() {
@@ -365,7 +383,7 @@ fn lower_loadtest(
             capability,
             suffix,
             ProjectPath::parse(*path).map_err(CompileError::new)?,
-            template.as_bytes().to_vec(),
+            template.resolve(templates)?.as_bytes().to_vec(),
             FileMode::Regular,
         )?;
     }
@@ -381,8 +399,9 @@ fn lower_loadtest(
         })
         .collect::<Vec<_>>()
         .join(",\n");
-    let api =
-        include_str!("../../../../templates/add/loadtest_api.js").replace("{{ROUTES}}", &entries);
+    let api = crate::template!("add/loadtest_api.js")
+        .resolve(templates)?
+        .replace("{{ROUTES}}", &entries);
     reader_facet::emit_managed_file(
         output,
         capability,

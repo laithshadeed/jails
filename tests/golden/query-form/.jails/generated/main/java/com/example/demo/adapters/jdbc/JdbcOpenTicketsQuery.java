@@ -20,7 +20,7 @@ public final class JdbcOpenTicketsQuery implements OpenTicketsQuery {
     @Override
     public List<Ticket> execute(OpenTicketsQuery.Input input) {
         var sql = new StringBuilder("select id, subject, status from tickets");
-        var predicates = new ArrayList<>();
+        var predicates = new ArrayList<String>();
         if (input.status().isPresent()) {
             predicates.add("status = :status");
         }

@@ -30,6 +30,7 @@ fn owns_terminal_output(path: &Path) -> bool {
         || relative == "src/new.rs"
         || relative == "src/sql_command.rs"
         || relative == "src/schema_command.rs"
+        || relative == "src/schema_command/render.rs"
         || relative == "src/editor_command.rs"
         || relative == "src/contract_command.rs"
         || relative == "src/tool_command.rs"
@@ -371,6 +372,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-support", "apply", 0),
     ("jails-support", "process", 0),
     ("jails-support", "hermetic", 0),
+    ("jails-support", "unified", 0),
     ("jails-support", "scratch", 0),
     ("jails-support", "codec", 0),
     ("jails-support", "git", 0),
@@ -413,6 +415,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-contracts", "path", 3),
     ("jails-contracts", "plan", 3),
     ("jails-contracts", "snapshot", 3),
+    ("jails-contracts", "templates", 3),
     // Pure lowering: semantic world -> desired artifact tree.
     ("jails-compiler", "emit_dto", 4),
     ("jails-compiler", "emit_architecture", 4),
@@ -427,6 +430,10 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-compiler", "emit_resource_http", 4),
     ("jails-compiler", "emit", 4),
     ("jails-compiler", "emit_seed", 4),
+    ("jails-compiler", "emit_relation", 4),
+    ("jails-compiler", "emit_messaging", 4),
+    ("jails-compiler", "ejectable", 4),
+    ("jails-compiler", "template", 4),
     ("jails-compiler", "emit_sql", 4),
     ("jails-compiler", "refuse", 4),
     ("jails-compiler", "plan_effects", 4),
@@ -460,7 +467,6 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-project", "maven", 5),
     ("jails-project", "capability", 5),
     ("jails-project", "config", 5),
-    ("jails-project", "junit", 5),
     ("jails-project", "synonyms", 5),
     ("jails-project", "capture", 5),
     ("jails-project", "compose", 5),
@@ -862,6 +868,13 @@ fn a_gate_that_reached_its_target_is_never_reopened() {
 /// executed. Naming a test that does not exist fails too, so the entry cannot
 /// decay into a comment.
 const DEFAULT_BRANCH_IS_EXECUTED: &[(&str, &str)] = &[
+    (
+        // `javax` below Boot 3 and `jakarta` at or above it. The default is
+        // the Jakarta branch, and this compiles a generated request DTO with
+        // its validation annotations against the real toolchain.
+        "crates/jails-compiler/src/emit_dto.rs",
+        "generate_scaffold_produces_a_project_that_compiles_and_passes_tests",
+    ),
     (
         "crates/jails-compiler/src/emit_capability.rs",
         "canonical_observability_pack_merges_ejects_and_serves_prometheus",

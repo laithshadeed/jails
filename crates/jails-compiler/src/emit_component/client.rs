@@ -27,11 +27,15 @@ use jails_model::{AppModel, Component};
 pub(super) const DEPENDENCIES: &[(&str, &str)] =
     &[("org.springframework.boot", "spring-boot-starter-restclient")];
 
-const INTERFACE: &str = include_str!("../../../../templates/spring/client_interface_java.java");
-const CONFIG: &str = include_str!("../../../../templates/spring/client_config_java.java");
-const TEST: &str = include_str!("../../../../templates/spring/client_test_java.java");
+const INTERFACE: crate::Template = crate::template!("spring/client_interface_java.java");
+const CONFIG: crate::Template = crate::template!("spring/client_config_java.java");
+const TEST: crate::Template = crate::template!("spring/client_test_java.java");
 
-pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitted>, CompileError> {
+pub(super) fn files(
+    model: &AppModel,
+    component: &Component,
+    templates: &jails_contracts::TemplateOverrides,
+) -> Result<Vec<Emitted>, CompileError> {
     let name = &component.name;
     let pkg = package(model, Package::Clients);
     let group = group(&component.label);
@@ -40,12 +44,13 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
         .as_ref()
         .map(|route| route.path.clone())
         .unwrap_or_else(|| format!("/{}", group));
-    let substitute = |template: &str| {
-        template
+    let substitute = |template: crate::Template| -> Result<String, CompileError> {
+        let template = template.resolve(templates)?;
+        Ok(template
             .replace("{{pkg}}", &pkg)
             .replace("{{name}}", name)
             .replace("{{group}}", &group)
-            .replace("{{path}}", &path)
+            .replace("{{path}}", &path))
     };
     Ok(vec![
         java(
@@ -58,7 +63,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             // would hand them a type the compiler stops maintaining while
             // every generated caller still names it.
             false,
-            substitute(INTERFACE),
+            substitute(INTERFACE)?,
         )?,
         java(
             component,
@@ -67,7 +72,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             &format!("{name}ClientConfig"),
             false,
             true,
-            substitute(CONFIG),
+            substitute(CONFIG)?,
         )?,
         java(
             component,
@@ -76,7 +81,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             &format!("{name}ClientTest"),
             true,
             true,
-            substitute(TEST),
+            substitute(TEST)?,
         )?,
     ])
 }

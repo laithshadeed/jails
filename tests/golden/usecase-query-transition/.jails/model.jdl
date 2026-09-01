@@ -19,7 +19,7 @@ entity Payout @id(ent_payout) {
   id: uuid @id(fld_payout_id) @pk
   amount: long @id(fld_payout_amount) @positive
   status: PayoutStatus @id(fld_payout_status) @index
-  version: long @id(fld_payout_version) @nonnegative
+  version: long @id(fld_payout_version) @version @nonnegative
   createdAt: instant @id(fld_payout_created_at) @default(now())
   command RequestPayout(id, amount) @id(op_request_payout) {
   }
@@ -27,6 +27,7 @@ entity Payout @id(ent_payout) {
   }
   transition ChangePayoutStatus(id, status, version) @id(op_change_payout_status) {
     select [id]
-    update [status, version]
+    update [status]
+    if-match required
   }
 }

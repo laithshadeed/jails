@@ -20,7 +20,7 @@ public final class JdbcItemsByOwnerEmailQuery implements ItemsByOwnerEmailQuery 
     @Override
     public List<Item> execute(ItemsByOwnerEmailQuery.Input input) {
         var sql = new StringBuilder("select items.id, items.owner_id, items.name, items.created_at from items join owners \"owner\" on items.owner_id = \"owner\".id");
-        var predicates = new ArrayList<>(List.of("\"owner\".email = :email"));
+        var predicates = new ArrayList<String>(List.of("\"owner\".email = :email"));
         if (!predicates.isEmpty()) {
             sql.append(" where ").append(String.join(" and ", predicates));
         }

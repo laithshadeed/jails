@@ -180,9 +180,10 @@ pub(crate) fn write_bundle(path: &Path, bundle: &jails_contracts::PlanBundle) ->
 /// instead, by name, at the moment it becomes their problem -- which is the
 /// half the sweep was actually for.
 ///
-/// Matched on the whole identifier, the same rule `rename` follows, and read
-/// out of the captured reader tree rather than off disk so it agrees with the
-/// snapshot every other decision here was made from.
+/// Matched on the whole identifier, the same rule `rename` follows. It reads
+/// the tree rather than the capture, and that is deliberate: which reader
+/// directories a plan captures follows from what it needs to *write*, while
+/// this needs to look everywhere the reader keeps Java.
 pub(crate) fn stranded_reader_references(
     root: &std::path::Path,
     current_model: &jails_model::AppModel,
@@ -196,9 +197,6 @@ pub(crate) fn stranded_reader_references(
         return Vec::new();
     }
     let mut lines = Vec::new();
-    // Read from the tree rather than from the capture: which reader
-    // directories a plan captures follows from what it needs to *write*, and
-    // this needs to look everywhere the reader keeps Java.
     for tree in ["src/main/java", "src/test/java"] {
         for path in java_sources(&root.join(tree)) {
             let Ok(source) = std::fs::read_to_string(&path) else {
@@ -224,9 +222,9 @@ pub(crate) fn stranded_reader_references(
 }
 
 /// Every `.java` file under a directory, deepest order unimportant.
-fn java_sources(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+fn java_sources(directory: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut found = Vec::new();
-    let mut pending = vec![root.to_path_buf()];
+    let mut pending = vec![directory.to_path_buf()];
     while let Some(directory) = pending.pop() {
         let Ok(entries) = std::fs::read_dir(&directory) else {
             continue;

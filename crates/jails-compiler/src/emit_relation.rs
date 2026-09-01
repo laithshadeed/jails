@@ -14,7 +14,7 @@
 
 use crate::CompileError;
 use jails_contracts::{FileKind, FileMode, Provenance, RenderedFile, RenderedTree};
-use jails_model::{AppModel, BuiltinType, Package, Relation, StableId as _, TypeRef};
+use jails_model::{AppModel, Package, Relation, StableId as _, TypeRef};
 use std::collections::BTreeSet;
 
 const JAVA_TEST_ROOT: &str = ".jails/generated/test/java";
@@ -202,7 +202,7 @@ fn proof(
 /// with a value that does not bind.
 fn sql_literal(model: &AppModel, field: &jails_model::Field) -> Option<String> {
     match &field.ty {
-        TypeRef::Builtin(builtin) => Some(builtin_literal(*builtin, 7)),
+        TypeRef::Builtin(builtin) => Some(builtin.semantics().sql_sample.to_string()),
         TypeRef::External(name) => {
             let declared = model
                 .entities
@@ -218,35 +218,13 @@ fn sql_literal(model: &AppModel, field: &jails_model::Field) -> Option<String> {
 /// The key of a parent that is not there.
 fn orphan_literal(model: &AppModel, field: &jails_model::Field) -> Result<String, CompileError> {
     match &field.ty {
-        TypeRef::Builtin(builtin) => Ok(builtin_literal(*builtin, 8)),
+        TypeRef::Builtin(builtin) => Ok(builtin.semantics().sql_alternate.to_string()),
         TypeRef::External(_) => sql_literal(model, field).ok_or_else(|| {
             CompileError::new(format!(
                 "relation key `{}` has no SQL literal jails can spell",
                 field.label
             ))
         }),
-    }
-}
-
-/// A distinguishable literal per builtin, `nth` keeping two rows apart.
-/// The digits start at 7 so a seeded row cannot collide on a unique column.
-fn builtin_literal(builtin: BuiltinType, nth: u8) -> String {
-    match builtin {
-        BuiltinType::Uuid => format!("'00000000-0000-0000-0000-00000000000{nth}'"),
-        BuiltinType::Integer | BuiltinType::Long => nth.to_string(),
-        BuiltinType::Double | BuiltinType::Decimal => format!("{nth}.0"),
-        BuiltinType::Boolean => "false".to_string(),
-        BuiltinType::Instant | BuiltinType::DateTime => {
-            format!("'2026-01-0{nth}T00:00:00Z'")
-        }
-        BuiltinType::Date => format!("'2026-01-0{nth}'"),
-        BuiltinType::Duration => format!("'PT{nth}S'"),
-        BuiltinType::Uri => format!("'https://example.invalid/{nth}'"),
-        BuiltinType::Path => format!("'/sample/{nth}'"),
-        BuiltinType::ZoneId => "'UTC'".to_string(),
-        BuiltinType::Currency => "'GBP'".to_string(),
-        BuiltinType::Bytes => format!("'\\x0{nth}'"),
-        BuiltinType::String => format!("'sample-{nth}'"),
     }
 }
 

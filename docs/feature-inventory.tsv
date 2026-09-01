@@ -51,7 +51,6 @@ db	jails-drive	external-process+service-lifecycle	console::db
 console	jails-drive	external-process	console::console
 rename	jails-engine	project-mutation	route::rename
 rename resource	jails-engine	project-mutation	route::rename_resource
-rename storage	jails-engine	project-mutation	route::rename_storage
 destroy	jails-engine	project-mutation	route::destroy
 resource	jails	dispatch-only	main command dispatch
 resource status	jails-report	read-only	model_status::run or lifecycle_status::status

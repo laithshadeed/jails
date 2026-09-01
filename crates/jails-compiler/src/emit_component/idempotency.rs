@@ -20,14 +20,18 @@ use jails_contracts::RenderedMigration;
 use jails_model::{AppModel, Component, ComponentKind, StableId};
 use std::collections::BTreeSet;
 
-const RECORD: &str = include_str!("../../../../templates/spring/idempotency_record_java.java");
-const PORT: &str = include_str!("../../../../templates/spring/idempotency_port_java.java");
-const STORE: &str = include_str!("../../../../templates/spring/idempotency_store_java.java");
-const GUARD: &str = include_str!("../../../../templates/spring/idempotency_guard_java.java");
-const TEST: &str = include_str!("../../../../templates/spring/idempotency_test_java.java");
-const MIGRATION: &str = include_str!("../../../../templates/spring/idempotency_migration.sql");
+const RECORD: crate::Template = crate::template!("spring/idempotency_record_java.java");
+const PORT: crate::Template = crate::template!("spring/idempotency_port_java.java");
+const STORE: crate::Template = crate::template!("spring/idempotency_store_java.java");
+const GUARD: crate::Template = crate::template!("spring/idempotency_guard_java.java");
+const TEST: crate::Template = crate::template!("spring/idempotency_test_java.java");
+const MIGRATION: crate::Template = crate::template!("spring/idempotency_migration.sql");
 
-pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitted>, CompileError> {
+pub(super) fn files(
+    model: &AppModel,
+    component: &Component,
+    templates: &jails_contracts::TemplateOverrides,
+) -> Result<Vec<Emitted>, CompileError> {
     // Receipts that do not outlive a restart are not receipts. Checked against
     // the model rather than the build file, for the reason `auth` is: in one
     // transition the capability this same model declares has not been spliced
@@ -66,6 +70,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             // all name it.
             false,
             RECORD
+                .resolve(templates)?
                 .replace("{{domain}}", &domain)
                 .replace("{{name}}", name),
         )?,
@@ -76,7 +81,8 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             &port,
             false,
             false,
-            PORT.replace("{{app}}", &app)
+            PORT.resolve(templates)?
+                .replace("{{app}}", &app)
                 .replace("{{name}}", name)
                 .replace("{{record_import}}", &import(&app, &domain, &record)),
         )?,
@@ -88,6 +94,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             false,
             true,
             STORE
+                .resolve(templates)?
                 .replace("{{adapters}}", &adapters)
                 .replace("{{name}}", name)
                 .replace("{{table}}", &table)
@@ -102,6 +109,7 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             false,
             true,
             GUARD
+                .resolve(templates)?
                 .replace("{{service}}", &service)
                 .replace("{{name}}", name)
                 .replace("{{record_import}}", &import(&service, &domain, &record))
@@ -114,7 +122,8 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             &format!("{name}GuardTest"),
             true,
             true,
-            TEST.replace("{{service}}", &service)
+            TEST.resolve(templates)?
+                .replace("{{service}}", &service)
                 .replace("{{name}}", name)
                 .replace("{{record_import}}", &import(&service, &domain, &record))
                 .replace("{{port_import}}", &import(&service, &app, &port)),
@@ -144,7 +153,7 @@ pub(super) fn migrations(accepted: Option<&AppModel>, next: &AppModel) -> Vec<Re
             let table = table(component);
             RenderedMigration {
                 logical_name: format!("create_{table}"),
-                bytes: MIGRATION.replace("{{table}}", &table).into_bytes(),
+                bytes: MIGRATION.built_in.replace("{{table}}", &table).into_bytes(),
                 semantic_ids: BTreeSet::from([component.id.as_str().to_string()]),
             }
         })

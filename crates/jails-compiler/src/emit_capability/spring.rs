@@ -7,7 +7,10 @@
 use super::*;
 use jails_model::Package;
 
+mod api;
 mod names;
+
+pub(super) use api::{API_FILES, API_FRAGMENTS};
 use names::*;
 
 /// The `api` capability's own files, as opposed to the per-operation adapters
@@ -17,178 +20,9 @@ use names::*;
 /// failure: `ApiException` is the sealed set the advice switches over, and the
 /// switch has no `default` -- so a new variant stops the build rather than
 /// quietly becoming a 500.
-const API_FILES: &[JavaFile] = &[
-    JavaFile {
-        suffix: "exception",
-        template: include_str!("../../../../templates/spring/api_exception_java.java"),
-        before_boot: None,
-        source_set: SourceSet::Main,
-        class_name: api_exception_class,
-        template_class: api_exception_class,
-    },
-    JavaFile {
-        suffix: "exception_handler",
-        template: include_str!("../../../../templates/spring/api_exception_handler_java.java"),
-        before_boot: None,
-        source_set: SourceSet::Main,
-        class_name: api_exception_handler_class,
-        template_class: api_exception_handler_class,
-    },
-    JavaFile {
-        suffix: "exception_handler_test",
-        // No classic form: `api` refuses below Boot 3, its advice being built
-        // on Framework 6's `ProblemDetail`.
-        template: include_str!("../../../../templates/spring/api_exception_handler_test_java.java"),
-        before_boot: None,
-        source_set: SourceSet::Test,
-        class_name: api_exception_handler_test_class,
-        template_class: api_exception_handler_test_class,
-    },
-];
-
-const API_FRAGMENTS: &[Fragment] = &[
-    Fragment {
-        key: "duplicate_key_import",
-        when_capability: "db",
-        body: "import org.springframework.dao.DuplicateKeyException;",
-    },
-    Fragment {
-        key: "duplicate_key_handler",
-        when_capability: "db",
-        body: DUPLICATE_KEY_HANDLER,
-    },
-    Fragment {
-        key: "duplicate_key_test",
-        when_capability: "db",
-        body: DUPLICATE_KEY_TEST,
-    },
-    Fragment {
-        key: "duplicate_key_route",
-        when_capability: "db",
-        body: DUPLICATE_KEY_ROUTE,
-    },
-    Fragment {
-        key: "precondition_import",
-        when_capability: "db",
-        body: "import org.springframework.dao.EmptyResultDataAccessException;\nimport org.springframework.dao.OptimisticLockingFailureException;",
-    },
-    Fragment {
-        key: "precondition_handler",
-        when_capability: "db",
-        body: PRECONDITION_HANDLER,
-    },
-    Fragment {
-        key: "precondition_test",
-        when_capability: "db",
-        body: PRECONDITION_TEST,
-    },
-    Fragment {
-        key: "precondition_route",
-        when_capability: "db",
-        body: PRECONDITION_ROUTE,
-    },
-];
-
-/// **Spring's own vocabulary, so nothing new has to be declared.** A
-/// transition whose `If-Match` did not match raises
-/// `OptimisticLockingFailureException` and one whose row is not there raises
-/// `EmptyResultDataAccessException` -- both from `spring-dao`, both already on
-/// the classpath the moment the JDBC starter is. Mapping them here rather than
-/// in each controller is what keeps a generated controller free of HTTP status
-/// arithmetic, and what makes a hand-written adapter get the same answer.
-const PRECONDITION_HANDLER: &str = r#"
-    /**
-     * A precondition the caller stated and the row no longer satisfies.
-     *
-     * <p>412 rather than 409: the caller sent an `If-Match` and it did not
-     * match, which is precisely what 412 means. A 500 here is the worse
-     * failure it replaces -- alerting pages on it, client libraries retry it,
-     * and the retry cannot succeed because the version has moved on.
-     */
-    @ExceptionHandler(OptimisticLockingFailureException.class)
-    public ProblemDetail handleStalePrecondition(OptimisticLockingFailureException failure) {
-        return ProblemDetail.forStatusAndDetail(
-                HttpStatus.PRECONDITION_FAILED,
-                "the resource has changed since the version you sent");
-    }
-
-    /**
-     * A row the request named and the database does not have.
-     *
-     * <p>The detail says nothing about which row: an unauthenticated caller
-     * learning that an id exists is the difference between 404 and 403, and
-     * a generated handler is the wrong place to decide that.
-     */
-    @ExceptionHandler(EmptyResultDataAccessException.class)
-    public ProblemDetail handleMissingRow(EmptyResultDataAccessException failure) {
-        return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, "no such resource");
-    }
-"#;
-
-const PRECONDITION_TEST: &str = r#"
-    @Test
-    void aStalePreconditionBecomesA412() {
-        assertThat(mvc.get().uri("/boom/stale")).hasStatus(HttpStatus.PRECONDITION_FAILED);
-    }
-
-    @Test
-    void aMissingRowBecomesA404() {
-        assertThat(mvc.get().uri("/boom/missing")).hasStatus(HttpStatus.NOT_FOUND);
-    }
-"#;
-
-const PRECONDITION_ROUTE: &str = r#"
-        @GetMapping("/boom/stale")
-        String stale() {
-            throw new OptimisticLockingFailureException("version moved on");
-        }
-
-        @GetMapping("/boom/missing")
-        String missing() {
-            throw new EmptyResultDataAccessException(1);
-        }
-"#;
-
-const DUPLICATE_KEY_HANDLER: &str = r#"
-    /**
-     * A unique constraint the database enforced, as the 409 it is.
-     *
-     * <p>Without this, a duplicate reaches the client as a 500 -- which is
-     * what alerting pages on and what a client library retries, so one
-     * duplicate becomes an incident and then a retry storm. The row was not
-     * written and never will be; that is a conflict, not a server fault.
-     *
-     * <p>The detail deliberately does not name the column. Spring's message
-     * carries the constraint name from the driver, which is a schema
-     * identifier rather than anything a caller can act on -- and echoing it
-     * tells an unauthenticated client the shape of your database.
-     */
-    @ExceptionHandler(DuplicateKeyException.class)
-    public ProblemDetail handleDuplicateKey(DuplicateKeyException failure) {
-        return ProblemDetail.forStatusAndDetail(
-                HttpStatus.CONFLICT, "a resource with those values already exists");
-    }
-"#;
-
-const DUPLICATE_KEY_TEST: &str = r#"
-    @Test
-    void aDuplicateKeyBecomesA409() {
-        // The database rejected a unique constraint; that is a conflict, not
-        // a server fault.
-        assertThat(mvc.get().uri("/boom/duplicate")).hasStatus(HttpStatus.CONFLICT);
-    }
-"#;
-
-const DUPLICATE_KEY_ROUTE: &str = r#"
-        @GetMapping("/boom/duplicate")
-        String duplicate() {
-            throw new DuplicateKeyException("unique constraint violated");
-        }
-"#;
-
 const ACTUATOR_FILES: &[JavaFile] = &[JavaFile {
     suffix: "endpoints_test",
-    template: include_str!("../../../../templates/spring/actuator_test_java.java"),
+    template: crate::template!("spring/actuator_test_java.java"),
     before_boot: None,
     source_set: SourceSet::Test,
     class_name: actuator_test_class,
@@ -198,7 +32,7 @@ const ACTUATOR_FILES: &[JavaFile] = &[JavaFile {
 const CACHE_FILES: &[JavaFile] = &[
     JavaFile {
         suffix: "config",
-        template: include_str!("../../../../templates/spring/cache_config_java.java"),
+        template: crate::template!("spring/cache_config_java.java"),
         before_boot: None,
         source_set: SourceSet::Main,
         class_name: cache_config_class,
@@ -206,7 +40,7 @@ const CACHE_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "test",
-        template: include_str!("../../../../templates/spring/cache_test_java.java"),
+        template: crate::template!("spring/cache_test_java.java"),
         before_boot: None,
         source_set: SourceSet::Test,
         class_name: cache_test_class,
@@ -217,7 +51,7 @@ const CACHE_FILES: &[JavaFile] = &[
 const CORS_FILES: &[JavaFile] = &[
     JavaFile {
         suffix: "config",
-        template: include_str!("../../../../templates/spring/cors_config_java.java"),
+        template: crate::template!("spring/cors_config_java.java"),
         before_boot: None,
         source_set: SourceSet::Main,
         class_name: cors_config_class,
@@ -225,10 +59,10 @@ const CORS_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "test",
-        template: include_str!("../../../../templates/spring/cors_config_test_java.java"),
+        template: crate::template!("spring/cors_config_test_java.java"),
         before_boot: Some((
             4,
-            include_str!("../../../../templates/spring/cors_config_test_classic_java.java"),
+            crate::template!("spring/cors_config_test_classic_java.java"),
         )),
         source_set: SourceSet::Test,
         class_name: cors_test_class,
@@ -239,7 +73,7 @@ const CORS_FILES: &[JavaFile] = &[
 const OBSERVABILITY_FILES: &[JavaFile] = &[
     JavaFile {
         suffix: "metrics_config",
-        template: include_str!("../../../../templates/spring/metrics_config_java.java"),
+        template: crate::template!("spring/metrics_config_java.java"),
         before_boot: None,
         source_set: SourceSet::Main,
         class_name: metrics_config_class,
@@ -247,7 +81,7 @@ const OBSERVABILITY_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "app_metrics",
-        template: include_str!("../../../../templates/spring/app_metrics_java.java"),
+        template: crate::template!("spring/app_metrics_java.java"),
         before_boot: None,
         source_set: SourceSet::Main,
         class_name: app_metrics_class,
@@ -255,7 +89,7 @@ const OBSERVABILITY_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "app_metrics_test",
-        template: include_str!("../../../../templates/spring/app_metrics_test_java.java"),
+        template: crate::template!("spring/app_metrics_test_java.java"),
         before_boot: None,
         source_set: SourceSet::Test,
         class_name: app_metrics_test_class,
@@ -263,7 +97,7 @@ const OBSERVABILITY_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "prometheus_scrape_test",
-        template: include_str!("../../../../templates/spring/prometheus_scrape_test_java.java"),
+        template: crate::template!("spring/prometheus_scrape_test_java.java"),
         before_boot: None,
         source_set: SourceSet::Test,
         class_name: prometheus_scrape_test_class,
@@ -274,7 +108,7 @@ const OBSERVABILITY_FILES: &[JavaFile] = &[
 const SECURITY_FILES: &[JavaFile] = &[
     JavaFile {
         suffix: "config",
-        template: include_str!("../../../../templates/spring/security_config_java.java"),
+        template: crate::template!("spring/security_config_java.java"),
         before_boot: None,
         source_set: SourceSet::Main,
         class_name: security_config_class,
@@ -282,7 +116,7 @@ const SECURITY_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "production_config",
-        template: include_str!("../../../../templates/spring/production_security_config_java.java"),
+        template: crate::template!("spring/production_security_config_java.java"),
         before_boot: None,
         source_set: SourceSet::Main,
         class_name: production_security_config_class,
@@ -290,7 +124,7 @@ const SECURITY_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "scope_authorizer",
-        template: include_str!("../../../../templates/spring/scope_authorizer_java.java"),
+        template: crate::template!("spring/scope_authorizer_java.java"),
         before_boot: None,
         source_set: SourceSet::Main,
         class_name: scope_authorizer_class,
@@ -298,7 +132,7 @@ const SECURITY_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "config_test",
-        template: include_str!("../../../../templates/spring/security_test_java.java"),
+        template: crate::template!("spring/security_test_java.java"),
         before_boot: None,
         source_set: SourceSet::Test,
         class_name: security_config_test_class,
@@ -306,7 +140,7 @@ const SECURITY_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "scope_authorizer_test",
-        template: include_str!("../../../../templates/spring/scope_authorizer_test_java.java"),
+        template: crate::template!("spring/scope_authorizer_test_java.java"),
         before_boot: None,
         source_set: SourceSet::Test,
         class_name: scope_authorizer_test_class,
@@ -317,7 +151,7 @@ const SECURITY_FILES: &[JavaFile] = &[
 const SSE_FILES: &[JavaFile] = &[
     JavaFile {
         suffix: "hub",
-        template: include_str!("../../../../templates/spring/sse_hub_java.java"),
+        template: crate::template!("spring/sse_hub_java.java"),
         before_boot: None,
         source_set: SourceSet::Main,
         class_name: event_hub_class,
@@ -325,7 +159,7 @@ const SSE_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "scheduling",
-        template: include_str!("../../../../templates/spring/scheduling_config_java.java"),
+        template: crate::template!("spring/scheduling_config_java.java"),
         before_boot: None,
         source_set: SourceSet::Main,
         class_name: scheduling_config_class,
@@ -333,7 +167,7 @@ const SSE_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "controller",
-        template: include_str!("../../../../templates/spring/sse_controller_java.java"),
+        template: crate::template!("spring/sse_controller_java.java"),
         before_boot: None,
         source_set: SourceSet::Main,
         class_name: event_stream_controller_class,
@@ -341,7 +175,7 @@ const SSE_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "hub_test",
-        template: include_str!("../../../../templates/spring/sse_hub_test_java.java"),
+        template: crate::template!("spring/sse_hub_test_java.java"),
         before_boot: None,
         source_set: SourceSet::Test,
         class_name: event_hub_test_class,
@@ -352,7 +186,7 @@ const SSE_FILES: &[JavaFile] = &[
 const REDIS_FILES: &[JavaFile] = &[
     JavaFile {
         suffix: "store",
-        template: include_str!("../../../../templates/spring/key_value_store_java.java"),
+        template: crate::template!("spring/key_value_store_java.java"),
         before_boot: None,
         source_set: SourceSet::Main,
         class_name: key_value_store_class,
@@ -360,7 +194,7 @@ const REDIS_FILES: &[JavaFile] = &[
     },
     JavaFile {
         suffix: "store_it",
-        template: include_str!("../../../../templates/spring/key_value_store_it_java.java"),
+        template: crate::template!("spring/key_value_store_it_java.java"),
         before_boot: None,
         source_set: SourceSet::IntegrationTest,
         class_name: key_value_store_it_class,

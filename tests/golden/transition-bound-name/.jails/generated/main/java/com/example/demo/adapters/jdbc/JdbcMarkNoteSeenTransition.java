@@ -5,6 +5,8 @@ import com.example.demo.application.transitions.MarkNoteSeenTransition;
 import com.example.demo.domain.Note;
 import java.util.ArrayList;
 import java.util.List;
+import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,12 +22,22 @@ public class JdbcMarkNoteSeenTransition implements MarkNoteSeenTransition {
 
     @Override
     @Transactional
-    public Note execute(long id, MarkNoteSeenTransition.Input input) {
-        var predicates = new ArrayList<>(List.of("id = :id", "version = :guard_version"));
+    public Note execute(long id, MarkNoteSeenTransition.Input input, Long expectedVersion) {
+        var predicates = new ArrayList<String>(List.of("id = :id", "version = coalesce(:expected_version, version)"));
         var sql = "update notes set seen = true, version = version + 1 where " + String.join(" and ", predicates) + " returning id, body, seen, version";
         JdbcClient.StatementSpec statement = jdbc.sql(sql);
         statement = statement.param("id", id);
-        statement = statement.param("guard_version", input.version());
-        return statement.query(Note.class).single();
+        statement = statement.param("expected_version", expectedVersion);
+        var applied = statement.query(Note.class).optional();
+        if (applied.isEmpty()) {
+            throw jdbc.sql("select 1 from notes where id = :id")
+                    .param("id", id)
+                    .query(Integer.class)
+                    .optional()
+                    .<RuntimeException>map(row -> new OptimisticLockingFailureException(
+                            "the resource has changed since the version you sent"))
+                    .orElseGet(() -> new EmptyResultDataAccessException(1));
+        }
+        return applied.get();
     }
 }

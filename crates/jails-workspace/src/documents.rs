@@ -51,11 +51,11 @@ pub(crate) fn reconcile_properties(
 
     for line in text.split_inclusive('\n') {
         let trimmed = line.trim();
-        if trimmed.starts_with("# jails:") {
+        if trimmed.starts_with(jails_codemod::marked::Marked::OPEN_PREFIX) {
             inside_marker = true;
             continue;
         }
-        if trimmed.starts_with("# /jails:") {
+        if trimmed.starts_with(jails_codemod::marked::Marked::CLOSE_PREFIX) {
             inside_marker = false;
             continue;
         }
