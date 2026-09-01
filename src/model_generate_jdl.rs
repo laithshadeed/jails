@@ -269,13 +269,16 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
         ArtifactKind::Enum => enum_declaration(&args.name, &entity_label, &fields, v1)?,
         ArtifactKind::Record | ArtifactKind::Value | ArtifactKind::Scaffold => {
             entity_declaration_at(
-                &args.name,
-                &entity_label,
-                args.kind == ArtifactKind::Scaffold,
-                &fields,
-                v1,
-                args.path.as_deref(),
-                &args.uniques,
+                &current_model,
+                &EntityDeclaration {
+                    java_name: &args.name,
+                    entity_label: &entity_label,
+                    scaffold: args.kind == ArtifactKind::Scaffold,
+                    fields: &fields,
+                    v1,
+                    path: args.path.as_deref(),
+                    uniques: &args.uniques,
+                },
             )?
         }
         _ => unreachable!("run only accepts entity kinds"),
@@ -579,26 +582,137 @@ pub(crate) fn relation_member_name(label: &str) -> String {
 /// dropped -- a route the reader asked for and did not get is the failure this
 /// closes, and writing it into a dialect on the deletion list would only move
 /// it.
-pub(crate) fn entity_declaration_at(
+/// A stored resource needs exactly one primary key, and it has to be declared.
+///
+/// **Refused here rather than by the linker.** The projection prerequisite
+/// says `projection `repo` on `book` requires a primary key`, which is true
+/// and is about a projection the reader never typed; this one is about the
+/// command they did.
+fn refuse_unstorable_identity(fields: &[ParsedField], java_name: &str) -> Result<()> {
+    let keys: Vec<&str> = fields
+        .iter()
+        .filter(|field| field.primary_key)
+        .map(|field| field.java_name.as_str())
+        .collect();
+    match keys.len() {
+        1 => Ok(()),
+        0 => Err(Failure::Told(format!(
+            "`{java_name}` needs exactly one `@pk` field to be stored, addressed and updated by.\n       fix: mark one component, for example `id:uuid@pk`"
+        ))),
+        _ => Err(Failure::Told(format!(
+            "`{java_name}` declares a composite primary key ({}), and a scaffold addresses one row by one value.\n       fix: keep one `@pk` and make the rest `@unique`, or declare the record and its repository by hand",
+            keys.join(", ")
+        ))),
+    }
+}
+
+/// A component whose type is another record has no column to live in.
+///
+/// The engine flattened it silently -- the record compiled, the DDL had no
+/// column for it, and the adapter's insert named one that did not exist. The
+/// two things a reader actually wants are both named here: the foreign key
+/// column, and the declaration that makes it an invariant.
+fn refuse_unstorable_components(
+    model: &jails_model::AppModel,
+    fields: &[ParsedField],
     java_name: &str,
-    entity_label: &str,
-    scaffold: bool,
-    fields: &[String],
-    v1: bool,
-    path: Option<&str>,
-    uniques: &[String],
+) -> Result<()> {
+    for field in fields {
+        let Some(referenced) = model
+            .entities
+            .values()
+            .find(|entity| entity.names.java_type == field.type_name)
+        else {
+            continue;
+        };
+        if referenced.facets.contains(&jails_model::Facet::Enum) {
+            continue;
+        }
+        let key = referenced
+            .fields
+            .iter()
+            .find(|candidate| candidate.primary_key)
+            .map(|candidate| match &candidate.ty {
+                jails_model::TypeRef::Builtin(builtin) => builtin.semantics().token.to_string(),
+                jails_model::TypeRef::External(name) => name.clone(),
+            })
+            .unwrap_or_else(|| "uuid".to_string());
+        return Err(Failure::Told(format!(
+            "`{}` names the record `{}`, which cannot be persisted as a column of `{java_name}`.\n       fix: hold its key -- `{}:{key}` -- and declare the invariant with `jails g association {}{} {}=id --on {java_name} --yields {}`",
+            field.java_name,
+            field.type_name,
+            field.java_name,
+            java_name,
+            field.type_name,
+            field.label,
+            field.type_name,
+        )));
+    }
+    Ok(())
+}
+
+/// One entity declaration's inputs, together because they are decided
+/// together: what to call it, what it holds, and which dialect it is written
+/// in.
+pub(crate) struct EntityDeclaration<'a> {
+    pub(crate) java_name: &'a str,
+    pub(crate) entity_label: &'a str,
+    pub(crate) scaffold: bool,
+    pub(crate) fields: &'a [String],
+    pub(crate) v1: bool,
+    pub(crate) path: Option<&'a str>,
+    pub(crate) uniques: &'a [String],
+}
+
+pub(crate) fn entity_declaration_at(
+    model: &jails_model::AppModel,
+    declaration: &EntityDeclaration<'_>,
 ) -> Result<String> {
+    let EntityDeclaration {
+        java_name,
+        entity_label,
+        scaffold,
+        fields,
+        v1,
+        path,
+        uniques,
+    } = *declaration;
     let mut labels = BTreeSet::new();
     let mut parsed = Vec::new();
     for token in fields {
         let field = parse_field(token)?;
+        // **One column, named twice.** `id` and `Id` converge on the same
+        // Java component and the same SQL column, so this is not two fields
+        // colliding -- it is one field spelled two ways, and the refusal says
+        // so in both projections rather than echoing whichever spelling came
+        // second.
         if !labels.insert(field.label.clone()) {
             return Err(Failure::Told(format!(
-                "field `{}` is declared more than once\n       fix: keep one declaration for each field name",
-                field.java_name
+                "`{}` is declared twice: `{}` and the column `{}` are one field, whatever the spelling.\n       fix: keep one declaration",
+                field.java_name,
+                jails_model::lower_camel_case(&field.label),
+                field
+                    .mapped_column
+                    .clone()
+                    .unwrap_or_else(|| field.label.clone()),
             )));
         }
         parsed.push(field);
+    }
+    if scaffold {
+        // **`scaffold` is four Spring facets, so it needs Spring.** The
+        // linker reaches the same conclusion one projection at a time --
+        // `projection `dto` on `note` requires platform spring` -- which
+        // names symbols the reader never typed and says nothing about which
+        // of the two ways out they want.
+        if model.project.platform != "spring" {
+            return Err(Failure::Told(format!(
+                "`scaffold` is a Spring Boot capability -- a DTO, a controller and a service are Spring types -- and this project declares `platform {}`.\n       fix: `jails g record {java_name}` for the record and its repository, or declare Spring in `{MODEL_PATH}`",
+                model.project.platform
+            )));
+        }
+        refuse_unstorable_identity(&parsed, java_name)?;
+        refuse_unstorable_components(model, &parsed, java_name)?;
     }
     let mut output = format!("entity {java_name} @id(ent_{entity_label}) {{\n");
     if scaffold {

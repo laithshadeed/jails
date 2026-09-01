@@ -3551,7 +3551,10 @@ fn scaffold_refuses_to_silently_flatten_a_project_record_component() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("cannot be persisted"), "{stderr}");
-    assert!(stderr.contains("author:UUID"), "{stderr}");
+    // The suggestion is in jails' own field syntax, where a lowercase type
+    // names a builtin: `author:UUID` would be read as a project type called
+    // `UUID`, which is the mistake this refusal exists to prevent.
+    assert!(stderr.contains("author:uuid"), "{stderr}");
     assert!(stderr.contains("g association"), "{stderr}");
     assert!(stderr.contains("--on Post --yields User"), "{stderr}");
     assert!(

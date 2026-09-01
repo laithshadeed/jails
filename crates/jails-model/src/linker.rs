@@ -656,20 +656,33 @@ impl Linker {
     }
 
     pub(crate) fn java_type(&mut self, value: &str, path: &str) {
-        if !valid_java_type(value) {
-            self.problem(
-                "model-java-type",
-                path,
-                format!("`{value}` is not valid in a Java identifier"),
-                "use an upper-camel-case Java identifier",
-            );
+        if !self.java_identifier(value, path) {
             return;
         }
-        // **A package member outranks `java.lang`'s implicit import.**
-        // `record String(String value)` types its own component as *itself*
-        // and compiles, as does its generated test -- `bugs.md` B50, and the
-        // reason no tier caught it. Refused where the name is *declared*, not
-        // where one is referenced: a `value:String` is the ordinary case.
+        self.java_lang_shadow(value, path);
+    }
+
+    /// Whether the name is a Java identifier at all, reporting it if not.
+    fn java_identifier(&mut self, value: &str, path: &str) -> bool {
+        if valid_java_type(value) {
+            return true;
+        }
+        self.problem(
+            "model-java-type",
+            path,
+            format!("`{value}` is not valid in a Java identifier"),
+            "use an upper-camel-case Java identifier",
+        );
+        false
+    }
+
+    /// **A package member outranks `java.lang`'s implicit import.**
+    ///
+    /// `record String(String value)` types its own component as *itself* and
+    /// compiles, as does its generated test -- `bugs.md` B50, and the reason
+    /// no tier caught it. Refused where the name is *declared*, not where one
+    /// is referenced: a `value:String` is the ordinary case.
+    fn java_lang_shadow(&mut self, value: &str, path: &str) {
         if JAVA_LANG_TYPES.contains(&value) {
             self.problem(
                 "model-java-lang-shadow",
@@ -692,14 +705,13 @@ impl Linker {
     ///
     /// **A component is deliberately not checked**, because nothing derives a
     /// variable from its name: `g command Import` writes `ImportCommand`, and
-    /// refusing it would refuse a program that compiles. A name that trips
-    /// both this and the `java.lang` shadow rule -- `Void` is the one -- is
-    /// reported once, by the type rules, because this returns as soon as they
-    /// found anything.
+    /// refusing it would refuse a program that compiles.
+    ///
+    /// Checked before the `java.lang` shadow rule, because a name that trips
+    /// both -- `Class` and `Void` are the two -- fails more concretely as the
+    /// variable it derives than as the type it hides.
     pub(crate) fn java_type_and_variable(&mut self, value: &str, path: &str) {
-        let before = self.diagnostics.len();
-        self.java_type(value, path);
-        if self.diagnostics.len() != before {
+        if !self.java_identifier(value, path) {
             return;
         }
         let variable = lower_camel_case(value);
@@ -710,7 +722,9 @@ impl Linker {
                 format!("`{value}` derives the Java variable `{variable}`, which is a keyword"),
                 "choose a name whose lower-camel-case form is a Java identifier",
             );
+            return;
         }
+        self.java_lang_shadow(value, path);
     }
 
     fn java_member(&mut self, value: &str, path: &str) {

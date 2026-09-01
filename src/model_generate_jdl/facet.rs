@@ -59,6 +59,89 @@ impl Kind {
     fn takes_fields(self) -> bool {
         matches!(self, Self::Search)
     }
+
+    /// What this projection does with the record, for the refusal that fires
+    /// when there is no record to do it to.
+    fn wants(self) -> &'static str {
+        match self {
+            Self::Factory => "needs the record it builds",
+            Self::Dto => "needs the record it carries",
+            Self::Repository => "needs the record it stores",
+            Self::Seed => "needs the record it seeds",
+            Self::Search => "needs the record it searches",
+        }
+    }
+}
+
+/// What a full-text index cannot be built over, named before anything is
+/// written.
+///
+/// **Each of these reaches the linker as a projection prerequisite**, which is
+/// true and is about `$.projections.prj_ent_article_search` -- a symbol the
+/// reader never typed. The three failures are distinct and each has a
+/// different answer, so they are three refusals rather than one.
+fn refuse_unindexable(kind: Kind, entity: &jails_model::Entity, fields: &[String]) -> Result<()> {
+    if fields.is_empty() {
+        let text = entity
+            .fields
+            .iter()
+            .filter(|field| indexable(field))
+            .map(|field| field.names.java_member.as_str())
+            .collect::<Vec<_>>();
+        return Err(Failure::Told(format!(
+            "`{} {}` needs the components it indexes: a `tsvector` over every text column indexes ids and status codes as if they were prose.\n       fix: name them -- {}",
+            kind.name(),
+            entity.names.java_type,
+            if text.is_empty() {
+                format!(
+                    "`{}` has no text components to index",
+                    entity.names.java_type
+                )
+            } else {
+                format!(
+                    "`jails g search {} {}`",
+                    entity.names.java_type,
+                    text.join(" ")
+                )
+            }
+        )));
+    }
+    for token in fields {
+        let name = token
+            .split_once(':')
+            .map_or(token.as_str(), |(name, _)| name);
+        let label = crate::model_resource::java_to_label(name);
+        let Some(field) = entity.fields.iter().find(|field| field.label == label) else {
+            return Err(Failure::Told(format!(
+                "`{}` has no component `{name}`.\n       fix: name one of {}",
+                entity.names.java_type,
+                entity
+                    .fields
+                    .iter()
+                    .map(|field| format!("`{}`", field.names.java_member))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        };
+        if !indexable(field) {
+            return Err(Failure::Told(format!(
+                "full-text search indexes text, and `{}` on `{}` is not.\n       fix: name a string component, or add a plain index with `jails resource index add {} {}`",
+                field.names.java_member,
+                entity.names.java_type,
+                entity.names.java_type,
+                field.names.java_member
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Whether a component is prose a `tsvector` can hold.
+fn indexable(field: &jails_model::Field) -> bool {
+    matches!(
+        field.ty,
+        jails_model::TypeRef::Builtin(jails_model::BuiltinType::String)
+    )
 }
 
 pub(super) fn run(args: GenerateArgs, invocation: Invocation, kind: Kind) -> Result<()> {
@@ -71,7 +154,10 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation, kind: Kind) -> Res
         .map_err(|error| Failure::Told(format!("could not assign entity identity: {error}")))?;
     let entity = current_model.entity(&entity_id).ok_or_else(|| {
         Failure::Told(format!(
-            "no canonical `{}` record exists\n       fix: `jails g record {} <field>:<type>` (or `jails g scaffold {}`) first, then `jails g {} {}`",
+            "`{} {}` {}, and this project declares none called `{}`\n       fix: `jails g record {} <field>:<type>` (or `jails g scaffold {}`) first, then `jails g {} {}`",
+            kind.name(),
+            args.name,
+            kind.wants(),
             args.name,
             args.name,
             args.name,
@@ -92,6 +178,7 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation, kind: Kind) -> Res
     // take the no-op path and report success over a component that does not
     // exist.
     let arguments = if kind.takes_fields() {
+        refuse_unindexable(kind, entity, &args.fields)?;
         let labels = crate::model_generate::operation_field_labels(
             &current_model,
             &entity.label,
