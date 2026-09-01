@@ -186,13 +186,20 @@ pub(crate) struct Unit {
 }
 
 fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, CompileError> {
+    // **Only a form-bound route needs the annotation.** A JSON body reaches
+    // Jackson, which applies the project's naming strategy itself; a form
+    // reaches Spring's data binder, which has none.
+    let binder = operation
+        .route()
+        .is_some_and(|route| route.consumes == Some(jails_model::RequestFormat::Form))
+        .then_some(model);
     let (package, type_name, body, imports) = match &operation.kind {
         OperationKind::Command(command) => {
             let entity = entity(model, &command.on)?;
             let mut imports = BTreeSet::from([domain_import(model, entity)]);
             let components = input_components(model, operation, &mut imports)?;
             let input = indent(
-                &record_shape_from_components("Input", &components, &mut imports),
+                &record_shape_bound("Input", &components, &mut imports, binder),
                 4,
             );
             let context = operation_context(model, entity, &mut imports);
@@ -210,7 +217,7 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
                 BTreeSet::from(["java.util.List".to_string(), domain_import(model, entity)]);
             let components = input_components(model, operation, &mut imports)?;
             let input = indent(
-                &record_shape_from_components("Input", &components, &mut imports),
+                &record_shape_bound("Input", &components, &mut imports, binder),
                 4,
             );
             let context = operation_context(model, entity, &mut imports);
@@ -233,7 +240,7 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
             let key_member = &key.names.java_member;
             let components = input_components(model, operation, &mut imports)?;
             let input = indent(
-                &record_shape_from_components("Input", &components, &mut imports),
+                &record_shape_bound("Input", &components, &mut imports, binder),
                 4,
             );
             let context = operation_context(model, entity, &mut imports);
@@ -573,10 +580,61 @@ pub(crate) fn parameter_member(parameter: &OperationParameter) -> String {
     jails_model::lower_camel_case(&parameter.name)
 }
 
+/// The name a form field arrives under, where it is not the component's own.
+///
+/// **Spring's data binder has no naming strategy.** Jackson has one and
+/// applies it to JSON without help, so a project whose wire is snake_case
+/// still binds a *form* field called `userId` unless the component says
+/// otherwise -- and a form post at a `@ModelAttribute` endpoint then delivers
+/// `null` for every multi-word component, silently. `@BindParam` is what says
+/// otherwise, and it is emitted only where the two spellings differ: an
+/// annotation restating the default is noise in every one-word component.
+///
+/// Read off the model's own settings rather than a manifest, for the reason
+/// `sql_dialect` reads the driver: `spring.jackson.property-naming-strategy`
+/// is where a project states this, and jails does not need to be told again.
+fn bind_param(
+    model: &AppModel,
+    form: bool,
+    member: &str,
+    imports: &mut BTreeSet<String>,
+) -> String {
+    if !form || !snake_case_wire(model) {
+        return String::new();
+    }
+    let mut wire = String::with_capacity(member.len() + 4);
+    for character in member.chars() {
+        if character.is_ascii_uppercase() && !wire.is_empty() {
+            wire.push('_');
+        }
+        wire.push(character.to_ascii_lowercase());
+    }
+    if wire == member {
+        return String::new();
+    }
+    imports.insert("org.springframework.web.bind.annotation.BindParam".to_string());
+    format!("@BindParam(\"{wire}\") ")
+}
+
+fn snake_case_wire(model: &AppModel) -> bool {
+    model.settings.values().any(|setting| {
+        setting.key == "spring.jackson.property-naming-strategy" && setting.value == "SNAKE_CASE"
+    })
+}
+
 fn record_shape_from_components(
     type_name: &str,
     components: &[RecordComponent<'_>],
     imports: &mut BTreeSet<String>,
+) -> String {
+    record_shape_bound(type_name, components, imports, None)
+}
+
+fn record_shape_bound(
+    type_name: &str,
+    components: &[RecordComponent<'_>],
+    imports: &mut BTreeSet<String>,
+    binder: Option<&AppModel>,
 ) -> String {
     let declarations = components
         .iter()
@@ -586,7 +644,10 @@ fn record_shape_from_components(
                 imports.insert("java.util.Optional".to_string());
                 java = format!("Optional<{java}>");
             }
-            format!("    {java} {}", component.name)
+            let bind = binder.map_or_else(String::new, |model| {
+                bind_param(model, true, &component.name, imports)
+            });
+            format!("    {bind}{java} {}", component.name)
         })
         .collect::<Vec<_>>()
         .join(",\n");

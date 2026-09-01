@@ -1366,6 +1366,7 @@ fn a_gradle_project_gets_the_commands_that_do_not_need_maven() {
     let refusal = String::from_utf8_lossy(&generated.stderr);
     assert!(refusal.contains("Java release"), "{refusal}");
     assert!(refusal.contains("Gradle toolchain"), "{refusal}");
+    assert!(refusal.contains("built by Gradle"), "{refusal}");
     assert!(
         !common::generated(&root, "src/main/java/com/acme/shop/domain/Order.java").is_file(),
         "the refusal still wrote the record"

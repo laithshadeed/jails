@@ -168,6 +168,19 @@ pub(crate) fn derive(project: &jails_project::model::Project) -> Result<String> 
     let build = match jails_spec::build::detect(root) {
         jails_spec::build::Build::Maven => "maven",
         jails_spec::build::Build::Gradle => "gradle",
+        // **Named the way the reader would name it, not the way the enum
+        // spells it.** `Foreign("Gradle")` is a multi-module root or a Kotlin
+        // script -- a build jails recognises by filename and will not read --
+        // and the fact that matters is the one such a root never states: which
+        // Java release the code jails writes has to compile against. A
+        // multi-module build declares it per module, so there is no answer
+        // here and no defensible default; jails' own target on a project whose
+        // modules build with 17 is code that does not compile.
+        jails_spec::build::Build::Foreign(name) => {
+            return Err(Failure::Told(format!(
+                "this project is built by {name}, and jails cannot read its Java release from here.\n       fix: run `jails g` inside a module whose build declares a Gradle toolchain, or model this project by hand"
+            )));
+        }
         other => {
             return Err(Failure::Told(format!(
                 "jails cannot model a `{other:?}` build.\n       fix: `model init` supports Maven and Groovy Gradle; run `jails modernize` first, or model this project by hand"
