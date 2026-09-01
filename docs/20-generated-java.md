@@ -164,11 +164,13 @@ re-confirmed on 2026-08-27 against a project built from nothing but
   command wrote the route rather than by a decision. Half closed: `g scaffold
   --path` is accepted, so a project *can* be made consistent. What is left is
   that consistency is something the reader must ask for on every command.
-- **§7 two read-side defects.** The service-layer criteria record is bound
-  directly as `@RequestBody` in a project whose own generated Javadoc argues
-  the wire type must not be the domain type; and `MAX_RESULTS = 100` is silent
-  -- no cursor, no total, nothing in the response saying the list was
-  truncated.
+- **§7 a truncated list says nothing.** A query declaring `limit 100` renders
+  `int DEFAULT_LIMIT = 100` on the port and `limit 100` in the JDBC adapter,
+  and a caller receiving exactly a hundred rows cannot tell a full page from a
+  complete result: no cursor, no total, nothing in the response saying the
+  list was cut. The binding half of this entry closed -- the canonical
+  controller binds the operation's own `Input`, `@ModelAttribute` for a query
+  and `@RequestBody` for a command, so the wire type is never the domain type.
 - **§9 the generated tests mostly test the framework.** A service test that can
   only fail if Mockito breaks; an association IT that asks `pg_constraint`
   whether PostgreSQL recorded the FK the migration declared; every fixture
