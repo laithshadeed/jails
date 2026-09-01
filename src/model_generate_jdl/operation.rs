@@ -487,7 +487,23 @@ pub(super) fn operation_declaration(
                 )));
             }
             if let Some(target) = target {
-                refuse_unpinnable(model, target, &args.fields, component, value)?;
+                refuse_unpinnable(
+                    model,
+                    target,
+                    // **A transition's field list names the columns it
+                    // touches, not the request body.** `g transition MarkSeen
+                    // id seen version --set seen=true` is the familiar
+                    // spelling: `seen` is named because the transition writes
+                    // it, and the `--set` says the value is a constant. A
+                    // command's list *is* its request, so a pin of one of its
+                    // fields is a value the caller could also send.
+                    match args.kind {
+                        ArtifactKind::Transition => &[],
+                        _ => args.fields.as_slice(),
+                    },
+                    component,
+                    value,
+                )?;
             }
             output.push_str(&format!(
                 "    set {} = {}\n",
@@ -703,18 +719,18 @@ fn refuse_unpinnable(
     // go. Checked against what the reader typed rather than the filtered
     // parameter list, which has already had the pinned components taken out of
     // it -- so the collision would never be visible there.
+    // The key selects the row rather than being written to it, so a pin of it
+    // is a value that would have to be two things at once. True of every kind,
+    // whether or not the field list names it.
+    if field.primary_key {
+        return Err(Failure::Told(format!(
+            "`{component}` identifies the row, so it cannot also be a value this endpoint writes.\n       fix: drop the `--set`, and change a component that is not the key"
+        )));
+    }
     if declared
         .iter()
         .any(|field| java_to_label(field.split(':').next().unwrap_or(field)) == label)
     {
-        // The primary key is the sharper case of the same mistake: it selects
-        // the row rather than being written to it, so a pin of it is a value
-        // that would have to be two things at once.
-        if field.primary_key {
-            return Err(Failure::Told(format!(
-                "`{component}` identifies the row, so it cannot also be a value this endpoint writes.\n       fix: drop the `--set`, and change a component that is not the key"
-            )));
-        }
         return Err(Failure::Told(format!(
             "this endpoint both accepts `{component}` and pins it, and a pin the caller can override is not one.\n       fix: drop `{component}` from the field list, or drop the `--set`"
         )));
