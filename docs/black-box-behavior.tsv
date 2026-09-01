@@ -3,7 +3,7 @@
 maven	test	success	tool:mvn test
 gradle	test	success	tool:gradle test
 maven	test --fast	success	stdout:normalized to auto|tool:mvn test
-gradle	test --fast	refused	stderr:Java release|stderr:Gradle toolchain
+gradle	test --fast	success	stdout:all tests in scope|stdout:the warm engine is unavailable for this build system
 maven	testd --status	success	stdout:testd: not running
 gradle	testd --status	success	stdout:testd: not running
 maven	run --launcher build-tool	success	tool:mvn spring-boot:run

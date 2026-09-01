@@ -549,6 +549,20 @@ fn render_property_value(value: &str, model: &AppModel, artifact_id: Option<&str
         .replace("{{project_group}}", &group.to_ascii_lowercase())
 }
 
+/// `jakarta` or `javax`, which Spring Boot crossed at 3.0.
+///
+/// **A version fact read off the project, never assumed.** Boot 2 is Java EE
+/// and the annotations are `javax.validation`; emitting the Jakarta package
+/// there hands the reader `package jakarta.validation does not exist` in a
+/// file they did not write, which is exactly the compile error a generator
+/// exists to remove.
+pub(crate) fn validation_package(boot_major: Option<u32>) -> &'static str {
+    match boot_major {
+        Some(major) if major < 3 => "javax",
+        _ => "jakarta",
+    }
+}
+
 fn mockmvc_autoconfigure_import(boot_major: Option<u32>) -> &'static str {
     if boot_major.is_some_and(|major| major >= 4) {
         "org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc"

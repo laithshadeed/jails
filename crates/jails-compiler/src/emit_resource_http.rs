@@ -46,7 +46,7 @@ pub(crate) fn lower(
     if spring_boot.is_none() {
         return Ok(units);
     }
-    units.push(controller(model, entity)?);
+    units.push(controller(model, entity, spring_boot)?);
     if let Some(test) = controller_test(model, entity, spring_boot)? {
         units.push(test);
     }
@@ -229,7 +229,11 @@ fn scoped(entity: &Entity) -> bool {
         .any(|field| field.semantics.scope.is_some())
 }
 
-fn controller(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
+fn controller(
+    model: &AppModel,
+    entity: &Entity,
+    spring_boot: Option<&str>,
+) -> Result<Unit, CompileError> {
     let package = model.project.package_for(Package::Web);
     let type_name = with_suffix(&entity.names.java_type, "Controller");
     let record = &entity.names.java_type;
@@ -276,7 +280,12 @@ fn controller(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
         "org.springframework.web.bind.annotation.RestController".to_string(),
     ]);
     if bounded {
-        imports.insert("jakarta.validation.Valid".to_string());
+        imports.insert(format!(
+            "{}.validation.Valid",
+            crate::emit_capability::validation_package(crate::emit_capability::boot_major(
+                spring_boot
+            ))
+        ));
     }
     if !create_only {
         imports.extend([

@@ -54,7 +54,7 @@ pub(crate) fn lower_and_emit(
                 continue;
             }
             if *facet == Facet::Dto {
-                for unit in crate::emit_dto::lower(model, entity) {
+                for unit in crate::emit_dto::lower(model, entity, spring_boot) {
                     let unit = unit?;
                     output
                         .insert(unit.path, unit.file)

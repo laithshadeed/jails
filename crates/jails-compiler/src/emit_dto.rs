@@ -14,9 +14,10 @@ use std::collections::BTreeSet;
 pub(crate) fn lower(
     model: &AppModel,
     entity: &Entity,
+    spring_boot: Option<&str>,
 ) -> Vec<Result<emit_java::Unit, CompileError>> {
     vec![
-        request(model, entity),
+        request(model, entity, spring_boot),
         response(model, entity),
         contract_test(model, entity),
     ]
@@ -145,7 +146,11 @@ fn hoisted_name(value: &str, taken: &BTreeSet<&str>) -> Option<String> {
     })
 }
 
-fn request(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, CompileError> {
+fn request(
+    model: &AppModel,
+    entity: &Entity,
+    spring_boot: Option<&str>,
+) -> Result<emit_java::Unit, CompileError> {
     let package = model.project.package_for(Package::Web);
     let type_name = format!("{}Request", entity.names.java_type);
     let artifact_id = format!("art_{}_dto_request", entity.id.as_str());
@@ -155,7 +160,14 @@ fn request(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, Compile
         .iter()
         .filter(|field| caller_supplied(field))
         .collect::<Vec<_>>();
-    let components = declared(model, &asked, &mut imports, true);
+    let components = declared(
+        model,
+        &asked,
+        &mut imports,
+        Some(crate::emit_capability::validation_package(
+            crate::emit_capability::boot_major(spring_boot),
+        )),
+    );
     if asked.iter().any(|field| !field.required) {
         imports.insert("java.util.Optional".to_string());
     }
@@ -226,7 +238,7 @@ fn response(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, Compil
     let type_name = format!("{}Response", entity.names.java_type);
     let artifact_id = format!("art_{}_dto_response", entity.id.as_str());
     let mut imports = BTreeSet::from([emit_java::domain_import(model, entity)]);
-    let components = components(model, entity, &mut imports, false);
+    let components = components(model, entity, &mut imports, None);
     let variable = lower_first(&entity.names.java_type);
     let arguments = entity
         .fields
@@ -307,7 +319,7 @@ fn components(
     model: &AppModel,
     entity: &Entity,
     imports: &mut BTreeSet<String>,
-    validation: bool,
+    validation: Option<&str>,
 ) -> String {
     declared(
         model,
@@ -321,7 +333,7 @@ fn declared(
     model: &AppModel,
     fields: &[&Field],
     imports: &mut BTreeSet<String>,
-    validation: bool,
+    validation: Option<&str>,
 ) -> String {
     // **A DTO lives in `web` and a declared type lives in `domain`**, so an
     // enum or record component that needs no import inside the entity's own
@@ -333,11 +345,8 @@ fn declared(
     fields
         .iter()
         .map(|field| {
-            let annotation = if validation {
-                validation_annotation(field, imports)
-            } else {
-                None
-            };
+            let annotation =
+                validation.and_then(|package| validation_annotation(field, imports, package));
             let java = emit_java::java_type(field, imports);
             let name = &field.names.java_member;
             match annotation {
@@ -349,15 +358,19 @@ fn declared(
         .join(",\n")
 }
 
-fn validation_annotation(field: &Field, imports: &mut BTreeSet<String>) -> Option<&'static str> {
+fn validation_annotation(
+    field: &Field,
+    imports: &mut BTreeSet<String>,
+    package: &str,
+) -> Option<&'static str> {
     if !field.required || primitive(field) {
         return None;
     }
     if field.non_blank {
-        imports.insert("jakarta.validation.constraints.NotBlank".to_string());
+        imports.insert(format!("{package}.validation.constraints.NotBlank"));
         Some("@NotBlank")
     } else {
-        imports.insert("jakarta.validation.constraints.NotNull".to_string());
+        imports.insert(format!("{package}.validation.constraints.NotNull"));
         Some("@NotNull")
     }
 }

@@ -79,7 +79,10 @@ pub(crate) fn run(invocation: Invocation) -> Result<()> {
         ));
     }
     if invocation.pretend {
-        println!("--pretend: {} file(s) would change", upgrade.edits.len());
+        println!(
+            "--pretend: nothing was written. ({} file(s) would change)",
+            upgrade.edits.len()
+        );
         return Ok(());
     }
     for step in &upgrade.edits {

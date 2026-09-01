@@ -2904,97 +2904,6 @@ fn task_drop_keeps_v001_and_appends_an_exact_forward_migration() {
     );
 }
 
-#[test]
-fn task_drop_can_explicitly_apply_the_frozen_history_after_commit() {
-    let root = temp_dir("task-drop-apply-migrations");
-    write_spring_fixture(&root);
-    common::declare_storage(&root);
-    assert!(
-        jails_cmd(&root, None)
-            .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
-            .status()
-            .unwrap()
-            .success()
-    );
-
-    let fake = temp_dir("task-drop-flyway-bin");
-    let log = fake.join("flyway.log");
-    write_fake_maven(&fake, &["flyway"], &log);
-    let before = snapshot_tree(&root);
-    let preview = jails_cmd(&root, Some(&fake))
-        .env(
-            "DATABASE_URL",
-            "postgresql://app:secret@127.0.0.1:5432/demo",
-        )
-        .args([
-            "destroy",
-            "scaffold",
-            "Task",
-            "--storage",
-            "drop",
-            "--confirm-table",
-            "tasks",
-            "--force",
-            "--migrate",
-            "--datasource",
-            "DATABASE_URL",
-            "--pretend",
-            "--output",
-            "json",
-        ])
-        .output()
-        .unwrap();
-    assert!(preview.status.success(), "{preview:?}");
-    assert_eq!(snapshot_tree(&root), before, "preview committed the drop");
-    assert!(read_log(&log).is_empty(), "preview ran Flyway");
-    let json = String::from_utf8(preview.stdout).unwrap();
-    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    let effect = &value["report"]["data"]["post_commit"][0]["effect"];
-    let effect = &effect["apply-migrations"];
-    assert_eq!(effect["datasource"], "DATABASE_URL", "{json}");
-    let migrations = effect["migrations"].as_array().unwrap();
-    assert_eq!(migrations.len(), 2, "{json}");
-    assert_eq!(migrations[0]["version"], 1, "{json}");
-    assert_eq!(migrations[1]["version"], 2, "{json}");
-
-    let committed = jails_cmd(&root, Some(&fake))
-        .env(
-            "DATABASE_URL",
-            "postgresql://app:secret@127.0.0.1:5432/demo",
-        )
-        .args([
-            "destroy",
-            "scaffold",
-            "Task",
-            "--storage",
-            "drop",
-            "--confirm-table",
-            "tasks",
-            "--force",
-            "--migrate",
-            "--datasource",
-            "DATABASE_URL",
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        committed.status.success(),
-        "{}{}",
-        String::from_utf8_lossy(&committed.stdout),
-        String::from_utf8_lossy(&committed.stderr)
-    );
-    let committed_stdout = String::from_utf8_lossy(&committed.stdout);
-    assert!(committed_stdout.contains("(done)"), "{committed_stdout}");
-    let invoked = read_log(&log);
-    assert!(invoked.contains("flyway migrate"), "{invoked}");
-    assert!(!invoked.contains("secret"), "credential leaked: {invoked}");
-    assert!(
-        root.join("src/main/resources/db/migration/V002__drop_tasks.sql")
-            .is_file(),
-        "effect ran without the migration commit"
-    );
-}
-
 /// A migration whose delivery is somebody else's business.
 ///
 /// **There is no post-commit effect any more, and that is the change.**
@@ -6079,36 +5988,20 @@ fn what_jails_generates_for_boot_2_compiles_and_what_cannot_refuses_by_name() {
         );
     }
 
-    // The four that cannot, and why the item's premise was incomplete: their
+    // The ones that cannot, and why the item's premise was incomplete: their
     // *main* source set is Boot 3 code, which no test variant can help. The
     // refusal names the type the compiler would have named.
+    //
+    // **`g query` and `g transition` are not on this list any more, and the
+    // reason is structural rather than a relaxation.** The `JdbcClient`
+    // adapter behind an operation port arrives with the `db` capability, and
+    // `db` is itself refused here -- `spring-boot-testcontainers` first
+    // appeared in Boot 3.1. So the floor is enforced one step earlier, on the
+    // declaration that would bring the Framework 6.1 type in, and the
+    // operations stay declarable as what they are: ports.
     for (command, needs) in [
         (vec!["add", "api", "--no-start"], "ProblemDetail"),
         (vec!["add", "security", "--no-start"], "requestMatchers"),
-        (
-            vec![
-                "g",
-                "query",
-                "NotesByStatus",
-                "status:NoteStatus",
-                "--on",
-                "Note",
-            ],
-            "JdbcClient",
-        ),
-        (
-            vec![
-                "g",
-                "transition",
-                "ChangeNoteStatus",
-                "id:uuid",
-                "status:NoteStatus",
-                "version:long@version",
-                "--on",
-                "Note",
-            ],
-            "JdbcClient",
-        ),
     ] {
         let refused = jails_cmd_with_path(&root, &path)
             .args(&command)
@@ -6120,11 +6013,67 @@ fn what_jails_generates_for_boot_2_compiles_and_what_cannot_refuses_by_name() {
         assert!(stderr.contains("Spring Boot 2"), "{command:?}: {stderr}");
         assert!(stderr.contains("jails g scaffold"), "{command:?}: {stderr}");
     }
+    let no_storage = jails_cmd_with_path(&root, &path)
+        .args(["add", "db", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(!no_storage.status.success(), "{no_storage:?}");
+    let stderr = String::from_utf8_lossy(&no_storage.stderr);
+    assert!(stderr.contains("spring-boot-testcontainers"), "{stderr}");
+    assert!(stderr.contains("Spring Boot 2.7"), "{stderr}");
 
-    // Not one of them may name the Framework 6.2 entry point.
+    // And with no adapter to render, the two operation declarations are
+    // ordinary: a port, its `Input`, and nothing that names Framework 6.1.
+    for command in [
+        vec![
+            "g",
+            "query",
+            "NotesByStatus",
+            "status:NoteStatus",
+            "--on",
+            "Note",
+        ],
+        vec![
+            "g",
+            "transition",
+            "ChangeNoteStatus",
+            "id:uuid",
+            "status:NoteStatus",
+            "version:long@version",
+            "--on",
+            "Note",
+        ],
+    ] {
+        let output = jails_cmd_with_path(&root, &path)
+            .args(&command)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{command:?}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    assert!(
+        !common::managed_listing(&root).contains("JdbcClient"),
+        "{}",
+        common::managed_listing(&root)
+    );
+
+    // Not one of them may name the Framework 6.2 entry point. Both trees:
+    // the fixture's own test is reader source and everything jails wrote is
+    // under the managed tree, and a walk of one of them would report a clean
+    // result over the half that could not contain the problem.
     let mut checked = 0;
-    let mut stack = vec![root.join("src/test/java")];
+    let mut stack = vec![
+        root.join("src/test/java"),
+        root.join(".jails/generated/test/java"),
+    ];
     while let Some(dir) = stack.pop() {
+        if !dir.is_dir() {
+            continue;
+        }
         for entry in fs::read_dir(&dir).unwrap() {
             let entry = entry.unwrap().path();
             if entry.is_dir() {
