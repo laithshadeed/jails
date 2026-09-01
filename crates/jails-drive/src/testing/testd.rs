@@ -162,80 +162,20 @@ pub enum TestIsolation {
     ForkSensitive,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(unknown_fix = "upgrade both testd protocol peers")]
 pub enum TestEventV2 {
-    Ready {
-        epoch: u64,
-        output_current: bool,
-    },
+    #[codec(tag = 0)]
+    Ready { epoch: u64, output_current: bool },
+    #[codec(tag = 1)]
     ClassesStale {
         epoch: u64,
         path: Option<ProjectPath>,
     },
-    Delegating {
-        epoch: u64,
-        reason: String,
-    },
-    Recycling {
-        epoch: u64,
-        reason: String,
-    },
-}
-
-impl Codec for TestEventV2 {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Ready {
-                epoch,
-                output_current,
-            } => {
-                encoder.tag(0);
-                encoder.u64(*epoch);
-                encoder.bool(*output_current);
-            }
-            Self::ClassesStale { epoch, path } => {
-                encoder.tag(1);
-                encoder.u64(*epoch);
-                encoder.maybe(path.as_ref())?;
-            }
-            Self::Delegating { epoch, reason } => {
-                encoder.tag(2);
-                encoder.u64(*epoch);
-                encoder.string(reason)?;
-            }
-            Self::Recycling { epoch, reason } => {
-                encoder.tag(3);
-                encoder.u64(*epoch);
-                encoder.string(reason)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        match decoder.tag()? {
-            0 => Ok(Self::Ready {
-                epoch: decoder.u64()?,
-                output_current: decoder.bool()?,
-            }),
-            1 => Ok(Self::ClassesStale {
-                epoch: decoder.u64()?,
-                path: decoder.perhaps()?,
-            }),
-            2 => Ok(Self::Delegating {
-                epoch: decoder.u64()?,
-                reason: decoder.string()?,
-            }),
-            3 => Ok(Self::Recycling {
-                epoch: decoder.u64()?,
-                reason: decoder.string()?,
-            }),
-            other => Err(format!(
-                "unknown TestEventV2 tag {other}\n       fix: upgrade both testd protocol peers"
-            )
-            .into()),
-        }
-    }
+    #[codec(tag = 2)]
+    Delegating { epoch: u64, reason: String },
+    #[codec(tag = 3)]
+    Recycling { epoch: u64, reason: String },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]

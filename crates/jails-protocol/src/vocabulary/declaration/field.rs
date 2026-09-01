@@ -11,7 +11,6 @@
 
 use crate::Result;
 use crate::identity::{FieldName, JavaType, Name, Package};
-use jails_support::codec::{Codec, Decoder, Encoder};
 
 /// A built-in scalar, or a type the project owns.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, jails_codec_derive::Codec)]
@@ -244,15 +243,17 @@ pub enum Optionality {
     Nullable,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, jails_codec_derive::Codec)]
 pub enum NumericConstraint {
+    #[codec(tag = 0)]
     Positive,
+    #[codec(tag = 1)]
     NonNegative,
 }
 
 /// The closed set of table constraints. They change SQL and nothing about the
 /// Java type — except `scoped`, which touches no SQL at all.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, jails_codec_derive::Codec)]
 pub struct FieldConstraints {
     pub primary_key: bool,
     pub unique: bool,
@@ -316,36 +317,6 @@ impl FieldConstraints {
         Ok(out)
     }
 }
-impl Codec for FieldConstraints {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.bool(self.primary_key);
-        encoder.bool(self.unique);
-        encoder.bool(self.indexed);
-        encoder.bool(self.scoped);
-        encoder.option(self.numeric.as_ref(), |e, numeric| {
-            e.tag(match numeric {
-                NumericConstraint::Positive => 0,
-                NumericConstraint::NonNegative => 1,
-            });
-            Ok(())
-        })
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            primary_key: decoder.bool()?,
-            unique: decoder.bool()?,
-            indexed: decoder.bool()?,
-            scoped: decoder.bool()?,
-            numeric: decoder.option(|d| match d.tag()? {
-                0 => Ok(NumericConstraint::Positive),
-                1 => Ok(NumericConstraint::NonNegative),
-                other => Err(format!("unknown numeric constraint tag {other}").into()),
-            })?,
-        })
-    }
-}
-
 /// One declared field, fully resolved.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, jails_codec_derive::Codec)]
 pub struct FieldSpec {

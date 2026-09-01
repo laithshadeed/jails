@@ -172,8 +172,10 @@ impl std::fmt::Display for EffectId {
 }
 
 /// The runtime work a committed transaction asks for.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(label = "post-commit effect")]
 pub enum PostCommitEffect {
+    #[codec(tag = 0)]
     ComposeReconcile {
         compose_output: ProjectPath,
         before_document: Option<ObjectId>,
@@ -182,130 +184,26 @@ pub enum PostCommitEffect {
         desired_services: BTreeMap<ServiceName, ObjectId>,
         stop_services: BTreeSet<ServiceName>,
     },
+    #[codec(tag = 1)]
     ApplyMigrations {
         datasource: DatasourceRef,
         migrations: Vec<MigrationInputV1>,
     },
 }
 
-impl Codec for PostCommitEffect {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::ComposeReconcile {
-                compose_output,
-                before_document,
-                after_document,
-                prior_managed_services,
-                desired_services,
-                stop_services,
-            } => {
-                encoder.tag(0);
-                compose_output.encode(encoder)?;
-                encode_optional_object(encoder, before_document.as_ref())?;
-                encode_optional_object(encoder, after_document.as_ref())?;
-                encoder.map(prior_managed_services)?;
-                encoder.map(desired_services)?;
-                encoder.set(stop_services)?;
-            }
-            Self::ApplyMigrations {
-                datasource,
-                migrations,
-            } => {
-                encoder.tag(1);
-                datasource.encode(encoder)?;
-                encoder.count(migrations.len())?;
-                for migration in migrations {
-                    migration.encode(encoder)?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        match decoder.tag()? {
-            0 => Ok(Self::ComposeReconcile {
-                compose_output: ProjectPath::decode(decoder)?,
-                before_document: decoder.option(ObjectId::decode)?,
-                after_document: decoder.option(ObjectId::decode)?,
-                prior_managed_services: decoder.map()?,
-                desired_services: decoder.map()?,
-                stop_services: decoder.set()?,
-            }),
-            1 => Ok(Self::ApplyMigrations {
-                datasource: DatasourceRef::decode(decoder)?,
-                migrations: {
-                    let count = decoder.count()?;
-                    let mut migrations = Vec::with_capacity(count as usize);
-                    for _ in 0..count {
-                        migrations.push(MigrationInputV1::decode(decoder)?);
-                    }
-                    migrations
-                },
-            }),
-            other => Err(format!("unknown post-commit effect tag {other}").into()),
-        }
-    }
-}
-
 /// The same work, before a transaction has been prepared to carry it.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(label = "deferred effect")]
 pub enum DeferredEffectIntent {
+    #[codec(tag = 0)]
     ComposeReconcile {
         before_document: Option<ObjectId>,
         compose_output: ProjectPath,
         prior_managed_services: BTreeMap<ServiceName, ObjectId>,
         desired_services: BTreeMap<ServiceName, ObjectId>,
     },
-    ApplyMigrations {
-        datasource: DatasourceRef,
-    },
-}
-
-impl Codec for DeferredEffectIntent {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::ComposeReconcile {
-                before_document,
-                compose_output,
-                prior_managed_services,
-                desired_services,
-            } => {
-                encoder.tag(0);
-                encode_optional_object(encoder, before_document.as_ref())?;
-                compose_output.encode(encoder)?;
-                encoder.map(prior_managed_services)?;
-                encoder.map(desired_services)?;
-            }
-            Self::ApplyMigrations { datasource } => {
-                encoder.tag(1);
-                datasource.encode(encoder)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        match decoder.tag()? {
-            0 => Ok(Self::ComposeReconcile {
-                before_document: decoder.option(ObjectId::decode)?,
-                compose_output: ProjectPath::decode(decoder)?,
-                prior_managed_services: decoder.map()?,
-                desired_services: decoder.map()?,
-            }),
-            1 => Ok(Self::ApplyMigrations {
-                datasource: DatasourceRef::decode(decoder)?,
-            }),
-            other => Err(format!("unknown deferred effect tag {other}").into()),
-        }
-    }
-}
-
-fn encode_optional_object(encoder: &mut Encoder, value: Option<&ObjectId>) -> Result<()> {
-    encoder.option(value, |e, id| {
-        id.encode(e)?;
-        Ok(())
-    })
+    #[codec(tag = 1)]
+    ApplyMigrations { datasource: DatasourceRef },
 }
 
 #[cfg(test)]

@@ -85,20 +85,38 @@ version, which is a lookup rather than an opinion about structure.
 cutover decision, not a refactor.
 
 
-**P13.4 133 wire formats are still hand-written, and the seam is not
-exhausted.** The first sweep concluded the remainder needed per-type work
-because it treated `encoder.count(..)` as a blocker. It is not one: `Encoder::seq`
-*is* a count followed by a loop of `encode`, so a codec that frames its own
-collection is byte-identical to `Vec<T>`, `BTreeSet<T>` or `BTreeMap<K, V>`
-doing it -- the canonical ordering guarantee included.
+**P13.4 90 wire formats are still hand-written, and the seam has now ended
+for a reason.** 133 -> 90 by the method this item asked for -- reading them one
+at a time -- and the class the first sweep had no name for is worth keeping:
+**an enum with a hand-written `tag()`/`from_tag()` pair is a second encoding of
+that type**, and its containers called the pair rather than the trait.
+`ReferenceRole` is the one to read: it already derived `Codec` *and* still
+carried the pair, so one enum had two encodings of one byte and only one of
+them was the wire's. Seven such pairs are gone; four more enums had the pair
+and no codec at all (`MavenScope`, `Optionality`, `JavaTypeKind`,
+`ToolFeature`), and deriving each is what made its containers derivable in
+turn. `encoder.count(..)` was never the blocker the first sweep took it for:
+`Encoder::seq` *is* a count followed by a loop of `encode`, ordering guarantee
+included.
 
-**Five are genuinely not candidates and should stay hand-written**:
-`RendererContextV1`, `PreparedChange` and `ToolIdentityFingerprint` call
-`self.validate()?` inside `encode`, so the codec enforces an invariant rather
-than describing a layout; `AppliedEntity` opens with a refusal on an empty set;
-`PreparedIdentityV1` writes a format constant. The rest were rejected by the
-*filter's* limits rather than the code's, and each needs a real Rust parser to
-clear safely -- so **convert these by reading them, one at a time.**
+**What is left is not a backlog.** 49 of the 90 validate: `decode` calls a
+validating constructor, or `encode` enforces an invariant before writing a byte
+-- `ByteSpan` refusing a span that starts after it ends, `PropertySetting`
+refusing a comment carrying its own `#`, `CanonicalRequestSyntaxV1` rejecting
+dashes, `AppliedEntity` refusing an empty owner set. That is R1.1 working: the
+constructor is the only place a value is validated, so a derive that skipped it
+would let a value rejected at the CLI arrive through a recovered journal
+instead. The other 41 are as deliberate and smaller in number -- six encode a
+label string rather than a discriminant (§R1.4 records the *name*, so
+reordering an enum cannot change a recorded value), four are the primitive
+impls the derive is built on, three frame a length-capped blob through
+`encoder.object`, two write a raw digest array, one carries a depth counter.
+
+**So the next move is a decision, not more reading:** either a
+`#[codec(validate)]` that calls the constructor after decoding, which would
+reach most of the 49 and is a change to `jails-codec-derive` rather than to 49
+types -- or accept the number, which is what the board row's withdrawn target
+already says.
 
 **The golden trees are not sufficient on their own.** `PreparedIdentityV1`
 passed all 62 of them and still changed the wire: its `encode` opens with a
@@ -107,7 +125,9 @@ only `prepared_bundle_matches_the_protocol_golden` caught it. A struct whose
 `encode` carries anything that is not a field is not a candidate, however well
 its fields line up. **Convert in small batches, running `cargo test -p
 jails-prepare -p jails-commit -p jails-protocol` alongside `--test golden`
-after each.**
+after each.** One trap the 133 -> 90 pass hit and the next one will: reverting
+a file to undo a bad edit also reverts the good conversions already made in it,
+and nothing fails -- the count is the only thing that notices.
 
 
 ## P12 — the defect found while re-confirming the closed ones

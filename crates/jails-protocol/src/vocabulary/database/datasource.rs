@@ -70,60 +70,18 @@ impl Codec for RedactedEndpoint {
     }
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, jails_codec_derive::Codec)]
+#[codec(unknown_fix = "upgrade jails or restore the record from a compatible source.")]
 pub enum DatasourceSource {
-    ExplicitEnvironment {
-        variable: String,
-    },
+    #[codec(tag = 0)]
+    ExplicitEnvironment { variable: String },
+    #[codec(tag = 1)]
     DeclaredRunningService {
         declaration: ProjectPath,
         service: String,
     },
-    SpringTestConfiguration {
-        source: ProjectPath,
-    },
-}
-
-impl Codec for DatasourceSource {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::ExplicitEnvironment { variable } => {
-                encoder.tag(0);
-                encoder.string(variable)
-            }
-            Self::DeclaredRunningService {
-                declaration,
-                service,
-            } => {
-                encoder.tag(1);
-                declaration.encode(encoder)?;
-                encoder.string(service)
-            }
-            Self::SpringTestConfiguration { source } => {
-                encoder.tag(2);
-                source.encode(encoder)
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        match decoder.tag()? {
-            0 => Ok(Self::ExplicitEnvironment {
-                variable: decoder.string()?,
-            }),
-            1 => Ok(Self::DeclaredRunningService {
-                declaration: ProjectPath::decode(decoder)?,
-                service: decoder.string()?,
-            }),
-            2 => Ok(Self::SpringTestConfiguration {
-                source: ProjectPath::decode(decoder)?,
-            }),
-            other => Err(format!(
-                "unknown datasource source tag {other}.\n       fix: upgrade jails or restore the record from a compatible source."
-            )
-            .into()),
-        }
-    }
+    #[codec(tag = 2)]
+    SpringTestConfiguration { source: ProjectPath },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

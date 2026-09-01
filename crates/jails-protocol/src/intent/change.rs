@@ -30,34 +30,12 @@ use std::collections::BTreeSet;
 // ---------------------------------------------------------------------------
 
 /// Who this change is on behalf of.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum ChangeAttribution {
+    #[codec(tag = 0)]
     Resource(ResourceOwner),
+    #[codec(tag = 1)]
     Maintenance(MaintenanceAttribution),
-}
-
-impl Codec for ChangeAttribution {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Resource(owner) => {
-                encoder.tag(0);
-                owner.encode(encoder)
-            }
-            Self::Maintenance(kind) => {
-                encoder.tag(1);
-                kind.encode(encoder)?;
-                Ok(())
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Resource(ResourceOwner::decode(decoder)?),
-            1 => Self::Maintenance(MaintenanceAttribution::decode(decoder)?),
-            other => Err(format!("unknown change attribution tag {other}"))?,
-        })
-    }
 }
 
 /// The maintenance operations that own no entity.

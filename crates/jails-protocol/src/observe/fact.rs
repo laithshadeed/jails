@@ -70,26 +70,28 @@ pub enum FactSourceState {
 // ---------------------------------------------------------------------------
 
 /// What a precondition or a delta names.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub enum ProjectFactKey {
+    #[codec(tag = 0)]
     MavenDependency(MavenCoordinate),
     /// What the build has to do, keyed the way a claim on it is. See
     /// [`crate::feature::BuildFeature`].
+    #[codec(tag = 1)]
     BuildFeature(BuildFeature),
+    #[codec(tag = 2)]
     ComposeService(ServiceName),
-    Property {
-        path: ProjectPath,
-        key: PropertyKey,
-    },
-    MarkedBlock {
-        path: ProjectPath,
-        marker: MarkerId,
-    },
+    #[codec(tag = 3)]
+    Property { path: ProjectPath, key: PropertyKey },
+    #[codec(tag = 4)]
+    MarkedBlock { path: ProjectPath, marker: MarkerId },
+    #[codec(tag = 5)]
     CommandRegistration {
         dispatcher: JavaType,
         command: JavaType,
     },
+    #[codec(tag = 6)]
     HumanConfigCapability(CapabilityId),
+    #[codec(tag = 7)]
     JavaType(JavaType),
 }
 
@@ -107,57 +109,6 @@ impl ProjectFactKey {
         }
     }
 }
-impl Codec for ProjectFactKey {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::MavenDependency(coordinate) => coordinate.encode(encoder),
-            Self::BuildFeature(feature) => feature.encode(encoder),
-            Self::ComposeService(name) => name.encode(encoder),
-            Self::Property { path, key } => {
-                path.encode(encoder)?;
-                key.encode(encoder)
-            }
-            Self::MarkedBlock { path, marker } => {
-                path.encode(encoder)?;
-                marker.encode(encoder)
-            }
-            Self::CommandRegistration {
-                dispatcher,
-                command,
-            } => {
-                dispatcher.encode(encoder)?;
-                command.encode(encoder)
-            }
-            Self::HumanConfigCapability(id) => id.encode(encoder),
-            Self::JavaType(java_type) => java_type.encode(encoder),
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::MavenDependency(MavenCoordinate::decode(decoder)?),
-            1 => Self::BuildFeature(BuildFeature::decode(decoder)?),
-            2 => Self::ComposeService(ServiceName::decode(decoder)?),
-            3 => Self::Property {
-                path: ProjectPath::decode(decoder)?,
-                key: PropertyKey::decode(decoder)?,
-            },
-            4 => Self::MarkedBlock {
-                path: ProjectPath::decode(decoder)?,
-                marker: MarkerId::decode(decoder)?,
-            },
-            5 => Self::CommandRegistration {
-                dispatcher: JavaType::decode(decoder)?,
-                command: JavaType::decode(decoder)?,
-            },
-            6 => Self::HumanConfigCapability(CapabilityId::decode(decoder)?),
-            7 => Self::JavaType(JavaType::decode(decoder)?),
-            other => Err(format!("unknown project fact key tag {other}"))?,
-        })
-    }
-}
-
 /// What was observed for a key.
 #[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum ProjectFact {

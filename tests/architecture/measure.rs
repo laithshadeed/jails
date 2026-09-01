@@ -1078,7 +1078,30 @@ pub(crate) const WIRE_RS: &str = "jails-support/src/codec/wire.rs";
 /// line is: it refuses an empty owner set inside `encode`, so its codec
 /// enforces an invariant rather than describing a layout. Only its `tag()`
 /// calls moved onto `OwnerId`'s codec.
-pub(crate) const HAND_WRITTEN_CODECS: usize = 105;
+///
+/// 105 -> 90, and this is where the mechanical seam ends for a reason rather
+/// than for lack of looking. **49 of the 90 validate**: `decode` calls a
+/// validating constructor, or `encode` enforces an invariant before writing a
+/// byte -- `ByteSpan` refusing a span that starts after it ends,
+/// `PropertySetting` refusing a comment carrying its own `#`,
+/// `CanonicalRequestSyntaxV1` rejecting dashes, `EffectState` refusing a zero
+/// attempt. That is R1.1 working, not a sweep left unfinished: the constructor
+/// is the only place a value is validated, so a derive that skipped it would
+/// let a value rejected at the CLI arrive through a recovered journal instead.
+///
+/// The rest of the 90 are as deliberate and smaller in number: six encode a
+/// label string rather than a discriminant (`RendererId`, `IntentId`,
+/// `SqlDialect` and their kin -- §R1.4 records the *name* so reordering an
+/// enum cannot change a recorded value), four are the primitive impls the
+/// derive is built on, three frame a length-capped blob through
+/// `encoder.object`, two write a raw digest array, and one carries a depth
+/// counter for a recursive type.
+///
+/// So the next move on this row is not more reading. It is either a
+/// `#[codec(validate)]` that calls the constructor after decoding -- which
+/// would reach most of the 49 -- or accepting the number, which is what
+/// "target withdrawn" already says.
+pub(crate) const HAND_WRITTEN_CODECS: usize = 90;
 
 /// The `spring.rs` these two rows are about.
 ///
@@ -1153,7 +1176,9 @@ pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 // type-change and repair policies -- kept it on the type through
 // `#[codec(unknown_fix = ...)]`, which is what stops the wording drifting per
 // type the way it had.
-pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 375;
+// 375 -> 369, the same consequence: six more unknown-tag refusals that named
+// no next step went with the codecs that built them.
+pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 369;
 
 /// A refusal that builds a message and does not say what to do next.
 ///

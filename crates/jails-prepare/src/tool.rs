@@ -258,31 +258,10 @@ impl Codec for ToolArgTemplate {
 }
 
 /// A tool as an operation *intends* to run it.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct OperationToolFingerprint {
     pub identity: ToolIdentityFingerprint,
     pub args: Vec<ToolArgTemplate>,
-}
-
-impl Codec for OperationToolFingerprint {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.identity.encode(encoder)?;
-        encoder.count(self.args.len())?;
-        for arg in &self.args {
-            arg.encode(encoder)?;
-        }
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        let identity = ToolIdentityFingerprint::decode(decoder)?;
-        let count = decoder.count()?;
-        let mut args = Vec::new();
-        for _ in 0..count {
-            args.push(ToolArgTemplate::decode(decoder)?);
-        }
-        Ok(Self { identity, args })
-    }
 }
 
 /// The tools an operation intends to run, sorted and unique by key.

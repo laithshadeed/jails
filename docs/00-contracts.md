@@ -287,7 +287,7 @@ survives.
 | every artifact requirement comes from IR, never a content or path scan | structural |
 | managed output is written only below the managed root | `execute`'s precondition check |
 | reader-owned source changes only by an explicit typed patch/eject/adopt operation | `PatchReaderFile` with a captured before-image |
-| every persisted union tag and field number is generated and golden-tested | partly: see P13.4 |
+| every persisted union tag and field number is generated and golden-tested | partly: 90 formats are still hand-written, and 49 of those validate rather than describe a layout. See P13.4 |
 | every advertised failpoint fires in at least one test | `failpoints!` emits both the registry and the constants, so an unfired point is `-D dead-code` |
 | every active transaction state has one tested recovery transition | `crates/jails-workspace/tests/crash.rs` |
 | the planner's read set is complete by construction | structural, via `WorkspaceSnapshot` |
