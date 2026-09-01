@@ -270,6 +270,9 @@ pub(crate) fn finish_generation_with_reader_paths(
     if invocation.pretend || invocation.plan_out.is_some() {
         return report_plan(&bundle, &invocation);
     }
+    if let Some(refusal) = refuse_unconfirmed_deletions(&bundle, &invocation) {
+        return refusal;
+    }
     let execution = jails_workspace::execute(&root, &bundle)
         .map_err(|error| Failure::Told(format!("could not apply exact plan: {error}")))?;
     if invocation.output == Output::Human {
@@ -312,6 +315,68 @@ pub(crate) fn finish_generation_with_reader_paths(
         );
     }
     run_follow_up_effects(&root, &bundle, &invocation)
+}
+
+/// Put a deletion to the reader before it happens.
+///
+/// **"It exists" is not ownership.** `remove` and `destroy` delete every
+/// generated file the plan names, and a `CsvReader` somebody spent an
+/// afternoon on looks exactly like the stub jails wrote. Refusing would make
+/// them unusable on the projects that got the most out of them; deleting
+/// silently is how an afternoon disappears. So the list is shown and the
+/// question is asked, and `--force` is the answer given in advance.
+///
+/// `None` means nothing is in the way. `Some` carries the whole outcome,
+/// including the successful "aborted" one -- a reader who says no got what
+/// they asked for.
+fn refuse_unconfirmed_deletions(
+    bundle: &jails_contracts::PlanBundle,
+    invocation: &Invocation,
+) -> Option<Result<()>> {
+    use std::io::BufRead as _;
+    // **Only the commands whose purpose is deletion.** A `g field` that
+    // supersedes a companion, or a `sync` converging a tree, deletes files as
+    // a consequence of what the model now says -- asking there would put a
+    // prompt in front of every ordinary mutation. `remove` and `destroy` are
+    // the two where deletion *is* the request, and the two where a reader's
+    // afternoon of edits can be in the files named.
+    let removal = invocation
+        .command_path
+        .first()
+        .is_some_and(|command| command == "remove" || command == "destroy");
+    if !removal || invocation.force || invocation.output != Output::Human {
+        return None;
+    }
+    let deletions = crate::model_command::preview_lines(bundle)
+        .into_iter()
+        .filter(|line| line.trim_start().starts_with("delete"))
+        .collect::<Vec<_>>();
+    if deletions.is_empty() {
+        return None;
+    }
+    println!(
+        "This removes {} generated file{}:",
+        deletions.len(),
+        if deletions.len() == 1 { "" } else { "s" }
+    );
+    for line in &deletions {
+        println!("{line}");
+    }
+    print!("Delete them? [y/N] ");
+    use std::io::Write as _;
+    let _ = std::io::stdout().flush();
+    let mut answer = String::new();
+    // A closed stdin is a no: a command that cannot ask has not been answered,
+    // and defaulting to yes there is how a pipeline deletes something nobody
+    // saw. `--force` is how a script says yes.
+    if std::io::stdin().lock().read_line(&mut answer).is_err() {
+        answer.clear();
+    }
+    if answer.trim().eq_ignore_ascii_case("y") {
+        return None;
+    }
+    println!("aborted; nothing was written.");
+    Some(Ok(()))
 }
 
 /// Do what the reviewed plan said was left once the files were written.

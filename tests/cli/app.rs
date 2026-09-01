@@ -163,7 +163,12 @@ fn app_plan_names_an_entity_the_manifest_no_longer_declares() {
     // entity the manifest still declares and disk already matches changes
     // nothing. V1's walk printed a row per intent whether or not it had
     // anything to say.
-    assert!(!stdout.contains("Keep.java"), "{stdout}");
+    assert!(
+        !stdout
+            .lines()
+            .any(|line| line.contains("delete") && line.contains("Keep")),
+        "{stdout}"
+    );
     // Planning stays non-mutating: nothing was removed.
     assert!(
         common::generated(&root, "src/main/java/com/example/demo/domain/Dropped.java").is_file(),
@@ -250,7 +255,7 @@ fn a_manifest_field_appended_to_a_scaffold_becomes_a_forward_migration() {
     let refused = apply(&root);
     assert_eq!(refused.status.code(), Some(1), "{refused:?}");
     let stderr = String::from_utf8_lossy(&refused.stderr);
-    assert!(stderr.contains("required component `note`"), "{stderr}");
+    assert!(stderr.contains("required field `note`"), "{stderr}");
     assert!(stderr.contains("--default-literal"), "{stderr}");
 
     // And a change that is not an append is refused by name: dropping one
@@ -503,7 +508,15 @@ fn app_manifest_updates_an_intent_without_needing_a_git_repository() {
     );
     let after = fs::read_to_string(&record).unwrap();
     assert_ne!(after, before, "the update happened");
-    assert!(root.join(".jails/objects").is_dir(), "and is recoverable");
+    // Recoverable without a repository, and without an object store of jails'
+    // own: the model states the shape and the accepted projection in
+    // `.jails/compiler.lock.json` is the merge base, so the previous bytes are
+    // reproducible by compiling rather than by keeping a copy of them.
+    assert!(root.join(".jails/compiler.lock.json").is_file());
+    assert!(
+        !root.join(".jails/objects").exists(),
+        "a canonical project must not grow a legacy object store"
+    );
 }
 
 #[test]

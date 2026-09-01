@@ -283,10 +283,78 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
     if let Some(existing) = current_model.entity(&entity_id) {
         let requested = declaration_entity(&current_model, &declaration, &entity_id, v1)?;
         if !same_entity_contribution(existing, &requested) {
-            return Err(Failure::Told(format!(
-                "canonical entity `{}` is already declared with a different shape.\n       fix: evolve it with `jails g field`, `jails resource field`, or `jails rename resource`",
-                args.name
-            )));
+            // **A strict superset is an addition, not a disagreement.** A
+            // declarative manifest states the shape it wants and is replayed
+            // whenever it changes, so a row that gained a field has to mean
+            // "add that field" -- refusing made `app apply` the one command
+            // that could not converge on the file it exists to read. Typing
+            // the same scaffold with one more field means the same thing.
+            //
+            // Only additions. A field that exists with a *different* shape is
+            // an evolution with a policy attached -- a type change, a
+            // nullability change, a rename -- and each of those is its own
+            // command for a reason.
+            let added = requested
+                .fields
+                .iter()
+                .filter(|field| existing.field(&field.id).is_none())
+                .map(|field| field.label.clone())
+                .collect::<Vec<_>>();
+            let unchanged = requested
+                .fields
+                .iter()
+                .filter(|field| existing.field(&field.id).is_some())
+                .all(|field| existing.field(&field.id) == Some(field));
+            // **A field that left is not an append.** Dropping one component
+            // and adding another reads exactly like renaming it, and jails
+            // cannot tell the two apart from the shapes alone -- so it says
+            // so rather than picking, because the difference is whether the
+            // column's rows survive.
+            let dropped = existing
+                .fields
+                .iter()
+                .filter(|field| requested.field(&field.id).is_none())
+                .map(|field| field.label.clone())
+                .collect::<Vec<_>>();
+            if !dropped.is_empty() {
+                return Err(Failure::Told(format!(
+                    "canonical entity `{}` gained {} and lost {}, and jails cannot say which change it is: a rename, a drop and an add, or a type change.\n       fix: `jails resource field rename|type|nullability|drop {}` states which one, and each keeps the rows differently",
+                    args.name,
+                    quoted_list(&added),
+                    quoted_list(&dropped),
+                    args.name
+                )));
+            }
+            if added.is_empty() || !unchanged {
+                return Err(Failure::Told(format!(
+                    "canonical entity `{}` is already declared with a different shape.\n       fix: evolve it with `jails g field`, `jails resource field`, or `jails rename resource`",
+                    args.name
+                )));
+            }
+            for label in added {
+                let Some(spec) = args
+                    .fields
+                    .iter()
+                    .find(|spec| field_label_of(spec) == label)
+                    .cloned()
+                else {
+                    return Err(Failure::Told(format!(
+                        "canonical entity `{}` gained field `{label}` from a declaration this command cannot restate.\n       fix: add it with `jails resource field add {} {label}:<type>`",
+                        args.name, args.name
+                    )));
+                };
+                crate::model_resource::add_field(
+                    crate::model_resource::AddFieldRequest {
+                        entity: args.name.clone(),
+                        field_spec: spec,
+                        default_literal: args.default_literal.clone(),
+                        backfill_file: args.backfill_file.clone(),
+                        package: None,
+                    },
+                    invocation.clone(),
+                )?;
+            }
+            return Ok(());
         }
         return finish_generation(PreparedMutation {
             name: args.name,
@@ -395,6 +463,36 @@ fn declaration_entity(
         .entity(entity_id)
         .cloned()
         .ok_or_else(|| Failure::Told(format!("requested entity `{entity_id}` did not link")))
+}
+
+fn quoted_list(labels: &[String]) -> String {
+    labels
+        .iter()
+        .map(|label| format!("`{label}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The model label a `name:type` field spec declares.
+///
+/// The same fold the parser applies: `userId` and `user_id` are one field, so
+/// matching a requested label against a typed spec has to agree with it.
+fn field_label_of(spec: &str) -> String {
+    let name = spec.split(':').next().unwrap_or_default();
+    let mut label = String::new();
+    for (index, character) in name.chars().enumerate() {
+        if character.is_ascii_uppercase() {
+            if index > 0 {
+                label.push('_');
+            }
+            label.push(character.to_ascii_lowercase());
+        } else if character == '-' {
+            label.push('_');
+        } else {
+            label.push(character);
+        }
+    }
+    label
 }
 
 fn same_entity_contribution(

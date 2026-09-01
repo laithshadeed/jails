@@ -87,7 +87,9 @@ fn add_errors_outside_a_project() {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("no pom.xml"));
+    let told = String::from_utf8_lossy(&output.stderr);
+    assert!(told.contains("not a Java project"), "{told}");
+    assert!(told.contains("jails new"), "{told}");
 }
 
 /// The bar is what the *generated code* needs, not what jails defaults new

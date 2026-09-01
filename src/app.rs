@@ -384,8 +384,59 @@ pub(crate) fn replay_at(
             invocation.clone(),
         )?;
     }
+    let declared = rows
+        .iter()
+        .map(|row| row.name.clone())
+        .collect::<std::collections::BTreeSet<_>>();
     for row in rows {
         crate::model_generate_jdl::run(row, invocation.clone())?;
+    }
+    report_undeclared(root, &declared, &invocation)
+}
+
+/// Name what the model still declares and the manifest no longer does.
+///
+/// **A manifest is desired state, so a row that left is a statement.** The
+/// replay only ever adds -- every frontend it drives is a declaration -- so
+/// without this a deleted row is silently nothing, and `app plan` answers "no
+/// change" about a manifest that dropped an entire resource.
+///
+/// It reports rather than removes. Retiring a stored entity needs a storage
+/// policy, and choosing one on the reader's behalf is the one thing a
+/// declarative replay must not do: `preserve` and `drop` differ by whether the
+/// rows still exist afterwards.
+fn report_undeclared(
+    root: &Path,
+    declared: &std::collections::BTreeSet<String>,
+    invocation: &crate::Invocation,
+) -> Result<()> {
+    if invocation.output != crate::Output::Human {
+        return Ok(());
+    }
+    let manifest = crate::model_command::resolve_manifest_at(root, None)?;
+    let (source, model) = crate::model_command::load_model_at(root, &manifest, invocation.output)?;
+    let _ = source;
+    for entity in model.entities.values() {
+        if !entity.active || declared.contains(&entity.names.java_type) {
+            continue;
+        }
+        println!(
+            "  undeclared {} -- the manifest no longer declares it",
+            entity.names.java_type
+        );
+        // The plan for removing it, so "what would that cost" is answered
+        // here rather than after another command.
+        let _ = crate::model_destroy::run(
+            crate::model_destroy::Request {
+                kind: crate::generate::ArtifactKind::Record,
+                name: entity.names.java_type.clone(),
+                package: false,
+                storage: None,
+                confirm_table: None,
+                migration_effect: false,
+            },
+            invocation.clone().pretending(),
+        );
     }
     Ok(())
 }

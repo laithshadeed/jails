@@ -962,8 +962,15 @@ fn verified_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::P
                 // which counted as passing and proved nothing; those run now,
                 // because the test that stores the row is the caller that can
                 // prove its tenancy.
-                reports: 28,
-                tests: 31,
+                //
+                // **28 -> 41 when the repository adapter gained its own.** A
+                // `JdbcClient` statement is a string until something runs it,
+                // and the adapter every scaffold emits had no test at all --
+                // so the column list, the `returning` clause and the types
+                // were only ever checked by the operations that happened to
+                // use them. `skipped` is still zero.
+                reports: 41,
+                tests: 44,
                 failures: 0,
                 errors: 0,
                 skipped: 0,
