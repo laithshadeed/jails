@@ -1889,3 +1889,39 @@ Deferred out of v1 on purpose — this is meant to stay a small tool:
 - A plugin system with lifecycle hooks or third-party code. Overriding a
   *template* is supported (see below); running arbitrary code inside jails is
   not, and the difference is the point — data is extensible, logic is not.
+- **Pagination.** A query declaring `limit` caps the rows and nothing more:
+  the port gets a `DEFAULT_LIMIT`, the adapter gets a `limit` clause, and a
+  caller handed exactly that many rows cannot tell a full page from a complete
+  result. No cursor, no total, no truncation flag. Ask for a limit you can
+  live with, or eject the adapter and page it yourself.
+- **One API style, chosen per command rather than per project.** A scaffold
+  serves REST over a resource path; a `command`, `query` or `transition`
+  serves whatever its own `route` says, which is commonly `POST` — including
+  for reads. `g scaffold --path` and an explicit `route` on each operation let
+  a project be made consistent, but consistency is something you ask for every
+  time rather than something the project settles once.
+- **A layer for capability configuration.** A capability's own classes —
+  `CorsConfig`, `MetricsConfig`, `AppMetrics` and the rest — are written into
+  the base package, where a generated *kind* goes through the package
+  convention instead. Placing them properly means a new package in a closed
+  convention table, which moves those files in every project generated so far;
+  until that is worth doing, they sit beside the application class.
+- **Generated tests prove wiring, not domain behaviour.** They check that a
+  route dispatches, that a record rejects what its constraints forbid, that a
+  listener reaches its port, and that a migration's schema is the one the
+  model declared. They do not check the rules of your domain, they seed every
+  string field with `"sample"`, and there is no generated concurrency test for
+  the CAS an `@version` column exists for. Treat them as a floor to build on.
+- **`jails g action <Name> --on <Controller>`** — splicing a handler and its
+  test into an existing controller. `g controller` always writes a new
+  standalone file, so related routes end up in separate classes unless you
+  move them by hand.
+- **An operator or back-office surface.** jails generates the REST surface and
+  nothing to administer it — no CRUD console, no admin views. This is the one
+  thing a Django or Rails port expects for free and does not get here; it is a
+  scope line rather than a plan.
+- **An endpoint accepting both JSON and a form body.** `consumes json` and
+  `consumes form` each work; one route accepting either is not expressible.
+- **Lightweight in-process presence.** `g presence` generates the
+  PostgreSQL-backed, cluster-safe version. A single-node in-memory variant
+  would be a different recipe and does not exist.
