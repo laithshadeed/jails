@@ -426,12 +426,12 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-compiler", "emit_factory", 4),
     ("jails-compiler", "emit_http", 4),
     ("jails-compiler", "emit_java", 4),
+    ("jails-compiler", "emit_messaging", 4),
     ("jails-compiler", "emit_operation", 4),
+    ("jails-compiler", "emit_relation", 4),
     ("jails-compiler", "emit_resource_http", 4),
     ("jails-compiler", "emit", 4),
     ("jails-compiler", "emit_seed", 4),
-    ("jails-compiler", "emit_relation", 4),
-    ("jails-compiler", "emit_messaging", 4),
     ("jails-compiler", "ejectable", 4),
     ("jails-compiler", "template", 4),
     ("jails-compiler", "emit_sql", 4),
@@ -914,6 +914,14 @@ const DEFAULT_BRANCH_IS_EXECUTED: &[(&str, &str)] = &[
     // The scaffold's controller test picks `MockMvcTester` on Boot 4 and
     // standalone `perform(...)` below it. The named test drives the generated
     // collection through real `mvn test` on the 4.1.0 fixture.
+    // The DTO's request record picks `jakarta.validation` on Boot 3+ and
+    // `javax.validation` below it, through `validation_package(boot_major(..))`.
+    // The named test builds a canonical DTO on the Boot 4 fixture with real
+    // Maven, so the default branch is the one that has to resolve.
+    (
+        "crates/jails-compiler/src/emit_dto.rs",
+        "canonical_dto_evolves_three_merge_managed_abi_files_without_losing_reader_edits",
+    ),
     (
         "crates/jails-compiler/src/emit_resource_http.rs",
         "canonical_scaffold_http_compiles_and_passes_on_real_maven",
@@ -1312,5 +1320,72 @@ fn both_pluralizers_answer_the_same_for_every_specified_rule() {
          cross between them, so a disagreement renames a table under a running \
          application. Fix whichever one departs from the spec.",
         disagreements.join("\n")
+    );
+}
+
+/// Every `cargo test --test <target>` a checked-in script runs is a real target.
+///
+/// `scripts/verify-rewrite-g1-canary.sh` ran `--test differential` for as long
+/// as that harness was called `differential`. It was renamed to `product_loop`
+/// and the script was not, so the one thing that compares this implementation
+/// against a frozen legacy binary -- the differential half of G1 and G5 -- could
+/// not start. Nothing said so: the canary is a separate `mise` task, CI runs
+/// `verify-rewrite` and nothing else, and a script that exits non-zero on a
+/// command nobody runs is indistinguishable from one that passes.
+///
+/// A shell script naming a Rust target is exactly the kind of edge `cargo`
+/// cannot check and a rename does not carry, which is why it is checked here
+/// rather than left to be noticed the next time somebody runs the canary.
+#[test]
+fn every_test_target_a_script_names_exists() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let targets: std::collections::BTreeSet<String> = std::fs::read_dir(root.join("tests"))
+        .expect("tests/ exists")
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let name = path.file_name()?.to_str()?.to_string();
+            // `tests/<name>.rs` and `tests/<name>/main.rs` are both one target.
+            if path.is_dir() && path.join("main.rs").is_file() {
+                Some(name)
+            } else {
+                name.strip_suffix(".rs").map(str::to_string)
+            }
+        })
+        .collect();
+    assert!(
+        targets.len() > 5,
+        "the target scan found only {targets:?} -- it has stopped reading tests/"
+    );
+
+    let mut missing = Vec::new();
+    let mut scanned = 0;
+    for entry in std::fs::read_dir(root.join("scripts"))
+        .expect("scripts/ exists")
+        .flatten()
+    {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        scanned += 1;
+        for (at, _) in text.match_indices("--test ") {
+            let named: String = text[at + "--test ".len()..]
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
+                .collect();
+            if !named.is_empty() && !targets.contains(&named) {
+                missing.push(format!("{}: --test {named}", path.display()));
+            }
+        }
+    }
+    assert!(scanned > 0, "no scripts were read");
+    assert!(
+        missing.is_empty(),
+        "these scripts run a cargo test target that does not exist:\n  {}\n\n\
+         Rename the reference with the harness, or the script silently stops \
+         testing anything.",
+        missing.join("\n  ")
     );
 }

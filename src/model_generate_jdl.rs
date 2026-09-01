@@ -1,24 +1,25 @@
 //! Lossless JDL edits for the familiar `jails generate` surface.
 
 mod component;
-mod declaration;
 mod edit;
 pub(crate) mod facet;
 pub(crate) mod index;
 mod operation;
 mod relation;
+pub(crate) mod render;
 mod unit;
 pub(crate) use component::{component_kind, component_stem};
-pub(crate) use declaration::{
-    EntityDeclaration, entity_declaration_at, enum_declaration, normalize_package,
-    render_field_line, render_v1_field_line,
-};
 use edit::insert_entity_member;
 pub(crate) use edit::{
     insert_field, is_v1_source, jdl_edit_failure, remove_capability, remove_dependency,
     remove_entity, remove_operation, remove_setting, remove_unit, rename_entity, set_entity_active,
 };
 use operation::operation_declaration;
+pub(crate) use render::{EntityDeclaration, normalize_package};
+use render::{entity_declaration_at, enum_declaration, field_label_of, quoted_list};
+pub(crate) use render::{
+    java_type_name, relation_member_name, render_field_line, render_v1_field_line,
+};
 
 use crate::ArtifactKind;
 use crate::cli::GenerateArgs;
@@ -222,28 +223,6 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         patch_bytes,
         authored_migration: None,
     })
-}
-
-/// A CLI name, as the Java type it names.
-///
-/// `jails g enum currency GBP EUR` writes `Currency.java` on the legacy path
-/// and every generator that later says `currency:Currency` resolves against
-/// it -- which is the whole of
-/// `generators_compose_through_user_owned_field_types`. The canonical model
-/// requires a real Java type name and refused the lower-camel spelling
-/// outright, so the same command produced a project on one engine and a
-/// diagnostic on the other.
-///
-/// Capitalising here rather than loosening the model: `java_name` is a
-/// projection the model is right to hold to, and this is the CLI sugar
-/// resolving what the reader typed, which is where the legacy path does it
-/// too.
-pub(crate) fn java_type_name(name: &str) -> String {
-    let mut characters = name.chars();
-    match characters.next() {
-        Some(first) => first.to_uppercase().collect::<String>() + characters.as_str(),
-        None => String::new(),
-    }
 }
 
 fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
@@ -537,36 +516,6 @@ fn declaration_entity(
         .ok_or_else(|| Failure::Told(format!("requested entity `{entity_id}` did not link")))
 }
 
-fn quoted_list(labels: &[String]) -> String {
-    labels
-        .iter()
-        .map(|label| format!("`{label}`"))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// The model label a `name:type` field spec declares.
-///
-/// The same fold the parser applies: `userId` and `user_id` are one field, so
-/// matching a requested label against a typed spec has to agree with it.
-fn field_label_of(spec: &str) -> String {
-    let name = spec.split(':').next().unwrap_or_default();
-    let mut label = String::new();
-    for (index, character) in name.chars().enumerate() {
-        if character.is_ascii_uppercase() {
-            if index > 0 {
-                label.push('_');
-            }
-            label.push(character.to_ascii_lowercase());
-        } else if character == '-' {
-            label.push('_');
-        } else {
-            label.push(character);
-        }
-    }
-    label
-}
-
 fn same_entity_contribution(
     existing: &jails_model::Entity,
     requested: &jails_model::Entity,
@@ -614,30 +563,6 @@ fn append_declaration(mut source: String, declaration: &str) -> Result<String> {
     source.push('\n');
     source.push_str(declaration);
     Ok(source)
-}
-
-/// The lowerCamel member name a relation is declared under.
-///
-/// The single owner of the `item_owner` -> `itemOwner` direction, so
-/// `g association` and `destroy association` cannot disagree about which
-/// member they are naming -- which they did, and the destroy half reported the
-/// declaration as missing from the entity it was sitting in.
-pub(crate) fn relation_member_name(label: &str) -> String {
-    let mut out = String::with_capacity(label.len());
-    let mut capitalise = false;
-    for character in label.chars() {
-        if character == '_' {
-            capitalise = true;
-            continue;
-        }
-        if capitalise {
-            out.extend(character.to_uppercase());
-            capitalise = false;
-        } else {
-            out.push(character);
-        }
-    }
-    out
 }
 
 /// The same declaration, with the collection route the reader pinned.

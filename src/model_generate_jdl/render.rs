@@ -1,11 +1,94 @@
-//! How a declaration is spelled, in either dialect.
+//! How a JDL v1 declaration is *spelled*.
 //!
-//! The frontends above decide *what* to declare; this module owns the syntax
-//! it is written in -- which is the one thing that differs between the v1
-//! grammar and the pre-v1 draft, and the reason a single `v1` flag reaches
-//! this far down rather than forking the frontends.
+//! Split out of `model_generate_jdl` because it is a different secret from the
+//! one that file keeps. Dispatch decides which mutation a `jails g` invocation
+//! means and what it must refuse; nothing in it needs to know that an entity
+//! member is two spaces in, that a field line puts `@id(..)` before its
+//! constraints, or that a quoted list is separated by `, `. Rendering is read
+//! against the parser and the formatter, and those are the only things it has
+//! to agree with.
+//!
+//! `edit.rs` is the neighbouring half: where a rendered declaration is spliced
+//! into an existing document. This module produces the text; that one places
+//! it.
 
 use super::*;
+
+/// A CLI name, as the Java type it names.
+///
+/// `jails g enum currency GBP EUR` writes `Currency.java` on the legacy path
+/// and every generator that later says `currency:Currency` resolves against
+/// it -- which is the whole of
+/// `generators_compose_through_user_owned_field_types`. The canonical model
+/// requires a real Java type name and refused the lower-camel spelling
+/// outright, so the same command produced a project on one engine and a
+/// diagnostic on the other.
+///
+/// Capitalising here rather than loosening the model: `java_name` is a
+/// projection the model is right to hold to, and this is the CLI sugar
+/// resolving what the reader typed, which is where the legacy path does it
+/// too.
+pub(crate) fn java_type_name(name: &str) -> String {
+    let mut characters = name.chars();
+    match characters.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + characters.as_str(),
+        None => String::new(),
+    }
+}
+
+pub(crate) fn quoted_list(labels: &[String]) -> String {
+    labels
+        .iter()
+        .map(|label| format!("`{label}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The model label a `name:type` field spec declares.
+///
+/// The same fold the parser applies: `userId` and `user_id` are one field, so
+/// matching a requested label against a typed spec has to agree with it.
+pub(crate) fn field_label_of(spec: &str) -> String {
+    let name = spec.split(':').next().unwrap_or_default();
+    let mut label = String::new();
+    for (index, character) in name.chars().enumerate() {
+        if character.is_ascii_uppercase() {
+            if index > 0 {
+                label.push('_');
+            }
+            label.push(character.to_ascii_lowercase());
+        } else if character == '-' {
+            label.push('_');
+        } else {
+            label.push(character);
+        }
+    }
+    label
+}
+
+/// The lowerCamel member name a relation is declared under.
+///
+/// The single owner of the `item_owner` -> `itemOwner` direction, so
+/// `g association` and `destroy association` cannot disagree about which
+/// member they are naming -- which they did, and the destroy half reported the
+/// declaration as missing from the entity it was sitting in.
+pub(crate) fn relation_member_name(label: &str) -> String {
+    let mut out = String::with_capacity(label.len());
+    let mut capitalise = false;
+    for character in label.chars() {
+        if character == '_' {
+            capitalise = true;
+            continue;
+        }
+        if capitalise {
+            out.extend(character.to_uppercase());
+            capitalise = false;
+        } else {
+            out.push(character);
+        }
+    }
+    out
+}
 
 /// One entity declaration's inputs, together because they are decided
 /// together: what to call it, what it holds, and which dialect it is written
@@ -94,8 +177,7 @@ pub(crate) fn entity_declaration_at(
     }
     let package = match declaration.package {
         Some(package) if v1 => format!(" @package({package})"),
-        Some(_) => String::new(),
-        None => String::new(),
+        _ => String::new(),
     };
     let mut output = format!("entity {java_name} @id(ent_{entity_label}){package} {{\n");
     if scaffold {

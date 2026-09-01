@@ -108,16 +108,6 @@ pub struct BuiltinSemantics {
     /// The Postgres column type. One dialect on purpose: a second one is a
     /// column on this row, not a second table somewhere else.
     pub sql_postgres: &'static str,
-    /// Two literals of this type, spelled as SQL, guaranteed unequal.
-    ///
-    /// **Not the Java sample and not the JSON one.** These go into a
-    /// statement rather than a record or a request body, so a `uuid` is a
-    /// quoted literal and a `boolean` is bare. A foreign-key proof needs two
-    /// -- a value for the columns it fills and a different one for the key it
-    /// points nowhere with -- and stating them here is what keeps a second
-    /// per-builtin table from growing beside this one.
-    pub sql_sample: &'static str,
-    pub sql_alternate: &'static str,
     /// How a literal default for this builtin is spelled.
     pub literal: LiteralKind,
     /// The generator defaults this builtin accepts -- `now()`, `uuid7()` and
@@ -128,6 +118,28 @@ pub struct BuiltinSemantics {
     /// Whether it can carry a request scope -- a value proved against a
     /// same-named JWT claim, so it has to be something a claim can hold.
     pub scopeable: bool,
+    /// One value of this builtin **as SQL**, for a generated proof row.
+    ///
+    /// Not [`sample`], which is a Java expression: these go into a statement
+    /// rather than a record, so a `uuid` is quoted and a `boolean` is bare.
+    /// It lives on this row for the reason every other projection does -- a
+    /// second exhaustive match over the enum is a second answer, and the
+    /// compiler cannot say which one is stale because both compile.
+    ///
+    /// The digits start at 7 so a seeded proof row cannot collide with a
+    /// hand-written fixture on a unique column.
+    ///
+    /// [`sample`]: Self::sample
+    pub sql_sample: &'static str,
+    /// A *second* SQL value, for the row a proof needs to be distinguishable
+    /// from [`sql_sample`] -- the parent key that is deliberately absent.
+    ///
+    /// Equal to `sql_sample` for the three builtins whose domain cannot supply
+    /// a second value worth distinguishing (`boolean`, `zone`, `currency`).
+    /// None of them is a foreign key, which is the only thing that reads it.
+    ///
+    /// [`sql_sample`]: Self::sql_sample
+    pub sql_alternate: &'static str,
 }
 
 use crate::model::BuiltinType;

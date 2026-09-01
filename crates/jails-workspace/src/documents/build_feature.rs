@@ -475,24 +475,32 @@ mod tests {
         let edited = once.replace("<minimum>0.80</minimum>", "<minimum>0.75</minimum>");
         let error = reconcile_maven_build_features(&edited, &coverage(), false).unwrap_err();
         assert!(error.contains("coverage block was edited"), "{error}");
-        // **Removal takes back what jails owns, and the container is not it.**
-        // `<build><plugins>` is created outside the markers on purpose -- the
-        // marked block holds one `<plugin>` -- so removal leaves the empty
-        // nest standing. Sweeping it would delete an element the reader may
-        // have written themselves, which is the one thing a lossless reader
-        // adapter may not do; an empty `<plugins>` is inert to Maven.
+        // **Removal takes back the plugin, not the container.** `<build>` and
+        // `<plugins>` are created outside the markers on purpose (see
+        // `insert_maven_feature_plugin`), because owning them makes the next
+        // command that legitimately adds a plugin read as an edit to this
+        // block and refuse every later plan. So the inverse of `add` is "the
+        // plugin is gone", not "the file is byte-identical": what is left is
+        // an empty container that jails never claimed and that changes no
+        // build behaviour.
         let removed = reconcile_maven_build_features(&once, &BTreeSet::new(), false).unwrap();
-        assert!(!removed.contains("jails:coverage"), "{removed}");
-        assert!(!removed.contains("jacoco"), "{removed}");
+        assert!(!removed.contains("jacoco-maven-plugin"), "{removed}");
+        assert!(!removed.contains(COVERAGE_MARKER), "{removed}");
         assert!(removed.contains("<!-- reader -->"), "{removed}");
         assert_eq!(
             removed,
-            "<project>\n    <!-- reader -->\n    <build>\n        <plugins>\n        </plugins>\n    </build>\n</project>\n"
+            "<project>\n    <!-- reader -->\n    <build>\n        <plugins>\n        \
+             </plugins>\n    </build>\n</project>\n"
         );
+        // Removing twice is still a no-op, and re-adding lands in the
+        // container that is already there rather than nesting a second one.
         assert_eq!(
             reconcile_maven_build_features(&removed, &BTreeSet::new(), false).unwrap(),
             removed
         );
+        let re_added = reconcile_maven_build_features(&removed, &coverage(), false).unwrap();
+        assert_eq!(re_added.matches("<plugins>").count(), 1, "{re_added}");
+        assert!(re_added.contains("jacoco-maven-plugin"), "{re_added}");
     }
 
     #[test]

@@ -256,6 +256,14 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // Java. Its walker took a second `root` for a value that was
                 // never a project root but `src/main/java`, and renaming that
                 // parameter is what kept the rise at one rather than two.
+                //
+                // Two more of the same shape arrived on the canonical executor
+                // in parallel and are already inside that 94: the
+                // staged-temporary sweep a crash between staging and rename
+                // leaves behind, and the managed-tree verification that reads
+                // it. Both run where no `Project` exists and neither threads a
+                // root further down, which is the exemption this row records
+                // three times over now.
                 ceiling: 94,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
@@ -1309,6 +1317,17 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // (which files an ejection would move) and `parser/attribute`
                 // (reading one `@name(...)`). The parser rise this row
                 // predicted is the last of them.
+                //
+                // `linker.rs` looked like the one that had to be a raise
+                // rather than a split -- it already has `linker/{component,
+                // enum_type, field, operation, unit}.rs`, so what is left in
+                // the parent is the part that has to see every declaration
+                // class at once, and cutting *that* badly gives two files
+                // which both need the whole picture. The seam is not there. It
+                // is between the walk and the checks the walk calls: whether
+                // one string may be a Java type, a package, a SQL identifier
+                // or a route is a question with nothing to do with the shape
+                // of the document, and it was 370 lines of the file.
                 ceiling: 671,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
