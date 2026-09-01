@@ -69,39 +69,40 @@ fn requests(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
     let path = resource_path(model, entity);
     let name = &entity.names.java_type;
     let key = primary_key(entity)?;
-    let body: Vec<String> = entity
-        .fields
-        .iter()
-        .filter(|field| field.id != key.id && field.semantics.default.is_none())
-        .filter_map(|field| {
-            // A component jails cannot sample is left out rather than guessed
-            // at: a wrong body documents a payload the record refuses, which
-            // is worse than a shorter one the reader completes.
-            let sample = crate::emit_companion_test::json_sample(model, &field.ty)?;
-            Some(format!("  \"{}\": {sample}", field.names.java_member))
-        })
-        .collect();
+    let body = documented_body(model, entity, key);
     // **Unquoted**, unlike the body above. `@id` is substituted into a path,
     // where a JSON string's own quotes would be sent literally and the request
     // would 400 on a key nobody mistyped.
     let key_sample = crate::emit_companion_test::json_sample(model, &key.ty)
         .map(|sample| sample.trim_matches('"').to_string())
         .unwrap_or_else(|| "1".to_string());
+    // **Only the requests the controller answers.** A scoped resource is
+    // create-only -- see `scoped` -- and a collection whose `### List` block
+    // returns 405 tells the reader something about this file rather than about
+    // their project. The generated controller test already asserted that same
+    // GET was a 405: the test knew and the collection did not.
+    let reads = if scoped(entity) {
+        String::new()
+    } else {
+        format!(
+            "### List {name}\n\
+             GET {{{{baseUrl}}}}{path}\n\
+             Accept: application/json\n\n\
+             @id = {key_sample}\n\n\
+             ### Get {name}\n\
+             GET {{{{baseUrl}}}}{path}/{{{{id}}}}\n\
+             Accept: application/json\n\n\
+             ### Delete {name}\n\
+             DELETE {{{{baseUrl}}}}{path}/{{{{id}}}}\n"
+        )
+    };
     let collection = format!(
         "@baseUrl = http://localhost:8080\n\n\
          ### Create {name}\n\
          POST {{{{baseUrl}}}}{path}\n\
          Content-Type: application/json\n\n\
          {{\n{}\n}}\n\n\
-         ### List {name}\n\
-         GET {{{{baseUrl}}}}{path}\n\
-         Accept: application/json\n\n\
-         @id = {key_sample}\n\n\
-         ### Get {name}\n\
-         GET {{{{baseUrl}}}}{path}/{{{{id}}}}\n\
-         Accept: application/json\n\n\
-         ### Delete {name}\n\
-         DELETE {{{{baseUrl}}}}{path}/{{{{id}}}}\n",
+         {reads}",
         body.join(",\n")
     );
     let artifact_id = format!("art_{}_http_requests", entity.id.as_str());
@@ -179,6 +180,44 @@ fn resource_path(model: &AppModel, entity: &Entity) -> String {
         .unwrap_or_else(|| format!("/{}", entity.names.sql_table))
 }
 
+/// Whether every read of this resource has to carry a tenant.
+///
+/// **A scoped resource is create-only over its collection**, and the reason is
+/// the whole of what `@scope` is for: the field is proved against a JWT claim
+/// at the request boundary, so a `GET /notes` that returns `findAll()` answers
+/// with every tenant's rows. There is no honest unscoped read, so none is
+/// written -- reading a scoped resource is a `jails g query`, which carries
+/// the claim into its predicate. Spring answers the absent methods with 405,
+/// which is the true answer rather than a leak.
+/// The JSON a caller sends to create one of these, as the `.http` collection
+/// documents it and the companion test posts it.
+///
+/// One derivation because the two must agree: a documented body the generated
+/// test does not exercise is a body nothing checks, which is how `bugs.md` B48
+/// -- two renderers resolving the same fact separately -- reads in this file.
+///
+/// A component jails cannot sample is left out rather than guessed at: a wrong
+/// body documents a payload the record refuses, which is worse than a shorter
+/// one the reader completes.
+fn documented_body(model: &AppModel, entity: &Entity, key: &jails_model::Field) -> Vec<String> {
+    entity
+        .fields
+        .iter()
+        .filter(|field| field.id != key.id && field.semantics.default.is_none())
+        .filter_map(|field| {
+            let sample = crate::emit_companion_test::json_sample(model, &field.ty)?;
+            Some(format!("  \"{}\": {sample}", field.names.java_member))
+        })
+        .collect()
+}
+
+fn scoped(entity: &Entity) -> bool {
+    entity
+        .fields
+        .iter()
+        .any(|field| field.semantics.scope.is_some())
+}
+
 fn controller(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
     let package = model.project.package_for(Package::Web);
     let type_name = with_suffix(&entity.names.java_type, "Controller");
@@ -205,6 +244,7 @@ fn controller(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
             "request".to_string(),
         )
     };
+    let create_only = scoped(entity);
     let mut imports = BTreeSet::from([
         domain_import(model, entity),
         // **The service, not the repository.** The suite jails generates
@@ -218,11 +258,7 @@ fn controller(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
             model.project.package_for(Package::Service)
         ),
         "java.net.URI".to_string(),
-        "java.util.List".to_string(),
         "org.springframework.http.ResponseEntity".to_string(),
-        "org.springframework.web.bind.annotation.DeleteMapping".to_string(),
-        "org.springframework.web.bind.annotation.GetMapping".to_string(),
-        "org.springframework.web.bind.annotation.PathVariable".to_string(),
         "org.springframework.web.bind.annotation.PostMapping".to_string(),
         "org.springframework.web.bind.annotation.RequestBody".to_string(),
         "org.springframework.web.bind.annotation.RequestMapping".to_string(),
@@ -231,9 +267,49 @@ fn controller(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
     if bounded {
         imports.insert("jakarta.validation.Valid".to_string());
     }
+    if !create_only {
+        imports.extend([
+            "java.util.List".to_string(),
+            "org.springframework.web.bind.annotation.DeleteMapping".to_string(),
+            "org.springframework.web.bind.annotation.GetMapping".to_string(),
+            "org.springframework.web.bind.annotation.PathVariable".to_string(),
+        ]);
+    }
     let key_type = java_type(key, &mut imports);
     let key_member = &key.names.java_member;
     let path = resource_path(model, entity);
+    // The reads and the delete, or nothing where every read must carry a
+    // tenant. `create_only` is `scoped`; the doc comment there is the reason.
+    let reads = if create_only {
+        String::new()
+    } else {
+        format!(
+            "\x20   @GetMapping\n\
+             \x20   public List<{record}> list() {{\n\
+             \x20       return service.all();\n\
+             \x20   }}\n\n\
+             \x20   /** 404 rather than an empty 200: \"no such thing\" and \"here is nothing\" differ. */\n\
+             \x20   @GetMapping(\"/{{id}}\")\n\
+             \x20   public ResponseEntity<{record}> byId(@PathVariable(\"id\") {key_type} id) {{\n\
+             \x20       return service.byId(id)\n\
+             \x20               .map(ResponseEntity::ok)\n\
+             \x20               .orElseGet(() -> ResponseEntity.notFound().build());\n\
+             \x20   }}\n\n"
+        )
+    };
+    let removal = if create_only {
+        String::new()
+    } else {
+        format!(
+            "\x20   /** 204 when something was removed, 404 when there was nothing to remove. */\n\
+             \x20   @DeleteMapping(\"/{{id}}\")\n\
+             \x20   public ResponseEntity<Void> delete(@PathVariable(\"id\") {key_type} id) {{\n\
+             \x20       return service.delete(id)\n\
+             \x20               ? ResponseEntity.noContent().build()\n\
+             \x20               : ResponseEntity.notFound().build();\n\
+             \x20   }}\n\n"
+        )
+    };
     let body = format!(
         "@RestController\n\
          @RequestMapping({type_name}.PATH)\n\
@@ -244,30 +320,14 @@ fn controller(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
          \x20   public {type_name}({record}Service service) {{\n\
          \x20       this.service = service;\n\
          \x20   }}\n\n\
-         \x20   @GetMapping\n\
-         \x20   public List<{record}> list() {{\n\
-         \x20       return service.all();\n\
-         \x20   }}\n\n\
-         \x20   /** 404 rather than an empty 200: \"no such thing\" and \"here is nothing\" differ. */\n\
-         \x20   @GetMapping(\"/{{id}}\")\n\
-         \x20   public ResponseEntity<{record}> byId(@PathVariable(\"id\") {key_type} id) {{\n\
-         \x20       return service.byId(id)\n\
-         \x20               .map(ResponseEntity::ok)\n\
-         \x20               .orElseGet(() -> ResponseEntity.notFound().build());\n\
-         \x20   }}\n\n\
+         {reads}\
          \x20   {create_doc}@PostMapping\n\
          \x20   public ResponseEntity<{record}> create({bound}) {{\n\
          \x20       {record} created = service.save({from_request});\n\
          \x20       return ResponseEntity.created(URI.create(PATH + \"/\" + created.{key_member}()))\n\
          \x20               .body(created);\n\
          \x20   }}\n\n\
-         \x20   /** 204 when something was removed, 404 when there was nothing to remove. */\n\
-         \x20   @DeleteMapping(\"/{{id}}\")\n\
-         \x20   public ResponseEntity<Void> delete(@PathVariable(\"id\") {key_type} id) {{\n\
-         \x20       return service.delete(id)\n\
-         \x20               ? ResponseEntity.noContent().build()\n\
-         \x20               : ResponseEntity.notFound().build();\n\
-         \x20   }}\n\n\
+         {removal}\
          \x20   // Reader-owned controller methods belong below this stable boundary.\n\
          }}"
     );
@@ -329,6 +389,12 @@ fn controller_test(
     let path = resource_path(model, entity);
     let boot_major = crate::emit_capability::boot_major(spring_boot);
     let modern = boot_major.is_some_and(|major| major >= 4);
+    // **What the collection documents is what this proves.** A scoped
+    // resource answers only the POST, so asserting an OK on the collection
+    // would assert the leak `scoped` exists to prevent -- and 405 is what
+    // Spring answers for a path that is mapped and a method that is not, which
+    // is the property worth pinning.
+    let create_only = scoped(entity);
     let (field, request) = if modern {
         imports.insert("static org.assertj.core.api.Assertions.assertThat".to_string());
         imports.insert("org.springframework.test.web.servlet.assertj.MockMvcTester".to_string());
@@ -336,7 +402,16 @@ fn controller_test(
             format!(
                 "    private final MockMvcTester mvc = MockMvcTester.of(new {controller}(new {record}Service(REPOSITORY)));"
             ),
-            format!("        assertThat(mvc.get().uri(\"{path}\")).hasStatusOk();"),
+            match create_only {
+                true => format!(
+                    "        assertThat(mvc.post().uri(\"{path}\")\n\
+                     \x20               .contentType(MediaType.APPLICATION_JSON)\n\
+                     \x20               .content(CREATE_REQUEST)).hasStatus(201);\n\
+                     \x20       // Every read carries the tenant, so the collection answers none.\n\
+                     \x20       assertThat(mvc.get().uri(\"{path}\")).hasStatus(405);"
+                ),
+                false => format!("        assertThat(mvc.get().uri(\"{path}\")).hasStatusOk();"),
+            },
         )
     } else {
         imports.insert(
@@ -356,10 +431,55 @@ fn controller_test(
             format!(
                 "    private final MockMvc mvc = standaloneSetup(new {controller}(new {record}Service(REPOSITORY))).build();"
             ),
-            format!("        mvc.perform(get(\"{path}\")).andExpect(status().isOk());"),
+            match create_only {
+                true => format!(
+                    "        mvc.perform(post(\"{path}\")\n\
+                     \x20               .contentType(MediaType.APPLICATION_JSON)\n\
+                     \x20               .content(CREATE_REQUEST)).andExpect(status().isCreated());\n\
+                     \x20       // Every read carries the tenant, so the collection answers none.\n\
+                     \x20       mvc.perform(get(\"{path}\")).andExpect(status().isMethodNotAllowed());"
+                ),
+                false => {
+                    format!("        mvc.perform(get(\"{path}\")).andExpect(status().isOk());")
+                }
+            },
         )
     };
     let throws = if modern { "" } else { " throws Exception" };
+    let method = match create_only {
+        true => "theDocumentedCreateRequestIsAccepted",
+        false => "theCollectionAnswers",
+    };
+    // The same JSON the `.http` collection documents, so what the reader is
+    // shown and what the build proves cannot diverge.
+    let request_constant = match create_only {
+        false => String::new(),
+        true => {
+            imports.insert("org.springframework.http.MediaType".to_string());
+            if modern {
+                imports.insert(
+                    "org.springframework.test.web.servlet.assertj.MockMvcTester".to_string(),
+                );
+            } else {
+                imports.insert(
+                    "static org.springframework.test.web.servlet.request.MockMvcRequestBuilders::post"
+                        .replace("::", ".")
+                        .to_string(),
+                );
+            }
+            format!(
+                "\x20   private static final String CREATE_REQUEST =\n\
+                 \x20           \"\"\"\n\
+                 \x20           {{\n{}\n\
+                 \x20           }}\"\"\";\n\n",
+                documented_body(model, entity, key)
+                    .iter()
+                    .map(|line| format!("\x20           {line}"))
+                    .collect::<Vec<_>>()
+                    .join(",\n")
+            )
+        }
+    };
     let body = format!(
         "class {type_name} {{\n\n\
          \x20   private static final {record} ROW = new {record}({row});\n\n\
@@ -381,9 +501,10 @@ fn controller_test(
          \x20           return true;\n\
          \x20       }}\n\
          \x20   }};\n\n\
+         {request_constant}\
          {field}\n\n\
          \x20   @Test\n\
-         \x20   void theCollectionAnswers(){throws} {{\n\
+         \x20   void {method}(){throws} {{\n\
          {request}\n\
          \x20   }}\n\n\
          \x20   // Reader-owned tests belong below this stable boundary.\n\
