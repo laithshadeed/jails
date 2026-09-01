@@ -397,6 +397,38 @@ resolution it got wrong, and not against a real runner.
 legacy subject, or the differential claim is withdrawn from this file.
 
 
+**P13.12 The document cross-reference gate stops at `docs/`.**
+`rules::every_cross_reference_in_the_documents_resolves` reads every markdown
+file under `docs/` and fails on a `docs/<name>.md` path, a `Part <n>`, a
+`jails-<crate>` or a claimed `fn` that does not exist. It was written after
+three dangling `Part` references were found by hand -- one of them in
+`docs/00-contracts.md`, which all four workstreams read first, and wrong since
+the six documents were split out of `new.md`. All four rules were verified by
+injection.
+
+It does **not** read `CLAUDE.md`, `ARCHITECTURE.md` or `README.md`, and the
+reason is a hand-over rather than a limitation of the gate. Those three carry
+eight references to `jails-engine`, deleted whole in `2e52c964`:
+
+```
+grep -n 'jails-engine' CLAUDE.md ARCHITECTURE.md
+```
+
+`docs/00-contracts.md` says those files are edited by whoever's change makes
+them wrong, and the cutover did; the sections naming the deleted crate are
+workstream C's subject, not this workstream's, and *what you do not touch*
+above is the rule that keeps this gate from patching across the boundary.
+Three more names in the same files -- parse_fields_for_test,
+install_test_container_import and cli::adopt_as_entry_point -- no longer
+resolve to a `fn` either, and README.md's art_cap_fake_ent_note_repository is
+a generated Java path that the fourth rule would read as a Rust name. They are
+written bare here on purpose: backticking them is the claim this item says is
+false.
+
+**Exit:** those references resolve, and the scan is widened to the three root
+documents in the same change.
+
+
 **P13.7 The suite is `tests/cli` and nothing else.** 122.6s of a 122.6s test
 phase locally, 325.2s of 325.2s on the runner: the other twenty-nine binaries
 finish inside it and are free, so nothing that speeds them up can show. Only

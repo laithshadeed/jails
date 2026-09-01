@@ -37,7 +37,9 @@ conformance fixture. Smaller `jdl` blocks are valid declaration fragments in
 the surrounding entity/workspace context unless the text says they show a
 before/after transformation.
 
-Part 3 is where this specification and the implementation currently differ.
+The three workstream documents are where this specification and the
+implementation currently differ; `docs/00-contracts.md`'s identifier map says
+which one holds a given entry.
 
 ## 1. Decision
 
@@ -2505,7 +2507,8 @@ into disconnected test strings.
 
 `the_specification_complete_example_links_except_its_one_recorded_gap` is that
 extraction for §4: it reads the block out of this file rather than a copy, and
-pins the one construct that does not resolve yet (Part 3's A3.15). The smaller
+pins the one construct that does not resolve yet (A3.15, in
+`docs/20-generated-java.md`). The smaller
 fragments are not extracted, and that is the rest of this family.
 
 ## 22. Upgrade from the pre-v1 draft
