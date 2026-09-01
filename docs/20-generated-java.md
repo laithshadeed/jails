@@ -152,17 +152,13 @@ tell the two apart.
 
 ## P6 — the generated Java, assessed against `java.md` and `backend.md`
 
-**P6.6** Five defects that survive a perfect field spec. Each was
+**P6.6** Four defects that survive a perfect field spec. Each was
 re-confirmed on 2026-08-27 against a project built from nothing but
 `jails new --offline` plus nine commands.
 
 - **§6.3 capability files land in the root package.** `AppMetrics`,
   `CorsConfig` and `MetricsConfig`: a capability's files decide nothing, so
   nothing places them, while every *kind* goes through `generate::layout`.
-- **§6.4 a service that only forwards.** `MessageService` is four one-line
-  forwards to the port. The port earns its interface -- there is a real
-  in-memory second implementation -- and the service between the controller and
-  it does not.
 - **§6.5 two API styles in one service.** REST for the scaffold, RPC-over-POST
   for the generated operations, including a `POST` that reads, chosen by which
   command wrote the route rather than by a decision. Half closed: `g scaffold
@@ -179,7 +175,7 @@ re-confirmed on 2026-08-27 against a project built from nothing but
   value `"sample"`; and no concurrency test for the CAS the `version` column
   exists for.
 
-**Exit:** all five closed, or each recorded as a scope line in `README.md`'s
+**Exit:** all four closed, or each recorded as a scope line in `README.md`'s
 "Not yet". Do not close one by deleting the entry that is its only record.
 
 ## P8.11b — the generator half of P8.11
