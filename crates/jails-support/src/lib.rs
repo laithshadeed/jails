@@ -42,6 +42,7 @@ pub mod json;
 pub mod lock;
 pub mod process;
 pub mod scratch;
+pub mod unified;
 
 /// Every fallible jails operation returns a message a human can act on, or
 /// says that it has already said everything.

@@ -113,6 +113,23 @@ fn disabled_tests(bundle: &jails_contracts::PlanBundle) -> Vec<String> {
     disabled
 }
 
+/// Refuse the legacy envelope rather than answering in a different shape.
+///
+/// **`json-v1` names a schema this path cannot produce.** It was the legacy
+/// engine's `jails.command-result.v1`, and on a canonical project the flag was
+/// simply ignored -- the caller asked for one shape, got another, and nothing
+/// said so. A machine consumer parsing the answer finds fields it did not ask
+/// for and misses every one it did.
+pub(crate) fn refuse_legacy_envelope(invocation: &Invocation) -> Result<()> {
+    match invocation.output {
+        Output::JsonV1 => Err(Failure::Told(
+            "`--output json-v1` is the legacy engine's envelope, and this project is canonical.\n       fix: pass `--output json` for the exact plan, or `--output human`"
+                .to_string(),
+        )),
+        _ => Ok(()),
+    }
+}
+
 pub(crate) fn report_plan(
     bundle: &jails_contracts::PlanBundle,
     invocation: &Invocation,
@@ -127,17 +144,7 @@ pub(crate) fn report_plan(
         for line in crate::model_command::preview_lines(bundle) {
             println!("{line}");
         }
-        if invocation.ast {
-            println!(
-                "model patch: {}",
-                String::from_utf8_lossy(&bundle.plan.input.bytes)
-            );
-        }
-        if invocation.diff {
-            for operation in &bundle.plan.operations {
-                println!("  {operation:?}");
-            }
-        }
+        report_review(bundle, invocation);
         for path in disabled_tests(bundle) {
             println!("  test-disabled  {path}");
         }
@@ -271,4 +278,126 @@ fn names_identifier(source: &str, name: &str) -> bool {
         boundary(source[..index].chars().next_back())
             && boundary(source[index + name.len()..].chars().next())
     })
+}
+
+/// What `--ast` and `--diff` add, on a preview and on a commit alike.
+///
+/// **`--ast` is the transition as values and `--diff` is the bytes.** They
+/// were the other way round: `--diff` printed the operation list and `--ast`
+/// the model patch, so the flag naming the *abstract* representation showed
+/// one JSON line and the flag asking for a diff showed no file contents at
+/// all.
+///
+/// Both are printed after a commit too, because "what did that change" is the
+/// same question whether it is asked before or after -- and the plan is the
+/// same value either way, which is what makes the two answers agree.
+pub(crate) fn report_review(bundle: &jails_contracts::PlanBundle, invocation: &Invocation) {
+    if invocation.output != Output::Human {
+        return;
+    }
+    if invocation.ast {
+        println!(
+            "model patch: {}",
+            String::from_utf8_lossy(&bundle.plan.input.bytes)
+        );
+        for operation in &bundle.plan.operations {
+            println!("  {operation:?}");
+        }
+    }
+    if invocation.diff {
+        for line in unified_diff(bundle) {
+            println!("{line}");
+        }
+    }
+}
+
+/// Every managed file this plan changes, as a unified diff.
+///
+/// **The managed tree is published whole and reviewed per file.**
+/// `PublishMergedTree` carries two content digests because the tree is what
+/// the executor swaps atomically; a reader reviewing a change wants the lines,
+/// so the two trees are walked here and diffed pairwise. Reader-owned files
+/// come from their own operations, which carry a before and an after image
+/// each.
+fn unified_diff(bundle: &jails_contracts::PlanBundle) -> Vec<String> {
+    use jails_contracts::PlannedOperation as Op;
+
+    let text = |digest: &jails_contracts::ContentDigest| {
+        bundle
+            .blobs
+            .get(digest)
+            .and_then(|bytes| std::str::from_utf8(bytes).ok())
+            .map(str::to_string)
+    };
+    let mut lines = Vec::new();
+    let mut show = |verb: &str, path: &str, before: Option<String>, after: Option<String>| {
+        if let Some(diff) =
+            jails_support::unified::diff(path, before.as_deref(), after.as_deref(), 3)
+        {
+            lines.push(format!("diff --jails {verb} {path}"));
+            lines.extend(diff.lines().map(str::to_string));
+        }
+    };
+    for operation in &bundle.plan.operations {
+        match operation {
+            Op::PublishMergedTree { before, after, .. } => {
+                let entries = |digest: Option<&jails_contracts::ContentDigest>| {
+                    digest
+                        .and_then(|digest| bundle.trees.get(digest))
+                        .map(|tree| tree.entries.clone())
+                        .unwrap_or_default()
+                };
+                let was = entries(before.as_ref());
+                let now = entries(Some(after));
+                for path in was
+                    .keys()
+                    .chain(now.keys())
+                    .collect::<std::collections::BTreeSet<_>>()
+                {
+                    let (old, new) = (was.get(path), now.get(path));
+                    let verb = match (old.is_some(), new.is_some()) {
+                        (false, _) => "create",
+                        (true, true) => "replace",
+                        (true, false) => "delete",
+                    };
+                    show(
+                        verb,
+                        path.as_str(),
+                        old.and_then(|entry| text(&entry.blob)),
+                        new.and_then(|entry| text(&entry.blob)),
+                    );
+                }
+            }
+            Op::ReplaceModelFile {
+                path,
+                before,
+                after,
+            }
+            | Op::ReplaceStateFile {
+                path,
+                before,
+                after,
+            }
+            | Op::PatchReaderFile {
+                path,
+                before,
+                after,
+            } => show(
+                match before.is_some() {
+                    true => "replace",
+                    false => "create",
+                },
+                path.as_str(),
+                before.as_ref().and_then(|image| text(&image.blob)),
+                text(&after.blob),
+            ),
+            Op::AppendMigration { path, after } => {
+                show("create", path.as_str(), None, text(&after.blob));
+            }
+            Op::RemoveReaderFile { path, before } => {
+                show("delete", path.as_str(), text(&before.blob), None);
+            }
+        }
+    }
+    lines
 }

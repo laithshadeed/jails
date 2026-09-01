@@ -1650,23 +1650,33 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
         .unwrap();
     assert!(changed.status.success(), "{changed:?}");
     let shown = String::from_utf8_lossy(&changed.stdout);
+    // The managed path, because that is where the file is: generated output
+    // lives under `.jails/generated` and the reader's own tree is theirs.
     assert!(
-        shown.contains("diff --jails replace src/main/java/com/example/demo/domain/Note.java"),
+        shown.contains(
+            "diff --jails replace .jails/generated/main/java/com/example/demo/domain/Note.java"
+        ),
         "{shown}"
     );
+    assert!(shown.contains("@@ -"), "{shown}");
     assert!(shown.contains("+import java.time.Instant;"), "{shown}");
+    // **The three-way merge, asserted by its result rather than by a label.**
+    // The reader's line is in the file's BASE and not in the compiler's
+    // THEIRS, so a diff that removed it would be a merge that dropped it --
+    // which is the thing worth checking, and a marker saying "three-way" is
+    // not.
     assert!(
-        shown.contains("@@ -") && shown.contains(" three-way\n"),
+        shown.contains(".jails/generated/test/java/com/example/demo/domain/NoteTest.java"),
         "{shown}"
     );
     assert!(
-        shown.contains("MergeFile { path: src/test/java/com/example/demo/domain/NoteTest.java }"),
-        "{shown}"
+        !shown.contains("-// reader-owned context"),
+        "the merge dropped the reader's line:\n{shown}"
     );
-    assert!(
-        shown.contains("ReplaceFile { path: src/main/java/com/example/demo/domain/Note.java }"),
-        "{shown}"
-    );
+    // `--ast` is the transition as values: the exact operations the executor
+    // would run, named as the closed set they come from.
+    assert!(shown.contains("PublishMergedTree { root:"), "{shown}");
+    assert!(shown.contains("ReplaceModelFile { path:"), "{shown}");
     assert_eq!(snapshot_tree(&root), before, "review preview wrote files");
 
     let created = jails_cmd(&root, None)
@@ -1684,7 +1694,7 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
     assert!(created.status.success(), "{created:?}");
     let shown = String::from_utf8_lossy(&created.stdout);
     assert!(shown.contains("--- /dev/null\n+++ b/"), "{shown}");
-    assert!(shown.contains("CreateFile { path:"), "{shown}");
+    assert!(shown.contains("diff --jails create "), "{shown}");
     assert!(
         !shown.contains("  timing  "),
         "ordinary human output exposed debug timings: {shown}"
@@ -1697,15 +1707,19 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
         .unwrap();
     assert!(debug.status.success(), "{debug:?}");
     let debug = String::from_utf8(debug.stdout).unwrap();
-    for phase in [
-        "discover", "observe", "parse", "project", "prepare", "verify",
-    ] {
+    // Named for the canonical pipeline, because that is what runs: capture the
+    // workspace, compile the patched model, materialize the exact plan. The
+    // legacy engine's `discover / observe / parse / project / prepare /
+    // verify` named steps this binary no longer has.
+    for phase in ["capture", "compile", "materialize"] {
         assert!(
             debug.contains(&format!("timing  {phase}")),
             "missing {phase} timing in {debug}"
         );
     }
-    assert!(!debug.contains("timing  commit"), "{debug}");
+    // And the absence is the point: `--pretend` stopped before the only step
+    // that writes.
+    assert!(!debug.contains("timing  execute"), "{debug}");
     assert_eq!(snapshot_tree(&root), before, "debug preview wrote files");
 
     let json = jails_cmd(&root, None)
@@ -1725,50 +1739,47 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
     assert!(json.status.success(), "{json:?}");
     let json = String::from_utf8(json.stdout).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert_eq!(value["schema"], "jails.command-result.v2", "{json}");
-    assert_eq!(value["command"]["path"], serde_json::json!(["generate"]));
+    // **The exact plan itself, not an envelope describing one.** The legacy
+    // engine wrapped every command in `jails.command-result.v2` and put a
+    // rendered summary inside it; the compiler's answer to `--output json` is
+    // the `PlanBundle` -- the reviewed transition, its digest, its operations
+    // and every blob they name -- because that is the value `--plan-out`
+    // writes and `apply` refers to. A second shape describing it could
+    // disagree with it.
+    assert_eq!(value["schema"], "jails.plan-bundle.v1", "{json}");
     assert!(
-        value["report"]["data"]["operation_digest"]
+        value["plan"]["digest"]
             .as_str()
             .is_some_and(|digest| digest.starts_with("sha256:") && digest.len() == 71),
         "{json}"
     );
     assert!(
-        value["report"]["data"]["prepared_after"]
+        value["plan"]["id"]
             .as_str()
-            .is_some_and(|digest| digest.starts_with("sha256:") && digest.len() == 71),
+            .is_some_and(|digest| digest.starts_with("sha256:")),
         "{json}"
     );
-    assert!(value["report"]["data"]["diffs"].is_array(), "{json}");
-    assert!(value["report"]["data"]["ast"].is_array(), "{json}");
-    let timings = value["timings"].as_array().unwrap();
-    for phase in [
-        "discover", "observe", "parse", "project", "prepare", "verify",
-    ] {
-        assert!(
-            timings.iter().any(|timing| timing["phase"] == phase),
-            "missing {phase} timing in {json}"
-        );
-    }
+    let operations = value["plan"]["operations"].as_array().unwrap();
     assert!(
-        !timings.iter().any(|timing| timing["phase"] == "commit"),
-        "{json}"
-    );
-    assert!(
-        value["report"]["data"]["diffs"]
-            .as_array()
-            .unwrap()
+        operations
             .iter()
-            .any(|diff| diff["patch"]
-                .as_str()
-                .is_some_and(|patch| patch.starts_with("diff --jails create"))),
+            .any(|operation| operation["kind"] == "publish-merged-tree"),
         "{json}"
     );
     assert!(
-        json.contains("src/main/java/com/example/demo/domain/Fresh.java"),
+        operations
+            .iter()
+            .any(|operation| operation["kind"] == "replace-model-file"),
         "{json}"
     );
+    assert!(
+        json.contains(".jails/generated/main/java/com/example/demo/domain/Fresh.java"),
+        "{json}"
+    );
+    // The JSON is the machine's answer, so the human's postscript is not in
+    // it.
     assert!(!json.contains("nothing was written"), "{json}");
+    assert!(!json.contains("timing"), "{json}");
     assert_eq!(
         snapshot_tree(&root),
         before,
@@ -1787,19 +1798,35 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
         ])
         .output()
         .unwrap();
-    assert!(compatibility.status.success(), "{compatibility:?}");
+    // **`json-v1` is refused rather than answered in a different shape.** It
+    // named the legacy engine's `jails.command-result.v1`; on a canonical
+    // project the flag was simply ignored and the caller got the plan bundle
+    // instead, so a machine consumer found fields it had not asked for and
+    // missed every one it had.
+    assert_eq!(compatibility.status.code(), Some(1), "{compatibility:?}");
+    // Reported *in* v1, because that is the shape the caller can parse: a
+    // refusal rendered in the schema they did not ask for is the same defect
+    // one level down.
     let compatibility = String::from_utf8(compatibility.stdout).unwrap();
-    let compatibility_value: serde_json::Value = serde_json::from_str(&compatibility).unwrap();
+    let refusal: serde_json::Value = serde_json::from_str(&compatibility).unwrap();
     assert_eq!(
-        compatibility_value["schema"], "jails.command-result.v1",
+        refusal["schema"], "jails.command-result.v1",
         "{compatibility}"
     );
+    assert_eq!(refusal["status"], "refused", "{compatibility}");
     assert!(
-        compatibility_value.get("command").is_none(),
+        refusal["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("json-v1")
+                && message.contains("--output json")),
         "{compatibility}"
     );
     assert_eq!(compatibility.matches('\n').count(), 1, "{compatibility}");
 
+    // A regeneration over an edited file is a three-way merge, and the plan
+    // carries its *result* rather than a timing for it: the merged bytes are
+    // in the bundle's blobs, which is what makes the digest above the thing
+    // `apply` refers to.
     let merged_json = jails_cmd(&root, None)
         .args([
             "g",
@@ -1815,13 +1842,28 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
     assert!(merged_json.status.success(), "{merged_json:?}");
     let merged_json = String::from_utf8(merged_json.stdout).unwrap();
     let merged_value: serde_json::Value = serde_json::from_str(&merged_json).unwrap();
-    assert!(
-        merged_value["timings"]
-            .as_array()
-            .unwrap()
+    let merged_tree = merged_value["plan"]["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|operation| operation["kind"] == "publish-merged-tree")
+        .expect("the managed tree is published");
+    let after = merged_tree["after"].as_str().unwrap();
+    let entries = &merged_value["trees"][after]["entries"];
+    let blob = entries[".jails/generated/test/java/com/example/demo/domain/NoteTest.java"]["blob"]
+        .as_str()
+        .expect("the merged companion is in the published tree");
+    let merged_test = merged_value["blobs"][blob].as_array().unwrap();
+    let merged_test = String::from_utf8(
+        merged_test
             .iter()
-            .any(|timing| timing["phase"] == "process"),
-        "three-way merge process was not timed: {merged_json}"
+            .map(|byte| byte.as_u64().unwrap() as u8)
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    assert!(
+        merged_test.contains("// reader-owned context"),
+        "the merge dropped the reader's line:\n{merged_test}"
     );
     assert_eq!(
         snapshot_tree(&root),
@@ -1835,11 +1877,16 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
         .unwrap();
     assert!(applied.status.success(), "{applied:?}");
     let applied = String::from_utf8_lossy(&applied.stdout);
+    // The same review after the fact: "what did that change" is one question
+    // whether it is asked before or after, and the plan is the same value
+    // either way -- which is what makes the two answers agree.
     assert!(
-        applied.contains("diff --jails create src/main/java/com/example/demo/domain/Fresh.java"),
+        applied.contains(
+            "diff --jails create .jails/generated/main/java/com/example/demo/domain/Fresh.java"
+        ),
         "{applied}"
     );
-    assert!(applied.contains("CreateFile { path:"), "{applied}");
+    assert!(applied.contains("PublishMergedTree { root:"), "{applied}");
     assert!(
         common::generated(&root, "src/main/java/com/example/demo/domain/Fresh.java").is_file(),
         "an applied reviewed transition did not commit"
@@ -1852,22 +1899,30 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
     assert!(committed.status.success(), "{committed:?}");
     let committed = String::from_utf8(committed.stdout).unwrap();
     let committed_value: serde_json::Value = serde_json::from_str(&committed).unwrap();
-    for field in ["operation_digest", "prepared_after"] {
-        assert!(
-            committed_value["receipt"][field]
-                .as_str()
-                .is_some_and(|digest| digest.starts_with("sha256:") && digest.len() == 71),
-            "committed JSON omitted {field}: {committed}"
-        );
-    }
-    assert!(
-        committed_value["timings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|timing| timing["phase"] == "commit"),
-        "committed JSON omitted commit timing: {committed}"
+    // **The plan digest, and it is the same one the preview printed.** The
+    // legacy receipt carried an `operation_digest` and a `prepared_after` of
+    // its own; here `apply` never replans, so what the execution reports is
+    // the digest of the bundle it was handed -- which is what makes "preview,
+    // review, apply" refer to one transition rather than three.
+    assert_eq!(
+        committed_value["schema"], "jails.execution.v1",
+        "{committed}"
     );
+    assert!(
+        committed_value["plan_digest"]
+            .as_str()
+            .is_some_and(|digest| digest.starts_with("sha256:") && digest.len() == 71),
+        "{committed}"
+    );
+    assert!(
+        committed_value["files_written"]
+            .as_u64()
+            .is_some_and(|n| n > 0),
+        "{committed}"
+    );
+    // The machine's answer carries no timings: they are a human diagnostic
+    // behind `--debug`, and a caller parsing this did not ask how long it took.
+    assert!(committed_value.get("timings").is_none(), "{committed}");
 }
 
 #[test]
@@ -2503,7 +2558,7 @@ fn single_cutover_refuses_opaque_database_dependencies_without_writing() {
 }
 
 #[test]
-fn rolling_rename_waits_for_attestation_then_completes_storage_forward() {
+fn a_rolling_rename_is_refused_as_the_campaign_it_is() {
     let root = temp_dir("resource-rename-rolling");
     write_spring_fixture(&root);
     common::declare_storage(&root);
@@ -2512,12 +2567,21 @@ fn rolling_rename_waits_for_attestation_then_completes_storage_forward() {
         .output()
         .unwrap();
     assert!(generated.status.success(), "{generated:?}");
+    let before = snapshot_tree(&root);
 
-    let staged = jails_cmd(&root, None)
+    // **A campaign is several reviewed plans, and the compiler plans one.**
+    // The legacy engine staged a rolling rename, waited for an attestation
+    // that every reader had moved, and completed the storage forward -- three
+    // commands, a campaign id, and a state machine living beside the model.
+    // Under the canonical contract each of those steps is an ordinary plan the
+    // reader runs when their readers are ready, so the tool refuses to own the
+    // waiting rather than reimplementing a machine whose whole content is
+    // "not yet".
+    let refused = jails_cmd(&root, None)
         .args([
             "rename",
             "resource",
-            "Billing.Task",
+            "Task",
             "WorkItem",
             "--strategy",
             "rolling",
@@ -2525,89 +2589,33 @@ fn rolling_rename_waits_for_attestation_then_completes_storage_forward() {
         ])
         .output()
         .unwrap();
-    assert!(staged.status.success(), "{staged:?}");
-    let stdout = String::from_utf8_lossy(&staged.stdout);
-    let campaign = stdout
-        .lines()
-        .find_map(|line| line.strip_prefix("rename-campaign: "))
-        .expect("rolling rename reports its campaign");
-    assert_eq!(campaign.len(), 64, "{stdout}");
-    assert!(stdout.contains("--old-version-retired"), "{stdout}");
-    assert!(
-        !root
-            .join("src/main/resources/db/migration/V002__rename_tasks_to_work_items.sql")
-            .exists()
-    );
-    let adapter_path = common::generated(
-        &root,
-        "src/main/java/com/example/demo/adapters/JdbcWorkItemRepository.java",
-    );
-    let staged_adapter = fs::read_to_string(&adapter_path).unwrap();
-    assert!(staged_adapter.contains("from tasks"), "{staged_adapter}");
+    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("campaign"), "{stderr}");
+    // And it names the two it does implement rather than leaving the reader
+    // to find out which strategies exist by trying them.
+    assert!(stderr.contains("preserve-table"), "{stderr}");
+    assert!(stderr.contains("single-cutover"), "{stderr}");
+    assert_eq!(snapshot_tree(&root), before, "refusal wrote project files");
 
-    let status = jails_cmd(&root, None)
-        .args(["resource", "status", "WorkItem", "--output", "json"])
-        .output()
-        .unwrap();
-    assert!(status.status.success(), "{status:?}");
-    let status_json = String::from_utf8_lossy(&status.stdout);
-    assert!(
-        status_json.contains("\"state\":\"rename-pending\""),
-        "{status_json}"
-    );
-    assert!(status_json.contains(campaign), "{status_json}");
-
-    let before_refusal = snapshot_tree(&root);
-    let refused = jails_cmd(&root, None)
+    // The cutover it points at is the one that works.
+    let cutover = jails_cmd(&root, None)
         .args([
             "rename",
-            "storage",
-            "Billing.WorkItem",
-            "--complete",
-            campaign,
+            "resource",
+            "Task",
+            "WorkItem",
+            "--strategy",
+            "single-cutover",
             "--force",
         ])
         .output()
         .unwrap();
-    assert!(!refused.status.success(), "{refused:?}");
     assert!(
-        String::from_utf8_lossy(&refused.stderr).contains("old-version-retired"),
-        "{refused:?}"
-    );
-    assert_eq!(snapshot_tree(&root), before_refusal);
-
-    let completed = jails_cmd(&root, None)
-        .args([
-            "rename",
-            "storage",
-            "Billing.WorkItem",
-            "--complete",
-            campaign,
-            "--old-version-retired",
-            "--force",
-        ])
-        .output()
-        .unwrap();
-    assert!(completed.status.success(), "{completed:?}");
-    let migration =
-        root.join("src/main/resources/db/migration/V002__rename_tasks_to_work_items.sql");
-    assert!(migration.is_file());
-    let completed_adapter = fs::read_to_string(adapter_path).unwrap();
-    assert!(
-        completed_adapter.contains("from work_items"),
-        "{completed_adapter}"
-    );
-    assert!(
-        !completed_adapter.contains("from tasks"),
-        "{completed_adapter}"
-    );
-    let status = common::resource_status(&root, "WorkItem");
-    assert_eq!(status["state"], "consistent", "{status}");
-    assert_eq!(status["table"], "work_items", "{status}");
-    assert_eq!(
-        status["migrations"],
-        serde_json::json!(["001", "002"]),
-        "{status}"
+        cutover.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&cutover.stdout),
+        String::from_utf8_lossy(&cutover.stderr)
     );
 }
 

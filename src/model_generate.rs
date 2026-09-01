@@ -193,6 +193,45 @@ pub(crate) fn report_already_declared(name: &str) {
     println!("{name} is already declared (0 files written)");
 }
 
+/// Where the wall clock went, under `--debug`.
+///
+/// **Named for the canonical pipeline, because that is what runs.** The legacy
+/// engine's phases were `discover / observe / parse / project / prepare /
+/// verify`; the compiler's are the five contracts -- capture the workspace,
+/// apply the patch to the model, compile it, materialize the exact plan, and
+/// execute it. A timing list naming steps the binary no longer has is worse
+/// than none, because it sends the reader looking for the wrong thing.
+///
+/// `execute` is absent on a preview, and that absence is the point: it is how
+/// a reader confirms `--pretend` stopped before the only step that writes.
+#[derive(Default)]
+struct Stopwatch {
+    phases: Vec<(&'static str, std::time::Duration)>,
+    since: Option<std::time::Instant>,
+}
+
+impl Stopwatch {
+    fn start(enabled: bool) -> Self {
+        Self {
+            phases: Vec::new(),
+            since: enabled.then(std::time::Instant::now),
+        }
+    }
+
+    fn mark(&mut self, phase: &'static str) {
+        if let Some(since) = self.since {
+            self.phases.push((phase, since.elapsed()));
+            self.since = Some(std::time::Instant::now());
+        }
+    }
+
+    fn report(&self) {
+        for (phase, elapsed) in &self.phases {
+            println!("  timing  {phase:<12}{:>8.1?}", elapsed);
+        }
+    }
+}
+
 pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
     finish_generation_with_reader_paths(prepared, &[])
 }
@@ -212,6 +251,8 @@ pub(crate) fn finish_generation_with_reader_paths(
         patch_bytes,
         authored_migration,
     } = prepared;
+    report::refuse_legacy_envelope(&invocation)?;
+    let mut clock = Stopwatch::start(invocation.debug);
     let canonical_model_path = model_path.to_string_lossy().replace('\\', "/");
     // The invocation's, so `jails new --app` can replay a manifest into the
     // project it is creating rather than into whatever encloses the directory
@@ -234,6 +275,7 @@ pub(crate) fn finish_generation_with_reader_paths(
         &capture_paths,
     )
     .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
+    clock.mark("capture");
     // **The refusal says the whole request was abandoned.** A command naming
     // several things -- `jails add csv security` -- plans all of them and
     // applies all of them or none, and a reader who is not told that has to
@@ -248,6 +290,7 @@ pub(crate) fn finish_generation_with_reader_paths(
     // `PreparedMutation::authored_migration`. It is still the plan's, not a
     // side effect -- the materializer allocates its version from the observed
     // history and refuses if the path it lands on already exists.
+    clock.mark("compile");
     draft.migrations.extend(authored_migration);
     // **What the compiler noticed but would not refuse over.** A warning that
     // stays inside the draft is a warning nobody reads; these are the shapes
@@ -279,12 +322,17 @@ pub(crate) fn finish_generation_with_reader_paths(
         },
     )
     .map_err(|error| Failure::Told(format!("could not materialize exact plan: {error}")))?;
+    clock.mark("materialize");
 
     if let Some(path) = &invocation.plan_out {
         write_bundle(path, &bundle)?;
     }
     if invocation.pretend || invocation.plan_out.is_some() {
-        return report_plan(&bundle, &invocation);
+        report_plan(&bundle, &invocation)?;
+        if invocation.output == Output::Human {
+            clock.report();
+        }
+        return Ok(());
     }
     if let Some(refusal) = refuse_unconfirmed_deletions(&bundle, &invocation) {
         return refusal;
@@ -305,6 +353,7 @@ pub(crate) fn finish_generation_with_reader_paths(
         });
     let execution = jails_workspace::execute(&root, &bundle)
         .map_err(|error| Failure::Told(format!("could not apply exact plan: {error}")))?;
+    clock.mark("execute");
     if converted {
         eprintln!("  create  {}", crate::model_command::JDL_PATH);
         eprintln!(
@@ -353,6 +402,10 @@ pub(crate) fn finish_generation_with_reader_paths(
             serde_json::to_string_pretty(&execution)
                 .map_err(|error| Failure::Told(format!("could not encode execution: {error}")))?
         );
+    }
+    report::report_review(&bundle, &invocation);
+    if invocation.output == Output::Human {
+        clock.report();
     }
     run_follow_up_effects(&root, &bundle, &invocation)
 }

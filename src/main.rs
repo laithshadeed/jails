@@ -249,32 +249,29 @@ fn main() -> std::process::ExitCode {
                 let result = rename_source::run(&old, &new, force, invocation);
                 return dispatch::finish_invocation(result, failure_output, &failure_path);
             }
-            let result = model_command::ensure_owned(invocation.clone()).and_then(|()| match command {
-                Some(cli::RenameCommand::Resource {
-                    from,
-                    to,
-                    strategy,
-                    table,
-                    api,
-                    route,
-                    force: _,
-                }) => model_rename::run(
-                    model_rename::Request {
+            let result =
+                model_command::ensure_owned(invocation.clone()).and_then(|()| match command {
+                    Some(cli::RenameCommand::Resource {
                         from,
                         to,
                         strategy,
                         table,
                         api,
                         route,
-                    },
-                    invocation,
-                ),
-                Some(cli::RenameCommand::Storage { .. }) => model_command::refuse_legacy_mutation(
-                    "rename storage",
-                    "use a supported single-cutover field/entity policy; multi-release storage campaigns are not canonical yet",
-                ),
-                None => unreachable!("the textual rename is dispatched above"),
-            });
+                        force: _,
+                    }) => model_rename::run(
+                        model_rename::Request {
+                            from,
+                            to,
+                            strategy,
+                            table,
+                            api,
+                            route,
+                        },
+                        invocation,
+                    ),
+                    None => unreachable!("the textual rename is dispatched above"),
+                });
             return dispatch::finish_invocation(result, failure_output, &failure_path);
         }
         Command::Destroy {
