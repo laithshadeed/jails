@@ -47,11 +47,58 @@ pub fn bin() -> &'static str {
 /// them an hour later.
 pub fn temp_dir(label: &str) -> PathBuf {
     sweep_stale_fixtures();
-    tempfile::Builder::new()
+    match tempfile::Builder::new()
         .prefix(&format!("jails-e2e-{label}-"))
         .tempdir()
-        .expect("failed to create a scratch directory")
-        .keep()
+    {
+        Ok(fixture) => fixture.keep(),
+        Err(error) => panic!("{}", scratch_failure(label, &error)),
+    }
+}
+
+/// What to say when a fixture directory cannot be created.
+///
+/// **A full disk used to report itself as a jails defect.** `.expect("failed
+/// to create a scratch directory")` is a sentence about jails, and the run it
+/// appeared in had 580 of them -- every one in a test that was working
+/// perfectly, on a machine whose `/tmp` was full. A harness that names the
+/// wrong subject costs an afternoon before anyone runs `df`.
+///
+/// So the disk is named when the disk is the cause, and only then: a
+/// permission error or a missing `TMPDIR` is a different failure and claiming
+/// it is a full disk is the same defect facing the other way. The count is
+/// the actionable half -- these fixtures are kept deliberately so a failed
+/// test can be inspected, so the sweep's budget is what is holding them, not
+/// a leak.
+fn scratch_failure(label: &str, error: &io::Error) -> String {
+    let temp = std::env::temp_dir();
+    let mut message = format!(
+        "could not create the `{label}` test fixture under {}: {error}",
+        temp.display()
+    );
+    if matches!(
+        error.kind(),
+        io::ErrorKind::StorageFull | io::ErrorKind::QuotaExceeded
+    ) {
+        let fixtures = fs::read_dir(&temp)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter(|entry| entry.file_name().to_string_lossy().starts_with("jails-"))
+                    .count()
+            })
+            .unwrap_or_default();
+        message.push_str(&format!(
+            "\n  This is the machine and not the tree: {} has no room left. \
+             {fixtures} jails fixtures are in it, kept on purpose so a failed test \
+             can be inspected, and swept once they are past {} minutes or over a \
+             budget of {FIXTURE_BUDGET}.\n  fix: rm -rf {}/jails-*",
+            temp.display(),
+            FIXTURE_LIFETIME.as_secs() / 60,
+            temp.display(),
+        ));
+    }
+    message
 }
 
 /// Whether the suite should print what every subprocess cost.
@@ -73,14 +120,95 @@ pub fn cached_toolchain_dir(label: &str) -> (PathBuf, bool) {
     cached_toolchain_dir_with_salt(label, "")
 }
 
+/// This process's claim on every persistent fixture it is using.
+///
+/// **The claim is `flock`, and it is held until the process exits.** Both
+/// halves are the fix rather than the implementation: a claim taken and
+/// dropped at the end of the decision would leave the tree unlocked before
+/// the first test read a byte of it, because every caller parks the directory
+/// in a `OnceLock` and uses it for the lifetime of the binary. And `flock`
+/// rather than a marker file, because the kernel releases it however the
+/// holder dies -- a gate killed mid-Maven leaves no claim anybody has to
+/// clear by hand.
+static FIXTURE_CLAIMS: Mutex<Vec<File>> = Mutex::new(Vec::new());
+
+/// Where this process may build `label`, given who else is using it.
+///
+/// The shared fixture is the point -- it is what lets Maven reuse javac
+/// output across `cargo test` invocations -- so it is what a run asks for
+/// first. What it must not do is *share* it: two gate runs at once used to
+/// read the same stamp, and whichever decided to rebuild called
+/// `remove_dir_all` on a tree the other was running Maven inside. The
+/// failures that produced were `capabilities::` assertions, which read
+/// exactly like capability regressions and are a harness defect.
+///
+/// A second run gets a private copy instead of waiting. Waiting would be
+/// correct too, but the wait is the whole `cli` binary -- minutes -- and a
+/// gate that has stopped for that long is indistinguishable from one that
+/// has hung. A cold build is a cost the second run can see and the first run
+/// does not pay.
+fn claim_fixture(cache: &Path, label: &str) -> PathBuf {
+    // Reported through the claim rather than swallowed: a cache directory
+    // that does not exist refuses every claim, which reads as contention.
+    let _ = fs::create_dir_all(cache);
+    if claim(cache, label) {
+        return cache.join(label);
+    }
+    let private = format!("{label}.pid{}", std::process::id());
+    eprintln!(
+        "[jails-tests] another run holds the `{label}` fixture, so this one builds \
+         `{private}` from cold. Concurrent gate runs are safe; they are not free."
+    );
+    claim(cache, &private);
+    cache.join(private)
+}
+
+/// Take this process's claim on one fixture, or report that somebody holds it.
+///
+/// The lock file sits *beside* the tree and never inside it. A rebuild
+/// removes the tree, and a lock file removed while a holder has it open is a
+/// lock the next opener cannot see -- so the claim would be granted twice and
+/// prove nothing.
+fn claim(cache: &Path, name: &str) -> bool {
+    let Ok(file) = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(cache.join(format!("{name}.lock")))
+    else {
+        return false;
+    };
+    // `WouldBlock` is the only refusal that means somebody holds this. The
+    // other one this binary is exposed to is `EINTR`: it reaps thousands of
+    // spawned `jails` processes, so `SIGCHLD` arrives constantly and `fs2`
+    // surfaces an interrupted `flock` as an ordinary error. Reading that as
+    // contention would send an ordinary single run to a private tree and a
+    // cold build for no reason at all.
+    for _ in 0..16 {
+        match fs2::FileExt::try_lock_exclusive(&file) {
+            Ok(()) => {
+                FIXTURE_CLAIMS
+                    .lock()
+                    .unwrap_or_else(|holder| holder.into_inner())
+                    .push(file);
+                return true;
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => return false,
+            Err(_) => continue,
+        }
+    }
+    false
+}
+
 /// A persistent toolchain directory whose validity also depends on harness
 /// inputs which are compiled into this integration-test binary rather than
 /// the `jails` executable itself (for example proof-application manifests).
 pub fn cached_toolchain_dir_with_salt(label: &str, salt: &str) -> (PathBuf, bool) {
     const CACHE_SCHEMA: u32 = 1;
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("target/jails-e2e-cache")
-        .join(label);
+    let root = claim_fixture(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/jails-e2e-cache"),
+        label,
+    );
     let executable = PathBuf::from(env!("CARGO_BIN_EXE_jails"));
     let metadata = fs::metadata(executable).unwrap();
     let modified = metadata
@@ -236,6 +364,96 @@ fn sweep_stale_fixtures() {
             fs::remove_dir_all(&path).ok();
         }
     });
+}
+
+#[cfg(test)]
+mod scratch_failure_tests {
+    use super::*;
+
+    /// P13.9: the run that produced 580 of these said nothing about a disk.
+    #[test]
+    fn a_full_disk_names_the_disk_and_says_what_to_do() {
+        let message = scratch_failure("new-cli", &io::Error::from(io::ErrorKind::StorageFull));
+        assert!(
+            message.contains("This is the machine and not the tree"),
+            "a full disk must not read as a jails defect: {message}"
+        );
+        assert!(
+            message.contains("fix: rm -rf"),
+            "every refusal carries a fix line: {message}"
+        );
+    }
+
+    /// The same defect facing the other way. A fixture that blames the disk
+    /// for a permission error sends the reader to `df` and there is nothing
+    /// there to find.
+    #[test]
+    fn a_failure_that_is_not_the_disk_does_not_claim_it_is() {
+        let message = scratch_failure("new-cli", &io::Error::from(io::ErrorKind::PermissionDenied));
+        assert!(
+            !message.contains("no room left"),
+            "only a storage error may be reported as one: {message}"
+        );
+        assert!(
+            message.contains("new-cli"),
+            "the fixture that could not be created is the one useful fact: {message}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod fixture_claim_tests {
+    use super::*;
+
+    /// P13.10's property: the second run must not be handed the tree the
+    /// first one is building in.
+    ///
+    /// `flock` treats two opens of one file independently even inside a
+    /// single process, so one process can play both runs here -- which is
+    /// what makes the property testable at all without launching a gate.
+    #[test]
+    fn a_fixture_another_run_holds_is_not_shared_with_it() {
+        let cache = temp_dir("fixture-claim");
+        assert!(
+            claim(&cache, "toolbox"),
+            "the first claim should be granted"
+        );
+        assert!(
+            !claim(&cache, "toolbox"),
+            "a fixture somebody holds must be refused, not shared"
+        );
+    }
+
+    #[test]
+    fn a_second_run_builds_its_own_copy_rather_than_the_one_in_use() {
+        let cache = temp_dir("fixture-fallback");
+        let first = claim_fixture(&cache, "toolbox");
+        let second = claim_fixture(&cache, "toolbox");
+        assert_eq!(
+            first,
+            cache.join("toolbox"),
+            "the first run gets the shared fixture, which is the whole point of it"
+        );
+        assert_ne!(
+            second, first,
+            "a claimed fixture must not be handed to a second run"
+        );
+    }
+
+    /// The lock file has to survive the rebuild that empties the tree, or the
+    /// claim is granted twice: `remove_dir_all` on the fixture would take the
+    /// lock file with it and the next opener would create a fresh one.
+    #[test]
+    fn a_rebuild_of_the_tree_does_not_release_the_claim() {
+        let cache = temp_dir("fixture-rebuild");
+        let root = claim_fixture(&cache, "toolbox");
+        fs::create_dir_all(&root).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+        assert!(
+            !claim(&cache, "toolbox"),
+            "emptying the fixture must not release the claim on it"
+        );
+    }
 }
 
 #[cfg(test)]

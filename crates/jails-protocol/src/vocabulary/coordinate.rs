@@ -59,11 +59,17 @@ pub enum MavenVersion {
 
 /// The three scopes jails emits. Absent normalises to `Compile` at the
 /// boundary, so the recorded value is always explicit.
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec,
+)]
+#[codec(label = "Maven scope")]
 pub enum MavenScope {
     #[default]
+    #[codec(tag = 0)]
     Compile,
+    #[codec(tag = 1)]
     Runtime,
+    #[codec(tag = 2)]
     Test,
 }
 
@@ -89,29 +95,12 @@ impl MavenScope {
             Self::Test => "test",
         }
     }
-
-    fn tag(self) -> u8 {
-        match self {
-            Self::Compile => 0,
-            Self::Runtime => 1,
-            Self::Test => 2,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Result<Self> {
-        match tag {
-            0 => Ok(Self::Compile),
-            1 => Ok(Self::Runtime),
-            2 => Ok(Self::Test),
-            other => Err(format!("unknown Maven scope tag {other}").into()),
-        }
-    }
 }
 
 /// One managed `<dependency>`. Carries no root path and no rendered POM bytes:
 /// the format owner renders it, so the same record produces the same line in
 /// any project.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub struct DependencySpec {
     pub coordinate: MavenCoordinate,
     pub version: MavenVersion,
@@ -127,24 +116,6 @@ impl DependencySpec {
             scope: MavenScope::Compile,
             optional: false,
         }
-    }
-}
-impl Codec for DependencySpec {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.coordinate.encode(encoder)?;
-        self.version.encode(encoder)?;
-        encoder.tag(self.scope.tag());
-        encoder.bool(self.optional);
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            coordinate: MavenCoordinate::decode(decoder)?,
-            version: MavenVersion::decode(decoder)?,
-            scope: MavenScope::from_tag(decoder.tag()?)?,
-            optional: decoder.bool()?,
-        })
     }
 }
 

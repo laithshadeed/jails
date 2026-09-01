@@ -722,31 +722,12 @@ pub enum ManifestSourceId {
 /// structural equality of all four the test a conflict resume applies — so a
 /// field left out here is a way for a resume to mistake one request for
 /// another, which is the whole failure this value exists to prevent.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct InvocationFingerprint {
     pub request_syntax: RequestSyntaxFingerprint,
     pub request: CanonicalMutationRequest,
     pub manifest_source: Option<ManifestSourceId>,
     pub desired_input_sha256: ObjectId,
-}
-
-impl Codec for InvocationFingerprint {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.request_syntax.encode(encoder)?;
-        self.request.encode(encoder)?;
-        encoder.option(self.manifest_source.as_ref(), |e, source| source.encode(e))?;
-        self.desired_input_sha256.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            request_syntax: RequestSyntaxFingerprint::decode(decoder)?,
-            request: CanonicalMutationRequest::decode(decoder)?,
-            manifest_source: decoder.option(ManifestSourceId::decode)?,
-            desired_input_sha256: ObjectId::decode(decoder)?,
-        })
-    }
 }
 
 #[cfg(test)]

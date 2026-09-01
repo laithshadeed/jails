@@ -30,34 +30,12 @@ use std::collections::BTreeSet;
 // ---------------------------------------------------------------------------
 
 /// Who this change is on behalf of.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum ChangeAttribution {
+    #[codec(tag = 0)]
     Resource(ResourceOwner),
+    #[codec(tag = 1)]
     Maintenance(MaintenanceAttribution),
-}
-
-impl Codec for ChangeAttribution {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Resource(owner) => {
-                encoder.tag(0);
-                owner.encode(encoder)
-            }
-            Self::Maintenance(kind) => {
-                encoder.tag(1);
-                encoder.tag(kind.tag());
-                Ok(())
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Resource(ResourceOwner::decode(decoder)?),
-            1 => Self::Maintenance(MaintenanceAttribution::from_tag(decoder.tag()?)?),
-            other => Err(format!("unknown change attribution tag {other}"))?,
-        })
-    }
 }
 
 /// The maintenance operations that own no entity.
@@ -82,36 +60,6 @@ pub enum MaintenanceAttribution {
     Undo,
     #[codec(tag = 7)]
     Modernize,
-}
-
-impl MaintenanceAttribution {
-    fn tag(self) -> u8 {
-        match self {
-            Self::AppInit => 0,
-            Self::Rename => 1,
-            Self::AdoptLayout => 2,
-            Self::Format => 4,
-            Self::ContractProjection => 5,
-            Self::Undo => 6,
-            Self::Modernize => 7,
-        }
-    }
-
-    /// Tag 3 was `AdoptLegacy`, and is not reused: a tag reaches a recovered
-    /// journal, so a number that meant one thing must not come to mean
-    /// another.
-    fn from_tag(tag: u8) -> Result<Self> {
-        Ok(match tag {
-            0 => Self::AppInit,
-            1 => Self::Rename,
-            2 => Self::AdoptLayout,
-            4 => Self::Format,
-            5 => Self::ContractProjection,
-            6 => Self::Undo,
-            7 => Self::Modernize,
-            other => Err(format!("unknown maintenance attribution tag {other}"))?,
-        })
-    }
 }
 
 // ---------------------------------------------------------------------------

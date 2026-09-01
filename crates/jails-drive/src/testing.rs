@@ -125,56 +125,22 @@ pub enum TestEngine {
 closed_enum!(TestEngine { Maven = 0, Gradle = 1, TestdV2 = 2 });
 
 /// Why a selector is present in a partition or result.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(unknown_fix = "upgrade jails so both protocol \
+                 peers use a compatible version")]
 pub enum SelectionReason {
+    #[codec(tag = 0)]
     Requested,
+    #[codec(tag = 1)]
     Scope(TestScope),
+    #[codec(tag = 2)]
     Tag(String),
+    #[codec(tag = 3)]
     Affected(ProjectPath),
+    #[codec(tag = 4)]
     PreviousFailure,
+    #[codec(tag = 5)]
     Widened(String),
-}
-
-impl Codec for SelectionReason {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Requested => encoder.tag(0),
-            Self::Scope(scope) => {
-                encoder.tag(1);
-                scope.encode(encoder)?;
-            }
-            Self::Tag(tag) => {
-                encoder.tag(2);
-                encoder.string(tag)?;
-            }
-            Self::Affected(path) => {
-                encoder.tag(3);
-                path.encode(encoder)?;
-            }
-            Self::PreviousFailure => encoder.tag(4),
-            Self::Widened(reason) => {
-                encoder.tag(5);
-                encoder.string(reason)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        match decoder.tag()? {
-            0 => Ok(Self::Requested),
-            1 => Ok(Self::Scope(TestScope::decode(decoder)?)),
-            2 => Ok(Self::Tag(decoder.string()?)),
-            3 => Ok(Self::Affected(ProjectPath::decode(decoder)?)),
-            4 => Ok(Self::PreviousFailure),
-            5 => Ok(Self::Widened(decoder.string()?)),
-            other => Err(format!(
-                "unknown SelectionReason tag {other}\n       fix: upgrade jails so both protocol \
-                 peers use a compatible version"
-            )
-            .into()),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
@@ -294,7 +260,7 @@ pub enum TestOutcome {
 }
 closed_enum!(TestOutcome { Passed = 0, Failed = 1, Skipped = 2, Error = 3 });
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct TestCaseResultV1 {
     pub engine: TestEngine,
     pub compile_owner: TestCompileOwner,
@@ -306,38 +272,6 @@ pub struct TestCaseResultV1 {
     pub stderr_summary: String,
     pub selection_reasons: Vec<SelectionReason>,
     pub fallback_reason: Option<String>,
-}
-
-impl Codec for TestCaseResultV1 {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.engine.encode(encoder)?;
-        self.compile_owner.encode(encoder)?;
-        self.selector.encode(encoder)?;
-        encoder.maybe(self.source.as_ref())?;
-        self.outcome.encode(encoder)?;
-        encoder.u64(self.duration_us);
-        encoder.string(&self.stdout_summary)?;
-        encoder.string(&self.stderr_summary)?;
-        encoder.seq(self.selection_reasons.len(), &self.selection_reasons)?;
-        encoder.option(self.fallback_reason.as_ref(), |encoder, reason| {
-            encoder.string(reason)
-        })
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            engine: TestEngine::decode(decoder)?,
-            compile_owner: TestCompileOwner::decode(decoder)?,
-            selector: TestSelector::decode(decoder)?,
-            source: decoder.perhaps()?,
-            outcome: TestOutcome::decode(decoder)?,
-            duration_us: decoder.u64()?,
-            stdout_summary: decoder.string()?,
-            stderr_summary: decoder.string()?,
-            selection_reasons: decoder.seq()?,
-            fallback_reason: decoder.option(Decoder::string)?,
-        })
-    }
 }
 
 /// One ordered report regardless of how many engines executed its cases.

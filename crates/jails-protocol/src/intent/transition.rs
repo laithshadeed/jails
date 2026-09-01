@@ -119,27 +119,12 @@ impl Codec for AbortPlan {
 }
 
 /// Why an effect is being run again.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum EffectResumeReason {
+    #[codec(tag = 0)]
     Interrupted,
+    #[codec(tag = 1)]
     ExplicitRetry,
-}
-
-impl EffectResumeReason {
-    fn tag(self) -> u8 {
-        match self {
-            Self::Interrupted => 0,
-            Self::ExplicitRetry => 1,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Result<Self> {
-        Ok(match tag {
-            0 => Self::Interrupted,
-            1 => Self::ExplicitRetry,
-            other => Err(format!("unknown effect resume reason tag {other}"))?,
-        })
-    }
 }
 
 /// Re-run one committed operation's post-commit effect.
@@ -147,7 +132,7 @@ impl EffectResumeReason {
 /// `expected_state` is the guard, and the reason this is not simply "run the
 /// effect again": an effect that has since succeeded must not be retried, and
 /// the only way to know is to say what state this plan was made against.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct EffectRetryPlan {
     pub invocation: InvocationFingerprint,
     pub receipt: ReceiptGuard,
@@ -157,33 +142,6 @@ pub struct EffectRetryPlan {
     pub effect: PostCommitEffect,
     pub expected_state: EffectState,
     pub reason: EffectResumeReason,
-}
-
-impl Codec for EffectRetryPlan {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.invocation.encode(encoder)?;
-        self.receipt.encode(encoder)?;
-        self.operation.encode(encoder)?;
-        encoder.u32(self.effect_index);
-        self.effect_id.encode(encoder)?;
-        self.effect.encode(encoder)?;
-        self.expected_state.encode(encoder)?;
-        encoder.tag(self.reason.tag());
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            invocation: InvocationFingerprint::decode(decoder)?,
-            receipt: ReceiptGuard::decode(decoder)?,
-            operation: OperationId::decode(decoder)?,
-            effect_index: decoder.u32()?,
-            effect_id: EffectId::decode(decoder)?,
-            effect: PostCommitEffect::decode(decoder)?,
-            expected_state: EffectState::decode(decoder)?,
-            reason: EffectResumeReason::from_tag(decoder.tag()?)?,
-        })
-    }
 }
 
 /// What a run does to the project.

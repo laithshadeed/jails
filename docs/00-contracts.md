@@ -85,7 +85,7 @@ in the same commit. Keep the edit to the section your work is about.
 
 ## Where an identifier resolves
 
-649 source comments cite the deleted documents by identifier --
+651 source comments cite the deleted documents by identifier --
 `plan.md P13.4`, `audit.md A3.14`, `bugs.md B57`, `research.md §4.2`,
 `modern.md §6.5`, `jdl-sol.md §9.7`, `simplify-sol.md` G1. **Every one still
 resolves**, because the identifier travelled rather than being renumbered.
@@ -95,7 +95,7 @@ Read `<file>.md <id>` as "the entry with that id", and find it here:
 |---|---|
 | `jdl-sol.md §N`, `jdl.md §N` | `docs/01-jdl-v1.md` -- Part 2's numbering, exact |
 | `A1`, `A3.14`, `A3.15`, `A4.*`, `A6.2` | the workstream that owns the subject; `A4` itself is below |
-| `G0`–`G5`, `P13.7`, `P13.9`, `P13.10`, `P13.11` | `docs/40-gates-and-ci.md` |
+| `G0`–`G5`, `P13.7`, `P13.9`, `P13.10`, `P13.11`, `P13.12` | `docs/40-gates-and-ci.md` |
 | `P6.6`, `P9.1`, `P9.5`, `P8.11b` | `docs/20-generated-java.md` |
 | `P9.3`, `P9.4` | `docs/10-language.md` |
 | `P8.11a`, `P9.2`, `P9.6`–`P9.10`, `P12.1`, `P13.2`, `P13.4` | `docs/30-cutover.md` |
@@ -108,7 +108,7 @@ git log --diff-filter=D -- jdl-sol.md    # the commit that removed it
 git show <commit>^:jdl-sol.md            # its last content
 ```
 
-The count above was taken 2026-09-01 by:
+The count above was re-taken 2026-09-01 by:
 
 ```
 grep -rhoE '(plan|audit|bugs|research|modern|jdl-sol|simplify-sol|pending|abstract|refactor)\.md' \
@@ -287,7 +287,7 @@ survives.
 | every artifact requirement comes from IR, never a content or path scan | structural |
 | managed output is written only below the managed root | `execute`'s precondition check |
 | reader-owned source changes only by an explicit typed patch/eject/adopt operation | `PatchReaderFile` with a captured before-image |
-| every persisted union tag and field number is generated and golden-tested | partly: see P13.4 |
+| every persisted union tag and field number is generated and golden-tested | partly: 90 formats are still hand-written, and 49 of those validate rather than describe a layout. See P13.4 |
 | every advertised failpoint fires in at least one test | `failpoints!` emits both the registry and the constants, so an unfired point is `-D dead-code` |
 | every active transaction state has one tested recovery transition | `crates/jails-workspace/tests/crash.rs` |
 | the planner's read set is complete by construction | structural, via `WorkspaceSnapshot` |
@@ -305,7 +305,8 @@ estimated. Where a claim is dated, the date is when it was measured.
 
 **The legacy path cannot be deleted yet.** The canonical architecture is real,
 correctly layered, and delivers the hardest thing the design asked for. What
-stops the deletion is named in Part 5 -- not doubt about the design.
+stops the deletion is named in `docs/30-cutover.md` -- not doubt about the
+design.
 
 Three things were done and should not be relitigated. Two of them still hold
 exactly; the second has acquired three exceptions since it was written, which
@@ -366,35 +367,60 @@ without a backend fails to compile rather than at the cutover.
 
 Production lines, `#[cfg(test)]` stripped and blank lines excluded.
 
-| | lines | units covered |
-|---|---:|---:|
-| legacy transaction kernel (`prepare` + `commit` + protocol `intent`/`durable`/`observe`) | 18,789 | — |
-| replaced by `jails-workspace` + `jails-contracts` | **3,763** | — |
-| legacy generation (`generate` + `spec` + `java` + `project` + `engine`) | 41,328 | 64 |
-| replaced by `jails-model` + `jails-compiler` + root `model_*` frontends | **25,389** | 41 |
+Re-measured 2026-09-01, with the figures this file carried when the six
+documents were split out beside them.
 
-**A4.1 — the transaction-kernel simplification is real, and it is the big
-one.** Roughly 5×. Object store, custom codec, GC, journal, receipts and
-roll-forward are replaced by capture → merge → exact plan → lock-last
-publication. This is the largest claim in Part 1 and it is delivered.
+| | lines | then | units covered |
+|---|---:|---:|---:|
+| legacy transaction kernel (`prepare` + `commit` + protocol `intent`/`durable`/`observe`) | 13,685 | 18,789 | — |
+| replaced by `jails-workspace` + `jails-contracts` | **4,682** | 3,763 | — |
+| legacy generation (`generate` + `spec` + `java` + `project`) | 23,573 | 34,205 | — |
+| replaced by `jails-model` + `jails-compiler` + root `model_*` frontends | **37,461** | 25,389 | 64 |
 
-**A4.2 — the generation simplification has not happened.** 646 production lines
-per generator-or-capability on the legacy side; 619 on the canonical side.
-Flat. The cause is A3.14: moving string assembly into a new crate does not make
+**Both legacy rows are smaller because the legacy path is being deleted, which
+is what makes this table stop being a simplification measurement.** The `then`
+column for legacy generation is not the 41,328 previously recorded: that figure
+counted `jails-engine`, which was deleted whole in `2e52c964` and measured
+7,123 production lines at the commit before. 34,205 is the same four crates
+that survive, so the two figures compare.
+
+**A4.1 — the transaction-kernel mechanism is replaced, and the ratio that
+used to state it no longer does.** Object store, custom codec, GC, journal,
+receipts and roll-forward are replaced by capture → merge → exact plan →
+lock-last publication; that is the largest claim in Part 1 and it is
+delivered. What has stopped meaning anything is the **5×** this line used to
+lead with. It is 2.9× today, and it fell for two unrelated reasons at once:
+the kernel lost 5,104 lines to the wire-format deletions, and its replacement
+gained 919. A ratio between a column being deleted and a column being built
+moves on its own. Cite the mechanism, not the multiple.
+
+**A4.2 — the generation simplification has not happened, and the honest
+measurement of that is the canonical side against itself.** 619 production
+lines per generator-or-capability when this was written, over 41 units
+covered; **585 over 64** today. The per-unit cost fell 5% while coverage rose
+by half, which is the right direction and nowhere near the claim. The cause is
+unchanged and is A3.14: moving string assembly into a new crate does not make
 it cheaper. The one place a real IR exists -- `Pack` -- is also the one place
 legacy and canonical share templates and cannot drift.
+
+**Do not restate this as a legacy-versus-canonical comparison**, which is what
+it was and what the numbers no longer support. Per unit the legacy generation
+crates now read 368 against the canonical side's 585 -- and that gap is the
+legacy path being deleted, not the compiler regressing. A column under
+deletion is not a baseline.
 
 **A4.3 — representation count is about the same; the win is authority, not
 arity.** Sixteen shapes became a comparable number, but exactly one of them is
 authoritative and the rest are projections of it. That is the change, and
 counting shapes does not show it.
 
-**A4.4 — the tree is currently larger than before the rewrite began.** Three
-model front ends are live and editable: `.jails/model.toml` (`source.rs`, 581
-lines), the pre-v1 JDL draft (1,912) and `jdl 1` (`jdl/v1/`, 4,955). Above them
-sit ~6,551 lines of frontend adapters in the root binary carrying 25
-`is_v1_source` branch sites, because every mutating command is written three
-times. Expected mid-cutover -- **but no simplicity claim can be banked until
+**A4.4 — the tree is currently larger than before the rewrite began, and it
+grew again.** Three model front ends are live and editable: `.jails/model.toml`
+(`source.rs`, 537 lines), the pre-v1 JDL draft (2,015) and `jdl 1` (`jdl/v1/`,
+3,725). Above them sit **9,465** lines of frontend adapters in the root binary
+carrying **31** `is_v1_source` branch sites, because every mutating command is
+written three times. Both of those rose -- from ~6,551 and 25 -- so this is the
+one row in A4 moving the wrong way. Expected mid-cutover -- **but no simplicity claim can be banked until
 two of the three front ends are gone.** §22 is the upgrade path that removes
 them.
 

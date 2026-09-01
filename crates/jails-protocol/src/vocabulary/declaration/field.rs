@@ -11,7 +11,6 @@
 
 use crate::Result;
 use crate::identity::{FieldName, JavaType, Name, Package};
-use jails_support::codec::{Codec, Decoder, Encoder};
 
 /// A built-in scalar, or a type the project owns.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, jails_codec_derive::Codec)]
@@ -232,43 +231,29 @@ fn split_map(inner: &str) -> Result<(&str, &str)> {
 }
 
 /// Whether a value may be absent, and how absence is expressed.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, jails_codec_derive::Codec)]
 pub enum Optionality {
+    #[codec(tag = 0)]
     Required,
     /// `!` — present *and* not blank. A text property only.
+    #[codec(tag = 1)]
     NonBlank,
     /// `?` — an `Optional<T>` component.
+    #[codec(tag = 2)]
     Nullable,
 }
 
-impl Optionality {
-    fn tag(self) -> u8 {
-        match self {
-            Self::Required => 0,
-            Self::NonBlank => 1,
-            Self::Nullable => 2,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Result<Self> {
-        match tag {
-            0 => Ok(Self::Required),
-            1 => Ok(Self::NonBlank),
-            2 => Ok(Self::Nullable),
-            other => Err(format!("unknown optionality tag {other}").into()),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, jails_codec_derive::Codec)]
 pub enum NumericConstraint {
+    #[codec(tag = 0)]
     Positive,
+    #[codec(tag = 1)]
     NonNegative,
 }
 
 /// The closed set of table constraints. They change SQL and nothing about the
 /// Java type — except `scoped`, which touches no SQL at all.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, jails_codec_derive::Codec)]
 pub struct FieldConstraints {
     pub primary_key: bool,
     pub unique: bool,
@@ -332,38 +317,8 @@ impl FieldConstraints {
         Ok(out)
     }
 }
-impl Codec for FieldConstraints {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.bool(self.primary_key);
-        encoder.bool(self.unique);
-        encoder.bool(self.indexed);
-        encoder.bool(self.scoped);
-        encoder.option(self.numeric.as_ref(), |e, numeric| {
-            e.tag(match numeric {
-                NumericConstraint::Positive => 0,
-                NumericConstraint::NonNegative => 1,
-            });
-            Ok(())
-        })
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            primary_key: decoder.bool()?,
-            unique: decoder.bool()?,
-            indexed: decoder.bool()?,
-            scoped: decoder.bool()?,
-            numeric: decoder.option(|d| match d.tag()? {
-                0 => Ok(NumericConstraint::Positive),
-                1 => Ok(NumericConstraint::NonNegative),
-                other => Err(format!("unknown numeric constraint tag {other}").into()),
-            })?,
-        })
-    }
-}
-
 /// One declared field, fully resolved.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, jails_codec_derive::Codec)]
 pub struct FieldSpec {
     pub name: FieldName,
     pub field_type: FieldType,
@@ -619,24 +574,6 @@ pub(super) fn validate_field_names(fields: &[FieldSpec]) -> Result<()> {
         }
     }
     Ok(())
-}
-
-impl Codec for FieldSpec {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.name.encode(encoder)?;
-        self.field_type.encode(encoder)?;
-        encoder.tag(self.optionality.tag());
-        self.constraints.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            name: FieldName::decode(decoder)?,
-            field_type: FieldType::decode(decoder)?,
-            optionality: Optionality::from_tag(decoder.tag()?)?,
-            constraints: FieldConstraints::decode(decoder)?,
-        })
-    }
 }
 
 fn is_numeric(scalar: &ScalarFieldType) -> bool {

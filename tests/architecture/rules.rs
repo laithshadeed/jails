@@ -513,8 +513,6 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-commit", "outcome", 7),
     ("jails-commit", "recover", 7),
     ("jails-commit", "store", 7),
-    // jails-engine: one request, as one transition. Above the executor because
-    // it drives it, and below the CLI because it is not about arguments.
     // jails-report: commands that answer a question. Read-only by contract,
     // and below `jails-drive` so the contract is structural.
     ("jails-report", "doctor", 7),
@@ -1125,7 +1123,7 @@ fn every_inventoried_command_path_is_invoked_by_a_test() {
     );
 
     let mut corpus = String::new();
-    collect_test_sources(&root.join("tests"), &mut corpus);
+    collect_rust_sources(&root.join("tests"), &mut corpus);
     assert!(
         corpus.len() > 500_000,
         "the test-source scan read only {} bytes -- it has lost the suite",
@@ -1217,14 +1215,17 @@ fn is_invoked(corpus: &str, command: &str) -> bool {
     })
 }
 
-fn collect_test_sources(dir: &Path, out: &mut String) {
+/// Every `.rs` file under `dir`, concatenated. Raw text, not blanked: the
+/// callers look for names that live inside `#[cfg(test)]` bodies, which
+/// [`measure::sources`] erases.
+fn collect_rust_sources(dir: &Path, out: &mut String) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            collect_test_sources(&path, out);
+            collect_rust_sources(&path, out);
         } else if path.extension().is_some_and(|extension| extension == "rs")
             && let Ok(text) = std::fs::read_to_string(&path)
         {
@@ -1323,7 +1324,38 @@ fn both_pluralizers_answer_the_same_for_every_specified_rule() {
     );
 }
 
-/// Every `cargo test --test <target>` a checked-in script runs is a real target.
+/// Every file that runs this project's automation: scripts, hooks, workflows.
+///
+/// One scan, because the three rot the same way. Each names Rust targets,
+/// other scripts and `mise` tasks in plain text, and a rename carries to none
+/// of them.
+fn automation_files() -> Vec<(std::path::PathBuf, String)> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut found = Vec::new();
+    for directory in ["scripts", ".githooks", ".github/workflows"] {
+        let Ok(entries) = std::fs::read_dir(root.join(directory)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            found.push((path, text));
+        }
+    }
+    // A scanner that has lost the tree reports exactly what a clean one does.
+    assert!(
+        found.len() > 4,
+        "the automation scan found only {} files -- it has stopped reading them",
+        found.len()
+    );
+    found
+}
+
+/// Every `cargo test --test <target>` this project's automation runs is a real
+/// target.
 ///
 /// `scripts/verify-rewrite-g1-canary.sh` ran `--test differential` for as long
 /// as that harness was called `differential`. It was renamed to `product_loop`
@@ -1335,7 +1367,9 @@ fn both_pluralizers_answer_the_same_for_every_specified_rule() {
 ///
 /// A shell script naming a Rust target is exactly the kind of edge `cargo`
 /// cannot check and a rename does not carry, which is why it is checked here
-/// rather than left to be noticed the next time somebody runs the canary.
+/// rather than left to be noticed the next time somebody runs the canary. The
+/// workflows are read for the same reason and it is a sharper one: a scheduled
+/// job is read by nobody until it has already not run.
 #[test]
 fn every_test_target_a_script_names_exists() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -1359,17 +1393,7 @@ fn every_test_target_a_script_names_exists() {
     );
 
     let mut missing = Vec::new();
-    let mut scanned = 0;
-    for entry in std::fs::read_dir(root.join("scripts"))
-        .expect("scripts/ exists")
-        .flatten()
-    {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let text = std::fs::read_to_string(&path).unwrap_or_default();
-        scanned += 1;
+    for (path, text) in automation_files() {
         for (at, _) in text.match_indices("--test ") {
             let named: String = text[at + "--test ".len()..]
                 .chars()
@@ -1380,12 +1404,372 @@ fn every_test_target_a_script_names_exists() {
             }
         }
     }
-    assert!(scanned > 0, "no scripts were read");
     assert!(
         missing.is_empty(),
-        "these scripts run a cargo test target that does not exist:\n  {}\n\n\
+        "these run a cargo test target that does not exist:\n  {}\n\n\
          Rename the reference with the harness, or the script silently stops \
          testing anything.",
         missing.join("\n  ")
+    );
+}
+
+/// Every script and `mise` task this project's automation names exists.
+///
+/// The same defect as the one above, one level out: `.githooks/pre-push` and
+/// both workflows are three files that reach the suite by *name* rather than
+/// by a path `cargo` resolves. A renamed script or a renamed task fails them
+/// at the moment they run, which for a weekly scheduled job is a week later
+/// and for a hook is on somebody else's push.
+///
+/// Only references this repository owns are checked. A `mise` task is matched
+/// against `mise.toml`'s own `[tasks.<name>]` headers, so the two cannot
+/// disagree about which tasks exist.
+#[test]
+fn every_script_and_task_the_automation_names_exists() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest = std::fs::read_to_string(root.join("mise.toml")).expect("mise.toml exists");
+    let tasks: std::collections::BTreeSet<&str> = manifest
+        .lines()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix("[tasks.")
+                .and_then(|rest| rest.strip_suffix(']'))
+        })
+        .collect();
+    assert!(
+        tasks.contains("verify-rewrite"),
+        "the task scan found {tasks:?} -- it has stopped reading mise.toml"
+    );
+
+    let mut missing = Vec::new();
+    for (path, text) in automation_files() {
+        for (at, _) in text.match_indices("mise run ") {
+            let named: String = text[at + "mise run ".len()..]
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
+                .collect();
+            if !named.is_empty() && !tasks.contains(named.as_str()) {
+                missing.push(format!("{}: mise run {named}", path.display()));
+            }
+        }
+        for (at, _) in text.match_indices("scripts/") {
+            let named: String = text[at + "scripts/".len()..]
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.'))
+                .collect();
+            // A bare `scripts/` in prose names no file; only a reference that
+            // looks like one is a reference.
+            if named.contains('.') && !root.join("scripts").join(&named).is_file() {
+                missing.push(format!("{}: scripts/{named}", path.display()));
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "these name a script or a mise task that does not exist:\n  {}\n\n\
+         A hook or a scheduled workflow reaches the suite by name, so a rename \
+         that misses one is only reported the next time it runs.",
+        missing.join("\n  ")
+    );
+}
+
+/// Every markdown file under `docs/`, with fenced code blocks removed.
+///
+/// The fences are dropped because every rule below reads a backticked token as
+/// a name somebody is citing, and a fenced block is a command line rather than
+/// a citation -- `git show <commit>^:jdl-sol.md` names a file that is supposed
+/// to be gone.
+fn document_prose() -> Vec<(std::path::PathBuf, String)> {
+    fn walk(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|e| e == "md") {
+                out.push(path);
+            }
+        }
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut paths = Vec::new();
+    walk(&root.join("docs"), &mut paths);
+    paths.sort();
+    // A scanner that has lost the tree reports exactly what a clean one does.
+    assert!(
+        paths.len() >= 6,
+        "the document scan found only {} files -- it has stopped reading them",
+        paths.len()
+    );
+    paths
+        .into_iter()
+        .map(|path| {
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            let mut kept = String::with_capacity(text.len());
+            let mut fenced = false;
+            for line in text.lines() {
+                if line.trim_start().starts_with("```") {
+                    fenced = !fenced;
+                    kept.push('\n');
+                    continue;
+                }
+                // Blank the fenced line rather than dropping it, so a reported
+                // line number still indexes the file on disk.
+                if !fenced {
+                    kept.push_str(line);
+                }
+                kept.push('\n');
+            }
+            (path, kept)
+        })
+        .collect()
+}
+
+/// Whether each 1-indexed line sits in a paragraph that cites a commit.
+///
+/// A document has to be able to *name* something that is gone -- the deletion
+/// map is most of `docs/00-contracts.md`, and workstream C cannot record that
+/// a crate was deleted without writing its name. The convention these
+/// documents already use for that is the one `git log --diff-filter=D` needs:
+/// give the commit. So a paragraph carrying a commit hash is read as history,
+/// and the two name rules below do not fire inside it. A paragraph, not a
+/// line, because this prose wraps at 78 columns and the name and the hash
+/// routinely land on different ones.
+fn lines_in_a_paragraph_citing_a_commit(text: &str) -> Vec<bool> {
+    fn is_commit(word: &str) -> bool {
+        let trimmed = word.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+        (7..=40).contains(&trimmed.len())
+            && trimmed.chars().all(|c| c.is_ascii_hexdigit())
+            && trimmed.chars().any(|c| c.is_ascii_digit())
+            && trimmed.chars().any(|c| c.is_ascii_alphabetic())
+    }
+    let lines: Vec<&str> = text.lines().collect();
+    let mut flags = vec![false; lines.len() + 2];
+    let mut start = 0;
+    while start < lines.len() {
+        if lines[start].trim().is_empty() {
+            start += 1;
+            continue;
+        }
+        let mut end = start;
+        while end < lines.len() && !lines[end].trim().is_empty() {
+            end += 1;
+        }
+        let historical = lines[start..end]
+            .iter()
+            .any(|line| line.split_whitespace().any(is_commit));
+        if historical {
+            for flag in flags.iter_mut().take(end + 1).skip(start + 1) {
+                *flag = true;
+            }
+        }
+        start = end;
+    }
+    flags
+}
+
+/// The backticked tokens of one document, with the line each was found on.
+fn backticked(text: &str) -> Vec<(usize, String)> {
+    let mut found = Vec::new();
+    let bytes = text.as_bytes();
+    let mut line = 1;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\n' {
+            line += 1;
+            i += 1;
+            continue;
+        }
+        if bytes[i] != b'`' {
+            i += 1;
+            continue;
+        }
+        let start = i + 1;
+        let Some(end) = text[start..].find('`').map(|o| start + o) else {
+            break;
+        };
+        let token = &text[start..end];
+        if !token.contains('\n') {
+            found.push((line, token.to_string()));
+        }
+        line += token.matches('\n').count();
+        i = end + 1;
+    }
+    found
+}
+
+/// Every file, part, crate and test name the documents cite is one that exists.
+///
+/// `docs/00-contracts.md` is the file all four workstreams read first, so a
+/// reference in it that names nothing sends whoever followed it looking for a
+/// section that is not there. Three such references were live when this gate
+/// was written, and the oldest had been wrong since the six documents were
+/// split out of `new.md`: *"what stops the deletion is named in Part 5"*, in a
+/// document whose parts are 1 and 6. `docs/01-jdl-v1.md` cited a `Part 3`
+/// twice for the same reason -- the audit findings that were Part 3 moved into
+/// the three workstream documents, and the citations stayed where they were.
+///
+/// This is the failure `CLAUDE.md` already records against the twelve
+/// documents these six replaced: two of them named a differential harness
+/// under a filename it had not had for days. A reference nothing checks is a
+/// reference that rots, and checking it costs one scan of nine files.
+///
+/// Four rules, each over `docs/**/*.md` with fenced blocks removed:
+///
+/// - a `docs/<name>.md` path is a file that exists;
+/// - a cited `Part <n>` has a `# Part <n>` heading somewhere in the set;
+/// - a backticked `jails-<crate>` or `jails_<crate>` names a crate that
+///   exists. `jails-engine` was deleted whole in `2e52c964`, and this is the
+///   rule that would say so the moment a document still named it;
+/// - a backticked snake_case identifier carrying three or more underscores is
+///   a `fn` in the tree. That is how these documents write a test they claim
+///   holds a rule -- `rules::canonical_compiler_is_pure_after_capture` and
+///   fifteen others -- and all sixteen resolve today.
+///
+/// The last two rules skip any paragraph that cites a commit hash, because a
+/// document must be able to name what was deleted -- see
+/// [`lines_in_a_paragraph_citing_a_commit`]. Give the commit and the name
+/// stands; give neither and the reference has to resolve.
+///
+/// The last rule reads any token of that shape as a Rust name, so a document
+/// wanting to backtick a Java or SQL identifier carrying three underscores
+/// should spell it without the backticks. Nothing under `docs/` does.
+///
+/// **`CLAUDE.md`, `ARCHITECTURE.md` and `README.md` are deliberately not
+/// scanned yet**, and the reason is recorded in `docs/40-gates-and-ci.md`
+/// rather than here: the first two carry eight references to `jails-engine`,
+/// which is prose the cutover made wrong and belongs to whoever owns that
+/// path, not to this gate.
+#[test]
+fn every_cross_reference_in_the_documents_resolves() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let documents = document_prose();
+
+    let crates: std::collections::BTreeSet<String> = std::fs::read_dir(root.join("crates"))
+        .expect("failed to read crates/")
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(crates.len() > 10, "the crate scan found {}", crates.len());
+
+    let mut rust = String::new();
+    for directory in ["crates", "src", "tests"] {
+        collect_rust_sources(&root.join(directory), &mut rust);
+    }
+    assert!(
+        rust.len() > 1_000_000,
+        "the Rust scan read only {} bytes -- it has lost the tree",
+        rust.len()
+    );
+
+    let parts: std::collections::BTreeSet<String> = documents
+        .iter()
+        .flat_map(|(_, text)| text.lines())
+        .filter_map(|line| {
+            let heading = line.trim_start().strip_prefix('#')?;
+            let title = heading.trim_start_matches('#').trim();
+            let number = title.strip_prefix("Part ")?;
+            Some(
+                number
+                    .split_whitespace()
+                    .next()?
+                    .trim_end_matches(|c: char| !c.is_ascii_digit())
+                    .to_string(),
+            )
+        })
+        .filter(|number| !number.is_empty())
+        .collect();
+    assert!(
+        !parts.is_empty(),
+        "no `# Part <n>` heading was found at all"
+    );
+
+    let mut dangling = Vec::new();
+    for (path, text) in &documents {
+        let name = path
+            .strip_prefix(root)
+            .unwrap_or(path)
+            .display()
+            .to_string();
+
+        for (offset, _) in text.match_indices("docs/") {
+            let rest = &text[offset + "docs/".len()..];
+            let end = rest
+                .find(|c: char| !(c.is_ascii_alphanumeric() || "._/-".contains(c)))
+                .unwrap_or(rest.len());
+            // Trailing full stops belong to the sentence, not the path: a
+            // reference ending one read as `…/name.md.` and was skipped by the
+            // `.md` check below, so rule A missed exactly the citations that
+            // end a sentence. Found by injecting one.
+            let cited = rest[..end].trim_end_matches('.');
+            if cited.ends_with(".md") && !root.join("docs").join(cited).is_file() {
+                dangling.push(format!(
+                    "{name}:{} names docs/{cited}, which is not a file",
+                    text[..offset].matches('\n').count() + 1
+                ));
+            }
+        }
+
+        for (offset, _) in text.match_indices("Part ") {
+            let rest = &text[offset + "Part ".len()..];
+            let end = rest
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(rest.len());
+            if end == 0 {
+                continue;
+            }
+            let cited = &rest[..end];
+            if !parts.contains(cited) {
+                dangling.push(format!(
+                    "{name}:{} cites Part {cited}, which has no heading in docs/",
+                    text[..offset].matches('\n').count() + 1
+                ));
+            }
+        }
+
+        let historical = lines_in_a_paragraph_citing_a_commit(text);
+        for (line, token) in backticked(text) {
+            if historical.get(line).copied().unwrap_or(false) {
+                continue;
+            }
+            let head: String = token
+                .split([':', '/'])
+                .next()
+                .unwrap_or_default()
+                .replace('_', "-");
+            if head.starts_with("jails-")
+                && head.len() > "jails-".len()
+                && head.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+                && !crates.contains(&head)
+            {
+                dangling.push(format!(
+                    "{name}:{line} names the crate `{head}`, which does not exist"
+                ));
+            }
+
+            let last = token.rsplit("::").next().unwrap_or_default();
+            let looks_like_a_test = last.starts_with(|c: char| c.is_ascii_lowercase())
+                && last
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                && last.matches('_').count() >= 3;
+            if looks_like_a_test && !rust.contains(&format!("fn {last}")) {
+                dangling.push(format!(
+                    "{name}:{line} names `{last}`, and no `fn {last}` exists"
+                ));
+            }
+        }
+    }
+
+    assert!(
+        dangling.is_empty(),
+        "{} document reference(s) name something that does not exist. A reference \
+         nothing checks is one that rots, which is why this is a gate rather than a \
+         proofread:\n  {}",
+        dangling.len(),
+        dangling.join("\n  ")
     );
 }

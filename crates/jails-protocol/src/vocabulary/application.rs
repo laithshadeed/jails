@@ -75,34 +75,15 @@ impl Codec for RoutePath {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
+#[codec(unknown_fix = "upgrade jails or restore the record from a known-good receipt.")]
 pub enum AuditPolicy {
+    #[codec(tag = 0)]
     None,
+    #[codec(tag = 1)]
     Created,
+    #[codec(tag = 2)]
     CreatedAndUpdated,
-}
-
-impl Codec for AuditPolicy {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(match self {
-            Self::None => 0,
-            Self::Created => 1,
-            Self::CreatedAndUpdated => 2,
-        });
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        match decoder.tag()? {
-            0 => Ok(Self::None),
-            1 => Ok(Self::Created),
-            2 => Ok(Self::CreatedAndUpdated),
-            other => Err(format!(
-                "unknown audit policy tag {other}.\n       fix: upgrade jails or restore the record from a known-good receipt."
-            )
-            .into()),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]

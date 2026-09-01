@@ -2836,6 +2836,59 @@ route = "PATCH /notes/{id}"
         }));
     }
 
+    /// **A required primitive component stays primitive on the wire.**
+    ///
+    /// `docs/20-generated-java.md` P6.6 §5.4: a `boolean` domain component
+    /// arriving as a `Boolean` in the request and the response, with
+    /// `@NotNull` compensating for the boxing, is three defects wearing one
+    /// coat -- a wire type that admits a null the domain record cannot hold,
+    /// an annotation that only exists because of the boxing, and a response
+    /// that can serialise `null` for a field that is never absent.
+    ///
+    /// The optionality already decides this once, in
+    /// [`jails_model::BuiltinType::java_type`], and both DTO faces read it
+    /// through `emit_java::java_type`. What this test pins is that they keep
+    /// reading it: a boxing regression compiles, passes every golden that has
+    /// no primitive field in it, and is visible only in the emitted bytes.
+    #[test]
+    fn a_required_primitive_is_not_boxed_or_annotated_on_either_dto_face() {
+        let model = jails_model::parse_jdl(
+            "application Notes\npackage com.example.notes\njava 26\ndialect postgresql\n\nentity Note @dto {\n  id: uuid @pk\n  done: boolean\n  attempts: int\n  note: string?\n}\n",
+        )
+        .unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
+        snapshot.project.build_system = BuildSystem::Maven;
+        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let face = |artifact: &str| {
+            draft
+                .generated
+                .files
+                .values()
+                .find(|file| file.provenance.artifact_id == artifact)
+                .map(|file| String::from_utf8(file.bytes.clone()).unwrap())
+                .unwrap_or_else(|| panic!("`{artifact}` was not emitted"))
+        };
+        for artifact in ["art_ent_note_dto_request", "art_ent_note_dto_response"] {
+            let source = face(artifact);
+            assert!(source.contains("boolean done"), "{artifact}: {source}");
+            assert!(source.contains("int attempts"), "{artifact}: {source}");
+            // The boxed spellings would still contain the primitive ones as a
+            // substring, so the check has to be for the box itself.
+            assert!(!source.contains("Boolean done"), "{artifact}: {source}");
+            assert!(!source.contains("Integer attempts"), "{artifact}: {source}");
+            // `@NotNull` on a primitive is noise at best; Hibernate Validator
+            // rejects some constraint/type pairings outright.
+            assert!(!source.contains("@NotNull"), "{artifact}: {source}");
+        }
+        // The optional component is the control: it *is* nullable on the wire,
+        // so the absence of boxing above is about optionality rather than
+        // about the emitter having stopped boxing anything at all.
+        let response = face("art_ent_note_dto_response");
+        assert!(response.contains("String note"), "{response}");
+        assert!(response.contains("note().orElse(null)"), "{response}");
+    }
+
     #[test]
     fn accepted_projection_is_the_exact_merge_base_across_emitter_versions() {
         let model = jails_model::parse_toml(MODEL).unwrap();

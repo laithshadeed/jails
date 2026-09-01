@@ -30,7 +30,7 @@ use crate::database::QueryId;
 use crate::entity::{CapabilitySpec, EntityId, OneShotId, TypeTargetId};
 use crate::feature::BuildFeature;
 use crate::identity::{JavaType, MarkerId, ProjectPath, PropertyKey, ServiceName, VolumeName};
-use jails_support::codec::{Codec, Decoder, Encoder, ordered};
+use jails_support::codec::{Codec, Decoder, Encoder};
 use std::collections::BTreeSet;
 
 // ---------------------------------------------------------------------------
@@ -107,41 +107,12 @@ impl Codec for CanonicalYamlMapping {
 }
 
 /// One managed compose service.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub struct ComposeServiceSpec {
     pub name: ServiceName,
     pub marker: MarkerId,
     pub mapping: CanonicalYamlMapping,
     pub volumes: BTreeSet<VolumeName>,
-}
-
-impl Codec for ComposeServiceSpec {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.name.encode(encoder)?;
-        self.marker.encode(encoder)?;
-        self.mapping.encode(encoder)?;
-        encoder.count(self.volumes.len())?;
-        let mut previous: Option<&VolumeName> = None;
-        for volume in &self.volumes {
-            ordered(previous, volume)?;
-            previous = Some(volume);
-            volume.encode(encoder)?;
-        }
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        let name = ServiceName::decode(decoder)?;
-        let marker = MarkerId::decode(decoder)?;
-        let mapping = CanonicalYamlMapping::decode(decoder)?;
-        let volumes: BTreeSet<VolumeName> = decoder.set()?;
-        Ok(Self {
-            name,
-            marker,
-            mapping,
-            volumes,
-        })
-    }
 }
 
 // ---------------------------------------------------------------------------

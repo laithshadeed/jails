@@ -116,7 +116,7 @@ impl Codec for JournalState {
             reason,
         } = self
         {
-            encoder.tag(resume.tag());
+            resume.encode(encoder)?;
             encoder.option(path.as_ref(), |e, path| path.encode(e))?;
             reason.encode(encoder)?;
         }
@@ -130,7 +130,7 @@ impl Codec for JournalState {
             2 => Self::LedgerCommitted,
             3 => Self::Complete,
             4 => Self::Blocked {
-                resume: ResumeState::from_tag(decoder.tag()?)?,
+                resume: ResumeState::decode(decoder)?,
                 path: decoder.option(ProjectPath::decode)?,
                 reason: BlockReason::decode(decoder)?,
             },
@@ -150,27 +150,6 @@ pub enum ResumeState {
     LedgerCommitted,
     #[codec(tag = 3)]
     Complete,
-}
-
-impl ResumeState {
-    fn tag(self) -> u8 {
-        match self {
-            Self::Prepared => 0,
-            Self::Active => 1,
-            Self::LedgerCommitted => 2,
-            Self::Complete => 3,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Result<Self> {
-        Ok(match tag {
-            0 => Self::Prepared,
-            1 => Self::Active,
-            2 => Self::LedgerCommitted,
-            3 => Self::Complete,
-            other => Err(format!("unknown resume state tag {other}"))?,
-        })
-    }
 }
 
 /// What a live path actually was, when it was neither image the plan named.

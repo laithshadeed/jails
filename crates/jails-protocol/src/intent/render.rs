@@ -209,7 +209,7 @@ fn deeper(depth: usize) -> Result<usize> {
 /// create uses `0o644`. A recipe that creates an executable must say `0o755`,
 /// because a mode derived from the process umask would make the same plan
 /// produce different files on two machines.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct DesiredFile {
     pub path: ProjectPath,
     pub body: DesiredBody,
@@ -258,29 +258,6 @@ impl Codec for DesiredProvenance {
                     .object(jails_support::codec::DEFAULT_MAX_OBJECT_BYTES)?
                     .as_slice(),
             ),
-        })
-    }
-}
-
-impl Codec for DesiredFile {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.path.encode(encoder)?;
-        self.body.encode(encoder)?;
-        encoder.option(self.mode.as_ref(), |e, mode| {
-            mode.encode(e)?;
-            Ok(())
-        })?;
-        encoder.option(self.resource.as_ref(), |e, key| key.encode(e))?;
-        encoder.option(self.renderer.as_ref(), |e, provenance| provenance.encode(e))
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            path: ProjectPath::decode(decoder)?,
-            body: DesiredBody::decode(decoder)?,
-            mode: decoder.option(FileMode::decode)?,
-            resource: decoder.option(ResourceKey::decode)?,
-            renderer: decoder.option(DesiredProvenance::decode)?,
         })
     }
 }

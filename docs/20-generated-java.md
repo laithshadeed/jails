@@ -152,13 +152,10 @@ tell the two apart.
 
 ## P6 — the generated Java, assessed against `java.md` and `backend.md`
 
-**P6.6** Seven defects that survive a perfect field spec. Each was
+**P6.6** Six defects that survive a perfect field spec. Each was
 re-confirmed on 2026-08-27 against a project built from nothing but
 `jails new --offline` plus nine commands.
 
-- **§5.4 boxed primitives on the wire.** A `boolean` domain component becomes a
-  `Boolean` in both request and response, with `@NotNull` compensating for the
-  boxing.
 - **§6.3 capability files land in the root package.** `AppMetrics`,
   `CorsConfig` and `MetricsConfig`: a capability's files decide nothing, so
   nothing places them, while every *kind* goes through `generate::layout`.
@@ -186,7 +183,7 @@ re-confirmed on 2026-08-27 against a project built from nothing but
   value `"sample"`; and no concurrency test for the CAS the `version` column
   exists for.
 
-**Exit:** all seven closed, or each recorded as a scope line in `README.md`'s
+**Exit:** all six closed, or each recorded as a scope line in `README.md`'s
 "Not yet". Do not close one by deleting the entry that is its only record.
 
 ## P8.11b — the generator half of P8.11

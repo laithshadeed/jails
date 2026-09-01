@@ -57,35 +57,12 @@ pub enum FactKind {
 ///
 /// `Absent` is a recorded observation, not a missing entry: it is the
 /// difference between "this project has no compose file" and "nobody looked".
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum FactSourceState {
+    #[codec(tag = 0)]
     Absent,
+    #[codec(tag = 1)]
     Present { sha256: ObjectId, len: u64 },
-}
-
-impl Codec for FactSourceState {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Absent => encoder.tag(0),
-            Self::Present { sha256, len } => {
-                encoder.tag(1);
-                sha256.encode(encoder)?;
-                encoder.u64(*len);
-            }
-        }
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Absent,
-            1 => Self::Present {
-                sha256: ObjectId::decode(decoder)?,
-                len: decoder.u64()?,
-            },
-            other => Err(format!("unknown fact source state tag {other}"))?,
-        })
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -93,26 +70,28 @@ impl Codec for FactSourceState {
 // ---------------------------------------------------------------------------
 
 /// What a precondition or a delta names.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub enum ProjectFactKey {
+    #[codec(tag = 0)]
     MavenDependency(MavenCoordinate),
     /// What the build has to do, keyed the way a claim on it is. See
     /// [`crate::feature::BuildFeature`].
+    #[codec(tag = 1)]
     BuildFeature(BuildFeature),
+    #[codec(tag = 2)]
     ComposeService(ServiceName),
-    Property {
-        path: ProjectPath,
-        key: PropertyKey,
-    },
-    MarkedBlock {
-        path: ProjectPath,
-        marker: MarkerId,
-    },
+    #[codec(tag = 3)]
+    Property { path: ProjectPath, key: PropertyKey },
+    #[codec(tag = 4)]
+    MarkedBlock { path: ProjectPath, marker: MarkerId },
+    #[codec(tag = 5)]
     CommandRegistration {
         dispatcher: JavaType,
         command: JavaType,
     },
+    #[codec(tag = 6)]
     HumanConfigCapability(CapabilityId),
+    #[codec(tag = 7)]
     JavaType(JavaType),
 }
 
@@ -130,57 +109,6 @@ impl ProjectFactKey {
         }
     }
 }
-impl Codec for ProjectFactKey {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::MavenDependency(coordinate) => coordinate.encode(encoder),
-            Self::BuildFeature(feature) => feature.encode(encoder),
-            Self::ComposeService(name) => name.encode(encoder),
-            Self::Property { path, key } => {
-                path.encode(encoder)?;
-                key.encode(encoder)
-            }
-            Self::MarkedBlock { path, marker } => {
-                path.encode(encoder)?;
-                marker.encode(encoder)
-            }
-            Self::CommandRegistration {
-                dispatcher,
-                command,
-            } => {
-                dispatcher.encode(encoder)?;
-                command.encode(encoder)
-            }
-            Self::HumanConfigCapability(id) => id.encode(encoder),
-            Self::JavaType(java_type) => java_type.encode(encoder),
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::MavenDependency(MavenCoordinate::decode(decoder)?),
-            1 => Self::BuildFeature(BuildFeature::decode(decoder)?),
-            2 => Self::ComposeService(ServiceName::decode(decoder)?),
-            3 => Self::Property {
-                path: ProjectPath::decode(decoder)?,
-                key: PropertyKey::decode(decoder)?,
-            },
-            4 => Self::MarkedBlock {
-                path: ProjectPath::decode(decoder)?,
-                marker: MarkerId::decode(decoder)?,
-            },
-            5 => Self::CommandRegistration {
-                dispatcher: JavaType::decode(decoder)?,
-                command: JavaType::decode(decoder)?,
-            },
-            6 => Self::HumanConfigCapability(CapabilityId::decode(decoder)?),
-            7 => Self::JavaType(JavaType::decode(decoder)?),
-            other => Err(format!("unknown project fact key tag {other}"))?,
-        })
-    }
-}
-
 /// What was observed for a key.
 #[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum ProjectFact {
@@ -420,78 +348,27 @@ pub(crate) fn decode_fact_map(
 // The Java type grammar
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(label = "Java type kind")]
 pub enum JavaTypeKind {
+    #[codec(tag = 0)]
     Class,
+    #[codec(tag = 1)]
     Record,
+    #[codec(tag = 2)]
     Interface,
+    #[codec(tag = 3)]
     Enum,
 }
 
-impl JavaTypeKind {
-    fn tag(self) -> u8 {
-        match self {
-            Self::Class => 0,
-            Self::Record => 1,
-            Self::Interface => 2,
-            Self::Enum => 3,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Result<Self> {
-        match tag {
-            0 => Ok(Self::Class),
-            1 => Ok(Self::Record),
-            2 => Ok(Self::Interface),
-            3 => Ok(Self::Enum),
-            other => Err(format!("unknown Java type kind tag {other}").into()),
-        }
-    }
-}
-
 /// What jails' reader learned about one declared type.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct JavaTypeFact {
     pub source: ProjectPath,
     pub kind: JavaTypeKind,
     pub supertypes: Vec<JavaType>,
     pub constructor: Vec<JavaParameterFact>,
     pub enum_constants: Vec<Name>,
-}
-
-impl Codec for JavaTypeFact {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.source.encode(encoder)?;
-        encoder.tag(self.kind.tag());
-        encoder.count(self.supertypes.len())?;
-        for supertype in &self.supertypes {
-            supertype.encode(encoder)?;
-        }
-        encoder.count(self.constructor.len())?;
-        for parameter in &self.constructor {
-            parameter.encode(encoder)?;
-        }
-        encoder.count(self.enum_constants.len())?;
-        for constant in &self.enum_constants {
-            constant.encode(encoder)?;
-        }
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        let source = ProjectPath::decode(decoder)?;
-        let kind = JavaTypeKind::from_tag(decoder.tag()?)?;
-        let supertypes = decoder.seq::<JavaType>()?;
-        let constructor = decoder.seq::<JavaParameterFact>()?;
-        let enum_constants = decoder.seq::<Name>()?;
-        Ok(Self {
-            source,
-            kind,
-            supertypes,
-            constructor,
-            enum_constants,
-        })
-    }
 }
 
 /// One constructor parameter. Order is preserved: a record's components are

@@ -157,7 +157,7 @@ impl Codec for OperationSemanticsV1 {
 }
 
 /// What the plan depended on, and what it will do about it.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct OperationIdentityV1 {
     pub snapshot: ObjectId,
     pub operation_context: OperationContextFingerprint,
@@ -179,24 +179,5 @@ impl OperationIdentityV1 {
             "JAILS-OPERATION-1",
             &encoder.finish()?,
         )))
-    }
-}
-impl Codec for OperationIdentityV1 {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.snapshot.encode(encoder)?;
-        self.operation_context.encode(encoder)?;
-        encoder.option(self.invocation.as_ref(), |e, one| one.encode(e))?;
-        encoder.u64(self.proposed_generation);
-        self.semantics.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            snapshot: ObjectId::decode(decoder)?,
-            operation_context: OperationContextFingerprint::decode(decoder)?,
-            invocation: decoder.option(InvocationFingerprint::decode)?,
-            proposed_generation: decoder.u64()?,
-            semantics: OperationSemanticsV1::decode(decoder)?,
-        })
     }
 }

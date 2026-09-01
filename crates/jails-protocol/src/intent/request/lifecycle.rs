@@ -39,60 +39,28 @@ pub type FieldId = Name;
 pub type FieldName = Name;
 
 /// The explicit storage transition selected for a logical resource rename.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(
+    label = "resource rename strategy",
+    unknown_fix = "upgrade jails or restore compatible `.jails` state"
+)]
 pub enum RenameStrategy {
+    #[codec(tag = 0)]
     PreserveTable,
+    #[codec(tag = 1)]
     SingleCutover,
+    #[codec(tag = 2)]
     Rolling,
 }
 
-impl Codec for RenameStrategy {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(match self {
-            Self::PreserveTable => 0,
-            Self::SingleCutover => 1,
-            Self::Rolling => 2,
-        });
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::PreserveTable,
-            1 => Self::SingleCutover,
-            2 => Self::Rolling,
-            other => Err(format!(
-                "unknown resource rename strategy tag {other}.\n       fix: upgrade jails or restore compatible `.jails` state"
-            ))?,
-        })
-    }
-}
-
 /// Whether externally visible names participate in a logical rename.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(unknown_fix = "upgrade jails or restore compatible `.jails` state")]
 pub enum ExternalRenamePolicy {
+    #[codec(tag = 0)]
     Preserve,
+    #[codec(tag = 1)]
     Rename,
-}
-
-impl Codec for ExternalRenamePolicy {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(match self {
-            Self::Preserve => 0,
-            Self::Rename => 1,
-        });
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Preserve,
-            1 => Self::Rename,
-            other => Err(format!(
-                "unknown external rename policy tag {other}.\n       fix: upgrade jails or restore compatible `.jails` state"
-            ))?,
-        })
-    }
 }
 
 /// A resource rename after its selector has resolved to one durable entity.
@@ -238,78 +206,46 @@ impl Codec for TypedLiteral {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(unknown_fix = "upgrade jails or restore compatible `.jails` state")]
 pub enum ColumnRenamePolicy {
+    #[codec(tag = 0)]
     Preserve,
+    #[codec(tag = 1)]
     SingleCutover,
+    #[codec(tag = 2)]
     Rolling,
 }
 
-impl Codec for ColumnRenamePolicy {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(match self {
-            Self::Preserve => 0,
-            Self::SingleCutover => 1,
-            Self::Rolling => 2,
-        });
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Preserve,
-            1 => Self::SingleCutover,
-            2 => Self::Rolling,
-            other => Err(format!(
-                "unknown column rename policy tag {other}.\n       fix: upgrade jails or restore compatible `.jails` state"
-            ))?,
-        })
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(unknown_fix = "upgrade jails or restore compatible `.jails` state")]
 pub enum TypeChangeStrategy {
+    #[codec(tag = 0)]
     Safe,
+    #[codec(tag = 1)]
     ExpandContract,
 }
 
-impl Codec for TypeChangeStrategy {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(match self {
-            Self::Safe => 0,
-            Self::ExpandContract => 1,
-        });
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Safe,
-            1 => Self::ExpandContract,
-            other => Err(format!(
-                "unknown type change strategy tag {other}.\n       fix: upgrade jails or restore compatible `.jails` state"
-            ))?,
-        })
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(unknown_fix = "upgrade jails or restore compatible `.jails` state")]
 pub enum FieldEvolution {
+    #[codec(tag = 0)]
     Add(FieldSpec),
+    #[codec(tag = 1)]
     Rename {
         field: FieldId,
         new_name: FieldName,
         column: ColumnRenamePolicy,
     },
+    #[codec(tag = 2)]
     ChangeType {
         field: FieldId,
         to: FieldType,
         strategy: TypeChangeStrategy,
     },
-    SetNullability {
-        field: FieldId,
-        nullable: bool,
-    },
+    #[codec(tag = 3)]
+    SetNullability { field: FieldId, nullable: bool },
+    #[codec(tag = 4)]
     Drop {
         field: FieldId,
         confirmed_column: SqlName,
@@ -320,84 +256,8 @@ pub enum FieldEvolution {
     /// classifies is *an edit to a recorded declaration that costs one
     /// forward migration*, and an index is one of those. A second envelope
     /// carrying the same three things would be a copy, not a distinction.
+    #[codec(tag = 5)]
     AddIndex(crate::declaration::IndexSpec),
-}
-
-impl Codec for FieldEvolution {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Add(field) => {
-                encoder.tag(0);
-                field.encode(encoder)
-            }
-            Self::Rename {
-                field,
-                new_name,
-                column,
-            } => {
-                encoder.tag(1);
-                field.encode(encoder)?;
-                new_name.encode(encoder)?;
-                column.encode(encoder)
-            }
-            Self::ChangeType {
-                field,
-                to,
-                strategy,
-            } => {
-                encoder.tag(2);
-                field.encode(encoder)?;
-                to.encode(encoder)?;
-                strategy.encode(encoder)
-            }
-            Self::SetNullability { field, nullable } => {
-                encoder.tag(3);
-                field.encode(encoder)?;
-                encoder.bool(*nullable);
-                Ok(())
-            }
-            Self::Drop {
-                field,
-                confirmed_column,
-            } => {
-                encoder.tag(4);
-                field.encode(encoder)?;
-                confirmed_column.encode(encoder)
-            }
-            Self::AddIndex(index) => {
-                encoder.tag(5);
-                index.encode(encoder)
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Add(FieldSpec::decode(decoder)?),
-            1 => Self::Rename {
-                field: Name::decode(decoder)?,
-                new_name: Name::decode(decoder)?,
-                column: ColumnRenamePolicy::decode(decoder)?,
-            },
-            2 => Self::ChangeType {
-                field: Name::decode(decoder)?,
-                to: FieldType::decode(decoder)?,
-                strategy: TypeChangeStrategy::decode(decoder)?,
-            },
-            3 => Self::SetNullability {
-                field: Name::decode(decoder)?,
-                nullable: decoder.bool()?,
-            },
-            4 => Self::Drop {
-                field: Name::decode(decoder)?,
-                confirmed_column: SqlName::decode(decoder)?,
-            },
-            5 => Self::AddIndex(crate::declaration::IndexSpec::decode(decoder)?),
-            other => Err(format!(
-                "unknown field evolution tag {other}.\n       fix: upgrade jails or restore compatible `.jails` state"
-            ))?,
-        })
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
@@ -410,7 +270,7 @@ pub enum DataEvolution {
     ReaderOwnedSql(ProjectPath),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct EvolveFieldRequestV1 {
     pub entity: EntityId,
     pub expected_path: EntityPath,
@@ -434,28 +294,6 @@ impl EvolveFieldRequestV1 {
     /// "writes a migration" cannot drift into two different answers.
     pub fn touches_storage(&self) -> bool {
         self.expected_table.is_some()
-    }
-}
-
-impl Codec for EvolveFieldRequestV1 {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.entity.encode(encoder)?;
-        self.expected_path.encode(encoder)?;
-        encoder.option(self.expected_table.as_ref(), |encoder, table| {
-            table.encode(encoder)
-        })?;
-        self.action.encode(encoder)?;
-        self.data.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            entity: EntityId::decode(decoder)?,
-            expected_path: JavaType::decode(decoder)?,
-            expected_table: decoder.option(SqlName::decode)?,
-            action: FieldEvolution::decode(decoder)?,
-            data: DataEvolution::decode(decoder)?,
-        })
     }
 }
 
@@ -493,32 +331,12 @@ impl Codec for DatasourceRef {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct DestroyResourceRequestV2 {
     pub entity: EntityId,
     pub expected_path: EntityPath,
     pub storage: StorageRetirement,
     pub migration_effect: Option<DatasourceRef>,
-}
-
-impl Codec for DestroyResourceRequestV2 {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.entity.encode(encoder)?;
-        self.expected_path.encode(encoder)?;
-        self.storage.encode(encoder)?;
-        encoder.option(self.migration_effect.as_ref(), |encoder, value| {
-            value.encode(encoder)
-        })
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            entity: EntityId::decode(decoder)?,
-            expected_path: JavaType::decode(decoder)?,
-            storage: StorageRetirement::decode(decoder)?,
-            migration_effect: decoder.option(DatasourceRef::decode)?,
-        })
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
@@ -527,49 +345,20 @@ pub struct ReviveResourceRequestV1 {
     pub expected_table: SqlName,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(
+    label = "resource repair strategy",
+    unknown_fix = "upgrade jails or restore compatible `.jails` state"
+)]
 pub enum RepairStrategy {
+    #[codec(tag = 0)]
     RollForward,
 }
 
-impl Codec for RepairStrategy {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(0);
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        match decoder.tag()? {
-            0 => Ok(Self::RollForward),
-            other => Err(format!("unknown resource repair strategy tag {other}.\n       fix: upgrade jails or restore compatible `.jails` state").into()),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct RepairResourceRequestV1 {
     pub entity: EntityId,
     pub expected_path: EntityPath,
     pub strategy: RepairStrategy,
     pub datasource: Option<DatasourceRef>,
-}
-
-impl Codec for RepairResourceRequestV1 {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.entity.encode(encoder)?;
-        self.expected_path.encode(encoder)?;
-        self.strategy.encode(encoder)?;
-        encoder.option(self.datasource.as_ref(), |encoder, value| {
-            value.encode(encoder)
-        })
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            entity: EntityId::decode(decoder)?,
-            expected_path: JavaType::decode(decoder)?,
-            strategy: RepairStrategy::decode(decoder)?,
-            datasource: decoder.option(DatasourceRef::decode)?,
-        })
-    }
 }

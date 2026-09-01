@@ -133,51 +133,12 @@ pub struct PendingOneShot {
 }
 
 /// The complete logical state a successful resolution promotes.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct PendingLedgerState {
     pub applied: Vec<AppliedEntity>,
     pub one_shots: Vec<PendingOneShot>,
     pub resources: Vec<PendingResource>,
     pub outputs: Vec<PendingOutput>,
-}
-
-impl Codec for PendingLedgerState {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.count(self.applied.len())?;
-        for entity in &self.applied {
-            entity.encode(encoder)?;
-        }
-        encoder.count(self.one_shots.len())?;
-        for one_shot in &self.one_shots {
-            one_shot.encode(encoder)?;
-        }
-        encoder.count(self.resources.len())?;
-        for resource in &self.resources {
-            resource.encode(encoder)?;
-        }
-        encoder.count(self.outputs.len())?;
-        for output in &self.outputs {
-            output.encode(encoder)?;
-        }
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        let mut state = Self::default();
-        for _ in 0..decoder.count()? {
-            state.applied.push(AppliedEntity::decode(decoder)?);
-        }
-        for _ in 0..decoder.count()? {
-            state.one_shots.push(PendingOneShot::decode(decoder)?);
-        }
-        for _ in 0..decoder.count()? {
-            state.resources.push(PendingResource::decode(decoder)?);
-        }
-        for _ in 0..decoder.count()? {
-            state.outputs.push(PendingOutput::decode(decoder)?);
-        }
-        Ok(state)
-    }
 }
 
 /// The whole frozen conflict.

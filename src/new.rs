@@ -234,7 +234,7 @@ mod tests {
     use super::plain::pom_xml;
     use super::spring::{effective_deps, initializr_java, set_java_release};
     use super::*;
-    use jails_testkit::CWD_LOCK;
+    use jails_testkit::hold_cwd;
     use std::path::PathBuf;
 
     fn scratch(label: &str) -> PathBuf {
@@ -372,7 +372,7 @@ mod tests {
 
     #[test]
     fn new_cli_writes_pom_and_sources_under_the_target_directory() {
-        let _guard = CWD_LOCK.lock().unwrap();
+        let _guard = hold_cwd();
         let workdir = scratch("new-cli");
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
@@ -396,7 +396,7 @@ mod tests {
 
     #[test]
     fn new_cli_refuses_to_overwrite_an_existing_directory() {
-        let _guard = CWD_LOCK.lock().unwrap();
+        let _guard = hold_cwd();
         let workdir = scratch("new-cli-exists");
         fs::create_dir_all(workdir.join("demo-app")).unwrap();
         let original_cwd = std::env::current_dir().unwrap();
@@ -409,7 +409,7 @@ mod tests {
 
     #[test]
     fn new_cli_skips_git_setup_when_disabled() {
-        let _guard = CWD_LOCK.lock().unwrap();
+        let _guard = hold_cwd();
         let workdir = scratch("new-cli-no-git");
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn new_cli_sets_up_git_by_default() {
-        let _guard = CWD_LOCK.lock().unwrap();
+        let _guard = hold_cwd();
         let workdir = scratch("new-cli-git");
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();

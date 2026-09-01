@@ -92,7 +92,7 @@ macro_rules! upper_name {
 upper_name!(SliceName, "slice name");
 upper_name!(QueryName, "query name");
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub struct QueryId {
     pub slice: SliceName,
     pub name: QueryName,
@@ -101,20 +101,6 @@ pub struct QueryId {
 impl QueryId {
     pub fn new(slice: SliceName, name: QueryName) -> Self {
         Self { slice, name }
-    }
-}
-
-impl Codec for QueryId {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.slice.encode(encoder)?;
-        self.name.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self::new(
-            SliceName::decode(decoder)?,
-            QueryName::decode(decoder)?,
-        ))
     }
 }
 
@@ -371,37 +357,17 @@ pub enum EvidenceSubject {
     Mapping { query: QueryId, name: Name },
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
+#[codec(unknown_fix = "upgrade jails or restore the contract from a known-good revision.")]
 pub enum EvidenceLevel {
+    #[codec(tag = 0)]
     Parsed,
+    #[codec(tag = 1)]
     VerifiedOffline,
+    #[codec(tag = 2)]
     VerifiedLive,
+    #[codec(tag = 3)]
     Executed,
-}
-
-impl Codec for EvidenceLevel {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(match self {
-            Self::Parsed => 0,
-            Self::VerifiedOffline => 1,
-            Self::VerifiedLive => 2,
-            Self::Executed => 3,
-        });
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        match decoder.tag()? {
-            0 => Ok(Self::Parsed),
-            1 => Ok(Self::VerifiedOffline),
-            2 => Ok(Self::VerifiedLive),
-            3 => Ok(Self::Executed),
-            other => Err(format!(
-                "unknown evidence level tag {other}.\n       fix: upgrade jails or restore the contract from a known-good revision."
-            )
-            .into()),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
