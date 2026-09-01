@@ -147,6 +147,10 @@ pub(crate) fn lower_and_emit(
 /// the filter was dropped without a word -- an endpoint that answered, and
 /// answered over every row.
 pub(super) struct QueryFilter<'a> {
+    /// The entity whose table the column is on -- the query's own target, or
+    /// one it joins. Carried rather than re-derived because the answer is
+    /// already made here and asking again is how the joined case gets lost.
+    pub owner: &'a Entity,
     /// The field the column belongs to.
     pub field: &'a Field,
     /// The `Input` record component this filter binds from.
@@ -184,6 +188,46 @@ fn resolution_joins(command: &jails_model::Command) -> Vec<jails_model::Join> {
         .collect()
 }
 
+/// One query, and the columns its `where` clause names.
+pub(crate) struct FilteredQuery<'a> {
+    pub operation: &'a Operation,
+    /// Each filtered column, with the entity whose table it is on.
+    pub columns: Vec<(&'a Entity, &'a Field)>,
+}
+
+/// Every query in the model, with the columns it is filtered by.
+///
+/// **Read through [`query_filters`], which is the same resolution the JDBC
+/// `where` clause is built from.** A second walk of `Query.filters` would be
+/// a second answer, and it would be wrong in exactly the case that resolution
+/// exists for: a `--via` query's joined column is in `semantics.parameters`
+/// and not in the flat list at all.
+///
+/// A query that does not resolve is skipped rather than reported. Anything
+/// that would fail here has already refused the whole compile in
+/// [`lower_and_emit`]; a diagnostic is not the place to say it a second time,
+/// in worse words.
+pub(crate) fn filtered_queries(model: &AppModel) -> Vec<FilteredQuery<'_>> {
+    model
+        .operations
+        .values()
+        .filter_map(|operation| {
+            let OperationKind::Query(spec) = &operation.kind else {
+                return None;
+            };
+            let target = entity(model, &spec.on).ok()?;
+            let filters = query_filters(model, operation, target, spec).ok()?;
+            Some(FilteredQuery {
+                operation,
+                columns: filters
+                    .into_iter()
+                    .map(|filter| (filter.owner, filter.field))
+                    .collect(),
+            })
+        })
+        .collect()
+}
+
 fn query_filters<'a>(
     model: &'a AppModel,
     operation: &Operation,
@@ -194,6 +238,7 @@ fn query_filters<'a>(
         return Ok(resolve_fields(operation, target, &spec.filters, "filters")?
             .into_iter()
             .map(|field| QueryFilter {
+                owner: target,
                 field,
                 member: field.names.java_member.clone(),
                 label: field.label.clone(),
@@ -245,6 +290,7 @@ fn query_filters<'a>(
                 Some(format!("\"{}\"", join.alias))
             };
             Ok(QueryFilter {
+                owner,
                 field,
                 member: crate::emit_java::parameter_member(parameter),
                 // Two joined tables can both carry `name`, so the bind label
