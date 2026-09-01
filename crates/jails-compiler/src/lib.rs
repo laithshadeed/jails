@@ -2901,7 +2901,14 @@ route = "PATCH /notes/{id}"
             .find(|(_, file)| file.provenance.artifact_id == "art_ent_note_dto_request")
             .map(|(_, file)| String::from_utf8(file.bytes.clone()).unwrap())
             .unwrap();
-        assert!(request.contains("@NotNull UUID id"), "{request}");
+        // **The request asks for what the caller may set, and nothing else.**
+        // `id` carries a server-assigned default (`uuid7`), so declaring it as
+        // a request component would let a caller choose the primary key of the
+        // row they are creating -- mass assignment at the HTTP boundary. It is
+        // supplied by `toDomain` instead, from the same generator the domain
+        // record uses.
+        assert!(!request.contains("UUID id"), "{request}");
+        assert!(request.contains("TimeOrderedUuid.next()"), "{request}");
         assert!(request.contains("@NotBlank String title"), "{request}");
         assert!(request.contains("Instant publishedAt"), "{request}");
         assert!(
@@ -2961,7 +2968,7 @@ route = "PATCH /notes/{id}"
         let ejection = jails_model::Ejection {
             id: jails_model::EjectionId::parse("eject_ent_note").unwrap(),
             label: "note".to_string(),
-            target: "art_cap_fake_ent_note_repository".to_string(),
+            target: "art_ent_note_repository_memory".to_string(),
         };
         let draft = Compiler::compile(&snapshot, Some(ModelPatch::AddEjection(ejection))).unwrap();
         assert_eq!(

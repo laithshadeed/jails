@@ -1,5 +1,8 @@
 {
   "compiler": "jails.compiler.golden",
+  "migrations": {
+    "src/main/resources/db/migration/V001__create_notes.sql": "sha256:c84a4e2549c20499ddd448fb86913ede0e61d11ae623b80e44a434b4915710ba"
+  },
   "model": {
     "capabilities": {
       "cap_db": {
@@ -701,7 +704,7 @@
         }
       },
       ".jails/generated/main/java/com/example/notes/application/commands/CreateCommand.java": {
-        "bytes": "<665 bytes elided>",
+        "bytes": "<661 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -714,7 +717,7 @@
         }
       },
       ".jails/generated/main/java/com/example/notes/application/queries/OpenQuery.java": {
-        "bytes": "<477 bytes elided>",
+        "bytes": "<473 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -727,7 +730,7 @@
         }
       },
       ".jails/generated/main/java/com/example/notes/application/transitions/RenameTransition.java": {
-        "bytes": "<629 bytes elided>",
+        "bytes": "<625 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -857,6 +860,21 @@
             "cap_db",
             "ent_note",
             "op_note_create"
+          ]
+        }
+      },
+      ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcNoteRepositoryIT.java": {
+        "bytes": "<1688 bytes elided>",
+        "kind": "java-test",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_cap_db_ent_note_repository_it",
+          "compiler_pass": "java-facets",
+          "ejectable": true,
+          "ejection_id": "cap_db",
+          "semantic_ids": [
+            "cap_db",
+            "ent_note"
           ]
         }
       },
@@ -1282,10 +1300,27 @@
             "cap_db"
           ]
         }
+      },
+      "doc_cap_db_file_migration-directory": {
+        "bytes": [],
+        "kind": {
+          "kind": "managed-file",
+          "mode": "regular"
+        },
+        "path": "src/main/resources/db/migration/.gitkeep",
+        "provenance": {
+          "artifact_id": "doc_cap_db_file_migration-directory",
+          "compiler_pass": "capability-project-file-db",
+          "ejectable": false,
+          "ejection_id": "cap_db",
+          "semantic_ids": [
+            "cap_db"
+          ]
+        }
       }
     },
     "root": ".jails/generated"
   },
-  "projection_digest": "sha256:8ac4d0605afe805262d92d12dfddd2d72edc3601bc583fdd6e05ccf872f8bc68",
-  "schema": "jails.compiler-lock.v2"
+  "projection_digest": "sha256:3c35b17d1824f5ac95695c95bb1963a26bb561883906e47041b71e959da2c6bb",
+  "schema": "jails.compiler-lock.v3"
 }
