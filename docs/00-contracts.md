@@ -85,7 +85,7 @@ in the same commit. Keep the edit to the section your work is about.
 
 ## Where an identifier resolves
 
-Roughly 680 source comments cite the deleted documents by identifier --
+649 source comments cite the deleted documents by identifier --
 `plan.md P13.4`, `audit.md A3.14`, `bugs.md B57`, `research.md §4.2`,
 `modern.md §6.5`, `jdl-sol.md §9.7`, `simplify-sol.md` G1. **Every one still
 resolves**, because the identifier travelled rather than being renumbered.
@@ -106,6 +106,13 @@ The documents these ids came from are deleted and recoverable:
 ```
 git log --diff-filter=D -- jdl-sol.md    # the commit that removed it
 git show <commit>^:jdl-sol.md            # its last content
+```
+
+The count above was taken 2026-09-01 by:
+
+```
+grep -rhoE '(plan|audit|bugs|research|modern|jdl-sol|simplify-sol|pending|abstract|refactor)\.md' \
+  --include='*.rs' crates/ src/ tests/ | wc -l
 ```
 
 ---
@@ -300,14 +307,44 @@ estimated. Where a claim is dated, the date is when it was measured.
 correctly layered, and delivers the hardest thing the design asked for. What
 stops the deletion is named in Part 5 -- not doubt about the design.
 
-Three things are done and should not be relitigated:
+Three things were done and should not be relitigated. Two of them still hold
+exactly; the second has acquired three exceptions since it was written, which
+is why it is stated with them rather than as a slogan:
 
 - **Source is no longer a database.** `jails-java` is not a dependency of any
   canonical crate, and nothing on the canonical path reparses generated Java or
   SQL.
-- **Requirements come from the model, not from bytes.** Every `contains("…")`
-  in `jails-compiler` is inside `#[cfg(test)]`; there is no canonical
-  counterpart to the legacy scan of emitted Java.
+- **Requirements come from the model, not from bytes** -- with three
+  exceptions as of 2026-09-01, and one of them is the pattern this line is
+  about. `contains("…")` in `jails-compiler` is no longer confined to
+  `#[cfg(test)]`:
+
+  | site | what it reads | verdict |
+  |---|---|---|
+  | `lib.rs` | `snapshot.project.dependencies`, a captured coordinate set | a fact, not a scan |
+  | `emit_http.rs` | a string the compiler itself just rendered | harmless, but it is re-reading its own output |
+  | `emit_component/cli.rs` | captured `App.java` and `<mainClass>` out of `pom.xml`, to decide whether to retarget the jar | **this is the pattern** |
+
+  The third stays inside the *purity* contract and is careful about it -- it
+  reads the snapshot rather than the disk, and goes through
+  `jails_codemod::text::blanked` so a comment cannot be mistaken for a
+  registration -- and its own comment says why. What it does not do is derive
+  the requirement from the model: "does this project already have a
+  dispatcher" is answered by scanning bytes. `crates/jails-compiler/**` is
+  workstream B's, so the fix is B's to make or to record as deliberate.
+
+  Re-measure before trusting either direction; a count of zero here would be
+  the claim restored, and a count that grew silently is the regression:
+
+  ```
+  python3 - <<'EOF'
+  import pathlib
+  for f in pathlib.Path('crates/jails-compiler/src').rglob('*.rs'):
+      src = f.read_text(); cut = src.find('#[cfg(test)]')
+      n = (src if cut < 0 else src[:cut]).count('contains("')
+      if n: print(n, f)
+  EOF
+  ```
 - **Preview and apply cannot plan twice.** `finish_generation` does one
   capture, one compile, one materialize, then either reports the bundle or
   executes *that* bundle.
@@ -393,6 +430,14 @@ suffixes/plurals, route styles, test templates or migration names; implicit
 many-to-many relations or ORM navigation collections; migration history in the
 desired-state file; plugin-defined unnamespaced keywords; automatic reverse
 adoption of ejected code; multi-file partial declaration merging.
+
+**No second spelling of a fact the language already states.** `@audit` and
+`--with-audit` are `--timestamps`, which on a `jdl 1` source writes
+`@default(now())` and `@updated`; `n:int=0` is `@default(0)`; `--with-events`
+is `jails g event`; `status:enum.PENDING.PAID` is `jails g enum` plus
+`status:Status`. Each was a documented proposal (`research.md` §4.1, whose own
+note called two ways to say one thing "the drift generator this repository has
+paid for twice") and each is refused for that reason, not for cost.
 
 These omissions keep name resolution, ownership, diffs and safety review
 deterministic. Repetition that proves common should become a typed projection

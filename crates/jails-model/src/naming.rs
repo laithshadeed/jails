@@ -50,63 +50,92 @@ enum Case {
     Lower,
 }
 
+/// Every reserved word a Java source file may not use as an identifier.
+///
+/// **Lifted out of `valid_java_identifier` because a package segment has to
+/// ask the same question.** `TypeRef::parse` used to answer it with a private
+/// shape-only copy in `model.rs`, so `status:enum.PENDING.PAID` linked and the
+/// record it rendered opened with `import enum.PENDING.PAID;` -- a file that
+/// cannot compile, emitted with no diagnostic. Two answers to "is this a Java
+/// identifier" in one crate, and the weaker one decided what jails wrote.
+const KEYWORDS: &[&str] = &[
+    "abstract",
+    "assert",
+    "boolean",
+    "break",
+    "byte",
+    "case",
+    "catch",
+    "char",
+    "class",
+    "const",
+    "continue",
+    "default",
+    "do",
+    "double",
+    "else",
+    "enum",
+    "extends",
+    "final",
+    "finally",
+    "float",
+    "for",
+    "goto",
+    "if",
+    "implements",
+    "import",
+    "instanceof",
+    "int",
+    "interface",
+    "long",
+    "native",
+    "new",
+    "package",
+    "private",
+    "protected",
+    "public",
+    "return",
+    "short",
+    "static",
+    "strictfp",
+    "super",
+    "switch",
+    "synchronized",
+    "this",
+    "throw",
+    "throws",
+    "transient",
+    "try",
+    "void",
+    "volatile",
+    "while",
+    "true",
+    "false",
+    "null",
+    "_",
+];
+
+/// Whether a token is a Java reserved word.
+pub(crate) fn is_java_keyword(value: &str) -> bool {
+    KEYWORDS.contains(&value)
+}
+
+/// A package segment: an identifier, any case, and never a reserved word.
+///
+/// Case is deliberately not constrained here. `com.example.Order` and a
+/// project that capitalises a package segment are both legal Java, and jails
+/// has no opinion about the reader's package names -- only about whether the
+/// import it is about to write is a thing Java can parse.
+pub(crate) fn valid_java_package_segment(value: &str) -> bool {
+    let mut chars = value.chars();
+    chars
+        .next()
+        .is_some_and(|character| character.is_ascii_alphabetic() || character == '_')
+        && chars.all(|character| character.is_ascii_alphanumeric() || character == '_')
+        && !KEYWORDS.contains(&value)
+}
+
 fn valid_java_identifier(value: &str, case: Case) -> bool {
-    const KEYWORDS: &[&str] = &[
-        "abstract",
-        "assert",
-        "boolean",
-        "break",
-        "byte",
-        "case",
-        "catch",
-        "char",
-        "class",
-        "const",
-        "continue",
-        "default",
-        "do",
-        "double",
-        "else",
-        "enum",
-        "extends",
-        "final",
-        "finally",
-        "float",
-        "for",
-        "goto",
-        "if",
-        "implements",
-        "import",
-        "instanceof",
-        "int",
-        "interface",
-        "long",
-        "native",
-        "new",
-        "package",
-        "private",
-        "protected",
-        "public",
-        "return",
-        "short",
-        "static",
-        "strictfp",
-        "super",
-        "switch",
-        "synchronized",
-        "this",
-        "throw",
-        "throws",
-        "transient",
-        "try",
-        "void",
-        "volatile",
-        "while",
-        "true",
-        "false",
-        "null",
-        "_",
-    ];
     let mut chars = value.chars();
     let starts_well = chars.next().is_some_and(|character| match case {
         Case::Upper => character.is_ascii_uppercase(),

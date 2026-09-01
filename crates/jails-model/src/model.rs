@@ -381,15 +381,36 @@ impl TypeRef {
         // and render `record Broken(nosuchtype value)`, which does not
         // compile. A capitalised final segment is a type the project owns and
         // jails is right not to know; the segments before it are its package.
+        //
+        // **A package segment is asked the same question, keywords
+        // included.** This clause had a shape-only copy of the identifier
+        // rule beside `naming.rs`'s keyword-aware one, so
+        // `status:enum.PENDING.PAID` linked and rendered
+        // `import enum.PENDING.PAID;` -- a file that cannot compile, written
+        // with no diagnostic. One authority now: `naming::valid_java_type`
+        // for the type, `naming::valid_java_package_segment` for the rest.
         let (package, name) = match value.rsplit_once('.') {
             Some((package, name)) => (package, name),
             None => ("", value),
         };
-        if name.starts_with(|first: char| first.is_ascii_uppercase())
-            && valid_java_type(name)
-            && (package.is_empty() || package.split('.').all(valid_java_type))
+        let segments = || package.split('.');
+        if crate::naming::valid_java_type(name)
+            && (package.is_empty() || segments().all(crate::naming::valid_java_package_segment))
         {
             return Ok(Self::External(value.to_string()));
+        }
+        // A reserved word is a different mistake from a misspelling, and
+        // "capitalise it" is not the answer to it -- so it gets its own
+        // sentence naming the segment. **No `fix:` line here**: every caller
+        // already supplies one, and two `fix:` lines under one diagnostic is
+        // the defect D3 is about, not twice the help.
+        if let Some(reserved) = segments()
+            .chain(std::iter::once(name))
+            .find(|segment| crate::naming::is_java_keyword(segment))
+        {
+            return Err(format!(
+                "`{value}` cannot be a Java type: `{reserved}` is a reserved word, so the import it would need does not parse"
+            ));
         }
         Err(format!(
             "`{value}` is an unknown field type: it is not one of jails' own, and a type this project declares is capitalised"
@@ -404,14 +425,6 @@ impl TypeRef {
     }
 }
 
-fn valid_java_type(value: &str) -> bool {
-    let mut characters = value.chars();
-    characters
-        .next()
-        .is_some_and(|character| character.is_ascii_alphabetic() || character == '_')
-        && characters.all(|character| character.is_ascii_alphanumeric() || character == '_')
-}
-
 pub(crate) fn refuse_retired_entity(entity: &Entity) -> Result<(), String> {
     if entity.active {
         return Ok(());
@@ -420,4 +433,48 @@ pub(crate) fn refuse_retired_entity(entity: &Entity) -> Result<(), String> {
         "entity id `{}` is retired\n       fix: revive the preserved entity before evolving it",
         entity.id
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Both halves, because a one-sided test is satisfied by refusing
+    /// everything.
+    ///
+    /// `status:enum.PENDING.PAID` linked before this rule existed, and
+    /// `jails g record` rendered `import enum.PENDING.PAID;` into a file that
+    /// cannot compile -- so the reserved word has to refuse *and* an ordinary
+    /// package has to keep resolving.
+    #[test]
+    fn a_reserved_word_is_never_a_java_type_and_an_ordinary_package_still_is() {
+        assert_eq!(
+            TypeRef::parse("com.example.Thing"),
+            Ok(TypeRef::External("com.example.Thing".to_string()))
+        );
+        assert_eq!(
+            TypeRef::parse("Status"),
+            Ok(TypeRef::External("Status".to_string()))
+        );
+        assert_eq!(
+            TypeRef::parse("string"),
+            Ok(TypeRef::Builtin(BuiltinType::String))
+        );
+
+        for reserved in ["enum.PENDING.PAID", "new.Thing", "com.class.Thing"] {
+            let message = TypeRef::parse(reserved).unwrap_err();
+            assert!(
+                message.contains("is a reserved word"),
+                "`{reserved}` should name the reserved word: {message}"
+            );
+            // No `fix:` here on purpose: the linker call sites carry one,
+            // and two under a single diagnostic reads as a defect.
+            assert!(!message.contains("fix:"), "`{reserved}`: {message}");
+        }
+
+        // The misspelling message is a different mistake and keeps its own
+        // wording: `jails g enum` is not the answer to a typo.
+        let typo = TypeRef::parse("notatype").unwrap_err();
+        assert!(typo.contains("unknown field type"), "{typo}");
+    }
 }

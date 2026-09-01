@@ -25,6 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) use binding::{bound_value, database_assigned, optional_bound_value};
 use field_semantics::{SqlDefault, initial_column, length_check, numeric_check, sql_default};
+pub(crate) use index::leading_fields as leading_index_fields;
 
 pub(crate) fn derive(
     snapshot: &WorkspaceSnapshot,
@@ -342,7 +343,7 @@ pub(crate) fn derive(
     Ok(rendered)
 }
 
-fn has_database(model: &AppModel) -> bool {
+pub(crate) fn has_database(model: &AppModel) -> bool {
     model
         .capabilities
         .values()

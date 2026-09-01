@@ -114,5 +114,151 @@ pub(crate) fn diagnostics(next_model: &AppModel) -> Vec<jails_contracts::Compile
             }
         }
     }
+    // **A query no index can serve is a sequential scan nobody asked for**,
+    // and the compiler can see it without running anything: the filtered
+    // columns are model facts and so is every index it emits. Reported per
+    // query rather than per column, because one usable access path is enough
+    // -- a filter set with a single indexed leading column among five is
+    // served.
+    //
+    // **A warning and never a refusal**, for `free-text-closed-set`'s reason:
+    // whether a table will grow enough to care is the reader's knowledge and
+    // not jails'. Naming the shape and the command is the difference between
+    // a tool with an opinion and a tool that guesses.
+    if crate::emit_sql::has_database(next_model) {
+        for query in crate::emit_operation::filtered_queries(next_model) {
+            if query.columns.is_empty() {
+                continue;
+            }
+            if query.columns.iter().any(|(entity, field)| {
+                crate::emit_sql::leading_index_fields(entity).contains(&field.id)
+            }) {
+                continue;
+            }
+            let (target, _) = query.columns[0];
+            let columns = query
+                .columns
+                .iter()
+                .map(|(entity, field)| {
+                    format!("{}.{}", entity.names.sql_table, field.names.sql_column)
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            diagnostics.push(jails_contracts::CompilerDiagnostic {
+                severity: jails_contracts::DiagnosticSeverity::Warning,
+                code: "query-unindexed".to_string(),
+                semantic_id: Some(
+                    jails_model::StableId::as_str(&query.operation.id).to_string(),
+                ),
+                message: format!(
+                    "`{}` filters on {columns}, and no index leads with a column it filters on: every call reads the whole table",
+                    query.operation.names.java_type
+                ),
+                // The command first, and the attribute second: a table
+                // already accepted refuses a bare `@index` as an index
+                // change with no evolution policy, so the order the two are
+                // offered in is the order they work in.
+                fix: format!(
+                    "run `jails resource index add {} '<columns>'` naming a filtered column first, or add `@index` to the field before the table is accepted",
+                    target.names.java_type
+                ),
+            });
+        }
+    }
     diagnostics
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One stored entity, one query, and a filter column nothing indexes.
+    const MODEL: &str = "jdl 1\n\
+app Demo {\n pkg com.example.demo\n java 26\n platform plain\n build maven\n storage postgres\n}\n\
+entity Task {\n \
+ id: uuid @pk\n \
+ owner: uuid\n \
+ title: string\n \
+ query ByOwner(owner) {\n }\n\
+}\n\
+use repo for Task\n";
+
+    fn codes(source: &str) -> Vec<String> {
+        let model = jails_model::parse_jdl(source).expect("the fixture parses");
+        diagnostics(&model)
+            .into_iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect()
+    }
+
+    /// The shape `modern.md` §4.3 recorded: a query reads a table whose only
+    /// index is its primary key, and nothing said so.
+    #[test]
+    fn a_query_no_index_can_serve_is_reported_with_the_command_that_fixes_it() {
+        let model = jails_model::parse_jdl(MODEL).expect("the fixture parses");
+        let found = diagnostics(&model);
+        let reported = found
+            .iter()
+            .find(|diagnostic| diagnostic.code == "query-unindexed")
+            .expect("an unindexed filter is reported");
+        assert_eq!(
+            reported.severity,
+            jails_contracts::DiagnosticSeverity::Warning,
+            "whether a table grows is the reader's knowledge, not jails'"
+        );
+        assert!(reported.message.contains("tasks.owner"), "{reported:?}");
+        assert!(
+            reported.fix.contains("jails resource index add Task"),
+            "{reported:?}"
+        );
+    }
+
+    /// Indexing the column closes it, which is the whole point of saying so.
+    #[test]
+    fn indexing_the_filtered_column_answers_the_diagnostic() {
+        assert!(
+            !codes(&MODEL.replace("owner: uuid\n", "owner: uuid @index\n"))
+                .contains(&"query-unindexed".to_string())
+        );
+    }
+
+    /// A composite index the query's column leads is enough; a composite it
+    /// only appears inside is not, because PostgreSQL cannot use one for a
+    /// predicate that names no leading column.
+    #[test]
+    fn only_a_leading_column_counts_as_served() {
+        let leads = MODEL.replace(
+            " title: string\n",
+            " title: string\n index [owner, title]\n",
+        );
+        assert!(!codes(&leads).contains(&"query-unindexed".to_string()));
+        let trails = MODEL.replace(
+            " title: string\n",
+            " title: string\n index [title, owner]\n",
+        );
+        assert!(codes(&trails).contains(&"query-unindexed".to_string()));
+    }
+
+    /// A query on the primary key is served by the key's own index, and a
+    /// query with no predicate at all has nothing to serve.
+    #[test]
+    fn a_key_lookup_and_a_full_listing_are_both_quiet() {
+        assert!(
+            !codes(&MODEL.replace("ByOwner(owner)", "ById(id)"))
+                .contains(&"query-unindexed".to_string())
+        );
+        assert!(
+            !codes(&MODEL.replace("ByOwner(owner)", "All()"))
+                .contains(&"query-unindexed".to_string())
+        );
+    }
+
+    /// Without SQL storage there are no indexes to be missing, and
+    /// `storage-absent` is already the honest thing to say about the shape.
+    #[test]
+    fn an_in_memory_resource_is_not_told_to_add_an_index() {
+        let found = codes(&MODEL.replace("storage postgres", "storage none"));
+        assert!(!found.contains(&"query-unindexed".to_string()));
+        assert!(found.contains(&"storage-absent".to_string()));
+    }
 }
