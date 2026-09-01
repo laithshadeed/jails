@@ -3999,7 +3999,7 @@ fn destroying_stored_data_needs_the_policy_and_the_table_named() {
     assert!(record.is_file());
 
     let refused = jails_cmd(&root, None)
-        .args(["destroy", "scaffold", "Note"])
+        .args(["destroy", "scaffold", "Note", "--force"])
         .output()
         .unwrap();
     assert!(!refused.status.success(), "{refused:?}");
@@ -4019,6 +4019,7 @@ fn destroying_stored_data_needs_the_policy_and_the_table_named() {
             "drop",
             "--confirm-table",
             "note",
+            "--force",
         ])
         .output()
         .unwrap();
@@ -4034,6 +4035,7 @@ fn destroying_stored_data_needs_the_policy_and_the_table_named() {
             "drop",
             "--confirm-table",
             "notes",
+            "--force",
         ])
         .output()
         .unwrap();

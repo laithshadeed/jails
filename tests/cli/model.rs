@@ -2955,7 +2955,7 @@ fn canonical_loadtest_merges_every_project_file_and_refuses_route_overlap_atomic
     fs::write(&api_path, clean_api).unwrap();
     let before_remove = snapshot_tree(&root);
     let edited_remove = jails_cmd(&root, None)
-        .args(["remove", "loadtest"])
+        .args(["remove", "loadtest", "--force"])
         .output()
         .unwrap();
     assert!(!edited_remove.status.success());
@@ -2971,7 +2971,7 @@ fn canonical_loadtest_merges_every_project_file_and_refuses_route_overlap_atomic
     fs::write(&readme_path, clean_readme).unwrap();
     fs::write(&token_path, clean_token).unwrap();
     let removed = jails_cmd(&root, None)
-        .args(["remove", "loadtest"])
+        .args(["remove", "loadtest", "--force"])
         .output()
         .unwrap();
     assert!(
@@ -3595,7 +3595,7 @@ fn jdl_destroy_removes_nested_operations_and_entities_without_legacy_state() {
         );
     }
     let destroyed_query = jails_cmd(&root, None)
-        .args(["destroy", "query", "OpenTasks"])
+        .args(["destroy", "query", "OpenTasks", "--force"])
         .output()
         .unwrap();
     assert!(
@@ -3671,7 +3671,14 @@ fn jdl_storage_preserve_and_revive_toggle_one_entity_declaration() {
     );
 
     let retired = jails_cmd(&root, None)
-        .args(["destroy", "scaffold", "Note", "--storage", "preserve"])
+        .args([
+            "destroy",
+            "scaffold",
+            "Note",
+            "--storage",
+            "preserve",
+            "--force",
+        ])
         .output()
         .unwrap();
     assert!(
@@ -3680,7 +3687,10 @@ fn jdl_storage_preserve_and_revive_toggle_one_entity_declaration() {
         String::from_utf8_lossy(&retired.stderr)
     );
     let retired_jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
-    assert!(retired_jdl.contains("entity Note @id(ent_note) @scaffold @inactive {"));
+    assert!(
+        retired_jdl.contains("entity Note @id(ent_note) @scaffold @inactive {"),
+        "{retired_jdl}"
+    );
     assert!(!record.exists());
     assert_eq!(fs::read(&migration).unwrap(), migration_before);
 
@@ -3694,8 +3704,11 @@ fn jdl_storage_preserve_and_revive_toggle_one_entity_declaration() {
         String::from_utf8_lossy(&revived.stderr)
     );
     let active_jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
-    assert!(active_jdl.contains("entity Note @id(ent_note) @scaffold {"));
-    assert!(!active_jdl.contains("@inactive"));
+    assert!(
+        active_jdl.contains("entity Note @id(ent_note) @scaffold {"),
+        "{active_jdl}"
+    );
+    assert!(!active_jdl.contains("@inactive"), "{active_jdl}");
     assert!(record.is_file());
     assert_eq!(fs::read(&migration).unwrap(), migration_before);
 }
@@ -3848,7 +3861,7 @@ fn jdl_capability_commands_edit_the_authoring_source_and_recompile() {
     assert!(adapter_path.is_file());
 
     let removed = jails_cmd(&root, None)
-        .args(["remove", "fake"])
+        .args(["remove", "fake", "--force"])
         .output()
         .unwrap();
     assert!(
@@ -4128,7 +4141,7 @@ fn canonical_fast_test_is_model_owned_and_never_journaled() {
     }
 
     let removed = jails_cmd(&root, Some(&fake_dir))
-        .args(["remove", "fast-test"])
+        .args(["remove", "fast-test", "--force"])
         .output()
         .unwrap();
     assert!(
@@ -4181,7 +4194,7 @@ fn jdl_fast_test_is_a_capability_in_the_authoring_source() {
     );
 
     let removed = jails_cmd(&root, Some(&fake_dir))
-        .args(["remove", "fast-test"])
+        .args(["remove", "fast-test", "--force"])
         .output()
         .unwrap();
     assert!(removed.status.success());
@@ -5772,7 +5785,7 @@ fn fake_capability_is_a_global_compiler_profile_and_remove_is_recompilation() {
     assert_eq!(execution["files_written"], 0);
 
     let removed = jails_cmd(&root, None)
-        .args(["remove", "fake"])
+        .args(["remove", "fake", "--force"])
         .output()
         .unwrap();
     assert!(
@@ -6723,7 +6736,7 @@ fn canonical_data_capability_packs_keep_the_iterative_loop_and_eject_as_one_boun
 
     let before_edited_remove = snapshot_tree(&root);
     let refused_remove = jails_cmd(&root, None)
-        .args(["remove", "json"])
+        .args(["remove", "json", "--force"])
         .output()
         .unwrap();
     assert!(!refused_remove.status.success());
@@ -6737,7 +6750,7 @@ fn canonical_data_capability_packs_keep_the_iterative_loop_and_eject_as_one_boun
     fs::write(&json_main, clean_json_main).unwrap();
     fs::write(&json_test, clean_json_test).unwrap();
     let removed_json = jails_cmd(&root, None)
-        .args(["remove", "json"])
+        .args(["remove", "json", "--force"])
         .output()
         .unwrap();
     assert!(

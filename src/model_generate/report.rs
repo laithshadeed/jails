@@ -62,11 +62,17 @@ pub(super) fn refuse_unconfirmed_deletions(
     use std::io::Write as _;
     let _ = std::io::stdout().flush();
     let mut answer = String::new();
-    // A closed stdin is a no: a command that cannot ask has not been answered,
-    // and defaulting to yes there is how a pipeline deletes something nobody
-    // saw. `--force` is how a script says yes.
-    if std::io::stdin().lock().read_line(&mut answer).is_err() {
-        answer.clear();
+    // **A stdin that cannot be read has not answered.** Defaulting to yes
+    // there is how a pipeline deletes something nobody saw; defaulting to a
+    // silent *no* is nearly as bad, because the command then exits 0 having
+    // done nothing and the script goes on believing it worked. So an
+    // unanswerable prompt is a refusal with an exit status, and `--force` is
+    // how a script says yes in advance.
+    let asked = std::io::stdin().lock().read_line(&mut answer);
+    if matches!(&asked, Ok(0)) || asked.is_err() {
+        return Some(Err(Failure::Told(
+            "this deletion needs an answer and nothing is connected to read one from.\n       fix: rerun with `--force` to confirm in advance".to_string(),
+        )));
     }
     if answer.trim().eq_ignore_ascii_case("y") {
         return None;

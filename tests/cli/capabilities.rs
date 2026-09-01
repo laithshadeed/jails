@@ -943,6 +943,10 @@ fn remove_is_the_inverse_of_add_csv() {
     );
     assert!(reader.is_file(), "{}", common::managed_listing(&root));
 
+    // `--force` because nothing is connected to answer the prompt: a piped
+    // command that cannot be asked has not consented, and the alternative --
+    // treating silence as a no and exiting 0 -- is a script that believes it
+    // removed something.
     let output = jails_cmd(&root, None)
         .args(["remove", "csv", "--force"])
         .output()
