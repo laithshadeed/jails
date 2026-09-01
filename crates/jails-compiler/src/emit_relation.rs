@@ -73,6 +73,14 @@ fn proof(
     let mut columns = Vec::new();
     let mut values = Vec::new();
     for field in &child.fields {
+        // **An identity column takes no value at all.** PostgreSQL answers
+        // `cannot insert a non-DEFAULT value into column "id"` for a
+        // `generated always as identity` column, so naming it in the insert
+        // fails before the foreign key is ever checked -- and the proof then
+        // reports a failure about the wrong thing.
+        if is_identity(field) {
+            continue;
+        }
         let Some(value) = sql_literal(model, field) else {
             return Ok(None);
         };
@@ -81,6 +89,9 @@ fn proof(
             true => orphan_literal(model, field)?,
             false => value,
         });
+    }
+    if columns.is_empty() {
+        return Ok(None);
     }
 
     let package = model.project.package_for(Package::AdaptersJdbc);
@@ -252,4 +263,17 @@ fn upper_camel(label: &str) -> String {
             }
         })
         .collect()
+}
+
+/// Whether the database assigns this column rather than the caller.
+///
+/// Read from the model's own default registry rather than from the rendered
+/// DDL: `emit_sql` lowers `identity()` to `generated always as identity`, and
+/// a second reader of that string would drift from the one that wrote it.
+fn is_identity(field: &jails_model::Field) -> bool {
+    matches!(
+        field.semantics.default.as_ref().map(|default| &default.value),
+        Some(jails_model::Value::Function { name, arguments })
+            if name == "identity" && arguments.is_empty()
+    )
 }

@@ -391,8 +391,13 @@ fn unheld_maven_example_manifest_passes_real_verification() {
             // parameters went through `bound_value`, and an enum reached
             // PostgreSQL raw. `Can't infer the SQL type to use for an instance
             // of MessageDirection`, from a statement that compiled.
-            reports: 7,
-            tests: 9,
+            //
+            // 7 -> 10 reports, 9 -> 13 tests: three declared relations gained
+            // an `AssociationIT` each. A foreign key is the one thing in a
+            // generated project no unit test can observe, and the catalogue
+            // half of that proof is what catches a mapping written backwards.
+            reports: 10,
+            tests: 13,
             failures: 0,
             errors: 0,
             skipped: 0,
