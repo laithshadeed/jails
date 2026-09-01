@@ -1,6 +1,7 @@
 package {{pkg}};
 
 {{input_import}}{{repository_import}}{{sample_imports}}import java.util.UUID;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,6 +38,25 @@ class {{name}}JobIT {
     @BeforeEach
     void emptyTheQueue() {
         db.sql("delete from {{table}}").update();
+    }
+
+    /**
+     * And the rows the worker committed, because nothing else will.
+     *
+     * <p>This is the one integration test that must not be
+     * {@code @Transactional}: the properties it exists to prove are about what
+     * a <em>second</em> process sees, so the worker runs in its own
+     * transaction and its writes are real. Every other generated IT rolls back
+     * and builds its row from the same sample key -- so leaving this one's
+     * output behind hands the next class a primary key that already exists,
+     * and which of the two runs first is Failsafe's {@code runOrder}, which is
+     * the filesystem's. Green on one machine and a duplicate-key error on the
+     * next.
+     */
+    @AfterEach
+    void dropWhatTheWorkerCommitted() {
+        db.sql("delete from {{table}}").update();
+        db.sql("delete from {{results_table}}").update();
     }
 
     @Test

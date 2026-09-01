@@ -536,7 +536,13 @@ fn an_unwritable_path_leaves_the_project_exactly_as_it_was() {
     );
     let cleared = jails_cmd(&root, None).arg("doctor").output().unwrap();
     let report = String::from_utf8_lossy(&cleared.stdout);
-    assert!(cleared.status.success(), "{report}");
+    // Named checks rather than the exit status, for the reason the sibling
+    // test above records: a fixture that declares a compose service and starts
+    // nothing makes `doctor`'s status a fact about the machine.
+    assert!(!report.contains("did not finish"), "{report}");
+    assert!(report.contains("ok    sealed migrations"), "{report}");
+    assert!(report.contains("ok    managed output"), "{report}");
+    assert!(report.contains("ok    model accepted"), "{report}");
 }
 
 /// A generated `@Disabled` test is honest about what it does not prove and
@@ -620,8 +626,13 @@ fn doctor_names_a_migration_that_was_written_and_never_filled_in() {
     let report = String::from_utf8_lossy(&output.stdout);
     assert!(report.contains("contain no SQL"), "{report}");
     assert!(report.contains("add_customer_id_index.sql"), "{report}");
-    // The reader's file to fill in, so a warning and not a failure.
-    assert!(output.status.success(), "{report}");
+    // **The reader's file to fill in, so a warning and not a failure** -- and
+    // the assertion is on the check rather than on the exit status, because
+    // this fixture declares a compose service and never starts it. `doctor`
+    // exits non-zero when *any* check fails, so asserting the status here
+    // asserted that a PostgreSQL happened to be listening on the machine
+    // running the suite. It was, on the laptop; it was not on the runner.
+    assert!(report.contains("warn  migration bodies"), "{report}");
 
     let written = root.join("src/main/resources/db/migration");
     let file = fs::read_dir(&written)

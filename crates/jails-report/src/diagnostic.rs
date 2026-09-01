@@ -66,4 +66,17 @@ impl Check {
         self.fix = command.into();
         self
     }
+
+    /// Add a clause to the detail this check already carries.
+    ///
+    /// For a check whose *verdict* is settled but whose reader still needs a
+    /// caveat -- a tool that resolved, beside one that did not.
+    pub fn note(mut self, extra: impl AsRef<str>) -> Self {
+        self.detail = format!("{} -- {}", self.detail, extra.as_ref());
+        self
+    }
+
+    pub fn status(&self) -> Status {
+        self.status
+    }
 }

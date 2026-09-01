@@ -152,6 +152,7 @@ pub(super) fn files(
         .replace("{{conflict_test}}", &conflict)
         .replace("{{args}}", &arguments)
         .replace("{{table}}", &table)
+        .replace("{{results_table}}", &target.names.sql_table)
         .replace("{{name}}", name)
         .replace("{{target}}", &target.names.java_type)
         .replace("{{usecase}}Command", &port);
