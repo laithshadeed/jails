@@ -200,31 +200,6 @@ projects onto the first, never by supporting both.
 **Exit:** `.jails/model.toml` and the pre-v1 draft are read by `model import`
 and by nothing else; `is_v1_source` has no callers.
 
-## A6.2 — `AppModel::apply` carries what §20.1 splits into passes
-
-```
-458  crates/jails-model/src/model_apply.rs:19  AppModel::apply_one
-```
-
-Conceptually present, not separately addressable. Craft debt rather than a
-correctness gap, and worth recording because the ratchet that measures module
-size can be satisfied by moving it rather than splitting it.
-
-**The citation moved and the number grew.** `model_apply.rs:9` is
-`AppModel::apply` and is nine lines -- a wrapper that delegates and then
-refreshes the derived projections. The body this item is about is `apply_one`,
-one `match` over every `ModelPatch` variant, and it is 458 lines rather than
-404. Measure it as the brace-matched span from the `fn` line, which is how
-both A6.2 numbers were taken.
-
-The split that would close this is by **subject**, and the arms already show
-where the seams are: five of them delegate to `crate::facet`, `crate::index`
-and `crate::unit` already. The rest group as project-level declarations
-(`cap`/`dep`/`prop`/`eject`/dialect), entity lifecycle (add, remove, retire,
-revive, rename-projection, enum constants), entity children (fields, indexes,
-relations, projections), units and components, and operations. Splitting it by
-*file* instead would be the move the ratchet cannot tell from a fix.
-
 ## Open items
 
 **P9.3 §4.2 — slices.** `SliceSpecV1` and `SliceName` exist and nothing reaches
