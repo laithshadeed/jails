@@ -1051,10 +1051,10 @@ mise run verify-rewrite && cargo install --path .       # before pushing
 
 **There are two commands and one switch between them, and the switch is
 `JAILS_TOOLCHAIN`.** Plain `cargo test --workspace` is Rust only -- no JVM, no
-container, no build tool -- and is **59.6s / 1982 tests** here on a machine
-already at load 18. `mise run verify-rewrite` sets `JAILS_TOOLCHAIN=1`, which
-switches the real-toolchain tier on and turns anything it then cannot run into
-a failure naming what was missing.
+container, no build tool -- and is **38.3s / 2005 tests inside a 2 GB cap**
+here, on a machine already at load 18. `mise run verify-rewrite` sets
+`JAILS_TOOLCHAIN=1`, which switches the real-toolchain tier on and turns
+anything it then cannot run into a failure naming what was missing.
 
 **That default is inverted from what it used to be, and inverting it is what
 fixed three separate complaints at once.** The tier used to run whenever the
@@ -1062,9 +1062,9 @@ machine *happened* to have the tools, each probed off `PATH`, which meant:
 
 | | before | after |
 |---|---|---|
-| `cargo test --workspace`, toolchain installed | 345.9s | **59.6s** |
+| `cargo test --workspace`, toolchain installed | 345.9s | **38.3s** |
 | Maven subprocesses in that run | 859.3s over 36 | **none** |
-| peak resident | ~7 GB of JVMs | ~1.5 GB |
+| peak resident | ~7 GB | **638 MB** |
 | same command on a machine without the tools | silently ran a third less | identical |
 
 The memory figure is the one that mattered: a full run on a 30 GB desktop with
@@ -1072,6 +1072,17 @@ a browser open was OOM-killed by the kernel, and the kill left a PostgreSQL and
 a Kafka container running for four hours afterwards. **Every one of those three
 symptoms was the same decision** -- an expensive tier that opted itself in
 based on what it found on `PATH`.
+
+**Only part of that 7 GB was the tier, though, and the rest is the more useful
+finding.** With the tier off the suite still peaked at 6.99 GB, and bisecting
+reached one test, then one subprocess: `resource field add ... --diff` at
+**6.8 GB in a single invocation**. Both diff implementations allocate an LCS
+table quadratic in *lines* while every guard around them is on *bytes*, and
+2 MB of source -- inside the 2 MB limit -- is about thirty thousand lines, whose
+square at eight bytes a cell is seven gigabytes. They are bounded on the
+product now (`jails-support::unified` for the canonical ladder,
+`jails-prepare::review` for the legacy one). That single fix took the suite from
+6.99 GB to 638 MB and from 59.6s to 38.3s.
 
 Two things follow that are easy to undo by accident:
 
