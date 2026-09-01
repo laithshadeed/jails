@@ -1424,8 +1424,20 @@ the tier is for. Maven is a ~3s wrapper around ~18s of work.
 **So the levers that remain are about how much of that work exists, not how it
 is launched.** Do not re-propose mvnd (measured and refused: 3 of 4 concurrent
 builds fail with `StaleAddressException`), the console launcher (14%), AppCDS
-(13%, and the archive cannot match a per-project classpath), `-o` (0.47s a
-run), or `-DforkCount=0` (already set).
+over Maven's JVM (13%, and the archive cannot match a per-project classpath),
+`-o` (0.47s a run), or `-DforkCount=0` (already set).
+
+**Class-data sharing over the JVM that boots Spring is the one that sounds
+like it should work, and it does not.** It is a different proposal from AppCDS
+over Maven -- it targets the context boot rather than the build -- so it was
+measured separately on the same fixture: a training run produced a **107 MiB**
+archive, and the three context boots went **13.5s -> 12.8s, 5%**. The training
+run costs more than the archive returns, and the archive is invalid the moment
+the project's classpath changes, which for generated fixtures is every time.
+
+**Spring lazy initialization is worse than useless here**: 18.34s -> 18.69s and
+one test fails, because a `contextLoads` assertion is exactly the eager wiring
+lazy init defers.
 
 **And do not re-propose JUnit class-level parallelism.** Turning it on at a
 parallelism of four took the gate from 144.5s green to **535.4s with eleven
