@@ -95,6 +95,19 @@ pub struct ProjectFacts {
     /// the only thing that makes the capability declarable at all.
     #[serde(default)]
     pub junit: Option<String>,
+    /// The identity this project's build declares for itself.
+    ///
+    /// **A consumer group is not a directory name.** It is a durable identity
+    /// in the broker, so naming it after whatever the checkout happens to be
+    /// called gives two clones of one service two different groups -- and both
+    /// then receive every message instead of splitting the work. The model's
+    /// application name is derived from the directory when a model is seeded
+    /// beside an existing build, which is exactly the case this corrects.
+    ///
+    /// Maven's `<artifactId>` and Gradle's `rootProject.name`; `None` when the
+    /// build states neither, and the caller falls back to the model.
+    #[serde(default)]
+    pub artifact_id: Option<String>,
 }
 
 impl ProjectFacts {
@@ -108,6 +121,7 @@ impl ProjectFacts {
             maven_wrapper: false,
             layout: Layout::default(),
             junit: None,
+            artifact_id: None,
         }
     }
 }

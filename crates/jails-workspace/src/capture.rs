@@ -36,7 +36,7 @@ use std::path::Path;
 
 mod observe;
 
-use observe::{declared_dependencies, junit_version, spring_boot_version};
+use observe::{build_artifact_id, declared_dependencies, junit_version, spring_boot_version};
 pub use observe::{observe_build_system, observe_spring_boot};
 
 const MANAGED_ROOT: &str = ".jails/generated";
@@ -352,6 +352,7 @@ fn capture_model_state(
         maven_wrapper: root.join("mvnw").is_file(),
         layout,
         junit: junit_version(root, build_system),
+        artifact_id: build_artifact_id(root, build_system),
     };
     let accepted_reader_paths = accepted
         .as_ref()

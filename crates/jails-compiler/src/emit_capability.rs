@@ -192,6 +192,7 @@ pub(crate) fn properties(
     model: &AppModel,
     target: SettingTarget,
     spring_boot: Option<&str>,
+    artifact_id: Option<&str>,
 ) -> Vec<PropertyEntry> {
     let boot_major = boot_major(spring_boot);
     model
@@ -202,7 +203,7 @@ pub(crate) fn properties(
         .filter(|property| property.target == target && property.boot.matches(boot_major))
         .map(|property| PropertyEntry {
             key: property.key.to_string(),
-            value: render_property_value(property.value, model),
+            value: render_property_value(property.value, model, artifact_id),
         })
         .collect::<BTreeSet<_>>()
         .into_iter()
@@ -534,13 +535,18 @@ fn render(
         .replace("{{webmvc_test_import}}", webmvc_test_import(boot_major))
 }
 
-fn render_property_value(value: &str, model: &AppModel) -> String {
+/// **The build's own identity wins over the model's application name.** A
+/// consumer group is durable in the broker, and the model's name is derived
+/// from the directory whenever a model is seeded beside an existing build --
+/// so two clones of one service under different directory names would each
+/// get their own group and both receive every message.
+fn render_property_value(value: &str, model: &AppModel, artifact_id: Option<&str>) -> String {
+    let group = artifact_id
+        .map(str::to_string)
+        .unwrap_or_else(|| model.project.name.clone());
     value
         .replace("{{base_package}}", &model.project.base_package)
-        .replace(
-            "{{project_group}}",
-            &model.project.name.to_ascii_lowercase(),
-        )
+        .replace("{{project_group}}", &group.to_ascii_lowercase())
 }
 
 fn mockmvc_autoconfigure_import(boot_major: Option<u32>) -> &'static str {

@@ -1225,9 +1225,13 @@ fn add_db_matches_the_modules_this_boot_version_has_or_refuses_by_name() {
     );
 
     // A supported Boot 3: Flyway's auto-configuration is where it always was,
-    // so the split-out module must not be named -- and both Flyway artifacts
-    // are pinned to one version, which is correct whether or not this
-    // project's parent manages them and keeps the pair moving together.
+    // so the split-out module must not be named. Both Flyway artifacts go in
+    // versionless here, because 3.3 is exactly the release whose BOM starts
+    // managing `flyway-database-postgresql` -- the legacy engine pinned them
+    // unconditionally to avoid giving 3.1 and 3.3 separate answers, and the
+    // compiler gives the separate answer instead. Inventing a version Boot
+    // already manages is how the pair comes to disagree with the rest of the
+    // curated set.
     let supported = build("three", "3.3.5");
     assert!(
         jails_cmd(&supported, None)
@@ -1238,9 +1242,29 @@ fn add_db_matches_the_modules_this_boot_version_has_or_refuses_by_name() {
     );
     let gradle = fs::read_to_string(supported.join("build.gradle")).unwrap();
     assert!(!gradle.contains("spring-boot-flyway"), "{gradle}");
-    assert!(gradle.contains("flyway-core:"), "{gradle}");
-    assert!(gradle.contains("flyway-database-postgresql:"), "{gradle}");
+    assert!(gradle.contains("org.flywaydb:flyway-core'"), "{gradle}");
+    assert!(
+        gradle.contains("org.flywaydb:flyway-database-postgresql'"),
+        "{gradle}"
+    );
     assert!(gradle.contains("spring-boot-testcontainers"), "{gradle}");
+
+    // And below that boundary the pin is back, because nothing else supplies
+    // one and a versionless Gradle dependency simply fails to resolve.
+    let unmanaged = build("early", "3.2.12");
+    assert!(
+        jails_cmd(&unmanaged, None)
+            .args(["add", "db", "--no-start"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let gradle = fs::read_to_string(unmanaged.join("build.gradle")).unwrap();
+    assert!(gradle.contains("org.flywaydb:flyway-core:"), "{gradle}");
+    assert!(
+        gradle.contains("org.flywaydb:flyway-database-postgresql:"),
+        "{gradle}"
+    );
 }
 
 /// The Spring flavor branch: `add json` must *omit* the version so Spring
@@ -2327,12 +2351,17 @@ fn a_set_property_is_owned_and_the_test_overlay_is_additive() {
 /// on and what client libraries retry.
 ///
 /// The advice can only name `DuplicateKeyException` when `spring-tx` is on the
-/// classpath, which arrives with the JDBC starter — so this is conditional, and
-/// the interesting half is the *order*. `add db api` gets it in one command
-/// because each capability is its own transition and the project is re-resolved
-/// between them. `add api` first cannot, because the plan is a pure function of
-/// the project at the moment it ran; `doctor` says so and `jails sync` repairs
-/// it, which is the contract rather than a workaround.
+/// classpath, which arrives with the JDBC starter -- so this is conditional,
+/// and the interesting half used to be the *order*.
+///
+/// **This is where the legacy engine's drift story went.** There, `add api`
+/// first planned against a pom that did not yet have the starter, `doctor`
+/// reported the gap and `jails sync` re-planned every recorded capability to
+/// repair it. The compiler recompiles the whole model on every command, so
+/// there is no half-planned state to report and no order to get wrong. The
+/// precondition survives where it is real: an *operation* that answers a
+/// route through a `JdbcClient` adapter refuses when the model declares no
+/// SQL storage, because that project cannot start.
 #[test]
 fn a_duplicate_key_answers_409_whichever_order_db_and_api_arrived() {
     let handler = "src/main/java/com/example/demo/api/ApiExceptionHandler.java";
@@ -2350,16 +2379,39 @@ fn a_duplicate_key_answers_409_whichever_order_db_and_api_arrived() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let advice = fs::read_to_string(together.join(handler)).unwrap();
+    let advice = common::read_generated(&together, handler);
     assert!(
         advice.contains("DuplicateKeyException"),
         "one command, both capabilities: the advice must map it\n{advice}"
     );
 
+    // The two orders that are not one command. `db` then `api` is the same
+    // project, because the compiler renders from the whole model rather than
+    // from what the last command happened to see.
+    let forwards = temp_dir("conflict-forwards");
+    write_spring_fixture(&forwards);
+    for capability in ["db", "api"] {
+        let output = jails_cmd(&forwards, Some(&fake))
+            .args(["add", capability, "--no-start"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "add {capability}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    assert_eq!(
+        common::read_generated(&forwards, handler),
+        advice,
+        "one command and two must render the same advice"
+    );
+
+    // And so is `api` then `db`, which is the order the legacy engine could
+    // not get right: its `api` plan was a pure function of the pom it saw, so
+    // the advice it wrote was permanently missing the arm.
     let backwards = temp_dir("conflict-backwards");
     write_spring_fixture(&backwards);
-    let fake = temp_dir("conflict-backwards-bin");
-    write_fake_maven(&fake, &["docker"], &fake.join("log.txt"));
     for capability in ["api", "db"] {
         let output = jails_cmd(&backwards, Some(&fake))
             .args(["add", capability, "--no-start"])
@@ -2371,45 +2423,9 @@ fn a_duplicate_key_answers_409_whichever_order_db_and_api_arrived() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    let advice = fs::read_to_string(backwards.join(handler)).unwrap();
-    assert!(
-        !advice.contains("DuplicateKeyException"),
-        "`add api` planned before the database existed, so it cannot have named it"
-    );
-
-    // Reported, not silently wrong. A capability's plan is a pure function of
-    // the project, so growing a project in this order is ordinary -- what must
-    // not happen is nothing saying so.
-    let doctor = jails_cmd(&backwards, Some(&fake))
-        .arg("doctor")
-        .output()
-        .unwrap();
-    let report = String::from_utf8_lossy(&doctor.stdout);
-    assert!(
-        report.contains("DuplicateKeyException") && report.contains("jails sync"),
-        "doctor must name the drift and the repair:\n{report}"
-    );
-
-    let output = jails_cmd(&backwards, Some(&fake))
-        .args(["sync", "--no-start"])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let advice = fs::read_to_string(backwards.join(handler)).unwrap();
-    assert!(
-        advice.contains("DuplicateKeyException"),
-        "`jails sync` re-plans every recorded capability, which is the repair\n{advice}"
-    );
-    let doctor = jails_cmd(&backwards, Some(&fake))
-        .arg("doctor")
-        .output()
-        .unwrap();
-    assert!(
-        String::from_utf8_lossy(&doctor.stdout).contains("a duplicate key answers 409"),
-        "and doctor agrees afterwards"
+    assert_eq!(
+        common::read_generated(&backwards, handler),
+        advice,
+        "the compiler renders from the whole model, so neither order is special"
     );
 }

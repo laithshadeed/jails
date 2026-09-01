@@ -169,6 +169,48 @@ fn build_file(root: &Path, build_system: BuildSystem) -> Option<std::path::PathB
     }
 }
 
+/// The identity the build declares for itself, if it declares one.
+///
+/// Maven states it as `<artifactId>` under the project element -- the parent's
+/// is skipped by taking the *last* one outside `<parent>`, since a Boot
+/// project's first `<artifactId>` belongs to `spring-boot-starter-parent`.
+/// Gradle states it as `rootProject.name` in `settings.gradle`, and a project
+/// with no settings file falls back to nothing rather than to the directory,
+/// which is the value this exists to stop using.
+pub(super) fn build_artifact_id(root: &Path, build_system: BuildSystem) -> Option<String> {
+    match build_system {
+        BuildSystem::Maven => {
+            let source = std::fs::read_to_string(root.join("pom.xml")).ok()?;
+            let outside = match between(&source, "<parent>", "</parent>") {
+                Some(parent) => source.replacen(parent, "", 1),
+                None => source,
+            };
+            between(&outside, "<artifactId>", "</artifactId>").map(|name| name.trim().to_string())
+        }
+        BuildSystem::Gradle => {
+            for name in ["settings.gradle", "settings.gradle.kts"] {
+                let Ok(source) = std::fs::read_to_string(root.join(name)) else {
+                    continue;
+                };
+                for line in source.lines() {
+                    let Some((key, value)) = line.split_once('=') else {
+                        continue;
+                    };
+                    if key.trim() != "rootProject.name" {
+                        continue;
+                    }
+                    let value = value.trim().trim_matches(['\'', '"']).trim();
+                    if !value.is_empty() {
+                        return Some(value.to_string());
+                    }
+                }
+            }
+            None
+        }
+        BuildSystem::Unknown => None,
+    }
+}
+
 pub(super) fn junit_version(root: &Path, build_system: BuildSystem) -> Option<String> {
     let path = match build_system {
         BuildSystem::Maven => root.join("pom.xml"),

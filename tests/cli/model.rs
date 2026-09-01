@@ -9335,9 +9335,13 @@ fn canonical_field_evolution_preserves_hand_edits_and_lowers_explicit_sql_polici
         "{}",
         String::from_utf8_lossy(&cutover.stderr)
     );
-    let rename_sql =
-        fs::read_to_string(root.join("src/main/resources/db/migration/V002__evolve_title.sql"))
-            .unwrap();
+    // Named for the change rather than for the fact that one happened: a
+    // column relaxed and then made required again produces two migrations, and
+    // `evolve_title` twice is a history nobody can read.
+    let rename_sql = fs::read_to_string(
+        root.join("src/main/resources/db/migration/V002__rename_title_to_subject.sql"),
+    )
+    .unwrap();
     assert!(
         rename_sql.contains("alter table notes rename column title to subject;"),
         "{rename_sql}"
@@ -9375,7 +9379,7 @@ fn canonical_field_evolution_preserves_hand_edits_and_lowers_explicit_sql_polici
         String::from_utf8_lossy(&widened.stderr)
     );
     let type_sql =
-        fs::read_to_string(root.join("src/main/resources/db/migration/V004__evolve_priority.sql"))
+        fs::read_to_string(root.join("src/main/resources/db/migration/V004__retype_priority.sql"))
             .unwrap();
     assert!(
         type_sql.contains("alter table notes alter column priority type bigint;"),
@@ -9433,9 +9437,10 @@ fn canonical_field_evolution_preserves_hand_edits_and_lowers_explicit_sql_polici
         "{}",
         String::from_utf8_lossy(&required.stderr)
     );
-    let required_sql =
-        fs::read_to_string(root.join("src/main/resources/db/migration/V006__evolve_status.sql"))
-            .unwrap();
+    let required_sql = fs::read_to_string(
+        root.join("src/main/resources/db/migration/V006__make_status_required.sql"),
+    )
+    .unwrap();
     let update = required_sql.find("update notes set status").unwrap();
     let constraint = required_sql
         .find("alter column status set not null")
@@ -9458,9 +9463,10 @@ fn canonical_field_evolution_preserves_hand_edits_and_lowers_explicit_sql_polici
         "{}",
         String::from_utf8_lossy(&nullable.stderr)
     );
-    let nullable_sql =
-        fs::read_to_string(root.join("src/main/resources/db/migration/V007__evolve_status.sql"))
-            .unwrap();
+    let nullable_sql = fs::read_to_string(
+        root.join("src/main/resources/db/migration/V007__make_status_nullable.sql"),
+    )
+    .unwrap();
     assert!(nullable_sql.contains("alter column status drop not null"));
 
     let before_wrong_drop = snapshot_tree(&root);
@@ -14280,11 +14286,13 @@ app Demo {
         String::from_utf8_lossy(&verified.stdout),
         String::from_utf8_lossy(&verified.stderr)
     );
+    // Three, not two: the repository adapter every scaffold emits proves its
+    // own round trip beside the two operations.
     assert_eq!(
         maven_report_summary(&root, "failsafe-reports"),
         MavenReportSummary {
-            reports: 2,
-            tests: 2,
+            reports: 3,
+            tests: 3,
             failures: 0,
             errors: 0,
             skipped: 0,

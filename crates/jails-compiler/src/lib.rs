@@ -596,9 +596,14 @@ impl Compiler {
                 &snapshot.model.model,
                 target,
                 snapshot.project.spring_boot.as_deref(),
+                snapshot.project.artifact_id.as_deref(),
             )?;
-            let desired =
-                property_entries(&next_model, target, snapshot.project.spring_boot.as_deref())?;
+            let desired = property_entries(
+                &next_model,
+                target,
+                snapshot.project.spring_boot.as_deref(),
+                snapshot.project.artifact_id.as_deref(),
+            )?;
             if previous.is_empty() && desired.is_empty() {
                 continue;
             }
@@ -794,6 +799,7 @@ fn property_entries(
     model: &jails_model::AppModel,
     target: SettingTarget,
     spring_boot: Option<&str>,
+    artifact_id: Option<&str>,
 ) -> Result<Vec<PropertyEntry>, CompileError> {
     let mut entries = model
         .settings
@@ -801,7 +807,7 @@ fn property_entries(
         .filter(|setting| setting.target == target)
         .map(|setting| (setting.key.clone(), setting.value.clone()))
         .collect::<BTreeMap<_, _>>();
-    for property in emit_capability::properties(model, target, spring_boot)
+    for property in emit_capability::properties(model, target, spring_boot, artifact_id)
         .into_iter()
         .chain(emit_component::properties(model, target)?)
     {
