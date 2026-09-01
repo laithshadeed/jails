@@ -138,24 +138,40 @@ default until every advertised follow-up workflow has a compiler backend:
 default-on partial coverage breaks working capability commands.
 
 `.jails/model.jdl` is the intended authoring boundary; `.jails/model.toml`
-remains a temporary compatibility input for existing canonical projects; the
-one-way importer now emits JDL. **Never permit both editable sources** -- and
-read that as it is written, because two of the things it sounds like it
-forbids are allowed. `model import` and `app plan|apply` both *read* a legacy
-authority and write declarations into the model, one way, once. That is not a
-second editable source, because the model is what every later command reads.
-What is forbidden is a second thing the reader *edits*, which is why `app init`
--- the subcommand that writes a manifest -- is the one that still refuses on a
-canonical project.
+remains a temporary compatibility input for existing canonical projects.
+**Never permit both editable sources** -- and read that as it is written,
+because one of the things it sounds like it forbids is allowed. `app
+plan|apply` *reads* a legacy authority and writes declarations into the model,
+one way, once. That is not a second editable source, because the model is what
+every later command reads. What is forbidden is a second thing the reader
+*edits*, which is why `app init` -- the subcommand that writes a manifest --
+is the one that still refuses on a canonical project.
 
-`model import` is one-way and fail-closed. Its currently supported boundary is
-a ledger containing record and enum intents only. For every source artifact,
-including the Spring enum converter, use the recorded legacy object as BASE,
-live reader Java as OURS, and the canonical render as THEIRS; only a clean merge
-may move into `.jails/generated` and remove the old reader path. Capture every
-source and destination in the exact plan and leave the legacy ledger unchanged.
-Never synthesize a model for an unsupported declaration and leave its source
-behind.
+**And the rule is being broken today, by a project on `.jails/model.toml`.**
+Reproduced 2026-09-01: `model check` accepts one, `jails g record` applies a
+patch and writes files, and `jails model upgrade` refuses it by name -- so it
+is fully editable with no route to `jdl 1`. It has no route because the
+command that was the route is gone: `jails model import` no longer exists, and
+`jails model --help` lists `init check upgrade fmt plan apply explain eject`.
+`model init` replaced it for a *foreign* project and writes the app block
+only. `docs/10-language.md` A4.4 is the item.
+
+**The renderer a one-shot carry-across needs now exists.**
+`jails_model::render_jdl_v1` (`crates/jails-model/src/jdl/emit/`) takes a
+linked `AppModel` and writes JDL v1. It refuses twice, and the second is what
+makes it safe to point at somebody's project: every construct it cannot state
+refuses by name, and then it parses and links what it just wrote and compares
+that against the model it was given, because a renderer that silently drops a
+field is how a one-shot migration corrupts a project. Proven over all 61
+models in `tests/golden` and over §4's complete example.
+
+What it does not have yet is a command, and the missing piece is one plan
+operation rather than more rendering: the upgrade must write
+`.jails/model.jdl` **and** retire `.jails/model.toml` in the same exact plan,
+or the project ends with two sources again. `PlannedOperation` is
+`ReplaceModelFile`, `PublishMergedTree`, `AppendMigration`, `ReplaceStateFile`,
+`PatchReaderFile` and `RemoveReaderFile` -- none retires a model file -- and
+`materialize_with_model` takes exactly one `ModelFileUpdate`.
 
 Reproducible output belongs below `.jails/generated` and is merge-managed. The
 accepted model renders BASE, capture supplies OURS, and the next model renders

@@ -290,11 +290,37 @@ with no slices must keep working unchanged, with the unqualified name meaning
 what it means today.
 
 **Most of this is not in your paths.** `SliceSpecV1` and `SliceName` live in
-`jails-protocol`, which is C's under the ownership table. What is yours is the
-*language* half: whether a slice is a declaration in JDL v1 or only a selector
-at the CLI, and §4.2 does not say. Settle that with C before either of you
-reaches for the type, because the answer decides whether this is a grammar
-change or an argument parser.
+`jails-protocol`, which is C's under the ownership table. The *language* half
+is yours, and it is decided:
+
+**A slice is a declaration, not a CLI selector.** §4.2 settles it in one
+sentence -- "package layout, ports, migrations, and route prefixes derive from
+the slice" -- because a thing that derives names has to be in the model.
+`AppModel.derived` records every derived name keyed by owner and role with the
+`rule_id` that produced it, and it is recomputed from the model rather than
+accumulated, so a slice that moved a package while living only in an argument
+vector would make `derived` stop being a function of the model. That is the
+same rule that keeps `pinned` from being a flag carried off the source, and it
+is what makes `jails model explain` answerable at all. `Billing.Order` at the
+CLI is then sugar that resolves to the declaration, which is the shape every
+other familiar command already has.
+
+**The implicit slice is derived, never written.** §4.2 also requires that "a
+project with no slices must keep working unchanged", and in a language that
+means the implicit slice must not appear in the source -- otherwise every
+`.jails/model.jdl` in existence changes, and `model fmt --check` fails on all
+of them the day it ships. So: one implicit slice, derived when nothing
+declares one, and it is what `rename resource` accepts unqualified.
+
+**It is a v2 construct, and §6.2 of `docs/00-contracts.md` lists the price.**
+Nine things, not syntax: grammar, typed linked-model payload, validation
+schema, stable-ID rule, ownership boundary, formatter behaviour, CLI mapping,
+upgrade rule, conformance tests. Two of those are already awkward and worth
+knowing before starting -- the stable-ID rule has to say what happens to
+`ent_order` when `Order` moves into a slice, and the upgrade rule has to leave
+every existing model on the implicit slice without rewriting a byte.
+
+With that settled, C can reach for `SliceSpecV1` knowing what it is holding.
 
 **This is the whole of what is left of §6.1's `generate scaffold` surface.**
 `--path` (§6.1 spelled it `--route`), `--index`, `--unique`, `--package` and
