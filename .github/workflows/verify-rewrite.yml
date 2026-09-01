@@ -6,12 +6,13 @@
 # green", and the second answer is the one that drifts -- which is exactly what
 # happened locally: the pre-push hook ran `cargo build && cargo test` with no
 # `--workspace`, so it tested the root package alone and said nothing about the
-# other twelve crates, and no `JAILS_REQUIRE_TOOLCHAIN`, so every test that
+# other twelve crates, and no `JAILS_TOOLCHAIN`, so every test that
 # could not find its toolchain skipped itself and was counted as passing.
 #
-# The tool list below is not decoration. `JAILS_REQUIRE_TOOLCHAIN=1` turns a
-# skip into a failure, so every one of these has to be present or the run is
-# red: a JDK that accepts `--release 26`, `jshell`, Maven, mvnd, Gradle 8.5 on
+# The tool list below is not decoration. `JAILS_TOOLCHAIN=1` switches the
+# real-toolchain tier on, and switching it on is what makes a missing tool a
+# failure rather than a skip -- so every one of these has to be present or the
+# run is red: a JDK that accepts `--release 26`, `jshell`, Maven, mvnd, Gradle 8.5 on
 # JDK 21 for the pinned example, git, and a container runtime for the
 # Testcontainers suites.
 name: verify-rewrite

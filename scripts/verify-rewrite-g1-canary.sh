@@ -50,7 +50,7 @@ CARGO_TARGET_DIR="$legacy_target" cargo build \
   --bin jails
 
 # The same two environment pins the gate itself sets, for the same two
-# reasons. Without `JAILS_REQUIRE_TOOLCHAIN` a comparison that cannot find its
+# reasons. Without `JAILS_TOOLCHAIN` a comparison that cannot find its
 # toolchain skips and the canary reports green having compared nothing, which
 # is the exact shape of check this script exists to stop. Without the empty
 # `JAILS_GIT_DIFF_ALGORITHM` the three-way merges are whatever git's default
@@ -59,5 +59,5 @@ CARGO_TARGET_DIR="$legacy_target" cargo build \
 echo "[verify-rewrite-g1-canary] comparing legacy and canonical product loops"
 JAILS_LEGACY_BIN="$legacy_target/debug/jails" \
   JAILS_GIT_DIFF_ALGORITHM= \
-  JAILS_REQUIRE_TOOLCHAIN=1 \
+  JAILS_TOOLCHAIN=1 \
   cargo test --test product_loop -- --nocapture

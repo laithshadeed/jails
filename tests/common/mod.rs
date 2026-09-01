@@ -626,55 +626,20 @@ fn xml_attribute(line: &str, name: &str, report: &Path) -> usize {
         .unwrap_or_else(|| panic!("{} has no numeric {name} attribute", report.display()))
 }
 
-/// Set `JAILS_REQUIRE_TOOLCHAIN=1` to turn every "skipping: ..." into a
-/// failure.
-///
-/// The real-toolchain tests self-skip when Maven, a new enough JDK or Docker
-/// is missing, which is right on a laptop and wrong in CI: the suite reports
-/// green while the one tier that answers "does this produce a project that
-/// compiles?" has not run, and nothing in the output says so.
-///
-/// So the default stays permissive and CI opts in. A run with this set either
-/// exercises the tier or fails naming what was missing -- it never passes
-/// quietly.
-#[track_caller]
-pub fn skip(reason: &str) {
-    if std::env::var_os("JAILS_REQUIRE_TOOLCHAIN").is_some_and(|v| v != "0") {
-        panic!("JAILS_REQUIRE_TOOLCHAIN is set, but this test cannot run: {reason}");
-    }
-    eprintln!("skipping: {reason}");
-}
+mod toolchain;
 
-/// Skip a test whose precondition **cannot be installed**, and stay skipped
-/// even under `JAILS_REQUIRE_TOOLCHAIN`.
-///
-/// `skip` promotes a skip to a failure because the things it guards -- Maven,
-/// a JDK that accepts `TARGET_RELEASE`, a container runtime, git -- are all
-/// things a machine can be given, so a run that silently omits that tier is
-/// hiding a fixable gap. That reasoning does not reach a property of the
-/// *user*: nothing installs "is not root", and the one test guarded this way
-/// needs a directory whose mode bits actually refuse a write, which root
-/// bypasses through `CAP_DAC_OVERRIDE`.
-///
-/// Promoting that to a failure would make the gate permanently red anywhere
-/// the suite runs as root -- every Claude Code on the web session, among
-/// others -- and a gate that is always red is a gate people learn to pass
-/// with `--no-verify`. It still prints, loudly and with the same prefix, so a
-/// run that lost this coverage says so.
-///
-/// **Use it only where no installation could satisfy the precondition.** A
-/// missing tool is `skip`.
-#[track_caller]
-pub fn skip_unsupported_environment(reason: &str) {
-    eprintln!("skipping (this environment cannot express the precondition): {reason}");
-}
+// Not every test crate that includes this harness uses every gate helper,
+// and this file is included by several of them.
+#[allow(unused_imports)]
+pub use toolchain::{skip, skip_unsupported_environment, toolchain_enabled};
 
 pub fn real_mvn_available() -> bool {
-    real_path_dirs().any(|dir| dir.join("mvn").is_file())
+    toolchain_enabled() && real_path_dirs().any(|dir| dir.join("mvn").is_file())
 }
 
 pub fn real_java_available() -> bool {
-    real_path_dirs().any(|dir| dir.join("java").is_file())
+    toolchain_enabled()
+        && real_path_dirs().any(|dir| dir.join("java").is_file())
         && real_path_dirs().any(|dir| dir.join("javac").is_file())
 }
 
@@ -682,26 +647,32 @@ pub fn real_java_available() -> bool {
 /// (`pom::TARGET_RELEASE`). Presence of a JDK is not enough: a JDK older than
 /// the target rejects `--release N` outright. Tests that really compile
 /// generated code skip on this rather than hiding the reason in a javac
-/// failure; required CI sets `JAILS_REQUIRE_TOOLCHAIN=1` so it cannot skip.
+/// failure.
+///
+/// Answers `false` whenever the tier is switched off, so the probe is never
+/// the thing that decides whether the expensive suite runs -- see
+/// [`toolchain_enabled`].
 pub fn real_java_supports_target_release() -> bool {
-    Command::new("javac")
-        .arg(format!("--release={TARGET_RELEASE}"))
-        .arg("-version")
-        .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false)
+    toolchain_enabled()
+        && Command::new("javac")
+            .arg(format!("--release={TARGET_RELEASE}"))
+            .arg("-version")
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false)
 }
 
 /// Testcontainers (and the real `add db` Spring contextLoads check) need a
 /// running daemon, not just a binary on PATH.
 pub fn real_docker_available() -> bool {
-    Command::new("docker")
-        .args(["info"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    toolchain_enabled()
+        && Command::new("docker")
+            .args(["info"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
 }
 
 /// The real constant, not a copy of it.
@@ -888,6 +859,7 @@ impl AppSuiteServices {
         launched: std::sync::mpsc::Sender<AppSuiteEndpoints>,
         postgres_ready: std::sync::mpsc::Sender<()>,
     ) -> Self {
+        sweep_orphaned_suite_containers();
         let nonce = format!(
             "{}-{}",
             std::process::id(),
@@ -1018,6 +990,123 @@ impl Drop for AppSuiteServices {
             scope.spawn(|| self.postgres.remove());
             scope.spawn(|| self.kafka.remove());
         });
+    }
+}
+
+/// Remove suite containers whose owning test process no longer exists.
+///
+/// [`ContainerGuard`]'s `Drop` is the ordinary path and it is reliable for
+/// every ordinary ending, panics included. It cannot run when the process is
+/// killed outright -- `SIGKILL` from the OOM killer, a `docker kill` of the
+/// runner, a hard `^C` -- and that is not hypothetical: a suite run that
+/// exhausted this machine's memory left a PostgreSQL and a Kafka behind
+/// exactly that way. Left to accumulate they exhaust Docker's address pool
+/// and unrelated container tests begin failing, with nothing pointing at the
+/// run that actually caused it.
+///
+/// So ownership is recoverable rather than merely promised: every suite
+/// container carries its creator's pid in its name, and a pid that is gone is
+/// a container nobody will ever reap. Sweeping at start-up rather than at exit
+/// is deliberate -- an exit-time sweep is one more thing a kill can skip,
+/// while a start-time sweep repairs whatever the last run could not.
+///
+/// It never touches a container whose owner is alive, so concurrent runs of
+/// the suite do not reap each other.
+fn sweep_orphaned_suite_containers() {
+    // `ps --format '{{.Names}}'` rather than `-q` plus an `inspect` each: it is
+    // one subprocess instead of one per container, and CLAUDE.md records that
+    // this exact spelling behaves identically on docker and on podman's shim,
+    // which is what this machine actually runs.
+    let listed = Command::new("docker")
+        .args([
+            "ps",
+            "-a",
+            "--filter",
+            "name=jails-suite-",
+            "--format",
+            "{{.Names}}",
+        ])
+        .stderr(Stdio::null())
+        .output();
+    let Ok(listed) = listed else { return };
+    if !listed.status.success() {
+        return;
+    }
+    for name in String::from_utf8_lossy(&listed.stdout).lines() {
+        let name = name.trim();
+        let Some(pid) = suite_container_pid(name) else {
+            continue;
+        };
+        if Path::new(&format!("/proc/{pid}")).exists() {
+            continue;
+        }
+        eprintln!("sweeping orphaned suite container {name} (pid {pid} is gone)");
+        let _ = Command::new("docker")
+            .args(["kill", name])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+/// The pid embedded in a suite container's name, if this is one of ours.
+///
+/// `jails-suite-<service>-<pid>-<nanos>`, so the pid is the second field from
+/// the end. It is a separate function because it is the only part of the sweep
+/// that can be *wrong* rather than merely fail: everything else either finds a
+/// live process or kills a container this suite named, while a parser that
+/// reads the wrong field returns a plausible pid belonging to something else
+/// entirely -- and the consequence of that is killing a stranger's container.
+/// The prefix check is what keeps a foreign name from ever reaching the digit
+/// parse.
+fn suite_container_pid(name: &str) -> Option<u32> {
+    name.strip_prefix("jails-suite-")?
+        .rsplit('-')
+        .nth(1)?
+        .parse()
+        .ok()
+}
+
+#[cfg(test)]
+mod sweep_container_tests {
+    use super::suite_container_pid;
+
+    #[test]
+    fn the_pid_is_read_from_a_real_suite_container_name() {
+        assert_eq!(
+            suite_container_pid("jails-suite-kafka-2355472-1788267293555018168"),
+            Some(2355472)
+        );
+        assert_eq!(
+            suite_container_pid("jails-suite-postgres-2355472-1788267293555018168"),
+            Some(2355472)
+        );
+    }
+
+    #[test]
+    fn a_container_this_suite_did_not_name_is_never_claimed() {
+        // The whole point of the prefix: `docker ps --filter name=` matches a
+        // *substring*, so a reader's own container can appear in the listing.
+        // Reaping one because its name happens to end in two numeric fields
+        // would be the sweep causing exactly the damage it exists to undo.
+        for foreign in [
+            "postgres-2355472-1788267293555018168",
+            "my-jails-suite-kafka-1-2",
+            "jails-generated-app-123-456",
+        ] {
+            assert_eq!(suite_container_pid(foreign), None, "claimed {foreign}");
+        }
+    }
+
+    #[test]
+    fn a_name_without_a_numeric_pid_field_is_left_alone() {
+        for malformed in [
+            "jails-suite-kafka",
+            "jails-suite-kafka-notapid-1788267293555018168",
+            "jails-suite-",
+        ] {
+            assert_eq!(suite_container_pid(malformed), None, "claimed {malformed}");
+        }
     }
 }
 
@@ -1386,14 +1475,19 @@ fn max_toolchain_processes() -> usize {
 /// A budget of concurrent toolchain processes, shared across **processes**.
 ///
 /// It was a `Mutex` and a `Condvar`, which is exactly right for one test
-/// binary and worth nothing for thirty-three. `cargo test` runs the binaries
-/// one after another, so an in-process budget *was* the whole machine's
-/// budget; `scripts/run-tests.py` runs them at once, and each one then
-/// believed it could have all six permits to itself. Five of these binaries
-/// shell out to Maven, so the machine was being asked for thirty concurrent
-/// JVMs on four cores -- which is why running them concurrently had only ever
-/// been worth 295.4s -> 281.7s. The overlap was real and the oversubscription
-/// ate it.
+/// binary and worth nothing for several. An in-process budget is the whole
+/// machine's budget only while one binary runs at a time: a runner that starts
+/// several at once gives each one its own `Mutex`, and each then believes it
+/// can have all six permits to itself. Five of these binaries shell out to
+/// Maven, so a four-core machine was being asked for thirty concurrent JVMs.
+///
+/// **The concurrent runner that forced this is gone** -- it was OOM-killed
+/// running 16 binaries at once and `cargo test`, which runs them one after
+/// another, proved both faster and bounded. The `flock` stays anyway, and not
+/// out of sentiment: it is what makes the budget true for *any* way of
+/// launching the suite, including the ordinary case of a second shell running
+/// `cargo test` while the first still is. An in-process budget silently
+/// doubles the machine's JVM count there; this one does not.
 ///
 /// `flock` is the budget, one lock file per permit under `target/`. Three
 /// properties are why it is a file lock rather than anything cleverer:
@@ -2319,8 +2413,8 @@ mod permit_pool_tests {
     /// budget, so the name carries the pid.
     /// A pool nothing outside this process can be holding.
     ///
-    /// `test-<label>-<pid>` was not that. `run-tests` starts 33 binaries 16 at
-    /// a time, so a binary in a later wave is routinely handed the pid of one
+    /// `test-<label>-<pid>` was not that. Pids are recycled, so a binary
+    /// started later is routinely handed the pid of one
     /// that has already exited -- and a slot lock outlives the process that
     /// took it whenever a forked child inherited the descriptor and has not
     /// reached `exec` yet. These binaries spawn thousands of `jails`
@@ -2438,7 +2532,7 @@ mod permit_pool_tests {
     /// are: each opens the slot files for itself, so each has its own open
     /// file description, and `flock` contends between them exactly as it does
     /// across a `fork`. If this passes in one process it holds across
-    /// thirty-three, which is what `scripts/run-tests.py` launches.
+    /// thirty-three, whatever launches them.
     #[test]
     fn a_budget_is_shared_by_every_pool_of_the_same_name() {
         let one = pool("shared-budget");
@@ -2451,9 +2545,24 @@ mod permit_pool_tests {
         );
 
         drop(held);
+        // **Report the refusal, do not summarise it.** This assertion read
+        // "the permit was not released back to the shared budget", which is
+        // one of three things a `None` can mean here and the only one that is
+        // a bug in the pool: the slot may equally have failed to *open*
+        // (fd exhaustion under a loaded suite) or failed to lock for a reason
+        // that is not contention. It failed exactly once, under full-suite
+        // load on a busy machine, and the message sent the reader after a
+        // release path that was never involved -- the same trap
+        // `try_acquire_reporting` was introduced for one test earlier.
+        let (permit, refusals) = two.try_acquire_reporting(1);
         assert!(
-            two.try_acquire(1).is_some(),
-            "the permit was not released back to the shared budget"
+            permit.is_some(),
+            "the shared budget refused a permit after its only holder was dropped: {}",
+            if refusals.is_empty() {
+                "no slot reported a reason".to_string()
+            } else {
+                refusals.join("; ")
+            }
         );
     }
 }

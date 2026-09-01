@@ -48,22 +48,24 @@ depends = ["lint"]
 # test; this one does both, and a compile error still stops the run at the
 # first error, in the same place it did before.
 #
-# **The suite's thirty-three binaries run concurrently now**, through
-# `scripts/run-tests.py`. `cargo test` runs them one after another -- the sum
-# of the per-target times was within four seconds of the whole run's wall
-# clock -- and on CI `cli` is 202s while the other thirty-two are 74s that
-# could have finished inside it.
+# **The binaries run one after another, and that is the measured answer rather
+# than a limitation.** They ran concurrently for a while, through a python
+# runner that started sixteen at a time; that bought a real overlap while no
+# single binary dominated, and stopped buying one once `cli` grew to be
+# essentially the whole run. What it never stopped costing was memory -- its
+# budget counted Maven processes and never their footprint -- and it was
+# SIGKILLed by the OOM killer 179s into a run capped at 10 GB, where plain
+# `cargo test --workspace` finishes the same 1991 tests in 275.7s inside 8 GB.
+# It is deleted; CLAUDE.md's "How the suite stays fast" carries the numbers.
 #
-# This was deliberately *not* the gate until now, and the reason it could not
-# be is fixed rather than waived: the Maven permit budget was a `Mutex` and a
-# `Condvar`, so each binary believed it owned all six permits and thirty-three
-# of them oversubscribed the machine. It is a `flock` budget shared across
-# processes now (`tests/common/mod.rs`), so the whole run has one budget
-# however it is launched.
+# The Maven permit budget stays a `flock` shared across processes
+# (`tests/common/mod.rs`). It is no longer needed to stop one runner
+# oversubscribing the machine, but it is what keeps the budget true when a
+# second shell runs the suite while the first still is -- which an in-process
+# `Mutex` cannot see.
 #
-# It is still one answer to "is this green": same binaries from `cargo test
-# --no-run`, same filters, same exit status. What it adds is a python3
-# dependency for the gate, which is the cost this trade accepts.
+# It is one answer to "is this green", and now with no python3 dependency for
+# the gate at all.
 #
 # **One command, and the Gradle example no longer needs a second.** It used to
 # be skipped here and then run by a `cargo test` of its own under
@@ -109,25 +111,35 @@ depends = ["lint"]
 # worse trade than catching a stale link one push later.
 run = [
   "RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps",
-  "JAILS_GIT_DIFF_ALGORITHM= JAILS_REQUIRE_TOOLCHAIN=1 ./scripts/run-tests.py",
+  "JAILS_GIT_DIFF_ALGORITHM= JAILS_TOOLCHAIN=1 cargo test --workspace",
 ]
 
 [tasks.test]
-description = "Run every test binary concurrently, longest first (the inner-loop run)"
-# **This is the same runner the gate invokes**, without the two environment
-# pins -- so an inner-loop run may skip a tier the gate would fail on, which is
-# the whole reason `verify-rewrite` sets them.
+description = "The gate's test phase, without the toolchain tier (the inner-loop run)"
+# **Plain `cargo test`, and the concurrent python runner it replaced was
+# measured out rather than argued out.**
 #
-# It was deliberately *not* the gate's runner for a while, and this comment
-# said so: G0 asks for one answer to "is this green", so the gate stayed on
-# plain `cargo test --workspace`, and "it needs python3, which the gate must
-# not" was the stated cost of keeping them apart. That reversed once the Maven
-# permit budget became a `flock` shared across processes -- the reason the two
-# could not be the same command -- and `verify-rewrite`'s own note above
-# records the python3 dependency as a cost the gate now accepts. Two comments
-# in one file disagreeing about what the gate runs is exactly the drift G0
-# exists to prevent.
-run = "./scripts/run-tests.py"
+# `scripts/run-tests.py` ran the 30 test binaries 16 at a time, longest first,
+# on the reasoning that `cargo test` runs them one after another and so leaves
+# a machine idle. That reasoning stopped holding once one binary grew to
+# dominate: `cli` is 42.7s of a 68.0s sum with the tier off, and 275.7s of the
+# whole run with it on, so the other 29 binaries overlap into its shadow and
+# concurrency across binaries has almost nothing left to win.
+#
+# What it still cost was unbounded memory. Sixteen binaries at once, each free
+# to start JVMs, with a budget that counted Maven *processes* and never their
+# footprint: measured here at **SIGKILL from the OOM killer 179s into a run
+# capped at 10 GB**, having printed only `30 binaries, 16 at a time`. The same
+# 1991 tests under `cargo test --workspace` finish in **275.7s inside 8 GB**.
+# One of those two is a gate and the other is a way to lose a laptop.
+#
+# It buffered, too, so the kill produced an empty log -- the one moment the
+# output mattered most.
+#
+# The Maven permit budget it needed a shared `flock` for lives in
+# `tests/common/mod.rs` and is unaffected: it is process-wide by construction,
+# so it still bounds toolchain concurrency however the binaries are launched.
+run = "cargo test --workspace"
 
 [tasks.verify-rewrite-g1-canary]
 description = "Build the frozen legacy revision and compare iterative, rerun, and destroy semantics"

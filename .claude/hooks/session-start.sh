@@ -19,8 +19,9 @@
 #
 # **Without them the suite does not merely fail, it lies.** A tier-3 test that
 # cannot find its toolchain calls `common::skip()` and is counted as passing,
-# which is why `JAILS_REQUIRE_TOOLCHAIN=1` exists and why this hook is worth
-# its startup cost: measure with the toolchain or measure nothing.
+# which is why `JAILS_TOOLCHAIN=1` turns that skip into a failure and why this
+# hook is worth its startup cost: measure with the toolchain or measure
+# nothing.
 #
 # Everything here is idempotent and confined to the machine -- no repository
 # file is written -- so re-running it on `resume` or `clear` is free.

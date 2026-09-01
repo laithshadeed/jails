@@ -1853,9 +1853,20 @@ fn a_timed_warm_run_cancels_the_request_and_recycles_the_daemon() {
     write_plain_fixture(&root);
     let tests = common::generated(&root, "src/test/java/com/example/demo");
     fs::create_dir_all(&tests).unwrap();
+    // **One owner for how long `SlowTest` sleeps**, because the assertion at
+    // the end of this test discriminates on exactly that number: a run that
+    // was *not* cancelled cannot finish before the sleep does. Written out
+    // twice, a change to the fixture silently weakens the bound instead of
+    // moving it.
+    const SLOW_TEST_SLEEP: std::time::Duration = std::time::Duration::from_secs(30);
+
     fs::write(
         tests.join("SlowTest.java"),
-        "package com.example.demo;\nimport org.junit.jupiter.api.Test;\nclass SlowTest { @Test void slow() throws Exception { Thread.sleep(30_000); } }\n",
+        format!(
+            "package com.example.demo;\nimport org.junit.jupiter.api.Test;\n\
+             class SlowTest {{ @Test void slow() throws Exception {{ Thread.sleep({}); }} }}\n",
+            SLOW_TEST_SLEEP.as_millis()
+        ),
     )
     .unwrap();
     // **The warm-up compiles `SlowTest` without running it, and leaves a
@@ -1928,9 +1939,22 @@ fn a_timed_warm_run_cancels_the_request_and_recycles_the_daemon() {
         report.contains("active request was cancelled") && report.contains("testd was recycled"),
         "the timeout must explain both cancellation and isolation cleanup: {report}"
     );
+    // **Bounded by the sleep, not by a guess at how fast the machine is.**
+    //
+    // This was `< 10s` and failed at 19.9s on a contended box -- while both
+    // assertions above passed, so the request *had* been cancelled and the
+    // daemon *had* been recycled. Ten seconds was never the property; it was
+    // an estimate of scheduling latency, which is the one quantity a loaded
+    // machine is free to change without anything being wrong.
+    //
+    // The property is that cancellation returned control before the work
+    // would have finished on its own, and `SLOW_TEST_SLEEP` is exactly that
+    // line: a run that waited the sleep out cannot come in under it, whatever
+    // the machine is doing.
     assert!(
-        elapsed < std::time::Duration::from_secs(10),
-        "the 1s timeout took {elapsed:?}"
+        elapsed < SLOW_TEST_SLEEP,
+        "the 1s timeout took {elapsed:?}, which is not less than the {SLOW_TEST_SLEEP:?} \
+         `SlowTest` sleeps -- so the request was not cancelled early"
     );
 
     let status = jails_cmd_with_path(&root, &path)
