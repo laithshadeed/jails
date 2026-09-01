@@ -167,35 +167,24 @@ anyone converts a crate.
 
 ## A4.4 — three model front ends, and why the simplicity claim is blocked on you
 
+**`docs/00-contracts.md` A4.4 carries the measurement; this section carries
+the work.** Both of us re-measured it on 2026-09-01 and agreed on three
+numbers and disagreed on two, which is the drift the six-document split
+exists to prevent -- so the count lives in one place and the exit condition
+lives here. (Its numbers are the right ones: the pre-v1 draft is the whole
+pre-v1 half of `jdl/`, `upgrade.rs` included, and the frontend adapters are
+the *root binary's*, which is 9,465 rather than the 10,081 a path match on
+`/src/model_` sweeps up from other crates.)
+
 Three model front ends are live and editable: `.jails/model.toml`
-(`source.rs`), the pre-v1 JDL draft (`jdl.rs` and its `declaration`,
-`operation` and `render` children) and `jdl 1` (`jdl/v1/`). Above them sit the
-root binary's `model_*` frontend adapters, carrying 31 `is_v1_source` branch
-sites, because every mutating command is written three times.
+(`source.rs`), the pre-v1 JDL draft (`jdl.rs` and its children) and `jdl 1`
+(`jdl/v1/`). Above them sit the root binary's `model_*` adapters, because
+every mutating command is written three times.
 
-Measured 2026-09-01 with the tree's own `production_lines` -- comments,
-string literals and `#[cfg(test)]` modules blanked, blank lines excluded,
-which is what `tests/architecture/measure.rs` counts and therefore the only
-number the ratchets can be read against:
-
-| | production lines |
-|---|---:|
-| `source.rs` (the TOML front end) | 537 |
-| `jdl.rs` + `declaration`/`operation`/`render` (the pre-v1 draft) | 1,247 |
-| `jdl/v1/` (`jdl 1`) | 3,725 |
-| `jdl/upgrade.rs` (§22, the path that removes the other two) | 554 |
-| root `src/model_*` frontend adapters | 9,957 |
-
-**The earlier figures here were measured another way and are not comparable**
--- they counted raw non-blank lines including tests, which is why `jdl/v1/`
-appeared to *shrink* when it grew. Stating the method is the point: a number
-whose method is unrecorded cannot be re-measured, only replaced.
-
-This is expected mid-cutover, and **no simplicity claim can be banked until two
-of the three are gone**. §22 is the upgrade path that removes them. The rule
-that constrains the order is in `docs/00-contracts.md`: two editable model
-sources are never permitted, so the second front end goes away by *upgrading*
-projects onto the first, never by supporting both.
+`jdl/upgrade.rs` is §22, and it is the only one of these that shrinks the
+others: the second front end goes away by *upgrading* projects onto the first,
+never by supporting both, because `docs/00-contracts.md` forbids two editable
+model sources. That rule is what fixes the order of this work.
 
 **Exit:** `.jails/model.toml` and the pre-v1 draft are read by `model import`
 and by nothing else; `is_v1_source` has no callers.
