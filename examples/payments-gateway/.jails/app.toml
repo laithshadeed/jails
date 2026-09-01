@@ -25,7 +25,7 @@ timestamps = true
 [[generate]]
 kind = "scaffold"
 name = "Payment"
-fields = ["id:uuid@pk", "merchantId:uuid@index@scope", "idempotencyKey:string!@unique", "amountMinor:long@positive", "currency:string!", "method:PaymentMethod", "status:PaymentStatus@default(AUTHORISED)@index", "version:long@default(0)@nonnegative", "authorisedAt:instant?", "capturedAt:instant?"]
+fields = ["id:uuid@pk", "merchantId:uuid@index@scope", "idempotencyKey:string!@unique", "amountMinor:long@positive", "currency:string!", "method:PaymentMethod", "status:PaymentStatus@default(AUTHORISED)@index", "version:long@nonnegative", "authorisedAt:instant?", "capturedAt:instant?"]
 timestamps = true
 indexes = ["merchant_id, created_at desc", "status, created_at"]
 

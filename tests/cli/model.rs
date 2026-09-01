@@ -50,8 +50,17 @@ fn model_project(label: &str, source: &str) -> PathBuf {
     root
 }
 
+/// A canonical project whose authoring source is written by hand.
+///
+/// **It carries a real Spring build**, because the models these tests write
+/// declare `platform spring` -- the default -- and the compiler will not emit
+/// a `@RestController` into a project whose build has no Spring Boot in it.
+/// A bare directory holding only `.jails/model.jdl` is not a project any of
+/// this could compile into, so proving JDL editing against one would prove it
+/// against a shape nobody has.
 fn jdl_project(label: &str, source: &str) -> PathBuf {
     let root = temp_dir(label);
+    write_spring_fixture(&root);
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(root.join(".jails/model.jdl"), source).unwrap();
     root
@@ -12254,7 +12263,7 @@ fn canonical_search_and_seed_write_their_projections_and_compile() {
         .unwrap();
     assert!(!refused.status.success());
     assert!(
-        String::from_utf8_lossy(&refused.stderr).contains("is not a field on `note`"),
+        String::from_utf8_lossy(&refused.stderr).contains("`Note` has no component `headline`"),
         "{}",
         String::from_utf8_lossy(&refused.stderr)
     );

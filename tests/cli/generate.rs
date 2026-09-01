@@ -788,7 +788,7 @@ fn a_named_route_replaces_the_derived_one_everywhere_it_appears() {
         ),
         (
             "src/main/java/com/example/demo/service/PingsByEmailUseCase.java",
-            "\"POST /customer_api/read\"",
+            "\"GET /customer_api/read\"",
         ),
         (
             "src/main/java/com/example/demo/web/BarController.java",
@@ -3258,7 +3258,7 @@ fn field_driven_generators_refuse_an_absent_model_with_a_fix() {
         .unwrap();
     assert!(!scaffolded.status.success());
     let stderr = String::from_utf8_lossy(&scaffolded.stderr);
-    assert!(stderr.contains("requires a primary key"), "{stderr}");
+    assert!(stderr.contains("needs exactly one `@pk` field"), "{stderr}");
     assert!(stderr.contains("fix:"), "{stderr}");
 }
 

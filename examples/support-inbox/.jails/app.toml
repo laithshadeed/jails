@@ -67,7 +67,7 @@ unique = ["workspaceId, id"]
 [[generate]]
 kind = "scaffold"
 name = "Conversation"
-fields = ["id:uuid@pk", "workspaceId:uuid@index@scope", "contactId:uuid@index", "inboxId:uuid@index", "status:ConversationStatus@default(OPEN)@index", "lastMessageAt:instant@default(now())", "version:long@default(0)@nonnegative"]
+fields = ["id:uuid@pk", "workspaceId:uuid@index@scope", "contactId:uuid@index", "inboxId:uuid@index", "status:ConversationStatus@default(OPEN)@index", "lastMessageAt:instant@default(now())", "version:long@nonnegative"]
 timestamps = true
 indexes = ["workspace_id, status, last_message_at desc"]
 unique = ["workspaceId, id"]
@@ -82,7 +82,7 @@ indexes = ["conversation_id, created_at"]
 [[generate]]
 kind = "scaffold"
 name = "ConversationAssignment"
-fields = ["id:uuid@pk", "workspaceId:uuid@index@scope", "conversationId:uuid@unique@index", "memberId:uuid@index", "status:AssignmentStatus@default(ACTIVE)@index", "version:long@default(0)@nonnegative", "assignedAt:instant@default(now())"]
+fields = ["id:uuid@pk", "workspaceId:uuid@index@scope", "conversationId:uuid@unique@index", "memberId:uuid@index", "status:AssignmentStatus@default(ACTIVE)@index", "version:long@nonnegative", "assignedAt:instant@default(now())"]
 timestamps = true
 indexes = ["workspace_id, member_id, status"]
 

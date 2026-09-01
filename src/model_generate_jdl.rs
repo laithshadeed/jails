@@ -699,6 +699,25 @@ pub(crate) fn entity_declaration_at(
         }
         parsed.push(field);
     }
+    // **A component called `version` is the row version.** The engine this
+    // replaces inferred it, every `--if-match` transition depends on it, and
+    // an entity that declared `version:long` without the marker got a plain
+    // column: the transition then refused with "entity `note` has 0 version
+    // fields" about a field the reader had just declared and named. Inferred
+    // in the frontend and written into the model as `@version`, so the
+    // convention is visible in `.jails/model.jdl` rather than hidden in the
+    // compiler -- and an entity that means something else by the word says so
+    // by editing the declaration.
+    //
+    // v1 only, because `@version` is a v1 marker; the draft dialect cannot
+    // express it and inferring one it cannot write would be a lie.
+    if v1 {
+        for field in &mut parsed {
+            if field.label == "version" && matches!(field.type_name.as_str(), "long" | "int") {
+                field.version = true;
+            }
+        }
+    }
     if scaffold {
         // **`scaffold` is four Spring facets, so it needs Spring.** The
         // linker reaches the same conclusion one projection at a time --
