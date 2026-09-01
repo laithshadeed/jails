@@ -143,14 +143,48 @@ pub(crate) fn snake_case(label: &str) -> String {
 }
 
 pub(crate) fn valid_route(route: &str) -> bool {
+    route_problem(route).is_none()
+}
+
+/// Why this is not a route, in the words of the rule it broke.
+///
+/// **This text is written into a Java annotation**, so a refusal that only
+/// says "not a canonical HTTP route" leaves the reader to work out which of
+/// six rules they tripped over -- and the answer is usually a single missing
+/// character. Naming the rule is what makes the message actionable.
+///
+/// `..` is rejected outright: Spring resolves it, so `/api/../secret` mounts
+/// somewhere other than where it reads as mounting, and a route that is not
+/// the route it looks like is worse than one that is refused.
+pub fn route_problem(route: &str) -> Option<String> {
     let Some((method, path)) = route.split_once(' ') else {
-        return false;
+        return Some(format!(
+            "`{route}` has no method: a route is `METHOD /path`"
+        ));
     };
-    matches!(method, "GET" | "POST" | "PUT" | "PATCH" | "DELETE")
-        && path.starts_with('/')
-        && path.len() > 1
-        && !path.contains(char::is_whitespace)
-        && !path.contains("//")
+    if !matches!(method, "GET" | "POST" | "PUT" | "PATCH" | "DELETE") {
+        return Some(format!(
+            "`{method}` is not one of GET, POST, PUT, PATCH or DELETE"
+        ));
+    }
+    if !path.starts_with('/') {
+        return Some(format!("`{path}` does not start with `/`"));
+    }
+    if path.len() == 1 {
+        return Some("the path is just `/`, which names no resource".to_string());
+    }
+    if path.contains(char::is_whitespace) {
+        return Some(format!("`{path}` contains ` `"));
+    }
+    if path.contains("//") {
+        return Some(format!("`{path}` contains `//`"));
+    }
+    if path.split('/').any(|segment| segment == "..") {
+        return Some(format!(
+            "`{path}` contains `..`, and Spring resolves it -- the route would not be where it reads as being"
+        ));
+    }
+    None
 }
 
 /// The conventional table for an entity label, pluralized per `jdl-sol.md`

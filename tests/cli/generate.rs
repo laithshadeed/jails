@@ -776,21 +776,26 @@ fn a_named_route_replaces_the_derived_one_everywhere_it_appears() {
         );
     }
 
+    // **The route lives on the operation, not on an adapter.** An operation's
+    // port carries `String ROUTE`, and the Spring controller the `api`
+    // capability writes reads it from there -- so the named route is checked
+    // where it is *decided*, and a project that never declares `api` still has
+    // one answer to "where does this operation answer".
     for (file, expected) in [
         (
-            "src/main/java/com/example/demo/web/RecordPingController.java",
-            "\"/customer_api/ping\"",
+            "src/main/java/com/example/demo/service/RecordPingUseCase.java",
+            "\"POST /customer_api/ping\"",
         ),
         (
-            "src/main/java/com/example/demo/web/PingsByEmailQueryController.java",
-            "\"/customer_api/read\"",
+            "src/main/java/com/example/demo/service/PingsByEmailUseCase.java",
+            "\"POST /customer_api/read\"",
         ),
         (
             "src/main/java/com/example/demo/web/BarController.java",
             "\"/bar\"",
         ),
     ] {
-        let source = fs::read_to_string(root.join(file)).unwrap();
+        let source = common::read_generated(&root, file);
         assert!(source.contains(expected), "{file}:\n{source}");
         assert!(!source.contains("/actions/"), "{file}:\n{source}");
         assert!(!source.contains("/queries/"), "{file}:\n{source}");
@@ -3745,7 +3750,13 @@ fn planning_pretending_and_inspecting_leave_machine_state_byte_for_byte() {
         String::from_utf8_lossy(&applied.stdout),
         String::from_utf8_lossy(&applied.stderr)
     );
-    assert!(root.join(".jails/ledger.toml").is_file());
+    // The committed store of a canonical project is its model and the lock
+    // that seals the projection it was compiled from -- there is no ledger,
+    // and a canonical project growing one would be the cutover running
+    // backwards.
+    assert!(root.join(".jails/model.jdl").is_file());
+    assert!(root.join(".jails/compiler.lock.json").is_file());
+    assert!(!root.join(".jails/ledger.toml").exists());
     let before = snapshot_tree(&root.join(".jails"));
     for argv in &arguments {
         jails_cmd(&root, None).args(argv).output().unwrap();

@@ -672,7 +672,8 @@ impl Linker {
             self.problem(
                 "model-route",
                 format!("{path}.route"),
-                format!("`{route}` is not a canonical HTTP route"),
+                crate::naming::route_problem(route)
+                    .unwrap_or_else(|| format!("`{route}` is not a canonical HTTP route")),
                 "use `METHOD /path`, for example `GET /notes/{id}`",
             );
             return;

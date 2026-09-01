@@ -424,28 +424,65 @@ pub(crate) fn operation_profile(kind: ArtifactKind) -> Option<OperationProfile> 
     }
 }
 
+/// Which of the supplied flags this profile has nowhere to put.
+///
+/// **Named, one at a time, with what it does apply to.** "does not represent
+/// one or more supplied flags" is true of every one of these and useful for
+/// none: a reader who typed `g record Thing --path /thing` needs to be told
+/// that `--path` is for the kinds that answer a route, not to re-read the
+/// command looking for which flag was the wrong one.
 fn reject_unsupported_options(args: &GenerateArgs, profile: &EntityProfile) -> Result<()> {
-    let unsupported = (args.timestamps && !profile.timestamps)
-        || (!args.uniques.is_empty() && !profile.table)
-        || args.package.is_some()
-        || args.default_literal.is_some()
-        || args.backfill_file.is_some()
-        || args.strategy_on.is_some()
-        || args.strategy_yields.is_some()
-        || args.via.is_some()
-        || args.order_by.is_some()
-        || args.limit.is_some()
-        || args.on_conflict.is_some()
-        || (args.path.is_some() && !profile.route)
-        || args.select.is_some()
-        || !args.set.is_empty()
-        || args.if_match.is_some()
-        || !args.bind.is_empty()
-        || args.method.is_some()
-        || args.consumes.is_some();
-    if unsupported {
+    let unsupported: &[(bool, &str, &str)] = &[
+        (
+            args.timestamps && !profile.timestamps,
+            "--timestamps",
+            "the kinds that own a table",
+        ),
+        (
+            !args.uniques.is_empty() && !profile.table,
+            "--unique",
+            "the kinds that own a table",
+        ),
+        (args.package.is_some(), "--package", "capabilities"),
+        (
+            args.default_literal.is_some(),
+            "--default-literal",
+            "`resource field` commands",
+        ),
+        (
+            args.backfill_file.is_some(),
+            "--backfill-file",
+            "`resource field nullability`",
+        ),
+        (args.strategy_on.is_some(), "--on", "operations"),
+        (args.strategy_yields.is_some(), "--yields", "operations"),
+        (args.via.is_some(), "--via", "queries"),
+        (args.order_by.is_some(), "--order-by", "queries"),
+        (args.limit.is_some(), "--limit", "queries"),
+        (args.on_conflict.is_some(), "--on-conflict", "use cases"),
+        (
+            args.path.is_some() && !profile.route,
+            "--path",
+            "the kinds that answer a route",
+        ),
+        (args.select.is_some(), "--select", "transitions"),
+        (!args.set.is_empty(), "--set", "transitions"),
+        (args.if_match.is_some(), "--if-match", "transitions"),
+        (!args.bind.is_empty(), "--bind", "operations"),
+        (
+            args.method.is_some(),
+            "--method",
+            "the kinds that answer a route",
+        ),
+        (
+            args.consumes.is_some(),
+            "--consumes",
+            "the kinds that answer a route",
+        ),
+    ];
+    if let Some((_, flag, applies)) = unsupported.iter().find(|(supplied, _, _)| *supplied) {
         return Err(Failure::Told(format!(
-            "the canonical `{}` semantic profile does not represent one or more supplied flags.\n       fix: remove the unsupported flags and put semantic projections in `.jails/model.toml`",
+            "`{flag}` applies to {applies}, and `{}` is not one of them.\n       fix: drop `{flag}`, or generate a kind that carries it",
             kind_name(args.kind)
         )));
     }
