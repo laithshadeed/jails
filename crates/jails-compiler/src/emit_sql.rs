@@ -1,6 +1,7 @@
 //! Stable-ID schema diffing and conservative PostgreSQL migration lowering.
 
 mod binding;
+pub(crate) mod closed_set;
 mod evolution;
 mod field_semantics;
 mod index;
@@ -294,6 +295,13 @@ pub(crate) fn derive(
         descriptions.push(format!("create_{}", entity.names.sql_table));
     }
 
+    closed_set::derive_into(
+        next,
+        previous,
+        &mut statements,
+        &mut semantic_ids,
+        &mut descriptions,
+    )?;
     search::derive_into(
         next,
         previous,
@@ -346,6 +354,12 @@ fn create_table(model: &AppModel, entity: &Entity) -> Result<Vec<String>, Compil
     let mut indexes = Vec::new();
     for field in entity.fields.iter() {
         columns.push(initial_column(field, sql_type(model, field)?)?);
+        // **Named, and a table constraint rather than a column check.** The
+        // widening migration drops it by name and adds the next one, so the
+        // two have to agree about what it is called.
+        if let Some(constraint) = closed_set::column_constraint(model, entity, field) {
+            columns.push(format!("    {constraint}"));
+        }
         if field.indexed && !field.primary_key && !field.unique {
             indexes.push(format!(
                 "create index idx_{}_{} on {} ({});",

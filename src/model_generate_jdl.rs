@@ -328,10 +328,35 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
                     args.name
                 )));
             }
-            // **A projection the entity has not got is an addition too.**
-            // `g record Post` then `g scaffold Post` asks for the repository,
-            // service, DTO and HTTP facets over the record that is already
-            // there, which is the order a reader types them in.
+            // **A projection the entity has not got is an addition too**, and
+            // so is a constant appended to a closed set. `g record Post` then
+            // `g scaffold Post` asks for the repository, service, DTO and HTTP
+            // facets over the record that is already there, which is the order
+            // a reader types them in; `g enum Status OPEN CLOSED PENDING` over
+            // `OPEN CLOSED` asks for the third constant.
+            let widened = match unchanged {
+                true => facet::widen_enum(&current_source, existing, &requested.enum_constants)?,
+                false => None,
+            };
+            if let Some((next_source, patches)) = widened {
+                let patch = ModelPatch::Batch(patches);
+                let patch_bytes = serde_json::to_vec(&serde_json::json!({
+                    "kind": "widen-enum",
+                    "entity": entity_id,
+                }))
+                .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
+                return finish_generation(PreparedMutation {
+                    name: args.name.clone(),
+                    invocation,
+                    model_path,
+                    current_source: current_source.clone(),
+                    current_model,
+                    next_source,
+                    patch,
+                    patch_bytes,
+                    authored_migration: None,
+                });
+            }
             if unchanged
                 && let Some((next_source, patches)) =
                     facet::add_facets(&current_source, existing, &requested.facets)?

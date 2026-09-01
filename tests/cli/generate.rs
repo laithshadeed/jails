@@ -2212,15 +2212,37 @@ fn renaming_a_storage_backed_resource_keeps_its_table_or_refuses() {
             .contains("nickname")
     );
 
-    // A source-only resource has no storage to carry, so the textual rename
-    // is still exactly right for it.
+    // A source-only resource has no storage to carry -- and the textual
+    // rename is still wrong for it, because the declaration is what the next
+    // compilation renders from: `rename` would move the Java and leave the
+    // model saying `Note`, so `jails sync` writes `Note.java` straight back.
+    // What "source-only" buys is that every strategy means the same thing.
     let record = jails_cmd(&root, None)
         .args(["g", "record", "Note", "body:string!"])
         .output()
         .unwrap();
     assert!(record.status.success(), "{record:?}");
-    let renamed = jails_cmd(&root, None)
+    let textual = jails_cmd(&root, None)
         .args(["rename", "Note", "Memo", "--force"])
+        .output()
+        .unwrap();
+    assert_eq!(textual.status.code(), Some(1), "{textual:?}");
+    let stderr = String::from_utf8_lossy(&textual.stderr);
+    assert!(
+        stderr.contains("declared in this project's application model"),
+        "{stderr}"
+    );
+    // ...and it does not name a table, because there is not one.
+    assert!(!stderr.contains("backed by table"), "{stderr}");
+    let renamed = jails_cmd(&root, None)
+        .args([
+            "rename",
+            "resource",
+            "Note",
+            "Memo",
+            "--strategy",
+            "preserve-table",
+        ])
         .output()
         .unwrap();
     assert!(renamed.status.success(), "{renamed:?}");

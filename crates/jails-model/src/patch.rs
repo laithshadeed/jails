@@ -93,6 +93,17 @@ pub enum ModelPatch {
         policy: FieldAddPolicy,
         placement: FieldPlacement,
     },
+    /// Widen a closed set, appending constants in the order given.
+    ///
+    /// **Append only, and the patch says so in its name.** A Java enum's
+    /// ordinal is ABI and a stored column may hold any accepted constant, so
+    /// inserting in the middle renumbers, and removing one leaves rows the
+    /// check constraint would reject. Narrowing is a schema evolution with a
+    /// data plan, not a redeclaration.
+    AddEnumConstants {
+        entity: EntityId,
+        constants: Vec<crate::EnumConstant>,
+    },
     AddIndex {
         entity: EntityId,
         index: Index,

@@ -54,6 +54,26 @@ impl AppModel {
                 self.projections.insert(id, projection);
             }
             ModelPatch::AddFacet { entity, facet } => crate::facet::add(self, entity, facet)?,
+            ModelPatch::AddEnumConstants { entity, constants } => {
+                let subject = self.entities.get_mut(&entity).ok_or_else(|| {
+                    format!(
+                        "enum `{entity}` is not declared\n       fix: declare it before widening it"
+                    )
+                })?;
+                for constant in constants {
+                    if subject
+                        .enum_constants
+                        .iter()
+                        .any(|existing| existing.java_name == constant.java_name)
+                    {
+                        return Err(format!(
+                            "enum `{entity}` already declares `{}`\n       fix: state the set once",
+                            constant.java_name
+                        ));
+                    }
+                    subject.enum_constants.push(constant);
+                }
+            }
             ModelPatch::RemoveFacet { entity, facet } => crate::facet::remove(self, entity, facet)?,
             ModelPatch::AddUnit(unit) => {
                 crate::unit::insert(&mut self.units, unit)?;

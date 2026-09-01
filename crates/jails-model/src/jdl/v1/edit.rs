@@ -346,6 +346,32 @@ pub fn insert_entity_member(
     cst.replace_span(super::Span::new(insertion, insertion), &rendered)
 }
 
+/// Append one constant to an `enum` declaration, before its closing brace.
+///
+/// **Appending is the only edit offered**, because a Java enum's ordinal is
+/// ABI: inserting a constant in the middle renumbers every one after it, and
+/// anything that stored an ordinal then reads a different value. The caller
+/// has already established that the requested set extends the accepted one in
+/// order.
+pub fn insert_enum_constant(
+    source: &str,
+    name: &str,
+    constant: &str,
+) -> Result<String, Diagnostics> {
+    let cst = parse_cst(source)?;
+    let declaration = unique_declaration(&cst, "enum", name)?;
+    let insertion = closing_brace(&cst, declaration.span).ok_or_else(|| {
+        edit_problem(
+            format!("enum `{name}` has no unambiguous closing brace"),
+            "repair the enum block, then retry the command",
+        )
+    })?;
+    let newline = newline_style(source);
+    let mut rendered = normalize_newlines(constant.trim_end_matches(['\r', '\n']), newline);
+    rendered.push_str(newline);
+    cst.replace_span(super::Span::new(insertion, insertion), &rendered)
+}
+
 /// Remove one direct entity member selected by syntax kind/name and optional ID.
 pub fn remove_entity_member(
     source: &str,

@@ -308,6 +308,78 @@ pub(super) fn add_facets(
     Ok(Some((next, patches)))
 }
 
+/// Widen a declared closed set, when the request extends it in order.
+///
+/// **A widened enum is an addition, exactly as a new facet is.** `g enum
+/// Status OPEN CLOSED` then `g enum Status OPEN CLOSED PENDING` is how a
+/// reader adds a constant, and refusing it as "already declared with a
+/// different shape" left no command that could -- the only advice was to
+/// hand-edit `.jails/model.jdl`.
+///
+/// The accepted constants must be a *prefix* of the request. A Java enum's
+/// ordinal is ABI, so appending is safe and inserting is not; and a constant
+/// that left is a narrowing, which the compiler refuses against the rows a
+/// live table may hold.
+pub(super) fn widen_enum(
+    source: &str,
+    entity: &jails_model::Entity,
+    requested: &[jails_model::EnumConstant],
+) -> Result<Option<(String, Vec<ModelPatch>)>> {
+    if requested == entity.enum_constants {
+        return Ok(None);
+    }
+    // **A constant that left is refused here, in the compiler's words.** The
+    // frontend sees the narrowing first, so letting it through to be caught
+    // during lowering was not an option -- and writing the sentence twice is
+    // how two refusals for one situation come to disagree.
+    let removed = entity
+        .enum_constants
+        .iter()
+        .filter(|constant| {
+            !requested
+                .iter()
+                .any(|kept| kept.java_name == constant.java_name)
+        })
+        .map(|constant| constant.java_name.as_str())
+        .collect::<Vec<_>>();
+    if !removed.is_empty() {
+        return Err(Failure::Told(jails_compiler::enum_narrowing_refusal(
+            &entity.names.java_type,
+            &entity.enum_constants,
+            &removed,
+        )));
+    }
+    if requested.len() <= entity.enum_constants.len() {
+        return Ok(None);
+    }
+    let (head, tail) = requested.split_at(entity.enum_constants.len());
+    if head != entity.enum_constants {
+        return Ok(None);
+    }
+    if !super::is_v1_source(source) {
+        return Err(Failure::Told(format!(
+            "widening enum `{}` edits a declaration only `jdl 1` can express.\n       fix: run `jails model upgrade --to 1` first",
+            entity.names.java_type
+        )));
+    }
+    let mut next = source.to_string();
+    for constant in tail {
+        let member = match &constant.wire_name {
+            Some(wire) => format!("  {} = {wire}", constant.java_name),
+            None => format!("  {}", constant.java_name),
+        };
+        next = jails_model::insert_jdl_enum_constant(&next, &entity.names.java_type, &member)
+            .map_err(super::jdl_edit_failure)?;
+    }
+    Ok(Some((
+        next,
+        vec![ModelPatch::AddEnumConstants {
+            entity: entity.id.clone(),
+            constants: tail.to_vec(),
+        }],
+    )))
+}
+
 /// The `use` marker that declares one facet, where a marker declares it.
 fn marker_of(facet: Facet) -> Option<&'static str> {
     match facet {
