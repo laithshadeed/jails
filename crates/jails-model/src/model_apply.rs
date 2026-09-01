@@ -197,29 +197,9 @@ impl AppModel {
             }
             ModelPatch::RemoveEntity(id) => {
                 refuse_ejected_target(self, id.as_str())?;
-                let references = self
-                    .operations
-                    .values()
-                    .filter(|operation| crate::operation::references_entity(&operation.kind, &id))
-                    .map(|operation| operation.label.as_str())
-                    .chain(
-                        self.components
-                            .values()
-                            .filter(|component| crate::component::references_entity(component, &id))
-                            .map(|component| component.label.as_str()),
-                    )
-                    .chain(
-                        self.relations
-                            .values()
-                            .filter(|relation| relation.child == id || relation.parent == id)
-                            .map(|relation| relation.label.as_str()),
-                    )
-                    .collect::<Vec<_>>();
+                let references = dependents(self, &id);
                 if !references.is_empty() {
-                    return Err(format!(
-                        "entity id `{id}` is still referenced by operations: {}\n       fix: remove those operations before removing the entity",
-                        references.join(", ")
-                    ));
+                    return Err(refuse_dependents(id.as_str(), &references, "removing"));
                 }
                 if self.entities.remove(&id).is_none() {
                     return Err(format!("entity id `{id}` does not exist"));
@@ -227,35 +207,9 @@ impl AppModel {
             }
             ModelPatch::RetireEntity { entity, policy } => {
                 refuse_ejected_target(self, entity.as_str())?;
-                let references = self
-                    .operations
-                    .values()
-                    .filter(|operation| {
-                        crate::operation::references_entity(&operation.kind, &entity)
-                    })
-                    .map(|operation| operation.label.as_str())
-                    .chain(
-                        self.components
-                            .values()
-                            .filter(|component| {
-                                crate::component::references_entity(component, &entity)
-                            })
-                            .map(|component| component.label.as_str()),
-                    )
-                    .chain(
-                        self.relations
-                            .values()
-                            .filter(|relation| {
-                                relation.child == entity || relation.parent == entity
-                            })
-                            .map(|relation| relation.label.as_str()),
-                    )
-                    .collect::<Vec<_>>();
+                let references = dependents(self, &entity);
                 if !references.is_empty() {
-                    return Err(format!(
-                        "entity id `{entity}` is still referenced by operations: {}\n       fix: remove those operations before retiring the entity",
-                        references.join(", ")
-                    ));
+                    return Err(refuse_dependents(entity.as_str(), &references, "retiring"));
                 }
                 let target = self
                     .entities
@@ -506,6 +460,65 @@ fn is_ejectable_target(model: &AppModel, target: &str) -> bool {
         || model.components.keys().any(|id| id.as_str() == target)
         || model.entities.keys().any(|id| id.as_str() == target)
         || model.operations.keys().any(|id| id.as_str() == target)
+}
+
+/// Everything that would be left pointing at an entity if it went away.
+///
+/// **Each one is named by what it is**, because the fix differs: an operation
+/// is removed, a component is removed, and an association is retired forward
+/// with its own command. The message this feeds used to call all three
+/// "operations" and print the model label -- so a reader who typed
+/// `jails g association ChildParent` was told to remove an operation called
+/// `child_parent`, which is neither the thing nor the word they typed.
+fn dependents(model: &AppModel, entity: &crate::EntityId) -> Vec<String> {
+    model
+        .operations
+        .values()
+        .filter(|operation| crate::operation::references_entity(&operation.kind, entity))
+        .map(|operation| {
+            format!(
+                "operation {}",
+                crate::naming::upper_camel_case(&operation.label)
+            )
+        })
+        .chain(
+            model
+                .components
+                .values()
+                .filter(|component| crate::component::references_entity(component, entity))
+                .map(|component| {
+                    format!(
+                        "component {}",
+                        crate::naming::upper_camel_case(&component.label)
+                    )
+                }),
+        )
+        .chain(
+            model
+                .relations
+                .values()
+                .filter(|relation| relation.child == *entity || relation.parent == *entity)
+                .map(|relation| {
+                    format!(
+                        "association {}",
+                        crate::naming::upper_camel_case(&relation.label)
+                    )
+                }),
+        )
+        .collect()
+}
+
+/// The refusal, in the words of what the removal would break.
+fn refuse_dependents(subject: &str, references: &[String], verb: &str) -> String {
+    format!(
+        "{verb} `{subject}` would leave {} pointing at nothing\n       fix: remove or retire {} first",
+        references.join(", "),
+        if references.len() == 1 {
+            "it"
+        } else {
+            "each of them"
+        }
+    )
 }
 
 pub(crate) fn refuse_ejected_target(model: &AppModel, target: &str) -> Result<(), String> {

@@ -432,9 +432,15 @@ fn report_undeclared(
             "  undeclared {} -- the manifest no longer declares it",
             entity.names.java_type
         );
-        // The plan for removing it, so "what would that cost" is answered
-        // here rather than after another command.
-        let _ = crate::model_destroy::run(
+        // **The plan for removing it, and its refusal is the command's.** A
+        // manifest that stops declaring a row is asking for it to go, and a
+        // row with a table behind it cannot go without somebody saying what
+        // happens to the data. Swallowing that refusal left `app apply`
+        // exiting 0 over a retirement it had not performed and could not
+        // perform -- the reader's next `app apply` would report the same line
+        // again, forever. A row with no table plans cleanly and is only
+        // reported.
+        crate::model_destroy::run(
             crate::model_destroy::Request {
                 kind: crate::generate::ArtifactKind::Record,
                 name: entity.names.java_type.clone(),
@@ -444,7 +450,7 @@ fn report_undeclared(
                 migration_effect: false,
             },
             invocation.clone().pretending(),
-        );
+        )?;
     }
     Ok(())
 }

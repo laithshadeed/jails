@@ -5714,8 +5714,8 @@ fn canonical_destroy_refuses_while_operations_reference_the_entity() {
         .unwrap();
     assert!(!refused.status.success());
     let stderr = String::from_utf8(refused.stderr).unwrap();
-    assert!(stderr.contains("open_notes"), "{stderr}");
-    assert!(stderr.contains("remove those operations"), "{stderr}");
+    assert!(stderr.contains("operation OpenNotes"), "{stderr}");
+    assert!(stderr.contains("pointing at nothing"), "{stderr}");
     assert_eq!(snapshot_tree(&root), before, "refusal mutated the project");
 
     let removed_query = jails_cmd(&root, None)
@@ -8608,7 +8608,7 @@ fn canonical_database_query_keeps_the_iterative_loop_and_ejects_only_its_adapter
     for contract in [
         "implements OpenNotesQuery",
         "select id, title, status from notes",
-        "new ArrayList<>(List.of(\"title = :title\"))",
+        "new ArrayList<String>(List.of(\"title = :title\"))",
         "if (input.status().isPresent())",
         "predicates.add(\"status = :status\")",
         "order by title",

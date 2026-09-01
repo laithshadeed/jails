@@ -20,7 +20,7 @@ pub(super) fn link(
         linker.register_id(&unit.id, &format!("{path}.id"));
         let id = linker.stable_id::<UnitId>(&unit.id, &format!("{path}.id"));
         let stem = unit.java_name.unwrap_or_else(|| upper_camel_case(&label));
-        linker.java_type(&stem, &format!("{path}.java_name"));
+        linker.java_type_and_variable(&stem, &format!("{path}.java_name"));
         let java_type = match unit.kind {
             UnitKind::Service if !stem.ends_with("Service") => format!("{stem}Service"),
             UnitKind::Test if !stem.ends_with("Test") => format!("{stem}Test"),

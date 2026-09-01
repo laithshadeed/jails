@@ -497,11 +497,64 @@ pub(super) fn operation_declaration(
             )));
         }
     }
+    // **A query's path variable has to name one of its filters.** The
+    // controller binds `@ModelAttribute`, and Spring's data binder fills the
+    // criteria from the request parameters *and* the URI template variables
+    // together -- so `/tickets/{userId}` binds `userId` and a mix with
+    // `?subject=x` is ordinary. A variable naming nothing binds nothing: the
+    // route is mounted, the value is dropped, and the query answers with the
+    // filter unset. That is the failure this refuses.
+    if let Some(path) = &path
+        && args.kind == ArtifactKind::Query
+    {
+        // The specs reaching here carry model labels (`user_id:long`), and
+        // the URL carries the Java member the criteria record declares -- so
+        // the comparison and the suggestion are both in the reader's spelling.
+        let filters: Vec<String> = fields
+            .iter()
+            .map(|field| {
+                jails_model::lower_camel_case(
+                    field
+                        .split_once(':')
+                        .map_or(field.as_str(), |(name, _)| name),
+                )
+            })
+            .collect();
+        for variable in path
+            .split('{')
+            .skip(1)
+            .filter_map(|rest| rest.split_once('}'))
+            .map(|(name, _)| name)
+        {
+            if !filters.iter().any(|filter| filter == variable) {
+                return Err(Failure::Told(format!(
+                    "this query's route names `{{{variable}}}`, which is not one of its filters.\n       fix: name one of {}, or drop it from `--path`",
+                    filters
+                        .iter()
+                        .map(|filter| format!("`{{{filter}}}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )));
+            }
+        }
+    }
     if let Some(path) = &path {
         let method = match args.kind {
             ArtifactKind::Usecase => "POST".to_string(),
-            ArtifactKind::Query if fields.is_empty() => "GET".to_string(),
-            ArtifactKind::Query => "POST".to_string(),
+            // **A query answers GET, whatever its filters.** The controller
+            // binds its criteria with `@ModelAttribute`, which reads request
+            // parameters and URI template variables -- never a JSON body -- so
+            // a POST here produced a route that could only be driven by a form
+            // post nobody writes, and a generated proof that had to post one.
+            // `--consumes json` is the one way to ask for a body, and it is
+            // the only shape that needs a verb with one.
+            ArtifactKind::Query
+                if args.consumes == Some(jails_spec::spec::kind::WireFormat::Json)
+                    && !fields.is_empty() =>
+            {
+                "POST".to_string()
+            }
+            ArtifactKind::Query => "GET".to_string(),
             ArtifactKind::Transition => args.method.map_or_else(
                 || "PUT".to_string(),
                 |method| method.label().to_ascii_uppercase(),

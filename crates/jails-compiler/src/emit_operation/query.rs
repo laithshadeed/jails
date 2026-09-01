@@ -154,10 +154,10 @@ pub(super) fn lower(
         }))
         .collect::<Vec<_>>();
     let predicate_seed = if predicates.is_empty() {
-        "new ArrayList<>()".to_string()
+        "new ArrayList<String>()".to_string()
     } else {
         format!(
-            "new ArrayList<>(List.of({}))",
+            "new ArrayList<String>(List.of({}))",
             predicates
                 .iter()
                 .map(|predicate| java_string(predicate))

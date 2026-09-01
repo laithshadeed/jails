@@ -508,8 +508,13 @@ fn derived_route(kind: RoutedKind, label: &str) -> linked::OperationRoute {
             path: format!("/actions/{name}"),
             consumes: None,
         },
+        // **GET, where the legacy engine derived POST.** That engine sent a
+        // query's filters as a JSON body, so it needed a verb with one; the
+        // canonical controller binds `@ModelAttribute`, which reads the query
+        // string and the URI template variables and never a body. A POST here
+        // would be a route only a form post could drive.
         RoutedKind::Query => linked::OperationRoute {
-            method: crate::EndpointMethod::Post,
+            method: crate::EndpointMethod::Get,
             path: format!("/queries/{name}"),
             consumes: None,
         },

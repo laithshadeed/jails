@@ -85,17 +85,40 @@ fn lower(
             }
             OperationKind::Query(query) => {
                 let entity = entity(model, &query.on)?;
+                // **`@ModelAttribute` unless the route declares a JSON body.**
+                // It binds request parameters *and* URI template variables, so
+                // one annotation answers `?status=open` and `/tickets/{userId}`
+                // alike -- which is why a query is a GET by default and why a
+                // path variable needs no second binding. A declared
+                // `consumes json` is the reader saying the filters ride in a
+                // body instead, and that is the only shape with one.
+                let json_body = route.consumes == Some(jails_model::RequestFormat::Json);
+                let (parameter, binder) = if json_body {
+                    (
+                        "@RequestBody PORT.Input input",
+                        "org.springframework.web.bind.annotation.RequestBody",
+                    )
+                } else {
+                    (
+                        "@ModelAttribute PORT.Input input",
+                        "org.springframework.web.bind.annotation.ModelAttribute",
+                    )
+                };
                 (
                     entity,
-                    Binding::Model,
+                    if json_body {
+                        Binding::Body
+                    } else {
+                        Binding::Model
+                    },
                     Package::ApplicationQueries,
                     with_suffix(&operation.names.java_type, "Query"),
                     format!("List<{}>", entity.names.java_type),
-                    "@ModelAttribute PORT.Input input".to_string(),
+                    parameter.to_string(),
                     BTreeSet::from([
                         domain_import(model, entity),
                         "java.util.List".to_string(),
-                        "org.springframework.web.bind.annotation.ModelAttribute".to_string(),
+                        binder.to_string(),
                     ]),
                 )
             }

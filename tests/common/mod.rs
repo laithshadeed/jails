@@ -1373,6 +1373,16 @@ const MOVED_PACKAGES: &[(&str, &[&str])] = &[
         &["com/example/demo/adapters/http/"],
     ),
     (
+        // An event is a domain fact, so the compiler puts it with the domain
+        // rather than with the transport that happens to carry it.
+        "src/main/java/com/example/demo/messaging/",
+        &["com/example/demo/domain/events/"],
+    ),
+    (
+        "src/main/java/com/example/demo/jobs/",
+        &["com/example/demo/jobs/"],
+    ),
+    (
         "src/test/java/com/example/demo/adapters/",
         &[
             "com/example/demo/adapters/jdbc/",
@@ -1501,6 +1511,10 @@ fn renamed_kinds(relative: &str) -> Vec<String> {
     // file, in a different package, which an assertion about the
     // implementation would then match instead.
     const PREFIXED: &[(&str, &str)] = &[("Jdbc", ""), ("Storing", "Jdbc")];
+    // **A durable job's unit of work is its queue.** The engine called the
+    // record `...Work`; the compiler names it after what holds it, which is
+    // the class a reader looks for when a job is not draining.
+    const SUFFIXED: &[(&str, &str)] = &[("Work", "Queue")];
     let Some(stem) = relative.strip_suffix(".java") else {
         return vec![relative.to_string()];
     };
@@ -1514,18 +1528,34 @@ fn renamed_kinds(relative: &str) -> Vec<String> {
             stems.push(format!("{to}{rest}"));
         }
     }
+    for (from, to) in SUFFIXED {
+        if let Some(head) = base.strip_suffix(*from) {
+            stems.push(format!("{head}{to}"));
+        }
+    }
     let mut names = Vec::new();
     for stem in stems {
         names.push(format!("{directory}{stem}.java"));
-        for (from, candidates) in RENAMED {
-            let Some(head) = stem.strip_suffix(from) else {
+        // **A companion test is renamed by whatever renamed its subject.**
+        // `OpenTicketsQueryController` became `OpenTicketsController`, so its
+        // test did too -- and a table listing both spellings of every row
+        // would go stale on the first kind that gains one. The trailing `Test`
+        // is lifted off, the rename applied to the type it names, and the
+        // suffix put back.
+        for (subject, tail) in [(stem.as_str(), ""), (stem.trim_end_matches("Test"), "Test")] {
+            if tail == "Test" && subject == stem {
                 continue;
-            };
-            names.extend(
-                candidates
-                    .iter()
-                    .map(|to| format!("{directory}{head}{to}.java")),
-            );
+            }
+            for (from, candidates) in RENAMED {
+                let Some(head) = subject.strip_suffix(from) else {
+                    continue;
+                };
+                names.extend(
+                    candidates
+                        .iter()
+                        .map(|to| format!("{directory}{head}{to}{tail}.java")),
+                );
+            }
         }
     }
     names

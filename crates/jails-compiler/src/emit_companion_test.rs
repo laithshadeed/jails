@@ -351,10 +351,18 @@ fn json_sample_with(model: &AppModel, ty: &TypeRef, seen: &mut BTreeSet<String>)
                 // By name, for the reason `declared_sample` gives: the first
                 // constant stands for a different value the moment somebody
                 // reorders the enum, with nothing in the diff to say so.
-                entity
-                    .enum_constants
-                    .first()
-                    .map(|constant| format!("\"{}\"", constant.java_name))
+                //
+                // **And by its wire name where it has one.** `g enum Stage
+                // OPEN=open` renders `@JsonValue` and a `StageConverter`, and
+                // both of them reject `OPEN` -- so a sample taken from the
+                // Java constant is a request the generated code refuses, on
+                // the one wire the proof exists to drive.
+                entity.enum_constants.first().map(|constant| {
+                    format!(
+                        "\"{}\"",
+                        constant.wire_name.as_deref().unwrap_or(&constant.java_name)
+                    )
+                })
             } else if entity.facets.contains(&jails_model::Facet::Record) {
                 entity
                     .fields

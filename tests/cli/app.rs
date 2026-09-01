@@ -69,7 +69,9 @@ fn app_manifest_plan_is_domain_blind_and_writes_nothing() {
     // apply declares a moment earlier. Once the model exists, `app plan`
     // names the files -- that is the case below.
     assert!(stdout.contains("would be created"), "{stdout}");
-    assert!(stdout.contains("declare record CrawlRun"), "{stdout}");
+    // The kind the manifest names, not the one the engine collapsed it to:
+    // `CrawlRun` is a `[[generate]]` row of kind `scaffold`.
+    assert!(stdout.contains("declare scaffold CrawlRun"), "{stdout}");
     assert!(stdout.contains("nothing was written"), "{stdout}");
     assert!(!root.join("jails.toml").exists());
     assert!(!root.join(".jails/app-state-v1").exists());
@@ -619,30 +621,98 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
         );
     }
 
-    let main = common::generated(&root, "src/main/java/com/example/demo");
-    assert!(main.join("domain/CrawlStatus.java").is_file());
-    assert!(main.join("domain/CrawlRun.java").is_file());
-    assert!(main.join("domain/CrawledPage.java").is_file());
-    assert!(main.join("service/QueueCrawlUseCase.java").is_file());
-    assert!(main.join("service/StoringQueueCrawlUseCase.java").is_file());
-    assert!(main.join("web/QueueCrawlController.java").is_file());
-    assert!(main.join("service/RecordCrawledPageUseCase.java").is_file());
-    assert!(main.join("service/CrawlRunsByStatusQuery.java").is_file());
     assert!(
-        main.join("adapters/JdbcCrawlRunsByStatusQuery.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/domain/CrawlStatus.java"
+        )
+        .is_file()
     );
     assert!(
-        main.join("web/CrawlRunsByStatusQueryController.java")
-            .is_file()
+        common::generated(&root, "src/main/java/com/example/demo/domain/CrawlRun.java").is_file()
     );
-    assert!(main.join("service/PagesByCrawlRunQuery.java").is_file());
     assert!(
-        main.join("adapters/JdbcPagesByCrawlRunQuery.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/domain/CrawledPage.java"
+        )
+        .is_file()
     );
-    assert!(main.join("clients/PageFetcher.java").is_file());
-    let safe_fetcher = fs::read_to_string(main.join("clients/SafePageFetcher.java")).unwrap();
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/service/QueueCrawlUseCase.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/service/StoringQueueCrawlUseCase.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/web/QueueCrawlController.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/service/RecordCrawledPageUseCase.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/service/CrawlRunsByStatusQuery.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/adapters/JdbcCrawlRunsByStatusQuery.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/web/CrawlRunsByStatusQueryController.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/service/PagesByCrawlRunQuery.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/adapters/JdbcPagesByCrawlRunQuery.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/clients/PageFetcher.java"
+        )
+        .is_file()
+    );
+    let safe_fetcher = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/clients/SafePageFetcher.java",
+    ))
+    .unwrap();
     assert!(
         safe_fetcher.contains("new PinnedResolver"),
         "{safe_fetcher}"
@@ -655,10 +725,19 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
         safe_fetcher.contains("acceptedStatuses.contains(response.statusCode())"),
         "{safe_fetcher}"
     );
-    assert!(main.join("jobs/SiteTraversalWorkflow.java").is_file());
     assert!(
-        main.join("web/SiteTraversalWorkflowController.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/jobs/SiteTraversalWorkflow.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/web/SiteTraversalWorkflowController.java"
+        )
+        .is_file()
     );
     assert!(
         common::generated(
@@ -667,18 +746,54 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
         )
         .is_file()
     );
-    assert!(main.join("messaging/PageDiscoveredEvent.java").is_file());
-    assert!(main.join("jobs/CrawlDispatcherWork.java").is_file());
-    assert!(main.join("jobs/SchedulingConfig.java").is_file());
-    assert!(main.join("jobs/JdbcCrawlDispatcherStore.java").is_file());
-    assert!(main.join("jobs/CrawlDispatcherWorker.java").is_file());
-    assert!(main.join("web/CrawlDispatcherJobController.java").is_file());
-    assert!(root.join(".jails/ledger.toml").is_file());
-    // One *registry*, not four. `.jails/` holds the reader's manifest, jails'
-    // one registry, and the executor's own state -- an object store, a
-    // transaction log, receipts and a lock. Closed rather than counted, so a
-    // second registry growing back still fails and so does an executor path
-    // nobody wrote down.
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/messaging/PageDiscoveredEvent.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/jobs/CrawlDispatcherWork.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/jobs/SchedulingConfig.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/jobs/JdbcCrawlDispatcherStore.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/jobs/CrawlDispatcherWorker.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/web/CrawlDispatcherJobController.java"
+        )
+        .is_file()
+    );
+    // **Five things, not seven.** `.jails/` holds the reader's manifest, the
+    // one editable model, the lock sealing the projection it was compiled
+    // from, the generated tree, and the executor's own lock -- and nothing
+    // else. Closed rather than counted, so a legacy ledger, an object store, a
+    // transaction log or a receipts directory growing back here fails, which
+    // is the cutover running backwards.
     let bookkeeping = fs::read_dir(root.join(".jails"))
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
@@ -687,12 +802,10 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
         bookkeeping,
         [
             "app.toml",
-            "architecture.toml",
-            "ledger.toml",
-            "lock",
-            "objects",
-            "receipts",
-            "transactions",
+            "apply.lock",
+            "compiler.lock.json",
+            "generated",
+            "model.jdl",
         ]
         .map(str::to_string)
         .into(),
@@ -701,11 +814,16 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
     assert!(root.join("Dockerfile").is_file());
     assert!(root.join(".github/workflows/ci.yml").is_file());
     assert!(root.join(".github/workflows/image.yml").is_file());
+    // Two tables and their indexes, plus one table each for the workflow and
+    // the durable job. Counted rather than named because the point is that
+    // nothing appends twice on a replay -- what each one is, is in the file.
     assert_eq!(
         fs::read_dir(root.join("src/main/resources/db/migration"))
             .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "sql"))
             .count(),
-        5
+        6
     );
 }
 
@@ -732,7 +850,6 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let main = common::generated(&root, "src/main/java/com/example/demo");
     for name in [
         "Workspace",
         "Member",
@@ -743,9 +860,20 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         "Message",
         "ConversationAssignment",
     ] {
-        assert!(main.join(format!("domain/{name}.java")).is_file(), "{name}");
         assert!(
-            main.join(format!("web/{name}Controller.java")).is_file(),
+            common::generated(
+                &root,
+                &format!("src/main/java/com/example/demo/domain/{name}.java")
+            )
+            .is_file(),
+            "{name}"
+        );
+        assert!(
+            common::generated(
+                &root,
+                &format!("src/main/java/com/example/demo/web/{name}Controller.java")
+            )
+            .is_file(),
             "{name} controller"
         );
     }
@@ -756,7 +884,14 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         "InboxChannel",
         "AssignmentStatus",
     ] {
-        assert!(main.join(format!("domain/{name}.java")).is_file(), "{name}");
+        assert!(
+            common::generated(
+                &root,
+                &format!("src/main/java/com/example/demo/domain/{name}.java")
+            )
+            .is_file(),
+            "{name}"
+        );
     }
     for name in [
         "CreateWorkspace",
@@ -769,11 +904,19 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         "ReceiveMessage",
     ] {
         assert!(
-            main.join(format!("service/{name}UseCase.java")).is_file(),
+            common::generated(
+                &root,
+                &format!("src/main/java/com/example/demo/service/{name}UseCase.java")
+            )
+            .is_file(),
             "{name} usecase"
         );
         assert!(
-            main.join(format!("web/{name}Controller.java")).is_file(),
+            common::generated(
+                &root,
+                &format!("src/main/java/com/example/demo/web/{name}Controller.java")
+            )
+            .is_file(),
             "{name} controller"
         );
     }
@@ -787,36 +930,76 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         "AssignmentByConversation",
     ] {
         assert!(
-            main.join(format!("service/{name}Query.java")).is_file(),
+            common::generated(
+                &root,
+                &format!("src/main/java/com/example/demo/service/{name}Query.java")
+            )
+            .is_file(),
             "{name} query"
         );
         assert!(
-            main.join(format!("adapters/Jdbc{name}Query.java"))
-                .is_file(),
+            common::generated(
+                &root,
+                &format!("src/main/java/com/example/demo/adapters/Jdbc{name}Query.java")
+            )
+            .is_file(),
             "{name} JDBC adapter"
         );
         assert!(
-            main.join(format!("web/{name}QueryController.java"))
-                .is_file(),
+            common::generated(
+                &root,
+                &format!("src/main/java/com/example/demo/web/{name}QueryController.java")
+            )
+            .is_file(),
             "{name} controller"
         );
     }
-    assert!(main.join("messaging/MessageReceivedEvent.java").is_file());
     assert!(
-        main.join("service/OutboxReceiveMessageUseCase.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/messaging/MessageReceivedEvent.java"
+        )
+        .is_file()
     );
-    let outbox = fs::read_to_string(main.join("jobs/JdbcReceiveMessageOutbox.java")).unwrap();
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/service/OutboxReceiveMessageUseCase.java"
+        )
+        .is_file()
+    );
+    let outbox = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/jobs/JdbcReceiveMessageOutbox.java",
+    ))
+    .unwrap();
     assert!(outbox.contains("for update skip locked"), "{outbox}");
-    assert!(main.join("jobs/ReceiveMessageOutboxWorker.java").is_file());
-    assert!(main.join("jobs/SchedulingConfig.java").is_file());
     assert!(
-        main.join("service/ChangeConversationStatusUseCase.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/jobs/ReceiveMessageOutboxWorker.java"
+        )
+        .is_file()
     );
-    let transition =
-        fs::read_to_string(main.join("adapters/JdbcChangeConversationStatusTransition.java"))
-            .unwrap();
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/jobs/SchedulingConfig.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/service/ChangeConversationStatusUseCase.java"
+        )
+        .is_file()
+    );
+    let transition = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/JdbcChangeConversationStatusTransition.java",
+    ))
+    .unwrap();
     assert!(transition.contains("version = version + 1"), "{transition}");
     assert!(
         transition.contains("public class JdbcChangeConversationStatusTransition"),
@@ -827,11 +1010,17 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         "{transition}"
     );
     assert!(
-        main.join("web/ChangeConversationStatusController.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/web/ChangeConversationStatusController.java"
+        )
+        .is_file()
     );
-    let assignment_transition =
-        fs::read_to_string(main.join("adapters/JdbcReassignConversationTransition.java")).unwrap();
+    let assignment_transition = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/JdbcReassignConversationTransition.java",
+    ))
+    .unwrap();
     assert!(
         assignment_transition.contains("member_id = :member_id"),
         "{assignment_transition}"
@@ -840,12 +1029,25 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         assignment_transition.contains("workspace_id = :workspace_id"),
         "{assignment_transition}"
     );
-    assert!(main.join("jobs/ReceiveMessageOutboxSink.java").is_file());
     assert!(
-        main.join("jobs/ReceiveMessageKafkaOutboxSink.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/jobs/ReceiveMessageOutboxSink.java"
+        )
+        .is_file()
     );
-    let provider = fs::read_to_string(main.join("jobs/ProviderHttpOutboxSink.java")).unwrap();
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/jobs/ReceiveMessageKafkaOutboxSink.java"
+        )
+        .is_file()
+    );
+    let provider = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/jobs/ProviderHttpOutboxSink.java",
+    ))
+    .unwrap();
     assert!(provider.contains("Idempotency-Key"), "{provider}");
     assert!(provider.contains("HttpClient.Redirect.NEVER"), "{provider}");
     assert!(
@@ -876,10 +1078,17 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
             "{name} association test"
         );
     }
-    let contacts =
-        fs::read_to_string(main.join("web/ContactsByWorkspaceQueryController.java")).unwrap();
+    let contacts = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/ContactsByWorkspaceQueryController.java",
+    ))
+    .unwrap();
     assert!(contacts.contains("scopeAuthorizer.require"), "{contacts}");
-    let contact_controller = fs::read_to_string(main.join("web/ContactController.java")).unwrap();
+    let contact_controller = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/ContactController.java",
+    ))
+    .unwrap();
     assert!(contact_controller.contains("Scope-safe creation endpoint"));
     assert!(
         !contact_controller.contains("@GetMapping"),

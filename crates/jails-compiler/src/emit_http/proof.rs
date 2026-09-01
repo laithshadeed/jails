@@ -150,14 +150,14 @@ pub(super) fn controller_test(
         ]);
         imports.extend(request.imports.iter().cloned());
         format!(
-            "class {type_name}Test {{\n\n    private final MockMvc mvc = MockMvcBuilders.standaloneSetup(\n            new {type_name}({stub})).build();\n\n{disabled}    @Test\n    void answersOnItsDeclaredRoute() throws Exception {{\n        mvc.perform({verb}(\"{}\"{})\n{})\n                .andExpect(status().isOk());\n    }}\n\n    // Reader-owned tests belong below this stable boundary.\n}}",
+            "class {type_name}Test {{\n\n    private final MockMvc mvc = MockMvcBuilders.standaloneSetup(\n            new {type_name}({stub})).build();\n\n{disabled}    @Test\n    void answersOnItsDeclaredRoute() throws Exception {{\n        mvc.perform({verb}(\"{}\"{}){})\n                .andExpect(status().isOk());\n    }}\n\n    // Reader-owned tests belong below this stable boundary.\n}}",
             route.path, request.classic_uri_arguments, request.classic,
         )
     } else {
         imports.insert("org.springframework.test.web.servlet.assertj.MockMvcTester".to_string());
         imports.extend(request.imports.iter().cloned());
         format!(
-            "class {type_name}Test {{\n\n    private final MockMvcTester mvc = MockMvcTester.of(\n            new {type_name}({stub}));\n\n{disabled}    @Test\n    void answersOnItsDeclaredRoute() {{\n        assertThat(mvc.{verb}()\n                .uri(\"{}\"{})\n{})\n                .hasStatusOk();\n    }}\n\n    // Reader-owned tests belong below this stable boundary.\n}}",
+            "class {type_name}Test {{\n\n    private final MockMvcTester mvc = MockMvcTester.of(\n            new {type_name}({stub}));\n\n{disabled}    @Test\n    void answersOnItsDeclaredRoute() {{\n        assertThat(mvc.{verb}()\n                .uri(\"{}\"{}){})\n                .hasStatusOk();\n    }}\n\n    // Reader-owned tests belong below this stable boundary.\n}}",
             route.path, request.uri_arguments, request.fluent,
         )
     };
@@ -229,6 +229,17 @@ struct Request {
     missing: Option<String>,
 }
 
+/// The request's own lines, carrying the newline that separates them from the
+/// URI -- so a request with nothing to add leaves no blank line behind rather
+/// than one the formatter then has to be told about.
+fn prefixed(lines: &[String]) -> String {
+    if lines.is_empty() {
+        String::new()
+    } else {
+        format!("\n{}", lines.join("\n"))
+    }
+}
+
 fn request_shape(
     model: &AppModel,
     binding: Binding,
@@ -247,14 +258,17 @@ fn request_shape(
             let mut fluent = Vec::new();
             let mut classic = Vec::new();
             for component in components {
-                // An absent optional filter is *omitted*, not sent as `null`:
-                // absent is what "no filter" means on a query string, and
-                // `status=null` is the four-character string.
-                if !component.required {
-                    continue;
-                }
+                // **An optional filter is sent with a value, not omitted and
+                // not `null`.** Omitting it leaves the adapter's
+                // `if (input.status().isPresent())` arm -- the half of the
+                // query that builds a predicate -- unproven, and `status=null`
+                // sends the four-character string, which the binder reads as a
+                // filter for the literal text `null`. Sampling it as present
+                // is the only one of the three that drives the code.
                 let Some(value) = json_sample(model, component.ty) else {
-                    missing.get_or_insert(format!("a sample for `{}`", component.name));
+                    if component.required {
+                        missing.get_or_insert(format!("a sample for `{}`", component.name));
+                    }
                     continue;
                 };
                 let value = value.trim_matches('"').to_string();
@@ -266,8 +280,8 @@ fn request_shape(
                 classic.push(line);
             }
             Ok(Request {
-                fluent: fluent.join("\n"),
-                classic: classic.join("\n"),
+                fluent: prefixed(&fluent),
+                classic: prefixed(&classic),
                 uri_arguments: String::new(),
                 classic_uri_arguments: String::new(),
                 imports,
@@ -308,11 +322,9 @@ fn request_shape(
                 _ => (String::new(), String::new()),
             };
             let fluent = format!(
-                "                .contentType(MediaType.APPLICATION_JSON)\n                .content(\"\"\"\n{{\n{json}\n}}\n\"\"\")"
+                "\n                .contentType(MediaType.APPLICATION_JSON)\n                .content(\"\"\"\n{{\n{json}\n}}\n\"\"\")"
             );
-            let classic = format!(
-                "                .contentType(MediaType.APPLICATION_JSON)\n                .content(\"\"\"\n{{\n{json}\n}}\n\"\"\")"
-            );
+            let classic = fluent.clone();
             Ok(Request {
                 fluent,
                 classic,

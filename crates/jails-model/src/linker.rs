@@ -259,7 +259,7 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
         let sql_table = entity
             .table
             .unwrap_or_else(|| crate::naming::plural_snake_case(&label));
-        linker.java_type(&java_type, &format!("{path}.java_name"));
+        linker.java_type_and_variable(&java_type, &format!("{path}.java_name"));
         linker.sql_identifier(&sql_table, &format!("{path}.table"));
         collision(
             &mut linker,
@@ -665,22 +665,6 @@ impl Linker {
             );
             return;
         }
-        // **The variable name is derived, so it is jails' to get right.**
-        // Every generator writes `{Type} {variable} = ...`, and the
-        // lower-camel form of a type like `Class` is a Java keyword -- so the
-        // type validates, the table validates, and the code does not compile.
-        // Checked before the shadowing rule below because it is the more
-        // concrete failure for a name that trips both.
-        let variable = lower_camel_case(value);
-        if !valid_java_member(&variable) {
-            self.problem(
-                "model-java-variable",
-                path,
-                format!("`{value}` derives the Java variable `{variable}`, which is a keyword"),
-                "choose a name whose lower-camel-case form is a Java identifier",
-            );
-            return;
-        }
         // **A package member outranks `java.lang`'s implicit import.**
         // `record String(String value)` types its own component as *itself*
         // and compiles, as does its generated test -- `bugs.md` B50, and the
@@ -692,6 +676,39 @@ impl Linker {
                 path,
                 format!("`{value}` is a type in `java.lang`, which every Java file imports"),
                 "choose another name -- a class here would outrank the one every file already has",
+            );
+        }
+    }
+
+    /// The same rules, plus the one that only applies where a **variable** of
+    /// this type is written.
+    ///
+    /// **The variable name is derived, so it is jails' to get right.** An
+    /// entity and a unit are both emitted as `{Type} {variable} = ...` -- in
+    /// the record's own test, in a repository round-trip, in an enum's
+    /// constant test -- and the lower-camel form of a type like `Class` is a
+    /// Java keyword, so the type validates, the table validates, and the code
+    /// does not compile.
+    ///
+    /// **A component is deliberately not checked**, because nothing derives a
+    /// variable from its name: `g command Import` writes `ImportCommand`, and
+    /// refusing it would refuse a program that compiles. A name that trips
+    /// both this and the `java.lang` shadow rule -- `Void` is the one -- is
+    /// reported once, by the type rules, because this returns as soon as they
+    /// found anything.
+    pub(crate) fn java_type_and_variable(&mut self, value: &str, path: &str) {
+        let before = self.diagnostics.len();
+        self.java_type(value, path);
+        if self.diagnostics.len() != before {
+            return;
+        }
+        let variable = lower_camel_case(value);
+        if !valid_java_member(&variable) {
+            self.problem(
+                "model-java-variable",
+                path,
+                format!("`{value}` derives the Java variable `{variable}`, which is a keyword"),
+                "choose a name whose lower-camel-case form is a Java identifier",
             );
         }
     }
