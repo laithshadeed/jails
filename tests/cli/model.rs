@@ -3,9 +3,9 @@ use super::*;
 /// The compatibility input, kept for the one test whose subject is that two
 /// editable model sources refuse rather than one of them winning.
 ///
-/// **Every other fixture here is `jdl 1`.** `docs/10-language.md` A4.4 is
-/// removing the TOML front end, and a test that exercises a mutating command
-/// *through* it is testing the front end being deleted rather than the command.
+/// **Every other fixture here is `jdl 1`.** `docs/10-language.md` A4.4 took
+/// the TOML front end out of the mutating commands, and a test that exercised
+/// one *through* it was testing the front end rather than the command.
 const TOML_MODEL: &str = r#"
 schema = "jails.model.v1"
 
@@ -5962,7 +5962,7 @@ fn unsupported_capabilities_refuse_before_the_legacy_engine_can_write() {
     // and touches nothing else. This test used to reach the same refusal
     // through `add db` on `.jails/model.toml` -- the compatibility input could
     // not state a storage axis -- which is a front end rather than a
-    // capability, and `docs/10-language.md` A4.4 is removing it.
+    // capability, and `docs/10-language.md` A4.4 removed it.
     let root = gradle_model_project(
         "model-capability-refusal",
         EMPTY_MODEL,
@@ -6419,14 +6419,14 @@ fn maven_build_compiles_the_managed_source_root_end_to_end() {
         return;
     }
 
+    // **The fixture's own Spring pom, not a bare one.** This test overwrote it
+    // with a dependency-free Maven build while `scaffold` meant four
+    // framework-free facets; under `jdl 1` it means a DTO, a controller and a
+    // service, so a build with nothing on the classpath is a build the
+    // compiler refuses by name rather than a stricter check. Compiling the
+    // whole scaffold against the dependencies it declares is the stronger
+    // question anyway, and the one the managed source root has to answer.
     let root = model_project("model-maven-real-compile", EMPTY_MODEL);
-    fs::write(
-        root.join("pom.xml"),
-        format!(
-            "<project>\n    <modelVersion>4.0.0</modelVersion>\n    <groupId>com.example</groupId>\n    <artifactId>notes</artifactId>\n    <version>1</version>\n    <properties><maven.compiler.release>{TARGET_RELEASE}</maven.compiler.release></properties>\n    <build>\n        <plugins>\n            <plugin>\n                <groupId>org.apache.maven.plugins</groupId>\n                <artifactId>maven-compiler-plugin</artifactId>\n                <version>3.14.1</version>\n            </plugin>\n        </plugins>\n    </build>\n</project>\n"
-        ),
-    )
-    .unwrap();
     let applied = jails_cmd(&root, None)
         .args([
             "g",
@@ -6454,15 +6454,22 @@ fn maven_build_compiles_the_managed_source_root_end_to_end() {
     );
 
     let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
-    let with_operations = model.replace(
-        "\n}\n",
-        "\n  command CreateNote(title) @id(op_create_note) {\n    route POST \"/notes\"\n  }\n\n  \
-         query OpenNotes(title) @id(op_open_notes) {\n    limit 25\n    route GET \"/notes\"\n  }\n\n  \
-         transition RenameNote(title) @id(op_rename_note) {\n    select [id]\n    \
-         update [title]\n    route PATCH \"/notes/{id}\"\n  }\n\n  \
-         event NoteCreated(id, title) @id(op_note_created) {\n  }\n}\n",
+    // **The last closing brace, not the first.** `app` and `entity` both end
+    // in `\n}\n`, and a plain `replace` puts four operations inside the app
+    // block -- which refuses as `unknown app property `command``, about a
+    // declaration the test meant for the entity.
+    let close = model
+        .rfind("\n}\n")
+        .expect("the entity block ends the model");
+    let with_operations = format!(
+        "{}\n\n  command CreateNote(title) @id(op_create_note) {{\n    route POST \"/notes\"\n  }}\n\n  \
+         query OpenNotes(title) @id(op_open_notes) {{\n    limit 25\n    route GET \"/notes\"\n  }}\n\n  \
+         transition RenameNote(title) @id(op_rename_note) {{\n    select [id]\n    \
+         update [title]\n    route PATCH \"/notes/{{id}}\"\n  }}\n\n  \
+         event NoteCreated(id, title) @id(op_note_created) {{\n  }}{}",
+        &model[..close],
+        &model[close..],
     );
-    assert_ne!(with_operations, model, "the entity block moved");
     fs::write(root.join(".jails/model.jdl"), with_operations).unwrap();
     let operation_plan = root.join("operations.json");
     let planned = jails_cmd(&root, None)
@@ -14271,6 +14278,17 @@ fn a_toml_project_upgrades_onto_jdl_v1_and_the_toml_is_retired_with_it() {
     let root = temp_dir("toml-carry-across");
     common::write_plain_fixture(&root);
     fs::create_dir_all(root.join(".jails")).unwrap();
+    // **Written by hand, because the front end no longer accepts an edit.**
+    // The entity and the operation used to arrive through `jails g record`;
+    // that command refuses on a TOML model now and names this one, which is
+    // the property asserted below.
+    //
+    // **The operation states its inputs as a flat `fields` list.** The TOML
+    // front end lets that stand in for parameters and `emit_java::input` reads
+    // it, so it is the request's whole shape -- and JDL v1 has no flat
+    // spelling for it. The renderer refuses it by name and the upgrade
+    // materialises the parameters, which is the only reason a project with a
+    // command can be carried across at all.
     fs::write(
         root.join(".jails/model.toml"),
         r#"
@@ -14282,27 +14300,49 @@ name = "Demo"
 base_package = "com.example.demo"
 java_release = 26
 dialect = "none"
+
+[entities.note]
+id = "ent_note"
+facets = ["record"]
+
+[entities.note.fields.id]
+id = "fld_note_id"
+type = "uuid"
+primary_key = true
+
+[entities.note.fields.title]
+id = "fld_note_title"
+type = "string"
+
+[operations.create_note]
+kind = "command"
+id = "op_create_note"
+on = "note"
+fields = ["title"]
 "#,
     )
     .unwrap();
 
-    let generated = jails_cmd(&root, None)
-        .args(["g", "record", "Note", "id:uuid@pk", "title:string"])
+    // **It compiles, and it does not accept an edit.** Both halves matter:
+    // refusing to *read* would leave a project unable to see its own model
+    // before upgrading, and accepting an edit is what made the compatibility
+    // input a second editable model source with no convergence.
+    let synced = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    let before = generated_tree(&root);
+    let refused = jails_cmd(&root, None)
+        .args(["g", "record", "Tag", "id:uuid@pk"])
         .output()
         .unwrap();
-    assert!(generated.status.success(), "{generated:?}");
-
-    // **An operation whose inputs only the flat list states.** The TOML front
-    // end lets `fields` stand in for parameters and `emit_java::input` reads
-    // it, so it is the request's whole shape -- and JDL v1 has no flat
-    // spelling for it. The renderer refuses it by name and the upgrade
-    // materialises the parameters, which is the only reason a project with a
-    // command can be carried across at all.
-    let mut source = fs::read_to_string(root.join(".jails/model.toml")).unwrap();
-    source.push_str(
-        "\n[operations.create_note]\nkind = \"command\"\nid = \"op_create_note\"\non = \"note\"\nfields = [\"title\"]\n",
-    );
-    fs::write(root.join(".jails/model.toml"), source).unwrap();
+    assert!(!refused.status.success());
+    let told = String::from_utf8_lossy(&refused.stderr);
+    assert!(told.contains("temporary compatibility input"), "{told}");
+    assert!(told.contains("jails model upgrade --to 1"), "{told}");
+    assert_eq!(generated_tree(&root), before, "the refusal wrote a plan");
 
     let upgraded = jails_cmd(&root, None)
         .args(["model", "upgrade", "--to", "1"])

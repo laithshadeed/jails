@@ -266,7 +266,11 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // three times over now.
                 // 94 -> 88 when the legacy generator stack went: six of the
                 // remaining root-taking readers were in `add` and `spring`.
-                ceiling: 88,
+                // 88 -> 87 when the TOML front end stopped accepting edits:
+                // `model_command::owns_jdl_at` was the switch that chose which
+                // editor a mutation used, and with one editor left there is
+                // nothing for it to answer.
+                ceiling: 87,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;
@@ -1206,7 +1210,12 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // one string may be a Java type, a package, a SQL identifier
                 // or a route is a question with nothing to do with the shape
                 // of the document, and it was 370 lines of the file.
-                ceiling: 671,
+                //
+                // 671 -> 669, and this one is a deletion rather than a split:
+                // `docs/10-language.md` A4.4 took the second and third model
+                // front ends out of the mutating commands, and the largest
+                // module lost the branches that chose between them.
+                ceiling: 669,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
                       decomposing one, so this asks the question the split is actually for: \

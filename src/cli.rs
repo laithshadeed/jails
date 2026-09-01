@@ -479,18 +479,6 @@ impl Invocation {
             no_start: true,
         }
     }
-
-    /// Does the project this command acts on author in JDL?
-    ///
-    /// A method rather than a free function taking a root, for this struct's
-    /// own reason: the answer is a fact about the project the invocation
-    /// already names.
-    pub(crate) fn owns_jdl(&self) -> bool {
-        match &self.root {
-            Some(root) => crate::model_command::owns_jdl_at(root),
-            None => crate::model_command::owns_jdl(),
-        }
-    }
 }
 
 #[derive(Subcommand)]

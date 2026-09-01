@@ -8,17 +8,7 @@
 
 use super::*;
 
-const RECORD_FACETS: &[Facet] = &[Facet::Record];
-const ENUM_FACETS: &[Facet] = &[Facet::Enum];
-const SCAFFOLD_FACETS: &[Facet] = &[
-    Facet::Record,
-    Facet::Repository,
-    Facet::Service,
-    Facet::Http,
-];
-
 pub(crate) struct EntityProfile {
-    pub(crate) facets: &'static [Facet],
     pub(crate) timestamps: bool,
     /// Whether this profile puts a table behind the entity.
     ///
@@ -34,21 +24,18 @@ pub(crate) struct EntityProfile {
     pub(crate) route: bool,
 }
 
-pub(crate) fn entity_profile(kind: ArtifactKind) -> Option<&'static EntityProfile> {
+fn entity_profile(kind: ArtifactKind) -> Option<&'static EntityProfile> {
     static RECORD: EntityProfile = EntityProfile {
-        facets: RECORD_FACETS,
         timestamps: false,
         table: false,
         route: false,
     };
     static ENUM: EntityProfile = EntityProfile {
-        facets: ENUM_FACETS,
         timestamps: false,
         table: false,
         route: false,
     };
     static SCAFFOLD: EntityProfile = EntityProfile {
-        facets: SCAFFOLD_FACETS,
         timestamps: true,
         table: true,
         route: true,

@@ -417,21 +417,24 @@ arity.** Sixteen shapes became a comparable number, but exactly one of them is
 authoritative and the rest are projections of it. That is the change, and
 counting shapes does not show it.
 
-**A4.4 — one of the three front ends is gone, and the count moved down for the
-first time.** Two model front ends are still *editable*: `.jails/model.toml`
-(`source.rs`, 622 lines) and `jdl 1` (`jdl/v1/`, 5,312). The pre-v1 JDL draft
-(`jdl.rs` and `upgrade.rs`, 1,951) still **parses** -- `sync`, `model check`
-and the upgrade all read one -- and no longer accepts an edit:
-`model_command::read_source_at` refuses it by name and points at
-`jails model upgrade --to 1`. So the **31** `is_v1_source` branch sites are
-**0**, and the frontend adapters under `src/model_*` went 12,166 -> 11,348
-lines (`find src -name '*.rs' | grep model_ | xargs wc -l`, whole files
-including tests -- re-measure rather than quoting this).
+**A4.4 — this row now moves down, and it is the only one in A4 that ever moved
+the wrong way.** **One** model front end is editable: `jdl 1` (`jdl/v1/`,
+5,312 lines). The other two still **parse** -- `sync`, `model check` and
+`jails model upgrade` all read either -- and neither accepts an edit:
+`model_command::read_source_at` refuses both by name and points at
+`jails model upgrade --to 1`. So `.jails/model.toml` (`source.rs`, 622) and the
+pre-v1 draft (`jdl.rs` and `upgrade.rs`, 1,951) are inputs to one one-shot
+rather than surfaces every mutating command has to carry.
 
-**The remaining claim is still not bankable**, because `.jails/model.toml` is
-editable and every mutating command is still written twice. `docs/10-language.md`
-A4.4 carries the work; §22 is the upgrade path, and the route off the TOML
-exists now.
+The count that measured the cost is **31 `is_v1_source` branch sites -> 0** and
+a `jdl` switch in nine frontends -> none; the adapters under `src/model_*` went
+**12,166 -> 10,545** lines and `jails-model` lost `syntax_edit.rs`, the 371-line
+TOML writer. (`find src -name '*.rs' | grep model_ | xargs wc -l`, whole files
+including tests -- re-measure rather than quoting this.)
+
+**Now the simplicity claim can be banked**, which is what §22 was for. What is
+left is deletion rather than divergence: the two compatibility parsers stay
+until every project that has one has been carried across.
 
 
 ---

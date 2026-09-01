@@ -35,20 +35,15 @@ pub(crate) fn add(
     package: Option<String>,
     invocation: Invocation,
 ) -> Result<()> {
-    let jdl = invocation.owns_jdl();
     if package.is_some() {
         return Err(Failure::Told(
             "canonical entities have one stable identity and do not accept a legacy package selector.\n       fix: remove `--package` and name the entity declared in the application model"
                 .to_string(),
         ));
     }
-    let model_path = PathBuf::from(if jdl {
-        crate::model_command::JDL_PATH
-    } else {
-        crate::model_command::TOML_PATH
-    });
+    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
     let current_source = crate::model_command::read_source_at(&invocation.root()?, &model_path)?;
-    let current_model = parse_model(&current_source, jdl)?;
+    let current_model = crate::model_generate_jdl::parse(&current_source)?;
     if !current_model
         .capabilities
         .values()
@@ -81,34 +76,21 @@ pub(crate) fn add(
     let entity_java_name = entity.names.java_type.clone();
     let signature = canonical.join(",");
     let suffix = &hex(&sha256(signature.as_bytes()))[..12];
-    let index_label = format!("index_{suffix}");
     let index_id = IndexId::parse(format!("idx_{model_label}_{suffix}")).map_err(Failure::Told)?;
-    let mut next_source = current_source.clone();
-    if jdl {
-        // v1's `field_list` reads `index [ user_id, created_at desc ]` and
-        // allows only `@id` and `@map`. The pre-v1 draft took parentheses and
-        // named the index with `@as`, and picking between the two used to be a
-        // test on the source rather than on the filename, because a `.jdl`
-        // file held either syntax. It no longer does.
-        let member = format!(
-            "  index [{}] @id({})",
-            canonical.join(", "),
-            index_id.as_str()
-        );
-        next_source =
-            crate::model_generate_jdl::index::insert(&next_source, &entity_java_name, &member)?;
-    } else {
-        if !next_source.ends_with('\n') {
-            next_source.push('\n');
-        }
-        next_source.push_str(&format!(
-            "\n[entities.{}.indexes.{index_label}]\nid = {}\ncolumns = {}\n",
-            model_label,
-            quote(index_id.as_str())?,
-            quote_list(&canonical)?,
-        ));
-    }
-    let next_model = parse_model(&next_source, jdl)?;
+    // v1's `field_list` reads `index [ user_id, created_at desc ]` and allows
+    // only `@id` and `@map`. The pre-v1 draft took parentheses and named the
+    // index with `@as`, and `.jails/model.toml` stated it as a table; picking
+    // between them used to be a test on the source rather than on the
+    // filename, because a `.jdl` file held either syntax. It no longer does,
+    // and neither of the other two accepts an edit.
+    let member = format!(
+        "  index [{}] @id({})",
+        canonical.join(", "),
+        index_id.as_str()
+    );
+    let next_source =
+        crate::model_generate_jdl::index::insert(&current_source, &entity_java_name, &member)?;
+    let next_model = crate::model_generate_jdl::parse(&next_source)?;
     let index = next_model
         .entities
         .get(&entity_id)
@@ -144,20 +126,15 @@ pub(crate) fn remove(
     package: Option<String>,
     invocation: Invocation,
 ) -> Result<()> {
-    let jdl = invocation.owns_jdl();
     if package.is_some() {
         return Err(Failure::Told(
             "canonical entities have one stable identity and do not accept a legacy package selector.\n       fix: remove `--package` and name the entity declared in the application model"
                 .to_string(),
         ));
     }
-    let model_path = PathBuf::from(if jdl {
-        crate::model_command::JDL_PATH
-    } else {
-        crate::model_command::TOML_PATH
-    });
+    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
     let current_source = crate::model_command::read_source_at(&invocation.root()?, &model_path)?;
-    let current_model = parse_model(&current_source, jdl)?;
+    let current_model = crate::model_generate_jdl::parse(&current_source)?;
     if !current_model
         .capabilities
         .values()
@@ -227,21 +204,14 @@ pub(crate) fn remove(
         )));
     }
     let entity_id = entity.id.clone();
-    let entity_model_label = entity.label.clone();
     let entity_java_name = entity.names.java_type.clone();
     let index_id = index.id.clone();
-    let index_label = index.label.clone();
-    let next_source = if jdl {
-        crate::model_generate_jdl::index::remove(
-            &current_source,
-            &entity_java_name,
-            index_id.as_str(),
-        )?
-    } else {
-        jails_model::remove_index_declaration(&current_source, &entity_model_label, &index_label)
-            .map_err(Failure::Told)?
-    };
-    let next_model = parse_model(&next_source, jdl)?;
+    let next_source = crate::model_generate_jdl::index::remove(
+        &current_source,
+        &entity_java_name,
+        index_id.as_str(),
+    )?;
+    let next_model = crate::model_generate_jdl::parse(&next_source)?;
     if next_model
         .entities
         .get(&entity_id)
@@ -322,23 +292,4 @@ fn canonical_columns(entity: &jails_model::Entity, columns: &str) -> Result<Vec<
         ));
     }
     Ok(canonical)
-}
-
-fn parse_model(source: &str, jdl: bool) -> Result<jails_model::AppModel> {
-    let parsed = if jdl {
-        jails_model::parse_jdl(source)
-    } else {
-        jails_model::parse_toml(source)
-    };
-    parsed.map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))
-}
-
-fn quote(value: &str) -> Result<String> {
-    serde_json::to_string(value)
-        .map_err(|error| Failure::Told(format!("could not quote model value: {error}")))
-}
-
-fn quote_list(values: &[String]) -> Result<String> {
-    serde_json::to_string(values)
-        .map_err(|error| Failure::Told(format!("could not quote model values: {error}")))
 }

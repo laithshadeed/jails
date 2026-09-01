@@ -72,6 +72,21 @@ pub(crate) fn read_source(model_path: &Path) -> Result<String> {
 pub(crate) fn read_source_at(root: &Path, model_path: &Path) -> Result<String> {
     let source = match std::fs::read_to_string(root.join(model_path)) {
         Ok(source) => source,
+        // **A project still on `.jails/model.toml` reads as a refusal, not as
+        // an absence.** The compatibility input is the second editable model
+        // `docs/00-contracts.md` forbids, so every mutation now asks for
+        // `.jails/model.jdl` and this is where a project that has not moved
+        // yet is told how to. It stays *readable* -- `sync`, `model check`
+        // and `model upgrade` all still work on one -- and only an edit is
+        // refused, which is what makes the upgrade a route rather than a
+        // wall.
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound && root.join(TOML_PATH).is_file() =>
+        {
+            return Err(Failure::Told(format!(
+                "`{TOML_PATH}` is the temporary compatibility input and no longer accepts edits.\n       fix: run `jails model upgrade --to 1` to move this project onto `{JDL_PATH}`, then retry"
+            )));
+        }
         // The same rule as `load_model_at`: a project with no model reads as
         // the model `model init` would write, so the first mutation patches a
         // real seed rather than refusing over the file it is about to create.
@@ -190,21 +205,6 @@ pub(crate) fn ensure_owned(invocation: Invocation) -> Result<()> {
     // apply, and saying so before planning is what turns a report about a
     // missing `.jails/model.jdl` into the answer the reader needs.
     jails_project::model::Project::load(&root).map(|_| ())
-}
-
-/// Does this project author its model in JDL?
-///
-/// **A project with no model yet answers yes**, because the seed
-/// `model init` writes is JDL: reading the absence as "TOML" sent the first
-/// mutation on a fresh project to render the compatibility dialect, which is
-/// the one being removed. `.jails/model.toml` is the only thing that makes
-/// this false, and only while it is on disk.
-pub(crate) fn owns_jdl() -> bool {
-    project_root().is_none_or(|root| owns_jdl_at(&root))
-}
-
-pub(crate) fn owns_jdl_at(root: &Path) -> bool {
-    !root.join(TOML_PATH).is_file()
 }
 
 pub(crate) fn sync(no_start: bool, invocation: Invocation) -> Result<()> {

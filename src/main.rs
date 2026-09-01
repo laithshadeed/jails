@@ -162,7 +162,7 @@ fn main() -> std::process::ExitCode {
         Command::Generate(args) => {
             return dispatch::finish_invocation(
                 model_command::ensure_owned(invocation.clone())
-                    .and_then(|()| model_generate::run(args, invocation)),
+                    .and_then(|()| model_generate_jdl::run(args, invocation)),
                 failure_output,
                 &failure_path,
             );

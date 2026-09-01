@@ -44,31 +44,26 @@ pub(crate) fn add(
         .map(|capability| capability.label())
         .collect::<Vec<_>>()
         .join(", ");
-    let jdl = invocation.owns_jdl();
-    let model_path = model_path(jdl);
+    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
     // Resolved against the invocation's project, so `jails new --app` can
     // install a manifest's capabilities into the one it is creating.
     let current_source = crate::model_command::read_source_at(&invocation.root()?, &model_path)?;
-    if jdl && package.is_some() {
+    if package.is_some() {
         return Err(Failure::Told(
             "JDL v1 derives capability packages from the closed projection registry.\n       fix: remove `--package`; eject the implementation boundary if it needs a reader-owned destination"
                 .to_string(),
         ));
     }
-    let current_model = parse_model(&current_source, jdl)?;
+    let current_model = crate::model_generate_jdl::parse(&current_source)?;
     let mut next_source = current_source.clone();
     let mut patches = Vec::new();
     let mut encoded = Vec::new();
     for capability in capabilities {
         let label = capability.label();
-        let identity_label = if jdl {
-            name.as_ref().map_or_else(
-                || label.to_string(),
-                |name| format!("{label}_{}", crate::model_resource::java_to_label(name)),
-            )
-        } else {
-            label.to_string()
-        };
+        let identity_label = name.as_ref().map_or_else(
+            || label.to_string(),
+            |name| format!("{label}_{}", crate::model_resource::java_to_label(name)),
+        );
         let id = CapabilityId::parse(format!("cap_{identity_label}")).map_err(Failure::Told)?;
         if let Some(existing) = current_model
             .capabilities
@@ -89,65 +84,44 @@ pub(crate) fn add(
             }
             continue;
         }
-        if jdl {
-            {
-                // **The storage kinds are an axis in v1, not a capability.**
-                // Its closed registry has no `db`, `h2` or `sqlite`, because
-                // `storage postgres` is what the reader declares and `cap db`
-                // is what the linker materializes from it. Appending one wrote
-                // a model that no longer parsed -- `jails add db` refused on
-                // every v1 project, and failed closed, so it simply did not
-                // work.
-                if let Some(storage) = storage_axis(label) {
-                    // `--name` never reaches here: `validate_request` already
-                    // limits it to the four packs that have a projection to
-                    // override, and neither of these is one.
-                    next_source =
-                        jails_model::set_jdl_app_property(&next_source, "storage", storage)
-                            .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
-                    // **The patch has to carry the axis too.** The source is
-                    // what the model is re-read from next time; the patch is
-                    // what *this* transition compiles. Without it `add db` on a
-                    // project that already had entities lowered them against
-                    // `dialect none` and refused -- so the capability worked
-                    // only as the very first command in a project.
-                    let dialect = jails_model::parse_jdl(&next_source)
-                        .map_err(|diagnostics| {
-                            Failure::Told(diagnostics.to_string().trim_end().to_string())
-                        })?
-                        .project
-                        .dialect;
-                    patches.push(ModelPatch::SetDialect(dialect.clone()));
-                    encoded.push(json!({"kind": "set-dialect", "dialect": dialect}));
-                } else {
-                    let declaration = format!(
-                        "cap {label}{} @id({})",
-                        name.as_ref()
-                            .map(|name| format!(" {name}"))
-                            .unwrap_or_default(),
-                        id.as_str(),
-                    );
-                    next_source = jails_model::append_jdl_declaration(&next_source, &declaration)
-                        .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
-                }
-            }
+        // **The storage kinds are an axis in v1, not a capability.** Its closed
+        // registry has no `db`, `h2` or `sqlite`, because `storage postgres` is
+        // what the reader declares and `cap db` is what the linker materializes
+        // from it. Appending one wrote a model that no longer parsed -- `jails
+        // add db` refused on every v1 project, and failed closed, so it simply
+        // did not work.
+        if let Some(storage) = storage_axis(label) {
+            // `--name` never reaches here: `validate_request` already limits it
+            // to the four packs that have a projection to override, and neither
+            // of these is one.
+            next_source = jails_model::set_jdl_app_property(&next_source, "storage", storage)
+                .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
+            // **The patch has to carry the axis too.** The source is what the
+            // model is re-read from next time; the patch is what *this*
+            // transition compiles. Without it `add db` on a project that
+            // already had entities lowered them against `dialect none` and
+            // refused -- so the capability worked only as the very first
+            // command in a project.
+            let dialect = jails_model::parse_jdl(&next_source)
+                .map_err(|diagnostics| {
+                    Failure::Told(diagnostics.to_string().trim_end().to_string())
+                })?
+                .project
+                .dialect;
+            patches.push(ModelPatch::SetDialect(dialect.clone()));
+            encoded.push(json!({"kind": "set-dialect", "dialect": dialect}));
         } else {
-            if !next_source.ends_with('\n') {
-                next_source.push('\n');
-            }
-            next_source.push_str(&format!(
-                "\n[capabilities.{label}]\nid = {}\nkind = {}\n",
-                quote(&format!("cap_{label}"))?,
-                quote(label)?,
-            ));
-            if let Some(name) = &name {
-                next_source.push_str(&format!("name = {}\n", quote(name)?));
-            }
-            if let Some(package) = &package {
-                next_source.push_str(&format!("package = {}\n", quote(package)?));
-            }
+            let declaration = format!(
+                "cap {label}{} @id({})",
+                name.as_ref()
+                    .map(|name| format!(" {name}"))
+                    .unwrap_or_default(),
+                id.as_str(),
+            );
+            next_source = jails_model::append_jdl_declaration(&next_source, &declaration)
+                .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
         }
-        let next_model = parse_model(&next_source, jdl)?;
+        let next_model = crate::model_generate_jdl::parse(&next_source)?;
         let declaration = next_model
             .capabilities
             .get(&id)
@@ -183,10 +157,9 @@ pub(crate) fn remove(
         .map(|capability| capability.label())
         .collect::<Vec<_>>()
         .join(", ");
-    let jdl = crate::model_command::owns_jdl();
-    let model_path = model_path(jdl);
+    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
     let current_source = read_source(&model_path)?;
-    let current_model = parse_model(&current_source, jdl)?;
+    let current_model = crate::model_generate_jdl::parse(&current_source)?;
     let mut next_source = current_source.clone();
     let mut patches = Vec::new();
     let mut encoded = Vec::new();
@@ -221,7 +194,7 @@ pub(crate) fn remove(
                 )));
             }
         }
-        next_source = if jdl && storage_axis(label).is_some() {
+        next_source = if storage_axis(label).is_some() {
             // **`remove` is the exact inverse of `add`, including here.**
             // `add h2` on a v1 project sets `storage h2` rather than
             // appending `cap h2`, because storage is an axis and the closed
@@ -234,16 +207,13 @@ pub(crate) fn remove(
             // member of `app`, and an axis with no value is not a v1 model.
             jails_model::set_jdl_app_property(&next_source, "storage", "none")
                 .map_err(crate::model_generate_jdl::jdl_edit_failure)?
-        } else if jdl {
-            crate::model_generate_jdl::remove_capability(&next_source, &declaration.label)?
         } else {
-            jails_model::remove_capability_declaration(&next_source, &declaration.label)
-                .map_err(Failure::Told)?
+            crate::model_generate_jdl::remove_capability(&next_source, &declaration.label)?
         };
         encoded.push(json!({"kind": "remove-capability", "capability": declaration.id}));
         patches.push(ModelPatch::RemoveCapability(declaration.id.clone()));
     }
-    parse_model(&next_source, jdl)?;
+    crate::model_generate_jdl::parse(&next_source)?;
     let patch_bytes = serde_json::to_vec(&json!({"kind": "batch", "patches": encoded}))
         .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
     finish_generation(PreparedMutation {
@@ -265,14 +235,13 @@ pub(crate) fn add_dependency(
     scope: DependencyScope,
     invocation: Invocation,
 ) -> Result<()> {
-    let jdl = crate::model_command::owns_jdl();
     let coordinate = coordinate.to_string();
     let (group, artifact) = coordinate
         .split_once(':')
         .expect("validated Maven coordinates contain one separator");
-    let model_path = model_path(jdl);
+    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
     let current_source = read_source(&model_path)?;
-    let current_model = parse_model(&current_source, jdl)?;
+    let current_model = crate::model_generate_jdl::parse(&current_source)?;
     if let Some(existing) = current_model
         .dependencies
         .values()
@@ -300,7 +269,7 @@ pub(crate) fn add_dependency(
     let label = format!("dep_{suffix}");
     let id = DependencyId::parse(label.clone()).map_err(Failure::Told)?;
     let mut next_source = current_source.clone();
-    if jdl {
+    {
         let declaration = format!(
             "dep {coordinate} @id({}){}{}",
             id.as_str(),
@@ -317,22 +286,8 @@ pub(crate) fn add_dependency(
         );
         next_source = jails_model::append_jdl_declaration(&next_source, &declaration)
             .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
-    } else {
-        if !next_source.ends_with('\n') {
-            next_source.push('\n');
-        }
-        next_source.push_str(&format!(
-            "\n[dependencies.{label}]\nid = {}\ngroup = {}\nartifact = {}\n",
-            quote(id.as_str())?,
-            quote(group)?,
-            quote(artifact)?,
-        ));
-        if let Some(version) = &version {
-            next_source.push_str(&format!("version = {}\n", quote(version)?));
-        }
-        next_source.push_str(&format!("scope = {}\n", quote(scope_name(scope))?));
     }
-    let next_model = parse_model(&next_source, jdl)?;
+    let next_model = crate::model_generate_jdl::parse(&next_source)?;
     let dependency = next_model
         .dependencies
         .get(&id)
@@ -360,14 +315,13 @@ pub(crate) fn remove_dependency(
     coordinate: jails_protocol::coordinate::MavenCoordinate,
     invocation: Invocation,
 ) -> Result<()> {
-    let jdl = crate::model_command::owns_jdl();
     let coordinate = coordinate.to_string();
     let (group, artifact) = coordinate
         .split_once(':')
         .expect("validated Maven coordinates contain one separator");
-    let model_path = model_path(jdl);
+    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
     let current_source = read_source(&model_path)?;
-    let current_model = parse_model(&current_source, jdl)?;
+    let current_model = crate::model_generate_jdl::parse(&current_source)?;
     let dependency = current_model
         .dependencies
         .values()
@@ -378,13 +332,9 @@ pub(crate) fn remove_dependency(
                 "canonical dependency `{coordinate}` is not declared.\n       fix: remove a coordinate declared under `[dependencies]`"
             ))
         })?;
-    let next_source = if jdl {
-        crate::model_generate_jdl::remove_dependency(&current_source, &dependency.label)?
-    } else {
-        jails_model::remove_dependency_declaration(&current_source, &dependency.label)
-            .map_err(Failure::Told)?
-    };
-    parse_model(&next_source, jdl)?;
+    let next_source =
+        crate::model_generate_jdl::remove_dependency(&current_source, &dependency.label)?;
+    crate::model_generate_jdl::parse(&next_source)?;
     let patch_bytes = serde_json::to_vec(&json!({
         "kind": "remove-dependency",
         "dependency": dependency.id,
@@ -417,10 +367,9 @@ fn set_tool_capability(
     present: bool,
     invocation: Invocation,
 ) -> Result<()> {
-    let jdl = crate::model_command::owns_jdl();
-    let model_path = model_path(jdl);
+    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
     let current_source = read_source(&model_path)?;
-    let current_model = parse_model(&current_source, jdl)?;
+    let current_model = crate::model_generate_jdl::parse(&current_source)?;
     let existing = current_model
         .capabilities
         .values()
@@ -434,24 +383,12 @@ fn set_tool_capability(
         ),
         (true, None) => {
             let id = CapabilityId::parse(format!("cap_{label}")).map_err(Failure::Told)?;
-            let mut next = current_source.clone();
-            if jdl {
-                next = jails_model::append_jdl_declaration(
-                    &next,
-                    &format!("cap {kind} @id({})", id.as_str()),
-                )
-                .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
-            } else {
-                if !next.ends_with('\n') {
-                    next.push('\n');
-                }
-                next.push_str(&format!(
-                    "\n[capabilities.{label}]\nid = {}\nkind = {}\n",
-                    quote(id.as_str())?,
-                    quote(kind)?,
-                ));
-            }
-            let linked = parse_model(&next, jdl)?;
+            let next = jails_model::append_jdl_declaration(
+                &current_source,
+                &format!("cap {kind} @id({})", id.as_str()),
+            )
+            .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
+            let linked = crate::model_generate_jdl::parse(&next)?;
             let capability = linked
                 .capabilities
                 .get(&id)
@@ -461,13 +398,9 @@ fn set_tool_capability(
             (next, ModelPatch::AddCapability(capability), encoded)
         }
         (false, Some(capability)) => {
-            let next = if jdl {
-                crate::model_generate_jdl::remove_capability(&current_source, &capability.label)?
-            } else {
-                jails_model::remove_capability_declaration(&current_source, &capability.label)
-                    .map_err(Failure::Told)?
-            };
-            parse_model(&next, jdl)?;
+            let next =
+                crate::model_generate_jdl::remove_capability(&current_source, &capability.label)?;
+            crate::model_generate_jdl::parse(&next)?;
             let encoded = json!({"kind": "remove-capability", "capability": capability.id});
             (next, ModelPatch::RemoveCapability(capability.id), encoded)
         }
@@ -541,23 +474,6 @@ fn validate_supported(capabilities: &[CliCapability]) -> Result<()> {
 
 fn read_source(path: &Path) -> Result<String> {
     crate::model_command::read_source(path)
-}
-
-fn model_path(jdl: bool) -> PathBuf {
-    PathBuf::from(if jdl {
-        crate::model_command::JDL_PATH
-    } else {
-        crate::model_command::TOML_PATH
-    })
-}
-
-fn parse_model(source: &str, jdl: bool) -> Result<jails_model::AppModel> {
-    let parsed = if jdl {
-        jails_model::parse_jdl(source)
-    } else {
-        jails_model::parse_toml(source)
-    };
-    parsed.map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))
 }
 
 fn quote(value: &str) -> Result<String> {

@@ -5,7 +5,6 @@ mod field_parse;
 pub(crate) use field_parse::{normalize_type, parse_field};
 
 mod profile;
-mod render;
 
 mod effects;
 mod report;
@@ -15,155 +14,17 @@ use report::refuse_unconfirmed_deletions;
 pub(crate) use report::{report_plan, write_bundle};
 
 pub(crate) use profile::{
-    EntityProfile, OperationProfile, entity_profile, operation_profile,
-    reject_unsupported_operation_options, reject_unsupported_options, validate_entity_args,
+    operation_profile, reject_unsupported_operation_options, validate_entity_args,
 };
-use render::operation_declaration;
-pub(crate) use render::{entity_declaration, enum_declaration, field_declaration};
 
 use crate::ArtifactKind;
 use crate::cli::GenerateArgs;
 use crate::model_resource::java_to_label;
 use crate::{Invocation, Output};
 use jails_contracts::{CanonicalModelPatch, ModelFileUpdate, ProjectPath};
-use jails_model::{AppModel, EntityId, Facet, ModelPatch, OperationId};
+use jails_model::{AppModel, ModelPatch};
 use jails_support::{Failure, Result};
-use serde_json::json;
 use std::path::PathBuf;
-
-const MODEL_PATH: &str = ".jails/model.toml";
-
-pub(crate) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
-    if crate::model_command::owns_jdl() {
-        return crate::model_generate_jdl::run(args, invocation);
-    }
-    let native = crate::canonical_support::generator(args.kind).is_native();
-    if !native {
-        return Err(Failure::Told(format!(
-            "canonical model projects do not route `{}` through the legacy generator.\n       fix: use an implemented semantic frontend or add the declaration to {MODEL_PATH}",
-            kind_name(args.kind)
-        )));
-    }
-    if args.kind == ArtifactKind::Field {
-        return crate::model_resource::add_generated_field(args, invocation);
-    }
-    if let Some(profile) = entity_profile(args.kind) {
-        return run_entity(args, profile, invocation);
-    }
-    if let Some(profile) = operation_profile(args.kind) {
-        return run_operation(args, profile, invocation);
-    }
-    Err(Failure::Told(format!(
-        "canonical `{}` is implemented by the JDL frontend, not the temporary TOML compatibility editor.\n       fix: move the model to `.jails/model.jdl`, or add the declaration directly to {MODEL_PATH}",
-        kind_name(args.kind)
-    )))
-}
-
-fn run_entity(
-    args: GenerateArgs,
-    profile: &'static EntityProfile,
-    invocation: Invocation,
-) -> Result<()> {
-    reject_unsupported_options(&args, profile)?;
-    if !args.uniques.is_empty() {
-        return Err(Failure::Told(
-            "a composite unique key needs a `jdl 1` model.\n       fix: run `jails model upgrade` and repeat the command"
-                .to_string(),
-        ));
-    }
-    let model_path = PathBuf::from(MODEL_PATH);
-    let current_source = crate::model_command::read_source(&model_path)?;
-    let current_model = jails_model::parse_toml(&current_source)
-        .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
-    let entity_label = java_to_label(&args.name);
-    let entity_id = EntityId::parse(format!("ent_{entity_label}"))
-        .map_err(|error| Failure::Told(format!("could not assign entity identity: {error}")))?;
-    let mut fields = args.fields.clone();
-    if args.timestamps {
-        fields.extend([
-            "createdAt:instant".to_string(),
-            "updatedAt:instant".to_string(),
-        ]);
-    }
-    let declaration = if args.kind == ArtifactKind::Enum {
-        enum_declaration(&entity_label, &args.name, &fields)?
-    } else {
-        entity_declaration(&entity_label, &args.name, profile.facets, &fields)?
-    };
-    let mut next_source = current_source.clone();
-    if !next_source.ends_with('\n') {
-        next_source.push('\n');
-    }
-    next_source.push('\n');
-    next_source.push_str(&declaration);
-    let next_model = jails_model::parse_toml(&next_source)
-        .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
-    let entity = next_model
-        .entity(&entity_id)
-        .cloned()
-        .ok_or_else(|| Failure::Told(format!("new entity `{entity_id}` did not link")))?;
-    let patch_bytes = serde_json::to_vec(&json!({
-        "kind": "add-entity",
-        "entity": entity,
-    }))
-    .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
-    finish_generation(PreparedMutation {
-        name: args.name,
-        invocation,
-        model_path,
-        current_source,
-        current_model,
-        next_source,
-        patch: ModelPatch::AddEntity(entity),
-        patch_bytes,
-        authored_migration: None,
-    })
-}
-
-fn run_operation(
-    args: GenerateArgs,
-    profile: OperationProfile,
-    invocation: Invocation,
-) -> Result<()> {
-    reject_unsupported_operation_options(&args, profile)?;
-    let model_path = PathBuf::from(MODEL_PATH);
-    let current_source = crate::model_command::read_source(&model_path)?;
-    let current_model = jails_model::parse_toml(&current_source)
-        .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
-    let label = java_to_label(&args.name);
-    let operation_id = OperationId::parse(format!("op_{label}"))
-        .map_err(|error| Failure::Told(format!("could not assign operation identity: {error}")))?;
-    let declaration = operation_declaration(&args, profile, &current_model, &label)?;
-    let mut next_source = current_source.clone();
-    if !next_source.ends_with('\n') {
-        next_source.push('\n');
-    }
-    next_source.push('\n');
-    next_source.push_str(&declaration);
-    let next_model = jails_model::parse_toml(&next_source)
-        .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
-    let operation = next_model
-        .operations
-        .get(&operation_id)
-        .cloned()
-        .ok_or_else(|| Failure::Told(format!("new operation `{operation_id}` did not link")))?;
-    let patch_bytes = serde_json::to_vec(&json!({
-        "kind": "add-operation",
-        "operation": operation,
-    }))
-    .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
-    finish_generation(PreparedMutation {
-        name: args.name,
-        invocation,
-        model_path,
-        current_source,
-        current_model,
-        next_source,
-        patch: ModelPatch::AddOperation(operation),
-        patch_bytes,
-        authored_migration: None,
-    })
-}
 
 pub(crate) struct PreparedMutation {
     pub(crate) name: String,
@@ -662,32 +523,6 @@ pub(crate) struct ParsedField {
     pub(crate) default: Option<String>,
     pub(crate) updated: bool,
     pub(crate) mapped_column: Option<String>,
-}
-
-impl ParsedField {
-    pub(crate) fn require_v1_for_rich_semantics(&self) -> Result<()> {
-        let marker = if self.positive {
-            Some("@positive")
-        } else if self.nonnegative {
-            Some("@nonnegative")
-        } else if self.scoped {
-            Some("@scope")
-        } else if self.version {
-            Some("@version")
-        } else if self.default.is_some() {
-            Some("@default")
-        } else if self.updated {
-            Some("@updated")
-        } else {
-            None
-        };
-        if let Some(marker) = marker {
-            return Err(Failure::Told(format!(
-                "field marker `{marker}` requires `jdl 1`.\n       fix: upgrade `.jails/model.jdl` to JDL v1 or author the field there"
-            )));
-        }
-        Ok(())
-    }
 }
 
 pub(crate) fn kind_name(kind: ArtifactKind) -> String {

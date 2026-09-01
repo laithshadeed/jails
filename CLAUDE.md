@@ -147,14 +147,17 @@ every later command reads. What is forbidden is a second thing the reader
 *edits*, which is why `app init` -- the subcommand that writes a manifest --
 is the one that still refuses on a canonical project.
 
-**And the rule is being broken today, by a project on `.jails/model.toml`.**
-Reproduced 2026-09-01: `model check` accepts one, `jails g record` applies a
-patch and writes files, and `jails model upgrade` refuses it by name -- so it
-is fully editable with no route to `jdl 1`. It has no route because the
-command that was the route is gone: `jails model import` no longer exists, and
-`jails model --help` lists `init check upgrade fmt plan apply explain eject`.
-`model init` replaced it for a *foreign* project and writes the app block
-only. `docs/10-language.md` A4.4 is the item.
+**The rule was being broken until 2026-09-01, and `read_source_at` is how it
+stopped.** A project on `.jails/model.toml` was fully editable -- `jails g
+record` applied a patch and wrote files -- with no route to `jdl 1`, because
+the command that was the route is gone: `jails model import` no longer exists
+and `model init` replaced it for a *foreign* project, writing the app block
+only. Both compatibility dialects still **parse**, so `sync`, `model check`
+and the upgrade all read one; what neither accepts any more is an **edit**.
+`model_command::read_source_at` is the funnel every canonical mutation reads
+its model through, and it refuses each by name and points at `jails model
+upgrade --to 1`. So there is one editable front end, `jdl 1`, and the two
+parsers stay until every project that has one has been carried across.
 
 **The renderer a one-shot carry-across needs now exists.**
 `jails_model::render_jdl_v1` (`crates/jails-model/src/jdl/emit/`) takes a
@@ -165,13 +168,22 @@ that against the model it was given, because a renderer that silently drops a
 field is how a one-shot migration corrupts a project. Proven over all 61
 models in `tests/golden` and over §4's complete example.
 
-What it does not have yet is a command, and the missing piece is one plan
-operation rather than more rendering: the upgrade must write
-`.jails/model.jdl` **and** retire `.jails/model.toml` in the same exact plan,
-or the project ends with two sources again. `PlannedOperation` is
-`ReplaceModelFile`, `PublishMergedTree`, `AppendMigration`, `ReplaceStateFile`,
-`PatchReaderFile` and `RemoveReaderFile` -- none retires a model file -- and
-`materialize_with_model` takes exactly one `ModelFileUpdate`.
+**The command is `jails model upgrade --to 1`, and its one hard requirement is
+atomicity.** It writes `.jails/model.jdl` **and** retires `.jails/model.toml`
+in the same exact plan, because writing one without the other leaves two
+editable sources and a crash between two plans would leave that state
+permanently. No seventh `PlannedOperation` was needed: a model source that
+stops being the model is reader-owned source, so the retirement is a
+`RemoveReaderFile` beside the `ReplaceModelFile`, and widening the vocabulary
+for one caller would have cost every executor and verifier.
+
+Two things it does that a naive version would not. **The `db` capability is
+materialised out loud** -- v1 reads `storage postgres` as a capability and the
+TOML `dialect` is not one, so the upgrade genuinely gains a JDBC adapter,
+which is why §22 requires review; `render_jdl_v1` refuses to add it silently
+and the upgrade adds it and prints a note. **The axes are observed, not
+defaulted** -- `.jails/model.toml` carries neither `platform` nor `build`, and
+defaulting them marked a `new-cli` project `platform spring`.
 
 Reproducible output belongs below `.jails/generated` and is merge-managed. The
 accepted model renders BASE, capture supplies OURS, and the next model renders

@@ -2,9 +2,7 @@
 
 use crate::Invocation;
 use crate::cli::{GenerateArgs, ResourceFieldCommand};
-use crate::model_generate::{
-    PreparedMutation, field_declaration, finish_generation_with_reader_paths, parse_field,
-};
+use crate::model_generate::{PreparedMutation, finish_generation_with_reader_paths, parse_field};
 use jails_model::{Facet, FieldAddPolicy, FieldId, ModelPatch};
 use jails_support::{Failure, Result};
 use serde_json::json;
@@ -143,12 +141,7 @@ pub(crate) fn add_generated_field(args: GenerateArgs, invocation: Invocation) ->
 }
 
 pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Result<()> {
-    let jdl = crate::model_command::owns_jdl();
-    let model_path = PathBuf::from(if jdl {
-        crate::model_command::JDL_PATH
-    } else {
-        crate::model_command::TOML_PATH
-    });
+    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
     if request.package.is_some() {
         return Err(Failure::Told(
             "canonical entities have one stable identity and do not accept a legacy package selector.\n       fix: remove `--package` and name the entity declared in the application model"
@@ -156,7 +149,7 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
         ));
     }
     let current_source = crate::model_command::read_source(&model_path)?;
-    let current_model = parse_model(&current_source, jdl)?;
+    let current_model = crate::model_generate_jdl::parse(&current_source)?;
     let has_database = current_model
         .capabilities
         .values()
@@ -259,28 +252,13 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
     // `field_order`, so an appended declaration in either dialect stays
     // appended.
     //
-    // `.jails/model.toml` is what is left, and it keeps `ByLabel` deliberately:
-    // it is the temporary compatibility input, its writer states no order, and
-    // giving one to a format on the cutover's deletion list would be adding
-    // surface to something being removed.
-    let placement = if jdl {
-        jails_model::FieldPlacement::Last
-    } else {
-        jails_model::FieldPlacement::ByLabel
-    };
-    let next_source = if jdl {
-        let line = crate::model_generate_jdl::render_v1_field_line(&entity_label, &parsed);
-        crate::model_generate_jdl::insert_field(&current_source, &entity_java_name, &line)?
-    } else {
-        let mut next = current_source.clone();
-        if !next.ends_with('\n') {
-            next.push('\n');
-        }
-        next.push('\n');
-        next.push_str(&field_declaration(&entity_label, &parsed)?);
-        next
-    };
-    let next_model = parse_model(&next_source, jdl)?;
+    // `ByLabel` was `.jails/model.toml`'s, whose writer stated no order; that
+    // input no longer accepts an edit, so there is one placement left.
+    let placement = jails_model::FieldPlacement::Last;
+    let line = crate::model_generate_jdl::render_v1_field_line(&entity_label, &parsed);
+    let next_source =
+        crate::model_generate_jdl::insert_field(&current_source, &entity_java_name, &line)?;
+    let next_model = crate::model_generate_jdl::parse(&next_source)?;
     let field_id =
         FieldId::parse(format!("fld_{entity_label}_{}", parsed.label)).map_err(Failure::Told)?;
     let field = next_model
@@ -323,13 +301,4 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
         },
         &reader_paths,
     )
-}
-
-fn parse_model(source: &str, jdl: bool) -> Result<jails_model::AppModel> {
-    let parsed = if jdl {
-        jails_model::parse_jdl(source)
-    } else {
-        jails_model::parse_toml(source)
-    };
-    parsed.map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))
 }

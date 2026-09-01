@@ -4,13 +4,10 @@
 //! makes the exhaustive matches fail to compile until its canonical ownership
 //! is decided. Frontends use the same answer they report to readers.
 //!
-//! **`Native` means the compiler has a backend, and the gate it drives is the
-//! `.jails/model.toml` route only.** A project on `.jails/model.jdl` -- the
-//! intended authoring boundary -- goes straight to the JDL frontend, which
-//! refuses an unserved kind at *compile* time through
-//! `component_kind_is_emitted`. So this table is the coverage number and the
-//! temporary compatibility input's router at once, and the two agree because
-//! the number is what the cutover is measured on. A kind marked
+//! **`Native` means the compiler has a backend.** Every project authors in
+//! `.jails/model.jdl` now, so the generator half of this table routes nothing
+//! -- it is the coverage number, and the compiler refuses an unserved kind at
+//! *compile* time through `component_kind_is_emitted`. A kind marked
 //! `Compatibility` that the compiler actually emits under-reports coverage,
 //! so a kind whose backend has landed must be moved to `Native` here.
 //!
@@ -18,6 +15,7 @@
 //! built for: making the next clap variant a compile error until its
 //! ownership is decided.
 
+#[cfg(test)]
 use crate::ArtifactKind;
 use crate::Capability;
 
@@ -43,7 +41,14 @@ impl Support {
     }
 }
 
-pub(crate) fn generator(kind: ArtifactKind) -> Support {
+/// **Nothing in production consults this any more, and the gate is why it
+/// stays.** `.jails/model.toml` no longer accepts edits, so every generation
+/// goes to the JDL frontend and an unserved kind refuses at compile time
+/// through `component_kind_is_emitted`. What the exhaustive match is still
+/// for is the next clap variant, which cannot be added without a decision
+/// recorded here, and the 39/39 coverage number the test below asserts.
+#[cfg(test)]
+fn generator(kind: ArtifactKind) -> Support {
     match kind {
         ArtifactKind::Scaffold
         | ArtifactKind::Controller

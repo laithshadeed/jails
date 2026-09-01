@@ -239,7 +239,9 @@ option that is not on the list.
 **Two editable model sources are never permitted.** `.jails/model.jdl` is the
 intended authoring boundary; `.jails/model.toml` remains a temporary
 compatibility input for existing canonical projects. `model import` is one-way
-and fail-closed. §22 is the path that removes the second, and A4.4 is why it
-matters: no simplicity claim can be banked until two of the three front ends
-are gone.
+and fail-closed. **It no longer accepts an edit**, which is A4.4's exit:
+`model_command::read_source_at` refuses a mutation against one by name and
+names `jails model upgrade --to 1`, so the compatibility input is read-only
+and §22 is the route off it. The parser stays until every project that has one
+has been carried across.
 

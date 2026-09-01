@@ -41,7 +41,7 @@ pub(crate) fn rename(request: RenameRequest, invocation: Invocation) -> Result<(
             rename_source_field(
                 &resolved,
                 &request.new_name,
-                resolved.jdl.then_some(resolved.field_sql_column.as_str()),
+                Some(resolved.field_sql_column.as_str()),
             )?,
         ),
         CliColumnPolicy::SingleCutover => (
@@ -89,23 +89,13 @@ pub(crate) fn change_type(request: TypeRequest, invocation: Invocation) -> Resul
     }
     let resolved = resolve(&request.entity, &request.field)?;
     let to = normalize_type(&request.to);
-    let mut next_source = if resolved.jdl {
-        jdl_edit::set_field_type(
-            &resolved.current_source,
-            &resolved.entity_java_name,
-            &resolved.field_java_name,
-            resolved.field_id.as_str(),
-            &to,
-        )?
-    } else {
-        jails_model::set_field_type(
-            &resolved.current_source,
-            &resolved.entity_label,
-            &resolved.field_label,
-            &to,
-        )
-        .map_err(Failure::Told)?
-    };
+    let mut next_source = jdl_edit::set_field_type(
+        &resolved.current_source,
+        &resolved.entity_java_name,
+        &resolved.field_java_name,
+        resolved.field_id.as_str(),
+        &to,
+    )?;
     finish_replace(
         resolved,
         &request.field,
@@ -156,23 +146,13 @@ pub(crate) fn set_nullability(request: NullabilityRequest, invocation: Invocatio
         }
         None => (None, Vec::new()),
     };
-    let mut next_source = if resolved.jdl {
-        jdl_edit::set_field_required(
-            &resolved.current_source,
-            &resolved.entity_java_name,
-            &resolved.field_java_name,
-            resolved.field_id.as_str(),
-            request.required,
-        )?
-    } else {
-        jails_model::set_field_required(
-            &resolved.current_source,
-            &resolved.entity_label,
-            &resolved.field_label,
-            request.required,
-        )
-        .map_err(Failure::Told)?
-    };
+    let mut next_source = jdl_edit::set_field_required(
+        &resolved.current_source,
+        &resolved.entity_java_name,
+        &resolved.field_java_name,
+        resolved.field_id.as_str(),
+        request.required,
+    )?;
     finish_replace(
         resolved,
         &request.field,
@@ -200,21 +180,12 @@ pub(crate) struct DropRequest {
 pub(crate) fn drop_field(request: DropRequest, invocation: Invocation) -> Result<()> {
     reject_package(request.package.as_deref())?;
     let resolved = resolve(&request.entity, &request.field)?;
-    let next_source = if resolved.jdl {
-        jdl_edit::remove_field(
-            &resolved.current_source,
-            &resolved.entity_java_name,
-            &resolved.field_java_name,
-            resolved.field_id.as_str(),
-        )?
-    } else {
-        jails_model::remove_field_declaration(
-            &resolved.current_source,
-            &resolved.entity_label,
-            &resolved.field_label,
-        )
-        .map_err(Failure::Told)?
-    };
+    let next_source = jdl_edit::remove_field(
+        &resolved.current_source,
+        &resolved.entity_java_name,
+        &resolved.field_java_name,
+        resolved.field_id.as_str(),
+    )?;
     let patch = ModelPatch::RemoveField {
         entity: resolved.entity_id.clone(),
         field: resolved.field_id.clone(),
@@ -252,18 +223,12 @@ struct ResolvedField {
     field_java_name: String,
     field_sql_column: String,
     has_database: bool,
-    jdl: bool,
 }
 
 fn resolve(entity_name: &str, field_name: &str) -> Result<ResolvedField> {
-    let jdl = crate::model_command::owns_jdl();
-    let model_path = PathBuf::from(if jdl {
-        crate::model_command::JDL_PATH
-    } else {
-        crate::model_command::TOML_PATH
-    });
+    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
     let current_source = crate::model_command::read_source(&model_path)?;
-    let current_model = parse_model(&current_source, jdl)?;
+    let current_model = crate::model_generate_jdl::parse(&current_source)?;
     let entity_label = java_to_label(entity_name);
     let entity = current_model
         .entities
@@ -299,7 +264,6 @@ fn resolve(entity_name: &str, field_name: &str) -> Result<ResolvedField> {
             .capabilities
             .values()
             .any(|capability| capability.kind == "db"),
-        jdl,
         current_model,
     };
     Ok(resolved)
@@ -314,7 +278,7 @@ fn finish_replace(
     invocation: Invocation,
     reader_paths: &[ProjectPath],
 ) -> Result<()> {
-    let next_model = parse_model(next_source, resolved.jdl)?;
+    let next_model = crate::model_generate_jdl::parse(next_source)?;
     let replacement: Field = next_model
         .entities
         .get(&resolved.entity_id)
@@ -370,43 +334,14 @@ fn rename_source_field(
     next_name: &str,
     next_column: Option<&str>,
 ) -> Result<String> {
-    if resolved.jdl {
-        jdl_edit::rename_field(
-            &resolved.current_source,
-            &resolved.entity_java_name,
-            &resolved.field_java_name,
-            resolved.field_id.as_str(),
-            next_name,
-            next_column,
-        )
-    } else {
-        let renamed = jails_model::set_field_java_name(
-            &resolved.current_source,
-            &resolved.entity_label,
-            &resolved.field_label,
-            next_name,
-        )
-        .map_err(Failure::Told)?;
-        match next_column {
-            Some(column) => jails_model::set_field_column(
-                &renamed,
-                &resolved.entity_label,
-                &resolved.field_label,
-                column,
-            )
-            .map_err(Failure::Told),
-            None => Ok(renamed),
-        }
-    }
-}
-
-fn parse_model(source: &str, jdl: bool) -> Result<AppModel> {
-    let parsed = if jdl {
-        jails_model::parse_jdl(source)
-    } else {
-        jails_model::parse_toml(source)
-    };
-    parsed.map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))
+    jdl_edit::rename_field(
+        &resolved.current_source,
+        &resolved.entity_java_name,
+        &resolved.field_java_name,
+        resolved.field_id.as_str(),
+        next_name,
+        next_column,
+    )
 }
 
 pub(crate) fn read_reader_sql(value: &str) -> Result<(ProjectPath, Vec<u8>)> {

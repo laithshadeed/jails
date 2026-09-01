@@ -33,7 +33,6 @@ mod projection;
 mod relation;
 mod setting;
 mod source;
-mod syntax_edit;
 mod unit;
 
 pub use app::ProjectIntent;
@@ -83,12 +82,6 @@ pub use patch::{
 };
 pub use projection::{Projection, ProjectionKind};
 pub use relation::{ReferentialAction, Relation, RelationCardinality, RelationMapping};
-pub use syntax_edit::{
-    remove_capability_declaration, remove_dependency_declaration, remove_entity_declaration,
-    remove_field_declaration, remove_index_declaration, remove_operation_declaration,
-    remove_setting_declaration, remove_unit_declaration, set_entity_active, set_entity_java_name,
-    set_field_column, set_field_java_name, set_field_required, set_field_type,
-};
 pub use unit::{EndpointMethod, HttpEndpoint, RequestFormat, SourceUnit, UnitKind};
 
 /// Parse and link a canonical TOML model.

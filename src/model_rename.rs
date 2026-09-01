@@ -8,8 +8,6 @@ use jails_support::{Failure, Result};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
-const MODEL_PATH: &str = ".jails/model.toml";
-
 pub(crate) struct Request {
     pub(crate) from: String,
     pub(crate) to: String,
@@ -50,14 +48,9 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
     }
 
     refuse_reader_java(&invocation.root()?, &request)?;
-    let jdl = crate::model_command::owns_jdl();
-    let model_path = PathBuf::from(if jdl {
-        crate::model_command::JDL_PATH
-    } else {
-        MODEL_PATH
-    });
+    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
     let current_source = crate::model_command::read_source(&model_path)?;
-    let current_model = parse_model(&current_source, jdl)?;
+    let current_model = crate::model_generate_jdl::parse(&current_source)?;
     let selector = request.from.rsplit('.').next().unwrap_or_default();
     if selector.is_empty() {
         return Err(Failure::Told(
@@ -104,28 +97,22 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         refuse_reader_sql(&invocation.root()?, &entity.names.sql_table)?;
     }
     let entity_id = entity.id.clone();
-    let entity_label = entity.label.clone();
     let sql_table = entity.names.sql_table.clone();
-    let next_source = if jdl {
-        crate::model_generate_jdl::rename_entity(
-            &current_source,
-            &entity.names.java_type,
-            &request.to,
-            entity.id.as_str(),
-            // Pinned only when the table stays. A cutover lets the SQL name
-            // follow the new label, which is what makes the migration below
-            // the *whole* of the storage change rather than half of it.
-            (!cutover && entity.facets.contains(&jails_model::Facet::Record))
-                .then_some(sql_table.as_str()),
-            accepted_route
-                .as_ref()
-                .map(|(projection, route)| (projection.as_str(), route.as_str())),
-        )?
-    } else {
-        jails_model::set_entity_java_name(&current_source, &entity_label, &request.to)
-            .map_err(Failure::Told)?
-    };
-    let next_model = parse_model(&next_source, jdl)?;
+    let next_source = crate::model_generate_jdl::rename_entity(
+        &current_source,
+        &entity.names.java_type,
+        &request.to,
+        entity.id.as_str(),
+        // Pinned only when the table stays. A cutover lets the SQL name
+        // follow the new label, which is what makes the migration below
+        // the *whole* of the storage change rather than half of it.
+        (!cutover && entity.facets.contains(&jails_model::Facet::Record))
+            .then_some(sql_table.as_str()),
+        accepted_route
+            .as_ref()
+            .map(|(projection, route)| (projection.as_str(), route.as_str())),
+    )?;
+    let next_model = crate::model_generate_jdl::parse(&next_source)?;
     let next_label = next_model
         .entities
         .get(&entity_id)
@@ -165,7 +152,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
     .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
 
     finish_generation(PreparedMutation {
-        name: entity_label,
+        name: entity.label.clone(),
         invocation,
         model_path,
         current_source,
@@ -323,13 +310,4 @@ fn collect(directory: &Path, extension: &str, into: &mut Vec<PathBuf>) {
             into.push(path);
         }
     }
-}
-
-fn parse_model(source: &str, jdl: bool) -> Result<jails_model::AppModel> {
-    let parsed = if jdl {
-        jails_model::parse_jdl(source)
-    } else {
-        jails_model::parse_toml(source)
-    };
-    parsed.map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))
 }

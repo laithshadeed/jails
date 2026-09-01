@@ -14,16 +14,11 @@ pub(crate) fn run(semantic_id: String, invocation: Invocation) -> Result<()> {
     // ejection boundary against `spring_boot: None` finds none of a Spring
     // project's files. See `implementation_paths`.
     let root = crate::model_command::root()?;
-    let jdl = crate::model_command::owns_jdl();
     // Relative, because it becomes a `ProjectPath` in the plan; the read is
     // anchored to `root`. See `model_command::project_root`.
-    let model_path = PathBuf::from(if jdl {
-        crate::model_command::JDL_PATH
-    } else {
-        crate::model_command::TOML_PATH
-    });
+    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
     let current_source = crate::model_command::read_source(&model_path)?;
-    let current_model = parse_model(&current_source, jdl)?;
+    let current_model = crate::model_generate_jdl::parse(&current_source)?;
     if current_model
         .ejections
         .values()
@@ -55,16 +50,8 @@ pub(crate) fn run(semantic_id: String, invocation: Invocation) -> Result<()> {
     if !next_source.ends_with('\n') {
         next_source.push('\n');
     }
-    if jdl {
-        next_source.push_str(&format!("\neject {semantic_id} @id({})\n", id.as_str()));
-    } else {
-        next_source.push_str(&format!(
-            "\n[ejections.{label}]\nid = {}\ntarget = {}\n",
-            quote(id.as_str())?,
-            quote(&semantic_id)?,
-        ));
-    }
-    let next_model = parse_model(&next_source, jdl)?;
+    next_source.push_str(&format!("\neject {semantic_id} @id({})\n", id.as_str()));
+    let next_model = crate::model_generate_jdl::parse(&next_source)?;
     let ejection = next_model
         .ejections
         .get(&id)
@@ -89,18 +76,4 @@ pub(crate) fn run(semantic_id: String, invocation: Invocation) -> Result<()> {
         },
         &reader_paths,
     )
-}
-
-fn parse_model(source: &str, jdl: bool) -> Result<jails_model::AppModel> {
-    let parsed = if jdl {
-        jails_model::parse_jdl(source)
-    } else {
-        jails_model::parse_toml(source)
-    };
-    parsed.map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))
-}
-
-fn quote(value: &str) -> Result<String> {
-    serde_json::to_string(value)
-        .map_err(|error| Failure::Told(format!("could not quote model value: {error}")))
 }
