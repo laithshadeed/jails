@@ -105,8 +105,10 @@ impl FileOp {
 /// There is no removal. An empty directory left behind is untidy; a removed
 /// one the user had put something in is data loss, and the two are told apart
 /// only by a listing that may be stale by the time it is acted on.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, jails_codec_derive::Codec)]
+#[codec(label = "directory operation")]
 pub enum DirectoryOp {
+    #[codec(tag = 0)]
     Create { path: ProjectPath },
 }
 
@@ -205,22 +207,6 @@ impl Codec for PreparedIdentityV1 {
         };
         identity.validate()?;
         Ok(identity)
-    }
-}
-
-impl Codec for DirectoryOp {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(0);
-        self.path().encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        match decoder.tag()? {
-            0 => Ok(Self::Create {
-                path: ProjectPath::decode(decoder)?,
-            }),
-            other => Err(format!("unknown directory operation tag {other}").into()),
-        }
     }
 }
 

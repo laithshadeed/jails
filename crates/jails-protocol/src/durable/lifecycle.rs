@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 pub type ReceiptId = OperationId;
 
 /// Stable identifier for one durable rolling storage-rename campaign.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub struct RenameCampaignId(ObjectId);
 
 impl RenameCampaignId {
@@ -23,16 +23,6 @@ impl RenameCampaignId {
 
     pub fn to_hex(self) -> String {
         self.0.to_hex()
-    }
-}
-
-impl Codec for RenameCampaignId {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.0.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self(ObjectId::decode(decoder)?))
     }
 }
 

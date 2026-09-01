@@ -108,52 +108,6 @@ pub struct RendererStamp {
     pub tools: Vec<ObjectId>,
 }
 
-impl FormatOwner {
-    fn tag(self) -> u8 {
-        match self {
-            Self::Pom => 0,
-            Self::Compose => 1,
-            Self::Properties => 2,
-            Self::HumanConfig => 3,
-            Self::MarkedSource => 4,
-            Self::CommandRegistration => 5,
-            Self::WholeFile => 6,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Result<Self> {
-        Ok(match tag {
-            0 => Self::Pom,
-            1 => Self::Compose,
-            2 => Self::Properties,
-            3 => Self::HumanConfig,
-            4 => Self::MarkedSource,
-            5 => Self::CommandRegistration,
-            6 => Self::WholeFile,
-            other => return Err(format!("unknown format owner tag {other}").into()),
-        })
-    }
-}
-
-impl OneShotKind {
-    fn tag(self) -> u8 {
-        match self {
-            Self::Field => 0,
-            Self::Migration => 1,
-            Self::Cases => 2,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Result<Self> {
-        Ok(match tag {
-            0 => Self::Field,
-            1 => Self::Migration,
-            2 => Self::Cases,
-            other => return Err(format!("unknown one-shot kind tag {other}").into()),
-        })
-    }
-}
-
 impl Codec for RendererId {
     fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
@@ -167,11 +121,11 @@ impl Codec for RendererId {
             }
             Self::Format(owner) => {
                 encoder.tag(2);
-                encoder.tag(owner.tag());
+                owner.encode(encoder)?;
             }
             Self::OneShot(kind) => {
                 encoder.tag(3);
-                encoder.tag(kind.tag());
+                kind.encode(encoder)?;
             }
             Self::ToolFeature(ToolFeature::FastTest) => {
                 encoder.tag(4);
@@ -185,8 +139,8 @@ impl Codec for RendererId {
         Ok(match decoder.tag()? {
             0 => Self::Recipe(crate::entity::recipe_from_label(&decoder.string()?)?),
             1 => Self::Capability(crate::entity::capability_from_label(&decoder.string()?)?),
-            2 => Self::Format(FormatOwner::from_tag(decoder.tag()?)?),
-            3 => Self::OneShot(OneShotKind::from_tag(decoder.tag()?)?),
+            2 => Self::Format(FormatOwner::decode(decoder)?),
+            3 => Self::OneShot(OneShotKind::decode(decoder)?),
             4 => match decoder.tag()? {
                 0 => Self::ToolFeature(ToolFeature::FastTest),
                 other => return Err(format!("unknown tool feature tag {other}").into()),

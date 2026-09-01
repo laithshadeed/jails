@@ -153,31 +153,13 @@ impl Codec for OutputSnapshotV1 {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(unknown_fix = "upgrade both testd protocol peers")]
 pub enum TestIsolation {
+    #[codec(tag = 0)]
     Isolated,
+    #[codec(tag = 1)]
     ForkSensitive,
-}
-
-impl Codec for TestIsolation {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(match self {
-            Self::Isolated => 0,
-            Self::ForkSensitive => 1,
-        });
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        match decoder.tag()? {
-            0 => Ok(Self::Isolated),
-            1 => Ok(Self::ForkSensitive),
-            other => Err(format!(
-                "unknown TestIsolation tag {other}\n       fix: upgrade both testd protocol peers"
-            )
-            .into()),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -256,27 +238,11 @@ impl Codec for TestEventV2 {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct TestdDiagnosticV1 {
     pub code: String,
     pub message: String,
     pub fix: Option<String>,
-}
-
-impl Codec for TestdDiagnosticV1 {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.string(&self.code)?;
-        encoder.string(&self.message)?;
-        encoder.option(self.fix.as_ref(), |encoder, fix| encoder.string(fix))
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            code: decoder.string()?,
-            message: decoder.string()?,
-            fix: decoder.option(Decoder::string)?,
-        })
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

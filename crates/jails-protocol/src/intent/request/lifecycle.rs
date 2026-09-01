@@ -39,60 +39,28 @@ pub type FieldId = Name;
 pub type FieldName = Name;
 
 /// The explicit storage transition selected for a logical resource rename.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(
+    label = "resource rename strategy",
+    unknown_fix = "upgrade jails or restore compatible `.jails` state"
+)]
 pub enum RenameStrategy {
+    #[codec(tag = 0)]
     PreserveTable,
+    #[codec(tag = 1)]
     SingleCutover,
+    #[codec(tag = 2)]
     Rolling,
 }
 
-impl Codec for RenameStrategy {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(match self {
-            Self::PreserveTable => 0,
-            Self::SingleCutover => 1,
-            Self::Rolling => 2,
-        });
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::PreserveTable,
-            1 => Self::SingleCutover,
-            2 => Self::Rolling,
-            other => Err(format!(
-                "unknown resource rename strategy tag {other}.\n       fix: upgrade jails or restore compatible `.jails` state"
-            ))?,
-        })
-    }
-}
-
 /// Whether externally visible names participate in a logical rename.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(unknown_fix = "upgrade jails or restore compatible `.jails` state")]
 pub enum ExternalRenamePolicy {
+    #[codec(tag = 0)]
     Preserve,
+    #[codec(tag = 1)]
     Rename,
-}
-
-impl Codec for ExternalRenamePolicy {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(match self {
-            Self::Preserve => 0,
-            Self::Rename => 1,
-        });
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Preserve,
-            1 => Self::Rename,
-            other => Err(format!(
-                "unknown external rename policy tag {other}.\n       fix: upgrade jails or restore compatible `.jails` state"
-            ))?,
-        })
-    }
 }
 
 /// A resource rename after its selector has resolved to one durable entity.
@@ -238,59 +206,24 @@ impl Codec for TypedLiteral {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(unknown_fix = "upgrade jails or restore compatible `.jails` state")]
 pub enum ColumnRenamePolicy {
+    #[codec(tag = 0)]
     Preserve,
+    #[codec(tag = 1)]
     SingleCutover,
+    #[codec(tag = 2)]
     Rolling,
 }
 
-impl Codec for ColumnRenamePolicy {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(match self {
-            Self::Preserve => 0,
-            Self::SingleCutover => 1,
-            Self::Rolling => 2,
-        });
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Preserve,
-            1 => Self::SingleCutover,
-            2 => Self::Rolling,
-            other => Err(format!(
-                "unknown column rename policy tag {other}.\n       fix: upgrade jails or restore compatible `.jails` state"
-            ))?,
-        })
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(unknown_fix = "upgrade jails or restore compatible `.jails` state")]
 pub enum TypeChangeStrategy {
+    #[codec(tag = 0)]
     Safe,
+    #[codec(tag = 1)]
     ExpandContract,
-}
-
-impl Codec for TypeChangeStrategy {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(match self {
-            Self::Safe => 0,
-            Self::ExpandContract => 1,
-        });
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Safe,
-            1 => Self::ExpandContract,
-            other => Err(format!(
-                "unknown type change strategy tag {other}.\n       fix: upgrade jails or restore compatible `.jails` state"
-            ))?,
-        })
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -527,23 +460,14 @@ pub struct ReviveResourceRequestV1 {
     pub expected_table: SqlName,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(
+    label = "resource repair strategy",
+    unknown_fix = "upgrade jails or restore compatible `.jails` state"
+)]
 pub enum RepairStrategy {
+    #[codec(tag = 0)]
     RollForward,
-}
-
-impl Codec for RepairStrategy {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(0);
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        match decoder.tag()? {
-            0 => Ok(Self::RollForward),
-            other => Err(format!("unknown resource repair strategy tag {other}.\n       fix: upgrade jails or restore compatible `.jails` state").into()),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

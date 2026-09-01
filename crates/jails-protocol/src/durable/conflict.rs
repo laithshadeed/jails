@@ -71,35 +71,12 @@ pub struct StoredFileImage {
 /// "this path is meant to have no file" is a claim a plan makes and must be
 /// able to record — an `Option::None` in a map is indistinguishable from a
 /// path nobody mentioned.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum FileImage {
+    #[codec(tag = 0)]
     Absent,
+    #[codec(tag = 1)]
     Present { object: ObjectRef, mode: FileMode },
-}
-
-impl Codec for FileImage {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Absent => encoder.tag(0),
-            Self::Present { object, mode } => {
-                encoder.tag(1);
-                object.encode(encoder)?;
-                mode.encode(encoder)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Absent,
-            1 => Self::Present {
-                object: ObjectRef::decode(decoder)?,
-                mode: FileMode::decode(decoder)?,
-            },
-            other => Err(format!("unknown file image tag {other}"))?,
-        })
-    }
 }
 
 /// The identity of one frozen pending conflict.
@@ -303,25 +280,11 @@ impl Codec for PendingConflictPath {
 
 /// A path the transaction wrote cleanly, frozen so the resume does not have to
 /// re-derive it from a tree that is mid-conflict.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct FrozenPath {
     pub path: ProjectPath,
+    /// `None` is a deletion: the path's postimage is that it is absent.
     pub postimage: Option<LiveFileImage>,
-}
-
-impl Codec for FrozenPath {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.path.encode(encoder)?;
-        // `None` is a deletion: the path's postimage is that it is absent.
-        encoder.option(self.postimage.as_ref(), |e, image| image.encode(e))
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            path: ProjectPath::decode(decoder)?,
-            postimage: decoder.option(LiveFileImage::decode)?,
-        })
-    }
 }
 
 /// Compute the finalisation identity of a frozen conflict.

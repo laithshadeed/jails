@@ -248,8 +248,11 @@ fn default_instance_name(kind: Capability) -> Name {
 
 /// A tool-level feature a project can own, distinct from a capability because
 /// nothing about it reaches the generated application.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub enum ToolFeature {
+    /// §R1.4 encodes the *feature*, not a Rust discriminant: the tag is the
+    /// recorded value, so reordering this enum cannot change what is on disk.
+    #[codec(tag = 0)]
     FastTest,
 }
 
@@ -272,56 +275,20 @@ impl ToolFeature {
 }
 
 /// Anything that can be owned and reconciled.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
+#[codec(label = "entity")]
 pub enum EntityId {
+    #[codec(tag = 0)]
     Capability(CapabilityId),
+    #[codec(tag = 1)]
     Intent(IntentId),
+    #[codec(tag = 2)]
     ToolFeature(ToolFeature),
+    #[codec(tag = 3)]
     Declared(DeclaredId),
     /// Stable logical identity declared by an application manifest.
+    #[codec(tag = 4)]
     Application(ObjectId),
-}
-
-impl Codec for EntityId {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Capability(id) => {
-                encoder.tag(0);
-                id.encode(encoder)
-            }
-            Self::Intent(id) => {
-                encoder.tag(1);
-                id.encode(encoder)
-            }
-            Self::ToolFeature(ToolFeature::FastTest) => {
-                encoder.tag(2);
-                encoder.tag(0);
-                Ok(())
-            }
-            Self::Declared(id) => {
-                encoder.tag(3);
-                id.encode(encoder)
-            }
-            Self::Application(id) => {
-                encoder.tag(4);
-                id.encode(encoder)
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        match decoder.tag()? {
-            0 => CapabilityId::decode(decoder).map(Self::Capability),
-            1 => IntentId::decode(decoder).map(Self::Intent),
-            2 => match decoder.tag()? {
-                0 => Ok(Self::ToolFeature(ToolFeature::FastTest)),
-                other => Err(format!("unknown tool feature tag {other}").into()),
-            },
-            3 => DeclaredId::decode(decoder).map(Self::Declared),
-            4 => ObjectId::decode(decoder).map(Self::Application),
-            other => Err(format!("unknown entity tag {other}").into()),
-        }
-    }
 }
 
 /// Who declared an entity. An entity may have several owners at once, and
@@ -340,46 +307,15 @@ pub enum OwnerId {
     DirectCli,
 }
 
-impl OwnerId {
-    pub fn tag(self) -> u8 {
-        match self {
-            Self::AppManifest => 0,
-            Self::DirectConfig => 1,
-            Self::DirectCli => 2,
-        }
-    }
-
-    pub fn from_tag(tag: u8) -> Result<Self> {
-        match tag {
-            0 => Ok(Self::AppManifest),
-            1 => Ok(Self::DirectConfig),
-            2 => Ok(Self::DirectCli),
-            other => Err(format!("unknown owner tag {other}").into()),
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // What an entity was declared to be
 // ---------------------------------------------------------------------------
 
 /// A capability's mutable content. Only placement, and only for the singleton
 /// class that has one — named identity already carries its package.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct CapabilitySpec {
     pub placement: Option<Package>,
-}
-
-impl Codec for CapabilitySpec {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.option(self.placement.as_ref(), |e, package| package.encode(e))
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            placement: decoder.option(Package::decode)?,
-        })
-    }
 }
 
 /// A tool feature's content: the console version it installs.
@@ -879,17 +815,28 @@ mod tests {
         }
     }
 
+    /// The numbers, not just the round trip. A round trip through one codec
+    /// agrees with itself whatever it writes, so it cannot notice a renumbered
+    /// variant -- and the ledgers on disk are numbers.
     #[test]
     fn owner_tags_are_stable_and_exhaustive() {
-        for owner in [
-            OwnerId::AppManifest,
-            OwnerId::DirectConfig,
-            OwnerId::DirectCli,
+        for (owner, tag) in [
+            (OwnerId::AppManifest, 0),
+            (OwnerId::DirectConfig, 1),
+            (OwnerId::DirectCli, 2),
         ] {
-            assert_eq!(OwnerId::from_tag(owner.tag()).unwrap(), owner);
+            let mut encoder = Encoder::new();
+            owner.encode(&mut encoder).unwrap();
+            let bytes = encoder.finish().unwrap();
+            assert_eq!(bytes, vec![tag]);
+
+            let mut decoder = Decoder::new(&bytes).unwrap();
+            assert_eq!(OwnerId::decode(&mut decoder).unwrap(), owner);
+            decoder.finish().unwrap();
         }
+        let mut decoder = Decoder::new(&[3]).unwrap();
         assert!(
-            OwnerId::from_tag(3)
+            OwnerId::decode(&mut decoder)
                 .unwrap_err()
                 .contains("unknown owner tag")
         );

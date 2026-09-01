@@ -75,27 +75,11 @@ pub enum ExternalInputId {
     CasesBrief { path_id: ExternalPathId },
 }
 
-impl Codec for MachineRootPresence {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(match self {
-            Self::Absent => 0,
-            Self::Present => 1,
-        });
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Absent,
-            1 => Self::Present,
-            other => Err(format!("unknown machine root presence tag {other}"))?,
-        })
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum MachineRootPresence {
+    #[codec(tag = 0)]
     Absent,
+    #[codec(tag = 1)]
     Present,
 }
 

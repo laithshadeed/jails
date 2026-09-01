@@ -232,32 +232,16 @@ fn split_map(inner: &str) -> Result<(&str, &str)> {
 }
 
 /// Whether a value may be absent, and how absence is expressed.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, jails_codec_derive::Codec)]
 pub enum Optionality {
+    #[codec(tag = 0)]
     Required,
     /// `!` — present *and* not blank. A text property only.
+    #[codec(tag = 1)]
     NonBlank,
     /// `?` — an `Optional<T>` component.
+    #[codec(tag = 2)]
     Nullable,
-}
-
-impl Optionality {
-    fn tag(self) -> u8 {
-        match self {
-            Self::Required => 0,
-            Self::NonBlank => 1,
-            Self::Nullable => 2,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Result<Self> {
-        match tag {
-            0 => Ok(Self::Required),
-            1 => Ok(Self::NonBlank),
-            2 => Ok(Self::Nullable),
-            other => Err(format!("unknown optionality tag {other}").into()),
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -363,7 +347,7 @@ impl Codec for FieldConstraints {
 }
 
 /// One declared field, fully resolved.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, jails_codec_derive::Codec)]
 pub struct FieldSpec {
     pub name: FieldName,
     pub field_type: FieldType,
@@ -619,24 +603,6 @@ pub(super) fn validate_field_names(fields: &[FieldSpec]) -> Result<()> {
         }
     }
     Ok(())
-}
-
-impl Codec for FieldSpec {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.name.encode(encoder)?;
-        self.field_type.encode(encoder)?;
-        encoder.tag(self.optionality.tag());
-        self.constraints.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            name: FieldName::decode(decoder)?,
-            field_type: FieldType::decode(decoder)?,
-            optionality: Optionality::from_tag(decoder.tag()?)?,
-            constraints: FieldConstraints::decode(decoder)?,
-        })
-    }
 }
 
 fn is_numeric(scalar: &ScalarFieldType) -> bool {

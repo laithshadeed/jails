@@ -71,49 +71,16 @@ pub enum ReferenceRole {
     Yields,
 }
 
-impl ReferenceRole {
-    fn tag(self) -> u8 {
-        match self {
-            Self::On => 0,
-            Self::Yields => 1,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Result<Self> {
-        Ok(match tag {
-            0 => Self::On,
-            1 => Self::Yields,
-            other => Err(format!("unknown reference role tag {other}"))?,
-        })
-    }
-}
-
 /// One reference the renderer resolved.
 ///
 /// The *resolved* qualified target and an optional managed identity — never a
 /// source path. A path recorded here would make the context depend on where
 /// the reader keeps their project.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, jails_codec_derive::Codec)]
 pub struct ResolvedReferenceContext {
     pub role: ReferenceRole,
     pub target: JavaType,
     pub managed: Option<EntityId>,
-}
-
-impl Codec for ResolvedReferenceContext {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.role.tag());
-        self.target.encode(encoder)?;
-        encoder.option(self.managed.as_ref(), |e, id| id.encode(e))
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            role: ReferenceRole::from_tag(decoder.tag()?)?,
-            target: JavaType::decode(decoder)?,
-            managed: decoder.option(EntityId::decode)?,
-        })
-    }
 }
 
 /// One layer and the package it resolved to.

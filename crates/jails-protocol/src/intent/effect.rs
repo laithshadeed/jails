@@ -63,29 +63,6 @@ pub enum EffectFailureCode {
     Protocol,
 }
 
-impl EffectFailureCode {
-    fn tag(self) -> u8 {
-        match self {
-            Self::Spawn => 0,
-            Self::Timeout => 1,
-            Self::ExitNonzero => 2,
-            Self::InterruptedTwice => 3,
-            Self::Protocol => 4,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Result<Self> {
-        match tag {
-            0 => Ok(Self::Spawn),
-            1 => Ok(Self::Timeout),
-            2 => Ok(Self::ExitNonzero),
-            3 => Ok(Self::InterruptedTwice),
-            4 => Ok(Self::Protocol),
-            other => Err(format!("unknown effect failure code {other}").into()),
-        }
-    }
-}
-
 impl Codec for EffectState {
     fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
@@ -109,7 +86,7 @@ impl Codec for EffectState {
                 encoder.tag(4);
                 nonzero(*attempt, "attempt")?;
                 encoder.u32(*attempt);
-                encoder.tag(code.tag());
+                code.encode(encoder)?;
                 encoder.string(summary)?;
             }
             Self::Superseded { by } => {
@@ -142,7 +119,7 @@ impl Codec for EffectState {
                 nonzero(attempt, "attempt")?;
                 Self::Failed {
                     attempt,
-                    code: EffectFailureCode::from_tag(decoder.tag()?)?,
+                    code: EffectFailureCode::decode(decoder)?,
                     summary: decoder.string()?,
                 }
             }
@@ -390,19 +367,29 @@ mod tests {
         assert!(EffectState::decode(&mut decoder).is_err());
     }
 
+    /// The numbers, not just the round trip: one codec agrees with itself
+    /// whatever it writes, and what is on disk is the number.
     #[test]
     fn every_failure_code_round_trips_and_an_unknown_one_rejects() {
-        for code in [
-            EffectFailureCode::Spawn,
-            EffectFailureCode::Timeout,
-            EffectFailureCode::ExitNonzero,
-            EffectFailureCode::InterruptedTwice,
-            EffectFailureCode::Protocol,
+        for (code, tag) in [
+            (EffectFailureCode::Spawn, 0),
+            (EffectFailureCode::Timeout, 1),
+            (EffectFailureCode::ExitNonzero, 2),
+            (EffectFailureCode::InterruptedTwice, 3),
+            (EffectFailureCode::Protocol, 4),
         ] {
-            assert_eq!(EffectFailureCode::from_tag(code.tag()).unwrap(), code);
+            let mut encoder = Encoder::new();
+            code.encode(&mut encoder).unwrap();
+            let bytes = encoder.finish().unwrap();
+            assert_eq!(bytes, vec![tag]);
+
+            let mut decoder = Decoder::new(&bytes).unwrap();
+            assert_eq!(EffectFailureCode::decode(&mut decoder).unwrap(), code);
+            decoder.finish().unwrap();
         }
+        let mut decoder = Decoder::new(&[5]).unwrap();
         assert!(
-            EffectFailureCode::from_tag(5)
+            EffectFailureCode::decode(&mut decoder)
                 .unwrap_err()
                 .contains("unknown effect failure code")
         );

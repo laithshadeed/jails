@@ -57,7 +57,7 @@ impl Codec for AppliedEntity {
         for owner in &self.owners {
             ordered(previous, owner)?;
             previous = Some(owner);
-            encoder.tag(owner.tag());
+            owner.encode(encoder)?;
         }
         self.version.spec.encode(encoder)?;
         self.version.operation.encode(encoder)?;
@@ -70,7 +70,7 @@ impl Codec for AppliedEntity {
         let mut owners = BTreeSet::new();
         let mut previous: Option<OwnerId> = None;
         for _ in 0..count {
-            let owner = OwnerId::from_tag(decoder.tag()?)?;
+            let owner = OwnerId::decode(decoder)?;
             ordered(previous.as_ref(), &owner)?;
             previous = Some(owner);
             owners.insert(owner);
