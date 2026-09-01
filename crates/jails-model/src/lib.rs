@@ -43,7 +43,7 @@ pub use component::{
 };
 pub use constraint::{ConstraintKind, EntityConstraint};
 pub use derived::{DerivedRole, DerivedRoleKey, DerivedValue};
-pub use diagnostic::{Diagnostic, Diagnostics};
+pub use diagnostic::{Diagnostic, Diagnostics, Severity};
 pub use enum_constant::EnumConstant;
 pub use id::{
     CapabilityId, ComponentId, ComponentVariantId, ConstraintId, DependencyId, EjectionId,

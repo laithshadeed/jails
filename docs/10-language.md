@@ -160,10 +160,33 @@ refusal from the compiler and a refusal from the parser are different kinds of
 object and only one of them can be pointed at a line.
 
 **Most of the fix is not yours.** Those returns are in `jails-compiler` and
-`jails-workspace`, which are B's and C's. What is yours is the contract they
-would adopt: the `Diagnostic` shape, the code namespace, and whether a
-span below the parser is a source span or a model path. Agree it before
-anyone converts a crate.
+`jails-workspace`, which are B's and C's. What was yours -- the contract they
+adopt -- is landed, so a conversion is now a mechanical change in their crate
+rather than a design question in yours:
+
+- **The shape** is `jails_model::Diagnostic`, and it is constructible from
+  above now. `Diagnostic::new` and `Diagnostics::from_vec` were `pub(crate)`,
+  so nothing outside `jails-model` could produce one -- which is the literal
+  reason the third vocabulary is strings. `Diagnostic::warning` and
+  `Severity` are there for §18.3's severity column.
+- **The namespace is closed and gated.** `JDL####` and `model-*` are
+  `jails-model`'s, `compile-*` is `jails-compiler`'s, `workspace-*` is
+  `jails-workspace`'s, and
+  `every_diagnostic_code_belongs_to_the_crate_that_owns_its_phase` fails the
+  build when a code escapes its crate. It found two real ones on its first
+  run, which is why the workspace prefix is `workspace-` and not the obvious
+  `plan-`: `jails-prepare` already spells `plan-refused` in its table of
+  command outcomes, and two vocabularies under one prefix is the thing the
+  table exists to stop.
+- **Below the parser a diagnostic points at a model path, not a source span.**
+  The compiler is pure over a `WorkspaceSnapshot` and never sees the reader's
+  bytes; carrying a span there would mean threading one through linking for
+  every node that might later refuse. The canonical model path the linker
+  already uses resolves to a declaration, and where the subject is a file
+  rather than a node the path is that file's project-relative path.
+
+**What is left is theirs:** 80 `Result<_, String>` returns, and `CompileError`
+as a newtype over `String`. The exit is unchanged.
 
 ## A4.4 — three model front ends, and why the simplicity claim is blocked on you
 
@@ -185,6 +208,26 @@ every mutating command is written three times.
 others: the second front end goes away by *upgrading* projects onto the first,
 never by supporting both, because `docs/00-contracts.md` forbids two editable
 model sources. That rule is what fixes the order of this work.
+
+**This item is not the branch-deletion it reads as, and starting it that way
+strands projects.** `is_v1_source` has 31 call sites and each is a two-armed
+`if`, so deleting the pre-v1 arm looks like the whole job. It is not, because
+only one of the two old front ends has an upgrade path:
+
+| front end | route onto `jdl 1` |
+|---|---|
+| pre-v1 JDL draft | `jails model upgrade --to 1`, source-to-source, identity proved by `jails_model::upgrade` |
+| `.jails/model.toml` | **none** -- `model upgrade` refuses it by name: *"the temporary compatibility input, not a JDL source; there is no in-place upgrade for it"* |
+
+So the order is: build the TOML route first, then delete the branches.
+§22 already says what it is -- "legacy TOML model state is imported into the
+same v1 AST through a separate one-shot command" -- and what it needs is a
+renderer from `AppModel` to v1 JDL, which does not exist. `jdl/render.rs`
+renders the *other* direction (parsed JDL down to the TOML boundary), and
+`upgrade()` rewrites pre-v1 JDL text rather than taking a model, so neither
+serves. That renderer is the real content of this item and it is a large
+piece: every v1 construct, emitted, and proved identity-preserving the way
+`preserves_identity` proves the JDL upgrade today.
 
 **Exit:** `.jails/model.toml` and the pre-v1 draft are read by `model import`
 and by nothing else; `is_v1_source` has no callers.
@@ -212,3 +255,24 @@ because most of it is about output names. **The linker half is yours**:
 `eject Task.repo.fake` refuses with `model-ejection-target` and §16.4's
 readable boundary path does not resolve. One registry serves both halves; agree
 its shape with B before either of you writes it.
+
+**Do not write the linker half alone, and here is the specific reason.** An
+ejection has to resolve to the id the compiler actually emits, and those ids
+are built by `format!` at the point of use:
+
+```text
+§16.4 calls it   Entity.repo.fake
+the emitter says art_ent_note_repository_memory
+```
+
+The mapping is not mechanical, so a
+registry written only in `jails-model` would be a *second* answer to "what is
+this artifact called", and the first divergence would be an ejection silently
+targeting an artifact no emitter produces. That is the same defect shape as
+the two `valid_java_type` copies, which is worth naming because it took a
+generated file that could not compile to notice.
+
+`the_specification_complete_example_links_except_its_one_recorded_gap` is
+built for this landing: it pins both halves, so when the registry resolves
+`eject Task.repo.fake` the second assertion fails and tells you the first can
+absorb it.

@@ -1773,3 +1773,113 @@ fn every_cross_reference_in_the_documents_resolves() {
         dangling.join("\n  ")
     );
 }
+
+/// Every diagnostic code belongs to the crate that owns its phase.
+///
+/// **§18.3 asks for one diagnostic contract, and the way it is lost is a
+/// third vocabulary.** `jails-compiler` and `jails-workspace` return
+/// `Result<_, String>` today -- no code, no path -- so a refusal from the
+/// compiler and a refusal from the parser are different kinds of object. When
+/// those are converted, the failure mode is not that they stay strings: it is
+/// that a `model-*` code appears in an emitter, because that prefix is the
+/// one already in the tree to copy. Then two crates own one namespace and
+/// nothing says which pass a code came from.
+///
+/// A code says which pass refused, so the prefix is owned by the crate that
+/// owns the pass: `JDL####` and `model-*` are `jails-model`'s, `compile-*` is
+/// `jails-compiler`'s, `plan-*` is `jails-workspace`'s. The rule is checked
+/// over *string literals* -- a code only ever appears inside one, and blanked
+/// source would report zero however wrong the tree was, which is the mistake
+/// `CODEMOD_RS` records having made.
+#[test]
+fn every_diagnostic_code_belongs_to_the_crate_that_owns_its_phase() {
+    const OWNERS: &[(&str, &str)] = &[
+        ("JDL", "jails-model"),
+        ("model-", "jails-model"),
+        ("compile-", "jails-compiler"),
+        ("workspace-", "jails-workspace"),
+    ];
+    // The root binary reports on the model in the linker's own vocabulary --
+    // `model-io` when it cannot read the file, `model-generated-drift` when
+    // the committed tree disagrees with this compilation -- and both are in
+    // the JSON a reader parses. What this gate defends against is an
+    // *emitter* copying `model-` because it is the prefix already there.
+    const ALSO_OWNS_MODEL: &str = "/src/model_command.rs";
+    let code = regex_lite_codes;
+    let mut offenders = Vec::new();
+    let mut seen = 0_usize;
+    for file in sources() {
+        let path = file.path.to_string_lossy().into_owned();
+        // The gate itself names every prefix, and `diagnostic.rs` documents
+        // the table; neither is a code site.
+        if path.ends_with("tests/architecture/rules.rs")
+            || path.ends_with("jails-model/src/diagnostic.rs")
+        {
+            continue;
+        }
+        for literal in code(&file.literals) {
+            let Some((prefix, owner)) = OWNERS
+                .iter()
+                .find(|(prefix, _)| literal.starts_with(prefix))
+                .copied()
+            else {
+                continue;
+            };
+            seen += 1;
+            if prefix == "model-" && path.ends_with(ALSO_OWNS_MODEL) {
+                continue;
+            }
+            if !path.contains(&format!("crates/{owner}/")) {
+                offenders.push(format!(
+                    "  {path}: `{literal}` is {owner}'s `{prefix}` namespace"
+                ));
+            }
+        }
+    }
+    assert!(
+        seen > 100,
+        "the scanner found only {seen} diagnostic codes -- it has stopped reading them, and \
+         would report the same clean result over a tree that had gone wrong"
+    );
+    assert!(
+        offenders.is_empty(),
+        "a diagnostic code escaped the crate that owns its phase:\n{}",
+        offenders.join("\n")
+    );
+}
+
+/// Every string literal shaped like a diagnostic code.
+///
+/// Deliberately shape-based rather than call-site based: a code reaches
+/// `Diagnostic::new` through `linker.problem`, `problem`, `here` and a handful
+/// of wrappers, and a gate that enumerated those would go quietly blind the
+/// first time somebody added a sixth.
+fn regex_lite_codes(literals: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let bytes = literals.as_bytes();
+    let mut at = 0;
+    while let Some(open) = literals[at..].find('"') {
+        let start = at + open + 1;
+        let Some(len) = literals[start..].find('"') else {
+            break;
+        };
+        let value = &literals[start..start + len];
+        at = start + len + 1;
+        let _ = bytes;
+        let looks_like_a_code = (value.starts_with("JDL")
+            && value.len() == 7
+            && value[3..].bytes().all(|byte| byte.is_ascii_digit()))
+            || (value.len() > 6
+                && value.contains('-')
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte == b'-')
+                && ["model-", "compile-", "workspace-"]
+                    .iter()
+                    .any(|prefix| value.starts_with(prefix)));
+        if looks_like_a_code {
+            found.push(value.to_string());
+        }
+    }
+    found
+}
