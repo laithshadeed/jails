@@ -1045,8 +1045,43 @@ jails'. `deps.tsv` and `deps-update.sh` at the repo root *are* tracked.
 ## Workflow (every change, no exceptions)
 
 ```
-mise run verify-rewrite && cargo install --path .
+cargo test --workspace                                  # the inner loop
+mise run verify-rewrite && cargo install --path .       # before pushing
 ```
+
+**There are two commands and one switch between them, and the switch is
+`JAILS_TOOLCHAIN`.** Plain `cargo test --workspace` is Rust only -- no JVM, no
+container, no build tool -- and is **59.6s / 1982 tests** here on a machine
+already at load 18. `mise run verify-rewrite` sets `JAILS_TOOLCHAIN=1`, which
+switches the real-toolchain tier on and turns anything it then cannot run into
+a failure naming what was missing.
+
+**That default is inverted from what it used to be, and inverting it is what
+fixed three separate complaints at once.** The tier used to run whenever the
+machine *happened* to have the tools, each probed off `PATH`, which meant:
+
+| | before | after |
+|---|---|---|
+| `cargo test --workspace`, toolchain installed | 345.9s | **59.6s** |
+| Maven subprocesses in that run | 859.3s over 36 | **none** |
+| peak resident | ~7 GB of JVMs | ~1.5 GB |
+| same command on a machine without the tools | silently ran a third less | identical |
+
+The memory figure is the one that mattered: a full run on a 30 GB desktop with
+a browser open was OOM-killed by the kernel, and the kill left a PostgreSQL and
+a Kafka container running for four hours afterwards. **Every one of those three
+symptoms was the same decision** -- an expensive tier that opted itself in
+based on what it found on `PATH`.
+
+Two things follow that are easy to undo by accident:
+
+- **A probe must never be the thing that decides whether the tier runs.**
+  `real_mvn_available` and its three siblings all answer `false` when the tier
+  is off, so there is one switch rather than four independent PATH questions.
+  `tests/common/toolchain.rs` owns it.
+- **One variable, not two.** `JAILS_REQUIRE_TOOLCHAIN` existed only to notice
+  that the old default was wrong; opting in *is* the requirement now, so it is
+  gone and there is no combination of two flags left to get wrong.
 
 **A Claude Code on the web session provisions itself.**
 `.claude/hooks/session-start.sh` runs before the session starts and installs
@@ -1165,9 +1200,10 @@ this project has been bitten by:
 - **`--workspace` is not optional.** `cargo test` at a workspace root tests the
   root package only: it reported 390 passing where the tree had 418, and
   nothing said the other 28 had not run.
-- **`JAILS_REQUIRE_TOOLCHAIN=1` turns a skip into a failure.** Without it a
+- **`JAILS_TOOLCHAIN=1` switches the real-toolchain tier on**, and switching
+  it on is what makes a missing tool a failure rather than a skip. Without it a
   tier-3 test that cannot find `mvn`, a new enough `javac`, Gradle or a
-  container runtime skips itself and is counted as passing. Turning it on found
+  container runtime does not run at all. It found
   `unheld_gradle_example_manifest_builds_on_its_pinned_toolchain`, which needs
   Gradle 8.5 on JDK 21 against a default of 26 and had never run here.
 
@@ -1185,10 +1221,10 @@ below are split in two.** The tier-3 tests need a JDK that can compile
 `TARGET_RELEASE` and a Docker daemon. On a machine missing either they skip or
 fail fast, the suite still says something, and **every measurement taken there
 is a measurement of the other two tiers**. Measure with
-`JAILS_REQUIRE_TOOLCHAIN=1` or measure nothing.
+`JAILS_TOOLCHAIN=1` or measure nothing.
 
 Measured on a four-core machine with the full toolchain present, so every
-tier actually ran (`JAILS_REQUIRE_TOOLCHAIN=1`). **The baseline is this
+tier actually ran (`JAILS_TOOLCHAIN=1`). **The baseline is this
 branch's own parent**, not some older revision -- the numbers below are what
 *this* change is worth on top of everything already in the tree:
 
@@ -1239,7 +1275,8 @@ run orders by it, with an unmeasured cell scheduled *first* because a new row
 is more likely to be expensive than not. It is a hint and only a hint -- a
 missing, stale or corrupt ledger changes the order and no result, which is why
 it lives under `target/` and every read and write failure is ignored.
-`scripts/run-tests.py` keeps the same kind of ledger for whole binaries.
+The per-binary ledger the deleted runner kept went with it; this one, over
+scenarios inside a binary, is unaffected.
 
 **3. A scan of the workspace happens once.** `tests/architecture/` has
 twenty-five gates over the same 457 files and 6.2 MB, and it re-walked, re-read
@@ -1271,7 +1308,7 @@ the latter is not the same lever.** The reading above invites it, so it was
 measured over a warm `tests/cli` with the full toolchain: **147s at four
 threads, 136s at eight, 140s at sixteen**. Eight is worth 7% and sixteen is
 worse than eight, which puts the whole range inside this suite's noise -- and
-`scripts/run-tests.py` records what oversubscription cost the last time it was
+The deleted runner recorded what oversubscription cost the last time it was
 tried, a generated `http-sink` test whose localhost timeout went marginal on a
 starved box. Leave it at the harness default.
 
@@ -1282,31 +1319,50 @@ Maven, so its limit is memory and disk rather than cores, and it is measured
 and clamped separately. Anything here that starts a build tool belongs under
 *that* budget, not this one.
 
-**6. `cargo test` runs the test binaries one after another.** The sum of the
-per-target times was within four seconds of the whole run's wall clock, so
-essentially nothing overlapped. `scripts/run-tests.py` (`mise run test`) runs
-every one of them at once, longest first, and **is what `verify-rewrite`
-invokes**, and prints how many it found on every run. (33 today; the count
-moves whenever a test file is added, so take it from that line rather than
-from any number written down here or in the transcripts below — a `cargo test
---workspace --no-run` artifact count is *not* the same number and gave 34.)
+**6. `cargo test` runs the test binaries one after another, and that is now
+the answer rather than the problem.** It was the problem for a while: the sum
+of per-target times was within four seconds of the whole run's wall clock, so
+essentially nothing overlapped, and `scripts/run-tests.py` ran all of them at
+once, longest first, as the gate's runner.
 
-**The Maven budget has to be a `flock` for this to work.** A `Mutex` and a
-`Condvar` are the whole machine's budget only while one binary runs at a time:
-launch every binary at once and each believes it owns all six permits, so four
-cores get asked for thirty concurrent JVMs and the oversubscription eats the
-overlap. One lock file per permit under `target/`, shared however the suite is
-launched, makes the run as long as its slowest binary rather than the sum of
-all of them -- 415.7s of per-binary time, 212.4s longest, 212.8s wall.
+**It was deleted on 2026-09-01, measured out rather than argued out**, and both
+halves of the measurement matter:
 
-It is still one answer to "is this green": the same binaries out of `cargo test
---no-run`, the same filters, the same exit status. What it costs is a python3
-dependency for the gate.
+| | `cargo test --workspace` | `scripts/run-tests.py` |
+|---|---|---|
+| toolchain tier on, 8 GB cap | **275.7s, 1991 passed** | killed |
+| toolchain tier on, 10 GB cap | -- | **SIGKILL at 179s** |
+| output when killed | streamed, up to the kill | empty (it buffered) |
 
-One thing it has to do that `cargo test` does for free: a proc-macro crate's test harness links
-`libstd` dynamically, so the runner puts the toolchain sysroot on
-`LD_LIBRARY_PATH` itself. Without that `jails-codec-derive` dies before `main`
-and the runner reports it as a failing test rather than as its own defect.
+- **The win had evaporated.** Concurrency across binaries is worth something
+  only while no single binary dominates, and `cli` had grown to dominate
+  completely: 42.7s of a 68.0s sum with the tier off, and essentially the whole
+  run with it on. The other 29 overlap into its shadow either way.
+- **The cost had not.** Sixteen binaries at once, each free to start JVMs, with
+  a budget that counts Maven *processes* and never their footprint. It was
+  OOM-killed by the kernel 179s into a run capped at 10 GB, having printed only
+  `30 binaries, 16 at a time` -- and on a developer's desktop it took the whole
+  session down and left a PostgreSQL and a Kafka running for four hours.
+
+So the gate and the inner loop are both plain `cargo test --workspace` now,
+which also removes the python3 dependency, the cost ledger for whole binaries,
+and the `LD_LIBRARY_PATH` fix-up the runner needed because a proc-macro crate's
+test harness links `libstd` dynamically.
+
+**The Maven budget stays a `flock`, and the reason changed rather than
+disappeared.** A `Mutex` and a `Condvar` are the whole machine's budget only
+while one binary runs at a time, which is once again true of the runner -- but
+not of the *machine*, where a second shell running `cargo test` while the first
+still is doubles the JVM count with nothing to notice. One lock file per permit
+under `target/`, shared however the suite is launched, is true in both cases and
+costs nothing in the sequential one.
+
+**Read the historical numbers below with the runner in mind.** Everything in
+the rest of this section that quotes a `run-tests:` summary line was measured
+under the concurrent runner and describes a scheduling regime that no longer
+exists. The conclusions about *where the cost is* -- Maven, JVM starts, Spring
+contexts -- are unaffected, because those are properties of the work rather
+than of how it was launched. Re-measure any wall clock before quoting it.
 
 ### The remaining cost is Maven, and it is at the machine's floor
 
@@ -1608,7 +1664,7 @@ inside it and are free; nothing that speeds them up can show. Only `cli` has a
 critical path, so only `cli` has a budget.
 
 Take a local `tests/cli` number as evidence about CI only with
-`JAILS_REQUIRE_TOOLCHAIN=1` **and** a container engine running. With both,
+`JAILS_TOOLCHAIN=1` **and** a container engine running. With both,
 local and CI agree closely -- 245s against 298s, and 474 of 476 tests passing
 -- so the suite *can* be profiled off CI. Without a container runtime the
 container-dependent tests fail in milliseconds and the run measures the suite
@@ -2547,8 +2603,7 @@ jails knows nothing about.
   and nothing else**, per `simplify-sol.md`'s G0: one answer to "is this
   green", so the hook and CI cannot drift. A hook running its own `cargo build
   && cargo test` gets neither `--workspace` (so the root package alone) nor
-  `JAILS_REQUIRE_TOOLCHAIN` (so a test that cannot find its toolchain skips and
-  counts as a pass).
+  `JAILS_TOOLCHAIN` (so the real-toolchain tier does not run at all).
 - **The crate is on edition `"2024"`, deliberately** — edition 2026 doesn't
   exist yet, whatever the version number suggests. Leave it alone.
 - Install target is `~/.cargo/bin/jails` via `cargo install --path .`
@@ -2731,12 +2786,12 @@ however confidently it is written down.
 27 — an unreleased JDK — `javac` on a bare PATH rejected it and **11 of the
 104 integration tests did nothing** while the suite said green. The move to 25
 should have removed that cause; confirm it rather than assume it. Every skip
-goes through `common::skip()`, and `JAILS_REQUIRE_TOOLCHAIN=1 cargo test`
-turns each one into a failure naming what was missing. Use it before believing
-a green run covered the generated-code path:
+goes through `common::skip()`, and `JAILS_TOOLCHAIN=1 cargo test` runs the
+tier for real, turning anything it cannot run into a failure naming what was
+missing. Use it before believing a green run covered the generated-code path:
 
 ```
-JAILS_REQUIRE_TOOLCHAIN=1 cargo test --workspace
+JAILS_TOOLCHAIN=1 cargo test --workspace
 ```
 
 Note `real_path_without_mvnd()` rebuilds PATH for the real-mvn tests, so

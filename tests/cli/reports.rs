@@ -485,7 +485,7 @@ fn an_unwritable_path_leaves_the_project_exactly_as_it_was() {
         // the honest test: asserting on the uid would claim to know why.
         //
         // Not `skip`: there is nothing to install here, so
-        // `JAILS_REQUIRE_TOOLCHAIN` must not turn it into a failure. See
+        // `JAILS_TOOLCHAIN` must not turn it into a failure. See
         // `skip_unsupported_environment`.
         common::skip_unsupported_environment("this user can write into a read-only directory");
         return;

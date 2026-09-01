@@ -68,7 +68,7 @@ jobs:
 
       # Reads `mise.toml`, so the Java, Maven, mvnd and Gradle versions this
       # runs are the ones the repository pins. The canary sets
-      # `JAILS_REQUIRE_TOOLCHAIN=1`, so a missing tool is a failure naming it
+      # `JAILS_TOOLCHAIN=1`, so a missing tool is a failure naming it
       # rather than a skip reported as a comparison.
       - name: Install the pinned toolchain
         uses: jdx/mise-action@v2

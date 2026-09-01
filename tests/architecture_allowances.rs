@@ -17,6 +17,9 @@
 #[path = "common/parallel.rs"]
 mod parallel;
 
+#[path = "common/toolchain.rs"]
+mod toolchain;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -74,24 +77,17 @@ const CASES: &[Case] = &[
 
 #[test]
 fn allowances_are_bounded_current_and_used() {
-    if Command::new("mvn").arg("--version").output().is_err() {
-        // The same contract as `common::skip`, spelled out because this
-        // binary does not take the shared harness for one function.
-        //
-        // It was a bare `eprintln!` and a `return`, which is the one thing
-        // CLAUDE.md says a skip must never be: `JAILS_REQUIRE_TOOLCHAIN=1`
-        // exists to turn "I could not run" into a failure, and this test --
-        // the only executable check of the generated ArchUnit policy, and one
-        // that shells out to real Maven -- was the single place in the suite
-        // that evaded it. On a machine without Maven it reported green, in a
-        // run whose whole point was that nothing may report green without
-        // running.
-        assert!(
-            std::env::var_os("JAILS_REQUIRE_TOOLCHAIN").is_none_or(|value| value == "0"),
-            "JAILS_REQUIRE_TOOLCHAIN is set, but this test cannot run: \
-             Maven is unavailable"
-        );
-        eprintln!("skipping architecture allowance acceptance: Maven is unavailable");
+    // The gate this binary evaded twice, now taken from its one owner.
+    //
+    // It was first a bare `eprintln!` and a `return` -- the one thing a skip
+    // must never be, since the whole point of the tier switch is that nothing
+    // may report green without running. Replacing that with a hand-copied
+    // assertion fixed the symptom and left the cause: two spellings of one
+    // contract, in a repository whose own rules say a second copy is a copy
+    // that drifts. `toolchain::skip` is that contract, and `common/mod.rs`
+    // re-exports the same function to everyone else.
+    if !toolchain::toolchain_enabled() || Command::new("mvn").arg("--version").output().is_err() {
+        toolchain::skip("architecture allowance acceptance: Maven is unavailable");
         return;
     }
 

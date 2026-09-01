@@ -195,7 +195,20 @@ twice.
 
 ## The runner is four cores, and that sets everything else
 
-`run-tests` prints its width, and on CI it says **`30 binaries, 4 at a time`**.
+**`scripts/run-tests.py` no longer exists**, and every `run-tests:` summary
+quoted in this file was printed by it. It was deleted on 2026-09-01 after being
+OOM-killed running 16 binaries at once inside a 10 GB cap, where plain
+`cargo test --workspace` completed the same 1991 tests in 275.7s inside 8 GB;
+the concurrency it bought had evaporated once `cli` grew to dominate the run.
+CLAUDE.md's "How the suite stays fast" section carries the measurement.
+
+What survives that deletion is everything below about *where the cost is* --
+Maven, JVM starts, Spring contexts, and the four-core arithmetic -- because
+those are properties of the work rather than of how it was launched. What does
+not survive is any wall clock or concurrency figure attributed to the runner.
+Re-measure before quoting one.
+
+Its width line said, on CI, **`30 binaries, 4 at a time`**.
 Every number below follows from that: the test phase is subprocess-bound, so
 its wall clock is total subprocess work over four, and **four seconds of work
 removed buys one second of wall**.
@@ -222,7 +235,7 @@ the ordinary commit:
 **Quote the second column.** A gate exists for commits that change code, and
 the first column is what it costs to change a comment.
 
-Inside that 382s gate, `run-tests` reported **325.2s of test phase carrying
+Inside that 382s gate, the runner reported **325.2s of test phase carrying
 1102.7s of subprocess work at mean concurrency 3.39**, with 41.1s spent
 queueing for a permit. So compilation, `fmt`, `clippy` and `doc` together are
 about 57s, and everything else is the suite.
@@ -278,7 +291,7 @@ then ask whether the total moved, over several runs.
 
 Do not re-propose these. Each was measured and each cost an afternoon:
 
-- **The runner is at a perfect four-core packing.** `run-tests` reported
+- **The runner was at a perfect four-core packing.** It reported
   1106.2s of subprocess work in a 276.4s wall at mean concurrency **4.00**,
   with 33.6s of permit waiting across 217 subprocesses. Ordering, thread
   counts, a larger permit budget and a cleverer work-stealer are worth
