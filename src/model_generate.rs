@@ -326,20 +326,20 @@ pub(crate) fn finish_generation_with_reader_paths(
                 execution.plan_digest.as_str(),
                 execution.files_written
             );
-            // **What went, and what history gained.** A written file
-            // announces itself -- it is there, under a path the reader can
-            // open. A deleted one leaves nothing behind, and with `--force` it
-            // may have carried an afternoon of edits. A migration is the other
-            // half: it is append-only, so the moment to read it is before it
-            // reaches a database, and it is the one generated file a reader is
-            // expected to review.
-            for line in crate::model_command::preview_lines(&bundle)
-                .iter()
-                .filter(|line| {
-                    let verb = line.trim_start();
-                    verb.starts_with("delete") || verb.starts_with("append")
-                })
-            {
+            // **Every path, because a count is not an answer.** `g field
+            // Order memo:string?` rewrites the query, the transition and the
+            // use case that construct `Order`, and reporting "17 files
+            // written" leaves a reader who wanted to know whether their
+            // companions moved with no way to find out but `git status`. The
+            // same lines `--pretend` prints, so the preview and the report
+            // cannot describe the transition differently.
+            //
+            // A deleted file is the one that most needs saying -- it leaves
+            // nothing behind, and with `--force` it may have carried an
+            // afternoon of edits -- and a migration is the other: it is
+            // append-only, so the moment to read it is before it reaches a
+            // database.
+            for line in crate::model_command::preview_lines(&bundle) {
                 println!("{line}");
             }
         }

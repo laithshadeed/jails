@@ -130,6 +130,15 @@ pub(super) fn lower(
             InsertValue::Parameter(context_value(field, &mut imports))
         } else if field.semantics.updated {
             InsertValue::Expression("current_timestamp".to_string())
+        } else if field.semantics.version {
+            // **An optimistic-lock column starts at zero and is never the
+            // caller's to set.** A transition increments it and checks it as
+            // the precondition; the insert that creates the row is what
+            // establishes the first value. Asking a command to carry it would
+            // let a caller choose the version their own next write is checked
+            // against, which is the concurrency control removed rather than
+            // used.
+            InsertValue::Expression("0".to_string())
         } else if matches!(
             field.semantics.default.as_ref().map(|default| &default.value),
             Some(Value::Function { name, arguments }) if name == "uuid7" && arguments.is_empty()

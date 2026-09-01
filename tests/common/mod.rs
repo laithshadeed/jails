@@ -1349,6 +1349,9 @@ const MOVED_PACKAGES: &[(&str, &[&str])] = &[
             "com/example/demo/application/commands/",
             "com/example/demo/application/queries/",
             "com/example/demo/application/transitions/",
+            // A `Storing...UseCase` was the implementation rather than the
+            // port, and the implementation is the operation's JDBC adapter.
+            "com/example/demo/adapters/jdbc/",
         ],
     ),
     (
@@ -1357,6 +1360,12 @@ const MOVED_PACKAGES: &[(&str, &[&str])] = &[
             "com/example/demo/adapters/jdbc/",
             "com/example/demo/adapters/memory/",
             "com/example/demo/adapters/http/",
+            // An operation's JDBC adapter is not an adapter any more: the
+            // compiler emits one typed class per operation and puts it with
+            // the other operations rather than with the driver code.
+            "com/example/demo/application/commands/",
+            "com/example/demo/application/queries/",
+            "com/example/demo/application/transitions/",
         ],
     ),
     (
@@ -1376,6 +1385,19 @@ const MOVED_PACKAGES: &[(&str, &[&str])] = &[
         &["com/example/demo/adapters/http/"],
     ),
 ];
+
+/// The same resolution, as a path relative to the project root.
+///
+/// For an assertion about *reported* text rather than about bytes: `g field`
+/// names each companion it regenerated, and the name it prints is the path the
+/// compiler wrote rather than the one the engine would have.
+pub fn generated_relative(root: &Path, relative: &str) -> String {
+    generated(root, relative)
+        .strip_prefix(root)
+        .unwrap_or(Path::new(relative))
+        .to_string_lossy()
+        .replace('\\', "/")
+}
 
 /// A generated source path, in whichever tree this project keeps it.
 ///
@@ -1446,20 +1468,45 @@ fn renamed_kinds(relative: &str) -> Vec<String> {
         ("QueryController", &["Controller"]),
         ("UseCaseController", &["Controller"]),
     ];
-    let mut names = vec![relative.to_string()];
+    // **The prefix moved the same way the suffix did**, and each of these is
+    // one legacy name for one canonical file rather than a pattern. `Storing`
+    // marked the *implementation* of a use case -- the class that wrote the
+    // row -- and the compiler calls that the operation's JDBC adapter, so the
+    // prefix is replaced rather than dropped. `Jdbc` is dropped where the
+    // compiler no longer distinguishes an implementation by its technology.
+    //
+    // Applied once rather than recursively, which is the part that matters:
+    // chaining them would turn `StoringPlaceOrderUseCase` into the bare
+    // `PlaceOrderCommand` as well, and that name is the *port* -- a different
+    // file, in a different package, which an assertion about the
+    // implementation would then match instead.
+    const PREFIXED: &[(&str, &str)] = &[("Jdbc", ""), ("Storing", "Jdbc")];
     let Some(stem) = relative.strip_suffix(".java") else {
-        return names;
+        return vec![relative.to_string()];
     };
-    for (from, candidates) in RENAMED {
-        let Some(head) = stem.strip_suffix(from) else {
-            continue;
-        };
-        names.extend(
-            candidates
-                .iter()
-                .map(|to| format!("{head}{to}.java"))
-                .collect::<Vec<_>>(),
-        );
+    let (directory, base) = match stem.rsplit_once('/') {
+        Some((directory, base)) => (format!("{directory}/"), base),
+        None => (String::new(), stem),
+    };
+    let mut stems = vec![base.to_string()];
+    for (from, to) in PREFIXED {
+        if let Some(rest) = base.strip_prefix(*from) {
+            stems.push(format!("{to}{rest}"));
+        }
+    }
+    let mut names = Vec::new();
+    for stem in stems {
+        names.push(format!("{directory}{stem}.java"));
+        for (from, candidates) in RENAMED {
+            let Some(head) = stem.strip_suffix(from) else {
+                continue;
+            };
+            names.extend(
+                candidates
+                    .iter()
+                    .map(|to| format!("{directory}{head}{to}.java")),
+            );
+        }
     }
     names
 }
