@@ -114,6 +114,10 @@ impl Compiler {
             compose_path: &compose_path,
             maven_wrapper: snapshot.project.maven_wrapper,
             jdbc: emit::jdbc_on_classpath(snapshot),
+            jspecify: snapshot
+                .project
+                .dependencies
+                .contains("org.jspecify:jspecify"),
         };
         let baseline_model = snapshot.accepted_model.as_ref().or_else(|| {
             snapshot
@@ -702,6 +706,9 @@ pub fn implementation_paths(
                 .capabilities
                 .values()
                 .any(|capability| capability.kind == "db"),
+            // A `package-info.java` is not ejectable, so its presence cannot
+            // change which files an ejection moves.
+            jspecify: false,
         },
     )?;
     Ok(generated

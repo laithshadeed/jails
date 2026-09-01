@@ -26,6 +26,16 @@ pub(crate) struct Observed<'a> {
     /// Whether the project ships `mvnw`, so generated CI and container builds
     /// invoke the build the way the project actually offers it.
     pub maven_wrapper: bool,
+    /// Whether JSpecify is on this project's classpath.
+    ///
+    /// **A package annotated `@NullMarked` that cannot resolve the annotation
+    /// is a compile error in a file the reader did not ask for**, so the
+    /// `package-info.java` beside every generated package is conditional on
+    /// the artifact actually being a dependency. It is worth writing when it
+    /// is: without a package-level opt-in JSpecify reads the package as
+    /// "unspecified nullness" and a nullness checker has nothing to check --
+    /// package level is the only level JSpecify offers.
+    pub jspecify: bool,
     /// Whether Spring's JDBC is on this project's classpath.
     ///
     /// **A model can say `storage none` over a project that has a database.**
@@ -68,6 +78,7 @@ pub(crate) fn emit(
     emit_component::lower_and_emit(model, output)?;
     emit_http::lower_and_emit(model, output, observed.spring_boot)?;
     crate::emit_architecture::lower(model, output)?;
+    package_infos(output, observed.jspecify)?;
     tidy_java(output);
     Ok(())
 }
@@ -85,6 +96,74 @@ pub(crate) fn emit(
 ///
 /// A blank line inside a text block is data and is left alone, which is why
 /// this counts `"""` fences rather than trimming unconditionally.
+/// One `package-info.java` for every package this compile writes main Java
+/// into.
+///
+/// **Emitted here rather than per generator**, for the reason the legacy write
+/// path had the same rule: it is a fact about a *package*, and a rule twenty
+/// renderers have to remember is a rule that decays the first time somebody
+/// adds one. Running over the finished tree also makes "one per package"
+/// structural rather than something to check.
+///
+/// Main sources only. A test package is not part of anyone's API and a
+/// nullness checker configured over `src/test` is a choice the reader makes.
+fn package_infos(output: &mut RenderedTree, jspecify: bool) -> Result<(), CompileError> {
+    if !jspecify {
+        return Ok(());
+    }
+    const ROOT: &str = ".jails/generated/main/java/";
+    let packages: std::collections::BTreeSet<String> = output
+        .files
+        .iter()
+        .filter(|(_, file)| file.kind == FileKind::JavaMain)
+        .filter_map(|(path, _)| {
+            let rest = path.as_str().strip_prefix(ROOT)?;
+            let (directory, _) = rest.rsplit_once('/')?;
+            Some(directory.to_string())
+        })
+        .collect();
+    for directory in packages {
+        let path = ProjectPath::parse(format!("{ROOT}{directory}/package-info.java"))
+            .map_err(CompileError::new)?;
+        if output.files.contains_key(&path) {
+            continue;
+        }
+        let package = directory.replace('/', ".");
+        let bytes = format!(
+            "/**\n\
+             \x20* Every reference type in this package is non-null unless it is explicitly\n\
+             \x20* annotated {{@code @Nullable}}.\n\
+             \x20*\n\
+             \x20* <p>This is a package-level opt-in because that is the only level JSpecify\n\
+             \x20* offers: without it the package is \"unspecified nullness\" and a nullness\n\
+             \x20* checker has nothing to check.\n\
+             \x20*/\n\
+             @NullMarked\n\
+             package {package};\n\n\
+             import org.jspecify.annotations.NullMarked;\n"
+        )
+        .into_bytes();
+        output
+            .insert(
+                path,
+                jails_contracts::RenderedFile {
+                    kind: FileKind::JavaMain,
+                    mode: jails_contracts::FileMode::Regular,
+                    bytes,
+                    provenance: jails_contracts::Provenance {
+                        artifact_id: format!("art_package_info_{}", package.replace('.', "_")),
+                        ejection_id: None,
+                        ejectable: false,
+                        semantic_ids: std::collections::BTreeSet::new(),
+                        compiler_pass: "package-nullness".to_string(),
+                    },
+                },
+            )
+            .map_err(CompileError::new)?;
+    }
+    Ok(())
+}
+
 fn tidy_java(output: &mut RenderedTree) {
     for file in output.files.values_mut() {
         if !matches!(file.kind, FileKind::JavaMain | FileKind::JavaTest) {

@@ -135,6 +135,13 @@ pub(crate) fn report_plan(
         for path in disabled_tests(bundle) {
             println!("  test-disabled  {path}");
         }
+        // **Said out loud, because the lines above look exactly like a report
+        // of what happened.** `create .jails/generated/...` reads the same
+        // whether it is a preview or a receipt, and the one place a reader can
+        // tell them apart should not be the flag they typed a moment ago.
+        if invocation.pretend {
+            println!("nothing was written.");
+        }
     } else {
         println!(
             "{}",
