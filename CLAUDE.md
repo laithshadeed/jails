@@ -18,14 +18,26 @@ is worth less than working when the project is the one you are actually in,
 which is why `add`, `check`, `test`, `build` and `run` all work on a Gradle
 project rather than declining.
 
-**Every idea, roadmap item and open design question lives in `plan.md`.**
-This file describes what the code *is* and the traps in it; `plan.md` is the
-working checklist of what is not done and why. Do not add proposals here.
+**Every idea, roadmap item and open design question lives in `new.md`.**
+This file describes what the code *is* and the traps in it; `new.md` is the
+design, the measured state, and the working checklist of what is not done and
+why. Do not add proposals here.
 
-**Items are `P<phase>.<item>`, and the numbering is deliberate.** 271 source
-comments cite `plan.md`, 97 of them an *older* one by section (`plan.md §R6`,
-`plan.md §19.2`), and `P3.1` can never be confused with `§R6`, so both citation
-styles keep working against the same filename. `plan.md`'s own header says so.
+**`new.md` replaced twelve documents on 2026-09-01.** `jdl-sol.md`, `jdl.md`,
+`simplify-sol.md`, `simplify-gemini.md`, `simplify-opus.md`, `simplify-glm.md`,
+`plan.md`, `audit.md`, `bugs.md`, `missing.md`, `modern.md` and `research.md`
+were one system described twelve times, and they had begun to disagree with
+each other and with the tree -- two of them named a differential harness under
+a filename it had not had for days, and a third described a gate under a
+function name that no longer existed. Twelve documents is twelve places to
+update and eleven that will not be.
+
+**Every identifier survived the merge**, deliberately: `P<phase>.<item>`,
+`A<section>.<item>`, `B<n>`, `M<n>`, `research.md §N`, `modern.md §N` and
+`jdl-sol.md §N` all still resolve, because `new.md` carries them rather than
+renumbering. Read `<file>.md <id>` as "the entry with that id, in `new.md`".
+Part 2 of that file is the JDL specification with its section numbering
+unchanged, which is what the `jdl-sol.md §N` citations index.
 
 Every citation count in this section is
 `grep -rIoh --include='*.rs' '<doc>\.md' crates/*/src src tests | wc -l`, and
@@ -33,28 +45,23 @@ each drifts with every commit that adds a comment. **Re-measure before quoting
 one**; they are recorded to show the order of magnitude that makes leaving the
 citations in place cheaper than stripping them, not as facts to cite.
 
-**A closed item is *deleted*, never marked done** -- from `plan.md` and, in the
-same commit, from the file it closes an entry in: `bugs.md`, `missing.md`,
-`modern.md` or `research.md`. All five share that convention, so
-`git log -p -- plan.md` is where a closed item and the measurement that closed
-it live.
+**A closed item is *deleted*, never marked done**, in the commit that closes
+it. `git log -p -- new.md` is where a closed item and the measurement that
+closed it live. Item and section numbers are stable and never reused, which is
+what makes the deletions safe.
 
-**`pending.md` is gone, and 117 comments still cite it.** It was the checklist
-until `2f8003ba` (2026-08-25) deleted it; `plan.md` and `missing.md`, which an
-earlier round had folded *into* it, are back on disk as the checklist and one
-of its sources. A `pending.md §N` citation resolves the way every deleted
-document here does, through git:
+**Seventeen design documents are gone from disk and still cited** -- the
+twelve above plus five older ones -- and every one resolves the same way:
+`pending.md` (the checklist until `2f8003ba`),
+`abstract.md` (the §7 ladder `tests/architecture/` implements), `refactor.md`,
+`playground.md` and `test.md`. Those citations are still the best record of
+*why* a decision was made, which is why they were left in place rather than
+stripped when the files went.
 
 ```
 git log --diff-filter=D -- pending.md     # the commit that removed it
 git show <commit>^:pending.md             # its last content
 ```
-
-**Four more design documents resolve the same way** and are not on disk:
-`abstract.md` (62 citations -- the §7 ladder `tests/architecture/` implements),
-`refactor.md` (1), `playground.md` and `test.md` (0 each). Those citations are
-still the best record of *why* a decision was made, which is why they were left
-in place rather than stripped when the files went.
 
 **`refactor.md` is the one that does not resolve cleanly.** `git show` reaches
 an older tracked version than the one folded in, because the copy on disk at
