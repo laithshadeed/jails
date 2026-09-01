@@ -296,10 +296,11 @@ Do not re-propose these. Each was measured and each cost an afternoon:
   deterministically ordered), and a byte-exact tree comparison was implemented,
   measured at 147s/149s without reuse against 150s/147s with it, and deleted.
 
-## The one lever with the size to matter
+## The lever that was supposed to have the size, measured and refused
 
-**Fewer Maven runs.** Maven is 693.1s of the 1106.2s across 36 runs, averaging
-19.3s, and 267s of that is spent before any test does anything:
+**Fewer Maven runs.** Maven is the largest bucket -- 563.1s of 1102.7s on the
+runner across 36 runs -- and 6.52s of every Spring run is paid before any test
+does anything:
 
 | | s | share |
 |---|---|---|
@@ -313,26 +314,55 @@ Do not re-propose these. Each was measured and each cost an afternoon:
 one, two, four and eight `@SpringBootTest` classes, one Maven invocation each,
 measured 6.56s, 6.48s, 6.44s and 6.49s. Spring caches a context per
 configuration inside the JVM, so once the floor is paid the rest costs nothing
-measurable. That is the entire case for batching.
+measurable. That is the entire case for batching, and it is why this was
+written down as *the* lever: 36 runs collapsed toward a dozen looks like 24
+floors, ~156s of work, 39s of wall.
 
-Collapsing 36 runs toward a dozen saves the floor about twenty-four times --
-roughly **156s of work, which is 39s of wall**. Against a 314s job that is the
-difference between missing five minutes and making it, and it is the only
-candidate of that size. `cached_toolchain_dir_with_salt` is the pattern
-already: `spring-core-toolbox`, `spring-services-toolbox`, `spring-db-toolbox`
-and `proof-apps` are expensive because they do real work rather than paying the
-floor over and over.
+**The per-run distribution says otherwise, and it is the number that decides
+it.** Profiled with `JAILS_TEST_PROFILE=1` over one warm `tests/cli`:
 
-**Two warnings, both earned.** Merging nine capability packs into two shared
-projects measured **471.8s -> 478.0s warm-to-warm: nothing**, because that
-experiment was run on a saturated four-core developer box with no idle to fill;
-the merges are worth keeping because merging is the *stronger* check -- it is
-what caught `mail` and `actuator` contradicting each other -- not because they
-were faster. And a partly cold run reports 730.2s against a warm 471.8s, so
-**compare warm against warm or the number will tell you whatever you hoped**.
+| band | runs | total | what they are |
+|---|---:|---:|---|
+| under the 6.52s floor | 15 | 53.4s | plain-Java fixtures, which never pay a Spring boot |
+| 6.7s - 12.8s | 7 | 63.4s | the canonical loops |
+| 13.5s - 36.5s | 14 | 311s | the toolboxes, the proof apps, `remaining-kinds` |
 
-**Exit:** three consecutive `verify` runs under 300s, each with the same test
-count as the run before the change, and the per-step breakdown recorded here.
+The cheap fifteen are cheap because they are *not* Spring, so merging them
+saves a floor they never paid -- about 28s of work, **7s of wall**. The
+expensive fourteen are expensive because they are doing real work, and merging
+them saves one floor each while costing exactly the per-test isolation the
+tier exists for. Everything worth having is around **30s of wall**, against a
+~460s job.
+
+So this is refused, and the estimate above is the trap: **6.52s times the
+number of runs is not the saving unless every run pays it.** The merges that
+exist are worth keeping because merging is the *stronger* check -- it is what
+caught `mail` and `actuator` contradicting each other -- not because they made
+the suite faster.
+
+Two further warnings, both earned. Merging nine capability packs into two
+shared projects measured **471.8s -> 478.0s warm-to-warm: nothing**. And a
+partly cold run reports 730.2s against a warm 471.8s, so **compare warm
+against warm or the number will tell you whatever you hoped**.
+
+## What is left, if five minutes is still the target
+
+Three things, and all three are somebody's decision rather than a tuning pass:
+
+- **A larger runner.** It is the only lever that reaches 300s. It roughly
+  halves the wall and roughly doubles the per-minute rate, so it buys time
+  rather than money -- which is the right trade only if the wall is what
+  hurts.
+- **One Maven run per group of tests**, generating several tests' artifacts
+  into one project. Worth ~30s by the table above, and it costs the tier's
+  per-test isolation.
+- **Fewer JVMs inside `jails` itself.** 428.0s of the 1102.7s is the product
+  binary, and the median invocation is 73.5 ms -- so essentially all of it is
+  the twenty or so invocations that are themselves a JVM (`jails check` is
+  `mvn clean verify`, `jails test`, `app apply`, `jails runner`). A classpath
+  cache for `jails runner` is the one with a clear shape: its four invocations
+  in `runner_reports_a_failing_snippet_...` cost 41s between them, and each
+  resolves the same project's classpath from scratch.
 
 ## Open items
 
@@ -349,9 +379,19 @@ per-subject seed and record path.
 withdrawn from this file and the harness renamed to what it is.
 
 
-**P13.7 The suite is ~110s of `tests/cli` because it compiles 36 Java
-projects**, and the remaining lever is Maven's JVM startup. Profile with
-`JAILS_TEST_PROFILE=1` (it needs `-- --nocapture`).
+**P13.7 The suite is `tests/cli` and nothing else.** 122.6s of a 122.6s test
+phase locally, 325.2s of 325.2s on the runner: the other twenty-nine binaries
+finish inside it and are free, so nothing that speeds them up can show. Only
+`cli` has a critical path, so only `cli` has a budget.
+
+Profile it with `JAILS_TEST_PROFILE=1` -- it needs `-- --nocapture`, and the
+per-subprocess lines go to **stderr**. What that buys over the four-number
+summary printed on every run is the *distribution*, which is what refutes an
+estimate built on an average: see *the lever that was supposed to have the
+size* above.
+
+**Exit:** the job fits its budget, or the budget is restated with the
+measurement that makes it unreachable. It is currently the second of those.
 
 
 **P13.9 A full tmpfs reports itself as a product bug**, and the one-hour

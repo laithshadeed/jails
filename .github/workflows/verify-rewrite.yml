@@ -221,7 +221,13 @@ jobs:
       # path of every run, and no churn evicting the cargo cache beside it.
       # What that costs is a dependency introduced after the cache was written:
       # Maven fetches the delta each run, which is the cheap half and is
-      # self-limiting. Bump `v1` when the delta is worth paying once to remove.
+      # self-limiting. Bump the version when the delta is worth paying once to
+      # remove -- **`v1` -> `v2` because it had become worth it**: the same 36
+      # Maven runs cost 563.1s on the runner against 427.7s locally, and the
+      # gap is 3.8s a run, which is a resolution the local repository already
+      # has and the cached one does not. Thirty-six of those is 136s of
+      # subprocess work, and on four cores that is 34s of wall against one
+      # save.
       #
       # `actions/cache` would save in its post step whatever the run left
       # behind, pass or fail -- and with a key that never changes, a run that
@@ -236,7 +242,7 @@ jobs:
           path: |
             ~/.m2/repository
             ~/.gradle/caches/modules-2
-          key: jvm-deps-${{ runner.os }}-v1
+          key: jvm-deps-${{ runner.os }}-v2
 
       # Reads `mise.toml`, so the Java, Maven, mvnd and Gradle versions CI runs
       # are the ones the repository pins -- not whatever the image ships.
@@ -393,4 +399,4 @@ jobs:
           path: |
             ~/.m2/repository
             ~/.gradle/caches/modules-2
-          key: jvm-deps-${{ runner.os }}-v1
+          key: jvm-deps-${{ runner.os }}-v2
