@@ -164,8 +164,42 @@ fn edits<'a>(left: &[&'a str], right: &[&'a str]) -> Vec<Edit<'a>> {
     script
 }
 
+/// The most table `middle` may allocate, in cells.
+///
+/// **Every guard around this function is on bytes and its cost is quadratic in
+/// lines.** Stripping the common head and tail first makes the usual case
+/// cheap and does nothing for the case that matters: two files that genuinely
+/// differ throughout. Thirty thousand differing lines a side is 900 million
+/// cells, and at eight bytes -- plus a `Vec` header per row -- that is over
+/// **seven gigabytes** in one command.
+///
+/// Measured rather than reasoned about: a single
+/// `jails resource field add ... --diff` was **6.8 GB resident** and by itself
+/// the entire memory profile of the test suite, where every other module
+/// peaked under 106 MB. It is what an OOM killer took a developer's 30 GB
+/// desktop down over, and the kill left two containers running for four hours
+/// after it.
+///
+/// Four million cells is ~32 MB of table, which covers every file jails
+/// generates and every reader file it merges into.
+const MAX_TABLE_CELLS: usize = 4_000_000;
+
+/// Both sides in full, when they are too far apart to look for common lines.
+///
+/// What a diff degrades to anyway once the table is mostly misses, and honest
+/// about having stopped looking rather than truncating one side.
+fn replaced_wholesale<'a>(left: &[&'a str], right: &[&'a str]) -> Vec<Edit<'a>> {
+    left.iter()
+        .map(|line| Edit::Remove(line))
+        .chain(right.iter().map(|line| Edit::Insert(line)))
+        .collect()
+}
+
 /// Longest common subsequence over the differing middle.
 fn middle<'a>(left: &[&'a str], right: &[&'a str]) -> Vec<Edit<'a>> {
+    if left.len().saturating_mul(right.len()) > MAX_TABLE_CELLS {
+        return replaced_wholesale(left, right);
+    }
     let mut table = vec![vec![0usize; right.len() + 1]; left.len() + 1];
     for (row, l) in left.iter().enumerate().rev() {
         for (column, r) in right.iter().enumerate().rev() {
@@ -198,6 +232,53 @@ fn middle<'a>(left: &[&'a str], right: &[&'a str]) -> Vec<Edit<'a>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The bound that keeps a diff from taking the machine down with it.
+    ///
+    /// Thirty thousand differing lines a side sits inside every byte-based
+    /// guard upstream and was over 7 GB of table, which is how one
+    /// `resource field add --diff` came to be the whole test suite's memory
+    /// profile. The assertion is on the shape rather than on resident bytes,
+    /// because a test that measures its own RSS measures the allocator:
+    /// above the budget every line of both sides is reported and none is lost.
+    #[test]
+    fn a_middle_too_large_to_align_reports_both_sides_whole_instead_of_allocating() {
+        let left: Vec<String> = (0..30_000).map(|n| format!("left {n}")).collect();
+        let right: Vec<String> = (0..30_000).map(|n| format!("right {n}")).collect();
+        let left: Vec<&str> = left.iter().map(String::as_str).collect();
+        let right: Vec<&str> = right.iter().map(String::as_str).collect();
+        assert!(left.len() * right.len() > MAX_TABLE_CELLS);
+
+        let script = middle(&left, &right);
+
+        assert_eq!(script.len(), left.len() + right.len());
+        assert_eq!(
+            script
+                .iter()
+                .filter(|e| matches!(e, Edit::Remove(_)))
+                .count(),
+            left.len()
+        );
+        assert_eq!(
+            script
+                .iter()
+                .filter(|e| matches!(e, Edit::Insert(_)))
+                .count(),
+            right.len()
+        );
+    }
+
+    /// Below the budget the real alignment still runs, so the guard cannot be
+    /// "fixed" by making every diff a wholesale replacement.
+    #[test]
+    fn a_middle_within_the_budget_still_aligns_the_lines_the_two_sides_share() {
+        let script = middle(&["keep", "drop"], &["keep", "add"]);
+
+        assert!(
+            script.iter().any(|e| matches!(e, Edit::Equal("keep"))),
+            "a shared line was not aligned"
+        );
+    }
 
     #[test]
     fn identical_text_has_no_diff() {
