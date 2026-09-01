@@ -559,6 +559,9 @@ fn a_field_reaches_the_companions_named_by_yields_as_well_as_on() {
             "--on",
             "Item",
         ],
+        // A durable job stores its payload as JSON, so the reader it uses has
+        // to be declared before the job that needs it.
+        vec!["add", "json"],
         vec![
             "g",
             "durable-job",
@@ -592,7 +595,8 @@ fn a_field_reaches_the_companions_named_by_yields_as_well_as_on() {
     // it goes stale the moment the child gains one. `--on Item` named it all
     // along; what was missing is that `association` was not in the set of
     // recipes a field evolution re-plans.
-    let probe = "src/test/java/com/example/demo/adapters/ItemOwnerAssociationIT.java";
+    let probe =
+        ".jails/generated/test/java/com/example/demo/adapters/jdbc/ItemOwnerAssociationIT.java";
     assert!(plan.contains(probe), "{probe} missing from:\n{plan}");
     let source = fs::read_to_string(root.join(probe)).unwrap();
     assert!(source.contains("memo"), "{probe}:\n{source}");

@@ -74,6 +74,7 @@ pub(crate) fn emit(
     emit_capability::lower_and_emit(model, output, observed)?;
     emit_java::lower_and_emit(model, output, observed)?;
     emit_operation::lower_and_emit(model, output)?;
+    crate::emit_relation::lower_and_emit(model, output)?;
     emit_operation::outbox::lower_and_emit(model, output)?;
     emit_component::lower_and_emit(model, output)?;
     emit_http::lower_and_emit(model, output, observed.spring_boot)?;

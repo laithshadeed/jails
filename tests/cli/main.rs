@@ -974,8 +974,14 @@ fn verified_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::P
                 // so the column list, the `returning` clause and the types
                 // were only ever checked by the operations that happened to
                 // use them. `skipped` is still zero.
-                reports: 41,
-                tests: 44,
+                //
+                // **41 -> 53 when every declared relation gained one**, two
+                // tests each: a foreign key is the one thing in a generated
+                // project no unit test can observe, so a mapping written
+                // backwards read exactly like a correct one. Twelve relations
+                // across the three applications.
+                reports: 53,
+                tests: 68,
                 failures: 0,
                 errors: 0,
                 skipped: 0,
