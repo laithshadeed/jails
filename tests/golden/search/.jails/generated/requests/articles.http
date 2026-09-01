@@ -5,8 +5,8 @@ POST {{baseUrl}}/articles
 Content-Type: application/json
 
 {
-  "title": "sample",
-  "body": "sample"
+  "title": "sample-title",
+  "body": "sample-bodie"
 }
 
 ### List Article

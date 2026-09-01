@@ -7,6 +7,7 @@ import com.example.demo.service.NoteService;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -36,10 +37,20 @@ class NoteControllerTest {
         }
     };
 
+    private static final String CREATE_REQUEST =
+            """
+            {
+              "body": "sample-bodie",
+              "seen": false
+            }""";
+
     private final MockMvcTester mvc = MockMvcTester.of(new NoteController(new NoteService(REPOSITORY)));
 
     @Test
-    void theCollectionAnswers() {
+    void theDocumentedCreateRequestIsAccepted() {
+        assertThat(mvc.post().uri("/notes")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(CREATE_REQUEST)).hasStatus(201);
         assertThat(mvc.get().uri("/notes")).hasStatusOk();
     }
 

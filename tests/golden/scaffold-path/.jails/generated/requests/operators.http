@@ -5,7 +5,7 @@ POST {{baseUrl}}/admin_api/operators
 Content-Type: application/json
 
 {
-  "email": "sample"
+  "email": "sample-email"
 }
 
 ### List Operator

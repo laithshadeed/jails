@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -38,10 +39,20 @@ class ItemControllerTest {
         }
     };
 
+    private static final String CREATE_REQUEST =
+            """
+            {
+              "ownerId": "00000000-0000-0000-0000-000000000001",
+              "name": "sample-name"
+            }""";
+
     private final MockMvcTester mvc = MockMvcTester.of(new ItemController(new ItemService(REPOSITORY)));
 
     @Test
-    void theCollectionAnswers() {
+    void theDocumentedCreateRequestIsAccepted() {
+        assertThat(mvc.post().uri("/items")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(CREATE_REQUEST)).hasStatus(201);
         assertThat(mvc.get().uri("/items")).hasStatusOk();
     }
 

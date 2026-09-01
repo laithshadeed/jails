@@ -5,7 +5,7 @@ POST {{baseUrl}}/messages
 Content-Type: application/json
 
 {
-  "body": "sample"
+  "body": "sample-bodie"
 }
 
 ### List Message

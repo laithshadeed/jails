@@ -5,8 +5,8 @@ POST {{baseUrl}}/tickets
 Content-Type: application/json
 
 {
-  "status": "sample",
-  "category": "sample"
+  "status": "sample-statu",
+  "category": "sample-categorie"
 }
 
 ### List Ticket

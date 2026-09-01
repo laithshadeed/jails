@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -39,10 +40,21 @@ class PayoutControllerTest {
         }
     };
 
+    private static final String CREATE_REQUEST =
+            """
+            {
+              "amount": 1,
+              "status": "PENDING",
+              "version": 1
+            }""";
+
     private final MockMvcTester mvc = MockMvcTester.of(new PayoutController(new PayoutService(REPOSITORY)));
 
     @Test
-    void theCollectionAnswers() {
+    void theDocumentedCreateRequestIsAccepted() {
+        assertThat(mvc.post().uri("/payouts")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(CREATE_REQUEST)).hasStatus(201);
         assertThat(mvc.get().uri("/payouts")).hasStatusOk();
     }
 

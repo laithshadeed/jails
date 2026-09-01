@@ -199,13 +199,24 @@ fn resource_path(model: &AppModel, entity: &Entity) -> String {
 /// A component jails cannot sample is left out rather than guessed at: a wrong
 /// body documents a payload the record refuses, which is worse than a shorter
 /// one the reader completes.
-fn documented_body(model: &AppModel, entity: &Entity, key: &jails_model::Field) -> Vec<String> {
+fn documented_body(model: &AppModel, entity: &Entity, _key: &jails_model::Field) -> Vec<String> {
     entity
         .fields
         .iter()
-        .filter(|field| field.id != key.id && field.semantics.default.is_none())
+        // **The request record decides, not a second filter beside it.** These
+        // had their own rule -- everything but the key and anything with a
+        // default -- and the two disagreed on a required component carrying a
+        // literal default: the record asked for it, the documented body did
+        // not supply it, and the generated POST failed with `Cannot map null
+        // into type boolean`. One predicate, and the body is by construction
+        // what the record accepts.
+        .filter(|field| crate::emit_dto::caller_supplied(field))
         .filter_map(|field| {
-            let sample = crate::emit_companion_test::json_sample(model, &field.ty)?;
+            let sample = crate::emit_companion_test::named_json_sample(
+                model,
+                &field.ty,
+                &field.names.java_member,
+            )?;
             Some(format!("  \"{}\": {sample}", field.names.java_member))
         })
         .collect()
@@ -395,6 +406,10 @@ fn controller_test(
     // Spring answers for a path that is mapped and a method that is not, which
     // is the property worth pinning.
     let create_only = scoped(entity);
+    let read_comment = match create_only {
+        true => "// Every read carries the tenant, so the collection answers none.\n        ",
+        false => "",
+    };
     let (field, request) = if modern {
         imports.insert("static org.assertj.core.api.Assertions.assertThat".to_string());
         imports.insert("org.springframework.test.web.servlet.assertj.MockMvcTester".to_string());
@@ -402,16 +417,16 @@ fn controller_test(
             format!(
                 "    private final MockMvcTester mvc = MockMvcTester.of(new {controller}(new {record}Service(REPOSITORY)));"
             ),
-            match create_only {
-                true => format!(
-                    "        assertThat(mvc.post().uri(\"{path}\")\n\
-                     \x20               .contentType(MediaType.APPLICATION_JSON)\n\
-                     \x20               .content(CREATE_REQUEST)).hasStatus(201);\n\
-                     \x20       // Every read carries the tenant, so the collection answers none.\n\
-                     \x20       assertThat(mvc.get().uri(\"{path}\")).hasStatus(405);"
-                ),
-                false => format!("        assertThat(mvc.get().uri(\"{path}\")).hasStatusOk();"),
-            },
+            format!(
+                "        assertThat(mvc.post().uri(\"{path}\")\n\
+                 \x20               .contentType(MediaType.APPLICATION_JSON)\n\
+                 \x20               .content(CREATE_REQUEST)).hasStatus(201);\n\
+                 \x20       {read_comment}assertThat(mvc.get().uri(\"{path}\")).hasStatus{};",
+                match create_only {
+                    true => "(405)",
+                    false => "Ok()",
+                }
+            ),
         )
     } else {
         imports.insert(
@@ -431,55 +446,42 @@ fn controller_test(
             format!(
                 "    private final MockMvc mvc = standaloneSetup(new {controller}(new {record}Service(REPOSITORY))).build();"
             ),
-            match create_only {
-                true => format!(
-                    "        mvc.perform(post(\"{path}\")\n\
-                     \x20               .contentType(MediaType.APPLICATION_JSON)\n\
-                     \x20               .content(CREATE_REQUEST)).andExpect(status().isCreated());\n\
-                     \x20       // Every read carries the tenant, so the collection answers none.\n\
-                     \x20       mvc.perform(get(\"{path}\")).andExpect(status().isMethodNotAllowed());"
-                ),
-                false => {
-                    format!("        mvc.perform(get(\"{path}\")).andExpect(status().isOk());")
+            format!(
+                "        mvc.perform(post(\"{path}\")\n\
+                 \x20               .contentType(MediaType.APPLICATION_JSON)\n\
+                 \x20               .content(CREATE_REQUEST)).andExpect(status().isCreated());\n\
+                 \x20       {read_comment}mvc.perform(get(\"{path}\")).andExpect(status().{});",
+                match create_only {
+                    true => "isMethodNotAllowed()",
+                    false => "isOk()",
                 }
-            },
+            ),
         )
     };
     let throws = if modern { "" } else { " throws Exception" };
-    let method = match create_only {
-        true => "theDocumentedCreateRequestIsAccepted",
-        false => "theCollectionAnswers",
-    };
-    // The same JSON the `.http` collection documents, so what the reader is
-    // shown and what the build proves cannot diverge.
-    let request_constant = match create_only {
-        false => String::new(),
-        true => {
-            imports.insert("org.springframework.http.MediaType".to_string());
-            if modern {
-                imports.insert(
-                    "org.springframework.test.web.servlet.assertj.MockMvcTester".to_string(),
-                );
-            } else {
-                imports.insert(
-                    "static org.springframework.test.web.servlet.request.MockMvcRequestBuilders::post"
-                        .replace("::", ".")
-                        .to_string(),
-                );
-            }
-            format!(
-                "\x20   private static final String CREATE_REQUEST =\n\
-                 \x20           \"\"\"\n\
-                 \x20           {{\n{}\n\
-                 \x20           }}\"\"\";\n\n",
-                documented_body(model, entity, key)
-                    .iter()
-                    .map(|line| format!("\x20           {line}"))
-                    .collect::<Vec<_>>()
-                    .join(",\n")
-            )
-        }
-    };
+    let method = "theDocumentedCreateRequestIsAccepted";
+    // **The same JSON the `.http` collection documents**, so what the reader
+    // is shown and what the build proves cannot diverge -- a documented body
+    // nothing exercises is a body nothing checks, which is `bugs.md` B48 in
+    // this file.
+    imports.insert("org.springframework.http.MediaType".to_string());
+    if !modern {
+        imports.insert(
+            "static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post"
+                .to_string(),
+        );
+    }
+    let request_constant = format!(
+        "\x20   private static final String CREATE_REQUEST =\n\
+         \x20           \"\"\"\n\
+         \x20           {{\n{}\n\
+         \x20           }}\"\"\";\n\n",
+        documented_body(model, entity, key)
+            .iter()
+            .map(|line| format!("\x20           {line}"))
+            .collect::<Vec<_>>()
+            .join(",\n")
+    );
     let body = format!(
         "class {type_name} {{\n\n\
          \x20   private static final {record} ROW = new {record}({row});\n\n\

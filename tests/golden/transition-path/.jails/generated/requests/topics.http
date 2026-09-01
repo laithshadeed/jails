@@ -6,7 +6,7 @@ Content-Type: application/json
 
 {
   "userId": 1,
-  "subject": "sample"
+  "subject": "sample-subject"
 }
 
 ### List Topic

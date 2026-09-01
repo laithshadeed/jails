@@ -6639,7 +6639,10 @@ fn the_documented_body_carries_only_what_the_request_record_declares() {
                 "Ticket",
                 "id:long@pk",
                 "subject:string!",
-                "version:long",
+                // `@version` is what makes it the optimistic-lock column: a
+                // caller who could set it would choose the version their own
+                // next write is checked against.
+                "version:long@version",
             ])
             .status()
             .unwrap()
@@ -6662,7 +6665,7 @@ fn the_documented_body_carries_only_what_the_request_record_declares() {
         "requests/tickets.http",
         "src/test/java/com/example/demo/web/TicketControllerTest.java",
     ] {
-        let text = fs::read_to_string(root.join(path)).unwrap();
+        let text = common::read_generated(&root, path);
         assert!(
             text.contains("\"subject\": \"sample-subject\""),
             "{path}: {text}"

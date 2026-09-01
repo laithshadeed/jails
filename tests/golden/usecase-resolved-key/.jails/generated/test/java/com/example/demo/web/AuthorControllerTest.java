@@ -7,6 +7,7 @@ import com.example.demo.service.AuthorService;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -36,10 +37,19 @@ class AuthorControllerTest {
         }
     };
 
+    private static final String CREATE_REQUEST =
+            """
+            {
+              "email": "sample-email"
+            }""";
+
     private final MockMvcTester mvc = MockMvcTester.of(new AuthorController(new AuthorService(REPOSITORY)));
 
     @Test
-    void theCollectionAnswers() {
+    void theDocumentedCreateRequestIsAccepted() {
+        assertThat(mvc.post().uri("/authors")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(CREATE_REQUEST)).hasStatus(201);
         assertThat(mvc.get().uri("/authors")).hasStatusOk();
     }
 

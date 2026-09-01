@@ -318,6 +318,24 @@ pub(crate) fn json_sample(model: &AppModel, ty: &TypeRef) -> Option<String> {
     json_sample_with(model, ty, &mut BTreeSet::new())
 }
 
+/// The same sample, carrying the component's own name where the type allows.
+///
+/// **A body whose every string is `"sample"` says nothing about which field is
+/// which.** The reader's first act with a `.http` collection is to edit the
+/// values, and `"sample-subject"` is the one that tells them where they are.
+/// Only strings: a number or a date has no room for a name, and putting one
+/// there would produce a body that does not parse.
+pub(crate) fn named_json_sample(model: &AppModel, ty: &TypeRef, name: &str) -> Option<String> {
+    let sample = json_sample(model, ty)?;
+    match sample.as_str() {
+        "\"sample\"" => Some(format!(
+            "\"sample-{}\"",
+            jails_model::plural_snake_case(name).trim_end_matches('s')
+        )),
+        _ => Some(sample),
+    }
+}
+
 fn json_sample_with(model: &AppModel, ty: &TypeRef, seen: &mut BTreeSet<String>) -> Option<String> {
     match ty {
         TypeRef::Builtin(builtin) => Some(builtin.semantics().json.to_string()),

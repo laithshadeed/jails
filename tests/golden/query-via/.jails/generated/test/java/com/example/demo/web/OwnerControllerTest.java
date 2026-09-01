@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -38,10 +39,19 @@ class OwnerControllerTest {
         }
     };
 
+    private static final String CREATE_REQUEST =
+            """
+            {
+              "email": "sample-email"
+            }""";
+
     private final MockMvcTester mvc = MockMvcTester.of(new OwnerController(new OwnerService(REPOSITORY)));
 
     @Test
-    void theCollectionAnswers() {
+    void theDocumentedCreateRequestIsAccepted() {
+        assertThat(mvc.post().uri("/owners")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(CREATE_REQUEST)).hasStatus(201);
         assertThat(mvc.get().uri("/owners")).hasStatusOk();
     }
 
