@@ -727,6 +727,21 @@ const REAL_MAVEN_ARGS: &str = "-ntp -DforkCount=0 -Dspring.main.banner-mode=off 
     -Dspring.datasource.hikari.maximum-pool-size=2 \
     -Dspring.datasource.hikari.minimum-idle=0";
 
+/// **JUnit class-level parallelism was measured here and refused.**
+///
+/// Adding `junit.jupiter.execution.parallel.*` with classes concurrent at a
+/// parallelism of four -- the same shape the app-suite fixture uses safely for
+/// its own two -- took the gate from **144.5s and green to 535.4s with eleven
+/// failures**, and the `jails` bucket from 313s over 133 subprocesses to 695s
+/// over 284. Generated tests share a database, ports and fixture files, so
+/// running their classes concurrently does not overlap work, it manufactures
+/// contention and retries.
+///
+/// The app suite gets away with it because it declares the mode explicitly per
+/// service and holds parallelism at two. Do not lift that setting to the
+/// general case again without re-measuring; this is the second time an
+/// idea that reads as free concurrency has cost more than it saved.
+
 /// Startup policy for the deliberately short-lived JVMs in this test suite.
 ///
 /// These processes compile a small generated project, run a small test set,
@@ -746,6 +761,129 @@ pub fn real_maven_cmd(cwd: &Path, path: &str) -> ToolchainCommand {
     cmd.env("MAVEN_ARGS", REAL_MAVEN_ARGS);
     cmd.env("JAVA_TOOL_OPTIONS", real_java_tool_options());
     ToolchainCommand::new(cmd)
+}
+
+/// `javac` with this project's dependencies already on the classpath.
+pub fn real_javac_cmd(cwd: &Path, path: &str) -> ToolchainCommand {
+    let mut cmd = Command::new("javac");
+    cmd.current_dir(cwd);
+    cmd.env("PATH", path);
+    cmd.env("JAVA_TOOL_OPTIONS", real_java_tool_options());
+    ToolchainCommand::new(cmd)
+}
+
+/// This project's dependency classpath, resolved once per distinct `pom.xml`.
+///
+/// **Resolution is the expensive half and it is identical across projects that
+/// share a pom**, which most generated fixtures do. Keyed on the pom's bytes
+/// rather than on the directory, so the first test to need a given shape pays
+/// `dependency:build-classpath` and every later one reads a file.
+///
+/// Cached under `target/` for the reason every other ledger here is: it is a
+/// derived value, never an input to a result, so a stale or missing entry
+/// costs a re-resolve and changes no verdict.
+fn dependency_classpath(root: &Path, path: &str) -> Option<String> {
+    let pom = fs::read(root.join("pom.xml")).ok()?;
+    let key = format!("{:016x}", stable_cache_salt(&String::from_utf8_lossy(&pom)));
+    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/jails-test-classpath");
+    fs::create_dir_all(&directory).ok()?;
+    let cached = directory.join(format!("{key}.txt"));
+    if let Ok(existing) = fs::read_to_string(&cached)
+        && !existing.trim().is_empty()
+    {
+        return Some(existing);
+    }
+
+    // **Unique per call, not per process.** Keyed on the pid alone, two
+    // threads of one test binary resolving the same pom write the same
+    // staging path: one truncates the file the other is about to read, and
+    // the loser hands `javac` an empty classpath. It passed alone and failed
+    // at eight threads, which is the signature of exactly this.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let unique = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let scratch = directory.join(format!("{key}.{}.{unique}.tmp", std::process::id()));
+    let resolved = real_maven_cmd(root, path)
+        .args([
+            "-q",
+            "-B",
+            "org.apache.maven.plugins:maven-dependency-plugin:3.6.1:build-classpath",
+            &format!("-Dmdep.outputFile={}", scratch.display()),
+        ])
+        .output()
+        .ok()?;
+    if !resolved.status.success() {
+        let _ = fs::remove_file(&scratch);
+        return None;
+    }
+    let classpath = fs::read_to_string(&scratch).ok()?;
+    let _ = fs::rename(&scratch, &cached);
+    let _ = fs::remove_file(&scratch);
+    Some(classpath)
+}
+
+/// Every `.java` file the project's main compilation would see.
+fn main_sources(root: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for tree in ["src/main/java", ".jails/generated/main/java"] {
+        let mut stack = vec![root.join(tree)];
+        while let Some(directory) = stack.pop() {
+            let Ok(entries) = fs::read_dir(&directory) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|ext| ext == "java") {
+                    found.push(path);
+                }
+            }
+        }
+    }
+    found
+}
+
+/// Prove the generated main sources compile, **without paying for Maven**.
+///
+/// `mvn -DskipTests compile` was doing this, and the profile says what that
+/// costs: Maven's own startup is **1.41s** before any work, against a **0.02s**
+/// JVM start, and a warm compile of a generated project is 2.26s of which the
+/// javac is a fraction. Six tests were each paying that whole stack to answer
+/// one question -- *does this compile* -- that `javac` answers directly.
+///
+/// The dependency resolution those runs also paid for is hoisted into
+/// [`dependency_classpath`], where it happens once per distinct pom and is
+/// then a file read. What is left is the compiler.
+///
+/// **It refuses rather than skipping when the classpath cannot be resolved.**
+/// A compile check that quietly becomes a no-op is the failure this tier
+/// exists to prevent, and it is the one this helper could most easily
+/// introduce.
+pub fn assert_main_sources_compile(root: &Path, path: &str, what: &str) {
+    let classpath = dependency_classpath(root, path)
+        .unwrap_or_else(|| panic!("{what}: could not resolve the dependency classpath"));
+    let sources = main_sources(root);
+    assert!(!sources.is_empty(), "{what}: no main sources to compile");
+
+    // **`target/classes`, where Maven would have put them.** Tests downstream
+    // assert on specific `.class` files through [`compiled_class`], and a
+    // helper that quietly moved the output would turn those into assertions
+    // about a path nothing writes.
+    let classes = root.join("target/classes");
+    fs::create_dir_all(&classes).unwrap();
+    let compiled = real_javac_cmd(root, path)
+        .args(["--release", &TARGET_RELEASE.to_string()])
+        .args(["-classpath", classpath.trim()])
+        .args(["-d", &classes.display().to_string()])
+        .args(sources.iter().map(|source| source.display().to_string()))
+        .output()
+        .unwrap();
+    assert!(
+        compiled.status.success(),
+        "{what} did not compile:\n{}\n{}",
+        String::from_utf8_lossy(&compiled.stdout),
+        String::from_utf8_lossy(&compiled.stderr)
+    );
 }
 
 /// The JVM startup policy, overridable for measurement.

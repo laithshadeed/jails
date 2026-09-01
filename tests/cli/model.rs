@@ -902,15 +902,10 @@ app Notes {
     );
 
     if real_mvn_available() && real_java_supports_target_release() {
-        let compiled = real_maven_cmd(&root, &real_path_without_mvnd())
-            .args(["-q", "-B", "-DskipTests", "compile"])
-            .output()
-            .unwrap();
-        assert!(
-            compiled.status.success(),
-            "generated rich-field project did not compile:\n{}\n{}",
-            String::from_utf8_lossy(&compiled.stdout),
-            String::from_utf8_lossy(&compiled.stderr)
+        common::assert_main_sources_compile(
+            &root,
+            &real_path_without_mvnd(),
+            "generated rich-field project",
         );
     }
 }
@@ -1243,15 +1238,10 @@ entity Job {
     );
 
     if real_mvn_available() && real_java_supports_target_release() {
-        let compiled = real_maven_cmd(&root, &real_path_without_mvnd())
-            .args(["-q", "-B", "-DskipTests", "compile"])
-            .output()
-            .unwrap();
-        assert!(
-            compiled.status.success(),
-            "generated default-owning command did not compile:\n{}\n{}",
-            String::from_utf8_lossy(&compiled.stdout),
-            String::from_utf8_lossy(&compiled.stderr)
+        common::assert_main_sources_compile(
+            &root,
+            &real_path_without_mvnd(),
+            "generated default-owning command",
         );
     }
 }
@@ -5603,16 +5593,7 @@ fn canonical_api_adapters_merge_then_eject_at_the_operation_boundary() {
     );
     if real_mvn_available() && real_java_supports_target_release() {
         let path = real_path_without_mvnd();
-        let compiled = real_maven_cmd(&root, &path)
-            .args(["-q", "-B", "-DskipTests", "compile"])
-            .output()
-            .unwrap();
-        assert!(
-            compiled.status.success(),
-            "canonical API adapters did not compile:\n{}\n{}",
-            String::from_utf8_lossy(&compiled.stdout),
-            String::from_utf8_lossy(&compiled.stderr)
-        );
+        common::assert_main_sources_compile(&root, &path, "canonical API adapters");
     }
 }
 
@@ -8761,16 +8742,7 @@ fn canonical_database_query_keeps_the_iterative_loop_and_ejects_only_its_adapter
     );
     if real_mvn_available() && real_java_supports_target_release() {
         let path = real_path_without_mvnd();
-        let compiled = real_maven_cmd(&root, &path)
-            .args(["-q", "-B", "-DskipTests", "compile"])
-            .output()
-            .unwrap();
-        assert!(
-            compiled.status.success(),
-            "canonical JDBC query did not compile after ejection:\n{}\n{}",
-            String::from_utf8_lossy(&compiled.stdout),
-            String::from_utf8_lossy(&compiled.stderr)
-        );
+        common::assert_main_sources_compile(&root, &path, "canonical JDBC query");
     }
 }
 
@@ -9022,16 +8994,7 @@ fn canonical_database_commands_and_transitions_are_independent_iterative_boundar
     );
     if real_mvn_available() && real_java_supports_target_release() {
         let path = real_path_without_mvnd();
-        let compiled = real_maven_cmd(&root, &path)
-            .args(["-q", "-B", "-DskipTests", "compile"])
-            .output()
-            .unwrap();
-        assert!(
-            compiled.status.success(),
-            "canonical write operations did not compile after ejection:\n{}\n{}",
-            String::from_utf8_lossy(&compiled.stdout),
-            String::from_utf8_lossy(&compiled.stderr)
-        );
+        common::assert_main_sources_compile(&root, &path, "canonical write operations");
     }
 }
 
@@ -9251,16 +9214,7 @@ fn canonical_database_and_safe_field_evolution_are_one_exact_compiler_path() {
     );
     if real_mvn_available() && real_java_supports_target_release() {
         let path = real_path_without_mvnd();
-        let compiled = real_maven_cmd(&root, &path)
-            .args(["-q", "-B", "-DskipTests", "compile"])
-            .output()
-            .unwrap();
-        assert!(
-            compiled.status.success(),
-            "canonical JDBC source did not compile:\n{}\n{}",
-            String::from_utf8_lossy(&compiled.stdout),
-            String::from_utf8_lossy(&compiled.stderr)
-        );
+        common::assert_main_sources_compile(&root, &path, "canonical JDBC source");
         assert!(
             root.join("target/classes/com/example/notes/adapters/jdbc/JdbcNoteRepository.class")
                 .is_file()
