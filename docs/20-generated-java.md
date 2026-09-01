@@ -152,13 +152,10 @@ tell the two apart.
 
 ## P6 — the generated Java, assessed against `java.md` and `backend.md`
 
-**P6.6** Eight defects that survive a perfect field spec. Each was
+**P6.6** Seven defects that survive a perfect field spec. Each was
 re-confirmed on 2026-08-27 against a project built from nothing but
 `jails new --offline` plus nine commands.
 
-- **§4.3 no index serves any query the application runs.** `g query --on X
-  userId:uuid` reads a table whose only index is the primary key. jails can see
-  the shape and could say so the way `free-text-closed-set` does.
 - **§5.4 boxed primitives on the wire.** A `boolean` domain component becomes a
   `Boolean` in both request and response, with `@NotNull` compensating for the
   boxing.
@@ -189,7 +186,7 @@ re-confirmed on 2026-08-27 against a project built from nothing but
   value `"sample"`; and no concurrency test for the CAS the `version` column
   exists for.
 
-**Exit:** all eight closed, or each recorded as a scope line in `README.md`'s
+**Exit:** all seven closed, or each recorded as a scope line in `README.md`'s
 "Not yet". Do not close one by deleting the entry that is its only record.
 
 ## P8.11b — the generator half of P8.11

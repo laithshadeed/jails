@@ -199,7 +199,14 @@ pub(crate) fn sync_at(root: &Path, invocation: Invocation) -> Result<()> {
     let manifest = resolve_manifest_at(root, None)?;
     let (source, model) = load_model_at(root, &manifest, invocation.output)?;
     let bare = model.capabilities.is_empty();
-    let bundle = compile_at(root, &manifest, source.as_bytes(), model, Repair::No)?;
+    let bundle = compile_at(
+        root,
+        &manifest,
+        source.as_bytes(),
+        model,
+        Repair::No,
+        invocation.output.into(),
+    )?;
     // **A dry run must not write, and this one did.** `sync` is the command a
     // reader reaches for when they are least sure what the tree is about to
     // become -- a merged branch, an edited model -- so it is the last one
@@ -568,7 +575,14 @@ fn plan(manifest: &Path, bundle_path: Option<&Path>, output: Output) -> Result<(
 pub(crate) fn materialize_seed(root: &Path) -> Result<()> {
     let manifest = resolve_manifest_at(root, None)?;
     let (source, model) = load_model_at(root, &manifest, Output::Human)?;
-    let bundle = compile_at(root, &manifest, source.as_bytes(), model, Repair::No)?;
+    let bundle = compile_at(
+        root,
+        &manifest,
+        source.as_bytes(),
+        model,
+        Repair::No,
+        Notice::Silent,
+    )?;
     jails_workspace::execute(root, &bundle)
         .map_err(|error| Failure::Told(format!("could not apply the seeded model: {error}")))?;
     Ok(())
@@ -579,7 +593,7 @@ fn compile(
     source: &[u8],
     model: jails_model::AppModel,
 ) -> Result<jails_contracts::PlanBundle> {
-    compile_at(&root()?, manifest, source, model, Repair::No)
+    compile_at(&root()?, manifest, source, model, Repair::No, Notice::Print)
 }
 
 /// Whether this compilation is `jails resource repair`.
@@ -594,12 +608,40 @@ enum Repair {
     DeletedManagedFiles,
 }
 
+/// Whether this compilation's diagnostics reach the reader.
+///
+/// **A warning that stays inside the draft is a warning nobody reads**, and
+/// every canonical frontend except `jails g` was one: `sync`, `plan` and
+/// `repair` handed the draft to the materializer without saying what it had
+/// noticed. Printing from the one place they all compile through is what
+/// stops a warning appearing on one command and vanishing on another -- the
+/// rule the legacy `report::warnings` already holds between `--pretend` and
+/// the real run.
+///
+/// `Silent` is `jails new`'s seed, which is documented to print nothing, and
+/// `--json`, whose answer is the payload on stdout.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum Notice {
+    Print,
+    Silent,
+}
+
+impl From<Output> for Notice {
+    fn from(output: Output) -> Self {
+        match output {
+            Output::Human => Self::Print,
+            _ => Self::Silent,
+        }
+    }
+}
+
 fn compile_at(
     root: &Path,
     manifest: &Path,
     source: &[u8],
     model: jails_model::AppModel,
     repair: Repair,
+    notice: Notice,
 ) -> Result<jails_contracts::PlanBundle> {
     let reader_paths = jails_compiler::external_project_paths(&model);
     let snapshot =
@@ -607,6 +649,12 @@ fn compile_at(
             .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
     let draft = jails_compiler::Compiler::compile(&snapshot, None)
         .map_err(|error| Failure::Told(format!("could not compile application model: {error}")))?;
+    if notice == Notice::Print {
+        for diagnostic in &draft.diagnostics {
+            eprintln!("jails: {}", diagnostic.message);
+            eprintln!("       fix: {}", diagnostic.fix);
+        }
+    }
     // Same capture, same model, same compiler: repair differs only in what
     // materialization does about a managed file that is no longer on disk.
     jails_workspace::materialize(
@@ -650,6 +698,7 @@ pub(crate) fn repair(datasource: Option<&str>, invocation: Invocation) -> Result
         source.as_bytes(),
         model,
         Repair::DeletedManagedFiles,
+        invocation.output.into(),
     )?;
     if let Some(datasource) = datasource {
         crate::schema_command::refuse_divergent_flyway_history(&bundle, datasource, &invocation)?;
