@@ -435,6 +435,16 @@ pub(super) fn operation_declaration(
                 literal(value)
             ));
         }
+        // **A binding is an instruction to Spring's data binder, and the data
+        // binder only reads a form.** On a JSON body Jackson does the binding
+        // and the annotation is not even looked at -- so a `--bind` there is a
+        // wire name the reader asked for and silently did not get.
+        if !args.bind.is_empty() && args.consumes != Some(jails_spec::spec::kind::WireFormat::Form)
+        {
+            return Err(Failure::Told(
+                "this endpoint reads a JSON body, where the wire names come from Jackson and `--bind` is not read at all.\n       fix: pass `--consumes form`, or set `spring.jackson.property-naming-strategy` for the whole project".to_string(),
+            ));
+        }
         for binding in &args.bind {
             let (component, wire) = binding.split_once('=').ok_or_else(|| {
                 Failure::Told(format!(

@@ -468,7 +468,7 @@ fn reject_unsupported_options(args: &GenerateArgs, profile: &EntityProfile) -> R
         (args.select.is_some(), "--select", "transitions"),
         (!args.set.is_empty(), "--set", "transitions"),
         (args.if_match.is_some(), "--if-match", "transitions"),
-        (!args.bind.is_empty(), "--bind", "operations"),
+        (!args.bind.is_empty(), "--bind", "a controller"),
         (
             args.method.is_some(),
             "--method",

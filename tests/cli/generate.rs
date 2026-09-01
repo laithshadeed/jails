@@ -7295,16 +7295,22 @@ fn a_form_bound_endpoint_is_proved_by_a_form_post() {
     }
     let path = real_path_without_mvnd();
     let root = verified_spring_db_toolbox(&path);
-    let web = common::generated(root, "src/test/java/com/example/demo/web");
 
     for (file, sample) in [
         (
             "PostNoteControllerTest.java",
             ".param(\"body\", \"sample\")",
         ),
-        ("MarkNoteSeenControllerTest.java", ".param(\"id\", \"7\")"),
+        // The transition addresses its row through the URL, so what the form
+        // carries is the rest of the request -- and the key is expanded into
+        // the template rather than posted beside it.
+        (
+            "MarkNoteSeenControllerTest.java",
+            ".uri(\"/actions/mark-note-seen/{id}\", \"1\")",
+        ),
     ] {
-        let proof = fs::read_to_string(web.join(file)).unwrap();
+        let proof =
+            common::read_generated(root, &format!("src/test/java/com/example/demo/web/{file}"));
         assert!(proof.contains(sample), "{file}: {proof}");
         // A JSON body at a `@ModelAttribute` parameter binds nothing.
         assert!(!proof.contains("APPLICATION_JSON"), "{file}: {proof}");
@@ -7314,10 +7320,7 @@ fn a_form_bound_endpoint_is_proved_by_a_form_post() {
     // it could reach for another reason.
     let proof = common::read_generated(
         root,
-        &format!(
-            "src/test/java/com/example/demo/web/{}",
-            "MarkNoteSeenControllerTest.java"
-        ),
+        "src/test/java/com/example/demo/web/MarkNoteSeenControllerTest.java",
     );
     assert!(
         proof.contains("aRequestWithNoIfMatchIsAppliedUnconditionally"),
@@ -7536,11 +7539,13 @@ fn a_component_can_be_bound_from_a_parameter_of_another_name() {
             "seen:boolean",
             "version:long",
         ],
+        vec!["add", "api", "--no-start"],
         vec![
             "g",
             "transition",
             "MarkSeen",
             "id:long",
+            "body:string!",
             "version:long",
             "--on",
             "Note",
@@ -7551,7 +7556,7 @@ fn a_component_can_be_bound_from_a_parameter_of_another_name() {
             "--consumes",
             "form",
             "--bind",
-            "id=note_id",
+            "body=note_body",
         ],
     ] {
         assert!(
@@ -7564,12 +7569,15 @@ fn a_component_can_be_bound_from_a_parameter_of_another_name() {
         );
     }
 
+    // **A component of the request, not the row's key.** The key is a path
+    // variable and the version is a header, so the two values that are not the
+    // caller's to name are the two `--bind` has nothing to say about.
     let command = common::read_generated(
         &root,
-        "src/main/java/com/example/demo/service/MarkSeenCommand.java",
+        "src/main/java/com/example/demo/service/MarkSeenUseCase.java",
     );
     assert!(
-        command.contains(r#"@BindParam("note_id") long id"#),
+        command.contains(r#"@BindParam("note_body") String body"#),
         "{command}"
     );
     assert!(
@@ -7583,8 +7591,8 @@ fn a_component_can_be_bound_from_a_parameter_of_another_name() {
         &root,
         "src/test/java/com/example/demo/web/MarkSeenControllerTest.java",
     );
-    assert!(proof.contains(r#".param("note_id", "7")"#), "{proof}");
-    assert!(!proof.contains(r#".param("id""#), "{proof}");
+    assert!(proof.contains(r#".param("note_body", "#), "{proof}");
+    assert!(!proof.contains(r#".param("body""#), "{proof}");
 
     // A binding is an instruction to the data binder, and the data binder only
     // reads a form. On JSON it would be silently ignored.

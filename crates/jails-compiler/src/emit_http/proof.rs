@@ -54,6 +54,9 @@ pub(super) struct ControllerProof<'a> {
     /// Read from the same `scope_fields` the controller's own constructor was
     /// built from: a scoped controller takes a second argument, and a test
     /// that passed only the port did not compile.
+    /// What each component is called on the wire, when the record binds it
+    /// under another name.
+    pub(super) binder: Option<crate::emit_java::Binder<'a>>,
     pub(super) scopes: Option<Scopes<'a>>,
     pub(super) spring_boot: Option<&'a str>,
 }
@@ -87,6 +90,7 @@ pub(super) fn controller_test(
         key_json,
         keyed,
         precondition,
+        binder,
         scopes,
         spring_boot,
     } = proof;
@@ -132,6 +136,7 @@ pub(super) fn controller_test(
         binding,
         components,
         keyed.then_some(key_json).flatten().as_deref(),
+        binder,
     )?;
     // Emitted whole and disabled rather than omitted: a test that cannot be
     // built is a gap in coverage, and a gap nobody can see is the one that
@@ -289,6 +294,7 @@ fn request_shape(
     binding: Binding,
     components: &[RecordComponent<'_>],
     key_json: Option<&str>,
+    binder: Option<crate::emit_java::Binder<'_>>,
 ) -> Result<Request, CompileError> {
     let mut imports = BTreeSet::new();
     let mut missing = None;
@@ -326,10 +332,10 @@ fn request_shape(
                     continue;
                 };
                 let value = value.trim_matches('"').to_string();
-                let line = format!(
-                    "                .param(\"{}\", \"{value}\")",
-                    component.name
-                );
+                let wire = binder
+                    .and_then(|binder| crate::emit_java::wire_name(binder, &component.name))
+                    .unwrap_or_else(|| component.name.clone());
+                let line = format!("                .param(\"{wire}\", \"{value}\")");
                 fluent.push(line.clone());
                 classic.push(line);
             }

@@ -573,11 +573,16 @@ fn verified_spring_db_toolbox(path: &str) -> &'static std::path::PathBuf {
             cached_toolchain_dir_with_salt("spring-db-toolbox", include_str!("main.rs"));
         if fresh {
             write_spring_fixture(&root);
-            let status = jails_cmd_with_path(&root, path)
-                .args(["add", "db", "--no-start"])
-                .status()
-                .unwrap();
-            assert!(status.success(), "add db failed in the JDBC toolbox");
+            for capability in [["add", "db", "--no-start"], ["add", "api", "--no-start"]] {
+                let status = jails_cmd_with_path(&root, path)
+                    .args(capability)
+                    .status()
+                    .unwrap();
+                assert!(
+                    status.success(),
+                    "{capability:?} failed in the JDBC toolbox"
+                );
+            }
 
             for args in [
                 &["generate", "enum", "Currency", "GBP", "USD"][..],

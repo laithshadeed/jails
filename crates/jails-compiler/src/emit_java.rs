@@ -192,7 +192,10 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
     let binder = operation
         .route()
         .is_some_and(|route| route.consumes == Some(jails_model::RequestFormat::Form))
-        .then_some(model);
+        .then(|| Binder {
+            model,
+            declared: operation.bindings(),
+        });
     let (package, type_name, body, imports) = match &operation.kind {
         OperationKind::Command(command) => {
             let entity = entity(model, &command.on)?;
@@ -600,14 +603,34 @@ pub(crate) fn parameter_member(parameter: &OperationParameter) -> String {
 /// Read off the model's own settings rather than a manifest, for the reason
 /// `sql_dialect` reads the driver: `spring.jackson.property-naming-strategy`
 /// is where a project states this, and jails does not need to be told again.
-fn bind_param(
-    model: &AppModel,
-    form: bool,
-    member: &str,
-    imports: &mut BTreeSet<String>,
-) -> String {
-    if !form || !snake_case_wire(model) {
-        return String::new();
+/// What binds one component of a form-bound request.
+///
+/// **The declaration outranks the derivation.** `@BindParam` is derived from
+/// the project's Jackson setting, which covers `userId` -> `user_id` and
+/// cannot cover `id` -> `message_id`, because neither name follows from the
+/// other -- so `--bind` states the pair the convention has no way to reach.
+#[derive(Clone, Copy)]
+pub(crate) struct Binder<'a> {
+    pub(crate) model: &'a AppModel,
+    pub(crate) declared: &'a [jails_model::ParameterBinding],
+}
+
+/// What this component is called on the wire, when that is not its own name.
+///
+/// **One answer for the record and its proof.** They are one fact, and a proof
+/// posting the other name passes or fails for a reason that has nothing to do
+/// with the endpoint.
+pub(crate) fn wire_name(binder: Binder<'_>, member: &str) -> Option<String> {
+    let Binder { model, declared } = binder;
+    if let Some(wire) = declared
+        .iter()
+        .find(|binding| binding.parameter == member)
+        .and_then(|binding| binding.wire_name.as_deref())
+    {
+        return (wire != member).then(|| wire.to_string());
+    }
+    if !snake_case_wire(model) {
+        return None;
     }
     let mut wire = String::with_capacity(member.len() + 4);
     for character in member.chars() {
@@ -616,9 +639,21 @@ fn bind_param(
         }
         wire.push(character.to_ascii_lowercase());
     }
-    if wire == member {
+    (wire != member).then_some(wire)
+}
+
+fn bind_param(
+    binder: Binder<'_>,
+    form: bool,
+    member: &str,
+    imports: &mut BTreeSet<String>,
+) -> String {
+    if !form {
         return String::new();
     }
+    let Some(wire) = wire_name(binder, member) else {
+        return String::new();
+    };
     imports.insert("org.springframework.web.bind.annotation.BindParam".to_string());
     format!("@BindParam(\"{wire}\") ")
 }
@@ -641,7 +676,7 @@ fn record_shape_bound(
     type_name: &str,
     components: &[RecordComponent<'_>],
     imports: &mut BTreeSet<String>,
-    binder: Option<&AppModel>,
+    binder: Option<Binder<'_>>,
 ) -> String {
     let declarations = components
         .iter()
@@ -651,8 +686,8 @@ fn record_shape_bound(
                 imports.insert("java.util.Optional".to_string());
                 java = format!("Optional<{java}>");
             }
-            let bind = binder.map_or_else(String::new, |model| {
-                bind_param(model, true, &component.name, imports)
+            let bind = binder.map_or_else(String::new, |binder| {
+                bind_param(binder, true, &component.name, imports)
             });
             format!("    {bind}{java} {}", component.name)
         })

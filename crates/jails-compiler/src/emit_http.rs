@@ -107,17 +107,31 @@ fn lower(
         match &operation.kind {
             OperationKind::Command(command) => {
                 let entity = entity(model, &command.on)?;
+                // **A declared `consumes form` reaches the controller.** It
+                // reached the `Input` record -- that is where `@BindParam`
+                // comes from -- and stopped there, so every form-bound command
+                // jails wrote asked Spring for a JSON body and answered 415
+                // for the form its own proof was told to post.
+                let form = route.consumes == Some(jails_model::RequestFormat::Form);
+                let (parameter, binder) = if form {
+                    (
+                        "@ModelAttribute PORT.Input input",
+                        "org.springframework.web.bind.annotation.ModelAttribute",
+                    )
+                } else {
+                    (
+                        "@RequestBody PORT.Input input",
+                        "org.springframework.web.bind.annotation.RequestBody",
+                    )
+                };
                 (
                     entity,
-                    Binding::Body,
+                    if form { Binding::Model } else { Binding::Body },
                     Package::ApplicationCommands,
                     with_suffix(&operation.names.java_type, "Command"),
                     entity.names.java_type.clone(),
-                    "@RequestBody PORT.Input input".to_string(),
-                    BTreeSet::from([
-                        domain_import(model, entity),
-                        "org.springframework.web.bind.annotation.RequestBody".to_string(),
-                    ]),
+                    parameter.to_string(),
+                    BTreeSet::from([domain_import(model, entity), binder.to_string()]),
                 )
             }
             OperationKind::Query(query) => {
@@ -398,6 +412,12 @@ fn lower(
             key_json: key_sample,
             keyed: matches!(operation.kind, OperationKind::Transition(_)),
             precondition: version_sample,
+            binder: (route.consumes == Some(jails_model::RequestFormat::Form)).then(|| {
+                crate::emit_java::Binder {
+                    model,
+                    declared: operation.bindings(),
+                }
+            }),
             scopes: (!scope_fields.is_empty()).then(|| proof::Scopes {
                 base_package: model.project.package_for(Package::Base),
                 claims: scope_fields

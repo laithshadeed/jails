@@ -45,6 +45,19 @@ impl Operation {
     pub fn route(&self) -> Option<&OperationRoute> {
         routes(&self.kind).1
     }
+
+    /// The wire names this operation's author stated for its components.
+    ///
+    /// Empty for a kind that binds no request. `--bind` is refused without
+    /// `consumes form`, so a non-empty list only ever reaches a form.
+    pub fn bindings(&self) -> &[ParameterBinding] {
+        match &self.kind {
+            OperationKind::Command(command) => &command.semantics.bindings,
+            OperationKind::Query(query) => &query.semantics.bindings,
+            OperationKind::Transition(transition) => &transition.semantics.bindings,
+            OperationKind::Event(_) => &[],
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
