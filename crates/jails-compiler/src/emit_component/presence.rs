@@ -30,7 +30,6 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
     let name = &component.name;
     let app = package(model, Package::Application);
     let adapters = package(model, Package::AdaptersJdbc);
-    let base = package(model, Package::Base);
     let table = table(component);
     let port = format!("{name}Presence");
     let import = |user: &str, owner: &str, class: &str| {
@@ -41,14 +40,12 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
         }
     };
     // The container config is a fact about the *model* here, not a file on
-    // disk: `storage postgres` is what writes it, and the check above has
-    // already established that. The legacy generator reads the test tree for
-    // it, which is the "source as a database" pattern this path exists to
-    // remove.
-    let container_import = format!(
-        "{}import org.springframework.context.annotation.Import;\n",
-        import(&adapters, &base, "TestcontainersConfig")
-    );
+    // disk -- the legacy generator reads the test tree for it, which is the
+    // "source as a database" pattern this path exists to remove. It is a
+    // different question from whether SQL is reachable: the guard above
+    // passes for a project carrying its own JDBC starter, and that project
+    // has no `TestcontainersConfig` for this test to import.
+    let support = super::container_support(model, &adapters);
     Ok(vec![
         java(
             component,
@@ -84,13 +81,10 @@ pub(super) fn files(model: &AppModel, component: &Component) -> Result<Vec<Emitt
             IT.replace("{{adapters}}", &adapters)
                 .replace("{{name}}", name)
                 .replace("{{table}}", &table)
-                .replace("{{container_import}}", &container_import)
-                .replace(
-                    "{{container_annotation}}",
-                    "@Import(TestcontainersConfig.class)\n",
-                )
-                .replace("{{disabled_import}}", "")
-                .replace("{{annotation}}", ""),
+                .replace("{{container_import}}", &support.import)
+                .replace("{{container_annotation}}", support.annotation)
+                .replace("{{disabled_import}}", support.disabled_import)
+                .replace("{{annotation}}", support.disabled),
         )?,
     ])
 }

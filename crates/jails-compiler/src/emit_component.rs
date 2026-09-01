@@ -118,11 +118,69 @@ pub(crate) fn entry_point(
 }
 
 /// Whether this model has SQL storage, which several components require.
+/// Whether SQL is reachable from this project, however it got there.
+///
+/// **Not "did jails install the database".** A project can carry the JDBC
+/// starter because the reader declared it -- `minicom`'s Spring application
+/// runs on an H2 file -- and a component that refuses there is refusing over
+/// a database that is present. What the `db` capability additionally supplies
+/// is a `TestcontainersConfig`, which is a separate question with a separate
+/// answer in [`container_support`].
 fn has_database(model: &AppModel) -> bool {
     model
         .capabilities
         .values()
         .any(|capability| capability.kind == "db")
+        || model
+            .dependencies
+            .values()
+            .any(|dependency| JDBC_STARTERS.contains(&dependency.artifact.as_str()))
+}
+
+/// The artifacts that put a `DataSource` and `JdbcClient` on the classpath.
+const JDBC_STARTERS: [&str; 2] = ["spring-boot-starter-jdbc", "spring-boot-starter-data-jdbc"];
+
+/// What an integration test in `package` needs to reach a container config.
+///
+/// The four strings the templates interpolate, in one decision: either the
+/// import and the `@Import`, or `@Disabled` and its import. Emitting the
+/// annotation over a config the model never declared hands the reader a
+/// `cannot find symbol` in a file they did not write, and emitting nothing
+/// drops the coverage silently.
+fn container_support(model: &AppModel, package: &str) -> ContainerSupport {
+    if !model
+        .capabilities
+        .values()
+        .any(|capability| capability.kind == "db")
+    {
+        return ContainerSupport {
+            import: String::new(),
+            annotation: "",
+            disabled_import: "import org.junit.jupiter.api.Disabled;\n",
+            disabled: "@Disabled(\"todo: run jails add db to generate TestcontainersConfig, \
+                       or point this at the database this project already has\")\n",
+        };
+    }
+    let base = model.project.package_for(Package::Base);
+    ContainerSupport {
+        import: format!(
+            "{}import org.springframework.context.annotation.Import;\n",
+            match package == base {
+                true => String::new(),
+                false => format!("import {base}.TestcontainersConfig;\n"),
+            }
+        ),
+        annotation: "@Import(TestcontainersConfig.class)\n",
+        disabled_import: "",
+        disabled: "",
+    }
+}
+
+struct ContainerSupport {
+    import: String,
+    annotation: &'static str,
+    disabled_import: &'static str,
+    disabled: &'static str,
 }
 
 /// The build dependencies this model's components need.

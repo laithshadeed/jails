@@ -66,7 +66,7 @@ pub(crate) fn layout(invocation: Invocation) -> Result<()> {
     }
     println!("[project] capabilities is not touched: `jails sync` acts on that list.");
     if invocation.pretend {
-        println!("--pretend: no file was written");
+        println!("--pretend: nothing was written.");
         return Ok(());
     }
 

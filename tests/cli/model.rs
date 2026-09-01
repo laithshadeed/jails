@@ -5353,7 +5353,7 @@ fn familiar_operation_commands_are_model_patches_not_legacy_routes() {
         "[operations.open_notes]",
         "[operations.rename_note]",
         "route = \"POST /notes\"",
-        "route = \"POST /notes/search\"",
+        "route = \"GET /notes/search\"",
         "route = \"PATCH /notes/{id}\"",
         "yields = \"note_created\"",
     ] {
@@ -5443,7 +5443,7 @@ fn familiar_operation_commands_edit_nested_jdl_and_compile_typed_abis() {
         "query OpenNotes(title) @id(op_open_notes)",
         "transition RenameNote(title) @id(op_rename_note)",
         "route: POST /notes",
-        "route: POST /notes/search",
+        "route: GET /notes/search",
         "route: PATCH /notes/{id}",
         "yields: note_created",
     ] {

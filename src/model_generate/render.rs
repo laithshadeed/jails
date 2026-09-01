@@ -89,8 +89,18 @@ pub(super) fn operation_declaration(
     if let Some(path) = &args.path {
         let method = match profile {
             OperationProfile::Command => "POST".to_string(),
-            OperationProfile::Query if args.fields.is_empty() => "GET".to_string(),
-            OperationProfile::Query => "POST".to_string(),
+            // **A query answers GET, whatever its filters** -- the same rule
+            // the JDL frontend applies, stated once in each because these are
+            // two renderers of one decision and a divergence here is a route
+            // that changes when the authoring format does. `--consumes json`
+            // is the one way to ask for a body.
+            OperationProfile::Query
+                if args.consumes == Some(jails_spec::spec::kind::WireFormat::Json)
+                    && !args.fields.is_empty() =>
+            {
+                "POST".to_string()
+            }
+            OperationProfile::Query => "GET".to_string(),
             OperationProfile::Transition => args.method.map_or_else(
                 || "PUT".to_string(),
                 |method| method.label().to_ascii_uppercase(),
