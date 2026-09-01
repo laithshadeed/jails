@@ -148,12 +148,7 @@ tell the two apart.
 
 ---
 
-## P9 — the two research items that are this workstream's
-
-**P9.1 §4.6 — the repository contract test.** One contract interface executed
-once against the fake and once against `JdbcOrderRepository`, so semantic drift
-becomes a failing test. Today the two adapters can diverge silently.
-
+## P9 — the research item that is this workstream's
 
 **P9.5 §4.7 — policy and contract matrices, closed form only.** No expression
 string, no SpEL passthrough -- the same rule that keeps `@check(...)` out of

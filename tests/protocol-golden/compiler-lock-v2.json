@@ -867,7 +867,7 @@
         }
       },
       ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcNoteRepositoryIT.java": {
-        "bytes": "<1688 bytes elided>",
+        "bytes": "<1113 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
         "provenance": {
@@ -934,6 +934,19 @@
           "ejectable": true,
           "semantic_ids": [
             "cmp_outcome"
+          ]
+        }
+      },
+      ".jails/generated/test/java/com/example/notes/repository/NoteRepositoryContract.java": {
+        "bytes": "<1753 bytes elided>",
+        "kind": "java-test",
+        "mode": "regular",
+        "provenance": {
+          "artifact_id": "art_ent_note_repository_contract",
+          "compiler_pass": "java-facets",
+          "ejectable": false,
+          "semantic_ids": [
+            "ent_note"
           ]
         }
       },
@@ -1324,6 +1337,6 @@
     },
     "root": ".jails/generated"
   },
-  "projection_digest": "sha256:7fa308fa16ea201b46520450c8d73ab5b79a511f09a70fbf60274cdfd3b3b281",
+  "projection_digest": "sha256:1db601644ee4f378372ecc87630d320f9570de1bf9e8032db5914f1d93abbfb5",
   "schema": "jails.compiler-lock.v3"
 }

@@ -2518,9 +2518,13 @@ fn the_compiler_writes_adapters_into_the_reader_s_own_package() {
             subject.succeeds(&["add", "fake"]);
         }
 
+        // The *adapter*, not its companion test: both carry the type name, and
+        // this assertion is about where the reader's own package puts the one
+        // implementation. `InMemoryInvoiceRepositoryTest` sits beside it in the
+        // test tree and is a second file by design.
         let adapters: Vec<String> = walk_java(&subject.root)
             .into_iter()
-            .filter(|path| path.contains("InMemoryInvoiceRepository"))
+            .filter(|path| path.ends_with("InMemoryInvoiceRepository.java"))
             .collect();
         assert_eq!(
             adapters.len(),
