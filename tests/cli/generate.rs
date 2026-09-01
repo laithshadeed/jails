@@ -889,8 +889,11 @@ fn a_transition_can_select_by_a_component_other_than_id() {
         &root,
         "src/main/java/com/example/demo/adapters/JdbcSetStatusTransition.java",
     );
-    assert!(adapter.contains("where user_id = :user_id"), "{adapter}");
-    assert!(!adapter.contains("where id = :id"), "{adapter}");
+    // The predicate is assembled from a list, so the column appears in the
+    // seed rather than glued to the `where` -- an optional guard adds to the
+    // same list, and one place decides how they are joined.
+    assert!(adapter.contains("\"user_id = :user_id\""), "{adapter}");
+    assert!(!adapter.contains("\"id = :id\""), "{adapter}");
 
     // A selector that names no component says which ones there are.
     let missing = jails_cmd(&root, None)
@@ -4620,9 +4623,11 @@ fn a_scaffold_with_database_types_compiles_including_its_derived_jdbc_adapter() 
 
     let verified = verified_spring_db_toolbox(&path);
     assert!(
-        verified
-            .join("target/classes/com/example/demo/adapters/JdbcPayoutRepository.class")
-            .is_file(),
+        common::compiled_class(
+            verified,
+            "src/main/java/com/example/demo/adapters/JdbcPayoutRepository.java"
+        )
+        .is_file(),
         "the shared JDBC toolbox did not compile the derived adapter"
     );
 }
@@ -5753,9 +5758,11 @@ fn generate_search_produces_a_project_that_compiles() {
 
     let verified = verified_spring_db_toolbox(&path);
     assert!(
-        verified
-            .join("target/classes/com/example/demo/adapters/JdbcArticleRepository.class")
-            .is_file(),
+        common::compiled_class(
+            verified,
+            "src/main/java/com/example/demo/adapters/JdbcArticleRepository.java"
+        )
+        .is_file(),
         "the shared JDBC toolbox did not compile the search adapter"
     );
 }

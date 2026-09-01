@@ -1386,6 +1386,26 @@ const MOVED_PACKAGES: &[(&str, &[&str])] = &[
     ),
 ];
 
+/// Where javac put the class for a generated source, in whichever package the
+/// compiler puts that source.
+///
+/// **The `.class` moved because the `.java` did**, so an assertion about
+/// compiled output goes through the same table as one about source. Named with
+/// the source path it is the output of -- `src/main/java/.../Foo.java` -- so
+/// the caller states the thing they generated rather than an output layout
+/// they would then have to keep in step with the build tool.
+pub fn compiled_class(root: &Path, relative: &str) -> PathBuf {
+    let resolved = generated_relative(root, relative);
+    let (output, rest) = match resolved.split_once("/main/java/") {
+        Some((_, rest)) => ("target/classes", rest.to_string()),
+        None => match resolved.split_once("/test/java/") {
+            Some((_, rest)) => ("target/test-classes", rest.to_string()),
+            None => return root.join(relative),
+        },
+    };
+    root.join(output).join(rest.replace(".java", ".class"))
+}
+
 /// The same resolution, as a path relative to the project root.
 ///
 /// For an assertion about *reported* text rather than about bytes: `g field`

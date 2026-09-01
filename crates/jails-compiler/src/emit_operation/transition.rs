@@ -181,7 +181,13 @@ pub(super) fn lower(
             field.names.sql_column, field.names.sql_column
         )
     });
-    let predicate_seed = std::iter::once(format!("{} = :id", selector[0].names.sql_column))
+    // **The parameter is named after the column it constrains.** `:id` is the
+    // right name only when the selector *is* the primary key: a transition
+    // selecting on `user_id` rendered `user_id = :id`, which is correct SQL
+    // and reads as a mistake -- and a reader adding a predicate of their own
+    // below has no way to tell which binding `:id` refers to.
+    let selector_param = selector[0].names.sql_column.as_str();
+    let predicate_seed = std::iter::once(format!("{selector_param} = :{selector_param}"))
         .chain(required_guards)
         .chain(scope_fields.iter().map(|field| {
             format!(
@@ -278,7 +284,7 @@ pub(super) fn lower(
         // context fails at startup with "Could not generate CGLIB subclass". The
         // adapter implements its port, so a JDK proxy would do, but making the whole
         // application proxy by interface to keep one `final` is the wrong trade.
-        "@Repository\npublic class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;{event_member}\n\n    public {type_name}(JdbcClient jdbc{event_parameter}) {{\n        this.jdbc = jdbc;{event_assignment}\n    }}\n\n    @Override\n    @Transactional\n    public {} execute({context}{key_type} {key_member}, {port_type}.Input input) {{\n        var predicates = new ArrayList<>(List.of({predicate_seed}));\n{optional_guards}        var sql = \"update {} set {assignments} where \" + String.join(\" and \", predicates) + \" returning {columns}\";\n        JdbcClient.StatementSpec statement = jdbc.sql(sql);\n        statement = statement.param(\"id\", {key_member});\n{set_params}{guard_params}{scope_params}{result}\n    }}\n}}",
+        "@Repository\npublic class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;{event_member}\n\n    public {type_name}(JdbcClient jdbc{event_parameter}) {{\n        this.jdbc = jdbc;{event_assignment}\n    }}\n\n    @Override\n    @Transactional\n    public {} execute({context}{key_type} {key_member}, {port_type}.Input input) {{\n        var predicates = new ArrayList<>(List.of({predicate_seed}));\n{optional_guards}        var sql = \"update {} set {assignments} where \" + String.join(\" and \", predicates) + \" returning {columns}\";\n        JdbcClient.StatementSpec statement = jdbc.sql(sql);\n        statement = statement.param(\"{selector_param}\", {key_member});\n{set_params}{guard_params}{scope_params}{result}\n    }}\n}}",
         target.names.java_type, target.names.sql_table
     );
     operation_file(

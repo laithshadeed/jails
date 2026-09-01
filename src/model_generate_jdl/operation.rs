@@ -345,6 +345,28 @@ pub(super) fn operation_declaration(
             },
             |field| Some(java_to_label(field)),
         );
+        // **Checked against the entity before it reaches the model.** The
+        // linker refuses an unknown selector too, and names it as
+        // `$.operations.x.semantics.select` -- a JSON path for a flag the
+        // reader typed, and no list of what would have worked. This says both.
+        if let Some(selector) = selector.as_deref()
+            && let Some(entity) = model
+                .entities
+                .values()
+                .find(|candidate| candidate.label == entity_label)
+            && !entity.fields.iter().any(|field| field.label == selector)
+        {
+            return Err(Failure::Told(format!(
+                "`{selector}` does not name a component of `{}`.\n       fix: pass `--select` one of {}",
+                entity.names.java_type,
+                entity
+                    .fields
+                    .iter()
+                    .map(|field| format!("`{}`", field.names.java_member))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
         let updated = fields
             .iter()
             .filter(|field| {
@@ -425,6 +447,56 @@ pub(super) fn operation_declaration(
             }
         })
     });
+    // **A path variable that is not the row selector has nowhere to go.** A
+    // transition takes exactly one value that identifies the row, and it is
+    // whatever `--select` names; a `{id}` in the URL of a transition selecting
+    // on `userId` would be mounted and then ignored, which is a route that
+    // answers and does the wrong thing. Two variables is the same fault twice:
+    // only one of them can be the selector.
+    if let Some(path) = &path
+        && args.kind == ArtifactKind::Transition
+    {
+        let variables: Vec<&str> = path
+            .split('{')
+            .skip(1)
+            .filter_map(|rest| rest.split_once('}'))
+            .map(|(name, _)| name)
+            .collect();
+        // The same derivation the declaration above uses: `--select`, or the
+        // entity's primary key when the reader named none.
+        let expected = args
+            .select
+            .as_ref()
+            .map(|field| java_to_label(field))
+            .or_else(|| {
+                model
+                    .entities
+                    .values()
+                    .find(|candidate| candidate.label == entity_label)
+                    .and_then(|entity| {
+                        entity
+                            .fields
+                            .iter()
+                            .find(|field| field.primary_key)
+                            .map(|field| field.label.clone())
+                    })
+            })
+            .map(|label| jails_model::lower_camel_case(&label));
+        if variables.len() > 1 {
+            return Err(Failure::Told(format!(
+                "a transition can bind one path variable -- the value that identifies the row -- and `{path}` has {}.\n       fix: keep `{{{}}}` and pass the rest in the body",
+                variables.len(),
+                expected.as_deref().unwrap_or(variables[0])
+            )));
+        }
+        if let (Some(variable), Some(expected)) = (variables.first(), expected.as_deref())
+            && *variable != expected
+        {
+            return Err(Failure::Told(format!(
+                "this transition selects on `{expected}` and cannot take `{{{variable}}}` from the URL.\n       fix: pass `--select {variable}`, or name `{{{expected}}}` in the path"
+            )));
+        }
+    }
     if let Some(path) = &path {
         let method = match args.kind {
             ArtifactKind::Usecase => "POST".to_string(),
