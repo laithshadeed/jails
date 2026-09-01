@@ -1,70 +1,255 @@
-# JDL v1 — implementation specification
+<!--
+new.md — the whole design: what jails is becoming, what it is now, and what
+is left.
 
-Status: normative design; implementation is in progress.
-The complete-document example is valid JDL v1. Smaller `jdl` blocks are valid
-declaration fragments in the surrounding entity/workspace context unless the
-text says they show a before/after transformation.
+**This file replaced twelve.** `jdl-sol.md`, `jdl.md`, `simplify-sol.md`,
+`simplify-gemini.md`, `simplify-opus.md`, `simplify-glm.md`, `plan.md`,
+`audit.md`, `bugs.md`, `missing.md`, `modern.md` and `research.md` were one
+system described twelve times, and they had begun to disagree with each other
+and with the tree -- `simplify-sol.md` named `tests/differential.rs`, which had
+been `tests/product_loop.rs` for days; two of them described a G2 gate under a
+function name that no longer existed. Twelve documents is twelve places to
+update and eleven that will not be.
 
-Implementation checkpoint (2026-08-28): `jails-model` now has a version-gated
-`jdl 1` frontend with a lossless UTF-8 byte-span CST, retained comments/blank
-lines/CRLF, stable `JDLxxxx` syntax diagnostics, local CST span replacement,
-and an idempotent encoding-level formatter. The v1 parser lowers app, cap,
-dep, prop, enum, entity, local and global `use`, field, table, primary/unique
-constraint, relation, eject, all four operation kinds, and all 23 closed
-component kinds directly into the typed linker boundary; it contains no TOML
-rendering or TOML parser call.
-Operation parameters, joins, assignments, resolutions, roles, emits, routes,
-bindings, event partitions, component parameters, identity-bearing variants,
-symbol references, projection arguments, selector membership, ordered relation
-mappings, referential actions, composite keys, cardinality, and exact component
-source paths are retained as explicit linked nodes. Projection prerequisites,
-relation target keys/types/nullability, and required cascade cycles fail closed.
-All 23 component kinds are reachable from familiar `jails g` commands through
-one typed CST/model mutation path and can be removed at component scope. The
-eight kinds already supported by emitters also derive temporary `SourceUnit`
-compatibility views; the typed component remains authoritative. A `cases`
-component captures its reader-owned source as an exact plan input, so changing
-the brief after review refuses the entire apply. Familiar entity, field,
-facet, operation, cap, dependency, property, component, destroy, and rename
-commands use local CST edits; `jails model fmt`, `--check`, preview, and sealed
-apply all use the same exact-plan boundary. Unversioned source continues
-through the pre-v1 compatibility importer. The formatter now canonicalizes
-JSON string encodings, HTTP method case, explicit ascending order, and
-attribute rank as well as whitespace, newline shape, and comma-safe wrapping
-to the 100-column target. It orders entity member classes, separates member
-and top-level declaration groups, and removes only comment-free identical
-`use` selections. The complete closed field-attribute vocabulary now lowers to
-typed field semantics. Explicit scope-claim/default evidence is distinguished
-from compiler-derived claims and defaults; UUID/integer primary keys and
-versions receive typed derived defaults. Intrinsic field/type rules, unique
-scope claims, routed-scope security, managed input/update roles, and explicit
-if-match/version relationships fail closed in the linker. The compact familiar
-field syntax now materializes scope, numeric, mapping, default, version, and
-updated facts into JDL v1, and `--timestamps` writes `now()`/`@updated` rather
-than replay-dependent shorthand. Primary `storage postgres|h2|sqlite` derives
-its implementation support in the linked model without a redundant source
-cap. Record and PostgreSQL emitters consume numeric constraints and typed
-database defaults; required versioned transitions increment `@version` and set
-`@updated` in the same statement. Create-command adapters omit database-owned
-defaults from inserts, generate RFC 9562 UUIDv7 values in the application,
-initialize `@updated` without exposing it in the command input, and return the
-complete database row. The UUIDv7 support file is itself merge-managed and has
-a generate-edit-generate E2E proof. Scoped entities now produce a non-ejectable,
-merge-managed `ExecutionContext` ABI. Command, query, and transition ports carry
-that context; HTTP adapters derive it from authenticated claims; create adapters
-bind scoped columns from it; and query/transition predicates always bind every
-scope column. A generate-edit-generate E2E preserves reader additions to the ABI,
-and a real Maven test exercises authenticated context construction plus JDBC
-tenant binding. Broader chosen/derived prerequisite semantics, the exhaustive
-CLI equivalence matrix, convention-derived output roles, and direct rich-node
-consumption by every emitter remain open. Command and transition database
-emitters now consume rich constant `set` assignments directly, including
-constant-only transitions; lookup `resolve`, conflict, join, and rich parameter
-ABI lowering are still open. This checkpoint is not the ship claim in section
-20.
+**Identifiers are unchanged, deliberately.** Roughly 680 source comments cite
+these files by identifier -- `plan.md P13.4`, `audit.md A3.14`, `bugs.md B57`,
+`research.md §4.2`, `modern.md §6.5`, `jdl-sol.md §9.7`, `simplify-sol.md` G1.
+Every one of them still resolves, because the identifier is carried here rather
+than renumbered. Read `<file>.md <id>` as "the entry with that id, in this
+file". The section-number citations into `jdl-sol.md` are exact: Part 2 below
+is that document's numbering, unchanged.
 
-The key words **MUST**, **MUST NOT**, **SHOULD**, and **MAY** have their usual
-RFC 2119 meanings.
+**A closed item is deleted from this file, not marked done** -- the convention
+all twelve shared, now with one file to apply it to. `git log -p -- new.md` is
+the record, and the deleted documents resolve the way every deleted document
+here does:
+
+```
+git log --diff-filter=D -- jdl-sol.md    # the commit that removed it
+git show <commit>^:jdl-sol.md            # its last content
+```
+
+**Item and section numbers are stable and never reused.** A phase or section
+with no open items disappears entirely rather than being renumbered.
+
+Status prose is dated where it is a measurement. Everything else is written in
+the present tense as a rule, because a note narrating what a module used to be
+gives a reader nothing to act on and goes stale on its own.
+-->
+
+# new.md — the canonical compiler, JDL v1, and what is left
+
+Jails is a compiler. Its source is one application model; its generated tree is
+merge-managed by stable artifact identity; its irreversible output is an
+explicit evolution plan; and its executor applies exactly the plan the reader
+reviewed.
+
+That sentence is the whole design. The rest of this file is what it means, how
+far it is built, and what has not been done.
+
+- **Part 1** is the decision and the architecture: why a compiler, the five
+  contracts, the pipeline, and the deletion map the cutover follows.
+- **Part 2** is JDL v1, normative. Its section numbers are the ones source
+  comments cite.
+- **Part 3** is where the implementation actually stands, measured against
+  Parts 1 and 2 rather than against memory.
+- **Part 4** is the gates that decide whether a cutover step may land.
+- **Part 5** is the plan: every open item, with the exit condition that retires
+  it.
+- **Part 6** is what will deliberately never be built.
+
+---
+
+# Part 1 — The decision
+
+## 1.1 The problem the compiler solves
+
+Four things made jails hard to change, and none of them was volume of code.
+
+**Product breadth is real and is not the problem.** Thirty-nine generator
+kinds and twenty-five capabilities are a legitimate surface; a tool that
+scaffolds one shape is not the tool this is.
+
+**The editable-output paradox is the first real cause.** Generated code is
+meant to be edited, and jails is meant to regenerate it. That is only
+answerable with a merge base, and without one every generator grows its own
+theory of "is this file still ours".
+
+**No canonical semantic world is the second, and the deepest.** Requirements
+were recovered from the bytes jails had already emitted -- a capability decided
+what to install by scanning rendered Java. Source became the database, so every
+question had two answers and the compiler could not report which was stale.
+
+**One intent copied through too many representations is the third.** A single
+`jails g record` request existed as `Intent`, `Recipe`, `Recorded`, `Declared`,
+`Asked`, `CanonicalMutationRequest`, `DesiredChange`, `SemanticEdit`, `Change`,
+`PreparedChange`, `PreparedKind`, a ledger row, a journal record, a receipt, an
+effect and an `Outcome` -- sixteen shapes, each with its own agreement method.
+
+## 1.2 The product choice
+
+Four options were considered and one was taken.
+
+| | shape | why not |
+|---|---|---|
+| A | honest one-shot generator | throws away the iterative loop, which is the product |
+| **B** | **merge-managed compiler with implementation-boundary ejection** | **chosen** |
+| C | disposable managed tree with ejection | a tree nobody may edit is a tree nobody trusts |
+| D | JVM build-time compiler | moves the problem into a build plugin and a second language |
+
+**D1 — the iterative edit loop is the product.** A reader adds a method to a
+generated record, edits a validation message jails wrote, and edits the exact
+line jails rewrites; all three must survive regeneration, and the third must
+refuse rather than guess. This is confirmed and overrides any simplification
+that trades it away.
+
+**D2 — JDL is a required deliverable**, not an optional front end. It overrides
+the earlier reading that a new language would not simplify anything: without a
+durable authoring source, the model is a transcript of CLI invocations and
+cannot be reviewed, diffed, or hand-edited.
+
+**D3 — ergonomics are a requirement.** A refusal that does not say what to do
+next is a defect, and every refusal carries a `fix:` line.
+
+## 1.3 The five contracts
+
+These are authoritative. Everything else in Part 1 follows from them.
+
+- **`AppModel` is desired-state authority.** Stable IDs carry identity; Java,
+  SQL, route and configuration names are projections of it.
+- **`WorkspaceSnapshot` captures every external fact once.** Code below the
+  compiler may observe the filesystem; the compiler may not.
+- **`Compiler` is pure.** Equal snapshot, patch and compiler version must
+  produce equal desired artifacts.
+- **`PlanBundle` is the exact reviewed transition.** Preview, export,
+  confirmation and apply all refer to its digest; apply never replans.
+- **`jails-workspace::execute` is the only canonical project writer.** It
+  locks, rechecks preconditions, publishes exact after-images, and converges on
+  retry.
+
+## 1.4 The pipeline
+
+```text
+.jails/model.jdl / CLI sugar
+        -> ModelPatch
+        -> AppModel + WorkspaceSnapshot
+        -> pure Compiler
+        -> PlanDraft
+        -> exact content-addressed PlanBundle
+        -> preview or the one Executor
+```
+
+The passes, in the order §20.1 specifies them: capture; parse front ends to
+`ModelPatch`; link, resolve and validate; normalize facets and derive the
+dependency graph; lower to typed artifact IR; derive schema and evolution;
+emit a draft, then materialize one exact plan.
+
+## 1.5 The canonical crates
+
+Lowest first. A crate may only depend on one below it, and Cargo enforces that;
+`no_module_depends_on_a_layer_above_its_own` enforces the same rule for
+module-level edges, and `LAYERS` in `tests/architecture/rules.rs` is the
+authority on which crate a module belongs to.
+
+| crate | contract |
+|---|---|
+| `jails-model` | closed source schema, stable IDs, linking, semantic diagnostics, `AppModel` and `ModelPatch` |
+| `jails-contracts` | portable `WorkspaceSnapshot`, `PlanDraft`, exact `Plan`, operations, trees and blobs |
+| `jails-compiler` | pure semantic lowering to a desired artifact tree; no filesystem, environment or subprocess access |
+| `jails-workspace` | capture, exact materialization, verification and the single canonical executor |
+
+`jails-codec-derive` (a `#[derive(Codec)]` proc macro) and `jails-codemod` (the
+marked block, and no dependencies at all) are the two leaves beside them.
+
+## 1.6 Managed output, ejection, and what stays irreproducible
+
+Reproducible output belongs below `.jails/generated` and is merge-managed. The
+accepted model renders BASE, capture supplies OURS, and the next model renders
+THEIRS. Clean merges are frozen into the plan; conflicts refuse without writes.
+The lock advances to THEIRS so hand edits remain deltas.
+
+Migrations, model revisions and explicit reader-file patches are
+**irreproducible** operations and stay visible in the plan rather than being
+smuggled into rendering.
+
+`model eject <artifact-id>` transfers one ejectable adapter implementation into
+reader source, records the transfer, and excludes that artifact from later
+managed trees. Records and ports remain managed ABI. Capture must include every
+prospective reader destination, collision must refuse, and ejection never
+infers ownership from edited bytes or silently reclaims it. Its before-image
+must be `Missing`: transfer is creation of a new reader-owned source, never
+reconciliation with an existing one.
+
+## 1.7 Concrete deletion map
+
+What the cutover deletes, and what replaces it. This is the list a cutover step
+is measured against.
+
+| Current area | Destination | Eventual deletion |
+|---|---|---|
+| `jails-spec::Field` plus protocol `FieldSpec` | one model type registry and renderer views | old field derivation/translation tables |
+| repeated `Layer`, route and name tables | small typed registries with derived projections | synchronized enum/label/package tables |
+| `Recipe` + `refuse_misplaced` + the giant artifact match | typed declarations, recipe metadata and compiler passes | optional-field bag and negative flag matrix |
+| `Recorded`, `Declared`, `Asked` | `ModelPatch`, canonical request identity and `Plan` | manual recipe reconstruction and syntax copies |
+| generated Java/SQL reparsing | adoption importer plus `AppModel` | source-as-database normal paths |
+| `Change` + `DesiredChange` + `SemanticEdit` + projected edit forests | one semantic `PatchSet` | mirrored apply/retire and translation layers |
+| desired/observed/applied/pending record variants | canonical records plus `StateDelta` | phase-specific row duplication |
+| hand codecs/tags/JSON serializers | generated wire/report schemas | repetitive encode/decode/match code |
+| project `Project`/`ProjectContext`/snapshot overlap | snapshot-backed `ProjectView` | post-capture arbitrary disk reads |
+| Gradle partial parser | managed fragment/plugin anchor | most arbitrary Groovy rewriting |
+| duplicate Maven XML scanners | one document backend | second scanners and field-name lies |
+| per-byte dependency inference | typed IR requirements | `with_test_support`-style scans |
+| route-level rename/field evolution replay | stable IDs + semantic schema diff | whole-generator reruns and hard-coded companions |
+| prepare identity/semantics/prepared representations | one canonical `Plan` | agreement methods and vector cloning |
+| journal/receipt/object directory protocols | lock-last convergent exact-file executor plus compiler projection lock | bespoke storage, codec, GC, WAL, receipt and roll-forward machinery |
+| `main.rs` dispatch + command-path + pre-clap parsing | generated command catalog | duplicated command oracles |
+| `new` generation paths | compiler `PlanDraft` plus workspace materializer | manual preview path lists and nested engine state |
+| drive/report/tool suites | optional command processes or explicit core modules | facade coupling and duplicated runners/caches |
+
+The largest deletion does not come from shorter render functions. It comes from
+making six questions disappear: which of six representations is authoritative;
+what facts can be recovered from the Java we emitted; which recipe kinds happen
+to depend on this field; is this edited file still ours; did preview and apply
+run the same computation; does recovery reproduce every side condition of
+normal commit. One model, one graph, one plan and one explicit ownership
+transfer answer all six.
+
+## 1.8 Architecture fitness rules
+
+Properties that express the new shape. **Not** file-size thresholds -- those
+improve navigation and can be satisfied while every duplicated concept
+survives.
+
+| rule | held by |
+|---|---|
+| after capture, no compiler module reaches `std::fs`, a project root or a process runner | `rules::canonical_compiler_is_pure_after_capture`, and structurally: the canonical crates depend on nothing that can read a disk |
+| identical snapshot + patch + compiler version yields an identical plan digest | `materialize::the_same_snapshot_patch_and_compiler_produce_the_same_plan_digest`, plus the two negatives |
+| preview, export, confirmation and apply reference one digest | `preview_export_and_apply_all_name_one_plan_digest` |
+| every command and alias resolves through one generated catalog | `commands.rs` walks the live `clap::Command`; `every_command_a_message_tells_the_reader_to_run_is_one_that_exists` checks messages against it |
+| every builtin type has one semantics row | `BuiltinSemantics` is one exhaustive match, held by the *largest table of per-builtin knowledge outside its row* ratchet |
+| every artifact requirement comes from IR, never a content or path scan | structural |
+| managed output is written only below the managed root | `execute`'s precondition check |
+| reader-owned source changes only by an explicit typed patch/eject/adopt operation | `PatchReaderFile` with a captured before-image |
+| every persisted union tag and field number is generated and golden-tested | partly: see P13.4 |
+| every advertised failpoint fires in at least one test | `failpoints!` emits both the registry and the constants, so an unfired point is `-D dead-code` |
+| every active transaction state has one tested recovery transition | `crates/jails-workspace/tests/crash.rs` |
+| the planner's read set is complete by construction | structural, via `WorkspaceSnapshot` |
+| optional tool crates cannot import mutation executor internals | Cargo, plus `LAYERS` |
+
+---
+
+# Part 2 — JDL v1
+
+**Normative.** The section numbers below are the ones source comments cite as
+`jdl-sol.md §N`; they are unchanged. The key words **MUST**, **MUST NOT**,
+**SHOULD** and **MAY** have their RFC 2119 meanings.
+
+The complete-document example in §4 is valid JDL v1 and is an executable
+conformance fixture. Smaller `jdl` blocks are valid declaration fragments in
+the surrounding entity/workspace context unless the text says they show a
+before/after transformation.
+
+Part 3 is where this specification and the implementation currently differ.
 
 ## 1. Decision
 
@@ -2628,3 +2813,541 @@ This is the intended balance: authors state the domain and behavior, Jails owns
 the repetitive source-code decisions, rare features remain available through
 typed components, and real storage/public-contract/ownership exceptions stay
 explicit enough to plan safely.
+---
+
+# Part 3 — Where it stands, measured
+
+Every number here was produced by running the binary or reading the tree, not
+estimated. Where a claim is dated, the date is when it was measured.
+
+## 3.1 The answer
+
+**The legacy path cannot be deleted yet.** The canonical architecture is real,
+correctly layered, and delivers the hardest thing the design asked for. What
+stops the deletion is named in Part 5 -- not doubt about the design.
+
+Three things are done and should not be relitigated:
+
+- **Source is no longer a database.** `jails-java` is not a dependency of any
+  canonical crate, and nothing on the canonical path reparses generated Java or
+  SQL.
+- **Requirements come from the model, not from bytes.** Every `contains("…")`
+  in `jails-compiler` is inside `#[cfg(test)]`; there is no canonical
+  counterpart to the legacy scan of emitted Java.
+- **Preview and apply cannot plan twice.** `finish_generation` does one
+  capture, one compile, one materialize, then either reports the bundle or
+  executes *that* bundle.
+
+## 3.2 Coverage
+
+| | |
+|---|---|
+| generators on the canonical path | 39 of 39 |
+| capabilities | 25 of 25 |
+| component kinds with a backend | 23 of 23 |
+
+Each is held by an exhaustive match over a `clap::ValueEnum`, so a kind added
+without a backend fails to compile rather than at the cutover.
+
+## 3.3 A1 — what coverage does not say
+
+**`migration` is the one whose gap is genuinely in the plan.** A migration is
+an irreproducible operation by construction (§1.6), so "covered" means the
+plan carries it, not that a renderer produces it from the model.
+
+**The §9.7 divergence is recorded rather than hidden.** Six of the
+twenty-three emitted packages sit under a head §9.7 does not close, so a
+`jails.toml` layer rename does not reach them. Their rule reads
+`convention.facet.*` where a layer's reads `convention.layer.*`. Reconciling
+them would move files in every project generated so far, which is why it is a
+recorded divergence and not a bug.
+
+## 3.4 A3.13 — three diagnostic vocabularies
+
+94 `JDL0001`–`JDL1002` codes live in `crates/jails-model/src/jdl/v1/`; 140
+kebab `model-*` codes live in the linker, which is §18.2's passes 2–9. Below
+that, `jails-compiler` and `jails-workspace` return `Result<_, String>` in 78
+places and `CompileError` is a newtype over `String` -- a third vocabulary with
+no codes at all, and no spans below the parser.
+
+§18.3 asks for one diagnostic contract. This is the gap.
+
+## 3.5 A3.14 — no typed artifact IR
+
+§20.1 pass 4 specifies `JavaFile` / `JavaDecl` / `JavaExpr` / `SqlExpr`. None
+exist. The canonical emitters assemble Java and SQL with `format!` exactly as
+the legacy generators do -- 67 sites in `emit_unit.rs`, 53 each in
+`emit_sql.rs` and `emit_java.rs`.
+
+**This is the largest unbuilt piece of the design**, and it is a phase rather
+than a fix. It is also the reason for A4.2 below.
+
+## 3.6 A4 — simplicity, measured
+
+Production lines, `#[cfg(test)]` stripped and blank lines excluded.
+
+| | lines | units covered |
+|---|---:|---:|
+| legacy transaction kernel (`prepare` + `commit` + protocol `intent`/`durable`/`observe`) | 18,789 | — |
+| replaced by `jails-workspace` + `jails-contracts` | **3,763** | — |
+| legacy generation (`generate` + `spec` + `java` + `project` + `engine`) | 41,328 | 64 |
+| replaced by `jails-model` + `jails-compiler` + root `model_*` frontends | **25,389** | 41 |
+
+**A4.1 — the transaction-kernel simplification is real, and it is the big
+one.** Roughly 5×. Object store, custom codec, GC, journal, receipts and
+roll-forward are replaced by capture → merge → exact plan → lock-last
+publication. This is the largest claim in Part 1 and it is delivered.
+
+**A4.2 — the generation simplification has not happened.** 646 production lines
+per generator-or-capability on the legacy side; 619 on the canonical side.
+Flat. The cause is A3.14: moving string assembly into a new crate does not make
+it cheaper. The one place a real IR exists -- `Pack` -- is also the one place
+legacy and canonical share templates and cannot drift.
+
+**A4.3 — representation count is about the same; the win is authority, not
+arity.** Sixteen shapes became a comparable number, but exactly one of them is
+authoritative and the rest are projections of it. That is the change, and
+counting shapes does not show it.
+
+**A4.4 — the tree is currently larger than before the rewrite began.** Three
+model front ends are live and editable: `.jails/model.toml` (`source.rs`, 581
+lines), the pre-v1 JDL draft (1,912) and `jdl 1` (`jdl/v1/`, 4,955). Above them
+sit ~6,551 lines of frontend adapters in the root binary carrying 25
+`is_v1_source` branch sites, because every mutating command is written three
+times. Expected mid-cutover -- **but no simplicity claim can be banked until
+two of the three front ends are gone.** §22 is the upgrade path that removes
+them.
+
+## 3.7 A6.2 — three functions carry what §20.1 specifies as nine layers
+
+```
+508  crates/jails-compiler/src/lib.rs:68     Compiler::compile
+404  crates/jails-model/src/model_apply.rs:9 AppModel::apply
+```
+
+The layers are conceptually present and are not separately addressable. This is
+craft debt rather than a correctness gap, and A3.14 is the change that would
+naturally split the first of them.
+
+## 3.8 The environment a measurement was taken in
+
+Tier-3 tests shell out to Maven and compile against `pom::TARGET_RELEASE`
+(currently 26). A machine whose JDK is older fails every one of them with
+`release version 26 not supported`. Those failures are the machine, not the
+tree -- but note the trap they sit next to: **a skipped tier-3 test is reported
+as passing**, which is why every skip goes through `common::skip()` and
+`JAILS_REQUIRE_TOOLCHAIN=1` turns each into a failure naming what was missing.
+The gate sets it.
+
+---
+
+# Part 4 — The gates
+
+`mise run verify-rewrite` is the single answer to "is this green".
+`.githooks/pre-push` and `.github/workflows/verify-rewrite.yml` invoke it and
+nothing else, so hook, CI and this file cannot disagree about what passing
+means. It runs `cargo fmt --check`, `cargo clippy -D warnings`,
+`RUSTDOCFLAGS='-D warnings' cargo doc`, and then every test binary
+concurrently under `JAILS_GIT_DIFF_ALGORITHM= JAILS_REQUIRE_TOOLCHAIN=1`.
+
+Both environment pins are load-bearing. Without the second, a tier-3 test that
+cannot find its toolchain skips and counts as a pass. Without the first the
+gate is not deterministic: `git merge-file` grew `--diff-algorithm` after 2.43,
+histogram and myers can resolve an ambiguous three-way merge differently, and
+the merged bytes go into the managed tree and the accepted projection -- so a
+gate whose merges depend on the distribution underneath it is two answers
+wearing one name. The empty value pins git's own default, which every git ever
+shipped supports.
+
+## 4.1 Where each gate stands
+
+- **G0 — mandatory execution and protocol.** Closed. Scenario names and golden
+  directories match exactly; every protocol fixture is read by something; every
+  advertised failpoint is named outside the registry.
+
+- **G1 — differential CLI.** `tests/product_loop.rs`, 38 scenarios plus the
+  corpus. **Read 4.2 before trusting this one.**
+
+- **G2 — behavior journeys.** Every advertised command path maps to a test.
+  Held in two places: `every_advertised_command_path_has_a_journey`
+  (`tests/cli/developer_tools.rs`) walks `jails commands --json` and requires
+  each path to appear in a test's argv, and
+  `every_inventoried_command_path_is_invoked_by_a_test`
+  (`tests/architecture/rules.rs`) holds the inventory half. The gate fails in
+  both directions: coverage may not fall, and an exemption that is no longer
+  needed must come off.
+
+  **What it proves is reachability, not behaviour.** A refusal counts, and the
+  match is textual -- a test that merely mentions `"model", "plan"` in an argv
+  satisfies it. That is the right bar for "no command is completely untested"
+  and the wrong one to read as coverage.
+
+- **G3 — exact real toolchain.** `tests/common/scenarios.rs` is the
+  machine-readable kind/capability map, held by
+  `every_kind_and_capability_has_a_golden_scenario` against the binary's own
+  help. `format` is the one documented exemption, listed in `COVERED_ELSEWHERE`
+  with the test that does cover it, and that test's existence is asserted.
+
+- **G4 — crash/recovery.** Closed. `failpoints!` is one declaration: it emits
+  `POINTS`, the list a crash test enumerates, and one constant per point, which
+  is the only thing `trip` accepts. A point nobody trips is an unused constant
+  and `-D dead-code` fails the build; a point tripped but unadvertised cannot
+  be written. `crates/jails-workspace/tests/crash.rs` declares nine points over
+  the canonical publication sequence and asserts convergence rather than
+  roll-forward, because there is no journal.
+
+  **The aborting half earned its cost immediately.** The in-process matrix was
+  green and the child-abort matrix was not: an injected `Err` unwinds, so the
+  staged temporary's guard removes it, and a crash between staging and rename
+  looked survivable. An `abort()` leaves the temporary on disk, where
+  `verify_preconditions` reads it as an unmanaged file inside the managed tree
+  and refuses -- permanently. `execute::sweep_staged` is the fix, and the prefix
+  is `.jails-staged-` rather than `tempfile`'s `.tmp` so the only thing in a
+  project that looks like a reader's file and is not says whose it is.
+
+- **G5 — real-project corpus.** `tests/corpus/` holds five checked-in project
+  trees jails did not write, with `policy.tsv` accounting for every one. The
+  corpus is bytes rather than a Rust table on purpose: it grows by dropping a
+  directory in, and a corpus only a Rust programmer can extend is not one. It
+  found a real defect on its second entry -- `jails adopt` read only the first
+  package segment, so a class in `infra/jdbc` was adopted as
+  `adapters = "infra"`, a directory holding no Java at all.
+
+  One finding is a refusal rather than a defect: `core` is not a synonym for
+  `domain` and should not become one. It means the domain model in one codebase
+  and shared framework glue in the next, so it fails the synonym table's bar on
+  *unambiguous* rather than on *common*. `spring-renamed-layers` pins the
+  refusal so nobody adds it on a guess.
+
+## 4.2 What "both implementations" currently means
+
+**Only one test compares two binaries, and only under the canary.**
+`subjects_with_fixture` and `adopted_subjects` each return a single canonical
+subject; the legacy half was deleted rather than each case rewritten, and the
+array shape was kept so a case that stops holding still says which subject it
+was about. `every_corpus_project_is_treated_the_same` is the one that takes a
+second binary, from `JAILS_LEGACY_BIN`.
+
+Nothing sets that variable except `scripts/verify-rewrite-g1-canary.sh`, and
+**CI does not run the canary** -- the workflow runs `verify-rewrite` and
+nothing else. So on every run that actually happens, G1's differential half is
+a canonical-only regression suite.
+
+Two things now stop that from being invisible. The corpus test's legacy subject
+is *absent* rather than a second copy of the binary under test, and a
+`JAILS_LEGACY_BIN` equal to that binary is refused -- previously it fell back
+to `CARGO_BIN_EXE_jails`, so an ordinary run compared the binary with itself
+and every assertion passed meaning nothing. And
+`every_test_target_a_script_names_exists` fails when a script names a cargo
+test target that does not exist, which is how the canary came to be running
+`--test differential` months after that harness was renamed.
+
+**Restoring a real legacy subject across the 38 scenarios is open work**, and
+it is not mechanical: the legacy binary predates JDL v1, seeds a ledger rather
+than `.jails/model.jdl`, and writes its Java to `src/main/java` rather than
+below the managed root, so a subject needs its own seed and its own record
+path. Until that is done, the honest description of G1 is "the canonical
+implementation does not regress", and the cutover claim it was written to
+support -- that the replacement behaves like the thing it replaces -- rests on
+the corpus test under the canary alone.
+
+---
+
+# Part 5 — The plan
+
+Every open item, with the exit condition that retires it. Identifiers are the
+ones source comments cite and are never reused.
+
+**Working discipline, every item.** Reproduce it from a clean `jails new`
+before believing it, and state the command that produced it -- goldens compare
+bytes and never run the code, so the oracle that finds this class of defect is
+a real build. Close an item by deleting it, in the commit that closes it.
+
+## P6 — the generated Java, assessed against `java.md` and `backend.md`
+
+**P6.6** Eight defects that survive a perfect field spec. Each was
+re-confirmed on 2026-08-27 against a project built from nothing but
+`jails new --offline` plus nine commands.
+
+- **§4.3 no index serves any query the application runs.** `g query --on X
+  userId:uuid` reads a table whose only index is the primary key. jails can see
+  the shape and could say so the way `free-text-closed-set` does.
+- **§5.4 boxed primitives on the wire.** A `boolean` domain component becomes a
+  `Boolean` in both request and response, with `@NotNull` compensating for the
+  boxing.
+- **§6.3 capability files land in the root package.** `AppMetrics`,
+  `CorsConfig` and `MetricsConfig`: a capability's files decide nothing, so
+  nothing places them, while every *kind* goes through `generate::layout`.
+- **§6.4 a service that only forwards.** `MessageService` is four one-line
+  forwards to the port. The port earns its interface -- there is a real
+  in-memory second implementation -- and the service between the controller and
+  it does not.
+- **§6.5 two API styles in one service.** REST for the scaffold, RPC-over-POST
+  for the generated operations, including a `POST` that reads, chosen by which
+  command wrote the route rather than by a decision. Half closed: `g scaffold
+  --path` is accepted, so a project *can* be made consistent. What is left is
+  that consistency is something the reader must ask for on every command.
+- **§7 two read-side defects.** The service-layer criteria record is bound
+  directly as `@RequestBody` in a project whose own generated Javadoc argues
+  the wire type must not be the domain type; and `MAX_RESULTS = 100` is silent
+  -- no cursor, no total, nothing in the response saying the list was
+  truncated.
+- **§8 the generated Kafka listener discards the event.** It logs an id and
+  drops it, under a Javadoc saying it hands the event to the application. There
+  is nowhere to hand it: no port is generated. A project consuming a topic
+  discards every message and logs that it received them.
+- **§9 the generated tests mostly test the framework.** A service test that can
+  only fail if Mockito breaks; an association IT that asks `pg_constraint`
+  whether PostgreSQL recorded the FK the migration declared; every fixture
+  value `"sample"`; and no concurrency test for the CAS the `version` column
+  exists for.
+
+**Exit:** all eight closed, or each recorded as a scope line in `README.md`'s
+"Not yet". Do not close one by deleting the entry that is its only record.
+
+## P8 — the primitives real projects needed
+
+**P8.11** Four entries, three of them adoption work.
+
+- **`jails adopt resource <Name>`** registers an existing hand-written type
+  into the store so `resource field`, `destroy` and `rename resource` work on
+  it. Today they refuse: *"no `Message` is recorded in this project"*.
+- **`jails g action <Name> --on <Controller>`** splices a handler method and
+  its test into an existing controller. Today `g controller` always creates a
+  new standalone file, which is not how related routes live in Spring projects.
+- **`modernize` does not re-plan jails' own output.** It moves the Boot
+  version, and the Boot version decides what jails' generated files should say
+  -- `javax.validation` against `jakarta.validation`, the `@AutoConfigureMockMvc`
+  package, the MockMvc form. It should re-plan what the ledger records.
+- **M18 is a decision, not work.** jails generates a REST surface and no
+  operator surface, which is the one thing every Django port gets free.
+  Either build the back-office generator or record the scope line in
+  `README.md`'s "Not yet".
+
+Two entries stay open as ordinary capability gaps: **dual-format
+`consumes = [json, form]`** (each works alone; a single endpoint accepting
+both is unexpressible) and **in-memory room-based presence**, where
+`g presence` generates PostgreSQL cluster-backed presence and a lightweight
+`socket-presence` recipe does not exist.
+
+## P9 — the remaining product direction
+
+In §9's own order.
+
+**P9.1 §4.6 — the repository contract test.** One contract interface executed
+once against the fake and once against `JdbcOrderRepository`, so semantic drift
+becomes a failing test. Today the two adapters can diverge silently.
+
+**P9.2 §3.3 — frozen conflicts, `continue` and `abort`.** Three-way
+reconciliation, conflict detection and per-path reporting all work; the marker
+bytes are produced and dropped. `PendingIdentity`, `ResolutionIdentity` and
+`RestoreIdentity` exist and nothing reaches them. Note the trap this item is
+named after: the frozen-conflict message told readers to run `jails continue`,
+which has never existed.
+
+**P9.3 §4.2 — slices.** `SliceSpecV1` and `SliceName` exist and nothing reaches
+them, while `rename resource` *requires* a `<slice>.<name>` selector. A project
+with no slices must keep working unchanged, with the unqualified name meaning
+what it means today.
+
+**P9.4 §4.1 — the extended field grammar**, then §6.1's `generate scaffold`
+surface. All four extensions refuse today: `status:enum.PENDING.PAID` (the
+package segment `enum` is a Java reserved word), `n:int=0` (unknown field
+type), and two more. **Ordering dependency:** decide whether `@audit` is a
+spelling of the existing `--timestamps` before adding it, or the two overlap.
+
+**P9.5 §4.7 — policy and contract matrices, closed form only.** No expression
+string, no SpEL passthrough -- the same rule that keeps `@check(...)` out of
+the field spec. `@scope` and `require_scope_authorizer` already cover the
+tenancy half.
+
+**P9.6 §5.1 — Gradle behavioural parity** for the warm test engine, `jails fmt`
+and `jails console`. No longer blocked. **Exit gate:** `jails test`,
+`--engine build` and `--engine warm` discover the same tests and report the
+same counts on both build systems.
+
+**P9.7 §2.3, §2.4a, §2.4b, §2.4c — the latency work, each behind a dated
+measurement.** The incremental source/AST index, additive test-dependency
+hints, service identity labels and semantic readiness. §2.3's own note is the
+rule: the report claimed a latency win here and never measured one, so no item
+in this group starts without a number.
+
+**P9.8 §2.7 — the Ecto-style SQL sandbox stays deliberately deferred.** Not a
+roadmap dependency and not a default. If the experiment is run, record the
+negative result rather than deleting the section.
+
+**P9.10 `jails schema diff` requires `.jails/app.toml`**, so it does not run on
+the shape `jails new` produces.
+
+## P12 — the defect found while re-confirming the closed ones
+
+**P12.1 (B57)** Re-running an already-installed capability in a project that
+declares a compose service leaves an unfinished transaction, and every mutating
+command afterwards dies on an object that was never stored. It is terminal
+rather than transient, the refusal names a path inside `.jails/` and carries no
+`fix:`, and `doctor` prescribes running the same command again -- which is the
+reproduction. `jails sync`, whose whole job is re-applying recorded
+capabilities, is among the commands that cannot run.
+
+`add sqlite` is the control, so the trigger is the compose service rather than
+any one capability. Not caught because every scenario and every proof
+application exercises the *first* install.
+
+**Two things to fix, and the second matters more:** the no-op re-apply must not
+leave a transaction expecting an object it never wrote, and `doctor`'s `fix:`
+must not name a command that reproduces the fault.
+
+## P13 — the cutover
+
+**P13.11 G1 has no legacy subject.** Part 4.2 measures this. The 38 product-loop
+scenarios each run one canonical subject; only the corpus test takes a second
+binary, and only under `scripts/verify-rewrite-g1-canary.sh`, which CI does not
+run. Restoring a real legacy subject is not mechanical: the frozen binary
+predates JDL v1, seeds a ledger rather than `.jails/model.jdl`, and writes Java
+to `src/main/java` rather than below the managed root, so `Subject` needs a
+per-subject seed and record path.
+
+**Exit:** the canary runs in CI on a schedule, or the differential claim is
+withdrawn from this file and the harness renamed to what it is.
+
+**P13.2 Five production files parse Maven XML; the design asks for one.**
+`jails-project/src/pom.rs` is the path being replaced;
+`jails-workspace/src/{capture,documents}.rs` and `documents/build_feature.rs`
+are replacing it; `jails-protocol/src/vocabulary/coordinate.rs` reads a plugin
+block as a protocol value. Four of the five are the strangler migration, so the
+duplication is deliberate until the cutover -- and the ratchet exists so a
+*sixth* answer cannot appear while it is going on, which is the failure a
+migration invites. `jails-project/src/junit.rs` is deliberately below the bar:
+it matches one element to read one artifact's version, which is a lookup rather
+than an opinion about structure.
+
+**Exit:** delete `pom.rs` once the document backend is trusted. This is the
+cutover decision, not a refactor.
+
+**P13.4 133 wire formats are still hand-written, and the seam is not
+exhausted.** The first sweep concluded the remainder needed per-type work
+because it treated `encoder.count(..)` as a blocker. It is not one: `Encoder::seq`
+*is* a count followed by a loop of `encode`, so a codec that frames its own
+collection is byte-identical to `Vec<T>`, `BTreeSet<T>` or `BTreeMap<K, V>`
+doing it -- the canonical ordering guarantee included.
+
+**Five are genuinely not candidates and should stay hand-written**:
+`RendererContextV1`, `PreparedChange` and `ToolIdentityFingerprint` call
+`self.validate()?` inside `encode`, so the codec enforces an invariant rather
+than describing a layout; `AppliedEntity` opens with a refusal on an empty set;
+`PreparedIdentityV1` writes a format constant. The rest were rejected by the
+*filter's* limits rather than the code's, and each needs a real Rust parser to
+clear safely -- so **convert these by reading them, one at a time.**
+
+**The golden trees are not sufficient on their own.** `PreparedIdentityV1`
+passed all 62 of them and still changed the wire: its `encode` opens with a
+bare `encoder.u32(1)` belonging to no field, so a derive dropped four bytes and
+only `prepared_bundle_matches_the_protocol_golden` caught it. A struct whose
+`encode` carries anything that is not a field is not a candidate, however well
+its fields line up. **Convert in small batches, running `cargo test -p
+jails-prepare -p jails-commit -p jails-protocol` alongside `--test golden`
+after each.**
+
+**P13.7 The suite is ~110s of `tests/cli` because it compiles 36 Java
+projects**, and the remaining lever is Maven's JVM startup. Profile with
+`JAILS_TEST_PROFILE=1` (it needs `-- --nocapture`).
+
+**P13.9 A full tmpfs reports itself as a product bug**, and the one-hour
+fixture sweep does not bound a burst. Two `new-cli` unit tests failed with
+`PoisonError` and *"failed to create a scratch directory"*, which reads as a
+jails defect and is a disk.
+
+**P13.10 The Maven budget is shared across processes and the fixture it
+protects is not.** `cached_toolchain_dir_with_salt` shares one persistent
+fixture per label under `target/jails-e2e-cache` and takes no lock, so two gate
+runs at once corrupt each other and produce `capabilities::` failures that read
+exactly like capability regressions. **Run one gate at a time** until this is
+fixed.
+
+## What the cutover cannot start on
+
+Recorded rather than chosen, because each has two possible shapes and no third.
+
+**Ordinary `jails new` is still legacy.** Seeding a model in `spring.rs` is one
+line, and the flip reaches a canonical project that applies and compiles. What
+stops it is a measurement: how much of the legacy engine's generated suite the
+compiler reproduces for the same manifest. The legacy side is pinned at
+`reports: 21, tests: 57` in `tests/cli/examples.rs`; the canonical side is
+pinned nowhere. `new` must also seed its six default properties as `prop`
+declarations rather than reader-owned text, or a capability declaring the same
+key collides with the project's own scaffolding.
+
+**`adopt` and `modernize` have two possible shapes.** Both write reader-owned
+files on projects with no model; `apply::` is banned outside the write layer;
+and `execute` takes a `PlanBundle` whose `Plan` carries a
+`CanonicalModelPatch`. So either the layout and release become model nodes --
+which contradicts both commands being pre-canonical -- or `jails-workspace`
+gains an explicit reader-file operation, widening "the only canonical project
+writer" from *runs exact compiled plans* to *runs exact operations, some of
+which no compiler produced*. Forging a `Plan` outside the compiler is the one
+option that is not on the list.
+
+**Two editable model sources are never permitted.** `.jails/model.jdl` is the
+intended authoring boundary; `.jails/model.toml` remains a temporary
+compatibility input for existing canonical projects. `model import` is one-way
+and fail-closed. §22 is the path that removes the second, and A4.4 is why it
+matters: no simplicity claim can be banked until two of the three front ends
+are gone.
+
+---
+
+# Part 6 — Deliberate non-goals
+
+## 6.1 What will not simplify jails by itself
+
+- **Minijinja or another template engine.** The templates are real `.java`
+  files with `{{name}}` substitution and no logic. Anything structural stays in
+  Rust and is passed in rendered.
+- **A three-crate rewrite.** Fewer crates is not fewer concepts.
+- **"Render in a temp directory and atomically swap it."** It cannot preserve a
+  reader's edits, which is D1.
+- **A fully dynamic runtime schema.** The closed vocabularies are what make an
+  unknown declaration an error rather than a silent no-op.
+- **A full Java compiler in Rust.** The readers stay small: `java.rs` answers
+  "what is annotated with what", `classfile.rs` answers "which types does this
+  class name", and neither may grow into a parser.
+- **Deleting the WAL because generated output is reproducible.** Reproducible
+  output does not make a half-applied transition safe.
+- **LOC as the limiting variable.** It is not, and a gate on file length can be
+  satisfied while every duplicated concept survives.
+
+## 6.2 What JDL v1 will never have
+
+Includes, imports, macros, templates, conditional declarations; environment
+overlays or secrets; arbitrary Java annotations, Java expressions, SQL
+expressions or build XML; per-declaration packages, configurable
+suffixes/plurals, route styles, test templates or migration names; implicit
+many-to-many relations or ORM navigation collections; migration history in the
+desired-state file; plugin-defined unnamespaced keywords; automatic reverse
+adoption of ejected code; multi-file partial declaration merging.
+
+These omissions keep name resolution, ownership, diffs and safety review
+deterministic. Repetition that proves common should become a typed projection
+or component kind in the shared registry first. A capability that cannot be
+modeled safely can still expose a managed port and an explicit ejected
+implementation boundary.
+
+**Future versions may add a construct only with its grammar, typed
+linked-model payload, validation schema, stable-ID rule, ownership boundary,
+formatter behavior, CLI mapping, upgrade rule and conformance tests. Syntax
+alone is not a language feature.**
+
+## 6.3 The product scope bar
+
+No ORM, no jails runtime jar, no Lombok, no preview features in generated Java,
+and no plugin system with lifecycle hooks. `README.md`'s "Not yet" is the list;
+check it before adding a command that is not already there.
+
+**"No Gradle" was on that list and was deliberately removed on 2026-08-24.**
+The target that reversed it is a Gradle + Spring Boot project that has to be
+worked in daily: `add`, `check`, `test`, `build` and `run` all refused there.
+Degrading politely is worth less than working, when the project is the one you
+are actually in. The old rule's *reason* survives as the bar `gradle.rs` has to
+clear -- answer exactly or refuse, never guess -- because a tool that
+half-understands a build file and reports a dependency the build does not have
+is still the worst outcome available.

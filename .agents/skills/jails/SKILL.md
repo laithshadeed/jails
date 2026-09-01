@@ -12,8 +12,8 @@ Canonical projects execute content-addressed exact plans; legacy projects use
 the older write-ahead journal while the cutover is in progress.
 
 State of this file: verified against `jails 0.1.0` at HEAD `d05a8af`
-(2026-08-27) by running the binary. All numbered reports in `bugs.md` are closed;
-active implementation phases are tracked in `plan.md`.
+(2026-08-27) by running the binary. One numbered defect is open (B57);
+active implementation phases are tracked in `new.md`.
 
 ## The three rules that explain everything else
 
