@@ -10,6 +10,10 @@ public record PayoutRequest(
     long amount
 ) {
 
+    /**
+     * The domain row this request describes, with every server-assigned
+     * value supplied here rather than taken from the caller.
+     */
     public Payout toDomain() {
         return new Payout(
                 id,

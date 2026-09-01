@@ -41,6 +41,12 @@
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-docker-compose</artifactId>
+            <scope>runtime</scope>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-flyway</artifactId>
             <scope>compile</scope>
         </dependency>
@@ -80,14 +86,6 @@
                 <artifactId>build-helper-maven-plugin</artifactId>
                 <version>3.6.1</version>
                 <executions>
-                    <execution>
-                        <id>jails-generated-main-source-root</id>
-                        <phase>generate-sources</phase>
-                        <goals><goal>add-source</goal></goals>
-                        <configuration>
-                            <sources><source>.jails/generated/main/java</source></sources>
-                        </configuration>
-                    </execution>
                     <execution>
                         <id>jails-generated-test-source-root</id>
                         <phase>generate-test-sources</phase>

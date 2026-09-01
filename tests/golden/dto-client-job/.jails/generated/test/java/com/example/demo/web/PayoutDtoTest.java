@@ -9,10 +9,18 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 final class PayoutDtoTest {
 
     @Test
-    void requestAndResponseExposeCanonicalComponents() {
-        var expected = List.of("id", "amount");
-        assertEquals(expected, componentNames(PayoutRequest.class));
-        assertEquals(expected, componentNames(PayoutResponse.class));
+    void theResponseProjectsEveryComponent() {
+        assertEquals(List.of("id", "amount"), componentNames(PayoutResponse.class));
+    }
+
+    /**
+     * The request declares what a caller supplies and nothing else: an
+     * audit column or an optimistic-lock version accepted from the body is
+     * a value the server is supposed to be the authority on.
+     */
+    @Test
+    void theRequestAsksOnlyForCallerSuppliedComponents() {
+        assertEquals(List.of("id", "amount"), componentNames(PayoutRequest.class));
     }
 
     private static List<String> componentNames(Class<?> type) {

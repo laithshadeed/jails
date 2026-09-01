@@ -3,6 +3,7 @@ package com.example.demo.web;
 
 import com.example.demo.domain.Widget;
 import com.example.demo.service.WidgetService;
+import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.List;
 import java.util.UUID;
@@ -41,9 +42,14 @@ public final class WidgetController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
+    /**
+     * The request record, not the domain row: a caller supplies what
+     * they are asked for, and every server-assigned value is minted by
+     * {@link WidgetRequest#toDomain()} rather than taken from the body.
+     */
     @PostMapping
-    public ResponseEntity<Widget> create(@RequestBody Widget request) {
-        Widget created = service.save(request);
+    public ResponseEntity<Widget> create(@Valid @RequestBody WidgetRequest request) {
+        Widget created = service.save(request.toDomain());
         return ResponseEntity.created(URI.create(PATH + "/" + created.id()))
                 .body(created);
     }

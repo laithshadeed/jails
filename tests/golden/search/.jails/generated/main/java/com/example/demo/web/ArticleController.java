@@ -3,6 +3,7 @@ package com.example.demo.web;
 
 import com.example.demo.domain.Article;
 import com.example.demo.service.ArticleService;
+import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.List;
 import java.util.UUID;
@@ -41,9 +42,14 @@ public final class ArticleController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
+    /**
+     * The request record, not the domain row: a caller supplies what
+     * they are asked for, and every server-assigned value is minted by
+     * {@link ArticleRequest#toDomain()} rather than taken from the body.
+     */
     @PostMapping
-    public ResponseEntity<Article> create(@RequestBody Article request) {
-        Article created = service.save(request);
+    public ResponseEntity<Article> create(@Valid @RequestBody ArticleRequest request) {
+        Article created = service.save(request.toDomain());
         return ResponseEntity.created(URI.create(PATH + "/" + created.id()))
                 .body(created);
     }

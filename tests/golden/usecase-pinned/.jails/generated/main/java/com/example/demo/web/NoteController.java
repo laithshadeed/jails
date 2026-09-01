@@ -3,6 +3,7 @@ package com.example.demo.web;
 
 import com.example.demo.domain.Note;
 import com.example.demo.service.NoteService;
+import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.List;
 import org.springframework.http.ResponseEntity;
@@ -40,9 +41,14 @@ public final class NoteController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
+    /**
+     * The request record, not the domain row: a caller supplies what
+     * they are asked for, and every server-assigned value is minted by
+     * {@link NoteRequest#toDomain()} rather than taken from the body.
+     */
     @PostMapping
-    public ResponseEntity<Note> create(@RequestBody Note request) {
-        Note created = service.save(request);
+    public ResponseEntity<Note> create(@Valid @RequestBody NoteRequest request) {
+        Note created = service.save(request.toDomain());
         return ResponseEntity.created(URI.create(PATH + "/" + created.id()))
                 .body(created);
     }

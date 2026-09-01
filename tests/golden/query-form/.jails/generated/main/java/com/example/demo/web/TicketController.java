@@ -3,6 +3,7 @@ package com.example.demo.web;
 
 import com.example.demo.domain.Ticket;
 import com.example.demo.service.TicketService;
+import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.List;
 import org.springframework.http.ResponseEntity;
@@ -40,9 +41,14 @@ public final class TicketController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
+    /**
+     * The request record, not the domain row: a caller supplies what
+     * they are asked for, and every server-assigned value is minted by
+     * {@link TicketRequest#toDomain()} rather than taken from the body.
+     */
     @PostMapping
-    public ResponseEntity<Ticket> create(@RequestBody Ticket request) {
-        Ticket created = service.save(request);
+    public ResponseEntity<Ticket> create(@Valid @RequestBody TicketRequest request) {
+        Ticket created = service.save(request.toDomain());
         return ResponseEntity.created(URI.create(PATH + "/" + created.id()))
                 .body(created);
     }

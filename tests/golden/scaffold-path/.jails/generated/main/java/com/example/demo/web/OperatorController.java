@@ -3,6 +3,7 @@ package com.example.demo.web;
 
 import com.example.demo.domain.Operator;
 import com.example.demo.service.OperatorService;
+import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.List;
 import org.springframework.http.ResponseEntity;
@@ -40,9 +41,14 @@ public final class OperatorController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
+    /**
+     * The request record, not the domain row: a caller supplies what
+     * they are asked for, and every server-assigned value is minted by
+     * {@link OperatorRequest#toDomain()} rather than taken from the body.
+     */
     @PostMapping
-    public ResponseEntity<Operator> create(@RequestBody Operator request) {
-        Operator created = service.save(request);
+    public ResponseEntity<Operator> create(@Valid @RequestBody OperatorRequest request) {
+        Operator created = service.save(request.toDomain());
         return ResponseEntity.created(URI.create(PATH + "/" + created.id()))
                 .body(created);
     }

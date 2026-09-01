@@ -47,12 +47,23 @@
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-docker-compose</artifactId>
+            <scope>runtime</scope>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-flyway</artifactId>
             <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-jdbc</artifactId>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
             <scope>compile</scope>
         </dependency>
         <dependency>
@@ -118,6 +129,20 @@
                 </executions>
             </plugin>
             <!-- /jails:generated-source-roots -->
+            <!-- jails:integration-tests -->
+            <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-failsafe-plugin</artifactId>
+            <executions>
+            <execution>
+            <goals>
+            <goal>integration-test</goal>
+            <goal>verify</goal>
+            </goals>
+            </execution>
+            </executions>
+            </plugin>
+            <!-- /jails:integration-tests -->
         </plugins>
     </build>
 </project>

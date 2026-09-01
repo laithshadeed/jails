@@ -3,6 +3,7 @@ package com.example.demo.web;
 
 import com.example.demo.domain.Author;
 import com.example.demo.service.AuthorService;
+import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.List;
 import org.springframework.http.ResponseEntity;
@@ -40,9 +41,14 @@ public final class AuthorController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
+    /**
+     * The request record, not the domain row: a caller supplies what
+     * they are asked for, and every server-assigned value is minted by
+     * {@link AuthorRequest#toDomain()} rather than taken from the body.
+     */
     @PostMapping
-    public ResponseEntity<Author> create(@RequestBody Author request) {
-        Author created = service.save(request);
+    public ResponseEntity<Author> create(@Valid @RequestBody AuthorRequest request) {
+        Author created = service.save(request.toDomain());
         return ResponseEntity.created(URI.create(PATH + "/" + created.id()))
                 .body(created);
     }

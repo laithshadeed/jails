@@ -3,6 +3,7 @@ package com.example.demo.web;
 
 import com.example.demo.domain.Payout;
 import com.example.demo.service.PayoutService;
+import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.List;
 import java.util.UUID;
@@ -41,9 +42,14 @@ public final class PayoutController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
+    /**
+     * The request record, not the domain row: a caller supplies what
+     * they are asked for, and every server-assigned value is minted by
+     * {@link PayoutRequest#toDomain()} rather than taken from the body.
+     */
     @PostMapping
-    public ResponseEntity<Payout> create(@RequestBody Payout request) {
-        Payout created = service.save(request);
+    public ResponseEntity<Payout> create(@Valid @RequestBody PayoutRequest request) {
+        Payout created = service.save(request.toDomain());
         return ResponseEntity.created(URI.create(PATH + "/" + created.id()))
                 .body(created);
     }
