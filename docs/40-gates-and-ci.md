@@ -182,25 +182,79 @@ cargo restore, the gate, and the post steps -- with no test removed and no
 second job added, because the bill is per minute and a parallel job is billed
 twice.
 
+## The runner is four cores, and that sets everything else
+
+`run-tests` prints its width, and on CI it says **`30 binaries, 4 at a time`**.
+Every number below follows from that: the test phase is subprocess-bound, so
+its wall clock is total subprocess work over four, and **four seconds of work
+removed buys one second of wall**.
+
 ## Where the five minutes currently go
 
-Read off run `33322968191`, a commit that changed no Rust at all against a warm
-cache, so the compile is zero and what is left is the floor:
+Two runs, because the two shapes cost very different amounts. `33322968191`
+changed no Rust at all against a warm cache, so its compile is zero and the
+save is skipped -- that is the floor. `33506161538` changed sources, which is
+the ordinary commit:
 
-| step | s |
-|---|---|
-| set up, checkout, rustup cache, `rustup toolchain install` | 11 |
-| **restore cargo** | **42** |
-| restore `~/.m2` and `~/.gradle` | 4 |
-| mise, JDK 21, toolchain banner | 14 |
-| **`mise run verify-rewrite`** | **217** |
-| **save cargo** | **21** |
-| post steps | 2 |
-| **job** | **314** |
+| step | docs-only | code |
+|---|---|---|
+| set up, checkout, rustup cache and install | 11 | 12 |
+| **restore cargo** | **42** | **78** |
+| restore `~/.m2` and `~/.gradle` | 4 | 6 |
+| mise, JDK 21, toolchain banner | 14 | 17 |
+| **`mise run verify-rewrite`** | **217** | **382** |
+| trim | — | 1 |
+| **save cargo** | **21** | **53** |
+| post steps | 2 | 1 |
+| **job** | **314** | **550** |
 
-So the irreducible part is a 217s gate and 97s of overhead, 63s of which is
-moving the cargo entry on and off the runner. A commit that does change code
-adds its compile to the 217s and nothing else.
+**Quote the second column.** A gate exists for commits that change code, and
+the first column is what it costs to change a comment.
+
+Inside that 382s gate, `run-tests` reported **325.2s of test phase carrying
+1102.7s of subprocess work at mean concurrency 3.39**, with 41.1s spent
+queueing for a permit. So compilation, `fmt`, `clippy` and `doc` together are
+about 57s, and everything else is the suite.
+
+## Whether five minutes is reachable, and the arithmetic that answers it
+
+A perfect four-core packing of 1102.7s is **276s**, and the observed 325.2s is
+85% of that -- so scheduling is worth at most ~49s and there is no queue worth
+draining. Add the 35s of set-up and toolchain steps that no change removes and
+the floor is **311s before a single byte is compiled or transferred**.
+
+**So the job cannot reach 300s at the current amount of work, whatever is done
+to the cache or the schedule.** Getting there means removing roughly 500s of
+subprocess work -- 46% of it -- with no test removed. The levers, priced
+honestly at 4:1:
+
+| lever | work removed | wall |
+|---|---:|---:|
+| collapse 36 Maven runs toward 10 (the per-run floor, ~24 times) | ~170s | ~42s |
+| keep the container images off the critical path | ~70s | ~18s |
+| everything scheduling can still give | — | ~49s |
+| **together** | | **~109s** |
+
+That is a **~440s job**, not a 300s one. The honest options past it are a
+structural change to the real-toolchain tier -- one Maven run per group of
+tests rather than per test, which trades that tier's isolation -- or a larger
+runner, which halves the wall and doubles the per-minute rate, so it buys time
+rather than money.
+
+**Do not read the earlier "perfect packing, concurrency 4.00, ordering is
+worth zero" measurement as still current.** It was true of run
+`33413442610`; `33506161538` measured 3.39 with 41.1s queued over the same
+total work, so the suite's packing moves with its shape and has to be re-read
+from the run in front of you.
+
+## The permit cap is not the constraint, measured three ways
+
+`JAILS_TEST_MAX_TOOLCHAIN_PROCESSES` at 8, 12 and 16 over the whole suite on
+a sixteen-core developer box: **114.2s, 112.0s and 113.9s**, with queueing
+falling 40.1s -> 0.0s -> 0.0s and mean concurrency reaching **7.08 and staying
+there**. Zero queueing and a flat wall means the suite does not *have* more
+than about seven things to run at once, so raising the cap cannot help and
+lowering it below 8 is the only setting that could hurt.
 
 **One run proves nothing about this job.** Two runs that compiled *nothing* --
 both documentation-only commits against a warm cache -- measured the gate at

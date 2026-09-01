@@ -83,6 +83,25 @@ jobs:
           # `git archive`, so a shallow clone would have nothing to freeze.
           fetch-depth: 0
 
+      # **Pull the container images while the Rust build is still running.**
+      # The runner is four cores and the test phase is subprocess-bound, so its
+      # wall clock is total work over four -- and a registry pull is work that
+      # need not be on that clock at all. Measured on run `33506161538`:
+      # `docker` cost 111.6s of the 1102.7s, against 35.6s locally where the
+      # images are already in the store. These pulls are started detached and
+      # nothing waits for them; a test that reaches a container first simply
+      # pulls it itself, which is what happens today.
+      #
+      # The list is derived from the tree rather than written here, because a
+      # second copy of a pinned tag drifts silently -- warming the wrong tag
+      # looks exactly like warming the right one.
+      - name: Warm the container images the suite starts
+        run: |
+          ./scripts/container-images.sh | while read -r image; do
+            nohup docker pull --quiet "$image" >/dev/null 2>&1 &
+          done
+          disown -a 2>/dev/null || true
+
       # Reads `rust-toolchain.toml`, so the compiler CI runs is the compiler
       # the pre-push hook runs and neither can drift from the other. This was
       # `dtolnay/rust-toolchain@stable`, which pins nothing: a clippy release
@@ -273,6 +292,29 @@ jobs:
       # tried here and reverted: it cost the gate 90-120s to save 30s of
       # transfer.
       #
+      # **`target/debug/deps` is the other thing that only grows.** Cargo
+      # never garbage-collects it: each run restores the previous run's
+      # artifacts and adds its own, so a workspace crate accumulates one
+      # `.rlib` per historical build hash while only the newest is ever
+      # linked. Measured here: **9.68 GB across 2610 files, 87% of it
+      # superseded.**
+      #
+      # This was priced once and refused, and the price has moved. Three keep
+      # rules were measured -- newest per `(stem, extension)` by mtime costs
+      # 24s of recompilation, the exact `filenames` cargo reports costs 150s
+      # (it names a fresh dependency's `.rlib` and not the `.rmeta` beside it
+      # that pipelined compilation reads, so cargo goes off rebuilding
+      # `tempfile` and `serde_json`), and matching by stem costs 126s. At the
+      # time the entry cost 63s a run to move, so 24s of rebuild was not worth
+      # it. On run `33508505521` it cost **93s to restore and 138s to save**,
+      # and it grows every run. Twenty-four seconds against two hundred and
+      # thirty-one is no longer a close call.
+      #
+      # Cargo rebuilds whatever this removes, so the rule being a heuristic
+      # bounds the damage at recompilation rather than a wrong answer. Doing
+      # it exactly means `cargo-sweep`, which reads `.fingerprint` -- worth
+      # revisiting if the 24s ever shows up as a regression.
+      #
       # This runs unconditionally: a failed run's artifacts are still valid
       # for the next one, and cargo revalidates everything it restores anyway.
       - name: Trim the cargo cache to build artifacts
@@ -280,6 +322,32 @@ jobs:
         run: |
           rm -rf target/jails-e2e-cache target/jails-test-logs target/jails-test-permits \
             target/jails-test-profile
+          python3 - <<'DEPS'
+          import collections
+          from pathlib import Path
+
+          root = Path("target/debug/deps")
+          files = [p for p in root.iterdir() if p.is_file()] if root.is_dir() else []
+          before = sum(p.stat().st_size for p in files)
+          # `libjails_model-<hash>.rlib` and `cli-<hash>` alike: the hash is
+          # the last `-` segment, and what identifies the *unit* is everything
+          # before it plus the extension.
+          newest = collections.defaultdict(list)
+          for path in files:
+              stem = path.stem.rsplit("-", 1)[0]
+              newest[(stem, path.suffix)].append(path)
+          removed = 0
+          for group in newest.values():
+              group.sort(key=lambda p: p.stat().st_mtime)
+              for stale in group[:-1]:
+                  removed += 1
+                  stale.unlink(missing_ok=True)
+          after = sum(p.stat().st_size for p in root.iterdir() if p.is_file())
+          print(
+              f"trim: dropped {removed} superseded artifacts, "
+              f"{before / 1e6:.0f} MB -> {after / 1e6:.0f} MB"
+          )
+          DEPS
           python3 - <<'TRIM'
           import shutil
           from pathlib import Path
