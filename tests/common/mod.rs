@@ -727,20 +727,20 @@ const REAL_MAVEN_ARGS: &str = "-ntp -DforkCount=0 -Dspring.main.banner-mode=off 
     -Dspring.datasource.hikari.maximum-pool-size=2 \
     -Dspring.datasource.hikari.minimum-idle=0";
 
-/// **JUnit class-level parallelism was measured here and refused.**
-///
-/// Adding `junit.jupiter.execution.parallel.*` with classes concurrent at a
-/// parallelism of four -- the same shape the app-suite fixture uses safely for
-/// its own two -- took the gate from **144.5s and green to 535.4s with eleven
-/// failures**, and the `jails` bucket from 313s over 133 subprocesses to 695s
-/// over 284. Generated tests share a database, ports and fixture files, so
-/// running their classes concurrently does not overlap work, it manufactures
-/// contention and retries.
-///
-/// The app suite gets away with it because it declares the mode explicitly per
-/// service and holds parallelism at two. Do not lift that setting to the
-/// general case again without re-measuring; this is the second time an
-/// idea that reads as free concurrency has cost more than it saved.
+// **JUnit class-level parallelism was measured here and refused.**
+//
+// Adding `junit.jupiter.execution.parallel.*` with classes concurrent at a
+// parallelism of four -- the same shape the app-suite fixture uses safely for
+// its own two -- took the gate from **144.5s and green to 535.4s with eleven
+// failures**, and the `jails` bucket from 313s over 133 subprocesses to 695s
+// over 284. Generated tests share a database, ports and fixture files, so
+// running their classes concurrently does not overlap work, it manufactures
+// contention and retries.
+//
+// The app suite gets away with it because it declares the mode explicitly per
+// service and holds parallelism at two. Do not lift that setting to the
+// general case again without re-measuring; this is the second time an
+// idea that reads as free concurrency has cost more than it saved.
 
 /// Startup policy for the deliberately short-lived JVMs in this test suite.
 ///
@@ -872,7 +872,7 @@ pub fn assert_main_sources_compile(root: &Path, path: &str, what: &str) {
     let classes = root.join("target/classes");
     fs::create_dir_all(&classes).unwrap();
     let compiled = real_javac_cmd(root, path)
-        .args(["--release", &TARGET_RELEASE.to_string()])
+        .args(["--release", TARGET_RELEASE])
         .args(["-classpath", classpath.trim()])
         .args(["-d", &classes.display().to_string()])
         .args(sources.iter().map(|source| source.display().to_string()))
