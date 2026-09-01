@@ -188,6 +188,74 @@ pub(super) fn value(value: &Value) -> String {
 mod tests {
     use super::*;
 
+    /// The constructs the golden corpus never exercises.
+    ///
+    /// **"Proven over 61 models" is only as strong as what those models
+    /// contain**, and twelve constructs appear in none of them: `dep`,
+    /// `prop`, `eject`, a composite `unique`, `@scope(claim:)`, `@updated`,
+    /// `@length`, `@retired`, `@internal`, `partition by`, `use value` and an
+    /// enum wire value. The corpus is what the *tool* emits; this is what the
+    /// *language* allows, and the renderer has to survive both.
+    #[test]
+    fn the_constructs_no_golden_model_carries_survive_the_round_trip() {
+        const COVERAGE: &str = r#"jdl 1
+
+app Coverage @id(project_coverage) {
+  pkg com.example.coverage
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+cap security
+cap kafka
+
+dep org.example:widget @version("1.2.3") @scope(test)
+
+prop server.port = "8080"
+prop logging.level.root = "INFO" @target(test)
+
+enum Status {
+  OPEN
+  IN_PROGRESS = "in_progress"
+}
+
+entity Archived @retired {
+  id: uuid @pk
+}
+
+entity Order {
+  use value
+  use repo, service, dto
+
+  id: uuid @pk
+  tenantId: uuid @scope(claim: "org")
+  reference: string @length(2..40) @notBlank
+  status: Status @default(OPEN)
+  version: long @version
+  updatedAt: instant @default(now()) @updated
+
+  unique [tenantId, reference]
+
+  transition Close(id, status, version) @internal {
+    select [id]
+    update [status]
+    if-match required
+  }
+}
+
+event OrderClosed(id: uuid, at: instant) {
+  partition by id
+}
+
+eject cmp_service_pricing
+component service Pricing
+"#;
+        let model = super::super::parse(COVERAGE).expect("the coverage fixture links");
+        render(&model).expect("every construct the language allows must round trip");
+    }
+
     /// Every model in the golden corpus, rendered and linked back.
     ///
     /// **A hand-written case proves the constructs somebody thought of.** The
@@ -216,13 +284,16 @@ mod tests {
             .and_then(|section| section.split("```jdl\n").nth(1))
             .and_then(|rest| rest.split("```").next())
             .expect("§4 still carries one jdl block");
-        let Ok(model) = super::super::parse(example) else {
-            // §16.4's readable ejection path is a recorded gap: the example
-            // does not link yet, and `tests/cli` pins that. Nothing to prove
-            // here until it does, and asserting it links would duplicate a
-            // pin that already exists somewhere better.
-            return;
-        };
+        // **The one line that does not link, removed rather than skipped.**
+        // §16.4's readable ejection path is a recorded gap -- `tests/cli`'s
+        // `the_specification_complete_example_links_except_its_one_recorded_gap`
+        // pins both halves of it -- and the first version of this test bailed
+        // out when the example failed to link, which meant it asserted
+        // nothing at all and reported green. A proof that passes by returning
+        // is the failure this repository names in its own workflow notes.
+        let example = example.replace("eject Task.repo.fake\n", "");
+        let model =
+            super::super::parse(&example).expect("§4 links once its one recorded gap is removed");
         render(&model).expect("the specification's own example must round trip");
     }
 

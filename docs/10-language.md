@@ -71,7 +71,7 @@ carried before drifted without anyone noticing.
 | operation statements | 14 | `parse_operation_member`, `jdl/v1/parser/operation.rs` | §12 |
 | `ModelPatch` variants | 34 | `patch.rs` | §16 |
 | syntax diagnostics (`JDL*`) | 96 | `jdl/v1/` | §18 |
-| semantic diagnostics (`model-*`) | 146 | the linker | §18.2 |
+| semantic diagnostics (`model-*`) | 148 | the linker | §18.2 |
 
 ```
 grep -n 'const CAPS' -A 32 crates/jails-model/src/jdl/v1/parser/declaration.rs
@@ -135,7 +135,7 @@ refuses -- so it cannot go stale in either direction.
 
 ## A3.13 — three diagnostic vocabularies
 
-96 `JDL0001`–`JDL1002` codes live in `crates/jails-model/src/jdl/v1/`; 146
+96 `JDL0001`–`JDL1002` codes live in `crates/jails-model/src/jdl/v1/`; 148
 kebab `model-*` codes live in the linker, which is §18.2's passes 2–9. Below
 that, `jails-compiler` and `jails-workspace` return `Result<_, String>` in 80
 places and `CompileError` is a newtype over `String` -- a third vocabulary with
@@ -263,10 +263,20 @@ enumerated. It caught three:
   `durable-job` lost its check. Two copies of one renderer, which is the
   defect shape this branch has now hit three times.
 
-Proven over the 61 models in `tests/golden` -- every generator kind and
-capability the tool emits -- and over §4's complete example, which carries a
-scoped field, an `if-match` guard, a `resolve` and an ejection that the
-goldens do not.
+Proven three ways, because the first one alone is weaker than it reads. The
+61 models in `tests/golden` are every generator kind and capability the tool
+*emits*; §4's complete example is the specification's own flagship; and a
+fixture covers the twelve constructs that appear in **no** golden -- `dep`,
+`prop`, `eject`, a composite `unique`, `@scope(claim:)`, `@updated`,
+`@length`, `@retired`, `@internal`, `partition by`, `use value` and an enum
+wire value. The corpus is what the tool writes; the language is larger, and a
+renderer has to survive both.
+
+The §4 proof needed fixing before it was one: it bailed out when the example
+failed to link, which it does because of A3.15's recorded ejection gap -- so
+it asserted nothing and reported green, the exact shape this repository's own
+workflow notes warn about. It removes that one line now, the way
+`tests/cli`'s pin of the same gap does, and runs.
 
 **What is left is one plan operation, and it is not yours.** The upgrade has
 to write `.jails/model.jdl` *and* retire `.jails/model.toml` in the same exact
