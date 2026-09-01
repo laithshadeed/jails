@@ -132,15 +132,29 @@ fn refuse_declared(root: &Path, old: &str, new: &str) -> Result<()> {
     else {
         return Ok(());
     };
-    if !model
+    let Some(entity) = model
         .entities
         .values()
-        .any(|entity| entity.active && entity.names.java_type == old)
-    {
+        .find(|entity| entity.active && entity.names.java_type == old)
+    else {
         return Ok(());
-    }
+    };
+    // **Name the table when there is one.** `jails destroy` says "backed by
+    // table `members`" for the same situation, and the concrete noun is what
+    // tells the reader what the textual rename would leave behind: an adapter
+    // reading `select ... from readers` over a schema history that still
+    // creates `members`.
+    let backing = match model
+        .capabilities
+        .values()
+        .any(|capability| capability.kind == "db")
+        && entity.facets.contains(&jails_model::Facet::Repository)
+    {
+        true => format!(" and is backed by table `{}`", entity.names.sql_table),
+        false => String::new(),
+    };
     Err(Failure::Told(format!(
-        "`{old}` is declared in this project's application model, and this rename carries only the Java.\n       fix: move the declaration, the table and the managed tree together with `jails rename resource {old} {new} --strategy preserve-table`"
+        "`{old}` is declared in this project's application model{backing}, and this rename carries only the Java.\n       fix: move the declaration, the table and the managed tree together with `jails rename resource {old} {new} --strategy preserve-table`"
     )))
 }
 

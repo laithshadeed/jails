@@ -1872,7 +1872,13 @@ class DemoApplicationTests {
 /// there.
 pub fn ledger_mentions(root: &std::path::Path, needle: &str) -> bool {
     let model = std::fs::read_to_string(root.join(".jails/model.jdl")).unwrap_or_default();
-    model.contains(needle) || managed_listing(root).contains(needle)
+    // A canonical project keeps its bookkeeping in three places, and which one
+    // holds a given fact is the compiler's business rather than a test's: the
+    // model states the declaration, the managed listing states what was
+    // written, and the lock states the accepted projection -- including the
+    // digest of every migration and the jails that produced them.
+    let lock = std::fs::read_to_string(root.join(".jails/compiler.lock.json")).unwrap_or_default();
+    model.contains(needle) || lock.contains(needle) || managed_listing(root).contains(needle)
 }
 
 /// A minimal plain-Maven project: a pom with a release level and JUnit, and

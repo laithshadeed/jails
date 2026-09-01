@@ -199,6 +199,20 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
                 .to_string(),
         ));
     }
+    // **Before the data plan, not after it.** A component that is already
+    // declared cannot be added whatever backfill accompanies it, and asking
+    // for one first told the reader to supply a `--default-literal` for a
+    // field that was already there -- an instruction that cannot succeed.
+    if entity
+        .fields
+        .iter()
+        .any(|field| field.names.java_member == parsed.java_name || field.label == parsed.label)
+    {
+        return Err(Failure::Told(format!(
+            "`{entity_java_name}` already has a `{}` component.\n       fix: change it with `jails resource field type|nullability|rename`, or drop it first",
+            parsed.java_name
+        )));
+    }
     let (policy, reader_paths) = match (
         &request.default_literal,
         request.backfill_file.as_deref(),

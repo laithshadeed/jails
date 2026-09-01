@@ -157,6 +157,7 @@ fn machine_output_carries_failures_that_stop_before_an_outcome() {
 fn widening_an_enum_migrates_every_table_that_stores_it() {
     let root = temp_dir("enum-closed-set-widening");
     write_spring_fixture(&root);
+    common::declare_storage(&root);
     let migrations = root.join("src/main/resources/db/migration");
     fs::create_dir_all(&migrations).unwrap();
 
@@ -304,6 +305,9 @@ fn preserving_a_column_renames_the_component_and_writes_no_migration() {
 fn resource_field_uses_scaffold_storage_identity_and_leaves_plain_records_source_only() {
     let root = temp_dir("resource-field-storage-identity");
     write_spring_fixture(&root);
+    // Storage is a model declaration now, so the scaffold below is table-backed
+    // because the project said so -- not because a migrations directory exists.
+    common::declare_storage(&root);
     let migrations = root.join("src/main/resources/db/migration");
     fs::create_dir_all(&migrations).unwrap();
     let scaffold = jails_cmd(&root, None)
@@ -3325,7 +3329,7 @@ fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migra
         .unwrap();
     assert!(!refused.status.success());
     assert!(
-        String::from_utf8_lossy(&refused.stderr).contains("needs a data plan"),
+        String::from_utf8_lossy(&refused.stderr).contains("needs a backfill"),
         "{}",
         String::from_utf8_lossy(&refused.stderr)
     );
@@ -3358,7 +3362,9 @@ fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migra
     // The plan names the files a new component touches: the record, its test
     // and the migration that adds the column. V1 printed a per-derivative
     // `skipped`/`add component` line from a walk of its own.
-    assert!(stdout.contains("replace "), "{stdout}");
+    // `write`, not the legacy engine's `replace`: the file is managed, it
+    // exists, and the plan is rewriting jails' own output over it.
+    assert!(stdout.contains("write "), "{stdout}");
     assert!(stdout.contains(".sql"), "{stdout}");
 
     let record = common::read_generated(&root, "src/main/java/com/example/demo/domain/Note.java");
@@ -3369,12 +3375,20 @@ fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migra
     );
     assert!(jdbc.contains("created_at"), "{jdbc}");
     // The edited derivative is *merged*, not skipped. V1 left it alone, which
-    // preserved the edit and left the request record missing the component the
-    // record had just grown -- a DTO that no longer describes its own domain
-    // type. Both halves survive here: the reader's line and the new field.
+    // preserved the edit and left the DTOs missing the component the record
+    // had just grown -- a DTO that no longer describes its own domain type.
+    // Both halves survive here: the reader's line and the new field.
     let merged = fs::read_to_string(&request).unwrap();
     assert!(merged.contains("// user-owned validation"), "{merged}");
-    assert!(merged.contains("Instant createdAt"), "{merged}");
+    // The new component reaches the *response*, and deliberately not the
+    // request: `@default(now())` is server-assigned, so a request record
+    // carrying it would invite a caller to declare its own creation time.
+    assert!(!merged.contains("Instant createdAt"), "{merged}");
+    let response = common::read_generated(
+        &root,
+        "src/main/java/com/example/demo/web/NoteResponse.java",
+    );
+    assert!(response.contains("Instant createdAt"), "{response}");
     let _ = &edited;
 
     let migration = fs::read_to_string(
@@ -3393,8 +3407,12 @@ fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migra
         migration.contains("alter column created_at set not null"),
         "{migration}"
     );
+    // And the declared default reaches the column. `create table` renders
+    // `default current_timestamp` for the same `@default(now())` field, so a
+    // column added later has to carry it too -- otherwise the schema depends
+    // on when the field was declared rather than on what it declares.
     assert!(
-        !migration.contains("default current_timestamp"),
+        migration.contains("alter column created_at set default current_timestamp"),
         "{migration}"
     );
 
