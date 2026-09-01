@@ -31,7 +31,7 @@ pub(crate) fn lower_and_emit(
             OperationKind::Command(spec) => {
                 let target = stored_entity(model, operation, &spec.on, "command")?;
                 if let Some(inputs) =
-                    proof::input_fields(target, &spec.fields, &spec.semantics.parameters)
+                    proof::input_fields(model, target, &spec.fields, &spec.semantics.parameters)
                     && let Some(written) = proof::write(
                         model,
                         capability.id.as_str(),
@@ -39,6 +39,14 @@ pub(crate) fn lower_and_emit(
                         target,
                         proof::WriteShape {
                             expected: None,
+                            optional: !spec.semantics.resolutions.is_empty(),
+                            // **A resolved key needs its parent row stored.**
+                            // The insert selects the foreign key out of the
+                            // parent, so a proof that stores none proves the
+                            // empty case by accident -- and the lookup
+                            // parameter has to carry the value that row was
+                            // written with, which is what a mapping says.
+                            joins: &resolution_joins(spec),
                             port_suffix: "Command",
                             port_package: jails_model::Package::ApplicationCommands,
                             keyed: None,
@@ -96,7 +104,7 @@ pub(crate) fn lower_and_emit(
                     .filter(|field| expected.is_none_or(|version| *field != &version.field.id))
                     .cloned()
                     .collect::<Vec<_>>();
-                if let Some(inputs) = proof::input_fields(target, &carried, &[])
+                if let Some(inputs) = proof::input_fields(model, target, &carried, &[])
                     && let Some(written) = proof::write(
                         model,
                         capability.id.as_str(),
@@ -108,6 +116,8 @@ pub(crate) fn lower_and_emit(
                             keyed: Some(key),
                             inputs: &inputs,
                             expected,
+                            optional: false,
+                            joins: &[],
                         },
                     )?
                 {
@@ -157,6 +167,23 @@ pub(super) struct QueryFilter<'a> {
 /// The linked parameters when there are any -- they are the only shape that
 /// can name a column of a joined table -- and the flat field list otherwise,
 /// which is what `.jails/model.toml` and an unjoined query still produce.
+/// Each `resolve` declaration as the parent row a proof has to store first.
+fn resolution_joins(command: &jails_model::Command) -> Vec<jails_model::Join> {
+    command
+        .semantics
+        .resolutions
+        .iter()
+        .map(|resolution| jails_model::Join {
+            entity: resolution.remote_entity.clone(),
+            alias: resolution.remote_entity.as_str().to_string(),
+            mappings: vec![jails_model::FieldMapping {
+                local: resolution.target.clone(),
+                remote: resolution.remote_value.clone(),
+            }],
+        })
+        .collect()
+}
+
 fn query_filters<'a>(
     model: &'a AppModel,
     operation: &Operation,

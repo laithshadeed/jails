@@ -32,7 +32,7 @@ use super::{
     stored_entity,
 };
 use crate::CompileError;
-use crate::emit_java::{domain_import, java_type, primary_key, with_suffix};
+use crate::emit_java::{domain_import, primary_key, with_suffix};
 use jails_contracts::{ProjectPath, RenderedFile};
 use jails_model::{
     AppModel, Command, ConstraintKind, Entity, Field, Operation, OperationParameter, Package,
@@ -71,14 +71,8 @@ pub(super) fn lower(
             )));
         }
     }
-    let (resolved_values, resolutions) = lower_resolutions(
-        model,
-        operation,
-        command,
-        target,
-        &rich_inputs,
-        &mut imports,
-    )?;
+    let resolved = lower_resolutions(model, operation, command, target, &rich_inputs)?;
+    let resolve_params = resolved.params.clone();
     let mut params = String::new();
     let mut columns = Vec::new();
     let mut values = Vec::new();
@@ -117,8 +111,8 @@ pub(super) fn lower(
                     &mut imports,
                 ))
             }
-        } else if let Some(value) = resolved_values.get(&field.id) {
-            InsertValue::Parameter(value.clone())
+        } else if let Some(value) = resolved.values.get(&field.id) {
+            InsertValue::Expression(value.clone())
         } else if let Some(assignment) = command
             .semantics
             .assignments
@@ -182,12 +176,21 @@ pub(super) fn lower(
         .join(", ");
     let insert = if columns.is_empty() {
         format!("insert into {} default values", target.names.sql_table)
-    } else {
+    } else if resolved.from.is_empty() {
         format!(
             "insert into {} ({}) values ({})",
             target.names.sql_table,
             columns.join(", "),
             values.join(", ")
+        )
+    } else {
+        format!(
+            "insert into {} ({}) select {} from {} where {}",
+            target.names.sql_table,
+            columns.join(", "),
+            values.join(", "),
+            resolved.from.join(", "),
+            resolved.conditions.join(" and ")
         )
     };
     let port_type = with_suffix(&operation.names.java_type, "Command");
@@ -210,12 +213,22 @@ pub(super) fn lower(
     // part of the same decision rather than a separate one somebody can
     // forget.
     let staged = super::outbox::delivery(operation) == jails_model::Delivery::Outbox;
+    // **A resolved insert writes nothing when the parent is not there**, so
+    // the row it answers with is optional and the port says so. Without a
+    // resolution the statement always writes exactly one row.
+    let optional = !command.semantics.resolutions.is_empty();
+    let (answer, take) = if optional {
+        imports.insert("java.util.Optional".to_string());
+        (format!("Optional<{}>", target.names.java_type), "optional")
+    } else {
+        (target.names.java_type.clone(), "single")
+    };
     let (collaborator, method_annotation, result) = if publications.is_empty() {
         (
             None,
             "",
             format!(
-                "        return statement.query({}.class).single();",
+                "        return statement.query({}.class).{take}();",
                 target.names.java_type
             ),
         )
@@ -228,7 +241,7 @@ pub(super) fn lower(
             }),
             if staged { "    @Transactional\n" } else { "" },
             format!(
-                "        var result = statement.query({}.class).single();{}\n        return result;",
+                "        var result = statement.query({}.class).{take}();{}\n        return result;",
                 target.names.java_type,
                 publications.concat()
             ),
@@ -249,8 +262,7 @@ pub(super) fn lower(
         // context fails at startup with "Could not generate CGLIB subclass". The
         // adapter implements its port, so a JDK proxy would do, but making the whole
         // application proxy by interface to keep one `final` is the wrong trade.
-        "@Repository\npublic class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;{member}\n\n    public {type_name}(JdbcClient jdbc{parameter}) {{\n        this.jdbc = jdbc;{assignment}\n    }}\n\n    @Override\n{method_annotation}    public {} execute({context}{port_type}.Input input) {{\n{resolutions}        JdbcClient.StatementSpec statement = jdbc.sql(\"{insert} returning {returning}\");\n{params}{result}\n    }}\n}}",
-        target.names.java_type
+        "@Repository\npublic class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;{member}\n\n    public {type_name}(JdbcClient jdbc{parameter}) {{\n        this.jdbc = jdbc;{assignment}\n    }}\n\n    @Override\n{method_annotation}    public {answer} execute({context}{port_type}.Input input) {{\n        JdbcClient.StatementSpec statement = jdbc.sql(\"{insert} returning {returning}\");\n{resolve_params}{params}{result}\n    }}\n}}"
     );
     operation_file(
         model,
@@ -299,10 +311,8 @@ fn lower_resolutions(
     command: &Command,
     target: &Entity,
     local_parameters: &BTreeMap<jails_model::FieldId, &OperationParameter>,
-    imports: &mut BTreeSet<String>,
-) -> Result<(BTreeMap<jails_model::FieldId, String>, String), CompileError> {
-    let mut values = BTreeMap::new();
-    let mut statements = String::new();
+) -> Result<Resolutions, CompileError> {
+    let mut resolved = Resolutions::default();
     for (position, resolution) in command.semantics.resolutions.iter().enumerate() {
         let target_field = target.field(&resolution.target).ok_or_else(|| {
             CompileError::new(format!(
@@ -379,24 +389,51 @@ fn lower_resolutions(
                 operation.label, parameter.name
             )));
         }
-        let java = java_type(target_field, imports);
-        let variable = format!("resolved_{}", target_field.names.java_member);
+        // **One statement, not two.** Reading the parent's key and then
+        // inserting leaves a window in which the parent is deleted between
+        // them, and a `select` inside the `insert` closes it: the row is
+        // written from the parent's own row or not at all.
+        let table = remote.names.sql_table.clone();
         let sql_parameter = format!("resolve_{}_{}", target_field.names.sql_column, position);
-        statements.push_str(&format!(
-            "        {java} {variable} = jdbc.sql(\"select {} from {} where {} = :{sql_parameter}\")\n                .param(\"{sql_parameter}\", input.{}())\n                .query({java}.class)\n                .single();\n",
-            remote_value.names.sql_column,
-            remote.names.sql_table,
-            remote_lookup.names.sql_column,
-            crate::emit_java::parameter_member(parameter),
-        ));
-        if values.insert(resolution.target.clone(), variable).is_some() {
+        if resolved
+            .values
+            .insert(
+                resolution.target.clone(),
+                format!("{table}.{}", remote_value.names.sql_column),
+            )
+            .is_some()
+        {
             return Err(CompileError::new(format!(
                 "canonical command `{}` resolves field `{}` more than once",
                 operation.label, target_field.label
             )));
         }
+        if !resolved.from.contains(&table) {
+            resolved.from.push(table.clone());
+        }
+        resolved.conditions.push(format!(
+            "{table}.{} = :{sql_parameter}",
+            remote_lookup.names.sql_column
+        ));
+        resolved.params.push_str(&format!(
+            "        statement = statement.param(\"{sql_parameter}\", input.{}());\n",
+            crate::emit_java::parameter_member(parameter),
+        ));
     }
-    Ok((values, statements))
+    Ok(resolved)
+}
+
+/// What a command's `resolve` declarations contribute to its one statement.
+#[derive(Default)]
+struct Resolutions {
+    /// The SQL expression each resolved column is selected from.
+    values: BTreeMap<jails_model::FieldId, String>,
+    /// The parent tables the `select` reads.
+    from: Vec<String>,
+    /// One equality per lookup, all of which must hold.
+    conditions: Vec<String>,
+    /// The bindings for those lookups.
+    params: String,
 }
 
 fn parameter_type<'a>(

@@ -389,6 +389,8 @@ pub(super) fn write(
         keyed,
         inputs,
         expected,
+        optional,
+        joins,
     } = shape;
     let package = model.project.package_for(Package::AdaptersJdbc);
     let port_type = format!("{}{port_suffix}", operation.names.java_type);
@@ -403,7 +405,7 @@ pub(super) fn write(
         format!("{}.{port_type}", model.project.package_for(port_package)),
     ]);
 
-    let Some(fixtures) = parent_fixtures(model, operation, target, &[], &mut imports)? else {
+    let Some(fixtures) = parent_fixtures(model, operation, target, joins, &mut imports)? else {
         return Ok(None);
     };
     let Fixtures {
@@ -500,8 +502,51 @@ pub(super) fn write(
         _ => String::new(),
     };
 
+    // **An optional answer is asserted as present, and its emptiness proved
+    // separately.** `isNotNull()` on an `Optional` is true of the empty one
+    // too, so it would assert nothing at all -- and the empty case is the
+    // whole reason the port answers one.
+    let (declaration, mut assertion) = if optional {
+        imports.insert("java.util.Optional".to_string());
+        (
+            format!("Optional<{record}> answered"),
+            "assertThat(answered).isPresent();".to_string(),
+        )
+    } else {
+        (
+            format!("{record} answered"),
+            "assertThat(answered).isNotNull();".to_string(),
+        )
+    };
+    // **The resolved key is the parent's, and the proof says whose.** Without
+    // this the test proves a row was written and nothing about the column the
+    // whole `select` exists to fill.
+    for join in joins {
+        for mapping in &join.mappings {
+            let Some(local) = target.field(&mapping.local) else {
+                continue;
+            };
+            let Some(value) = substitutions.get(&mapping.local) else {
+                continue;
+            };
+            assertion.push_str(&format!(
+                "\n        assertThat(answered.orElseThrow().{}()).isEqualTo({value});",
+                local.names.java_member
+            ));
+        }
+    }
+    // And the empty answer, which is the reason the port has one. A parent
+    // nothing matches is a request about a row that is not there.
+    let missing = if optional {
+        let absent = arguments.replacen('"', "\"no-such-", 1);
+        format!(
+            "\n    @Test\n    void answersEmptyWhenNoParentMatches() {{\n        assertThat(operation.execute(new {port_type}.Input({absent}))).isEmpty();\n    }}\n"
+        )
+    } else {
+        String::new()
+    };
     let body = format!(
-        "@SpringBootTest\n@Transactional\nclass {type_name} {{\n\n{autowired}    @Autowired\n    private {port_type} operation;\n\n    @Test\n    void writesThroughTheRealDatabase() {{\n{setup}        {record} answered = {invocation};\n\n        // `returning` answers with the row the statement wrote, so a null\n        // here means it matched none -- which is the failure worth catching.\n        assertThat(answered).isNotNull();\n    }}\n{unconditional}\n    // Reader-owned cases belong below this stable boundary.\n}}"
+        "@SpringBootTest\n@Transactional\nclass {type_name} {{\n\n{autowired}    @Autowired\n    private {port_type} operation;\n\n    @Test\n    void writesThroughTheRealDatabase() {{\n{setup}        {declaration} = {invocation};\n\n        // `returning` answers with the row the statement wrote, so an empty\n        // answer here means it matched none -- which is the failure worth\n        // catching.\n        {assertion}\n    }}\n{missing}{unconditional}\n    // Reader-owned cases belong below this stable boundary.\n}}"
     );
     let artifact_id = format!("art_{}_write_it", operation.id.as_str());
     let rendered = crate::emit_capability::imported_test_container(
@@ -574,6 +619,7 @@ fn claims(scoped: &[&jails_model::Field], value: impl Fn(&jails_model::Field) ->
 /// -- has no sample this proof can reach, so it emits nothing rather than a
 /// constructor call that will not compile.
 pub(super) fn input_fields<'a>(
+    model: &'a AppModel,
     target: &'a Entity,
     flat: &[FieldId],
     parameters: &[jails_model::OperationParameter],
@@ -581,13 +627,19 @@ pub(super) fn input_fields<'a>(
     if parameters.is_empty() {
         return flat.iter().map(|id| target.field(id)).collect();
     }
+    // **A parameter may name a component of another entity**, and that is what
+    // `--via` is: the caller states the parent's email and the insert resolves
+    // the foreign key from it. Reading only the target's own components
+    // answered `None` for every resolving command, so none of them had a write
+    // proof at all -- the one shape whose failure mode is a race.
     parameters
         .iter()
         .map(|parameter| match &parameter.source {
-            jails_model::ParameterSource::Field(visible) if visible.entity == target.id => {
-                target.field(&visible.field)
-            }
-            _ => None,
+            jails_model::ParameterSource::Field(visible) => model
+                .entities
+                .get(&visible.entity)
+                .and_then(|entity| entity.field(&visible.field)),
+            jails_model::ParameterSource::Typed(_) => None,
         })
         .collect()
 }
@@ -604,6 +656,11 @@ pub(super) struct WriteShape<'a> {
     pub(super) inputs: &'a [&'a jails_model::Field],
     /// The precondition `execute` takes after its input, when there is one.
     pub(super) expected: Option<&'a crate::emit_java::Precondition<'a>>,
+    /// Whether the port answers `Optional`, which a command that resolves its
+    /// foreign key out of a parent row does: no parent, no row, no fault.
+    pub(super) optional: bool,
+    /// Parent rows this proof has to store before the target's can be written.
+    pub(super) joins: &'a [jails_model::Join],
 }
 
 /// The `Input` arguments, matching the row the fixtures stored.

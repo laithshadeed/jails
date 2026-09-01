@@ -41,7 +41,7 @@ pub(crate) fn lower(
     let domain = model.project.package_for(Package::Domain);
     let repository = model.project.package_for(Package::Repository);
     let resource = format!("db/seeds/{}.json", entity.names.sql_table);
-    let row = row(entity);
+    let rows = [row(model, entity, true), row(model, entity, false)];
     let imports = format!(
         "{}{}{}",
         import(&adapters, &domain, name),
@@ -56,7 +56,7 @@ pub(crate) fn lower(
         .replace("{{resource}}", &resource)
         .replace("{{json}}", &reader)
         .replace("{{name}}", name);
-    let disabled = row.is_none();
+    let disabled = rows[0].is_none() || rows[1].is_none();
     let test = TEST
         .replace("{{pkg}}", &adapters)
         .replace("{{imports}}", &import(&adapters, &domain, name))
@@ -91,9 +91,11 @@ pub(crate) fn lower(
             RESOURCE_ROOT,
             &resource,
             FileKind::Resource,
-            match &row {
-                Some(components) => format!("[\n  {{\n{components}\n  }}\n]\n"),
-                None => "[]\n".to_string(),
+            match (&rows[0], &rows[1]) {
+                (Some(first), Some(second)) => {
+                    format!("[\n  {{\n{first}\n  }},\n  {{\n{second}\n  }}\n]\n")
+                }
+                _ => "[]\n".to_string(),
             },
         )?,
         rendered(
@@ -121,23 +123,48 @@ pub(crate) fn lower(
 /// would ship a file that fails to bind at start-up, so the row is left out
 /// and the generated test is `@Disabled` naming what to fill in -- the same
 /// trade `sample_value` makes for a generated record test.
-fn row(entity: &Entity) -> Option<String> {
+fn row(model: &AppModel, entity: &Entity, first: bool) -> Option<String> {
     if entity.fields.is_empty() {
         return None;
     }
     entity
         .fields
         .iter()
-        .map(|field| match &field.ty {
-            TypeRef::Builtin(builtin) => Some(format!(
-                "    \"{}\": {}",
-                field.names.java_member,
-                builtin.semantics().json
-            )),
-            TypeRef::External(_) => None,
+        .map(|field| {
+            // **The second row leaves every optional component out.** One row
+            // proves the file binds; the pair proves the loader reads more
+            // than one and that an absent optional is absent rather than the
+            // four-character string `null`.
+            if !first && !field.required {
+                return Some(format!("    \"{}\": null", field.names.java_member));
+            }
+            let value = match &field.ty {
+                TypeRef::Builtin(builtin) => builtin.semantics().json.to_string(),
+                // **An enum is the one project type jails can sample**, and by
+                // its wire value: the record's converter reads that, and the
+                // Java constant is what it refuses. Leaving it out made every
+                // seeded entity with an enum column ship `[]` and a
+                // `@Disabled` test.
+                TypeRef::External(name) => enum_sample(model, name)?,
+            };
+            Some(format!("    \"{}\": {value}", field.names.java_member))
         })
         .collect::<Option<Vec<_>>>()
         .map(|components| components.join(",\n"))
+}
+
+/// The first constant of a declared enum, as the JSON a caller would send.
+fn enum_sample(model: &AppModel, java_type: &str) -> Option<String> {
+    let declared = model
+        .entities
+        .values()
+        .find(|entity| entity.names.java_type == java_type)
+        .filter(|entity| entity.facets.contains(&jails_model::Facet::Enum))?;
+    let constant = declared.enum_constants.first()?;
+    Some(format!(
+        "\"{}\"",
+        constant.wire_name.as_deref().unwrap_or(&constant.java_name)
+    ))
 }
 
 /// The project's JSON reader, by name, or a refusal naming the fix.

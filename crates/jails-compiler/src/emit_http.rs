@@ -103,6 +103,7 @@ fn lower(
     let mut path_member = String::from("id");
     let mut precondition: Option<(String, String)> = None;
     let mut precondition_field: Option<(jails_model::Field, bool)> = None;
+    let mut optional_answer = false;
     let (target, binding, port_package, port_type, return_type, parameters, mut imports) =
         match &operation.kind {
             OperationKind::Command(command) => {
@@ -124,14 +125,34 @@ fn lower(
                         "org.springframework.web.bind.annotation.RequestBody",
                     )
                 };
+                // **A command that resolves its key answers `Optional`**, and
+                // the empty case is a 404: the caller named a parent that is
+                // not there, which is a request about a row rather than a
+                // fault in the handler.
+                let (answer, imports) = if command.semantics.resolutions.is_empty() {
+                    (
+                        entity.names.java_type.clone(),
+                        BTreeSet::from([domain_import(model, entity), binder.to_string()]),
+                    )
+                } else {
+                    optional_answer = true;
+                    (
+                        format!("ResponseEntity<{}>", entity.names.java_type),
+                        BTreeSet::from([
+                            domain_import(model, entity),
+                            binder.to_string(),
+                            "org.springframework.http.ResponseEntity".to_string(),
+                        ]),
+                    )
+                };
                 (
                     entity,
                     if form { Binding::Model } else { Binding::Body },
                     Package::ApplicationCommands,
                     with_suffix(&operation.names.java_type, "Command"),
-                    entity.names.java_type.clone(),
+                    answer,
                     parameter.to_string(),
-                    BTreeSet::from([domain_import(model, entity), binder.to_string()]),
+                    imports,
                 )
             }
             OperationKind::Query(query) => {
@@ -361,6 +382,10 @@ fn lower(
     };
     let invocation = if matches!(operation.kind, OperationKind::Transition(_)) {
         format!("operation.execute({context_argument}{path_member}, input{expected_argument})")
+    } else if optional_answer {
+        format!(
+            "operation.execute({context_argument}input)\n                .map(ResponseEntity::ok)\n                .orElseGet(() -> ResponseEntity.notFound().build())"
+        )
     } else {
         format!("operation.execute({context_argument}input)")
     };

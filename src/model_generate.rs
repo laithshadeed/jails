@@ -591,10 +591,13 @@ pub(crate) fn reject_unsupported_operation_options(
             "--yields",
             "a transition or a command",
         ),
+        // **A query's and a command's verb follows its request**, so
+        // `--method` there is not a preference jails declines to honour -- it
+        // is a claim about the request that contradicts the request.
         (
             args.method.is_some() && profile != OperationProfile::Transition,
             "--method",
-            "a transition",
+            "a transition; every other operation's verb follows its request",
         ),
         (
             args.path.is_some() && profile == OperationProfile::Event,

@@ -1510,7 +1510,7 @@ fn renamed_kinds(relative: &str) -> Vec<String> {
     // `PlaceOrderCommand` as well, and that name is the *port* -- a different
     // file, in a different package, which an assertion about the
     // implementation would then match instead.
-    const PREFIXED: &[(&str, &str)] = &[("Jdbc", ""), ("Storing", "Jdbc")];
+    const PREFIXED: &[(&str, &str)] = &[("Jdbc", ""), ("Storing", "Jdbc"), ("Resolving", "Jdbc")];
     // **A durable job's unit of work is its queue.** The engine called the
     // record `...Work`; the compiler names it after what holds it, which is
     // the class a reader looks for when a job is not draining.
@@ -1542,8 +1542,12 @@ fn renamed_kinds(relative: &str) -> Vec<String> {
         // would go stale on the first kind that gains one. The trailing `Test`
         // is lifted off, the rename applied to the type it names, and the
         // suffix put back.
-        for (subject, tail) in [(stem.as_str(), ""), (stem.trim_end_matches("Test"), "Test")] {
-            if tail == "Test" && subject == stem {
+        for (subject, tail) in [
+            (stem.as_str(), ""),
+            (stem.trim_end_matches("Test"), "Test"),
+            (stem.trim_end_matches("IT"), "IT"),
+        ] {
+            if !tail.is_empty() && subject == stem {
                 continue;
             }
             for (from, candidates) in RENAMED {

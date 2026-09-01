@@ -1297,10 +1297,13 @@ fn a_verb_a_recipe_derives_is_not_one_a_flag_can_set() {
     let root = temp_dir("method-derived-not-set");
     write_spring_fixture(&root);
 
-    // The two recipes that name a verb keep taking it.
-    for kind in ["controller", "client"] {
+    // The two recipes that name a verb keep taking it. **Different names,
+    // because a component name is one namespace**: `on` and `yields`
+    // reference a component by that name, so two of them would make every
+    // such reference ambiguous.
+    for (kind, name) in [("controller", "VerifyEndpoint"), ("client", "VerifyClient")] {
         let named = jails_cmd(&root, None)
-            .args(["g", kind, "Verify", "--method", "post"])
+            .args(["g", kind, name, "--method", "post"])
             .output()
             .unwrap();
         assert!(
@@ -1309,6 +1312,14 @@ fn a_verb_a_recipe_derives_is_not_one_a_flag_can_set() {
             String::from_utf8_lossy(&named.stderr)
         );
     }
+
+    // And declaring one twice under one name is refused rather than silently
+    // taking whichever came last.
+    let duplicate = jails_cmd(&root, None)
+        .args(["g", "client", "VerifyEndpoint", "--method", "post"])
+        .output()
+        .unwrap();
+    assert!(!duplicate.status.success(), "{duplicate:?}");
 
     // Every other recipe says so rather than generating a different verb.
     let refused = jails_cmd(&root, None)
@@ -4855,15 +4866,17 @@ fn a_scaffold_writes_a_two_row_fixture_keyed_by_column_name() {
         .unwrap();
     assert!(seeded.status.success(), "{seeded:?}");
 
-    let fixture = common::read_generated(&root, "src/test/resources/fixtures/payouts.json");
-    // Column names, not component names -- the fixture describes what the
-    // database holds, next to a JDBC adapter that reads those same columns.
-    assert!(fixture.contains("\"paid_at\""), "{fixture}");
-    assert!(!fixture.contains("paidAt"), "{fixture}");
+    let fixture = common::read_generated(&root, "src/main/resources/db/seeds/payouts.json");
+    // **Component names, not column names.** The seeder reads the file into
+    // the record and saves it through the port, so a row the record rejects
+    // fails at start-up rather than sitting in the table -- and the keys are
+    // the ones the record declares.
+    assert!(fixture.contains("\"paidAt\""), "{fixture}");
+    assert!(!fixture.contains("paid_at"), "{fixture}");
     // A real constant read off the generated enum, not a guess.
     assert!(fixture.contains("\"currency\": \"GBP\""), "{fixture}");
-    // Two rows, and the nullable one is absent in the second.
-    assert!(fixture.contains("\"note\": \"sample-1\""), "{fixture}");
+    // Two rows, and the nullable one is null in the second.
+    assert!(fixture.contains("\"note\": \"sample\""), "{fixture}");
     assert!(fixture.contains("\"note\": null"), "{fixture}");
 }
 
@@ -7442,6 +7455,9 @@ fn a_use_case_can_resolve_its_key_from_the_parent_the_caller_names() {
             "body:string!",
             "senderType:SenderType",
         ],
+        // The route is served by the `api` capability, which is what emits a
+        // Spring controller for an operation.
+        vec!["add", "api", "--no-start"],
         vec![
             "g",
             "usecase",
@@ -7478,19 +7494,16 @@ fn a_use_case_can_resolve_its_key_from_the_parent_the_caller_names() {
         "{adapter}"
     );
     assert!(
-        adapter.contains("select authors.id, :body, :sender_type"),
+        adapter.contains("select authors.id, :body, 'CUSTOMER'"),
         "{adapter}"
     );
     assert!(
-        adapter.contains("where authors.email = :email"),
+        adapter.contains("where authors.email = :resolve_author_id_0"),
         "{adapter}"
     );
-    // The pinned component travels through the column's own write expression,
-    // so an enum is still stored by name.
-    assert!(
-        adapter.contains(".param(\"sender_type\", SenderType.CUSTOMER.name())"),
-        "{adapter}"
-    );
+    // The pinned component is a constant of the statement, so an enum is
+    // stored by the name the column already holds and nothing binds it.
+    assert!(!adapter.contains(".param(\"sender_type\""), "{adapter}");
     // And there is no binding for the reference: it never was a parameter.
     assert!(!adapter.contains(".param(\"author_id\""), "{adapter}");
 
@@ -7500,7 +7513,7 @@ fn a_use_case_can_resolve_its_key_from_the_parent_the_caller_names() {
         "src/main/java/com/example/demo/service/PostNoteUseCase.java",
     );
     assert!(
-        port.contains("Optional<Note> execute(PostNoteCommand command);"),
+        port.contains("Optional<Note> execute(Input input);"),
         "{port}"
     );
     let controller = common::read_generated(
@@ -7518,11 +7531,12 @@ fn a_use_case_can_resolve_its_key_from_the_parent_the_caller_names() {
         "src/test/java/com/example/demo/adapters/ResolvingPostNoteUseCaseIT.java",
     );
     assert!(
-        integration.contains("assertThat(useCase.execute(command)).isEmpty();"),
+        integration.contains("answersEmptyWhenNoParentMatches"),
         "{integration}"
     );
+    assert!(integration.contains(")).isEmpty();"), "{integration}");
     assert!(
-        integration.contains(".authorId()).isEqualTo(parent.id())"),
+        integration.contains(".authorId()).isEqualTo(authorRow.id())"),
         "{integration}"
     );
 }

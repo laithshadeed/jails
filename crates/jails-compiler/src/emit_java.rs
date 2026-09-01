@@ -208,9 +208,18 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
             let context = operation_context(model, entity, &mut imports);
             let type_name = with_suffix(&operation.names.java_type, "Command");
             let route = route_constant(command.route.as_deref());
+            // **A resolved key can miss, and that is an outcome rather than a
+            // fault.** The insert selects the foreign key out of the parent's
+            // own row, so a caller naming a parent that is not there writes
+            // nothing -- which is a 404, not a 500.
+            let answer = if command.semantics.resolutions.is_empty() {
+                entity.names.java_type.clone()
+            } else {
+                imports.insert("java.util.Optional".to_string());
+                format!("Optional<{}>", entity.names.java_type)
+            };
             let body = format!(
-                "public interface {type_name} {{\n{route}\n    {} execute({context}Input input);\n\n{input}\n}}",
-                entity.names.java_type
+                "public interface {type_name} {{\n{route}\n    {answer} execute({context}Input input);\n\n{input}\n}}"
             );
             (Package::ApplicationCommands, type_name, body, imports)
         }
