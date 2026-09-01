@@ -12,7 +12,7 @@
 
 use super::super::Linker;
 use crate::source;
-use crate::{ComponentKind, EndpointMethod};
+use crate::{ComponentKind, EndpointMethod, RequestFormat};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Copy)]
@@ -109,10 +109,42 @@ pub(super) fn validate_presence(
 pub(super) fn validate_route(
     kind: ComponentKind,
     route: Option<&source::OperationRoute>,
+    has_body: bool,
     path: &str,
     routes: &mut BTreeMap<String, String>,
     linker: &mut Linker,
 ) {
+    // **The two rules the `SourceUnit` linker had and this one did not.** A
+    // controller's request body is the `on` entity, and `GET`/`DELETE` do not
+    // carry one -- so `g controller Verify --method get --on Request` refused
+    // on the pre-v1 draft and silently emitted a body-bound `@GetMapping` once
+    // the same command went through a v1 component. Found by porting the
+    // draft's own test, which is the reason to port a test rather than delete
+    // it.
+    //
+    // **Above the `route` guard**, because a controller with no `route` member
+    // still answers on one: `component::endpoint` defaults the method to `GET`
+    // and the path to the component's own name, so the declaration a reader
+    // most easily writes is exactly the one an early return would not check.
+    if kind == ComponentKind::Controller {
+        let method = route.map_or(EndpointMethod::Get, |route| route.method);
+        if has_body && !method.takes_body() {
+            linker.problem(
+                "model-controller-body-method",
+                format!("{path}.on"),
+                "this HTTP method does not carry the declared request body",
+                "use post, put, or patch, or remove `on`",
+            );
+        }
+        if route.and_then(|route| route.consumes) == Some(RequestFormat::Form) && !has_body {
+            linker.problem(
+                "model-controller-form-without-body",
+                format!("{path}.route"),
+                "form binding needs a request type",
+                "declare `on <Entity>` or consume json",
+            );
+        }
+    }
     let Some(route) = route else {
         return;
     };

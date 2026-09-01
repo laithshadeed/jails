@@ -150,6 +150,7 @@ pub(super) fn link(
         validate_route(
             declaration.kind,
             declaration.route.as_ref(),
+            declaration.on.is_some(),
             &path,
             routes,
             linker,
