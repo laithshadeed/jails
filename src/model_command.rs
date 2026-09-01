@@ -70,8 +70,8 @@ pub(crate) fn read_source(model_path: &Path) -> Result<String> {
 /// `jails new --app` replays a manifest into the project it is creating, and
 /// the process directory is that project's *parent*.
 pub(crate) fn read_source_at(root: &Path, model_path: &Path) -> Result<String> {
-    match std::fs::read_to_string(root.join(model_path)) {
-        Ok(source) => Ok(source),
+    let source = match std::fs::read_to_string(root.join(model_path)) {
+        Ok(source) => source,
         // The same rule as `load_model_at`: a project with no model reads as
         // the model `model init` would write, so the first mutation patches a
         // real seed rather than refusing over the file it is about to create.
@@ -80,15 +80,50 @@ pub(crate) fn read_source_at(root: &Path, model_path: &Path) -> Result<String> {
         // "could not read `.jails/model.jdl`: No such file or directory" about
         // a project whose base package could not be read, which names neither
         // the problem nor anything to do about it.
+        //
+        // Returned rather than checked below: what `model init` derives is
+        // `jdl 1` by construction, so putting it through the dialect test
+        // would only be able to fail on a bug in the deriver.
         Err(error) if error.kind() == std::io::ErrorKind::NotFound && !owns_at(root) => {
-            jails_project::model::Project::load(root)
-                .and_then(|project| crate::model_init::derive(&project))
+            return jails_project::model::Project::load(root)
+                .and_then(|project| crate::model_init::derive(&project));
         }
-        Err(error) => Err(Failure::Told(format!(
-            "could not read canonical model `{}`: {error}",
-            model_path.display()
-        ))),
+        Err(error) => {
+            return Err(Failure::Told(format!(
+                "could not read canonical model `{}`: {error}",
+                model_path.display()
+            )));
+        }
+    };
+    // **One editable JDL dialect, and it is `jdl 1`.** The pre-v1 draft was a
+    // second front end for every mutating command -- 31 `is_v1_source` branch
+    // sites in `docs/00-contracts.md` A4.4's count -- and the way that count
+    // reaches zero is the draft becoming read-only rather than the branches
+    // being maintained. A draft still *parses*, so `sync`, `model check` and
+    // `model upgrade` keep working on one; what it no longer does is accept an
+    // edit. `model upgrade` reads the file directly, because its whole input
+    // is the source this refuses.
+    if model_path.ends_with(JDL_PATH) && !is_jdl_v1(&source) {
+        return Err(Failure::Told(format!(
+            "`{JDL_PATH}` is a pre-v1 JDL draft and no longer accepts edits.\n       fix: run `jails model upgrade --to 1`, then retry"
+        )));
     }
+    Ok(source)
+}
+
+/// The header test, and the only thing that decides which dialect a source is.
+///
+/// A `jdl 1` document opens with the version line; a draft opens with
+/// `application`. Comments and blank lines come first in both, so the first
+/// line that is neither is the one that answers it.
+pub(crate) fn is_jdl_v1(source: &str) -> bool {
+    source
+        .lines()
+        .find_map(|line| {
+            let line = line.trim();
+            (!line.is_empty() && !line.starts_with("//")).then_some(line)
+        })
+        .is_some_and(|line| line.split_whitespace().next() == Some("jdl"))
 }
 
 pub(crate) fn owns() -> bool {

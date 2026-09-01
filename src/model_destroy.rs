@@ -39,7 +39,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         // command exists and names the accepted constraint: the compiler drops
         // exactly `confirmed_name` and refuses a relation that merely stopped
         // being declared.
-        if !jdl || !crate::model_generate_jdl::is_v1_source(&current_source) {
+        if !jdl {
             return Err(Failure::Told(
                 "retiring an association needs a `jdl 1` model.\n       fix: run `jails model upgrade --to 1`, then retry"
                     .to_string(),
@@ -167,7 +167,6 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                         crate::model_generate_jdl::remove_entity(
                             &current_source,
                             &entity.names.java_type,
-                            entity.id.as_str(),
                         )?
                     } else {
                         jails_model::remove_entity_declaration(&current_source, &entity.label)
@@ -189,7 +188,6 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                     crate::model_generate_jdl::remove_entity(
                         &current_source,
                         &entity.names.java_type,
-                        entity.id.as_str(),
                     )?
                 } else {
                     jails_model::remove_entity_declaration(&current_source, &entity.label)
@@ -298,10 +296,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         }))
         .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
         (patch, next, bytes)
-    } else if jdl
-        && crate::model_generate_jdl::is_v1_source(&current_source)
-        && crate::model_generate_jdl::component_kind(request.kind).is_some()
-    {
+    } else if jdl && crate::model_generate_jdl::component_kind(request.kind).is_some() {
         if request.storage.is_some() || request.confirm_table.is_some() {
             return Err(Failure::Told(
                 "components have no independent storage to retire.\n       fix: remove the storage flags"
@@ -337,12 +332,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             .values()
             .find(|unit| unit.id.as_str() == id.as_str())
             .map(|unit| unit.id.clone());
-        let next = crate::model_generate_jdl::remove_unit(
-            &current_source,
-            kind.label(),
-            &component.name,
-            id.as_str(),
-        )?;
+        let next = crate::model_generate_jdl::remove_unit(&current_source, &component.name)?;
         let mut patches = vec![ModelPatch::RemoveComponent(id.clone())];
         if let Some(unit) = unit.clone() {
             patches.push(ModelPatch::RemoveUnit(unit));
@@ -413,7 +403,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             })
             .flatten();
         let next = if jdl {
-            crate::model_generate_jdl::remove_unit(&current_source, kind.0, &stem, id.as_str())?
+            crate::model_generate_jdl::remove_unit(&current_source, &stem)?
         } else {
             jails_model::remove_unit_declaration(&current_source, &unit.label)
                 .map_err(Failure::Told)?
@@ -458,7 +448,6 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             crate::model_generate_jdl::remove_operation(
                 &current_source,
                 &operation.names.java_type,
-                operation.id.as_str(),
             )?
         } else {
             jails_model::remove_operation_declaration(&current_source, &operation.label)

@@ -9,10 +9,8 @@ pub(crate) fn rename_field(
     field: &str,
     field_id: &str,
     next_name: &str,
-    stable_label: &str,
     next_column: Option<&str>,
 ) -> Result<String> {
-    let v1 = crate::model_generate_jdl::is_v1_source(source);
     rewrite_field(source, entity, field, field_id, |line, declaration| {
         let declaration_at = line
             .find(declaration)
@@ -24,20 +22,11 @@ pub(crate) fn rename_field(
             .trim();
         let mut rewritten = line.to_string();
         rewritten.replace_range(declaration_at..declaration_at + name.len(), next_name);
-        if v1 {
-            if !declaration.contains("@id(") {
-                rewritten = set_annotation(&rewritten, "id", field_id);
-            }
-            if let Some(column) = next_column {
-                rewritten = set_annotation(&rewritten, "map", column);
-            }
-        } else {
-            if !declaration.contains("@as(") && java_to_label(next_name) != stable_label {
-                rewritten = set_annotation(&rewritten, "as", stable_label);
-            }
-            if let Some(column) = next_column {
-                rewritten = set_annotation(&rewritten, "column", column);
-            }
+        if !declaration.contains("@id(") {
+            rewritten = set_annotation(&rewritten, "id", field_id);
+        }
+        if let Some(column) = next_column {
+            rewritten = set_annotation(&rewritten, "map", column);
         }
         Ok(rewritten)
     })
@@ -108,83 +97,38 @@ fn rewrite_field(
     field_id: &str,
     edit: impl FnOnce(&str, &str) -> Result<String>,
 ) -> Result<String> {
-    if crate::model_generate_jdl::is_v1_source(source) {
-        let cst = jails_model::parse_jdl_cst(source)
-            .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
-        let owner = java_to_label(entity);
-        let explicit_id = format!("@id({field_id})");
-        let matches = cst
-            .members
-            .iter()
-            .filter(|member| member.owner == owner && member.kind == "field")
-            .filter(|member| member.name.as_deref() == Some(field))
-            .filter(|member| {
-                let text = cst.member_text(member);
-                text.contains(&explicit_id) || !text.contains("@id(")
-            })
-            .collect::<Vec<_>>();
-        let member = match matches.as_slice() {
-            [member] => *member,
-            [] => {
-                return Err(Failure::Told(format!(
-                    "could not find JDL field `{entity}.{field}` with identity `{field_id}`\n       fix: keep it as a direct field member in the parsed entity block"
-                )));
-            }
-            _ => {
-                return Err(Failure::Told(format!(
-                    "JDL field `{entity}.{field}` is ambiguous\n       fix: give the field one explicit `@id({field_id})`"
-                )));
-            }
-        };
-        let line = cst.member_text(member);
-        let declaration = line.split("//").next().unwrap_or_default().trim();
-        let rewritten = edit(line, declaration)?;
-        return cst
-            .replace_span(member.span, &rewritten)
-            .map_err(crate::model_generate_jdl::jdl_edit_failure);
-    }
+    let cst =
+        jails_model::parse_jdl_cst(source).map_err(crate::model_generate_jdl::jdl_edit_failure)?;
+    let owner = java_to_label(entity);
     let explicit_id = format!("@id({field_id})");
-    let mut inside = false;
-    let mut depth = 0usize;
-    let mut byte_offset = 0;
-    let mut edit = Some(edit);
-    for line in source.split_inclusive('\n') {
-        let declaration = line.split("//").next().unwrap_or_default().trim();
-        if !inside && declaration.starts_with("entity ") && declaration.ends_with('{') {
-            let candidate = declaration["entity ".len()..]
-                .split_whitespace()
-                .next()
-                .unwrap_or_default();
-            inside = candidate == entity;
-            if inside {
-                depth = 1;
-            }
-        } else if inside && declaration.ends_with('{') {
-            depth += 1;
-        } else if inside && declaration == "}" {
-            if depth == 1 {
-                break;
-            }
-            depth -= 1;
-        } else if inside && depth == 1 {
-            let candidate = declaration
-                .split_once(':')
-                .map(|(name, _)| name.trim())
-                .unwrap_or_default();
-            if candidate == field
-                && (declaration.contains(&explicit_id) || !declaration.contains("@id("))
-            {
-                let rewritten = edit.take().expect("field edit runs once")(line, declaration)?;
-                let mut next = source.to_string();
-                next.replace_range(byte_offset..byte_offset + line.len(), &rewritten);
-                return Ok(next);
-            }
+    let matches = cst
+        .members
+        .iter()
+        .filter(|member| member.owner == owner && member.kind == "field")
+        .filter(|member| member.name.as_deref() == Some(field))
+        .filter(|member| {
+            let text = cst.member_text(member);
+            text.contains(&explicit_id) || !text.contains("@id(")
+        })
+        .collect::<Vec<_>>();
+    let member = match matches.as_slice() {
+        [member] => *member,
+        [] => {
+            return Err(Failure::Told(format!(
+                "could not find JDL field `{entity}.{field}` with identity `{field_id}`\n       fix: keep it as a direct field member in the parsed entity block"
+            )));
         }
-        byte_offset += line.len();
-    }
-    Err(Failure::Told(format!(
-        "could not find JDL field `{entity}.{field}` with identity `{field_id}`\n       fix: keep it as one compact field line inside `entity {entity} {{ ... }}` and retry"
-    )))
+        _ => {
+            return Err(Failure::Told(format!(
+                "JDL field `{entity}.{field}` is ambiguous\n       fix: give the field one explicit `@id({field_id})`"
+            )));
+        }
+    };
+    let line = cst.member_text(member);
+    let declaration = line.split("//").next().unwrap_or_default().trim();
+    let rewritten = edit(line, declaration)?;
+    cst.replace_span(member.span, &rewritten)
+        .map_err(crate::model_generate_jdl::jdl_edit_failure)
 }
 
 fn replace_type_token(

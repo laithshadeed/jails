@@ -417,15 +417,21 @@ arity.** Sixteen shapes became a comparable number, but exactly one of them is
 authoritative and the rest are projections of it. That is the change, and
 counting shapes does not show it.
 
-**A4.4 — the tree is currently larger than before the rewrite began, and it
-grew again.** Three model front ends are live and editable: `.jails/model.toml`
-(`source.rs`, 537 lines), the pre-v1 JDL draft (2,015) and `jdl 1` (`jdl/v1/`,
-3,725). Above them sit **9,465** lines of frontend adapters in the root binary
-carrying **31** `is_v1_source` branch sites, because every mutating command is
-written three times. Both of those rose -- from ~6,551 and 25 -- so this is the
-one row in A4 moving the wrong way. Expected mid-cutover -- **but no simplicity claim can be banked until
-two of the three front ends are gone.** §22 is the upgrade path that removes
-them.
+**A4.4 — one of the three front ends is gone, and the count moved down for the
+first time.** Two model front ends are still *editable*: `.jails/model.toml`
+(`source.rs`, 622 lines) and `jdl 1` (`jdl/v1/`, 5,312). The pre-v1 JDL draft
+(`jdl.rs` and `upgrade.rs`, 1,951) still **parses** -- `sync`, `model check`
+and the upgrade all read one -- and no longer accepts an edit:
+`model_command::read_source_at` refuses it by name and points at
+`jails model upgrade --to 1`. So the **31** `is_v1_source` branch sites are
+**0**, and the frontend adapters under `src/model_*` went 12,166 -> 11,348
+lines (`find src -name '*.rs' | grep model_ | xargs wc -l`, whole files
+including tests -- re-measure rather than quoting this).
+
+**The remaining claim is still not bankable**, because `.jails/model.toml` is
+editable and every mutating command is still written twice. `docs/10-language.md`
+A4.4 carries the work; §22 is the upgrade path, and the route off the TOML
+exists now.
 
 
 ---

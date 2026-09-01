@@ -98,7 +98,6 @@ pub(crate) struct EntityDeclaration<'a> {
     pub(crate) entity_label: &'a str,
     pub(crate) scaffold: bool,
     pub(crate) fields: &'a [String],
-    pub(crate) v1: bool,
     pub(crate) path: Option<&'a str>,
     pub(crate) uniques: &'a [String],
     /// `--package`, already normalized against the base package.
@@ -114,7 +113,6 @@ pub(crate) fn entity_declaration_at(
         entity_label,
         scaffold,
         fields,
-        v1,
         path,
         uniques,
         package: _,
@@ -151,13 +149,9 @@ pub(crate) fn entity_declaration_at(
     // compiler -- and an entity that means something else by the word says so
     // by editing the declaration.
     //
-    // v1 only, because `@version` is a v1 marker; the draft dialect cannot
-    // express it and inferring one it cannot write would be a lie.
-    if v1 {
-        for field in &mut parsed {
-            if field.label == "version" && matches!(field.type_name.as_str(), "long" | "int") {
-                field.version = true;
-            }
+    for field in &mut parsed {
+        if field.label == "version" && matches!(field.type_name.as_str(), "long" | "int") {
+            field.version = true;
         }
     }
     if scaffold {
@@ -176,36 +170,21 @@ pub(crate) fn entity_declaration_at(
         refuse_unstorable_components(model, &parsed, java_name)?;
     }
     let package = match declaration.package {
-        Some(package) if v1 => format!(" @package({package})"),
-        _ => String::new(),
+        Some(package) => format!(" @package({package})"),
+        None => String::new(),
     };
     let mut output = format!("entity {java_name} @id(ent_{entity_label}){package} {{\n");
     if scaffold {
-        if v1 {
-            match path {
-                Some(path) => output.push_str(&format!(
-                    "  use scaffold(path: {})\n\n",
-                    serde_json::to_string(path).expect("a route path encodes as a JSON string")
-                )),
-                None => output.push_str("  use scaffold\n\n"),
-            }
-        } else {
-            if path.is_some() {
-                return Err(Failure::Told(
-                    "pinning a resource route needs a `jdl 1` model.\n       fix: run `jails model upgrade` and repeat the command"
-                        .to_string(),
-                ));
-            }
-            output = output.replacen(" {", " @scaffold {", 1);
+        match path {
+            Some(path) => output.push_str(&format!(
+                "  use scaffold(path: {})\n\n",
+                serde_json::to_string(path).expect("a route path encodes as a JSON string")
+            )),
+            None => output.push_str("  use scaffold\n\n"),
         }
     }
     for field in &parsed {
-        let line = if v1 {
-            render_v1_field_line(entity_label, field)
-        } else {
-            render_field_line(entity_label, field)?
-        };
-        output.push_str(&line);
+        output.push_str(&render_v1_field_line(entity_label, field));
         output.push('\n');
     }
     // **A composite unique is a constraint on the table, not a marker on one
@@ -230,24 +209,13 @@ pub(crate) fn entity_declaration_at(
                     .to_string(),
             ));
         }
-        if !v1 {
-            return Err(Failure::Told(
-                "a composite unique key needs a `jdl 1` model.\n       fix: run `jails model upgrade` and repeat the command"
-                    .to_string(),
-            ));
-        }
         output.push_str(&format!("  unique [{}]\n", components.join(", ")));
     }
     output.push_str("}\n");
     Ok(output)
 }
 
-pub(crate) fn enum_declaration(
-    java_name: &str,
-    label: &str,
-    values: &[String],
-    v1: bool,
-) -> Result<String> {
+pub(crate) fn enum_declaration(java_name: &str, label: &str, values: &[String]) -> Result<String> {
     let values = values
         .iter()
         .map(|value| {
@@ -258,65 +226,18 @@ pub(crate) fn enum_declaration(
     let mut output = format!("enum {java_name} @id(ent_{label}) {{\n");
     for value in values {
         output.push_str("  ");
-        if v1 {
-            if let Some((constant, wire)) = value.split_once('=') {
-                output.push_str(constant);
-                output.push_str(" = ");
-                output.push_str(&serde_json::to_string(wire).map_err(|error| {
-                    Failure::Told(format!("could not quote enum wire value: {error}"))
-                })?);
-            } else {
-                output.push_str(&value);
-            }
+        if let Some((constant, wire)) = value.split_once('=') {
+            output.push_str(constant);
+            output.push_str(" = ");
+            output.push_str(&serde_json::to_string(wire).map_err(|error| {
+                Failure::Told(format!("could not quote enum wire value: {error}"))
+            })?);
         } else {
             output.push_str(&value);
         }
         output.push('\n');
     }
     output.push_str("}\n");
-    Ok(output)
-}
-
-pub(crate) fn render_field_line(entity_label: &str, field: &ParsedField) -> Result<String> {
-    field.require_v1_for_rich_semantics()?;
-    let suffix = if !field.required {
-        "?"
-    } else if field.non_blank {
-        "!"
-    } else {
-        ""
-    };
-    let range = if field.min_length.is_some() || field.max_length.is_some() {
-        format!(
-            "({}..{})",
-            field
-                .min_length
-                .map(|value| value.to_string())
-                .unwrap_or_default(),
-            field
-                .max_length
-                .map(|value| value.to_string())
-                .unwrap_or_default(),
-        )
-    } else {
-        String::new()
-    };
-    let mut output = format!(
-        "  {}: {}{}{} @id(fld_{}_{})",
-        field.java_name, field.type_name, suffix, range, entity_label, field.label
-    );
-    if field.primary_key {
-        output.push_str(" @pk");
-    }
-    if field.unique {
-        output.push_str(" @unique");
-    }
-    if field.indexed {
-        output.push_str(" @index");
-    }
-    if let Some(column) = &field.mapped_column {
-        output.push_str(&format!(" @column({column})"));
-    }
     Ok(output)
 }
 

@@ -199,10 +199,19 @@ pre-v1 half of `jdl/`, `upgrade.rs` included, and the frontend adapters are
 the *root binary's*, which is 9,465 rather than the 10,081 a path match on
 `/src/model_` sweeps up from other crates.)
 
-Three model front ends are live and editable: `.jails/model.toml`
-(`source.rs`), the pre-v1 JDL draft (`jdl.rs` and its children) and `jdl 1`
-(`jdl/v1/`). Above them sit the root binary's `model_*` adapters, because
-every mutating command is written three times.
+**The pre-v1 draft is done: `is_v1_source` has no callers.** It still
+*parses* -- `sync`, `model check` and the upgrade all read one, which is what
+makes the carry-across possible at all -- and `model_command::read_source_at`
+refuses an edit to one by name, pointing at `jails model upgrade --to 1`. So
+31 branch sites became 0 and 818 lines of line-scanning editors went with
+them: the parameters they needed to find a declaration by hand (a stable id to
+match `@id(...)` against, a keyword prefix, the `@as` label a rename had to
+pin) are gone from nine signatures, because the CST is indexed by declaration
+rather than searched.
+
+**Two front ends are still editable**: `.jails/model.toml` (`source.rs`) and
+`jdl 1` (`jdl/v1/`). Above them sit the root binary's `model_*` adapters,
+because every mutating command is still written twice.
 
 `jdl/upgrade.rs` is §22, and it is the only one of these that shrinks the
 others: the second front end goes away by *upgrading* projects onto the first,
@@ -257,15 +266,49 @@ axes are the project's, and the command's flat inputs arrive as
 `a_flat_input_list_with_no_parameters_refuses_by_name` pins the renderer's
 half, including that the same model *with* parameters renders.
 
-**What is left is deleting the branches.** 31 `is_v1_source` sites, and the
-test surface that reaches them: ~43 references to `.jails/model.toml` in
-`tests/cli/model.rs`, most of them exercising a mutating command *through* the
-TOML front end. Those become `jdl_project` fixtures. Nothing is blocked any
-more -- every project can be carried across first.
+**What is left is the TOML half.** ~44 `model_project(...)` fixtures and ~47
+references to `.jails/model.toml` in `tests/cli/model.rs`, most of them
+exercising a mutating command *through* the TOML front end. Those become
+`jdl_project` fixtures, the same way the 47 draft fixtures did, and then the
+`jdl` switch in `model_capability`, `model_setting`, `model_resource`,
+`model_destroy`, `model_index` and `model_rename` collapses the way `v1` just
+did. Nothing is blocked -- every project can be carried across first.
 
-**Exit:** `.jails/model.toml` and the pre-v1 draft are read only by
-`jails model upgrade`, the one-shot that carries a project across;
-`is_v1_source` has no callers.
+**Two defects the draft port found, both silent, both now fixed.** They are
+here because they are the argument for porting a test rather than deleting it:
+
+- **The component linker had no body-method rule.** A controller's request body
+  is its `on` entity and `GET`/`DELETE` carry none. `linker/unit.rs` refused
+  that pair; `linker/component.rs` did not, so `g controller X --method get
+  --on Y` succeeded through a v1 component and emitted a body-bound
+  `@GetMapping`. The check sits *above* `validate_route`'s `route` guard,
+  because a controller with no `route` member still answers on one --
+  `component::endpoint` defaults the method to `GET`, which is exactly the
+  declaration an early return would not see.
+- **Relaxing a non-blank field wrote a model that could not be read.**
+  `resource field nullability --nullable` moved the `?` suffix and left
+  `@notBlank`, and `model-non-blank-required` then refused the whole model,
+  naming a contradiction the reader did not write. The draft dropped it
+  implicitly because `string!` and `string?` were one token.
+
+**Two constructs the draft had and v1 does not**, recorded because they are
+language decisions rather than gaps to fill in later: a **component** and a
+**capability** each carried a `@package`, and moving it moved the pack's files.
+v1 derives every managed destination from the closed projection registry, so
+the reader-owned destination is `model eject`'s. An **entity** `@package` does
+still state a move, which is where the "a move relocates the managed tree,
+carries the reader's delta across, and refuses an overlapping edit" property is
+proved now.
+
+**Budget it from the half that is done.** Porting the draft fixtures cost 23
+failing tests, of which 19 were assertions on a syntax that had changed, and
+four were properties v1 states differently: two `@package` moves it does not
+have, a comment that has to sit above a declaration rather than inside it, and
+a label that follows the name. It also found two silent product defects -- see
+the two entries above. Expect the same shape and the same yield.
+
+**Exit:** `.jails/model.toml` is read only by `jails model upgrade`, the
+one-shot that carries a project across.
 
 ## Open items
 

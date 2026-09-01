@@ -54,7 +54,11 @@ pub(crate) fn run(to: u16, invocation: Invocation) -> Result<()> {
             "`jails model upgrade` requires the JDL authoring source `{JDL_PATH}`.\n       fix: run `jails model init` for a project jails did not create, or write `{JDL_PATH}` directly"
         )));
     }
-    let current_source = crate::model_command::read_source(&model_path)?;
+    // **Read directly, because this is the one command whose input is the
+    // source `read_source_at` refuses.** A pre-v1 draft no longer accepts
+    // edits; the way off it is here, and the file exists -- the `is_file`
+    // check above is what got us this far -- so there is no seed to derive.
+    let current_source = read_file(&root.join(&model_path))?;
     let current_model = jails_model::parse_jdl(&current_source)
         .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
 
@@ -108,7 +112,7 @@ pub(crate) fn run(to: u16, invocation: Invocation) -> Result<()> {
 /// operations, or neither.
 fn carry_toml_across(invocation: Invocation) -> Result<()> {
     let toml_path = PathBuf::from(TOML_PATH);
-    let current_source = crate::model_command::read_source(&toml_path)?;
+    let current_source = read_file(&invocation.root()?.join(&toml_path))?;
     let current_model = jails_model::parse_toml(&current_source)
         .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
 
@@ -394,6 +398,19 @@ fn materialize_flat_inputs(model: &mut jails_model::AppModel) -> Result<Vec<Stri
         }
     }
     Ok(carried)
+}
+
+/// The model file, read as bytes on disk.
+///
+/// Not `model_command::read_source_at`: that one refuses a pre-v1 draft by
+/// name, which is exactly the input this command exists to consume.
+fn read_file(path: &std::path::Path) -> Result<String> {
+    std::fs::read_to_string(path).map_err(|error| {
+        Failure::Told(format!(
+            "could not read canonical model `{}`: {error}",
+            path.display()
+        ))
+    })
 }
 
 #[cfg(test)]

@@ -25,7 +25,6 @@ pub(super) fn operation_declaration(
     model: &jails_model::AppModel,
     entity_label: &str,
     fields: &[String],
-    v1: bool,
 ) -> Result<String> {
     let kind = match args.kind {
         ArtifactKind::Usecase => "command",
@@ -152,18 +151,10 @@ pub(super) fn operation_declaration(
                     Ok(format!("{label}{direction}"))
                 })
                 .collect::<Result<Vec<_>>>()?;
-            if v1 {
-                output.push_str(&format!("    order by [{}]\n", order_by.join(", ")));
-            } else {
-                output.push_str(&format!("    orderBy: {}\n", order_by.join(", ")));
-            }
+            output.push_str(&format!("    order by [{}]\n", order_by.join(", ")));
         }
         if let Some(limit) = args.limit {
-            if v1 {
-                output.push_str(&format!("    limit {limit}\n"));
-            } else {
-                output.push_str(&format!("    limit: {limit}\n"));
-            }
+            output.push_str(&format!("    limit {limit}\n"));
         }
     }
     if args.kind == ArtifactKind::Usecase
@@ -175,11 +166,7 @@ pub(super) fn operation_declaration(
         // publication, which is the weaker guarantee and the exact
         // substitution `deliver` exists to make impossible.
         let event = java_to_label(yields);
-        if v1 {
-            output.push_str(&format!("    emit {event}\n    deliver outbox\n"));
-        } else {
-            output.push_str(&format!("    emits: {event}\n    delivery: outbox\n"));
-        }
+        output.push_str(&format!("    emit {event}\n    deliver outbox\n"));
     }
     // `--via` is a `join`: `g query --via User` reads `users` alongside
     // `messages`, on the `userId` the child already declares. The model has
@@ -231,17 +218,10 @@ pub(super) fn operation_declaration(
                 ))
             })?;
         let alias = &parent_label;
-        if v1 {
-            output.push_str(&format!(
-                "    join {parent} as {alias} on {} -> {alias}.{}\n",
-                child.label, key.label
-            ));
-        } else {
-            output.push_str(&format!(
-                "    via: {parent}\n    join_on: {} -> {}\n",
-                child.label, key.label
-            ));
-        }
+        output.push_str(&format!(
+            "    join {parent} as {alias} on {} -> {alias}.{}\n",
+            child.label, key.label
+        ));
     }
     // `--on-conflict` is `conflict on [field]`: one
     // `insert ... on conflict (col) do nothing returning`, then a read of the
@@ -253,11 +233,7 @@ pub(super) fn operation_declaration(
         && let Some(component) = &args.on_conflict
     {
         let label = model_generate::operation_field_label(model, entity_label, component)?;
-        if v1 {
-            output.push_str(&format!("    conflict on [{label}]\n"));
-        } else {
-            output.push_str(&format!("    conflict_on: {label}\n"));
-        }
+        output.push_str(&format!("    conflict on [{label}]\n"));
     }
     // **`set`, `select`, `if-match`, `bind` and `consumes` are grammar and
     // model already**; only this frontend refused them, which is the same
@@ -438,106 +414,95 @@ pub(super) fn operation_declaration(
             })
             .cloned()
             .collect::<Vec<_>>();
-        if v1 {
-            if let Some(selector) = &selector {
-                output.push_str(&format!("    select [{selector}]\n"));
-            }
-            // Omitted rather than empty when every component is pinned,
-            // managed or the selector: `update []` is not a field reference
-            // list the grammar accepts, and a transition whose whole effect is
-            // a pinned constant is an ordinary shape.
-            if !updated.is_empty() {
-                output.push_str(&format!("    update [{}]\n", updated.join(", ")));
-            }
-            if let Some(policy) = precondition {
-                output.push_str(&format!("    if-match {}\n", policy.label()));
-            }
-        } else {
-            output.push_str(&format!("    sets: {}\n", updated.join(", ")));
+        if let Some(selector) = &selector {
+            output.push_str(&format!("    select [{selector}]\n"));
+        }
+        // Omitted rather than empty when every component is pinned, managed or
+        // the selector: `update []` is not a field reference list the grammar
+        // accepts, and a transition whose whole effect is a pinned constant is
+        // an ordinary shape.
+        if !updated.is_empty() {
+            output.push_str(&format!("    update [{}]\n", updated.join(", ")));
+        }
+        if let Some(policy) = precondition {
+            output.push_str(&format!("    if-match {}\n", policy.label()));
         }
         if let Some(yields) = &args.strategy_yields {
-            if v1 {
-                output.push_str(&format!("    emit {}\n", java_to_label(yields)));
-            } else {
-                output.push_str(&format!("    yields: {}\n", java_to_label(yields)));
-            }
+            output.push_str(&format!("    emit {}\n", java_to_label(yields)));
         }
     }
-    if v1 {
-        let target = model
-            .entities
-            .values()
-            .find(|candidate| candidate.label == entity_label);
-        for assignment in &args.set {
-            let (component, value) = assignment.split_once('=').ok_or_else(|| {
-                Failure::Told(format!(
-                    "`{assignment}` is not a pinned component\n       fix: write `<component>=<value>`, for example `seen=true`"
-                ))
-            })?;
-            // **Refused before any type is consulted.** A pin is a constant
-            // this project declares, and anything an expression could hide in
-            // never reaches a type at all -- so the message is about the value
-            // rather than about the component whose type it failed to be.
-            if let Some(character) = value
-                .chars()
-                .find(|character| "()\\\"'`;{}<>".contains(*character) || character.is_control())
-            {
-                return Err(Failure::Told(format!(
-                    "`{value}` contains `{character}`, so it is not a literal.\n       fix: pin a constant -- a number, `true`, `false`, a plain string, or an enum constant"
-                )));
-            }
-            if let Some(target) = target {
-                refuse_unpinnable(
-                    model,
-                    target,
-                    // **A transition's field list names the columns it
-                    // touches, not the request body.** `g transition MarkSeen
-                    // id seen version --set seen=true` is the familiar
-                    // spelling: `seen` is named because the transition writes
-                    // it, and the `--set` says the value is a constant. A
-                    // command's list *is* its request, so a pin of one of its
-                    // fields is a value the caller could also send.
-                    match args.kind {
-                        ArtifactKind::Transition => &[],
-                        _ => args.fields.as_slice(),
-                    },
-                    component,
-                    value,
-                )?;
-            }
-            output.push_str(&format!(
-                "    set {} = {}\n",
-                java_to_label(component),
-                literal(value)
-            ));
-        }
-        // **A binding is an instruction to Spring's data binder, and the data
-        // binder only reads a form.** On a JSON body Jackson does the binding
-        // and the annotation is not even looked at -- so a `--bind` there is a
-        // wire name the reader asked for and silently did not get.
-        if !args.bind.is_empty() && args.consumes != Some(jails_spec::spec::kind::WireFormat::Form)
+    let target = model
+        .entities
+        .values()
+        .find(|candidate| candidate.label == entity_label);
+    for assignment in &args.set {
+        let (component, value) = assignment.split_once('=').ok_or_else(|| {
+            Failure::Told(format!(
+                "`{assignment}` is not a pinned component\n       fix: write `<component>=<value>`, for example `seen=true`"
+            ))
+        })?;
+        // **Refused before any type is consulted.** A pin is a constant
+        // this project declares, and anything an expression could hide in
+        // never reaches a type at all -- so the message is about the value
+        // rather than about the component whose type it failed to be.
+        if let Some(character) = value
+            .chars()
+            .find(|character| "()\\\"'`;{}<>".contains(*character) || character.is_control())
         {
-            return Err(Failure::Told(
-                "this endpoint reads a JSON body, where the wire names come from Jackson and `--bind` is not read at all.\n       fix: pass `--consumes form`, or set `spring.jackson.property-naming-strategy` for the whole project".to_string(),
-            ));
+            return Err(Failure::Told(format!(
+                "`{value}` contains `{character}`, so it is not a literal.\n       fix: pin a constant -- a number, `true`, `false`, a plain string, or an enum constant"
+            )));
         }
-        for binding in &args.bind {
-            let (component, wire) = binding.split_once('=').ok_or_else(|| {
-                Failure::Told(format!(
-                    "`{binding}` is not a parameter binding\n       fix: write `<component>=<parameter>`, for example `id=note_id`"
-                ))
-            })?;
-            // From the form, because `--bind` is refused without
-            // `--consumes form`: the whole reason a binding exists is that a
-            // form field's name is the page's, not the model's.
-            output.push_str(&format!(
-                "    bind {} from form {}\n",
-                java_to_label(component),
-                serde_json::to_string(wire).map_err(|error| Failure::Told(format!(
-                    "could not quote a bound parameter name: {error}"
-                )))?
-            ));
+        if let Some(target) = target {
+            refuse_unpinnable(
+                model,
+                target,
+                // **A transition's field list names the columns it
+                // touches, not the request body.** `g transition MarkSeen
+                // id seen version --set seen=true` is the familiar
+                // spelling: `seen` is named because the transition writes
+                // it, and the `--set` says the value is a constant. A
+                // command's list *is* its request, so a pin of one of its
+                // fields is a value the caller could also send.
+                match args.kind {
+                    ArtifactKind::Transition => &[],
+                    _ => args.fields.as_slice(),
+                },
+                component,
+                value,
+            )?;
         }
+        output.push_str(&format!(
+            "    set {} = {}\n",
+            java_to_label(component),
+            literal(value)
+        ));
+    }
+    // **A binding is an instruction to Spring's data binder, and the data
+    // binder only reads a form.** On a JSON body Jackson does the binding
+    // and the annotation is not even looked at -- so a `--bind` there is a
+    // wire name the reader asked for and silently did not get.
+    if !args.bind.is_empty() && args.consumes != Some(jails_spec::spec::kind::WireFormat::Form) {
+        return Err(Failure::Told(
+            "this endpoint reads a JSON body, where the wire names come from Jackson and `--bind` is not read at all.\n       fix: pass `--consumes form`, or set `spring.jackson.property-naming-strategy` for the whole project".to_string(),
+        ));
+    }
+    for binding in &args.bind {
+        let (component, wire) = binding.split_once('=').ok_or_else(|| {
+            Failure::Told(format!(
+                "`{binding}` is not a parameter binding\n       fix: write `<component>=<parameter>`, for example `id=note_id`"
+            ))
+        })?;
+        // From the form, because `--bind` is refused without
+        // `--consumes form`: the whole reason a binding exists is that a
+        // form field's name is the page's, not the model's.
+        output.push_str(&format!(
+            "    bind {} from form {}\n",
+            java_to_label(component),
+            serde_json::to_string(wire).map_err(|error| Failure::Told(format!(
+                "could not quote a bound parameter name: {error}"
+            )))?
+        ));
     }
     // **`consumes` rides on the route**, which is the grammar's shape rather
     // than a statement of its own -- `route POST "/x" consumes form`. So a
@@ -668,16 +633,12 @@ pub(super) fn operation_declaration(
             ),
             _ => unreachable!("event paths are rejected during validation"),
         };
-        if v1 {
-            let path = serde_json::to_string(path)
-                .map_err(|error| Failure::Told(format!("could not quote route path: {error}")))?;
-            let consumes = args.consumes.map_or_else(String::new, |format| {
-                format!(" consumes {}", format.label())
-            });
-            output.push_str(&format!("    route {method} {path}{consumes}\n"));
-        } else {
-            output.push_str(&format!("    route: {method} {path}\n"));
-        }
+        let path = serde_json::to_string(path)
+            .map_err(|error| Failure::Told(format!("could not quote route path: {error}")))?;
+        let consumes = args.consumes.map_or_else(String::new, |format| {
+            format!(" consumes {}", format.label())
+        });
+        output.push_str(&format!("    route {method} {path}{consumes}\n"));
     }
     output.push_str("  }");
     Ok(output)

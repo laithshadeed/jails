@@ -85,29 +85,16 @@ pub(crate) fn add(
     let index_id = IndexId::parse(format!("idx_{model_label}_{suffix}")).map_err(Failure::Told)?;
     let mut next_source = current_source.clone();
     if jdl {
-        // **Two grammars, one file extension.** `.jails/model.jdl` may hold
-        // either syntax, and they disagree about a constraint: v1's
-        // `field_list` reads `index [ user_id, created_at desc ]` and allows
-        // only `@id` and `@map`, while v0 takes parentheses and names the
-        // index with `@as`. **Branch on the source, never the filename**: a
-        // `.jdl` file holds either syntax, so writing the v0 form for one
-        // produces a declaration its own parser rejects -- "a constraint needs
-        // a bracketed field list", pointing at the entity's closing brace.
-        //
-        // A test whose model is v0 syntax in a `.jdl` file cannot catch that;
-        // it is the one shape where branching on the filename is right.
-        let member = match crate::model_generate_jdl::is_v1_source(&next_source) {
-            true => format!(
-                "  index [{}] @id({})",
-                canonical.join(", "),
-                index_id.as_str()
-            ),
-            false => format!(
-                "  index ({}) @id({}) @as({index_label})",
-                canonical.join(", "),
-                index_id.as_str()
-            ),
-        };
+        // v1's `field_list` reads `index [ user_id, created_at desc ]` and
+        // allows only `@id` and `@map`. The pre-v1 draft took parentheses and
+        // named the index with `@as`, and picking between the two used to be a
+        // test on the source rather than on the filename, because a `.jdl`
+        // file held either syntax. It no longer does.
+        let member = format!(
+            "  index [{}] @id({})",
+            canonical.join(", "),
+            index_id.as_str()
+        );
         next_source =
             crate::model_generate_jdl::index::insert(&next_source, &entity_java_name, &member)?;
     } else {

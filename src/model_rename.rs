@@ -111,7 +111,6 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             &current_source,
             &entity.names.java_type,
             &request.to,
-            &entity_label,
             entity.id.as_str(),
             // Pinned only when the table stays. A cutover lets the SQL name
             // follow the new label, which is what makes the migration below

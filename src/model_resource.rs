@@ -269,11 +269,7 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
         jails_model::FieldPlacement::ByLabel
     };
     let next_source = if jdl {
-        let line = if crate::model_generate_jdl::is_v1_source(&current_source) {
-            crate::model_generate_jdl::render_v1_field_line(&entity_label, &parsed)
-        } else {
-            crate::model_generate_jdl::render_field_line(&entity_label, &parsed)?
-        };
+        let line = crate::model_generate_jdl::render_v1_field_line(&entity_label, &parsed);
         crate::model_generate_jdl::insert_field(&current_source, &entity_java_name, &line)?
     } else {
         let mut next = current_source.clone();

@@ -11,22 +11,20 @@ mod unit;
 pub(crate) use component::{component_kind, component_stem};
 use edit::insert_entity_member;
 pub(crate) use edit::{
-    insert_field, is_v1_source, jdl_edit_failure, remove_capability, remove_dependency,
-    remove_entity, remove_operation, remove_setting, remove_unit, rename_entity, set_entity_active,
+    insert_field, jdl_edit_failure, remove_capability, remove_dependency, remove_entity,
+    remove_operation, remove_setting, remove_unit, rename_entity, set_entity_active,
 };
 use operation::operation_declaration;
 pub(crate) use render::{EntityDeclaration, normalize_package};
 use render::{entity_declaration_at, enum_declaration, field_label_of, quoted_list};
-pub(crate) use render::{
-    java_type_name, relation_member_name, render_field_line, render_v1_field_line,
-};
+pub(crate) use render::{java_type_name, relation_member_name, render_v1_field_line};
 
 use crate::ArtifactKind;
 use crate::cli::GenerateArgs;
 use crate::model_generate::{ParsedField, PreparedMutation, finish_generation, parse_field};
 use crate::model_resource::java_to_label;
 use crate::{Invocation, model_generate};
-use jails_model::{EntityId, ModelPatch, OperationId, StableId};
+use jails_model::{EntityId, ModelPatch, OperationId};
 use jails_support::{Failure, Result};
 use serde_json::json;
 use std::collections::BTreeSet;
@@ -94,7 +92,6 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     model_generate::reject_unsupported_operation_options(&args, profile)?;
     let model_path = PathBuf::from(MODEL_PATH);
     let current_source = read_model(&invocation)?;
-    let v1 = is_v1_source(&current_source);
     let current_model = parse(&current_source)?;
     // **An event may name no entity**, and then the block it becomes is a
     // top-level declaration rather than an entity member. Everything below
@@ -118,11 +115,6 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         }
     };
     let standalone = entity_java_name.is_empty();
-    if standalone && !v1 {
-        return Err(Failure::Told(format!(
-            "an event with no entity needs `jdl 1`.\n       fix: upgrade `{MODEL_PATH}` to JDL v1, or pass `--on <Entity>`"
-        )));
-    }
     // An event's payload can carry a component the row does not: see
     // `event_component_declarations`. Every other operation's field list is a
     // projection of the target, so it goes through the checked resolver.
@@ -145,7 +137,7 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     let operation_label = java_to_label(&args.name);
     let operation_id = OperationId::parse(format!("op_{operation_label}"))
         .map_err(|error| Failure::Told(format!("could not assign operation identity: {error}")))?;
-    let declaration = operation_declaration(&args, &current_model, &entity_label, &fields, v1)?;
+    let declaration = operation_declaration(&args, &current_model, &entity_label, &fields)?;
     // The same block one level out. An entity member is rendered nested; a
     // top-level declaration is the identical text without that indent, so it
     // is one transform rather than a second renderer.
@@ -173,7 +165,7 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         }
     };
     if let Some(existing) = current_model.operations.get(&operation_id) {
-        let without = remove_operation(&current_source, &args.name, operation_id.as_str())?;
+        let without = remove_operation(&current_source, &args.name)?;
         let requested_source = splice(&without)?;
         let requested_model = parse(&requested_source)?;
         let requested = requested_model
@@ -230,24 +222,16 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
     model_generate::validate_entity_args(&args)?;
     let model_path = PathBuf::from(MODEL_PATH);
     let current_source = read_model(&invocation)?;
-    let v1 = is_v1_source(&current_source);
     let current_model = parse(&current_source)?;
     let entity_label = java_to_label(&args.name);
     let entity_id = EntityId::parse(format!("ent_{entity_label}"))
         .map_err(|error| Failure::Told(format!("could not assign entity identity: {error}")))?;
     let mut fields = args.fields.clone();
     if args.timestamps {
-        fields.extend(if v1 {
-            [
-                "createdAt:instant@default(now())".to_string(),
-                "updatedAt:instant@default(now())@updated".to_string(),
-            ]
-        } else {
-            [
-                "createdAt:instant".to_string(),
-                "updatedAt:instant".to_string(),
-            ]
-        });
+        fields.extend([
+            "createdAt:instant@default(now())".to_string(),
+            "updatedAt:instant@default(now())@updated".to_string(),
+        ]);
     }
     // **Normalized, so both spellings mean one place.** A reader types the
     // package they see in their editor -- `com.example.demo.billing` -- and
@@ -260,7 +244,7 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
         .map(|package| normalize_package(&current_model.project.base_package, package))
         .transpose()?;
     let declaration = match args.kind {
-        ArtifactKind::Enum => enum_declaration(&args.name, &entity_label, &fields, v1)?,
+        ArtifactKind::Enum => enum_declaration(&args.name, &entity_label, &fields)?,
         ArtifactKind::Record | ArtifactKind::Value | ArtifactKind::Scaffold => {
             entity_declaration_at(
                 &current_model,
@@ -269,7 +253,6 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
                     entity_label: &entity_label,
                     scaffold: args.kind == ArtifactKind::Scaffold,
                     fields: &fields,
-                    v1,
                     path: args.path.as_deref(),
                     uniques: &args.uniques,
                     package: package.as_deref(),
@@ -279,7 +262,7 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
         _ => unreachable!("run only accepts entity kinds"),
     };
     if let Some(existing) = current_model.entity(&entity_id) {
-        let requested = declaration_entity(&current_model, &declaration, &entity_id, v1)?;
+        let requested = declaration_entity(&current_model, &declaration, &entity_id)?;
         if !same_entity_contribution(existing, &requested) {
             // **A strict superset is an addition, not a disagreement.** A
             // declarative manifest states the shape it wants and is replayed
@@ -484,7 +467,6 @@ fn declaration_entity(
     model: &jails_model::AppModel,
     declaration: &str,
     entity_id: &EntityId,
-    v1: bool,
 ) -> Result<jails_model::Entity> {
     let storage = match model.project.dialect.as_str() {
         "postgresql" => "postgres",
@@ -492,24 +474,14 @@ fn declaration_entity(
         "sqlite" => "sqlite",
         _ => "none",
     };
-    let source = if v1 {
-        format!(
-            "jdl 1\napp Comparison @id(project_comparison) {{\n  pkg {}\n  java {}\n  platform {}\n  build {}\n  storage {storage}\n}}\n\n{}",
-            model.project.base_package,
-            model.project.java_release,
-            model.project.platform,
-            model.project.build,
-            declaration
-        )
-    } else {
-        format!(
-            "application Comparison @id(project_comparison)\npackage {}\njava {}\ndialect {}\n\n{}",
-            model.project.base_package,
-            model.project.java_release,
-            model.project.dialect,
-            declaration
-        )
-    };
+    let source = format!(
+        "jdl 1\napp Comparison @id(project_comparison) {{\n  pkg {}\n  java {}\n  platform {}\n  build {}\n  storage {storage}\n}}\n\n{}",
+        model.project.base_package,
+        model.project.java_release,
+        model.project.platform,
+        model.project.build,
+        declaration
+    );
     parse(&source)?
         .entity(entity_id)
         .cloned()
@@ -553,16 +525,8 @@ pub(crate) fn parse(source: &str) -> Result<jails_model::AppModel> {
         .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))
 }
 
-fn append_declaration(mut source: String, declaration: &str) -> Result<String> {
-    if is_v1_source(&source) {
-        return jails_model::append_jdl_declaration(&source, declaration).map_err(jdl_edit_failure);
-    }
-    if !source.ends_with('\n') {
-        source.push('\n');
-    }
-    source.push('\n');
-    source.push_str(declaration);
-    Ok(source)
+fn append_declaration(source: String, declaration: &str) -> Result<String> {
+    jails_model::append_jdl_declaration(&source, declaration).map_err(jdl_edit_failure)
 }
 
 /// The same declaration, with the collection route the reader pinned.

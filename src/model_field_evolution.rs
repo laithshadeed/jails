@@ -377,7 +377,6 @@ fn rename_source_field(
             &resolved.field_java_name,
             resolved.field_id.as_str(),
             next_name,
-            &resolved.field_label,
             next_column,
         )
     } else {

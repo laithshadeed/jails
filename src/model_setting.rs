@@ -41,12 +41,7 @@ pub(crate) fn set(key: String, value: String, tests: bool, invocation: Invocatio
             setting.id.clone(),
             setting.label.clone(),
             if jdl {
-                crate::model_generate_jdl::remove_setting(
-                    &current_source,
-                    &setting.key,
-                    setting.id.as_str(),
-                    &setting.label,
-                )?
+                crate::model_generate_jdl::remove_setting(&current_source, &setting.label)?
             } else {
                 jails_model::remove_setting_declaration(&current_source, &setting.label)
                     .map_err(Failure::Told)?
@@ -103,12 +98,7 @@ pub(crate) fn unset(key: String, tests: bool, invocation: Invocation) -> Result<
             ))
         })?;
     let next_source = if jdl {
-        crate::model_generate_jdl::remove_setting(
-            &current_source,
-            &setting.key,
-            setting.id.as_str(),
-            &setting.label,
-        )?
+        crate::model_generate_jdl::remove_setting(&current_source, &setting.label)?
     } else {
         jails_model::remove_setting_declaration(&current_source, &setting.label)
             .map_err(Failure::Told)?
@@ -141,7 +131,7 @@ fn append_setting(
     target: SettingTarget,
     jdl: bool,
 ) -> Result<()> {
-    if jdl && crate::model_generate_jdl::is_v1_source(source) {
+    if jdl {
         let declaration = format!(
             "prop {key} = {} @id({}){}",
             quote(value)?,
@@ -154,16 +144,6 @@ fn append_setting(
         );
         *source = jails_model::append_jdl_declaration(source, &declaration)
             .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
-    } else if jdl {
-        if !source.ends_with('\n') {
-            source.push('\n');
-        }
-        source.push_str(&format!(
-            "\nsetting {key} @id({}) @target({}) = {}\n",
-            id.as_str(),
-            target.label(),
-            quote(value)?,
-        ));
     } else {
         if !source.ends_with('\n') {
             source.push('\n');

@@ -10622,6 +10622,21 @@ fn jdl_upgrade_moves_a_pre_v1_draft_onto_v1_without_re_identifying_anything() {
         "{before:?}"
     );
 
+    // **A draft compiles and no longer accepts an edit.** `docs/10-language.md`
+    // A4.4 removed the second implementation of every mutating command by
+    // making this the one refusal, so a draft is read-only rather than
+    // maintained -- and the refusal has to name the way out, because otherwise
+    // the project is stuck on a front end nothing edits.
+    let refused = jails_cmd(&root, None)
+        .args(["g", "record", "Note", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let told = String::from_utf8_lossy(&refused.stderr);
+    assert!(told.contains("pre-v1 JDL draft"), "{told}");
+    assert!(told.contains("jails model upgrade --to 1"), "{told}");
+    assert_eq!(generated_tree(&root), before, "the refusal wrote a plan");
+
     let upgrade = jails_cmd(&root, None)
         .args(["model", "upgrade", "--to", "1"])
         .output()
