@@ -57,6 +57,27 @@ pub(super) fn operation_declaration(
     // compare-and-swap is. It is never a *target*, though -- the compiler
     // increments it -- so it leaves the update list either way. A scope and an
     // `@updated` stamp are neither input nor target.
+    // **The precondition is the default, not a flag.** An entity with a
+    // `@version` column has one for exactly one reason -- so a stale update is
+    // a no-op rather than a blind overwrite -- and a transition that omitted
+    // the guard silently gave that up. `--if-match optional` relaxes it to
+    // "check it if the caller sent one"; there is no spelling that removes it,
+    // because an entity that does not want one does not declare the column.
+    //
+    // A transition only. A command writes the row, so its version is the
+    // compiler's initial value and there is nothing for a caller to state --
+    // which is what the linker refuses a version parameter on anything else
+    // for.
+    let precondition = (args.kind == ArtifactKind::Transition
+        && model
+            .entities
+            .values()
+            .find(|candidate| candidate.label == entity_label)
+            .is_some_and(|entity| entity.fields.iter().any(|field| field.semantics.version)))
+    .then(|| {
+        args.if_match
+            .unwrap_or(jails_spec::spec::kind::Precondition::Required)
+    });
     let managed = |as_input: bool| {
         model
             .entities
@@ -68,7 +89,7 @@ pub(super) fn operation_declaration(
                     .iter()
                     .filter(|field| {
                         field.semantics.scope.is_some()
-                            || (field.semantics.version && !(as_input && args.if_match.is_some()))
+                            || (field.semantics.version && !(as_input && precondition.is_some()))
                             || field.semantics.updated
                     })
                     .map(|field| field.label.clone())
@@ -387,7 +408,7 @@ pub(super) fn operation_declaration(
             if !updated.is_empty() {
                 output.push_str(&format!("    update [{}]\n", updated.join(", ")));
             }
-            if let Some(policy) = args.if_match {
+            if let Some(policy) = precondition {
                 output.push_str(&format!("    if-match {}\n", policy.label()));
             }
         } else {

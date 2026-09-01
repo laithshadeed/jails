@@ -1079,7 +1079,7 @@ fn a_transition_can_take_its_key_from_the_url() {
         "{controller}"
     );
     assert!(
-        controller.contains("operation.execute(userId, input)"),
+        controller.contains("operation.execute(userId, input, expectedVersion)"),
         "{controller}"
     );
     assert!(controller.contains("RequestMethod.PATCH"), "{controller}");
@@ -1088,7 +1088,8 @@ fn a_transition_can_take_its_key_from_the_url() {
     // it is addressed by is a constant on the port rather than a second
     // spelling in the adapter.
     assert!(
-        transition.contains("Conversation execute(long userId, Input input);"),
+        transition
+            .contains("Conversation execute(long userId, Input input, long expectedVersion);"),
         "{transition}"
     );
     assert!(
@@ -7040,6 +7041,9 @@ fn an_optional_precondition_reaches_the_sql_the_port_and_the_route() {
 
     for args in [
         vec!["add", "db", "--no-start"],
+        // The route is served by the `api` capability, which is what emits a
+        // Spring controller for an operation.
+        vec!["add", "api", "--no-start"],
         vec![
             "g",
             "scaffold",
@@ -7064,7 +7068,7 @@ fn an_optional_precondition_reaches_the_sql_the_port_and_the_route() {
             "--consumes",
             "form",
             "--path",
-            "/customer_api/seen",
+            "/customer_api/seen/{id}",
         ],
     ] {
         assert!(
@@ -7086,30 +7090,29 @@ fn an_optional_precondition_reaches_the_sql_the_port_and_the_route() {
     // also what gives the null parameter a type -- an untyped null compared
     // with `=` leaves PostgreSQL unable to infer one.
     assert!(
-        adapter.contains("version = coalesce(:version, version)"),
+        adapter.contains("version = coalesce(:expected_version, version)"),
         "{adapter}"
     );
-    // The pinned component is in the SQL and bound as a parameter, so the
-    // statement text is the same for every call.
-    assert!(adapter.contains("set seen = :seen"), "{adapter}");
-    assert!(adapter.contains(".param(\"seen\", true)"), "{adapter}");
+    // The pinned component is in the statement, and it is one value for every
+    // call -- so it is written where it cannot be overridden rather than bound
+    // from somewhere a request could reach.
+    assert!(adapter.contains("set seen = true"), "{adapter}");
+    assert!(!adapter.contains(".param(\"seen\""), "{adapter}");
 
-    // Boxed, because `null` is a value the port has to be able to hold.
+    // Boxed, because `null` is a value the port has to be able to hold -- and
+    // outside `Input`, because the version travels as `If-Match`.
     let port = common::read_generated(
         &root,
         "src/main/java/com/example/demo/service/MarkSeenUseCase.java",
     );
     assert!(
-        port.contains("Result execute(Long id, MarkSeenCommand command, Long expectedVersion);"),
+        port.contains("Note execute(long id, Input input, Long expectedVersion);"),
         "{port}"
     );
 
-    // And the request cannot carry the pinned flag at all.
-    let command = common::read_generated(
-        &root,
-        "src/main/java/com/example/demo/service/MarkSeenCommand.java",
-    );
-    assert!(!command.contains("seen"), "{command}");
+    // And the request carries neither the pinned flag nor the version.
+    assert!(!port.contains("boolean seen"), "{port}");
+    assert!(!port.contains("long version"), "{port}");
 
     let controller = common::read_generated(
         &root,
@@ -7133,7 +7136,8 @@ fn an_optional_precondition_reaches_the_sql_the_port_and_the_route() {
         "{integration}"
     );
     assert!(
-        integration.contains("useCase.execute(stored.id(), command, null)"),
+        integration
+            .contains("operation.execute(stored.id(), new MarkSeenTransition.Input(), null)"),
         "{integration}"
     );
 
@@ -7148,7 +7152,17 @@ fn an_optional_precondition_reaches_the_sql_the_port_and_the_route() {
         proof.contains("aRequestWithNoIfMatchIsAppliedUnconditionally"),
         "{proof}"
     );
-    assert!(proof.contains(".param(\"id\", \"7\")"), "{proof}");
+    // The row is addressed through the URL, and the version through the
+    // header the strict branch needs -- so both branches are driven and
+    // neither request carries a body.
+    assert!(
+        proof.contains(".uri(\"/customer_api/seen/{id}\", \"1\")"),
+        "{proof}"
+    );
+    assert!(
+        proof.contains(".header(HttpHeaders.IF_MATCH, \"\\\"1\\\"\")"),
+        "{proof}"
+    );
     assert!(!proof.contains("APPLICATION_JSON"), "{proof}");
 }
 
@@ -7193,21 +7207,21 @@ fn a_transition_insists_on_the_precondition_unless_it_was_asked_not_to() {
         &root,
         "src/main/java/com/example/demo/adapters/JdbcRenameTransition.java",
     );
-    assert!(adapter.contains("version = :version"), "{adapter}");
+    assert!(adapter.contains("version = :expected_version"), "{adapter}");
     assert!(!adapter.contains("coalesce"), "{adapter}");
 
-    // The precondition is a component of the request, and it is required:
-    // the caller states the version they believe they are updating, and the
-    // `where version = :version` above is what makes a stale one a no-op
-    // rather than a blind overwrite. Carrying it in `If-Match` instead is the
-    // HTTP idiom and is not what the compiler emits -- `plan.md` tracks it.
+    // The precondition is required and it is not part of the body: the caller
+    // states the version they believe they are replacing, `where version =
+    // :expected_version` makes a stale one a no-op rather than a blind
+    // overwrite, and the value travels as `If-Match` -- which every cache,
+    // proxy and client library already understands.
     let port = common::read_generated(
         &root,
         "src/main/java/com/example/demo/application/transitions/RenameTransition.java",
     );
-    assert!(port.contains("long version"), "{port}");
+    assert!(!port.contains("long version"), "{port}");
     assert!(
-        port.contains("Note execute(long id, Input input);"),
+        port.contains("Note execute(long id, Input input, long expectedVersion);"),
         "{port}"
     );
 

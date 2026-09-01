@@ -39,6 +39,15 @@ pub(super) struct ControllerProof<'a> {
     pub(super) components: &'a [RecordComponent<'a>],
     /// The Java type of the transition's key parameter, when there is one.
     pub(super) key_json: Option<String>,
+    /// Whether `execute` takes the row's key before its input. **Not derived
+    /// from the binding any more**: a form-bound transition binds
+    /// `@ModelAttribute` like a query and still takes the key, so a stub whose
+    /// arity came from the binding had one parameter too few and the test did
+    /// not compile.
+    pub(super) keyed: bool,
+    /// The row version this route's caller states in `If-Match`, when it has
+    /// one, and whether they must.
+    pub(super) precondition: Option<(String, bool)>,
     /// The JWT claims this controller proves the request against, and the
     /// base package its `ScopeAuthorizer` lives in.
     ///
@@ -76,6 +85,8 @@ pub(super) fn controller_test(
         many,
         components,
         key_json,
+        keyed,
+        precondition,
         scopes,
         spring_boot,
     } = proof;
@@ -93,9 +104,10 @@ pub(super) fn controller_test(
     // answer the constructor above was rendered from.
     let context = if scopes.is_some() { "context, " } else { "" };
     let answered = answer.as_deref().unwrap_or("null");
-    let stub = match binding {
-        Binding::Path => format!("({context}id, input) -> {answered}"),
-        _ => format!("({context}input) -> {answered}"),
+    let stub = match (keyed, precondition.is_some()) {
+        (true, true) => format!("({context}id, input, expectedVersion) -> {answered}"),
+        (true, false) => format!("({context}id, input) -> {answered}"),
+        (false, _) => format!("({context}input) -> {answered}"),
     };
     // `ScopeAuthorizer` is a final class over `Environment`, not an interface,
     // so the stub is a real one reading a `MockEnvironment`. Outside the `prod`
@@ -115,7 +127,12 @@ pub(super) fn controller_test(
     });
     let stub = format!("{stub}{}", authorizer.unwrap_or_default());
 
-    let request = request_shape(model, binding, components, key_json.as_deref())?;
+    let request = request_shape(
+        model,
+        binding,
+        components,
+        keyed.then_some(key_json).flatten().as_deref(),
+    )?;
     // Emitted whole and disabled rather than omitted: a test that cannot be
     // built is a gap in coverage, and a gap nobody can see is the one that
     // stays. Guessing a value instead would not compile.
@@ -138,6 +155,33 @@ pub(super) fn controller_test(
     let classic = crate::emit_capability::boot_major(spring_boot)
         .is_some_and(|major| major < MOCKMVC_TESTER_BOOT_MAJOR);
     let verb = route.method.wire_name().to_ascii_lowercase();
+    // **The precondition is part of the request, so the proof sends it.** An
+    // `If-Match` route driven without the header proves the permissive branch
+    // and nothing else -- and where the header is required, Spring answers 400
+    // before the controller runs, so the proof would assert a status the route
+    // never reaches on a real call.
+    let (header, unconditional) = match &precondition {
+        Some((sample, required)) => {
+            imports.insert("org.springframework.http.HttpHeaders".to_string());
+            let sent = format!(
+                "\n                .header(HttpHeaders.IF_MATCH, \"\\\"{}\\\"\")",
+                sample.trim_matches('"')
+            );
+            let relaxed = if *required {
+                String::new()
+            } else {
+                // The other branch, named for what it proves. Without it
+                // `coalesce(:expected_version, version)` is code no test
+                // drives, and deleting the `coalesce` changes nothing.
+                format!(
+                    "\n    @Test\n    void aRequestWithNoIfMatchIsAppliedUnconditionally() {{\n        assertThat(mvc.{verb}()\n                .uri(\"{}\"{}){})\n                .hasStatusOk();\n    }}\n",
+                    route.path, request.uri_arguments, request.fluent,
+                )
+            };
+            (sent, relaxed)
+        }
+        None => (String::new(), String::new()),
+    };
     let body = if classic {
         imports.extend([
             "org.springframework.test.web.servlet.MockMvc".to_string(),
@@ -150,14 +194,14 @@ pub(super) fn controller_test(
         ]);
         imports.extend(request.imports.iter().cloned());
         format!(
-            "class {type_name}Test {{\n\n    private final MockMvc mvc = MockMvcBuilders.standaloneSetup(\n            new {type_name}({stub})).build();\n\n{disabled}    @Test\n    void answersOnItsDeclaredRoute() throws Exception {{\n        mvc.perform({verb}(\"{}\"{}){})\n                .andExpect(status().isOk());\n    }}\n\n    // Reader-owned tests belong below this stable boundary.\n}}",
+            "class {type_name}Test {{\n\n    private final MockMvc mvc = MockMvcBuilders.standaloneSetup(\n            new {type_name}({stub})).build();\n\n{disabled}    @Test\n    void answersOnItsDeclaredRoute() throws Exception {{\n        mvc.perform({verb}(\"{}\"{}){}{header})\n                .andExpect(status().isOk());\n    }}\n{unconditional}\n    // Reader-owned tests belong below this stable boundary.\n}}",
             route.path, request.classic_uri_arguments, request.classic,
         )
     } else {
         imports.insert("org.springframework.test.web.servlet.assertj.MockMvcTester".to_string());
         imports.extend(request.imports.iter().cloned());
         format!(
-            "class {type_name}Test {{\n\n    private final MockMvcTester mvc = MockMvcTester.of(\n            new {type_name}({stub}));\n\n{disabled}    @Test\n    void answersOnItsDeclaredRoute() {{\n        assertThat(mvc.{verb}()\n                .uri(\"{}\"{}){})\n                .hasStatusOk();\n    }}\n\n    // Reader-owned tests belong below this stable boundary.\n}}",
+            "class {type_name}Test {{\n\n    private final MockMvcTester mvc = MockMvcTester.of(\n            new {type_name}({stub}));\n\n{disabled}    @Test\n    void answersOnItsDeclaredRoute() {{\n        assertThat(mvc.{verb}()\n                .uri(\"{}\"{}){}{header})\n                .hasStatusOk();\n    }}\n{unconditional}\n    // Reader-owned tests belong below this stable boundary.\n}}",
             route.path, request.uri_arguments, request.fluent,
         )
     };
@@ -257,6 +301,16 @@ fn request_shape(
         Binding::Model => {
             let mut fluent = Vec::new();
             let mut classic = Vec::new();
+            // A form-bound transition still addresses its row through the URL,
+            // so the placeholder needs expanding even though nothing else
+            // about this request is a body.
+            let (uri_arguments, classic_uri_arguments) = match key_json {
+                Some(key) => {
+                    let key = key.trim_matches('"').to_string();
+                    (format!(", \"{key}\""), format!(", \"{key}\""))
+                }
+                None => (String::new(), String::new()),
+            };
             for component in components {
                 // **An optional filter is sent with a value, not omitted and
                 // not `null`.** Omitting it leaves the adapter's
@@ -282,8 +336,8 @@ fn request_shape(
             Ok(Request {
                 fluent: prefixed(&fluent),
                 classic: prefixed(&classic),
-                uri_arguments: String::new(),
-                classic_uri_arguments: String::new(),
+                uri_arguments,
+                classic_uri_arguments,
                 imports,
                 missing,
             })

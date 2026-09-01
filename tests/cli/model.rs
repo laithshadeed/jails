@@ -10415,7 +10415,7 @@ entity Task {
         "the primary key selects the row: {adapter}"
     );
     assert!(
-        adapter.contains(r#""version = :guard_version""#),
+        adapter.contains(r#""version = :expected_version""#),
         "a version parameter guards rather than updates: {adapter}"
     );
     assert!(

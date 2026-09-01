@@ -38,6 +38,7 @@ pub(crate) fn lower_and_emit(
                         operation,
                         target,
                         proof::WriteShape {
+                            expected: None,
                             port_suffix: "Command",
                             port_package: jails_model::Package::ApplicationCommands,
                             keyed: None,
@@ -84,10 +85,15 @@ pub(crate) fn lower_and_emit(
                 // `execute` takes the key beside the record, so a proof that
                 // passed it inside as well would not compile.
                 let key = crate::emit_java::transition_key(target, spec)?;
+                // And minus the version, for the same reason: it travels as
+                // `If-Match`, so `execute` takes it beside the record too.
+                let expected = crate::emit_java::precondition(target, spec);
+                let expected = expected.as_ref();
                 let carried = spec
                     .fields
                     .iter()
                     .filter(|field| *field != &key.id)
+                    .filter(|field| expected.is_none_or(|version| *field != &version.field.id))
                     .cloned()
                     .collect::<Vec<_>>();
                 if let Some(inputs) = proof::input_fields(target, &carried, &[])
@@ -101,6 +107,7 @@ pub(crate) fn lower_and_emit(
                             port_package: jails_model::Package::ApplicationTransitions,
                             keyed: Some(key),
                             inputs: &inputs,
+                            expected,
                         },
                     )?
                 {

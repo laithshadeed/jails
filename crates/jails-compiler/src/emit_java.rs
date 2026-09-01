@@ -246,8 +246,11 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
             let context = operation_context(model, entity, &mut imports);
             let type_name = with_suffix(&operation.names.java_type, "Transition");
             let route = route_constant(transition.route.as_deref());
+            let expected = precondition(entity, transition)
+                .map(|precondition| precondition.parameter(&mut imports))
+                .unwrap_or_default();
             let body = format!(
-                "public interface {type_name} {{\n{route}\n    {} execute({context}{key_type} {key_member}, Input input);\n\n{input}\n}}",
+                "public interface {type_name} {{\n{route}\n    {} execute({context}{key_type} {key_member}, Input input{expected});\n\n{input}\n}}",
                 entity.names.java_type
             );
             (Package::ApplicationTransitions, type_name, body, imports)
@@ -437,17 +440,21 @@ pub(crate) fn input_components<'a>(
                 parameter_components(model, &query.semantics.parameters, imports)
             }
         }
-        // **Minus the row selector.** `execute` already takes it, and a
-        // component bound from two places can disagree with itself -- a
-        // `PATCH /conversations/{userId}/status` whose body carries a
-        // different `userId` has no honest answer.
+        // **Minus the row selector, and minus the version.** `execute` already
+        // takes both, and a component bound from two places can disagree with
+        // itself -- a `PATCH /conversations/{userId}/status` whose body
+        // carries a different `userId` has no honest answer. The version has
+        // the same problem and one more: it belongs in `If-Match`, where every
+        // cache and client library already knows to put it.
         OperationKind::Transition(transition) => {
             let entity = entity(model, &transition.on)?;
             let key = transition_key(entity, transition)?;
+            let expected = precondition(entity, transition).map(|precondition| precondition.field);
             let carried = transition
                 .fields
                 .iter()
                 .filter(|field| *field != &key.id)
+                .filter(|field| expected.is_none_or(|version| *field != &version.id))
                 .cloned()
                 .collect::<Vec<_>>();
             from_fields(&transition.on, &carried, imports)
@@ -667,6 +674,13 @@ fn record_shape_bound(
                 .join("\n")
         )
     };
+    // **An empty component list is `()`, not a blank line between parens.** A
+    // transition whose whole effect is a pinned constant carries nothing from
+    // the caller, and `record Input(\n\n)` is a record with one thing wrong
+    // with it that no reader would write.
+    if components.is_empty() {
+        return format!("public record {type_name}() {{{constructor}\n}}");
+    }
     format!("public record {type_name}(\n{declarations}\n) {{{constructor}\n}}")
 }
 
@@ -732,6 +746,62 @@ fn indent(value: &str, spaces: usize) -> String {
 /// A multi-column selector is refused where the update statement is rendered,
 /// which is the renderer that cannot express one; this returns the first so
 /// the port and the route still say something true about the rest.
+/// The row version this transition's caller states, and how it states it.
+///
+/// **The version travels as `If-Match` and comes back as an `ETag`.** It used
+/// to be a component of the request body, which is a bespoke spelling of a
+/// thing HTTP already has -- and one no cache, proxy or client library
+/// understands. So the port takes it as its own argument, the body does not
+/// carry it, and the controller reads the header.
+///
+/// `None` when the declaration asked for no precondition, in which case the
+/// linker has already refused a version parameter and there is nothing to
+/// take.
+pub(crate) fn precondition<'a>(
+    entity: &'a Entity,
+    transition: &jails_model::Transition,
+) -> Option<Precondition<'a>> {
+    let required = match transition.semantics.precondition? {
+        jails_model::Precondition::Required => true,
+        jails_model::Precondition::Optional => false,
+        jails_model::Precondition::None => return None,
+    };
+    // The linker holds that an if-match transition's entity has exactly one
+    // version field, so a miss here is a model that did not link rather than a
+    // shape to render around.
+    let field = entity.fields.iter().find(|field| field.semantics.version)?;
+    Some(Precondition { field, required })
+}
+
+/// The version argument a precondition adds to the port.
+pub(crate) struct Precondition<'a> {
+    pub(crate) field: &'a Field,
+    /// Whether the caller must send one. An optional precondition arrives as
+    /// `null`, so its Java type is always the boxed one.
+    pub(crate) required: bool,
+}
+
+impl Precondition<'_> {
+    /// The Java type of the expected version, boxed when it may be absent.
+    pub(crate) fn java_type(&self, imports: &mut BTreeSet<String>) -> String {
+        let java = java_type(self.field, imports);
+        if self.required {
+            return java;
+        }
+        match java.as_str() {
+            "long" => "Long".to_string(),
+            "int" => "Integer".to_string(),
+            "short" => "Short".to_string(),
+            other => other.to_string(),
+        }
+    }
+
+    /// The parameter this adds to `execute`, with its leading comma.
+    pub(crate) fn parameter(&self, imports: &mut BTreeSet<String>) -> String {
+        format!(", {} expectedVersion", self.java_type(imports))
+    }
+}
+
 pub(crate) fn transition_key<'a>(
     entity: &'a Entity,
     transition: &jails_model::Transition,

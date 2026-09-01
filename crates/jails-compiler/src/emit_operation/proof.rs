@@ -388,6 +388,7 @@ pub(super) fn write(
         port_package,
         keyed,
         inputs,
+        expected,
     } = shape;
     let package = model.project.package_for(Package::AdaptersJdbc);
     let port_type = format!("{}{port_suffix}", operation.names.java_type);
@@ -446,8 +447,15 @@ pub(super) fn write(
         context_argument = claims(&scoped, |field| {
             format!("String.valueOf(stored.{}())", field.names.java_member)
         });
+        // **The version the fixture stored, not a sample.** A precondition
+        // compares what the caller believes against what is there, so a
+        // sampled value proves the guard rejects an unrelated number rather
+        // than that the update it was written for goes through.
+        let precondition = expected.map_or_else(String::new, |version| {
+            format!(", stored.{}()", version.field.names.java_member)
+        });
         format!(
-            "operation.execute({context_argument}stored.{}(), new {port_type}.Input({{arguments}}))",
+            "operation.execute({context_argument}stored.{}(), new {port_type}.Input({{arguments}}){precondition})",
             key.names.java_member
         )
     } else {
@@ -473,9 +481,27 @@ pub(super) fn write(
         return Ok(None);
     };
     let invocation = invocation.replace("{arguments}", &arguments);
+    // **The unconditional branch needs its own case.** `coalesce(:expected,
+    // version)` is generated, compiles, and is executed by nothing when every
+    // proof sends a version -- so deleting the `coalesce` would change no
+    // test. This drives it twice, because "applies without a precondition" and
+    // "applies again after the version moved" are the same promise and only
+    // the second one catches a guard that crept back in.
+    let unconditional = match expected {
+        Some(version) if !version.required => {
+            let repeated = invocation.replace(
+                &format!(", stored.{}()", version.field.names.java_member),
+                ", null",
+            );
+            format!(
+                "\n    @Test\n    void aCallerThatSendsNoPreconditionAppliesUnconditionallyAndCanRepeat() {{\n{setup}        {record} first = {repeated};\n        {record} again = {repeated};\n\n        assertThat(first).isNotNull();\n        assertThat(again).isNotNull();\n    }}\n"
+            )
+        }
+        _ => String::new(),
+    };
 
     let body = format!(
-        "@SpringBootTest\n@Transactional\nclass {type_name} {{\n\n{autowired}    @Autowired\n    private {port_type} operation;\n\n    @Test\n    void writesThroughTheRealDatabase() {{\n{setup}        {record} answered = {invocation};\n\n        // `returning` answers with the row the statement wrote, so a null\n        // here means it matched none -- which is the failure worth catching.\n        assertThat(answered).isNotNull();\n    }}\n\n    // Reader-owned cases belong below this stable boundary.\n}}"
+        "@SpringBootTest\n@Transactional\nclass {type_name} {{\n\n{autowired}    @Autowired\n    private {port_type} operation;\n\n    @Test\n    void writesThroughTheRealDatabase() {{\n{setup}        {record} answered = {invocation};\n\n        // `returning` answers with the row the statement wrote, so a null\n        // here means it matched none -- which is the failure worth catching.\n        assertThat(answered).isNotNull();\n    }}\n{unconditional}\n    // Reader-owned cases belong below this stable boundary.\n}}"
     );
     let artifact_id = format!("art_{}_write_it", operation.id.as_str());
     let rendered = crate::emit_capability::imported_test_container(
@@ -576,6 +602,8 @@ pub(super) struct WriteShape<'a> {
     pub(super) keyed: Option<&'a jails_model::Field>,
     /// The fields the `Input` record declares, in order.
     pub(super) inputs: &'a [&'a jails_model::Field],
+    /// The precondition `execute` takes after its input, when there is one.
+    pub(super) expected: Option<&'a crate::emit_java::Precondition<'a>>,
 }
 
 /// The `Input` arguments, matching the row the fixtures stored.

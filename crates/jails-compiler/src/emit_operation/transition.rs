@@ -91,12 +91,21 @@ pub(super) fn lower(
     // in `update` provide new values, and every remaining entity parameter is
     // an equality guard. The selector was missing from this subtraction, so a
     // declared `select [id]` was rendered as a guard *and* as an update.
+    // **The precondition is not a guard, because it does not come from the
+    // body.** It arrives as `If-Match`, so `execute` takes it as its own
+    // argument and the SQL binds `:expected_version` -- an optional one
+    // through `coalesce`, which is one statement rather than two and is also
+    // what gives a null parameter a type PostgreSQL can compare with `=`.
+    let precondition = crate::emit_java::precondition(target, transition);
     let guards = inputs
         .iter()
         .copied()
         .filter(|input| {
             !sets.iter().any(|field| field.id == input.id)
                 && !selector.iter().any(|field| field.id == input.id)
+                && precondition
+                    .as_ref()
+                    .is_none_or(|version| version.field.id != input.id)
         })
         .collect::<Vec<_>>();
     let port_type = with_suffix(&operation.names.java_type, "Transition");
@@ -187,7 +196,16 @@ pub(super) fn lower(
     // and reads as a mistake -- and a reader adding a predicate of their own
     // below has no way to tell which binding `:id` refers to.
     let selector_param = selector[0].names.sql_column.as_str();
+    let expected_predicate = precondition.as_ref().map(|version| {
+        let column = &version.field.names.sql_column;
+        if version.required {
+            format!("{column} = :expected_version")
+        } else {
+            format!("{column} = coalesce(:expected_version, {column})")
+        }
+    });
     let predicate_seed = std::iter::once(format!("{selector_param} = :{selector_param}"))
+        .chain(expected_predicate)
         .chain(required_guards)
         .chain(scope_fields.iter().map(|field| {
             format!(
@@ -261,6 +279,13 @@ pub(super) fn lower(
             }
         })
         .collect::<String>();
+    let expected_param = precondition.as_ref().map_or_else(String::new, |_| {
+        "        statement = statement.param(\"expected_version\", expectedVersion);\n".to_string()
+    });
+    let expected_argument = precondition
+        .as_ref()
+        .map(|version| version.parameter(&mut imports))
+        .unwrap_or_default();
     let scope_params = scope_fields
         .iter()
         .map(|field| {
@@ -284,7 +309,7 @@ pub(super) fn lower(
         // context fails at startup with "Could not generate CGLIB subclass". The
         // adapter implements its port, so a JDK proxy would do, but making the whole
         // application proxy by interface to keep one `final` is the wrong trade.
-        "@Repository\npublic class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;{event_member}\n\n    public {type_name}(JdbcClient jdbc{event_parameter}) {{\n        this.jdbc = jdbc;{event_assignment}\n    }}\n\n    @Override\n    @Transactional\n    public {} execute({context}{key_type} {key_member}, {port_type}.Input input) {{\n        var predicates = new ArrayList<String>(List.of({predicate_seed}));\n{optional_guards}        var sql = \"update {} set {assignments} where \" + String.join(\" and \", predicates) + \" returning {columns}\";\n        JdbcClient.StatementSpec statement = jdbc.sql(sql);\n        statement = statement.param(\"{selector_param}\", {key_member});\n{set_params}{guard_params}{scope_params}{result}\n    }}\n}}",
+        "@Repository\npublic class {type_name} implements {port_type} {{\n\n    private final JdbcClient jdbc;{event_member}\n\n    public {type_name}(JdbcClient jdbc{event_parameter}) {{\n        this.jdbc = jdbc;{event_assignment}\n    }}\n\n    @Override\n    @Transactional\n    public {} execute({context}{key_type} {key_member}, {port_type}.Input input{expected_argument}) {{\n        var predicates = new ArrayList<String>(List.of({predicate_seed}));\n{optional_guards}        var sql = \"update {} set {assignments} where \" + String.join(\" and \", predicates) + \" returning {columns}\";\n        JdbcClient.StatementSpec statement = jdbc.sql(sql);\n        statement = statement.param(\"{selector_param}\", {key_member});\n{set_params}{expected_param}{guard_params}{scope_params}{result}\n    }}\n}}",
         target.names.java_type, target.names.sql_table
     );
     operation_file(

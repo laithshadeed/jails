@@ -51,6 +51,41 @@ pub(crate) fn lower_and_emit(
     Ok(())
 }
 
+/// What to do with an absent `If-Match`.
+///
+/// A required precondition never reaches this -- Spring answers 400 for a
+/// missing required header before the method runs -- so the only caller left
+/// is the optional form, where absent means "no precondition".
+fn precondition_absent(precondition: &Option<(String, String)>) -> bool {
+    precondition
+        .as_ref()
+        .is_some_and(|(parameter, _)| parameter.contains("required = false"))
+}
+
+/// The private method that turns an `If-Match` header into a row version.
+///
+/// **It accepts the weak-validator prefix and the quotes RFC 9110 requires**,
+/// because that is what a client library sends back after reading the `ETag`
+/// this controller issued. A header that is not a version this resource could
+/// have issued is a 400 -- jails could not read the request -- rather than any
+/// of the statuses the outcome maps to, which are all about a request it read.
+fn expected_version_parser(java: &str, optional: bool) -> String {
+    let absent = if optional {
+        "        if (ifMatch == null || ifMatch.isBlank()) {\n            return null;\n        }\n"
+    } else {
+        ""
+    };
+    let parse = match java {
+        "long" | "Long" => "Long.parseLong",
+        "int" | "Integer" => "Integer.parseInt",
+        "short" | "Short" => "Short.parseShort",
+        _ => "Long.parseLong",
+    };
+    format!(
+        "\n    /**\n     * The version the caller believes the row is at.\n     */\n    private static {java} expectedVersion(String ifMatch) {{\n{absent}        String value = ifMatch.trim();\n        if (value.startsWith(\"W/\")) {{\n            value = value.substring(2);\n        }}\n        if (value.length() >= 2 && value.startsWith(\"\\\"\") && value.endsWith(\"\\\"\")) {{\n            value = value.substring(1, value.length() - 1);\n        }}\n        try {{\n            return {parse}(value);\n        }} catch (NumberFormatException malformed) {{\n            throw new ResponseStatusException(\n                    HttpStatus.BAD_REQUEST,\n                    \"If-Match is not a version this resource issued: \" + ifMatch,\n                    malformed);\n        }}\n    }}\n"
+    )
+}
+
 fn lower(
     model: &AppModel,
     capability_id: &str,
@@ -66,6 +101,8 @@ fn lower(
     let (method, path) = (route.method.wire_name(), route.path.as_str());
     let mut key_sample = None;
     let mut path_member = String::from("id");
+    let mut precondition: Option<(String, String)> = None;
+    let mut precondition_field: Option<(jails_model::Field, bool)> = None;
     let (target, binding, port_package, port_type, return_type, parameters, mut imports) =
         match &operation.kind {
             OperationKind::Command(command) => {
@@ -161,20 +198,60 @@ fn lower(
                     "org.springframework.web.bind.annotation.PathVariable".to_string(),
                     "org.springframework.web.bind.annotation.RequestBody".to_string(),
                 ]);
+                // **The version arrives as `If-Match`, so the controller reads
+                // the header rather than the body.** Spring answers 400 for a
+                // missing *required* header before any code jails wrote runs,
+                // which is why the optional form has to say `required = false`
+                // rather than rely on a null check further in.
+                precondition_field = crate::emit_java::precondition(entity, transition)
+                    .map(|version| (version.field.clone(), version.required));
+                precondition = crate::emit_java::precondition(entity, transition).map(|version| {
+                    imports.insert("org.springframework.http.HttpHeaders".to_string());
+                    imports.insert(
+                        "org.springframework.web.bind.annotation.RequestHeader".to_string(),
+                    );
+                    let optional = if version.required {
+                        String::new()
+                    } else {
+                        ", required = false".to_string()
+                    };
+                    (
+                        format!(
+                            "@RequestHeader(value = HttpHeaders.IF_MATCH{optional}) String ifMatch"
+                        ),
+                        version.java_type(&mut imports),
+                    )
+                });
                 let key_type = java_type(key, &mut imports);
                 // The placeholder the test has to expand, sampled from the
                 // model's own key rather than from a literal that happens to
                 // parse: a `uuid` key rejects `"1"` at the path variable,
                 // before the handler runs.
                 key_sample = crate::emit_companion_test::json_sample(model, &key.ty);
+                // **A form-bound transition reads parameters, not a body.**
+                // The route said `consumes form` and the controller asked for
+                // `@RequestBody`, so Spring matched the URL and then answered
+                // 415 for the form the caller actually sent. `@ModelAttribute`
+                // binds the query string, the form body and the URI template
+                // variables alike, which is the one annotation that can.
+                let form = route.consumes == Some(jails_model::RequestFormat::Form);
+                let binding = if form {
+                    imports.remove("org.springframework.web.bind.annotation.RequestBody");
+                    imports.insert(
+                        "org.springframework.web.bind.annotation.ModelAttribute".to_string(),
+                    );
+                    "@ModelAttribute"
+                } else {
+                    "@RequestBody"
+                };
                 (
                     entity,
-                    Binding::Path,
+                    if form { Binding::Model } else { Binding::Path },
                     Package::ApplicationTransitions,
                     with_suffix(&operation.names.java_type, "Transition"),
                     entity.names.java_type.clone(),
                     format!(
-                        "@PathVariable(\"{member}\") {key_type} {member}, @RequestBody PORT.Input input"
+                        "@PathVariable(\"{member}\") {key_type} {member}, {binding} PORT.Input input"
                     ),
                     imports,
                 )
@@ -245,13 +322,36 @@ fn lower(
                 "context, ".to_string(),
             )
         };
+    // The version a proof states, sampled from the model's own column so a
+    // `long` key is not proved with a string that happens to parse.
+    let version_sample = precondition_field.as_ref().map(|(field, required)| {
+        (
+            crate::emit_companion_test::json_sample(model, &field.ty)
+                .unwrap_or_else(|| "1".to_string()),
+            *required,
+        )
+    });
+    let (expected_setup, expected_parser, expected_argument) = match &precondition {
+        Some((parameter, java)) => {
+            parameters.push_str(", ");
+            parameters.push_str(parameter);
+            imports.insert("org.springframework.http.HttpStatus".to_string());
+            imports.insert("org.springframework.web.server.ResponseStatusException".to_string());
+            (
+                format!("        {java} expectedVersion = expectedVersion(ifMatch);\n"),
+                expected_version_parser(java, precondition_absent(&precondition)),
+                ", expectedVersion".to_string(),
+            )
+        }
+        None => (String::new(), String::new(), String::new()),
+    };
     let invocation = if matches!(operation.kind, OperationKind::Transition(_)) {
-        format!("operation.execute({context_argument}{path_member}, input)")
+        format!("operation.execute({context_argument}{path_member}, input{expected_argument})")
     } else {
         format!("operation.execute({context_argument}input)")
     };
     let body = format!(
-        "@RestController\npublic final class {type_name} {{\n\n    private final {port_type} operation;{scope_member}\n\n    public {type_name}({port_type} operation{scope_parameter}) {{\n        this.operation = operation;{scope_assignment}\n    }}\n\n    @RequestMapping(path = \"{path}\", method = RequestMethod.{method})\n    public {return_type} execute({parameters}) {{\n{context_setup}        return {invocation};\n    }}\n}}"
+        "@RestController\npublic final class {type_name} {{\n\n    private final {port_type} operation;{scope_member}\n\n    public {type_name}({port_type} operation{scope_parameter}) {{\n        this.operation = operation;{scope_assignment}\n    }}\n\n    @RequestMapping(path = \"{path}\", method = RequestMethod.{method})\n    public {return_type} execute({parameters}) {{\n{context_setup}{expected_setup}        return {invocation};\n    }}\n{expected_parser}}}"
     );
     let artifact_id = format!("art_{}_http", operation.id.as_str());
     let rendered = render(&package, &imports, &body, &artifact_id);
@@ -296,6 +396,8 @@ fn lower(
             many: matches!(operation.kind, OperationKind::Query(_)),
             components: &components,
             key_json: key_sample,
+            keyed: matches!(operation.kind, OperationKind::Transition(_)),
+            precondition: version_sample,
             scopes: (!scope_fields.is_empty()).then(|| proof::Scopes {
                 base_package: model.project.package_for(Package::Base),
                 claims: scope_fields
