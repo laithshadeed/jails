@@ -144,6 +144,15 @@ fn reconcile_managed_file(
 ) -> Result<ManagedFileMerge, String> {
     match (base, current, desired) {
         (None, None, Some(desired)) => Ok(ManagedFileMerge::Write(desired.to_vec())),
+        // **A file that already says what jails would write is adopted, not
+        // refused.** The refusal exists so a capability cannot overwrite work
+        // somebody did; where the bytes are identical there is nothing to
+        // overwrite, and refusing there means a project that seeded an empty
+        // `db/migration/.gitkeep` -- exactly what `add db` would have put
+        // there -- can never declare storage at all.
+        (None, Some(current), Some(desired)) if current == desired => {
+            Ok(ManagedFileMerge::Write(desired.to_vec()))
+        }
         (None, Some(_), Some(_)) => Err(format!(
             "managed project path `{path}` is already reader-owned\n       fix: move the existing file before generating; nothing was written"
         )),

@@ -55,8 +55,8 @@ struct CompilerLock<'a> {
     migrations: BTreeMap<ProjectPath, ContentDigest>,
 }
 
-const PLAN_SCHEMA: &str = "jails.plan.v1";
-const BUNDLE_SCHEMA: &str = "jails.plan-bundle.v1";
+pub(crate) const PLAN_SCHEMA: &str = "jails.plan.v1";
+pub(crate) const BUNDLE_SCHEMA: &str = "jails.plan-bundle.v1";
 
 /// What materialization does about a managed file the reader deleted.
 ///
@@ -237,7 +237,7 @@ pub fn materialize_with_model(
         trees,
         blobs,
     };
-    verify_bundle(&bundle)?;
+    crate::verify::verify_bundle(&bundle)?;
     Ok(bundle)
 }
 
@@ -685,88 +685,6 @@ pub(crate) fn file_image(
     })
 }
 
-pub fn verify_bundle(bundle: &PlanBundle) -> Result<(), String> {
-    if bundle.schema != BUNDLE_SCHEMA || bundle.plan.schema != PLAN_SCHEMA {
-        return Err("unsupported exact-plan schema".to_string());
-    }
-    for (id, bytes) in &bundle.blobs {
-        if &digest(bytes)? != id {
-            return Err(format!("blob `{id:?}` does not match its content"));
-        }
-    }
-    for (id, tree) in &bundle.trees {
-        for entry in tree.entries.values() {
-            if !bundle.blobs.contains_key(&entry.blob) {
-                return Err(format!("tree `{id:?}` references a missing blob"));
-            }
-        }
-        if &tree_id(tree)? != id {
-            return Err(format!("tree `{id:?}` does not match its manifest"));
-        }
-    }
-    for operation in &bundle.plan.operations {
-        match operation {
-            PlannedOperation::PublishMergedTree { before, after, .. } => {
-                if before
-                    .as_ref()
-                    .is_some_and(|tree| !bundle.trees.contains_key(tree))
-                    || !bundle.trees.contains_key(after)
-                {
-                    return Err("managed-tree operation references a missing tree".to_string());
-                }
-            }
-            PlannedOperation::ReplaceModelFile { before, after, .. } => {
-                if let Some(before) = before {
-                    verify_image(bundle, before)?;
-                }
-                verify_image(bundle, after)?;
-            }
-            PlannedOperation::PatchReaderFile { before, after, .. } => {
-                if let Some(before) = before {
-                    verify_image(bundle, before)?;
-                }
-                verify_image(bundle, after)?;
-            }
-            PlannedOperation::RemoveReaderFile { before, .. } => verify_image(bundle, before)?,
-            PlannedOperation::ReplaceStateFile { before, after, .. } => {
-                if let Some(before) = before {
-                    verify_image(bundle, before)?;
-                }
-                verify_image(bundle, after)?;
-            }
-            PlannedOperation::AppendMigration { after, .. } => verify_image(bundle, after)?,
-        }
-    }
-    let actual = plan_digest(
-        &bundle.plan.compiler,
-        &bundle.plan.base,
-        &bundle.plan.input,
-        &bundle.plan.summary,
-        &bundle.plan.operations,
-        &bundle.plan.follow_up_effects,
-    )?;
-    if actual != bundle.plan.digest || bundle.plan.id != actual.as_str() {
-        return Err("plan digest does not match the exact plan".to_string());
-    }
-    Ok(())
-}
-
-fn verify_image(bundle: &PlanBundle, image: &FileImageRef) -> Result<(), String> {
-    let bytes = bundle.blobs.get(&image.blob).ok_or_else(|| {
-        format!(
-            "file image references missing blob `{}`",
-            image.blob.as_str()
-        )
-    })?;
-    if bytes.len() as u64 != image.len {
-        return Err(format!(
-            "file image `{}` has the wrong length",
-            image.blob.as_str()
-        ));
-    }
-    Ok(())
-}
-
 fn captured_tree(
     snapshot: &WorkspaceSnapshot,
     root: &ProjectPath,
@@ -807,11 +725,11 @@ pub(crate) fn file_kind(path: &ProjectPath) -> FileKind {
     }
 }
 
-fn tree_id(tree: &TreeManifest) -> Result<ContentDigest, String> {
+pub(crate) fn tree_id(tree: &TreeManifest) -> Result<ContentDigest, String> {
     canonical_digest("tree", tree)
 }
 
-fn plan_digest(
+pub(crate) fn plan_digest(
     compiler: &str,
     base: &jails_contracts::SnapshotPreconditions,
     input: &CanonicalModelPatch,
@@ -887,12 +805,12 @@ primary_key = true
             Some(PlannedOperation::ReplaceStateFile { path, .. })
                 if path.as_str() == crate::capture::COMPILER_LOCK
         ));
-        verify_bundle(&bundle).unwrap();
+        crate::verify::verify_bundle(&bundle).unwrap();
 
         let mut damaged = bundle;
         let bytes = damaged.blobs.values_mut().next().unwrap();
         bytes.push(b'x');
-        assert!(verify_bundle(&damaged).is_err());
+        assert!(crate::verify::verify_bundle(&damaged).is_err());
     }
 
     /// **The property `apply never replans` rests on.**
@@ -1253,7 +1171,7 @@ primary_key = true
             bundle.plan.operations.as_slice(),
             [PlannedOperation::ReplaceStateFile { .. }]
         ));
-        verify_bundle(&bundle).unwrap();
+        crate::verify::verify_bundle(&bundle).unwrap();
     }
 
     #[test]

@@ -35,6 +35,15 @@ fn owns_terminal_output(path: &Path) -> bool {
         || relative == "src/tool_command.rs"
         || relative == "src/model_command.rs"
         || relative == "src/model_generate.rs"
+        // The two halves `model_generate` was split into, and both are here for
+        // its reason rather than a new one. `report` is the preview, the
+        // disabled-test list and the deletion prompt -- the whole of what a
+        // reader is shown about a plan; `effects` is what is said on the way
+        // past once the transition is durable, where a service that is not up
+        // or a formatter that could not run has to be named or nobody learns
+        // of it.
+        || relative == "src/model_generate/report.rs"
+        || relative == "src/model_generate/effects.rs"
         // The other half of the same door. `model_import` carries a legacy
         // ledger across; this one gives a project jails never created its
         // first model, and saying so is part of the command: a reader who has
@@ -420,6 +429,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-compiler", "emit_seed", 4),
     ("jails-compiler", "emit_sql", 4),
     ("jails-compiler", "refuse", 4),
+    ("jails-compiler", "plan_effects", 4),
     ("jails-compiler", "storage", 4),
     ("jails-compiler", "emit_unit", 4),
     // The only canonical filesystem capture/materialization/execution owner.
@@ -431,6 +441,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-workspace", "merge", 5),
     ("jails-workspace", "reader_facet", 5),
     ("jails-workspace", "reconcile", 5),
+    ("jails-workspace", "verify", 5),
     // jails-protocol: the validated values every closed format is built from.
     ("jails-protocol", "compatibility", 3),
     ("jails-protocol", "durable", 3),

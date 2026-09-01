@@ -38,6 +38,24 @@ pub(crate) struct Observed<'a> {
     pub jdbc: bool,
 }
 
+/// Whether `JdbcClient` can be resolved in this project.
+///
+/// Spring's `spring-jdbc` is what declares it, and three starters bring it in:
+/// the JDBC starter, the data-JDBC starter, and the JPA starter above them.
+/// Named rather than matched on `jdbc` appearing anywhere in a coordinate, so
+/// a project's own `com.example:jdbc-utils` is not read as Spring's.
+pub(crate) fn jdbc_on_classpath(snapshot: &WorkspaceSnapshot) -> bool {
+    const PROVIDERS: [&str; 4] = [
+        "org.springframework:spring-jdbc",
+        "org.springframework.boot:spring-boot-starter-jdbc",
+        "org.springframework.boot:spring-boot-starter-data-jdbc",
+        "org.springframework.boot:spring-boot-starter-data-jpa",
+    ];
+    PROVIDERS
+        .iter()
+        .any(|provider| snapshot.project.dependencies.contains(*provider))
+}
+
 pub(crate) fn emit(
     model: &jails_model::AppModel,
     output: &mut RenderedTree,

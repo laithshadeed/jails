@@ -230,7 +230,21 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // process directory. `jails new --app` stands in the parent of
                 // the project it is creating, which is the edge every `_at`
                 // above exists for.
-                ceiling: 85,
+                // 85 -> 93 for eight more of the same two shapes, none of them
+                // threading a root further down. Five ask the filesystem one
+                // question and stop: `capture::declared_dependencies` and
+                // `capture::build_file` observe which artifacts a build states,
+                // at the capture boundary where every external fact is read
+                // once; `compose::up_document` runs a committed document
+                // against a project directory; `run_follow_up_effects` and
+                // `drop_compiled_shadows` act on the tree a plan just wrote,
+                // after the executor, where there is no `Project` to hold the
+                // answer. Three are refusals that read the reader's own tree
+                // before a rename touches it -- `refuse_reader_java`,
+                // `refuse_reader_sql`, `refuse_declared` -- and a refusal about
+                // what is on disk is a question about paths, which is the same
+                // exemption `preflight_writable` records above.
+                ceiling: 93,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;
