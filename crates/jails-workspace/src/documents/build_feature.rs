@@ -143,10 +143,16 @@ fn insert_maven_feature_plugin(text: &str, marker: &str, plugin: &str) -> Result
             0,
         ));
     }
+    // **The container the plugin needs is created outside the markers.** What
+    // jails owns is one `<plugin>`; wrapping `<build>` or `<plugins>` in the
+    // marker as well claims a container the reader shares -- and the next
+    // command to add a plugin legitimately writes inside it, which reads back
+    // as "the owned block was edited" and refuses every later plan. That is
+    // what `add coverage` then `add fake` did on a pom with no `<build>`.
     if let Some(at) = direct_child_close(text, &["project", "build"]) {
-        let block = marked_maven_feature(
-            marker,
-            &format!("<plugins>\n{}</plugins>\n", indent_block(plugin, "    ")),
+        let block = format!(
+            "<plugins>\n{}</plugins>\n",
+            indent_block(&marked_maven_feature(marker, plugin), "    ")
         );
         return Ok(insert_indented_block(text, at, &block, 0));
     }
@@ -156,12 +162,9 @@ fn insert_maven_feature_plugin(text: &str, marker: &str, plugin: &str) -> Result
                 .to_string(),
         );
     };
-    let block = marked_maven_feature(
-        marker,
-        &format!(
-            "<build>\n    <plugins>\n{}    </plugins>\n</build>\n",
-            indent_block(plugin, "        ")
-        ),
+    let block = format!(
+        "<build>\n    <plugins>\n{}    </plugins>\n</build>\n",
+        indent_block(&marked_maven_feature(marker, plugin), "        ")
     );
     Ok(insert_indented_block(text, at, &block, 0))
 }
