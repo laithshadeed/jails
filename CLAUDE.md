@@ -1397,6 +1397,45 @@ exists. The conclusions about *where the cost is* -- Maven, JVM starts, Spring
 contexts -- are unaffected, because those are properties of the work rather
 than of how it was launched. Re-measure any wall clock before quoting it.
 
+### The remaining cost is not Maven, and three measurements say so
+
+**This section used to be called "the remaining cost is Maven".** It is not,
+and the correction matters because "replace Maven with something faster" is the
+first idea everyone has, this project included.
+
+Measured 2026-09-01 on a 16-core machine, three independent ways:
+
+- **Maven's own startup is 1.41s** (`mvn -q -B validate`), against a **0.02s**
+  JVM start and a 2.26s warm compile. So of a 12.2s mean `mvn` invocation,
+  about 1.4s is Maven existing at all.
+- **Replacing six `mvn compile` runs with `javac` and a cached classpath** took
+  subprocess work from 830.3s to 722.4s and the gate from 144.5s to 132.2s.
+  Work fell 13%; wall fell 8%.
+- **Removing Maven entirely from a real test run buys 14%.** The generated
+  `support-inbox` proof app, 59 test classes, warm `target/`: `mvn -q -B test`
+  is **21.26s**, and the JUnit console launcher over the same compiled classes
+  with the same classpath is **18.34s**.
+
+That last one is the whole answer. 18.34s over 59 test classes is **0.31s per
+class**, in one JVM, with Spring's context cache already doing its job. What
+the tier costs is *running the generated applications' tests*, which is what
+the tier is for. Maven is a ~3s wrapper around ~18s of work.
+
+**So the levers that remain are about how much of that work exists, not how it
+is launched.** Do not re-propose mvnd (measured and refused: 3 of 4 concurrent
+builds fail with `StaleAddressException`), the console launcher (14%), AppCDS
+(13%, and the archive cannot match a per-project classpath), `-o` (0.47s a
+run), or `-DforkCount=0` (already set).
+
+**And do not re-propose JUnit class-level parallelism.** Turning it on at a
+parallelism of four took the gate from 144.5s green to **535.4s with eleven
+failures**: generated tests share a database, ports and fixture files, so
+concurrent classes manufacture contention rather than overlap. The app-suite
+fixture gets away with it because it sets the mode per service and holds
+parallelism at two.
+
+### The old Maven-floor measurements, still true of what they measured
+
 ### The remaining cost is Maven, and it is at the machine's floor
 
 `cli` is the critical path and the real-toolchain tier is nearly all of its
