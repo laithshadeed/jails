@@ -5102,14 +5102,22 @@ fn generate_client_bounds_the_call_it_generates() {
 /// thing. A reader finds `ApiException`, believes it is the error model, and
 /// is wrong.
 ///
-/// Both branches matter: without `add api` the class does not exist, so the
-/// other rendering is not a tidiness fallback -- it is the only one that
-/// compiles. Same rule `repository_wiring` follows for `JdbcClient`.
+/// **The compiler closes it from the other end, and that is the change.**
+/// The legacy engine had the controller throw `ApiException.NotFound` or
+/// `.Conflict`, which put HTTP status arithmetic in every generated
+/// controller and made the mapping unreachable from any adapter a reader
+/// wrote by hand. Here the *adapter* names the outcome in `spring-dao`'s own
+/// vocabulary -- `OptimisticLockingFailureException` for a stated `If-Match`
+/// that no longer matches, `EmptyResultDataAccessException` for a row that is
+/// not there -- and the error model maps both. Nothing has to declare a type,
+/// the controller keeps only the one status that is genuinely its own, and a
+/// hand-written adapter raising the same pair gets the same answer.
 #[test]
-fn a_transition_throws_into_the_error_model_the_project_installed() {
+fn a_transition_names_its_outcome_where_the_error_model_can_read_it() {
     let with_api = temp_dir("transition-api-error-model");
     write_spring_fixture(&with_api);
     let build = |root: &std::path::Path, api: bool| {
+        common::declare_storage(root);
         if api {
             assert!(
                 jails_cmd(root, None)
@@ -5127,7 +5135,7 @@ fn a_transition_throws_into_the_error_model_the_project_installed() {
                 "id:uuid@pk",
                 "body:string!",
                 "isRead:boolean",
-                "version:long",
+                "version:long@version",
             ][..],
             &[
                 "g",
@@ -5135,7 +5143,7 @@ fn a_transition_throws_into_the_error_model_the_project_installed() {
                 "MarkRead",
                 "id:uuid",
                 "isRead:boolean",
-                "version:long",
+                "version:long@version",
                 "--on",
                 "Msg",
             ][..],
@@ -5145,47 +5153,82 @@ fn a_transition_throws_into_the_error_model_the_project_installed() {
         }
         fs::read_to_string(common::generated(
             root,
-            "src/main/java/com/example/demo/web/MarkReadController.java",
+            "src/main/java/com/example/demo/adapters/JdbcMarkReadTransition.java",
         ))
         .unwrap()
     };
 
-    let installed = build(&with_api, true);
+    // **The adapter decides, in Spring's own vocabulary.** Zero rows updated
+    // has two causes and they are different answers -- a stated `If-Match`
+    // that no longer matches is a 412, a row that is not there is a 404 --
+    // and `.single()` cannot tell them apart, so it raised one unclassified
+    // failure that reached the client as a 500. That is what alerting pages
+    // on and what client libraries retry, and the retry can never succeed
+    // because the version has moved on.
+    let adapter = build(&with_api, true);
+    assert!(adapter.contains(".optional();"), "{adapter}");
     assert!(
-        installed.contains("import com.example.demo.api.ApiException;"),
-        "{installed}"
+        adapter.contains("new OptimisticLockingFailureException("),
+        "{adapter}"
     );
     assert!(
-        installed.contains("throw new ApiException.NotFound("),
-        "{installed}"
-    );
-    assert!(
-        installed.contains("throw new ApiException.Conflict("),
-        "{installed}"
-    );
-    // Neither *outcome* becomes a `ResponseStatusException` where the project
-    // has an error model.
-    assert!(
-        !installed.contains("ResponseStatusException(NOT_FOUND"),
-        "{installed}"
-    );
-    assert!(
-        !installed.contains("ResponseStatusException(CONFLICT"),
-        "{installed}"
-    );
-    // It survives for one thing, and only that: a malformed `If-Match` is a
-    // 400 -- jails could not read the request -- while every `ApiException`
-    // variant is about a request it read. plan.md P4.5.
-    assert!(
-        installed.contains("If-Match is not a version this resource issued"),
-        "{installed}"
+        adapter.contains("new EmptyResultDataAccessException("),
+        "{adapter}"
     );
 
+    // Both are `spring-dao`'s, on the classpath the moment the JDBC starter
+    // is -- so the error model maps them without either side declaring a type,
+    // and a hand-written adapter raising the same pair gets the same answer.
+    let advice = common::read_generated(
+        &with_api,
+        "src/main/java/com/example/demo/api/ApiExceptionHandler.java",
+    );
+    assert!(
+        advice.contains("@ExceptionHandler(OptimisticLockingFailureException.class)"),
+        "{advice}"
+    );
+    assert!(
+        advice.contains("HttpStatus.PRECONDITION_FAILED"),
+        "{advice}"
+    );
+    assert!(
+        advice.contains("@ExceptionHandler(EmptyResultDataAccessException.class)"),
+        "{advice}"
+    );
+    assert!(advice.contains("HttpStatus.NOT_FOUND"), "{advice}");
+
+    // The controller keeps exactly one status of its own, and only that one:
+    // a malformed `If-Match` is a 400 because jails could not read the
+    // request, while every outcome above is about a request it read.
+    // plan.md P4.5.
+    let controller = common::read_generated(
+        &with_api,
+        "src/main/java/com/example/demo/web/MarkReadController.java",
+    );
+    assert!(
+        controller.contains("If-Match is not a version this resource issued"),
+        "{controller}"
+    );
+    assert!(
+        !controller.contains("ResponseStatusException(HttpStatus.NOT_FOUND"),
+        "{controller}"
+    );
+    assert!(
+        !controller.contains("ResponseStatusException(HttpStatus.CONFLICT"),
+        "{controller}"
+    );
+
+    // Without the error model the adapter is unchanged: what it raises is a
+    // fact about the database, and which HTTP status that becomes is the
+    // `api` capability's business. Nothing here names `ApiException`.
     let without = temp_dir("transition-no-error-model");
     write_spring_fixture(&without);
     let plain = build(&without, false);
     assert!(!plain.contains("ApiException"), "{plain}");
-    assert!(plain.contains("PRECONDITION_FAILED"), "{plain}");
+    assert!(
+        plain.contains("new OptimisticLockingFailureException("),
+        "{plain}"
+    );
 }
 
 #[test]

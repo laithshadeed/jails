@@ -358,8 +358,12 @@ fn unheld_maven_example_manifest_passes_real_verification() {
             // `UserDtoTest`, two cases each. A scaffold declares the request
             // boundary now, so every resource ships the request and response
             // records and the test that holds them to what a caller supplies.
+            // 46 -> 48: the error model gained the two outcomes a transition
+            // can have when its `If-Match` does not match -- 412 for a version
+            // that moved on, 404 for a row that is not there. Both reached the
+            // client as a 500 before, which is what alerting pages on.
             reports: 20,
-            tests: 46,
+            tests: 48,
             failures: 0,
             errors: 0,
             skipped: 0,

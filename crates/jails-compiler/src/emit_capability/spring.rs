@@ -67,7 +67,87 @@ const API_FRAGMENTS: &[Fragment] = &[
         when_capability: "db",
         body: DUPLICATE_KEY_ROUTE,
     },
+    Fragment {
+        key: "precondition_import",
+        when_capability: "db",
+        body: "import org.springframework.dao.EmptyResultDataAccessException;\nimport org.springframework.dao.OptimisticLockingFailureException;",
+    },
+    Fragment {
+        key: "precondition_handler",
+        when_capability: "db",
+        body: PRECONDITION_HANDLER,
+    },
+    Fragment {
+        key: "precondition_test",
+        when_capability: "db",
+        body: PRECONDITION_TEST,
+    },
+    Fragment {
+        key: "precondition_route",
+        when_capability: "db",
+        body: PRECONDITION_ROUTE,
+    },
 ];
+
+/// **Spring's own vocabulary, so nothing new has to be declared.** A
+/// transition whose `If-Match` did not match raises
+/// `OptimisticLockingFailureException` and one whose row is not there raises
+/// `EmptyResultDataAccessException` -- both from `spring-dao`, both already on
+/// the classpath the moment the JDBC starter is. Mapping them here rather than
+/// in each controller is what keeps a generated controller free of HTTP status
+/// arithmetic, and what makes a hand-written adapter get the same answer.
+const PRECONDITION_HANDLER: &str = r#"
+    /**
+     * A precondition the caller stated and the row no longer satisfies.
+     *
+     * <p>412 rather than 409: the caller sent an `If-Match` and it did not
+     * match, which is precisely what 412 means. A 500 here is the worse
+     * failure it replaces -- alerting pages on it, client libraries retry it,
+     * and the retry cannot succeed because the version has moved on.
+     */
+    @ExceptionHandler(OptimisticLockingFailureException.class)
+    public ProblemDetail handleStalePrecondition(OptimisticLockingFailureException failure) {
+        return ProblemDetail.forStatusAndDetail(
+                HttpStatus.PRECONDITION_FAILED,
+                "the resource has changed since the version you sent");
+    }
+
+    /**
+     * A row the request named and the database does not have.
+     *
+     * <p>The detail says nothing about which row: an unauthenticated caller
+     * learning that an id exists is the difference between 404 and 403, and
+     * a generated handler is the wrong place to decide that.
+     */
+    @ExceptionHandler(EmptyResultDataAccessException.class)
+    public ProblemDetail handleMissingRow(EmptyResultDataAccessException failure) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, "no such resource");
+    }
+"#;
+
+const PRECONDITION_TEST: &str = r#"
+    @Test
+    void aStalePreconditionBecomesA412() {
+        assertThat(mvc.get().uri("/boom/stale")).hasStatus(HttpStatus.PRECONDITION_FAILED);
+    }
+
+    @Test
+    void aMissingRowBecomesA404() {
+        assertThat(mvc.get().uri("/boom/missing")).hasStatus(HttpStatus.NOT_FOUND);
+    }
+"#;
+
+const PRECONDITION_ROUTE: &str = r#"
+        @GetMapping("/boom/stale")
+        String stale() {
+            throw new OptimisticLockingFailureException("version moved on");
+        }
+
+        @GetMapping("/boom/missing")
+        String missing() {
+            throw new EmptyResultDataAccessException(1);
+        }
+"#;
 
 const DUPLICATE_KEY_HANDLER: &str = r#"
     /**
