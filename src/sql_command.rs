@@ -202,10 +202,20 @@ fn generate(
         for artifact in
             jails_project::named_query::project(&query.source, &query.contract, &packages)?
         {
+            // **Every path, because a count is not an answer.** The preview
+            // named each file and the commit reported "wrote 5 file(s)", so a
+            // reader who wanted to know whether their contract test moved had
+            // nothing to read but `git status` -- and the two halves of one
+            // command described it differently.
+            let verb = match artifact.path.exists() {
+                true => "write",
+                false => "create",
+            };
             if invocation.pretend {
-                println!("--pretend: would write {}", artifact.path.display());
+                println!("  {verb:<8}{}", artifact.path.display());
             } else {
                 jails_support::apply::put_one_shot(&artifact.path, artifact.contents)?;
+                println!("  {verb:<8}{}", artifact.path.display());
             }
             written += 1;
         }

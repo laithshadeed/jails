@@ -205,6 +205,20 @@ pub struct WorkspaceSnapshot {
     /// `migration_history` is read fresh from the tree on every capture, so it
     /// agrees with whatever the file says now.
     pub accepted_migrations: BTreeMap<ProjectPath, ContentDigest>,
+    /// The exact bytes of every migration the executor has published.
+    ///
+    /// **A digest can only say a migration changed; the bytes can put it
+    /// back.** An edited migration that a database has already run is the one
+    /// file a reader cannot fix by regenerating: the compiler derives a
+    /// migration from a model *diff*, and the diff that produced this one is
+    /// history. Flyway refuses on the checksum until the file matches what
+    /// ran, so `resource repair` needs the original and nothing else has it.
+    ///
+    /// `#[serde(default)]` so a lock written before this field existed still
+    /// decodes; repair then reports that migration as unrecoverable rather
+    /// than claiming to have restored it.
+    #[serde(default)]
+    pub accepted_migration_bytes: BTreeMap<ProjectPath, Vec<u8>>,
     pub project: ProjectFacts,
     pub external_types: ExternalTypeIndex,
     pub migration_history: MigrationHistory,
@@ -225,6 +239,7 @@ impl WorkspaceSnapshot {
             accepted_projection: None,
             accepted_compiler: None,
             accepted_migrations: BTreeMap::new(),
+            accepted_migration_bytes: BTreeMap::new(),
             project,
             external_types: ExternalTypeIndex::default(),
             migration_history: MigrationHistory::default(),

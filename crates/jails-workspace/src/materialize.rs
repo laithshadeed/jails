@@ -53,6 +53,14 @@ struct CompilerLock<'a> {
     /// published, so a later capture reading a different file on disk is the
     /// finding rather than the new truth.
     migrations: BTreeMap<ProjectPath, ContentDigest>,
+    /// The bytes behind those digests, so an edited one can be put back.
+    ///
+    /// **A digest can only say a migration changed.** The compiler derives a
+    /// migration from a model *diff*, and the diff that produced a published
+    /// one is history -- so regenerating cannot recover it and nothing else
+    /// holds it. Flyway refuses on the checksum until the file matches what
+    /// ran, which makes this the one restore that has no alternative.
+    migration_bytes: BTreeMap<ProjectPath, Vec<u8>>,
 }
 
 pub(crate) const PLAN_SCHEMA: &str = "jails.plan.v1";
@@ -149,6 +157,7 @@ pub fn materialize_with_model(
     // the reader to fill in and names nothing, and sealing that would report a
     // fault the moment the reader did what the file asks.
     let mut sealed_migrations = snapshot.accepted_migrations.clone();
+    let mut sealed_bytes = snapshot.accepted_migration_bytes.clone();
     materialize_migrations(
         snapshot,
         &draft,
@@ -156,7 +165,21 @@ pub fn materialize_with_model(
         &mut blobs,
         &mut operations,
         &mut sealed_migrations,
+        &mut sealed_bytes,
     )?;
+    // **Restoring a sealed migration is `resource repair`'s job and no other
+    // plan's.** An ordinary command that found one edited would be rewriting a
+    // file the reader touched as a side effect of something else; repair is
+    // the command that exists to say "put back what was published".
+    if restore == Restore::Deleted {
+        restore_sealed_migrations(
+            snapshot,
+            &sealed_bytes,
+            &mut base,
+            &mut blobs,
+            &mut operations,
+        )?;
+    }
     crate::reader_facet::materialize(
         snapshot,
         &draft.baseline.reader_facets,
@@ -208,6 +231,7 @@ pub fn materialize_with_model(
         &draft,
         compiler_version,
         sealed_migrations,
+        sealed_bytes,
         &mut blobs,
         &mut operations,
     )?;
@@ -248,6 +272,7 @@ fn materialize_migrations(
     blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
     operations: &mut Vec<PlannedOperation>,
     sealed: &mut BTreeMap<ProjectPath, ContentDigest>,
+    sealed_bytes: &mut BTreeMap<ProjectPath, Vec<u8>>,
 ) -> Result<(), String> {
     if draft.migrations.is_empty() {
         return Ok(());
@@ -301,6 +326,7 @@ fn materialize_migrations(
         let after = file_image(&migration.bytes, FileMode::Regular, blobs)?;
         if !migration.semantic_ids.is_empty() {
             sealed.insert(path.clone(), after.blob.clone());
+            sealed_bytes.insert(path.clone(), migration.bytes.clone());
         }
         operations.push(PlannedOperation::AppendMigration { path, after });
     }
@@ -313,6 +339,7 @@ fn materialize_compiler_lock(
     draft: &PlanDraft,
     compiler_version: &str,
     migrations: BTreeMap<ProjectPath, ContentDigest>,
+    migration_bytes: BTreeMap<ProjectPath, Vec<u8>>,
     blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
     operations: &mut Vec<PlannedOperation>,
 ) -> Result<(), String> {
@@ -332,6 +359,7 @@ fn materialize_compiler_lock(
         projection_digest,
         projection: &draft.generated,
         migrations,
+        migration_bytes,
     })
     .map_err(|error| format!("could not encode compiler lock: {error}"))?;
     let path = ProjectPath::parse(crate::capture::COMPILER_LOCK)?;
@@ -759,6 +787,48 @@ fn canonical_digest(label: &str, value: &impl Serialize) -> Result<ContentDigest
 /// hex somewhere else is how two answers to one question start.
 pub fn digest(bytes: &[u8]) -> Result<ContentDigest, String> {
     ContentDigest::parse(format!("sha256:{}", hex(&sha256(bytes))))
+}
+
+/// Put back a published migration the reader edited.
+///
+/// **Only `resource repair` asks for this**, and it is the one restore the
+/// compiler cannot derive: a migration comes from a model *diff*, and the diff
+/// that produced a published one is history. Flyway refuses on the checksum
+/// until the file matches what ran, so a project whose migration was edited
+/// after being applied has no other way back.
+///
+/// A migration the lock records no bytes for -- written by an older jails --
+/// is left alone rather than guessed at.
+fn restore_sealed_migrations(
+    snapshot: &WorkspaceSnapshot,
+    sealed: &BTreeMap<ProjectPath, Vec<u8>>,
+    base: &mut jails_contracts::SnapshotPreconditions,
+    blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
+    operations: &mut Vec<PlannedOperation>,
+) -> Result<(), String> {
+    for (path, bytes) in sealed {
+        let live = snapshot.files.get(path);
+        if live.is_some_and(|file| file.bytes == *bytes) {
+            continue;
+        }
+        let before = live
+            .map(|file| file_image(&file.bytes, FileMode::Regular, blobs))
+            .transpose()?;
+        base.files.entry(path.clone()).or_insert(match &before {
+            Some(image) => jails_contracts::FilePrecondition::Present {
+                digest: image.blob.clone(),
+                executable: image.mode == FileMode::Executable,
+            },
+            None => jails_contracts::FilePrecondition::Missing,
+        });
+        let after = file_image(bytes, FileMode::Regular, blobs)?;
+        operations.push(PlannedOperation::PatchReaderFile {
+            path: path.clone(),
+            before,
+            after,
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]

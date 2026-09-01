@@ -22,14 +22,17 @@ pub(crate) fn resource_status(
     // completely. `model_status` reads the same four authorities where they
     // actually live.
     if crate::model_command::owns() {
-        if let Some(datasource) = datasource {
-            let _ = datasource;
-            return Err(jails_support::Failure::Told(
-                "`resource status --datasource` is not yet available for a canonical project.\n       fix: run `jails resource status <SELECTOR>` for the declared, generated and migration authorities"
-                    .to_string(),
-            ));
-        }
-        return crate::model_status::run(selector, invocation);
+        // **The database is a fifth authority, observed the way every other
+        // external fact is: once, read-only, and named in the report.** The
+        // four jails can read on its own -- the declaration, the managed tree,
+        // the lock and the migration history -- can all agree while the
+        // application still fails on its first query, because the migration
+        // that creates the table is on disk and unapplied. That is the one
+        // state `--datasource` exists to find.
+        let live = datasource
+            .map(|datasource| observe_live(datasource, invocation.debug))
+            .transpose()?;
+        return crate::model_status::run(selector, live, invocation);
     }
     let Some(datasource) = datasource else {
         return jails_report::lifecycle_status::status(selector, None, invocation.output.is_json());
@@ -631,4 +634,147 @@ fn risk_label(risk: MigrationRisk) -> &'static str {
         MigrationRisk::DeploymentIncompatible => "deployment-incompatible",
         MigrationRisk::Opaque => "opaque",
     }
+}
+
+/// The tables the database has and the migrations it says it ran.
+///
+/// Two probes rather than one, because a table that is there for the wrong
+/// reason is a different answer from a table that is there because the
+/// migration jails wrote created it. Nothing here writes: `observe_flyway`
+/// reads an absent history table as an empty history rather than creating it,
+/// and `observe` reads `pg_catalog`.
+fn observe_live(datasource: &str, debug: bool) -> Result<crate::model_status::Live> {
+    use jails_protocol::database::SchemaObjectKind;
+
+    let project = Project::discover()?;
+    let history = jails_drive::live_sql::observe_flyway(
+        &project,
+        datasource,
+        jails_drive::live_sql::LiveServices::Existing,
+        debug,
+    )?;
+    let catalog = jails_drive::live_sql::observe(
+        &project,
+        datasource,
+        jails_drive::live_sql::LiveServices::Existing,
+        "public",
+        debug,
+    )?;
+    Ok(crate::model_status::Live {
+        tables: catalog
+            .catalog
+            .objects
+            .keys()
+            .filter(|id| id.kind == SchemaObjectKind::Table)
+            .map(|id| id.name.as_str().to_string())
+            .collect(),
+        applied: history
+            .applied
+            .iter()
+            .filter(|migration| migration.success)
+            .filter_map(|migration| migration.version.as_ref())
+            // The report's own migration list is the bare zero-padded number
+            // the filename carries -- `001` -- so both sides of the comparison
+            // spell one version one way.
+            .map(|version| format!("{:03}", version.get()))
+            .collect(),
+    })
+}
+
+/// Refuse when the database applied an image the seal would overwrite.
+///
+/// **`resource repair` restores a sealed migration byte-for-byte, and that is
+/// only safe when the bytes are what ran.** Flyway records a checksum per
+/// applied migration; if it matches the accepted bytes, the file on disk was
+/// edited after the fact and restoring it is exactly the repair. If it matches
+/// something else, a different image is what the database ran -- restoring the
+/// seal would leave Flyway refusing on the checksum for ever, about a file
+/// jails had just reported as repaired.
+///
+/// jails does not run `flyway repair` here, and says so: rewriting the
+/// recorded checksum to match a file is asserting that two different
+/// migrations were the same one, which is the database owner's call.
+pub(crate) fn refuse_divergent_flyway_history(
+    bundle: &jails_contracts::PlanBundle,
+    datasource: &str,
+    invocation: &crate::Invocation,
+) -> Result<()> {
+    let project = Project::discover()?;
+    let history = jails_drive::live_sql::observe_flyway(
+        &project,
+        datasource,
+        jails_drive::live_sql::LiveServices::Existing,
+        invocation.debug,
+    )?;
+    // The bytes this repair *would* write, taken from the plan rather than
+    // from disk: the file on disk is the edited one, which is the whole reason
+    // repair was asked for.
+    let accepted = planned_migrations(bundle);
+    for applied in &history.applied {
+        if !applied.success {
+            continue;
+        }
+        let Some(version) = applied.version.as_ref() else {
+            continue;
+        };
+        let Some(checksum) = applied.checksum else {
+            continue;
+        };
+        let version = format!("{:03}", version.get());
+        let Some(bytes) = accepted.get(&version) else {
+            continue;
+        };
+        let sealed = jails_drive::live_sql::flyway_checksum(bytes)?;
+        if sealed != checksum {
+            return Err(jails_support::Failure::Told(format!(
+                "flyway-checksum-divergent: the database applied a different image of migration {version} (applied {checksum}, accepted {sealed}).\n       fix: jails will not invoke Flyway repair -- reconcile the applied migration by hand, or accept the image that ran"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Every migration this plan writes, keyed by the version in its filename.
+///
+/// A migration reaches the tree through more than one operation depending on
+/// whether it is being appended or restored, so this reads the *paths* rather
+/// than matching an operation kind -- the filename is what carries the version
+/// Flyway records, and it is the same filename either way.
+fn planned_migrations(
+    bundle: &jails_contracts::PlanBundle,
+) -> std::collections::BTreeMap<String, Vec<u8>> {
+    use jails_contracts::PlannedOperation as Op;
+
+    let mut found = std::collections::BTreeMap::new();
+    let mut take = |path: &jails_contracts::ProjectPath, blob: &jails_contracts::ContentDigest| {
+        let Some(name) = path.as_str().rsplit('/').next() else {
+            return;
+        };
+        let Some((version, _)) = name
+            .strip_prefix('V')
+            .and_then(|rest| rest.split_once("__"))
+        else {
+            return;
+        };
+        if let Some(bytes) = bundle.blobs.get(blob) {
+            found.insert(version.to_string(), bytes.clone());
+        }
+    };
+    for operation in &bundle.plan.operations {
+        match operation {
+            Op::AppendMigration { path, after } => take(path, &after.blob),
+            Op::ReplaceModelFile { path, after, .. }
+            | Op::ReplaceStateFile { path, after, .. }
+            | Op::PatchReaderFile { path, after, .. } => take(path, &after.blob),
+            Op::PublishMergedTree { after, .. } => {
+                if let Some(tree) = bundle.trees.get(after) {
+                    for (path, entry) in &tree.entries {
+                        take(path, &entry.blob);
+                    }
+                }
+            }
+            Op::RemoveReaderFile { .. } => {}
+        }
+    }
+    found
 }

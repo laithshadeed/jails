@@ -2683,7 +2683,7 @@ fn resource_repair_restores_sealed_history_and_missing_owned_projections() {
     fs::remove_file(&controller).unwrap();
 
     let repaired = jails_cmd(&root, None)
-        .args(["resource", "repair", "Task", "--strategy", "roll-forward"])
+        .args(["resource", "repair"])
         .output()
         .unwrap();
     assert!(
@@ -2700,7 +2700,7 @@ fn resource_repair_restores_sealed_history_and_missing_owned_projections() {
 
     fs::remove_file(&migration).unwrap();
     let repaired_missing = jails_cmd(&root, None)
-        .args(["resource", "repair", "Task", "--strategy", "roll-forward"])
+        .args(["resource", "repair"])
         .output()
         .unwrap();
     assert!(repaired_missing.status.success(), "{repaired_missing:?}");
@@ -2752,15 +2752,7 @@ fn live_resource_repair_requires_the_applied_flyway_checksum_to_match_the_seal()
             "DATABASE_URL",
             "postgresql://app:secret@127.0.0.1:5432/demo",
         )
-        .args([
-            "resource",
-            "repair",
-            "Task",
-            "--strategy",
-            "roll-forward",
-            "--datasource",
-            "DATABASE_URL",
-        ])
+        .args(["resource", "repair", "--datasource", "DATABASE_URL"])
         .output()
         .unwrap();
     assert!(
@@ -2783,15 +2775,7 @@ fn live_resource_repair_requires_the_applied_flyway_checksum_to_match_the_seal()
             "DATABASE_URL",
             "postgresql://app:secret@127.0.0.1:5432/demo",
         )
-        .args([
-            "resource",
-            "repair",
-            "Task",
-            "--strategy",
-            "roll-forward",
-            "--datasource",
-            "DATABASE_URL",
-        ])
+        .args(["resource", "repair", "--datasource", "DATABASE_URL"])
         .output()
         .unwrap();
     assert!(!refused.status.success(), "{refused:?}");
