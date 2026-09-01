@@ -2715,6 +2715,11 @@ smaller `jdl` fragment is parsed in a minimal synthetic document appropriate to
 its context. Documentation examples MUST be extracted in CI rather than copied
 into disconnected test strings.
 
+`the_specification_complete_example_links_except_its_one_recorded_gap` is that
+extraction for §4: it reads the block out of this file rather than a copy, and
+pins the one construct that does not resolve yet (Part 3's A3.15). The smaller
+fragments are not extracted, and that is the rest of this family.
+
 ## 22. Upgrade from the pre-v1 draft
 
 A file without `jdl 1` is parsed only by the legacy importer. It is never
@@ -2871,6 +2876,34 @@ places and `CompileError` is a newtype over `String` -- a third vocabulary with
 no codes at all, and no spans below the parser.
 
 §18.3 asks for one diagnostic contract. This is the gap.
+
+## 3.4a A3.15 — §16.4's readable boundary path does not resolve
+
+§16.4 says the *preferred* ejection reference is a readable, linked boundary
+path -- `Entity.record`, `Entity.repo.fake`, `Entity.http.api` -- and that
+"the boundary registry, not string concatenation in the parser, defines valid
+paths". **There is no boundary registry.** `known_targets` in the linker is the
+set of stable IDs already in the model, so an ejection resolves only against an
+`art_*` id or a node id, and `jails model eject` takes "a stable entity,
+operation, or capability id".
+
+So the §4 complete example does not link: `eject Task.repo.fake` refuses with
+`model-ejection-target`, and it is the only thing wrong with it.
+`the_specification_complete_example_links_except_its_one_recorded_gap` pins
+both halves -- the rest of the example links, and that line still refuses --
+so this entry cannot go stale in either direction.
+
+This is the same missing piece as §20.2's `OutputConvention` registry, seen
+from the other side: both want one data table that maps a readable name to a
+generated artifact, and neither exists. Emitters concatenate role suffixes at
+the point of use instead (`format!("{}Repository", ..)` in two files), which is
+why §20.2's "emitters MUST NOT concatenate a package, prefix, suffix, filename
+or test marker" is not held today.
+
+**Exit:** one registry, read by the linker for ejection targets and by the
+emitters for output names, with the exhaustiveness test §20.2 asks for -- an
+emitter asking for an unregistered role, or a registered role with no emitter,
+fails the build.
 
 ## 3.5 A3.14 — no typed artifact IR
 

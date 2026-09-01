@@ -14299,3 +14299,84 @@ app Demo {
         }
     );
 }
+
+/// **`new.md` §21's first conformance family: the §4 complete example is a
+/// fixture, not prose.**
+///
+/// §21 says the complete example "is an executable conformance fixture" and
+/// that documentation examples MUST be extracted in CI rather than copied into
+/// disconnected test strings. Nothing extracted it, so the flagship example of
+/// the language could stop linking and the only thing that would notice is a
+/// reader typing it in. It had: `version` is a `@version` field and the
+/// transition that guards on it is `if-match required`, which the linker
+/// rejected as a set target for months.
+///
+/// **The example is read out of `new.md` rather than pasted here**, which is
+/// the whole point -- a copy is a second document that drifts silently, and a
+/// test asserting a copy links proves nothing about what a reader sees.
+///
+/// **One line is a recorded gap rather than a passing assertion.** §16.4 says
+/// the *preferred* ejection reference is a readable boundary path --
+/// `Entity.repo.fake` -- resolved by a boundary registry. There is no boundary
+/// registry: `known_targets` in the linker is the set of stable IDs, and
+/// `jails model eject` takes a "stable entity, operation, or capability id".
+/// So `eject Task.repo.fake` refuses, and this test pins both halves: the rest
+/// of the example links, and that line still refuses with the recorded
+/// diagnostic. When the registry lands, the second assertion fails and this
+/// test is how you find out the first one can absorb it.
+#[test]
+fn the_specification_complete_example_links_except_its_one_recorded_gap() {
+    let document = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("new.md"))
+        .expect("new.md is checked in");
+    let section = document
+        .split("## 4. Complete example")
+        .nth(1)
+        .and_then(|rest| rest.split("\n## 5.").next())
+        .expect("new.md still has a §4 complete example");
+    let example = section
+        .split("```jdl\n")
+        .nth(1)
+        .and_then(|rest| rest.split("```").next())
+        .expect("§4 still carries one jdl block");
+    assert!(
+        example.starts_with("jdl 1"),
+        "the extracted block is not a v1 document:\n{example}"
+    );
+    assert!(
+        example.contains("eject Task.repo.fake"),
+        "§4 no longer carries the readable ejection path this test pins:\n{example}"
+    );
+
+    // The whole example, as written. This is the assertion that fails when the
+    // language and the linker drift apart.
+    let whole = jdl_project("spec-section-4-whole", example);
+    let refused = jails_cmd(&whole, None)
+        .args(["model", "check"])
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&refused.stderr).into_owned();
+    assert!(
+        !refused.status.success() && said.contains("model-ejection-target"),
+        "§16.4's readable boundary path resolves now -- delete this half and the \
+         `known_targets` note in `new.md` §16.4's entry:\n{said}"
+    );
+    assert!(
+        said.matches("] $.").count() == 1,
+        "the example has a second diagnostic beyond the recorded ejection gap:\n{said}"
+    );
+    fs::remove_dir_all(&whole).ok();
+
+    // Everything else, which must link cleanly.
+    let without = example.replace("eject Task.repo.fake\n", "");
+    let root = jdl_project("spec-section-4-linked", &without);
+    let checked = jails_cmd(&root, None)
+        .args(["model", "check"])
+        .output()
+        .unwrap();
+    assert!(
+        checked.status.success(),
+        "the §4 example does not link:\n{}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    fs::remove_dir_all(&root).ok();
+}
