@@ -751,12 +751,28 @@ the companion test is emitted whole and `@Disabled`, naming the component.
   captured Boot version (`snapshot.project.spring_boot`) picks the package.
   **The test fixture must not supply what the tool is supposed to supply**:
   `SPRING_FIXTURE_POM` declares only what `jails new` writes.
-- **Three version facts are read off the captured project, never assumed**:
-  the `@AutoConfigureMockMvc` package, the `WebMvcTest` starter and the
-  validation package (`jakarta` vs `javax`). Boot 4 moved
-  `@AutoConfigureMockMvc` to `org.springframework.boot.webmvc.test.autoconfigure`
-  with no shim, and moved `MeterRegistryCustomizer` out of
-  `actuate.autoconfigure`.
+- **A type whose package a Boot major moved is an `Import::Moved` row, not a
+  template placeholder.** `emit_capability::MovedImport` holds both spellings
+  side by side with the rule that an unreadable version resolves to the older
+  package; `AUTOCONFIGURE_MOCKMVC`, `WEBMVC_TEST` and
+  `METER_REGISTRY_CUSTOMIZER` are the three, and a pack's `JavaFile` row asks
+  for one so the name joins the unit's import set. Boot 4 moved
+  `@AutoConfigureMockMvc` and `@WebMvcTest` to
+  `org.springframework.boot.webmvc.test.autoconfigure` with no shim, and moved
+  `MeterRegistryCustomizer` out of `actuate.autoconfigure`. The validation
+  package (`jakarta` vs `javax`) is the fourth version fact and stays a
+  function, because it is a package *prefix* rather than a type.
+- **A pack's own facts are on its row.** `Pack::substitutions` carries what
+  only that capability's templates spell -- an image tag, a URL, a route
+  segment -- because one shared substitution list applies `redis:7-alpine` to
+  `mail`'s templates and is safe only while no two packs pick the same key.
+- **`Map<long, Note>` is not a type.** `int` and `long` are the only builtins
+  with a Java primitive, and a required one is spelled with it everywhere
+  except a *type argument*, where it has to be boxed;
+  `emit_java::boxed_java_type` is that spelling and
+  `emit_java/repository.rs` is the only place in the compiler that needs it.
+  Goldens cannot catch this -- they compare bytes -- so the tier-3 kind sweep
+  keys a `g repo` on `long` beside the `uuid` one.
 - **The Boot floor is in the generated *code*, not its tests.** `add api`
   writes `ProblemDetail`, `add security` writes `requestMatchers`, `g query`
   and `g transition` write a `JdbcClient` adapter, all in the main source set;
