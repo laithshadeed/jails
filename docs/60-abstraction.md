@@ -219,6 +219,79 @@ report cases -- as two versioned protocols. One `TestPlan` and one `TestReport`,
 with the daemon's wire framing as an encoding of them rather than a second
 model.
 
+### S60.7 — managed output lives in `src/`, and the lock says what is managed
+
+JDL v1 §9.7 places every layer under `src/main/java` or `src/test/java`. The
+code places all of it under `.jails/generated/{main,test}/{java,resources}`
+and `.jails/generated/requests`, then edits the reader's build file so the
+build can find it: a `build-helper-maven-plugin` block on Maven, a source-set
+block per root on Gradle (`documents/source_root.rs`,
+`DocumentIntent::EnsureMavenSourceRoots`). That is the code diverging from the
+language, and it costs the product its own premise. `docs/00-contracts.md`
+§1.2 rejected the disposable tree because "a tree nobody may edit is a tree
+nobody trusts", and D1 says the reader edits generated files and the merge
+keeps the edits. A dotfolder is hidden by IntelliJ, VS Code, `ls` and
+ripgrep by default, and its name says *do not edit*. So the design asks for
+edits in a place built to discourage them, splits one Java package across two
+source roots, and makes every reader of source learn a second tree
+(`inspect/roots.rs`, the storage wiring check in `doctor`, `jails src`).
+
+The path does exactly one job in the code: it answers "is this file jails'"
+with a prefix test (`MANAGED_ROOT` in the compiler, `ejectable.rs`, the
+source-root splice, the managed walk in `capture`). The lock,
+`.jails/compiler.lock.json`, already holds the accepted projection as a
+`RenderedTree` keyed by path with the BASE bytes of every managed file, so the
+answer is available without the prefix: **a file is managed if the accepted
+projection names its path.** Nothing in the merge depends on where the file
+is. BASE is the accepted render, OURS is the captured file, THEIRS is the next
+render, at whatever path.
+
+What changes, in order of dependency:
+
+1. **`RenderedTree.root` goes.** The projection is a set of project paths; the
+   compiler stops checking `baseline.root != root` and `ejectable.rs` stops
+   translating `.jails/generated/main/java/…` into `src/main/java/…`, because
+   the emitted path *is* the reader path. Every emitter's `*_ROOT` constant
+   collapses onto the §9.7 table, which then has one owner (S60.2's rule).
+2. **Capture reads the lock first and walks the paths it names**, plus the
+   reader trees `ReaderTrees` already selects. Today's wholesale walk of the
+   managed root becomes a walk of the accepted projection's paths, and the
+   only new observation is a reader file at a path the next render wants
+   that the lock does not own: a collision, refused with the file named, which
+   is the `create` verb's contract and the eject collision rule stated once
+   more. `verify_preconditions`' "unmanaged file inside the managed tree"
+   refusal becomes this check; `sweep_staged` sweeps the parents of the
+   bundle's paths, which it already does for reader files.
+3. **Ejection is a lock edit, not a move.** `eject <boundary>` removes the
+   boundary's artifacts from the accepted projection and records the `eject`
+   declaration; the files stay where they are. The `Missing` before-image
+   rule and "transfer is creation" go, because there is no transfer.
+4. **`check --frozen` compares the lock's paths**, not a directory. A managed
+   file the reader deleted is a difference; a reader file beside a managed one
+   is not.
+5. **Delete** `documents/source_root.rs`, `EnsureMavenSourceRoots`, the Gradle
+   source-set block, the second root in `inspect/roots.rs` and `doctor`, and
+   the `ProjectPath::parse(".jails/generated/…")` block in the compiler.
+   `requests/*.http` moves beside the tests, under `src/test/http`.
+6. **Each managed file carries one header line naming its artifact ID**
+   (`// jails: art_…`, part of BASE, so an edit to it is an ordinary edit).
+   `ls .jails/generated` was the way to see what jails owns; `jails model
+   status` listing the lock is the replacement, and the header is the answer
+   from inside the file.
+
+What it does not change: the three-way merge, the lock's BASE/OURS/THEIRS
+rule, the executor and its crash proof, `PlanBundle`. A project generated
+before this needs one migration, `jails model relocate`: move
+`.jails/generated/<set>/<kind>/…` to `src/<set>/<kind>/…`, rewrite the paths
+in the lock, remove the marked source-root block from the build file, and
+refuse if any destination exists. `tests/golden/**` is regenerated and the
+diff is read.
+
+**Exit:** no path under `.jails/` holds Java, SQL or resources; the string
+`.jails/generated` appears in `jails model relocate` and nowhere else; the
+board's Maven-scanner row counts one fewer marked block; a generated project
+opened in an IDE shows one source root per source set.
+
 ## What stays exactly as it is
 
 The executor and its crash proof; the three-way merge and the lock's
@@ -237,6 +310,7 @@ BASE/OURS/THEIRS rule; `PlanBundle`, `PlannedOperation` (six kinds is right),
 | S60.4 the snapshot | 53 | S53.2, S53.3 |
 | S60.5 one entry point | 53 | S53.7 |
 | S60.6 one test vocabulary | 53 | S53.5 |
+| S60.7 managed output in `src/` | none yet | after S60.2 (one owner for the §9.7 table) and S60.4 (capture is the one reader); needs `jails model relocate` |
 
 A plan step that lands a deletion without moving toward one of these is
 still worth landing; a step that adds a *new* shape -- a fourth vocabulary, a
