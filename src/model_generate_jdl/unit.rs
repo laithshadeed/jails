@@ -1,18 +1,17 @@
 //! Familiar standalone main/test CLI syntax over one source-unit node.
 
+use super::append_declaration;
 use super::component::{
     component_kind, component_stem, legacy_unit_kind, reject_v1_options, replace_v1_declaration,
     v1_declaration,
 };
-use super::{MODEL_PATH, append_declaration, parse, read_model};
 use crate::ArtifactKind;
 use crate::Invocation;
 use crate::cli::GenerateArgs;
+use crate::model_command::parse;
 use crate::model_generate::{PreparedMutation, finish_generation};
 use jails_model::{ComponentId, ModelPatch, StableId, UnitId, UnitKind};
 use jails_support::{Failure, Result};
-use serde_json::json;
-use std::path::PathBuf;
 
 pub(super) fn run(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
     // The same rule entities get: a name typed in lower camel case is the Java
@@ -34,9 +33,7 @@ pub(super) fn run(mut args: GenerateArgs, invocation: Invocation) -> Result<()> 
     } else {
         Vec::new()
     };
-    let model_path = PathBuf::from(MODEL_PATH);
-    let current_source = read_model(&invocation)?;
-    let current_model = parse(&current_source)?;
+    let current = crate::model_command::Current::load(&invocation)?;
     reject_v1_options(&args, component_kind)?;
     run_v1(
         args,
@@ -44,22 +41,17 @@ pub(super) fn run(mut args: GenerateArgs, invocation: Invocation) -> Result<()> 
         (component_kind.label(), legacy_kind),
         stem,
         variants,
-        model_path,
-        current_source,
-        current_model,
+        current,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run_v1(
     args: GenerateArgs,
     invocation: Invocation,
     kind: (&str, Option<UnitKind>),
     stem: String,
     variants: Vec<String>,
-    model_path: PathBuf,
-    current_source: String,
-    current_model: jails_model::AppModel,
+    current: crate::model_command::Current,
 ) -> Result<()> {
     if args.package.is_some() {
         return Err(Failure::Told(format!(
@@ -86,12 +78,12 @@ fn run_v1(
         &variants,
         component_id.as_str(),
         &args,
-        &current_model,
+        &current.model,
     )?;
-    let next_source = if current_model.components.contains_key(&component_id) {
-        replace_v1_declaration(&current_source, &stem, &declaration)?
+    let next_source = if current.model.components.contains_key(&component_id) {
+        replace_v1_declaration(&current.source, &stem, &declaration)?
     } else {
-        append_declaration(current_source.clone(), &declaration)?
+        append_declaration(current.source.clone(), &declaration)?
     };
     let next_model = parse(&next_source)?;
     let component = next_model
@@ -107,22 +99,20 @@ fn run_v1(
             })
         })
         .transpose()?;
-    let existing = current_model.components.get(&component_id);
+    let existing = current.model.components.get(&component_id);
     if existing == Some(&component)
         && unit_id
             .as_ref()
-            .is_none_or(|unit_id| current_model.units.get(unit_id) == unit.as_ref())
+            .is_none_or(|unit_id| current.model.units.get(unit_id) == unit.as_ref())
     {
         return finish_generation(PreparedMutation {
             name: args.name,
             invocation,
-            model_path,
-            current_source: current_source.clone(),
-            current_model,
-            next_source: current_source,
+            next_source: current.source.clone(),
+            current,
             patch: ModelPatch::Batch(Vec::new()),
-            patch_bytes: br#"{"kind":"batch","patches":[]}"#.to_vec(),
             authored_migration: None,
+            reader_paths: Vec::new(),
         });
     }
     let mut patches = if existing.is_some() {
@@ -137,22 +127,14 @@ fn run_v1(
             ModelPatch::AddUnit(unit)
         });
     }
-    let patch_bytes = serde_json::to_vec(&json!({
-        "kind": if existing.is_some() { "replace-component" } else { "add-component" },
-        "component": component,
-        "unit_view": unit,
-    }))
-    .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
     finish_generation(PreparedMutation {
         name: args.name,
         invocation,
-        model_path,
-        current_source,
-        current_model,
+        current,
         next_source,
         patch: ModelPatch::Batch(patches),
-        patch_bytes,
         authored_migration: None,
+        reader_paths: Vec::new(),
     })
 }
 

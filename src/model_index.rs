@@ -7,9 +7,7 @@ use crate::model_resource::java_to_label;
 use jails_model::{Facet, IndexId, ModelPatch, StableId};
 use jails_support::codec::{hex, sha256};
 use jails_support::{Failure, Result};
-use serde_json::json;
 use std::collections::BTreeSet;
-use std::path::PathBuf;
 
 pub(crate) fn run(command: ResourceIndexCommand, invocation: Invocation) -> Result<()> {
     match command {
@@ -41,10 +39,9 @@ pub(crate) fn add(
                 .to_string(),
         ));
     }
-    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
-    let current_source = crate::model_command::read_source_at(&invocation.root()?, &model_path)?;
-    let current_model = crate::model_generate_jdl::parse(&current_source)?;
-    if !current_model
+    let current = crate::model_command::Current::load(&invocation)?;
+    if !current
+        .model
         .capabilities
         .values()
         .any(|capability| capability.kind == "db")
@@ -55,7 +52,7 @@ pub(crate) fn add(
         ));
     }
     let entity_label = java_to_label(&entity_name);
-    let entity = current_model
+    let entity = current.model
         .entities
         .values()
         .find(|entity| entity.label == entity_label || entity.names.java_type == entity_name)
@@ -85,33 +82,25 @@ pub(crate) fn add(
         index_id.as_str()
     );
     let next_source =
-        crate::model_generate_jdl::index::insert(&current_source, &entity_java_name, &member)?;
-    let next_model = crate::model_generate_jdl::parse(&next_source)?;
+        crate::model_generate_jdl::index::insert(&current.source, &entity_java_name, &member)?;
+    let next_model = crate::model_command::parse(&next_source)?;
     let index = next_model
         .entities
         .get(&entity_id)
         .and_then(|entity| entity.indexes.get(&index_id))
         .cloned()
         .ok_or_else(|| Failure::Told(format!("new index `{index_id}` did not link")))?;
-    let patch_bytes = serde_json::to_vec(&json!({
-        "kind": "add-index",
-        "entity": entity_id,
-        "index": index,
-    }))
-    .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
     finish_generation(PreparedMutation {
         name: format!("{}.{}", entity_name, signature),
         invocation,
-        model_path,
-        current_source,
-        current_model,
+        current,
         next_source,
         patch: ModelPatch::AddIndex {
             entity: entity_id,
             index,
         },
-        patch_bytes,
         authored_migration: None,
+        reader_paths: Vec::new(),
     })
 }
 
@@ -128,10 +117,9 @@ pub(crate) fn remove(
                 .to_string(),
         ));
     }
-    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
-    let current_source = crate::model_command::read_source_at(&invocation.root()?, &model_path)?;
-    let current_model = crate::model_generate_jdl::parse(&current_source)?;
-    if !current_model
+    let current = crate::model_command::Current::load(&invocation)?;
+    if !current
+        .model
         .capabilities
         .values()
         .any(|capability| capability.kind == "db")
@@ -142,7 +130,7 @@ pub(crate) fn remove(
         ));
     }
     let entity_label = java_to_label(&entity_name);
-    let entity = current_model
+    let entity = current.model
         .entities
         .values()
         .find(|entity| entity.label == entity_label || entity.names.java_type == entity_name)
@@ -203,11 +191,11 @@ pub(crate) fn remove(
     let entity_java_name = entity.names.java_type.clone();
     let index_id = index.id.clone();
     let next_source = crate::model_generate_jdl::index::remove(
-        &current_source,
+        &current.source,
         &entity_java_name,
         index_id.as_str(),
     )?;
-    let next_model = crate::model_generate_jdl::parse(&next_source)?;
+    let next_model = crate::model_command::parse(&next_source)?;
     if next_model
         .entities
         .get(&entity_id)
@@ -217,27 +205,18 @@ pub(crate) fn remove(
             "index `{index_id}` remained after editing the canonical model.\n       fix: keep its generated JDL declaration on one line and retry"
         )));
     }
-    let patch_bytes = serde_json::to_vec(&json!({
-        "kind": "remove-index",
-        "entity": entity_id,
-        "index": index_id,
-        "confirmed_name": confirmed_name,
-    }))
-    .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
     finish_generation(PreparedMutation {
         name: format!("{}.{}", entity_name, requested),
         invocation,
-        model_path,
-        current_source,
-        current_model,
+        current,
         next_source,
         patch: ModelPatch::RemoveIndex {
             entity: entity_id,
             index: index_id,
             confirmed_name,
         },
-        patch_bytes,
         authored_migration: None,
+        reader_paths: Vec::new(),
     })
 }
 

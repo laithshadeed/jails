@@ -18,69 +18,68 @@ Re-measure before quoting one; the tree moves under every commit.
 
 The goal is **one system, described once, in fewer lines**. The canonical
 compiler is finished -- 39 of 39 generators, 25 of 25 capabilities, ordinary
-`jails new` seeds a model -- and what remains beside it is a legacy engine
-nothing can reach, a binary that repeats one pipeline sixteen times, two
-compatibility parsers for inputs this binary no longer writes, and fifty-five
-template files nothing renders.
+`jails new` seeds a model -- and the legacy engine, its two compatibility
+parsers, the transaction kernel and the fifty-five templates nothing rendered
+are deleted. What remains beside the compiler is the shape of what survives:
+several spellings of each contract and a translation layer between every
+pair.
 
 `docs/00-contracts.md` still carries the five contracts, the deletion map and
 the non-goals, and nothing here overrides them. What this file adds is the
-measured state on 2026-09-02, five disjoint plans that reduce it, and the rules
-that let five agents land deletions in the same tree without waiting on each
-other.
+measured state, five disjoint plans that reduce it, and the rules that let
+five agents land deletions in the same tree without waiting on each other.
 
 ## What was measured
 
 Production lines are non-blank, non-comment lines with every `#[cfg(test)]`
-module removed. Raw lines are `wc -l`. Method at the end of this section.
+module removed. Raw lines are `wc -l`. Measured 2026-09-02, after the one
+mutation pipeline landed; method at the end of this section.
 
 | crate | production | raw |
 |---|---:|---:|
 | `jails-compiler` | 14,376 | 21,356 |
-| root `src/` (the binary) | 13,457 | 18,385 |
-| `jails-model` | 11,935 | 15,924 |
+| root `src/` (the binary) | 13,071 | 17,988 |
+| `jails-model` | 11,942 | 15,931 |
 | `jails-drive` | 7,186 | 10,165 |
-| `jails-workspace` | 4,226 | 6,409 |
-| `jails-project` | 3,945 | 7,327 |
-| `jails-report` | 3,403 | 5,442 |
-| `jails-support` | 2,633 | 5,459 |
+| `jails-workspace` | 4,208 | 6,405 |
+| `jails-project` | 3,932 | 7,285 |
+| `jails-report` | 3,403 | 5,376 |
+| `jails-support` | 2,569 | 5,388 |
 | `jails-java` | 752 | 1,505 |
-| `jails-spec` | 641 | 1,239 |
+| `jails-spec` | 634 | 1,220 |
 | `jails-contracts` | 588 | 1,012 |
 | `jails-codemod` | 361 | 795 |
 | `jails-codec-derive` | 243 | 323 |
 | `jails-testkit` | 0 | 36 |
-| **total** | **63,746** | **95,377** |
+| **total** | **63,265** | **94,785** |
 
-Beside the crates: `tests/` is 46,486 raw lines (`tests/cli/model.rs` alone is
-about 14,000); `templates/` is 142 files.
+Beside the crates: `tests/` is 46,455 raw lines (`tests/cli/model.rs` alone is
+about 13,800); `templates/` is 142 files, every one named by a Rust source.
 
 ## What the measurement found
 
 The facts below seed the plans. Every one was read off the tree, and each
-plan carries the command that re-checks it. The transaction kernel, the SQL
-workspace built on its vocabulary, the two compatibility parsers, the
-one-shot upgrade and the orphaned templates are deleted already; what
-remains is the shape of what survives.
+plan carries the command that re-checks it.
 
-2. **Ordinary `jails new` is canonical.** `new/spring.rs` seeds a model
-   through `seed_canonical_model` on both the online and offline paths, so
-   there is no project shape left that reaches the legacy crates. Plans `51`
-   and `52`.
+1. **Every mutating frontend starts and ends in one place.** `model_command::Current::load`
+   is the one read of the model and `model_generate::finish_generation` the
+   one pipeline behind it; the plan's patch bytes are the typed `ModelPatch`
+   serialised, not a third hand-written encoding. What each frontend still
+   does twice is *decide the change*: it edits the JDL text and builds a
+   `ModelPatch` describing the same change, `ModelPatch::` at 77 sites in 17
+   files under `src/`. `docs/60-abstraction.md` S60.1 is the deletion.
 
-3. **The binary repeats one pipeline sixteen times.** Sixteen `src/model_*.rs`
-   frontends each read the model source, parse it, edit the text, parse it
-   again and hand the result to `finish_generation` --
-   `crate::model_generate_jdl::parse(` appears at 30 call sites in 11 files.
-   Ten `owns()` switches in seven files still guard legacy branches whose other
-   side no longer exists. Plan `52`.
+2. **The compiler assembles Java in 834 `format!(` sites.** The package
+   line, import block and class shell are rendered by `emit_java::render` at
+   20 call sites and by `emit_capability::render` at one; 19 `format!` sites
+   still write an `import` line by hand. Plan `55`.
 
-5. **The compiler assembles Java in 838 `format!(` sites**, each carrying its
-   own copy of the package line, the import block and the class shell. Plan
-   `55`.
-
-6. **The tool crates still carry a second Maven parser** (P13.2) and a
+3. **The tool crates still carry a second Maven parser** (P13.2) and a
    second project model beside the snapshot. Plan `53`.
+
+4. **`jails-drive` describes test execution twice**, as `testing::*V1` and
+   `testd::v2`, and the `#[derive(Codec)]` machinery exists for the first.
+   Plans `53` and `51`.
 
 Reproduce the table with this, from the repository root. It is the
 approximation the baseline was taken with; `tests/architecture/measure.rs` is
@@ -121,17 +120,16 @@ adds a new shape is not progress.
 
 ## The five plans
 
-| plan | agent | owns | what it deletes | expected |
-|---|---|---|---|---:|
-| `docs/51-kernel.md` | **1 -- kernel** | `crates/jails-codec-derive/**`, `crates/jails-support/src/codec*`, `crates/jails-spec/**`, `src/dispatch.rs`, `tests/protocol-golden/**`, `docs/30-cutover.md` | the codec the daemon's wire still uses, once the wire is one protocol | −1,000 production |
-| `docs/52-binary.md` | **2 -- binary** | `src/**` (except `src/dispatch.rs` and `src/model_upgrade.rs`), `tests/cli/**` (except `generate.rs`, `capabilities.rs`, `tooling.rs`, `examples.rs`, `reports.rs`), `docs/feature-inventory.tsv`, `README.md`'s command sections | sixteen copies of one pipeline, every `owns()` branch, `jails app`'s legacy backend, `new`'s write path | −4,000 production |
-| `docs/53-tool-crates.md` | **3 -- tool crates** | `crates/jails-{project,java,drive,report,workspace,support,codemod,contracts}/**` (minus plan 1's files), `tests/cli/{tooling,capabilities,reports,examples}.rs`, `tests/corpus/**`, `tests/baseline.rs`, `tests/architecture_allowances.rs` | the second Maven parser, the second project model, the two test-execution vocabularies | −4,000 production |
-| `docs/54-language.md` | **4 -- language** | `crates/jails-model/**`, `docs/10-language.md` | a second patch path if there is one, the parser's repeated attribute handling | −1,500 production |
-| `docs/55-compiler.md` | **5 -- compiler** | `crates/jails-compiler/**`, `templates/**`, `tests/golden/**`, `tests/golden.rs`, `tests/agreement.rs`, `tests/cli/generate.rs`, `docs/20-generated-java.md` | the per-emitter copies of the Java shell, the second proof renderer | −2,500 production |
+| plan | agent | owns | what it deletes |
+|---|---|---|---|
+| `docs/51-kernel.md` | **1 -- kernel** | `crates/jails-codec-derive/**`, `crates/jails-support/src/codec*`, `crates/jails-spec/**`, `src/dispatch.rs`, `tests/protocol-golden/**`, `docs/30-cutover.md` | the codec, once the test-execution wire is one protocol |
+| `docs/52-binary.md` | **2 -- binary** | `src/**` except `src/dispatch.rs`, `tests/cli/**` except `generate.rs`, `capabilities.rs`, `tooling.rs`, `examples.rs`, `reports.rs`, `docs/feature-inventory.tsv`, `README.md`'s command sections | the second decision of each mutation, `new`'s three seeds, the unread flags |
+| `docs/53-tool-crates.md` | **3 -- tool crates** | `crates/jails-{project,java,drive,report,workspace,support,codemod,contracts}/**` (minus plan 1's files), `tests/cli/{tooling,capabilities,reports,examples}.rs`, `tests/corpus/**`, `tests/baseline.rs`, `tests/architecture_allowances.rs` | the second Maven parser, the second project model, the two test-execution vocabularies |
+| `docs/54-language.md` | **4 -- language** | `crates/jails-model/**`, `docs/10-language.md` | `ModelPatch` and `model_apply.rs`, the parser's repeated attribute handling |
+| `docs/55-compiler.md` | **5 -- compiler** | `crates/jails-compiler/**`, `templates/**`, `tests/golden/**`, `tests/golden.rs`, `tests/agreement.rs`, `tests/cli/generate.rs`, `docs/20-generated-java.md` | the remaining copies of the Java shell, the second proof renderer |
 
-The expected column is an estimate from the reading above, written down so
-the result can be compared with it. **A plan that lands fewer lines than
-expected reports the number and why; it does not pad.**
+**A plan that lands fewer lines than it expected reports the number and why;
+it does not pad.**
 
 ## Rules that let five agents share one tree
 
@@ -151,9 +149,10 @@ agent's path while there. Whoever lands second resolves the trivial conflict.
 **R3 -- one landing order, three dependencies.** Everything else is parallel.
 
 - Plan `51`'s codec decision (S51.4) waits on plan `53`'s S53.5, because the
-  daemon's wire is the codec's last user.
-- Plan `52`'s one pipeline (S52.1) and plan `54`'s `Edit` (S60.1) are the same
-  change seen from two crates; agree the `Edit` shape before either starts.
+  test-execution wire is the codec's last user.
+- Plan `54`'s `ModelPatch` decision (S54.2) and `docs/60-abstraction.md`
+  S60.1 are the same change seen from two crates; the binary's frontends
+  become functions from arguments to an `Edit` in the same step.
 - Plan `53`'s S53.3 and plan `55`'s S55.6 both touch what `doctor` compares
   migrations against; land S55.6 first.
 
@@ -170,7 +169,7 @@ A step is one commit and, where the repository uses pull requests, one pull
 request: a 30,000-line change that fails review is a week lost, and a
 1,000-line one reverts alone. Rebase onto `main` at least daily.
 
-**R6 -- a test dies only with its subject.** The suite is 50,000 lines and
+**R6 -- a test dies only with its subject.** The suite is 46,000 lines and
 some of it will go, but only the tests whose subject a plan deletes, and the
 duplicates a plan can *name* -- two tests proving one property through one
 path. Nothing is deleted to make a number.
@@ -204,12 +203,12 @@ blocks on and may be retired whole by plan `51`, and the ownership table in
 
 ## The end state, so it can be recognised
 
-Ten crates, not thirteen: `jails-model`, `jails-contracts`, `jails-compiler`,
+Twelve crates: `jails-model`, `jails-contracts`, `jails-compiler`,
 `jails-workspace`, `jails-codemod` (dependency-free, for both ladders),
 `jails-support`, `jails-spec` (the shared CLI vocabulary and nothing
 derived), `jails-project` (reader-owned files, with the Java reader folded in),
-`jails-drive`, `jails-report`, plus the binary and `jails-testkit`. One Maven
-document backend. One SQL projection. One field syntax parser, in the crate
-that owns builtins. One mutation pipeline in the binary. No `owns()`. No
-ledger, no store, no journal, no codec for them, and no prose that says
-otherwise. A `CLAUDE.md` that describes what the code *is*.
+`jails-drive`, `jails-report`, plus the binary and `jails-testkit`; the codec
+derive crate goes with its last user. One Maven document backend. One SQL
+projection. One field syntax parser, in the crate that owns builtins. One
+decision per mutation in the binary. One test-execution vocabulary. A
+`CLAUDE.md` that describes what the code *is*.

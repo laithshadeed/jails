@@ -215,10 +215,10 @@ against this list.
 |---|---|---|
 | `jails-spec::Field` plus protocol `FieldSpec` | one field-syntax parser producing model fields; `BuiltinSemantics` as the one type table | the derivation tables |
 | generated Java/SQL reparsing | `AppModel` and the snapshot | source-as-database paths |
-| hand codecs, tags and serializers | `serde` for the JSON surface | the wire-format machinery |
+| `#[derive(Codec)]` on the test-execution wire | one `serde` protocol (S60.6) | the codec and its derive crate |
 | `Project`/`ProjectContext`/snapshot overlap | a snapshot-backed project view | post-capture disk reads |
 | duplicate Maven XML scanners | one document backend in `jails-workspace` | `pom.rs`'s scanner |
-| sixteen copies of one frontend pipeline | one mutation pipeline in `model_command` | the copies and every `owns()` branch |
+| one decision per mutation | an `Edit` per frontend, the model re-linked from the edited source | the `ModelPatch` built beside every text edit |
 | per-emitter copies of the Java shell | one `JavaUnit` | the copies |
 
 The largest deletion does not come from shorter render functions. It comes

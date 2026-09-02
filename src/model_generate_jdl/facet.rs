@@ -1,14 +1,13 @@
 //! Familiar generators that add one projection facet to an existing entity.
 
-use super::{MODEL_PATH, parse, read_model};
+use super::MODEL_PATH;
 use crate::Invocation;
 use crate::cli::GenerateArgs;
+use crate::model_command::parse;
 use crate::model_generate::{PreparedMutation, finish_generation};
 use crate::model_resource::java_to_label;
 use jails_model::{EntityId, Facet, ModelPatch};
 use jails_support::{Failure, Result};
-use serde_json::json;
-use std::path::PathBuf;
 
 #[derive(Clone, Copy)]
 pub(super) enum Kind {
@@ -146,13 +145,11 @@ fn indexable(field: &jails_model::Field) -> bool {
 
 pub(super) fn run(args: GenerateArgs, invocation: Invocation, kind: Kind) -> Result<()> {
     reject_unsupported_options(&args, kind)?;
-    let model_path = PathBuf::from(MODEL_PATH);
-    let current_source = read_model(&invocation)?;
-    let current_model = parse(&current_source)?;
+    let current = crate::model_command::Current::load(&invocation)?;
     let label = java_to_label(&args.name);
     let entity_id = EntityId::parse(format!("ent_{label}"))
         .map_err(|error| Failure::Told(format!("could not assign entity identity: {error}")))?;
-    let entity = current_model.entity(&entity_id).ok_or_else(|| {
+    let entity = current.model.entity(&entity_id).ok_or_else(|| {
         Failure::Told(format!(
             "`{} {}` {}, and this project declares none called `{}`\n       fix: `jails g record {} <field>:<type>` (or `jails g scaffold {}`) first, then `jails g {} {}`",
             kind.name(),
@@ -180,7 +177,7 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation, kind: Kind) -> Res
     let arguments = if kind.takes_fields() {
         refuse_unindexable(kind, entity, &args.fields)?;
         let labels = crate::model_generate::operation_field_labels(
-            &current_model,
+            &current.model,
             &entity.label,
             &args.fields,
         )?;
@@ -195,7 +192,7 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation, kind: Kind) -> Res
         // into a generated column, so altering it is a migration nothing here
         // writes. Saying so beats a silent no-op that leaves the reader
         // believing the new field is indexed.
-        if let Some(existing) = declared_arguments(&current_source, &entity.names.java_type, kind)?
+        if let Some(existing) = declared_arguments(&current.source, &entity.names.java_type, kind)?
             && existing != arguments
         {
             return Err(Failure::Told(format!(
@@ -207,17 +204,15 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation, kind: Kind) -> Res
         return finish_generation(PreparedMutation {
             name: args.name,
             invocation,
-            model_path,
-            current_source: current_source.clone(),
-            current_model,
-            next_source: current_source,
+            next_source: current.source.clone(),
+            current,
             patch: ModelPatch::Batch(Vec::new()),
-            patch_bytes: br#"{"kind":"batch","patches":[]}"#.to_vec(),
             authored_migration: None,
+            reader_paths: Vec::new(),
         });
     }
     let next_source = set_projection(
-        &current_source,
+        &current.source,
         &entity.names.java_type,
         kind.marker(),
         &arguments,
@@ -240,22 +235,14 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation, kind: Kind) -> Res
         entity: entity_id.clone(),
         facet,
     };
-    let patch_bytes = serde_json::to_vec(&json!({
-        "kind": "add-facet",
-        "entity": entity_id,
-        "facet": kind.name(),
-    }))
-    .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
     finish_generation(PreparedMutation {
         name: args.name,
         invocation,
-        model_path,
-        current_source,
-        current_model,
+        current,
         next_source,
         patch,
-        patch_bytes,
         authored_migration: None,
+        reader_paths: Vec::new(),
     })
 }
 

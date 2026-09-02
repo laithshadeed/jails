@@ -151,13 +151,6 @@ Do not re-propose these:
 
 ## Open items
 
-**P13.12 The document cross-reference gate stops at `docs/`.**
-`rules::every_cross_reference_in_the_documents_resolves` reads every markdown
-file under `docs/` and fails on a `docs/<name>.md` path, a `Part <n>`, a
-`jails-<crate>` or a claimed `fn` that does not exist. It does not read
-`CLAUDE.md`, `ARCHITECTURE.md` or `README.md`. **Exit:** the scan is widened
-to the three root documents (`docs/51-kernel.md` S51.7).
-
 **P13.7 The suite is `tests/cli` and nothing else.** The other binaries finish
 inside it, so only `cli` has a critical path and a budget. Profile it with
 `JAILS_TEST_PROFILE=1 -- --nocapture`; the per-subprocess lines go to stderr.

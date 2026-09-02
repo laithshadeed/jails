@@ -23,7 +23,8 @@ use crate::model::{Capability, Dependency, Ejection, Entity, Facet, Field, Index
 use crate::operation::Operation;
 use crate::{Component, SourceUnit};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ModelPatch {
     Batch(Vec<ModelPatch>),
     /// The storage axis this project declares, as a SQL dialect.
@@ -163,7 +164,8 @@ pub enum ModelPatch {
 ///
 /// Nullable columns need no data rewrite. Required columns carry the typed
 /// literal used to backfill existing rows before `not null` is enforced.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum FieldAddPolicy {
     Nullable,
     BackfillLiteral(String),
@@ -182,32 +184,37 @@ pub enum FieldAddPolicy {
 /// declared alphabetically, and appending `delta` to `alpha, beta, gamma`
 /// then lands third in the model and fourth in the file. Only the frontend
 /// can answer this, so it is asked.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum FieldPlacement {
     /// The source states field order and the edit appended: `jdl 1` records
     /// the order its CST walked, so a new field goes last.
     Last,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum FieldEvolutionPolicy {
     Rename { column: ColumnRenamePolicy },
     ChangeType { strategy: TypeChangeStrategy },
     SetNullability { backfill_sql: Option<Vec<u8>> },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ColumnRenamePolicy {
     Preserve,
     SingleCutover,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum TypeChangeStrategy {
     Safe,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum StorageRetirementPolicy {
     Preserve,
     Drop { confirmed_table: String },

@@ -76,7 +76,6 @@ fn owns_terminal_output(path: &Path) -> bool {
         || relative == "crates/jails-project/src/compose.rs"
         || relative == "crates/jails-project/src/inspect.rs"
         || relative == "crates/jails-project/src/project.rs"
-        || relative == "crates/jails-generate/src/generate.rs"
         || relative.starts_with("crates/jails-drive/src/")
         || relative.starts_with("crates/jails-report/src/")
         // The two commands that run *before* a project has a model. Both
@@ -429,9 +428,6 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-project", "project", 5),
     ("jails-project", "properties", 5),
     ("jails-project", "inspect", 5),
-    // jails-generate: everything that decides what Java to write.
-    // jails-prepare: turning desire into an exact executable transition.
-    // jails-commit: making a prepared transaction durable, and recovering one.
     // jails-report: commands that answer a question. Read-only by contract,
     // and below `jails-drive` so the contract is structural.
     ("jails-report", "doctor", 7),
@@ -595,8 +591,8 @@ const SUBPROCESS_CLASSIFICATION: &[(&str, &str)] = &[
 
 /// Which module a file belongs to: `(crate, module)`.
 ///
-/// `crates/jails-generate/src/spring/durable.rs` ->
-/// `("jails-generate", "spring")`.
+/// `crates/jails-compiler/src/emit_java/facet.rs` ->
+/// `("jails-compiler", "emit_java")`.
 ///
 /// **The crate half is not decoration.** By basename alone,
 /// `crates/a/src/spec.rs` and `crates/b/src/spec.rs` are one name to every

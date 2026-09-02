@@ -22,13 +22,11 @@
 
 use crate::Invocation;
 use crate::cli::GenerateArgs;
-use crate::model_command::JDL_PATH;
 use crate::model_generate::{PreparedMutation, finish_generation};
 use jails_contracts::RenderedMigration;
 use jails_model::ModelPatch;
 use jails_support::{Failure, Result};
 use std::collections::BTreeSet;
-use std::path::PathBuf;
 
 /// What the file says until the reader writes the change.
 const BODY: &str = "-- Forward-only migration. Write explicit SQL below.\n";
@@ -36,25 +34,16 @@ const BODY: &str = "-- Forward-only migration. Write explicit SQL below.\n";
 pub(crate) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     reject_unsupported_options(&args)?;
     let description = description(&args.name)?;
-    let model_path = PathBuf::from(JDL_PATH);
-    let current_source = crate::model_generate_jdl::read_model(&invocation)?;
-    let current_model = crate::model_generate_jdl::parse(&current_source)?;
+    let current = crate::model_command::Current::load(&invocation)?;
     finish_generation(PreparedMutation {
         name: args.name.clone(),
         invocation,
-        model_path,
         // The source is unchanged and so is the model: an empty batch is the
         // honest patch for an action that declares nothing. Writing one
         // anyway -- a `migration` node -- is what JDL v1 §2.1 forbids.
-        current_source: current_source.clone(),
-        current_model,
-        next_source: current_source,
+        next_source: current.source.clone(),
+        current,
         patch: ModelPatch::Batch(Vec::new()),
-        patch_bytes: serde_json::to_vec(&serde_json::json!({
-            "kind": "author-migration",
-            "description": description,
-        }))
-        .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?,
         authored_migration: Some(RenderedMigration {
             logical_name: description,
             bytes: BODY.as_bytes().to_vec(),
@@ -65,6 +54,7 @@ pub(crate) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
             // SQL.
             semantic_ids: BTreeSet::new(),
         }),
+        reader_paths: Vec::new(),
     })
 }
 

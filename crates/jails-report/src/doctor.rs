@@ -118,6 +118,7 @@ fn run_checks(project: &Project) -> Vec<Check> {
     // nothing of its own.
     // Nothing below reads a pom that is not there; the first check said why.
     if matches!(project.build(), crate::build::Build::Foreign(_)) {
+        checks.extend(capability_drift_checks());
         checks.extend(template_override_checks());
         return checks;
     }
@@ -140,7 +141,7 @@ fn run_checks(project: &Project) -> Vec<Check> {
     checks.extend(virtual_thread_checks(root));
     checks.extend(hot_reload_checks(project));
     checks.extend(port_checks(root));
-    checks.extend(capability_drift_checks(project));
+    checks.extend(capability_drift_checks());
     checks.extend(template_override_checks());
     checks.push(beans_check(root));
     checks
@@ -179,12 +180,10 @@ fn template_override_checks() -> Vec<Check> {
 
 /// Capability drift is the model's business.
 ///
-/// `jails add`, `add dependency` and `sync` all seed a model before they do
-/// anything, so every project jails mutates records its capabilities in the
-/// model, and `jails sync` reconciles them by compiling. There is nothing here
-/// to re-plan, so the check is one `Skip` naming where the answer lives.
-fn capability_drift_checks(project: &Project) -> Vec<Check> {
-    let _ = project;
+/// Every project jails mutates records its capabilities in the model and
+/// `jails sync` reconciles them by compiling, so there is nothing here to
+/// re-plan; the row names where the answer lives.
+fn capability_drift_checks() -> Vec<Check> {
     vec![Check::new(
         Status::Skip,
         "capabilities",
@@ -495,71 +494,6 @@ testcontainers.reuse.enable=true
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A capability's property block is prose *and* settings, and only the
-    /// settings are keys.
-    ///
-    /// `add cors` writes "Exact browser origins; never use `*` together with
-    /// credentials." above the line it explains. Reading it as a required
-    /// property would make `doctor` demand a key whose name is an English
-    /// sentence, on a project where the capability is installed correctly --
-    /// and no amount of `jails sync` could satisfy it, because nothing would
-    /// ever write that key.
-    #[test]
-    fn a_property_comment_is_not_a_required_key() {
-        let root = jails_support::scratch::ScratchDir::in_temp("jails-doctor-cors")
-            .unwrap()
-            .keep();
-        std::fs::create_dir_all(root.join("src/main/java/com/example/demo")).unwrap();
-        std::fs::write(
-            root.join("src/main/java/com/example/demo/App.java"),
-            "package com.example.demo;\npublic final class App {}\n",
-        )
-        .unwrap();
-        std::fs::write(
-            root.join("pom.xml"),
-            "<project><parent><groupId>org.springframework.boot</groupId>\
-             <artifactId>spring-boot-starter-parent</artifactId><version>4.1.0</version>\
-             </parent></project>",
-        )
-        .unwrap();
-        std::fs::write(
-            root.join("jails.toml"),
-            "[project]\ncapabilities = [\"cors\"]\n",
-        )
-        .unwrap();
-
-        let project = Project::inspect(&root).unwrap();
-        let checks = capability_drift_checks(&project);
-
-        for check in &checks {
-            assert!(
-                !check.detail.contains("property #"),
-                "a comment was read as a required key: {}",
-                check.detail
-            );
-            assert!(
-                !check.detail.contains("never use"),
-                "a comment was read as a required key: {}",
-                check.detail
-            );
-        }
-    }
-
-    /// A project that records nothing has nothing to reconcile, and saying so
-    /// is not a failure -- `doctor` must stay usable on a project jails did
-    /// not create.
-    #[test]
-    fn recording_no_capabilities_is_reported_as_nothing_to_do() {
-        let root = jails_support::scratch::ScratchDir::in_temp("jails-doctor-nodrift")
-            .unwrap()
-            .keep();
-        let project = project_with_pom(&root, "<project></project>");
-        let checks = capability_drift_checks(&project);
-        assert_eq!(checks.len(), 1);
-        assert_eq!(checks[0].status, Status::Skip);
-        std::fs::remove_dir_all(&root).ok();
-    }
 
     /// A `Project` over a scratch root whose pom says exactly this.
     ///

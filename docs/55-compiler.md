@@ -10,9 +10,8 @@ Item numbers `S55.n` are stable and never reused.
 # 55 — Compiler and templates: render the shell once
 
 **Read `docs/50-simplify.md` first.** You are agent 5. Your subject is the
-pure compiler -- 14,376 production lines that assemble Java and SQL in 838
-`format!(` sites -- and the templates it renders, of which fifty-five files
-are rendered by nothing.
+pure compiler -- 14,376 production lines that assemble Java and SQL in 834
+`format!(` sites -- and the templates it renders.
 
 ## What you own
 
@@ -33,14 +32,14 @@ capture change they make. `templates/new/**` is rendered by the binary (agent
 | | |
 |---|---:|
 | `jails-compiler` production / raw | 14,376 / 21,526 |
-| `format!(` sites | 838 |
+| `format!(` sites | 834 |
 | of which `emit_unit.rs` / `emit_sql.rs` / `emit_operation/proof.rs` | 67 / 46 / 40 |
 | `Compiler::compile` | 508 lines, one function |
 | `templates/` | 142 files, held live by `every_template_is_named_by_a_rust_source` |
-| `tests/cli/generate.rs` | 7,948 lines, 110 tests |
+| `tests/cli/generate.rs` | 7,715 lines |
 
-The orphan count, re-measured from the repository root -- templates are
-named through `template!("spring/x.java")` and the like, never by
+The orphan count is zero, re-measured from the repository root -- templates
+are named through `template!("spring/x.java")` and the like, never by
 `include_str!` directly, so the match is on the path or basename:
 
 ```
@@ -51,21 +50,22 @@ for f in $(find templates -type f); do rel=${f#templates/}; b=$(basename $f)
 
 ## Steps
 
-**S55.2 -- One Java shell.** Every emitter writes the package line, the
-import block, the class or record header and, for a test, the JUnit
-boilerplate, in its own `format!`. Count the copies:
+**S55.2 -- One Java shell.** `emit_java::render(package, imports, body,
+artifact_id)` writes the package line, the import block and the class shell,
+and 20 emitters call it; `emit_capability::render` is a second copy, and 19
+`format!` sites still spell an `import` line by hand. Count them:
 
 ```
-grep -rn '"package {' crates/jails-compiler/src | wc -l
+grep -rn 'fn render(' crates/jails-compiler/src
 grep -rn 'import ' crates/jails-compiler/src --include=*.rs | grep -c 'format!'
 ```
 
 One `JavaUnit { package, imports, body }` value with import dedup and sorted
 rendering, built by every emitter and rendered in one place, is the first
 rung of A3.14's IR and the only one this pass takes: it deletes the copies
-without inventing `JavaExpr`. The exit is the `"package {` count at one and
-`normalize_imports`-style logic in one function. `Pack` already has this
-shape for capabilities; extend it rather than writing a second.
+without inventing `JavaExpr`. The exit is one `fn render` and the second
+grep at zero. `Pack` already has this shape for capabilities; extend it
+rather than writing a second.
 
 **S55.3 -- One proof renderer.** `emit_operation/proof.rs` (566 raw),
 `emit_http/proof.rs` and the companion-test halves of `emit_unit.rs` each

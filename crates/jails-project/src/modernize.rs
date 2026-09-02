@@ -278,8 +278,8 @@ fn maven(sources: &Sources, upgrade: &mut Upgrade) {
 /// "DATETIME"`, while the H2 that Boot 2.7 manages accepts it. The rewrite is
 /// exact rather than a guess
 /// -- it is gated on H2 actually being this project's driver, and `timestamp`
-/// is the type H2 documents in its place -- which is the same bargain
-/// `Dialect::column_type` takes for `timestamptz`.
+/// is the type H2 documents in its place -- the same bargain
+/// `BuiltinSemantics` strikes for `timestamptz`.
 ///
 /// Flyway migrations under `db/migration` are deliberately out of scope: those
 /// are applied-once history, and rewriting one that has already run changes a

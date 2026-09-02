@@ -200,9 +200,6 @@ pub(crate) enum ResourceCommand {
     Repair {
         /// Simple entity name or fully qualified generated Java type
         selector: Option<String>,
-        /// The only automatic repair policy: preserve history and move forward
-        #[arg(long, value_enum)]
-        strategy: Option<RepairStrategy>,
     },
     /// Evolve one field through a new forward migration
     Field {
@@ -246,11 +243,6 @@ pub(crate) enum ResourceIndexCommand {
         #[arg(long)]
         package: Option<String>,
     },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
-pub(crate) enum RepairStrategy {
-    RollForward,
 }
 
 #[derive(Subcommand)]

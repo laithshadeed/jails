@@ -5,7 +5,6 @@ use crate::cli::{ExternalRenamePolicy, RenameStrategy};
 use crate::model_generate::{PreparedMutation, finish_generation};
 use jails_model::{ModelPatch, StableId};
 use jails_support::{Failure, Result};
-use serde_json::json;
 use std::path::{Path, PathBuf};
 
 pub(crate) struct Request {
@@ -48,9 +47,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
     }
 
     refuse_reader_java(&invocation.root()?, &request)?;
-    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
-    let current_source = crate::model_command::read_source(&model_path)?;
-    let current_model = crate::model_generate_jdl::parse(&current_source)?;
+    let current = crate::model_command::Current::load(&invocation)?;
     let selector = request.from.rsplit('.').next().unwrap_or_default();
     if selector.is_empty() {
         return Err(Failure::Told(
@@ -58,7 +55,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                 .to_string(),
         ));
     }
-    let entity = current_model
+    let entity = current.model
         .entities
         .values()
         .find(|entity| entity.label == selector || entity.names.java_type == selector)
@@ -99,7 +96,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
     let entity_id = entity.id.clone();
     let sql_table = entity.names.sql_table.clone();
     let next_source = crate::model_generate_jdl::rename_entity(
-        &current_source,
+        &current.source,
         &entity.names.java_type,
         &request.to,
         entity.id.as_str(),
@@ -112,7 +109,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             .as_ref()
             .map(|(projection, route)| (projection.as_str(), route.as_str())),
     )?;
-    let next_model = crate::model_generate_jdl::parse(&next_source)?;
+    let next_model = crate::model_command::parse(&next_source)?;
     let next_label = next_model
         .entities
         .get(&entity_id)
@@ -134,7 +131,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         table: cutover.then(|| next_table.clone()),
         route: accepted_route.as_ref().map(|(_, route)| route.clone()),
     };
-    let mut proof = current_model.clone();
+    let mut proof = current.model.clone();
     proof.apply(patch.clone()).map_err(Failure::Told)?;
     if next_model != proof {
         return Err(Failure::Told(
@@ -142,29 +139,19 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                 .to_string(),
         ));
     }
-    let patch_bytes = serde_json::to_vec(&json!({
-        "kind": "rename-entity-projection",
-        "entity": entity_id,
-        "java": request.to,
-        "table": next_table,
-        "storage": if cutover { "single-cutover" } else { "preserved" },
-    }))
-    .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
 
     finish_generation(PreparedMutation {
         name: entity.label.clone(),
         invocation,
-        model_path,
-        current_source,
-        current_model,
+        current,
         next_source,
         patch,
-        patch_bytes,
         // The cutover's `alter table ... rename to` is *derived*: the patch
         // states the policy and the compiler emits the statement beside every
         // other schema change, so it lands in the reviewed plan rather than
         // being smuggled in beside it.
         authored_migration: None,
+        reader_paths: Vec::new(),
     })
 }
 

@@ -104,10 +104,11 @@ fn seed(root: &Path) {
 /// being changed, not the one being asked for.
 fn bundle_for(root: &Path, current: &str, next: &str) -> PlanBundle {
     let model = jails_model::parse_jdl(next).expect("the fixture model parses");
-    let snapshot = jails_workspace::capture(root, Path::new(MODEL_PATH), current.as_bytes(), model)
-        .expect("the fixture project captures");
+    let snapshot =
+        jails_workspace::capture(root, Path::new(MODEL_PATH), current.as_bytes(), model, &[])
+            .expect("the fixture project captures");
     let draft = jails_compiler::Compiler::compile(&snapshot, None).expect("the model compiles");
-    jails_workspace::materialize_with_model(
+    jails_workspace::materialize(
         &snapshot,
         CanonicalModelPatch::reconcile(),
         draft,

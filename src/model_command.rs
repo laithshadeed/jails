@@ -50,18 +50,6 @@ pub(crate) fn root() -> Result<PathBuf> {
     }
 }
 
-/// Read the model source named by a project-relative path.
-///
-/// **The path stays relative and only the read is anchored**, because the same
-/// value becomes a `ProjectPath` in the exact plan and `ProjectPath` refuses an
-/// absolute one. Every canonical mutation reads its model through here, so a
-/// command run from a subdirectory reads the project's model instead of
-/// reporting that the project has none -- the other half of `project_root`,
-/// and the reason that walk is safe to add.
-pub(crate) fn read_source(model_path: &Path) -> Result<String> {
-    read_source_at(&root()?, model_path)
-}
-
 /// The same read, against a project the caller has resolved.
 ///
 /// `jails new --app` replays a manifest into the project it is creating, and
@@ -132,6 +120,33 @@ fn starts_with_jdl_header(source: &str) -> bool {
             (!line.is_empty() && !line.starts_with("//")).then_some(line)
         })
         .is_some_and(|line| line.split_whitespace().next() == Some("jdl"))
+}
+
+/// The model a mutation starts from: the one editable source, read through
+/// [`read_source_at`], and the model it links to.
+///
+/// **Every frontend begins here and nowhere else.** The read is anchored to
+/// the invocation's project -- the process directory's nearest model for a
+/// typed command, the tree being created for `jails new --app` -- so a
+/// frontend cannot read one project and plan another.
+#[derive(Clone)]
+pub(crate) struct Current {
+    pub(crate) source: String,
+    pub(crate) model: jails_model::AppModel,
+}
+
+impl Current {
+    pub(crate) fn load(invocation: &Invocation) -> Result<Self> {
+        let source = read_source_at(&invocation.root()?, Path::new(JDL_PATH))?;
+        let model = parse(&source)?;
+        Ok(Self { source, model })
+    }
+}
+
+/// Parse and link JDL text, rendering the diagnostics as one refusal.
+pub(crate) fn parse(source: &str) -> Result<jails_model::AppModel> {
+    jails_model::parse_jdl(source)
+        .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))
 }
 
 pub(crate) fn owns() -> bool {
@@ -292,12 +307,6 @@ pub(crate) fn sync_at(root: &Path, invocation: Invocation) -> Result<()> {
     )
 }
 
-pub(crate) fn refuse_legacy_mutation(command: &str, fix: &str) -> Result<()> {
-    Err(Failure::Told(format!(
-        "canonical project does not route `{command}` through the legacy mutation engine.\n       fix: {fix}"
-    )))
-}
-
 pub(crate) fn run(command: ModelCommand, invocation: Invocation) -> Result<()> {
     match command {
         ModelCommand::Init => crate::model_init::run(invocation),
@@ -317,20 +326,16 @@ pub(crate) fn run(command: ModelCommand, invocation: Invocation) -> Result<()> {
 }
 
 fn format(check: bool, invocation: Invocation) -> Result<()> {
-    let model_path = PathBuf::from(JDL_PATH);
-    if !root()?.join(&model_path).is_file() {
+    if !root()?.join(JDL_PATH).is_file() {
         return Err(Failure::Told(format!(
             "`jails model fmt` requires the JDL authoring source `{JDL_PATH}`.\n       fix: import or create a JDL v1 model before formatting"
         )));
     }
-    let current_source = read_source(&model_path)?;
-    let current_model = jails_model::parse_jdl(&current_source)
+    let current = Current::load(&invocation)?;
+    let next_source = jails_model::format_jdl_v1(&current.source)
         .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
-    let next_source = jails_model::format_jdl_v1(&current_source)
-        .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
-    let next_model = jails_model::parse_jdl(&next_source)
-        .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
-    if current_model != next_model {
+    let next_model = parse(&next_source)?;
+    if current.model != next_model {
         return Err(Failure::Told(
             "the JDL formatter changed linked model semantics.\n       fix: report this formatter bug; the source was not written"
                 .to_string(),
@@ -338,7 +343,7 @@ fn format(check: bool, invocation: Invocation) -> Result<()> {
     }
 
     if check {
-        if current_source != next_source {
+        if current.source != next_source {
             return Err(Failure::Told(format!(
                 "canonical formatting differs in `{JDL_PATH}`.\n       fix: run `jails model fmt` and review the exact source update"
             )));
@@ -356,7 +361,7 @@ fn format(check: bool, invocation: Invocation) -> Result<()> {
         return Ok(());
     }
 
-    if current_source == next_source {
+    if current.source == next_source {
         if invocation.output == Output::Human {
             println!("model already formatted: {JDL_PATH}");
         } else {
@@ -373,13 +378,11 @@ fn format(check: bool, invocation: Invocation) -> Result<()> {
     crate::model_generate::finish_generation(crate::model_generate::PreparedMutation {
         name: "JDL formatting".to_string(),
         invocation,
-        model_path,
-        current_source,
-        current_model,
+        current,
         next_source,
         patch: jails_model::ModelPatch::Batch(Vec::new()),
-        patch_bytes: br#"{"kind":"format"}"#.to_vec(),
         authored_migration: None,
+        reader_paths: Vec::new(),
     })
 }
 
@@ -659,9 +662,8 @@ fn compile_at(
     notice: Notice,
 ) -> Result<jails_contracts::PlanBundle> {
     let reader_paths = jails_compiler::external_project_paths(&model);
-    let snapshot =
-        jails_workspace::capture_with_reader_paths(root, manifest, source, model, &reader_paths)
-            .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
+    let snapshot = jails_workspace::capture(root, manifest, source, model, &reader_paths)
+        .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
     let draft = jails_compiler::Compiler::compile(&snapshot, None)
         .map_err(|error| Failure::Told(format!("could not compile application model: {error}")))?;
     if notice == Notice::Print {
@@ -676,6 +678,7 @@ fn compile_at(
         &snapshot,
         jails_contracts::CanonicalModelPatch::reconcile(),
         draft,
+        None,
         jails_compiler::COMPILER_VERSION,
         match repair {
             Repair::No => jails_workspace::Restore::Refuse,

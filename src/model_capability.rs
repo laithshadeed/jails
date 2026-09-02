@@ -6,8 +6,6 @@ use crate::model_generate::{PreparedMutation, finish_generation};
 use jails_model::{CapabilityId, DependencyId, DependencyScope, ModelPatch, StableId};
 use jails_support::codec::{hex, sha256};
 use jails_support::{Failure, Result};
-use serde_json::json;
-use std::path::{Path, PathBuf};
 
 /// The `app { storage ... }` value a capability label means, for the two
 /// kinds JDL v1 states as an axis rather than a capability.
@@ -43,20 +41,17 @@ pub(crate) fn add(
         .map(|capability| capability.label())
         .collect::<Vec<_>>()
         .join(", ");
-    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
     // Resolved against the invocation's project, so `jails new --app` can
     // install a manifest's capabilities into the one it is creating.
-    let current_source = crate::model_command::read_source_at(&invocation.root()?, &model_path)?;
+    let current = crate::model_command::Current::load(&invocation)?;
     if package.is_some() {
         return Err(Failure::Told(
             "JDL v1 derives capability packages from the closed projection registry.\n       fix: remove `--package`; eject the implementation boundary if it needs a reader-owned destination"
                 .to_string(),
         ));
     }
-    let current_model = crate::model_generate_jdl::parse(&current_source)?;
-    let mut next_source = current_source.clone();
+    let mut next_source = current.source.clone();
     let mut patches = Vec::new();
-    let mut encoded = Vec::new();
     for capability in capabilities {
         let label = capability.label();
         let identity_label = name.as_ref().map_or_else(
@@ -64,16 +59,17 @@ pub(crate) fn add(
             |name| format!("{label}_{}", crate::model_resource::java_to_label(name)),
         );
         let id = CapabilityId::parse(format!("cap_{identity_label}")).map_err(Failure::Told)?;
-        if let Some(existing) = current_model
+        if let Some(existing) = current
+            .model
             .capabilities
             .values()
             .find(|existing| existing.kind == label && existing.name == name)
         {
             let requested_package = package.as_ref().map(|package| {
                 if package.is_empty() {
-                    current_model.project.base_package.clone()
+                    current.model.project.base_package.clone()
                 } else {
-                    format!("{}.{}", current_model.project.base_package, package)
+                    format!("{}.{}", current.model.project.base_package, package)
                 }
             });
             if existing.name != name || existing.java_package != requested_package {
@@ -105,7 +101,6 @@ pub(crate) fn add(
                 .project
                 .dialect;
             patches.push(ModelPatch::SetDialect(dialect.clone()));
-            encoded.push(json!({"kind": "set-dialect", "dialect": dialect}));
         } else {
             let declaration = format!(
                 "cap {label}{} @id({})",
@@ -117,27 +112,22 @@ pub(crate) fn add(
             next_source = jails_model::append_jdl_declaration(&next_source, &declaration)
                 .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
         }
-        let next_model = crate::model_generate_jdl::parse(&next_source)?;
+        let next_model = crate::model_command::parse(&next_source)?;
         let declaration = next_model
             .capabilities
             .get(&id)
             .cloned()
             .ok_or_else(|| Failure::Told(format!("new capability `{id}` did not link")))?;
-        encoded.push(json!({"kind": "add-capability", "capability": declaration}));
         patches.push(ModelPatch::AddCapability(declaration));
     }
-    let patch_bytes = serde_json::to_vec(&json!({"kind": "batch", "patches": encoded}))
-        .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
     finish_generation(PreparedMutation {
         name: format!("capability {requested}"),
         invocation,
-        model_path,
-        current_source,
-        current_model,
+        current,
         next_source,
         patch: ModelPatch::Batch(patches),
-        patch_bytes,
         authored_migration: None,
+        reader_paths: Vec::new(),
     })
 }
 
@@ -153,15 +143,12 @@ pub(crate) fn remove(
         .map(|capability| capability.label())
         .collect::<Vec<_>>()
         .join(", ");
-    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
-    let current_source = read_source(&model_path)?;
-    let current_model = crate::model_generate_jdl::parse(&current_source)?;
-    let mut next_source = current_source.clone();
+    let current = crate::model_command::Current::load(&invocation)?;
+    let mut next_source = current.source.clone();
     let mut patches = Vec::new();
-    let mut encoded = Vec::new();
     for capability in capabilities {
         let label = capability.label();
-        let declaration = current_model
+        let declaration = current.model
             .capabilities
             .values()
             .find(|candidate| candidate.kind == label)
@@ -180,9 +167,9 @@ pub(crate) fn remove(
         }
         if let Some(package) = &package {
             let expected = if package.is_empty() {
-                current_model.project.base_package.clone()
+                current.model.project.base_package.clone()
             } else {
-                format!("{}.{}", current_model.project.base_package, package)
+                format!("{}.{}", current.model.project.base_package, package)
             };
             if declaration.java_package.as_deref() != Some(expected.as_str()) {
                 return Err(Failure::Told(format!(
@@ -205,22 +192,17 @@ pub(crate) fn remove(
         } else {
             crate::model_generate_jdl::remove_capability(&next_source, &declaration.label)?
         };
-        encoded.push(json!({"kind": "remove-capability", "capability": declaration.id}));
         patches.push(ModelPatch::RemoveCapability(declaration.id.clone()));
     }
-    crate::model_generate_jdl::parse(&next_source)?;
-    let patch_bytes = serde_json::to_vec(&json!({"kind": "batch", "patches": encoded}))
-        .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
+    crate::model_command::parse(&next_source)?;
     finish_generation(PreparedMutation {
         name: format!("capability {requested}"),
         invocation,
-        model_path,
-        current_source,
-        current_model,
+        current,
         next_source,
         patch: ModelPatch::Batch(patches),
-        patch_bytes,
         authored_migration: None,
+        reader_paths: Vec::new(),
     })
 }
 
@@ -234,10 +216,9 @@ pub(crate) fn add_dependency(
     let (group, artifact) = coordinate
         .split_once(':')
         .expect("validated Maven coordinates contain one separator");
-    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
-    let current_source = read_source(&model_path)?;
-    let current_model = crate::model_generate_jdl::parse(&current_source)?;
-    if let Some(existing) = current_model
+    let current = crate::model_command::Current::load(&invocation)?;
+    if let Some(existing) = current
+        .model
         .dependencies
         .values()
         .find(|dependency| dependency.group == group && dependency.artifact == artifact)
@@ -250,20 +231,18 @@ pub(crate) fn add_dependency(
         return finish_generation(PreparedMutation {
             name: coordinate,
             invocation,
-            model_path,
-            current_source: current_source.clone(),
-            current_model,
-            next_source: current_source,
+            next_source: current.source.clone(),
+            current,
             patch: ModelPatch::Batch(Vec::new()),
-            patch_bytes: br#"{"kind":"batch","patches":[]}"#.to_vec(),
             authored_migration: None,
+            reader_paths: Vec::new(),
         });
     }
 
     let suffix = &hex(&sha256(coordinate.as_bytes()))[..16];
     let label = format!("dep_{suffix}");
     let id = DependencyId::parse(label.clone()).map_err(Failure::Told)?;
-    let mut next_source = current_source.clone();
+    let mut next_source = current.source.clone();
     {
         let declaration = format!(
             "dep {coordinate} @id({}){}{}",
@@ -282,27 +261,20 @@ pub(crate) fn add_dependency(
         next_source = jails_model::append_jdl_declaration(&next_source, &declaration)
             .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
     }
-    let next_model = crate::model_generate_jdl::parse(&next_source)?;
+    let next_model = crate::model_command::parse(&next_source)?;
     let dependency = next_model
         .dependencies
         .get(&id)
         .cloned()
         .ok_or_else(|| Failure::Told(format!("new dependency `{id}` did not link")))?;
-    let patch_bytes = serde_json::to_vec(&json!({
-        "kind": "add-dependency",
-        "dependency": dependency,
-    }))
-    .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
     finish_generation(PreparedMutation {
         name: coordinate,
         invocation,
-        model_path,
-        current_source,
-        current_model,
+        current,
         next_source,
         patch: ModelPatch::AddDependency(dependency),
-        patch_bytes,
         authored_migration: None,
+        reader_paths: Vec::new(),
     })
 }
 
@@ -314,10 +286,8 @@ pub(crate) fn remove_dependency(
     let (group, artifact) = coordinate
         .split_once(':')
         .expect("validated Maven coordinates contain one separator");
-    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
-    let current_source = read_source(&model_path)?;
-    let current_model = crate::model_generate_jdl::parse(&current_source)?;
-    let dependency = current_model
+    let current = crate::model_command::Current::load(&invocation)?;
+    let dependency = current.model
         .dependencies
         .values()
         .find(|dependency| dependency.group == group && dependency.artifact == artifact)
@@ -328,23 +298,16 @@ pub(crate) fn remove_dependency(
             ))
         })?;
     let next_source =
-        crate::model_generate_jdl::remove_dependency(&current_source, &dependency.label)?;
-    crate::model_generate_jdl::parse(&next_source)?;
-    let patch_bytes = serde_json::to_vec(&json!({
-        "kind": "remove-dependency",
-        "dependency": dependency.id,
-    }))
-    .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
+        crate::model_generate_jdl::remove_dependency(&current.source, &dependency.label)?;
+    crate::model_command::parse(&next_source)?;
     finish_generation(PreparedMutation {
         name: coordinate,
         invocation,
-        model_path,
-        current_source,
-        current_model,
+        current,
         next_source,
         patch: ModelPatch::RemoveDependency(dependency.id),
-        patch_bytes,
         authored_migration: None,
+        reader_paths: Vec::new(),
     })
 }
 
@@ -362,56 +325,45 @@ fn set_tool_capability(
     present: bool,
     invocation: Invocation,
 ) -> Result<()> {
-    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
-    let current_source = read_source(&model_path)?;
-    let current_model = crate::model_generate_jdl::parse(&current_source)?;
-    let existing = current_model
+    let current = crate::model_command::Current::load(&invocation)?;
+    let existing = current
+        .model
         .capabilities
         .values()
         .find(|capability| capability.kind == kind)
         .cloned();
-    let (next_source, patch, encoded) = match (present, existing) {
-        (true, Some(_)) | (false, None) => (
-            current_source.clone(),
-            ModelPatch::Batch(Vec::new()),
-            json!({"kind": "batch", "patches": []}),
-        ),
+    let (next_source, patch) = match (present, existing) {
+        (true, Some(_)) | (false, None) => (current.source.clone(), ModelPatch::Batch(Vec::new())),
         (true, None) => {
             let id = CapabilityId::parse(format!("cap_{label}")).map_err(Failure::Told)?;
             let next = jails_model::append_jdl_declaration(
-                &current_source,
+                &current.source,
                 &format!("cap {kind} @id({})", id.as_str()),
             )
             .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
-            let linked = crate::model_generate_jdl::parse(&next)?;
+            let linked = crate::model_command::parse(&next)?;
             let capability = linked
                 .capabilities
                 .get(&id)
                 .cloned()
                 .ok_or_else(|| Failure::Told(format!("new capability `{id}` did not link")))?;
-            let encoded = json!({"kind": "add-capability", "capability": capability});
-            (next, ModelPatch::AddCapability(capability), encoded)
+            (next, ModelPatch::AddCapability(capability))
         }
         (false, Some(capability)) => {
             let next =
-                crate::model_generate_jdl::remove_capability(&current_source, &capability.label)?;
-            crate::model_generate_jdl::parse(&next)?;
-            let encoded = json!({"kind": "remove-capability", "capability": capability.id});
-            (next, ModelPatch::RemoveCapability(capability.id), encoded)
+                crate::model_generate_jdl::remove_capability(&current.source, &capability.label)?;
+            crate::model_command::parse(&next)?;
+            (next, ModelPatch::RemoveCapability(capability.id))
         }
     };
-    let patch_bytes = serde_json::to_vec(&encoded)
-        .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
     finish_generation(PreparedMutation {
         name: "fast-test".to_string(),
         invocation,
-        model_path,
-        current_source,
-        current_model,
+        current,
         next_source,
         patch,
-        patch_bytes,
         authored_migration: None,
+        reader_paths: Vec::new(),
     })
 }
 
@@ -465,10 +417,6 @@ fn validate_supported(capabilities: &[CliCapability]) -> Result<()> {
         )));
     }
     Ok(())
-}
-
-fn read_source(path: &Path) -> Result<String> {
-    crate::model_command::read_source(path)
 }
 
 fn quote(value: &str) -> Result<String> {

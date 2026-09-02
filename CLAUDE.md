@@ -164,6 +164,7 @@ to** -- this is the prose, and prose goes stale.
 | `jails-compiler` | pure semantic lowering; no filesystem, environment or subprocess access |
 | `jails-workspace` | capture, exact materialization, verification and the single executor |
 | `jails-codemod` | the marked block, the `@Import` splice, `blanked`; **no dependencies at all**, so both `jails-compiler` and `jails-project` can reach it |
+| `jails-codec-derive` | `#[derive(Codec)]` for `jails-drive`'s test-execution wire; goes with its last user (`docs/51-kernel.md` S51.4) |
 | `jails-support` | write, run, encode and name: `apply` (the only module that writes), `process`, `hermetic`, `scratch`, `git`, `unified`, `lock`, the validating newtypes, `Result` and `Failure` |
 | `jails-spec` | the closed CLI vocabularies (`spec::kind`, `policy`, `coordinate`, `constant`, `suffix`), `find_project_root`, the eleven layers, and `build` -- which build tool a directory uses and nothing more |
 | `jails-java` | the small Java reader, the class-file constant-pool reader, template rendering |
@@ -208,11 +209,14 @@ Five things to know before touching the workspace:
   `edit`, `render` halves), `model_capability`, `model_resource`,
   `model_field_evolution`, `model_destroy`, `model_rename`, `model_index`,
   `model_migration`, `model_setting`, `model_eject`, `model_init`,
-  `model_explain`, `model_doctor`, `model_status`. Each reads the source,
-  edits the JDL text, re-parses, and hands the result to
-  `model_generate::finish_generation`, which captures, compiles, materializes
-  and then either reports the bundle or executes *that* bundle -- one
-  computation for preview and apply. `src/model_command.rs` is the one owner
+  `model_explain`, `model_doctor`, `model_status`. Each starts from
+  `model_command::Current::load` (the one read of the invocation's model),
+  edits the JDL text, builds the typed `ModelPatch` for the same change, and
+  hands a `PreparedMutation` to `model_generate::finish_generation`, which
+  captures over the intended model, compiles, materializes and then either
+  reports the bundle or executes *that* bundle -- one computation for
+  preview and apply. The plan's input bytes are the patch serialised; no
+  frontend writes an encoding of its own. `src/model_command.rs` is the one owner
   of *which directory a model command is about*: `project_root` walks up to
   the nearest build file or model marker, nearest wins, and every model path
   stays project-relative because the same value becomes a `ProjectPath` in the

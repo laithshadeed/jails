@@ -110,9 +110,10 @@ ceiling being lowered.
 ## Where to start reading
 
 1. `src/cli.rs` for what can be typed; `src/main.rs` for what each command does.
-2. `src/model_generate_jdl.rs` for how a `jails g` becomes a model edit, and
-   `src/model_generate.rs` for `finish_generation`, where every mutation
-   captures, compiles, materializes and executes once.
+2. `src/model_generate_jdl.rs` for how a `jails g` becomes a model edit:
+   `model_command::Current::load` reads the model, the frontend edits the
+   source, and `src/model_generate.rs`'s `finish_generation` captures,
+   compiles, materializes and executes once for every mutation.
 3. `crates/jails-compiler/src/lib.rs` for `Compiler::compile`.
 4. `crates/jails-workspace/src/execute.rs` for the executor and its crash
    sweep in `crates/jails-workspace/tests/crash.rs`.

@@ -53,23 +53,16 @@ fn canonical_child(parent: &str, child: &str) -> Option<&'static str> {
     match (parent, child) {
         ("app", "init" | "plan" | "apply")
         | ("model", "check" | "plan" | "apply" | "eject" | "explain")
-        | ("sql", "check" | "generate" | "explain")
-        | ("introspect", "schema" | "query")
-        | ("schema", "diff" | "apply")
         | ("editor", "handshake" | "complete" | "symbols" | "diagnostics")
         | ("contract", "emit" | "check")
         | ("resource", "status" | "revive" | "repair" | "field")
-        | ("rename", "resource" | "storage") => Some(match child {
+        | ("rename", "resource") => Some(match child {
             "init" => "init",
             "plan" => "plan",
             "apply" => "apply",
             "eject" => "eject",
             "check" => "check",
-            "generate" => "generate",
             "explain" => "explain",
-            "schema" => "schema",
-            "query" => "query",
-            "diff" => "diff",
             "handshake" => "handshake",
             "complete" => "complete",
             "symbols" => "symbols",
@@ -80,7 +73,6 @@ fn canonical_child(parent: &str, child: &str) -> Option<&'static str> {
             "repair" => "repair",
             "field" => "field",
             "resource" => "resource",
-            "storage" => "storage",
             _ => unreachable!(),
         }),
         _ => None,
@@ -117,7 +109,7 @@ mod tests {
             path(&["--output", "json", "g", "record", "Note", "--pretend"]),
             ["generate"]
         );
-        assert_eq!(path(&["rm", "db", "--output=json-v1"]), ["remove"]);
+        assert_eq!(path(&["rm", "db", "--output=json"]), ["remove"]);
     }
 
     #[test]
@@ -127,8 +119,8 @@ mod tests {
             ["resource", "field", "rename"]
         );
         assert_eq!(
-            path(&["--plan-in=plan.json", "rename", "storage"]),
-            ["rename", "storage"]
+            path(&["--plan-in=plan.json", "rename", "resource"]),
+            ["rename", "resource"]
         );
         assert_eq!(
             path(&["--output", "json", "model", "check"]),

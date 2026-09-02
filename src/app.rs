@@ -204,10 +204,9 @@ fn fingerprint(intent: &GenerateArgs) -> String {
 /// `apply` stopped one step before the lock, and what it names is exactly
 /// what the apply then writes.
 fn refuse_manifest(command: &str) -> Result<()> {
-    crate::model_command::refuse_legacy_mutation(
-        command,
-        "declare capabilities and generators in the canonical model and run `jails sync`; `.jails/app.toml` is the legacy manifest and is not a second source",
-    )
+    Err(jails_support::Failure::Told(format!(
+        "`{command}` writes a manifest, and this project already has a model: `.jails/model.jdl` is the one editable source.\n       fix: declare capabilities and generators in the model and run `jails sync`, or replay an existing manifest with `jails app apply`"
+    )))
 }
 
 pub(crate) fn run(command: AppCommand, invocation: crate::Invocation) -> Result<()> {

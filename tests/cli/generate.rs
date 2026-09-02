@@ -127,26 +127,6 @@ fn machine_output_carries_failures_that_stop_before_an_outcome() {
             "{value}"
         );
     }
-
-    let v1 = jails_cmd(&root, None)
-        .args([
-            "destroy",
-            "scaffold",
-            "Task",
-            "--force",
-            "--pretend",
-            "--output",
-            "json-v1",
-        ])
-        .output()
-        .unwrap();
-    assert_eq!(v1.status.code(), Some(1), "{v1:?}");
-    assert!(v1.stderr.is_empty(), "{v1:?}");
-    let value: serde_json::Value = serde_json::from_slice(&v1.stdout).unwrap();
-    assert_eq!(value["schema"], "jails.command-result.v1", "{value}");
-    assert_eq!(value["exit_code"], 1, "{value}");
-    assert_eq!(value["status"], "refused", "{value}");
-    assert!(value["error"]["message"].is_string(), "{value}");
 }
 
 /// Once the schema carries the closed set, adding a constant to the Java enum
@@ -1751,41 +1731,6 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
         before,
         "JSON review preview wrote files"
     );
-
-    let compatibility = jails_cmd(&root, None)
-        .args([
-            "g",
-            "record",
-            "Compatibility",
-            "id:uuid",
-            "--pretend",
-            "--output",
-            "json-v1",
-        ])
-        .output()
-        .unwrap();
-    // `json-v1` is refused rather than answered in a different shape: a
-    // machine consumer handed the plan bundle instead would find fields it
-    // had not asked for and miss every one it had.
-    assert_eq!(compatibility.status.code(), Some(1), "{compatibility:?}");
-    // Reported *in* v1, because that is the shape the caller can parse: a
-    // refusal rendered in the schema they did not ask for is the same defect
-    // one level down.
-    let compatibility = String::from_utf8(compatibility.stdout).unwrap();
-    let refusal: serde_json::Value = serde_json::from_str(&compatibility).unwrap();
-    assert_eq!(
-        refusal["schema"], "jails.command-result.v1",
-        "{compatibility}"
-    );
-    assert_eq!(refusal["status"], "refused", "{compatibility}");
-    assert!(
-        refusal["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("json-v1")
-                && message.contains("--output json")),
-        "{compatibility}"
-    );
-    assert_eq!(compatibility.matches('\n').count(), 1, "{compatibility}");
 
     // A regeneration over an edited file is a three-way merge, and the plan
     // carries its *result* rather than a timing for it: the merged bytes are

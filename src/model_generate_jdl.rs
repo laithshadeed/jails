@@ -26,9 +26,7 @@ use crate::model_resource::java_to_label;
 use crate::{Invocation, model_generate};
 use jails_model::{EntityId, ModelPatch, OperationId};
 use jails_support::{Failure, Result};
-use serde_json::json;
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
 
 const MODEL_PATH: &str = crate::model_command::JDL_PATH;
 
@@ -87,9 +85,7 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         )
     })?;
     model_generate::reject_unsupported_operation_options(&args, profile)?;
-    let model_path = PathBuf::from(MODEL_PATH);
-    let current_source = read_model(&invocation)?;
-    let current_model = parse(&current_source)?;
+    let current = crate::model_command::Current::load(&invocation)?;
     // **An event may name no entity**, and then the block it becomes is a
     // top-level declaration rather than an entity member. Everything below
     // that reads the target -- the managed field list, the borrowed `--via`
@@ -99,7 +95,7 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         None => (String::new(), String::new()),
         Some(on) => {
             let requested_entity = java_to_label(on);
-            let entity = current_model
+            let entity = current.model
                 .entities
                 .values()
                 .find(|entity| entity.label == requested_entity || entity.names.java_type == on)
@@ -116,10 +112,10 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     // `event_component_declarations`. Every other operation's field list is a
     // projection of the target, so it goes through the checked resolver.
     let fields = if args.kind == ArtifactKind::Event {
-        model_generate::event_component_declarations(&current_model, &entity_label, &args.fields)?
+        model_generate::event_component_declarations(&current.model, &entity_label, &args.fields)?
     } else {
         model_generate::operation_field_labels_via(
-            &current_model,
+            &current.model,
             &entity_label,
             args.via
                 .as_deref()
@@ -134,7 +130,7 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     let operation_label = java_to_label(&args.name);
     let operation_id = OperationId::parse(format!("op_{operation_label}"))
         .map_err(|error| Failure::Told(format!("could not assign operation identity: {error}")))?;
-    let declaration = operation_declaration(&args, &current_model, &entity_label, &fields)?;
+    let declaration = operation_declaration(&args, &current.model, &entity_label, &fields)?;
     // The same block one level out. An entity member is rendered nested; a
     // top-level declaration is the identical text without that indent, so it
     // is one transform rather than a second renderer.
@@ -161,8 +157,8 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
             false => insert_entity_member(source, &entity_java_name, &declaration),
         }
     };
-    if let Some(existing) = current_model.operations.get(&operation_id) {
-        let without = remove_operation(&current_source, &args.name)?;
+    if let Some(existing) = current.model.operations.get(&operation_id) {
+        let without = remove_operation(&current.source, &args.name)?;
         let requested_source = splice(&without)?;
         let requested_model = parse(&requested_source)?;
         let requested = requested_model
@@ -180,46 +176,35 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         return finish_generation(PreparedMutation {
             name: args.name,
             invocation,
-            model_path,
-            current_source: current_source.clone(),
-            current_model,
-            next_source: current_source,
+            next_source: current.source.clone(),
+            current,
             patch: ModelPatch::Batch(Vec::new()),
-            patch_bytes: br#"{"kind":"batch","patches":[]}"#.to_vec(),
             authored_migration: None,
+            reader_paths: Vec::new(),
         });
     }
-    let next_source = splice(&current_source)?;
+    let next_source = splice(&current.source)?;
     let next_model = parse(&next_source)?;
     let operation = next_model
         .operations
         .get(&operation_id)
         .cloned()
         .ok_or_else(|| Failure::Told(format!("new operation `{operation_id}` did not link")))?;
-    let patch_bytes = serde_json::to_vec(&json!({
-        "kind": "add-operation",
-        "operation": operation,
-    }))
-    .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
     finish_generation(PreparedMutation {
         name: args.name,
         invocation,
-        model_path,
-        current_source,
-        current_model,
+        current,
         next_source,
         patch: ModelPatch::AddOperation(operation),
-        patch_bytes,
         authored_migration: None,
+        reader_paths: Vec::new(),
     })
 }
 
 fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
     args.name = java_type_name(&args.name);
     model_generate::validate_entity_args(&args)?;
-    let model_path = PathBuf::from(MODEL_PATH);
-    let current_source = read_model(&invocation)?;
-    let current_model = parse(&current_source)?;
+    let current = crate::model_command::Current::load(&invocation)?;
     let entity_label = java_to_label(&args.name);
     let entity_id = EntityId::parse(format!("ent_{entity_label}"))
         .map_err(|error| Failure::Told(format!("could not assign entity identity: {error}")))?;
@@ -238,13 +223,13 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
     let package = args
         .package
         .as_deref()
-        .map(|package| normalize_package(&current_model.project.base_package, package))
+        .map(|package| normalize_package(&current.model.project.base_package, package))
         .transpose()?;
     let declaration = match args.kind {
         ArtifactKind::Enum => enum_declaration(&args.name, &entity_label, &fields)?,
         ArtifactKind::Record | ArtifactKind::Value | ArtifactKind::Scaffold => {
             entity_declaration_at(
-                &current_model,
+                &current.model,
                 &EntityDeclaration {
                     java_name: &args.name,
                     entity_label: &entity_label,
@@ -258,8 +243,8 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
         }
         _ => unreachable!("run only accepts entity kinds"),
     };
-    if let Some(existing) = current_model.entity(&entity_id) {
-        let requested = declaration_entity(&current_model, &declaration, &entity_id)?;
+    if let Some(existing) = current.model.entity(&entity_id) {
+        let requested = declaration_entity(&current.model, &declaration, &entity_id)?;
         if !same_entity_contribution(existing, &requested) {
             // **A strict superset is an addition, not a disagreement.** A
             // declarative manifest states the shape it wants and is replayed
@@ -311,48 +296,34 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
             // a reader types them in; `g enum Status OPEN CLOSED PENDING` over
             // `OPEN CLOSED` asks for the third constant.
             let widened = match unchanged {
-                true => facet::widen_enum(&current_source, existing, &requested.enum_constants)?,
+                true => facet::widen_enum(&current.source, existing, &requested.enum_constants)?,
                 false => None,
             };
             if let Some((next_source, patches)) = widened {
                 let patch = ModelPatch::Batch(patches);
-                let patch_bytes = serde_json::to_vec(&serde_json::json!({
-                    "kind": "widen-enum",
-                    "entity": entity_id,
-                }))
-                .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
                 return finish_generation(PreparedMutation {
                     name: args.name.clone(),
                     invocation,
-                    model_path,
-                    current_source: current_source.clone(),
-                    current_model,
+                    current,
                     next_source,
                     patch,
-                    patch_bytes,
                     authored_migration: None,
+                    reader_paths: Vec::new(),
                 });
             }
             if unchanged
                 && let Some((next_source, patches)) =
-                    facet::add_facets(&current_source, existing, &requested.facets)?
+                    facet::add_facets(&current.source, existing, &requested.facets)?
             {
                 let patch = ModelPatch::Batch(patches);
-                let patch_bytes = serde_json::to_vec(&serde_json::json!({
-                    "kind": "add-facets",
-                    "entity": entity_id,
-                }))
-                .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
                 finish_generation(PreparedMutation {
                     name: args.name.clone(),
                     invocation: invocation.clone(),
-                    model_path: model_path.clone(),
-                    current_source: current_source.clone(),
-                    current_model: current_model.clone(),
+                    current: current.clone(),
                     next_source,
                     patch,
-                    patch_bytes,
                     authored_migration: None,
+                    reader_paths: Vec::new(),
                 })?;
                 if added.is_empty() {
                     return Ok(());
@@ -391,16 +362,14 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
         return finish_generation(PreparedMutation {
             name: args.name,
             invocation,
-            model_path,
-            current_source: current_source.clone(),
-            current_model,
-            next_source: current_source,
+            next_source: current.source.clone(),
+            current,
             patch: ModelPatch::Batch(Vec::new()),
-            patch_bytes: br#"{"kind":"batch","patches":[]}"#.to_vec(),
             authored_migration: None,
+            reader_paths: Vec::new(),
         });
     }
-    let next_source = append_declaration(current_source.clone(), &declaration)?;
+    let next_source = append_declaration(current.source.clone(), &declaration)?;
     let next_model = parse(&next_source)?;
     let entity = next_model
         .entity(&entity_id)
@@ -418,12 +387,6 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
         .filter(|projection| projection.entity == entity_id)
         .cloned()
         .collect();
-    let patch_bytes = serde_json::to_vec(&json!({
-        "kind": "add-entity",
-        "entity": entity,
-        "projections": projections,
-    }))
-    .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
     let patch = if projections.is_empty() {
         ModelPatch::AddEntity(entity)
     } else {
@@ -438,13 +401,11 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
     finish_generation(PreparedMutation {
         name: args.name,
         invocation: invocation.clone(),
-        model_path,
-        current_source,
-        current_model,
+        current,
         next_source,
         patch,
-        patch_bytes,
         authored_migration: None,
+        reader_paths: Vec::new(),
     })?;
     // **`--index` is a second patch, not a flag on the first.** An index is a
     // stable entity child with its own identity and its own forward
@@ -513,14 +474,7 @@ fn same_entity_contribution(
             .all(|(id, index)| existing.indexes.get(id) == Some(index))
 }
 
-pub(crate) fn read_model(invocation: &Invocation) -> Result<String> {
-    crate::model_command::read_source_at(&invocation.root()?, Path::new(MODEL_PATH))
-}
-
-pub(crate) fn parse(source: &str) -> Result<jails_model::AppModel> {
-    jails_model::parse_jdl(source)
-        .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))
-}
+use crate::model_command::parse;
 
 fn append_declaration(source: String, declaration: &str) -> Result<String> {
     jails_model::append_jdl_declaration(&source, declaration).map_err(jdl_edit_failure)

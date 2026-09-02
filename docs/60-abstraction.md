@@ -22,38 +22,39 @@ Measured 2026-09-02 over the crates that survive the pass
 
 | crate | public types | of which |
 |---|---:|---|
-| `jails-model` | 143 | ~40 are `source.rs`'s second copy of the model for the TOML input; 4 belong to the upgrade |
-| root binary | 71 | 40 are clap argument types; the rest are per-command request bags |
+| `jails-model` | 139 | 43 are `source.rs`, the unlinked wire shape the parser builds and the linker consumes -- a deliberate second copy, held by nothing else |
+| root binary | 63 | 18 are clap argument types; the rest are per-command request bags |
 | `jails-contracts` | 44 | |
-| `jails-drive` | 42 | two test-execution vocabularies (`testing::*V1`, `testd::*V2`) |
-| `jails-project` | 41 | a second project model (`model::{Project, Slice, Layer, Layers, Artifact, Change}`) beside the snapshot's `ProjectFacts` |
-| `jails-spec` | 13 | six closed vocabularies that also exist in `jails-model` |
+| `jails-drive` | 38 | two test-execution vocabularies (`testing::*V1`, `testd::*V2`) |
+| `jails-project` | 31 | a second project model (`model::{Project, Layer, Layers, Artifact, Change}`) beside the snapshot's `ProjectFacts` |
+| `jails-spec` | 14 | six closed vocabularies that also exist in `jails-model` |
 | `jails-compiler` | 10 | |
 | `jails-workspace` | 4 | |
 
 Six specific shapes, each measured:
 
-1. **One mutation is encoded three times.** Every frontend edits the JDL
-   text (`next_source`), builds a `ModelPatch` (34 variants), and serialises
-   a third form as `patch_bytes` JSON. `PreparedMutation` carries all three.
-   The compiler then applies the patch to the model it parsed from the *old*
-   source while the plan replaces the source file with the *new* text -- two
-   routes to the same next model, and a test (`model_generate_jdl::parse`
-   at 30 call sites) that they agree.
+1. **One mutation is decided twice.** Every frontend edits the JDL text
+   (`next_source`) and builds a `ModelPatch` (34 variants) for the same
+   change; `PreparedMutation` carries both and the plan records the patch
+   serialised. The compiler then applies the patch to the model it parsed
+   from the *old* source while the plan replaces the source file with the
+   *new* text -- two routes to the same next model, and a re-parse of the
+   edited source at 24 sites to pull the linked declaration out for the
+   patch.
 2. **Closed vocabularies exist in two or three crates each.** `Layer` is
    defined in `jails-model`, `jails-spec` and `jails-project`. `Capability`,
    `Dialect`, `HttpMethod`, `WireFormat`, `ArtifactKind` are `clap::ValueEnum`s
    in `jails-spec`; the model spells the same sets as `CAPS`, `storage`,
    `EndpointMethod`, `RequestFormat`, `UnitKind`/`ComponentKind`/`ProjectionKind`.
-   `Build` is in `jails-spec`, `BuildSystem` in `jails-contracts`, and a third
-   `Build` in the upgrade. Every pair has a translation and a test that they
+   `Build` is in `jails-spec` and `BuildSystem` in `jails-contracts`. Every
+   pair has a translation and a test that they
    agree, and `the_compilers_renameable_layers_are_the_engines_layers` exists
    only because there are two.
 3. **Generators are code, capabilities are data.** A capability is a `Pack`:
    files, dependencies, properties, compose services, build features and a
    placement rule, as one `static`. A generator kind is a `lower_and_emit`
    function -- nine of them, plus six `lower`s -- each walking the model and
-   assembling Java with `format!` (838 sites). The two shapes emit into the
+   assembling Java with `format!` (834 sites). The two shapes emit into the
    same `RenderedTree`.
 4. **The compiler re-derives its external facts.** `emit::Observed` is a
    hand-picked subset of the snapshot, rebuilt in `Compiler::compile`; every
@@ -62,11 +63,13 @@ Six specific shapes, each measured:
    and `ProjectContext` answer "what is at this path" for `drive` and
    `report`, reading the disk again, while the snapshot's `ProjectFacts`
    answers the same question for the compiler.
-6. **Entry points come in families.** `capture`, `capture_with_reader_paths`,
-   `capture_planned`, `capture_import`; `materialize`, `materialize_with_model`;
-   `finish_generation`, `finish_generation_with_reader_paths`,
-   `finish_carry_across`. Each variant is one caller's exception promoted to
-   API.
+6. **Entry points come in families.** `capture`, `capture_planned` and
+   `capture_import` remain of a family of four; `materialize` and
+   `finish_generation` are one function each now, taking the model update
+   and the reader paths as arguments. The binary's `_at` family
+   (`compile_at`, `load_model_at`, `resolve_manifest_at`, `sync_at`,
+   `read_source_at`, `owns_at`, `replay_at` and kin, nine functions) is the
+   same observation: each is one caller's exception promoted to API.
 
 ## The target
 
@@ -99,7 +102,7 @@ with `--pretend` stopping after `plan`, `--plan-out` writing it, and
 `--plan-in` starting at `execute`. That composition is `finish_generation`
 today; the change is what it takes.
 
-### S60.1 — `Edit` replaces `ModelPatch`, `patch_bytes` and the text splices
+### S60.1 — `Edit` replaces `ModelPatch` and the text splices
 
 An `Edit` is a syntactic operation on the CST, from a closed set small enough
 to list: append a declaration, remove a declaration, set or clear an
@@ -111,9 +114,9 @@ outside the touched span, which `jdl/v1/edit.rs` already does.
 The model is then whatever the edited source parses and links to. The plan
 records the source before-image and after-image (`ReplaceModelFile` already
 does), which is the only "patch" the executor needs. `ModelPatch`,
-`AppModel::apply`, `model_apply.rs`, `CanonicalModelPatch`'s JSON and the
-`Batch`/`ReplaceModel` plumbing go. `ReplaceModel` is a whole-source edit;
-`Batch` is a `Vec<Edit>`.
+`AppModel::apply`, `model_apply.rs` and the `Batch` plumbing go;
+`CanonicalModelPatch` records the `Edit` and the `Evolution` instead of the
+patch. `Batch` is a `Vec<Edit>`.
 
 What does not fit in the source is **`Evolution`**: a one-shot instruction
 about how to get from the accepted model to the next one, which is not
@@ -126,8 +129,8 @@ confirmation, index removal's confirmation -- and it is one enum passed to
 variants and nothing else changes.
 
 **Exit:** `ModelPatch` is gone; `Compiler::compile` takes a `&AppModel` and
-an `Evolution`; no frontend constructs a JSON patch; `PreparedMutation` has
-one source field.
+an `Evolution`; `PreparedMutation` carries the edited source and the
+evolution and nothing else about the change.
 
 ### S60.2 — one owner per closed vocabulary
 
@@ -198,11 +201,15 @@ capture reads the pom, and the board's Maven-scanner row reads one.
 
 `capture(root, model, reader_paths)`; `materialize(snapshot, desired)`;
 `mutate(invocation, edit, evolution)`. Variants become arguments with
-defaults, not functions. The `_at` family in the binary is the same
-observation: `Invocation` already carries the root.
+defaults, not functions. `materialize` and `finish_generation` are there;
+`capture_planned` and `capture_import` differ from `capture` by one argument
+each (the intended model, the model-absent precondition) and become one.
+The `_at` family in the binary is the same observation: `Invocation` already
+carries the root, and `Current::load` reads it, so a frontend never needs a
+root-taking twin.
 
-**Exit:** the `pub fn` count in `jails-workspace` is four; the binary has one
-`finish`.
+**Exit:** the `pub fn` count in `jails-workspace` is four; the binary has no
+`_at` function.
 
 ### S60.6 — one test-execution vocabulary
 
@@ -224,11 +231,11 @@ BASE/OURS/THEIRS rule; `PlanBundle`, `PlannedOperation` (six kinds is right),
 
 | item | plan | step |
 |---|---|---|
-| S60.1 `Edit` and `Evolution` | 52, 54 | S52.1 builds the one pipeline; S54.2 decides `ModelPatch`'s fate on this basis |
+| S60.1 `Edit` and `Evolution` | 52, 54 | S54.2 supplies `Edit` and `Evolution`; S52.1 makes each frontend a function to one |
 | S60.2 one vocabulary | 51, 53, 54 | S51.2 moves survivors; S53.4 and S54.5 move the field parser; the `Layer` triple is S53.1's first deletion |
 | S60.3 `Recipe` | 55 | S55.2 (the shell) and S55.5 (packs as data) are its first two rungs |
 | S60.4 the snapshot | 53 | S53.2, S53.3 |
-| S60.5 one entry point | 52, 53 | S52.1, S53.7 |
+| S60.5 one entry point | 53 | S53.7 |
 | S60.6 one test vocabulary | 53 | S53.5 |
 
 A plan step that lands a deletion without moving toward one of these is

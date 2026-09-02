@@ -5,7 +5,6 @@
 pub(crate) enum Output {
     Human,
     Json,
-    JsonV1,
 }
 
 impl Output {

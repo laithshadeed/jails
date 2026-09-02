@@ -10,9 +10,8 @@ Item numbers `S54.n` are stable and never reused.
 # 54 — Language: one front end, one way to change a model
 
 **Read `docs/50-simplify.md` first.** You are agent 4. Your subject is
-`jails-model`, the largest crate in the tree at 15,996 production lines, of
-which about 3,500 raw lines exist to read two inputs this binary no longer
-writes and to carry them across once.
+`jails-model`, 11,942 production lines: the `jdl 1` front end, the linker,
+and a second way to change a model.
 
 ## What you own
 
@@ -38,21 +37,24 @@ crate, agent 3 writes the move and you review it.
 
 ## Steps
 
-**S54.2 -- Is there a second way to change a model?** The frontends edit JDL
-*text* and re-parse. `ModelPatch` has 34 variants and `model_apply.rs` (736
-lines) applies one to a linked model. Measure who constructs a `ModelPatch`
-outside `jails-model` after S54.1:
+**S54.2 -- There is a second way to change a model, and it goes.** The
+frontends edit JDL *text* and re-parse; `ModelPatch` has 34 variants and
+`model_apply.rs` (736 lines) applies one to a linked model. Measured
+2026-09-02:
 
 ```
-grep -rn 'ModelPatch::' src crates/*/src --include=*.rs | grep -v '^crates/jails-model' | grep -v '^\s*//'
+grep -rn 'ModelPatch::' src crates/*/src --include=*.rs | grep -v '^crates/jails-model' | grep -v '^\s*//' | wc -l
 ```
 
-If the answer is the compiler alone (the `CanonicalModelPatch` a plan
-carries), then `model_apply` is the executor's replay path and stays. If a
-frontend both edits text *and* builds a patch for the same change, there are
-two encodings of one mutation and the text edit is the surviving one --
-`docs/00-contracts.md` §1.1 names sixteen shapes of one request as the
-original defect. Delete the variants nothing constructs.
+77 sites, all in the binary's frontends, and every one sits beside the text
+edit for the same change: two encodings of one mutation, which
+`docs/00-contracts.md` §1.1 names as the original defect. The text edit is
+the surviving one. `docs/60-abstraction.md` S60.1 is the shape: an `Edit`
+enum over the CST in this crate, `jdl/v1/edit.rs` as its one implementation,
+the seven one-shot policies the patch carries today as an `Evolution` the
+compiler takes beside the model, and `ModelPatch`, `AppModel::apply` and
+`model_apply.rs` deleted. Agent 2's S52.1 is the same change seen from the
+binary; agree `Edit`'s variants before either starts.
 
 **S54.3 -- `jdl/v1`: what the parser says three times.** `parser/declaration.rs`
 (540), `parser/operation.rs` (669) and `parser/projection.rs` each carry

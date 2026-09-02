@@ -44,13 +44,8 @@ pub(crate) fn finish_invocation(
         return std::process::ExitCode::FAILURE;
     }
 
-    let schema = match output {
-        Output::Human => unreachable!("handled above"),
-        Output::JsonV1 => "jails.command-result.v1",
-        Output::Json => "jails.command-result.v2",
-    };
     let envelope = serde_json::json!({
-        "schema": schema,
+        "schema": "jails.command-result.v2",
         "status": "refused",
         "exit_code": 1,
         "command": command_path,

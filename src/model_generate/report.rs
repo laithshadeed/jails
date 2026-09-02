@@ -113,22 +113,6 @@ fn disabled_tests(bundle: &jails_contracts::PlanBundle) -> Vec<String> {
     disabled
 }
 
-/// Refuse `--output json-v1` rather than answering in a different shape.
-///
-/// **`json-v1` names a schema this path cannot produce.** Ignoring the flag
-/// would hand the caller one shape when they asked for another, with nothing
-/// saying so: a machine consumer parsing the answer finds fields it did not
-/// ask for and misses every one it did.
-pub(crate) fn refuse_legacy_envelope(invocation: &Invocation) -> Result<()> {
-    match invocation.output {
-        Output::JsonV1 => Err(Failure::Told(
-            "`--output json-v1` is the legacy engine's envelope, and this project is canonical.\n       fix: pass `--output json` for the exact plan, or `--output human`"
-                .to_string(),
-        )),
-        _ => Ok(()),
-    }
-}
-
 pub(crate) fn report_plan(
     bundle: &jails_contracts::PlanBundle,
     invocation: &Invocation,

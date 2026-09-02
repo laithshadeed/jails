@@ -107,17 +107,12 @@ pub enum Restore {
     EditedAndRemoved,
 }
 
+/// Freeze a draft into the exact, content-addressed plan.
+///
+/// `model_update` is the authoring source the plan writes beside the managed
+/// tree; `None` for a compilation that changes no declaration (`sync`,
+/// `plan`, `repair`).
 pub fn materialize(
-    snapshot: &WorkspaceSnapshot,
-    input: CanonicalModelPatch,
-    draft: PlanDraft,
-    compiler_version: &str,
-    restore: Restore,
-) -> Result<PlanBundle, String> {
-    materialize_with_model(snapshot, input, draft, None, compiler_version, restore)
-}
-
-pub fn materialize_with_model(
     snapshot: &WorkspaceSnapshot,
     input: CanonicalModelPatch,
     draft: PlanDraft,
@@ -959,6 +954,7 @@ mod tests {
             &snapshot,
             CanonicalModelPatch::reconcile(),
             draft,
+            None,
             // Pinned rather than `COMPILER_VERSION`: the version is *meant* to
             // move, and a golden that churned on every bump would be refreshed
             // without being read, which is how a golden stops being one.
@@ -1073,6 +1069,7 @@ mod tests {
             &snapshot,
             CanonicalModelPatch::reconcile(),
             draft,
+            None,
             jails_compiler::COMPILER_VERSION,
             Restore::Refuse,
         )
@@ -1114,6 +1111,7 @@ mod tests {
             &snapshot,
             CanonicalModelPatch::reconcile(),
             draft,
+            None,
             jails_compiler::COMPILER_VERSION,
             Restore::Refuse,
         )
@@ -1141,6 +1139,7 @@ mod tests {
                 &snapshot,
                 input,
                 draft,
+                None,
                 jails_compiler::COMPILER_VERSION,
                 Restore::Refuse,
             )
@@ -1174,6 +1173,7 @@ mod tests {
                 &snapshot,
                 CanonicalModelPatch::reconcile(),
                 draft,
+                None,
                 version,
                 Restore::Refuse,
             )
@@ -1212,6 +1212,7 @@ mod tests {
                 &snapshot,
                 CanonicalModelPatch::reconcile(),
                 draft,
+                None,
                 jails_compiler::COMPILER_VERSION,
                 Restore::Refuse,
             )
@@ -1231,6 +1232,7 @@ mod tests {
             &snapshot,
             CanonicalModelPatch::reconcile(),
             draft,
+            None,
             jails_compiler::COMPILER_VERSION,
             Restore::Refuse,
         )

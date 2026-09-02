@@ -7,8 +7,6 @@ use crate::model_generate::{PreparedMutation, finish_generation};
 use crate::model_resource::java_to_label;
 use jails_model::{Facet, ModelPatch, OperationKind, StableId, StorageRetirementPolicy, UnitKind};
 use jails_support::{Failure, Result};
-use serde_json::json;
-use std::path::PathBuf;
 
 pub(crate) struct Request {
     pub(crate) kind: ArtifactKind,
@@ -27,11 +25,9 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         ));
     }
 
-    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
-    let current_source = crate::model_command::read_source(&model_path)?;
-    let current_model = crate::model_generate_jdl::parse(&current_source)?;
+    let current = crate::model_command::Current::load(&invocation)?;
     let label = java_to_label(&request.name);
-    let (patch, next_source, patch_bytes) = if request.kind == ArtifactKind::Association {
+    let (patch, next_source) = if request.kind == ArtifactKind::Association {
         // **Retiring a foreign key is a forward migration, not the un-running
         // of one.** Refusing the verb would leave both halves of an
         // association permanently undestroyable, so the command exists and
@@ -44,7 +40,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                     .to_string(),
             ));
         }
-        let relation = current_model
+        let relation = current.model
             .relations
             .values()
             .find(|relation| relation.label == label || relation.sql_name == request.name)
@@ -55,7 +51,8 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                 ))
             })?
             .clone();
-        let child = current_model
+        let child = current
+            .model
             .entities
             .get(&relation.child)
             .ok_or_else(|| {
@@ -71,7 +68,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         // has to ask the CST for the name it actually wrote.
         let member = crate::model_generate_jdl::relation_member_name(&relation.label);
         let next = jails_model::remove_jdl_entity_member(
-            &current_source,
+            &current.source,
             &child.names.java_type,
             &["relation"],
             Some(&member),
@@ -82,18 +79,12 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             relation: relation.id.clone(),
             confirmed_name: relation.sql_name.clone(),
         };
-        let bytes = serde_json::to_vec(&json!({
-            "kind": "remove-relation",
-            "relation": relation.id,
-            "confirmed_name": relation.sql_name,
-        }))
-        .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
-        (patch, next, bytes)
+        (patch, next)
     } else if matches!(
         request.kind,
         ArtifactKind::Record | ArtifactKind::Value | ArtifactKind::Enum | ArtifactKind::Scaffold
     ) {
-        let entity = current_model
+        let entity = current.model
             .entities
             .values()
             .find(|entity| entity.label == label || entity.names.java_type == request.name)
@@ -104,12 +95,13 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                 ))
             })?;
         let id = entity.id.clone();
-        let stored = current_model
+        let stored = current
+            .model
             .capabilities
             .values()
             .any(|capability| capability.kind == "db")
             && entity.facets.contains(&Facet::Repository);
-        let (patch, next, kind) = if stored {
+        let (patch, next) = if stored {
             match (request.storage, request.confirm_table.as_deref()) {
                 (None, _) => {
                     return Err(Failure::Told(format!(
@@ -132,11 +124,10 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                         policy: StorageRetirementPolicy::Preserve,
                     },
                     crate::model_generate_jdl::set_entity_active(
-                        &current_source,
+                        &current.source,
                         &entity.names.java_type,
                         false,
                     )?,
-                    "retire-entity-preserve-storage",
                 ),
                 (Some(StoragePolicy::Drop), None) => {
                     return Err(Failure::Told(format!(
@@ -152,10 +143,9 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                         },
                     },
                     crate::model_generate_jdl::remove_entity(
-                        &current_source,
+                        &current.source,
                         &entity.names.java_type,
                     )?,
-                    "retire-entity-drop-storage",
                 ),
             }
         } else {
@@ -167,22 +157,12 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             }
             (
                 ModelPatch::RemoveEntity(id.clone()),
-                crate::model_generate_jdl::remove_entity(&current_source, &entity.names.java_type)?,
-                "remove-entity",
+                crate::model_generate_jdl::remove_entity(&current.source, &entity.names.java_type)?,
             )
         };
-        let mut proof = current_model.clone();
+        let mut proof = current.model.clone();
         proof.apply(patch.clone()).map_err(Failure::Told)?;
-        let bytes = serde_json::to_vec(&json!({
-            "kind": kind,
-            "entity": id,
-            "storage": match &patch {
-                ModelPatch::RetireEntity { policy, .. } => Some(format!("{policy:?}")),
-                _ => None,
-            },
-        }))
-        .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
-        (patch, next, bytes)
+        (patch, next)
     } else if matches!(
         request.kind,
         ArtifactKind::Factory
@@ -197,7 +177,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                     .to_string(),
             ));
         }
-        let entity = current_model
+        let entity = current.model
             .entities
             .values()
             .find(|entity| {
@@ -238,12 +218,12 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             _ => unreachable!(),
         };
         let next = crate::model_generate_jdl::facet::set_marker(
-            &current_source,
+            &current.source,
             &entity.names.java_type,
             marker,
             false,
         )?;
-        let next_model = crate::model_generate_jdl::parse(&next)?;
+        let next_model = crate::model_command::parse(&next)?;
         if next_model
             .entity(&id)
             .is_some_and(|entity| entity.facets.contains(&facet))
@@ -256,15 +236,9 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             entity: id.clone(),
             facet,
         };
-        let mut proof = current_model.clone();
+        let mut proof = current.model.clone();
         proof.apply(patch.clone()).map_err(Failure::Told)?;
-        let bytes = serde_json::to_vec(&json!({
-            "kind": "remove-facet",
-            "entity": id,
-            "facet": name,
-        }))
-        .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
-        (patch, next, bytes)
+        (patch, next)
     } else if crate::model_generate_jdl::component_kind(request.kind).is_some() {
         if request.storage.is_some() || request.confirm_table.is_some() {
             return Err(Failure::Told(
@@ -275,7 +249,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         let kind = crate::model_generate_jdl::component_kind(request.kind)
             .expect("the component branch checked this kind");
         let stem = crate::model_generate_jdl::component_stem(request.kind, &request.name)?;
-        let component = current_model
+        let component = current.model
             .components
             .values()
             .find(|component| {
@@ -296,26 +270,21 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                 ))
             })?;
         let id = component.id.clone();
-        let unit = current_model
+        let unit = current
+            .model
             .units
             .values()
             .find(|unit| unit.id.as_str() == id.as_str())
             .map(|unit| unit.id.clone());
-        let next = crate::model_generate_jdl::remove_unit(&current_source, &component.name)?;
+        let next = crate::model_generate_jdl::remove_unit(&current.source, &component.name)?;
         let mut patches = vec![ModelPatch::RemoveComponent(id.clone())];
         if let Some(unit) = unit.clone() {
             patches.push(ModelPatch::RemoveUnit(unit));
         }
         let patch = ModelPatch::Batch(patches);
-        let mut proof = current_model.clone();
+        let mut proof = current.model.clone();
         proof.apply(patch.clone()).map_err(Failure::Told)?;
-        let bytes = serde_json::to_vec(&json!({
-            "kind": "remove-component",
-            "component": id,
-            "unit_view": unit,
-        }))
-        .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
-        (patch, next, bytes)
+        (patch, next)
     } else if matches!(
         request.kind,
         ArtifactKind::Class
@@ -346,7 +315,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         };
         let stem = crate::strip_redundant_suffix(request.kind, &request.name);
         let label = java_to_label(&stem);
-        let unit = current_model
+        let unit = current.model
             .units
             .values()
             .find(|unit| {
@@ -362,18 +331,13 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                 ))
             })?;
         let id = unit.id.clone();
-        let component = current_model
+        let component = current
+            .model
             .components
             .values()
             .find(|component| component.id.as_str() == id.as_str())
             .map(|component| component.id.clone());
-        let next = crate::model_generate_jdl::remove_unit(&current_source, &stem)?;
-        let bytes = serde_json::to_vec(&json!({
-            "kind": "remove-source-unit",
-            "unit": id,
-            "component": component,
-        }))
-        .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
+        let next = crate::model_generate_jdl::remove_unit(&current.source, &stem)?;
         let patch = component.map_or_else(
             || ModelPatch::RemoveUnit(id.clone()),
             |component| {
@@ -383,9 +347,9 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                 ])
             },
         );
-        (patch, next, bytes)
+        (patch, next)
     } else if operation_kind(request.kind).is_some() {
-        let operation = current_model
+        let operation = current.model
             .operations
             .values()
             .find(|operation| {
@@ -400,37 +364,30 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                 ))
             })?;
         let id = operation.id.clone();
-        let mut proof = current_model.clone();
+        let mut proof = current.model.clone();
         proof
             .apply(ModelPatch::RemoveOperation(id.clone()))
             .map_err(Failure::Told)?;
         let next = crate::model_generate_jdl::remove_operation(
-            &current_source,
+            &current.source,
             &operation.names.java_type,
         )?;
-        let bytes = serde_json::to_vec(&json!({
-            "kind": "remove-operation",
-            "operation": id,
-        }))
-        .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
-        (ModelPatch::RemoveOperation(id), next, bytes)
+        (ModelPatch::RemoveOperation(id), next)
     } else {
         return Err(Failure::Told(format!(
             "canonical destroy does not map `{}` to a semantic declaration.\n       fix: destroy `record`, `value`, `enum`, `sealed`, `strategy`, `controller`, `scaffold`, `factory`, `dto`, `repo`, `search`, `seed`, `association`, `class`, `interface`, `service`, `test`, `integration-test`, `usecase`, `query`, `transition`, or `event`, or edit the application model",
             kind_name(request.kind)
         )));
     };
-    crate::model_generate_jdl::parse(&next_source)?;
+    crate::model_command::parse(&next_source)?;
     finish_generation(PreparedMutation {
         name: request.name,
         invocation,
-        model_path,
-        current_source,
-        current_model,
+        current,
         next_source,
         patch,
-        patch_bytes,
         authored_migration: None,
+        reader_paths: Vec::new(),
     })
 }
 
@@ -453,11 +410,9 @@ fn dropped_table(_source: &str, selector: &str) -> Option<String> {
 }
 
 pub(crate) fn revive(selector: String, table: String, invocation: Invocation) -> Result<()> {
-    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
-    let current_source = crate::model_command::read_source(&model_path)?;
-    let current_model = crate::model_generate_jdl::parse(&current_source)?;
+    let current = crate::model_command::Current::load(&invocation)?;
     let label = java_to_label(&selector);
-    let entity = current_model
+    let entity = current.model
         .entities
         .values()
         .find(|entity| entity.label == label || entity.names.java_type == selector)
@@ -467,7 +422,7 @@ pub(crate) fn revive(selector: String, table: String, invocation: Invocation) ->
             // so there is nothing to revive: the history says the table was
             // created and dropped, and going back means declaring the resource
             // again and creating a new one.
-            if let Some(table) = dropped_table(&current_source, &selector) {
+            if let Some(table) = dropped_table(&current.source, &selector) {
                 return Failure::Told(format!(
                     "`{selector}` had an append-only drop planned for `{table}`, so there is no preserved table to revive.\n       fix: declare it again with `jails g scaffold {selector} <field>:<type>`, which creates a new table"
                 ));
@@ -478,7 +433,7 @@ pub(crate) fn revive(selector: String, table: String, invocation: Invocation) ->
         })?;
     let id = entity.id.clone();
     let next_source = crate::model_generate_jdl::set_entity_active(
-        &current_source,
+        &current.source,
         &entity.names.java_type,
         true,
     )?;
@@ -486,25 +441,17 @@ pub(crate) fn revive(selector: String, table: String, invocation: Invocation) ->
         entity: id.clone(),
         confirmed_table: table.clone(),
     };
-    let mut proof = current_model.clone();
+    let mut proof = current.model.clone();
     proof.apply(patch.clone()).map_err(Failure::Told)?;
-    crate::model_generate_jdl::parse(&next_source)?;
-    let patch_bytes = serde_json::to_vec(&json!({
-        "kind": "revive-entity-preserved-storage",
-        "entity": id,
-        "confirmed_table": table,
-    }))
-    .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
+    crate::model_command::parse(&next_source)?;
     finish_generation(PreparedMutation {
         name: selector,
         invocation,
-        model_path,
-        current_source,
-        current_model,
+        current,
         next_source,
         patch,
-        patch_bytes,
         authored_migration: None,
+        reader_paths: Vec::new(),
     })
 }
 

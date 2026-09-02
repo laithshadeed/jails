@@ -99,16 +99,11 @@ struct AcceptedCompilerState {
     migration_bytes: BTreeMap<ProjectPath, Vec<u8>>,
 }
 
+/// Capture a project's external facts for a compilation of `model`.
+///
+/// `reader_paths` are the reader-owned files the plan may edit beyond the
+/// trees the model implies; pass `&[]` when the caller has none.
 pub fn capture(
-    root: &Path,
-    model_path: &Path,
-    model_source: &[u8],
-    model: AppModel,
-) -> Result<WorkspaceSnapshot, String> {
-    capture_with_reader_paths(root, model_path, model_source, model, &[])
-}
-
-pub fn capture_with_reader_paths(
     root: &Path,
     model_path: &Path,
     model_source: &[u8],

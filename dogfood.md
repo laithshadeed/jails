@@ -9,11 +9,14 @@ unbuildable, data-dangerous, or impossible to recover.
 
 ## Boundaries
 
-- Never modify jails source, tests, build files, or existing docs. The only
-  repository file you may edit is bugs.md.
+- Never modify jails source, tests, build files, or the design documents.
+  The only repository file you may edit is `BUGS.md` at the repository root,
+  which you create on the first report; `docs/00-contracts.md` says how an
+  item that survives triage becomes a `B<n>` entry in the workstream file
+  that owns the path.
 - Every test project must be a fresh, disposable /tmp/jails-dogfood-* directory.
   Never run destructive tests in this repository.
-- Start by reading bugs.md. Retest relevant existing reports before creating new
+- Start by reading `BUGS.md`. Retest relevant existing reports before creating new
   ones. Remove a report only after a direct reproduction proves it fixed.
 - Correct stale details in a still-valid report rather than deleting the whole
   report. Do not claim an issue is fixed because a different path succeeds.
@@ -80,7 +83,7 @@ inventing new scenarios:
   variable `class`, `Foo` -> `FooServiceService`. The failure lives downstream of
   the input the validator inspected.
 
-For every scenario, capture this mini-verdict before touching bugs.md:
+For every scenario, capture this mini-verdict before touching `BUGS.md`:
 
     Existing ID: B<n> / none
     Reproduction: exact minimal command sequence
@@ -96,7 +99,7 @@ Twenty sections is more than one run can do well, and a shallow pass over all of
 them is worth less than a deep pass over four. Choose like this:
 
 1. **Always:** section 1 (the baseline must stay boring) and a retest of every
-   open report in bugs.md. Everything else is optional.
+   open report in `BUGS.md`. Everything else is optional.
 2. **Then pick by where the product last moved.** Read `git log` since the
    previous run's HEAD; the sections touching those commits are where fixes
    regress and where new surfaces arrive half-finished.
@@ -389,7 +392,7 @@ State the relation, then try to break it. These find bugs no single scenario can
 
 ## Completion
 
-Update bugs.md only after collecting evidence. Preserve valid IDs; remove fixed
+Update `BUGS.md` only after collecting evidence. Preserve valid IDs; remove fixed
 reports; amend partially fixed ones precisely; add new reports by severity. Add
 a dated recheck note listing exactly what was retested, removed, corrected,
 added, and skipped.

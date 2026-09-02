@@ -5,18 +5,14 @@ mod jdl_edit;
 
 use crate::Invocation;
 use crate::cli::{ColumnRenamePolicy as CliColumnPolicy, TypeChangeStrategy as CliTypeStrategy};
-use crate::model_generate::{
-    PreparedMutation, finish_generation, finish_generation_with_reader_paths, normalize_type,
-};
+use crate::model_generate::{PreparedMutation, finish_generation, normalize_type};
 use crate::model_resource::java_to_label;
 use jails_contracts::ProjectPath;
 use jails_model::{
-    AppModel, ColumnRenamePolicy, EntityId, Field, FieldEvolutionPolicy, FieldId, ModelPatch,
-    StableId, TypeChangeStrategy,
+    ColumnRenamePolicy, EntityId, Field, FieldEvolutionPolicy, FieldId, ModelPatch, StableId,
+    TypeChangeStrategy,
 };
 use jails_support::{Failure, Result};
-use serde_json::json;
-use std::path::PathBuf;
 
 pub(crate) struct RenameRequest {
     pub(crate) entity: String,
@@ -28,7 +24,7 @@ pub(crate) struct RenameRequest {
 
 pub(crate) fn rename(request: RenameRequest, invocation: Invocation) -> Result<()> {
     reject_package(request.package.as_deref())?;
-    let resolved = resolve(&request.entity, &request.field)?;
+    let resolved = resolve(&request.entity, &request.field, &invocation)?;
     let (column, mut next_source) = match request.column {
         CliColumnPolicy::Rolling => {
             return Err(Failure::Told(
@@ -58,14 +54,6 @@ pub(crate) fn rename(request: RenameRequest, invocation: Invocation) -> Result<(
         &request.new_name,
         &mut next_source,
         FieldEvolutionPolicy::Rename { column },
-        json!({
-            "kind": "rename-field",
-            "new_name": request.new_name,
-            "column": match column {
-                ColumnRenamePolicy::Preserve => "preserve",
-                ColumnRenamePolicy::SingleCutover => "single-cutover",
-            },
-        }),
         invocation,
         &[],
     )
@@ -87,10 +75,10 @@ pub(crate) fn change_type(request: TypeRequest, invocation: Invocation) -> Resul
                 .to_string(),
         ));
     }
-    let resolved = resolve(&request.entity, &request.field)?;
+    let resolved = resolve(&request.entity, &request.field, &invocation)?;
     let to = normalize_type(&request.to);
     let mut next_source = jdl_edit::set_field_type(
-        &resolved.current_source,
+        &resolved.current.source,
         &resolved.entity_java_name,
         &resolved.field_java_name,
         resolved.field_id.as_str(),
@@ -103,7 +91,6 @@ pub(crate) fn change_type(request: TypeRequest, invocation: Invocation) -> Resul
         FieldEvolutionPolicy::ChangeType {
             strategy: TypeChangeStrategy::Safe,
         },
-        json!({"kind": "change-field-type", "to": to, "strategy": "safe"}),
         invocation,
         &[],
     )
@@ -132,7 +119,7 @@ pub(crate) fn set_nullability(request: NullabilityRequest, invocation: Invocatio
                 .to_string(),
         ));
     }
-    let resolved = resolve(&request.entity, &request.field)?;
+    let resolved = resolve(&request.entity, &request.field, &invocation)?;
     let (backfill_sql, reader_paths) = match request.backfill_file.as_deref() {
         Some(path) => {
             let (path, bytes) = read_reader_sql(path)?;
@@ -147,7 +134,7 @@ pub(crate) fn set_nullability(request: NullabilityRequest, invocation: Invocatio
         None => (None, Vec::new()),
     };
     let mut next_source = jdl_edit::set_field_required(
-        &resolved.current_source,
+        &resolved.current.source,
         &resolved.entity_java_name,
         &resolved.field_java_name,
         resolved.field_id.as_str(),
@@ -160,11 +147,6 @@ pub(crate) fn set_nullability(request: NullabilityRequest, invocation: Invocatio
         FieldEvolutionPolicy::SetNullability {
             backfill_sql: backfill_sql.clone(),
         },
-        json!({
-            "kind": "set-field-nullability",
-            "required": request.required,
-            "backfill_sql": backfill_sql,
-        }),
         invocation,
         &reader_paths,
     )
@@ -179,9 +161,9 @@ pub(crate) struct DropRequest {
 
 pub(crate) fn drop_field(request: DropRequest, invocation: Invocation) -> Result<()> {
     reject_package(request.package.as_deref())?;
-    let resolved = resolve(&request.entity, &request.field)?;
+    let resolved = resolve(&request.entity, &request.field, &invocation)?;
     let next_source = jdl_edit::remove_field(
-        &resolved.current_source,
+        &resolved.current.source,
         &resolved.entity_java_name,
         &resolved.field_java_name,
         resolved.field_id.as_str(),
@@ -191,30 +173,19 @@ pub(crate) fn drop_field(request: DropRequest, invocation: Invocation) -> Result
         field: resolved.field_id.clone(),
         confirmed_column: request.confirm_column.clone(),
     };
-    let patch_bytes = serde_json::to_vec(&json!({
-        "kind": "drop-field",
-        "entity": resolved.entity_id,
-        "field": resolved.field_id,
-        "confirmed_column": request.confirm_column,
-    }))
-    .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
     finish_generation(PreparedMutation {
         name: format!("{}.{}", request.entity, request.field),
         invocation,
-        model_path: resolved.model_path,
-        current_source: resolved.current_source,
-        current_model: resolved.current_model,
+        current: resolved.current,
         next_source,
         patch,
-        patch_bytes,
         authored_migration: None,
+        reader_paths: Vec::new(),
     })
 }
 
 struct ResolvedField {
-    model_path: PathBuf,
-    current_source: String,
-    current_model: AppModel,
+    current: crate::model_command::Current,
     entity_id: EntityId,
     entity_label: String,
     entity_java_name: String,
@@ -225,12 +196,10 @@ struct ResolvedField {
     has_database: bool,
 }
 
-fn resolve(entity_name: &str, field_name: &str) -> Result<ResolvedField> {
-    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
-    let current_source = crate::model_command::read_source(&model_path)?;
-    let current_model = crate::model_generate_jdl::parse(&current_source)?;
+fn resolve(entity_name: &str, field_name: &str, invocation: &Invocation) -> Result<ResolvedField> {
+    let current = crate::model_command::Current::load(invocation)?;
     let entity_label = java_to_label(entity_name);
-    let entity = current_model
+    let entity = current.model
         .entities
         .values()
         .find(|entity| entity.label == entity_label || entity.names.java_type == entity_name)
@@ -251,8 +220,6 @@ fn resolve(entity_name: &str, field_name: &str) -> Result<ResolvedField> {
             ))
         })?;
     let resolved = ResolvedField {
-        model_path,
-        current_source,
         entity_id: entity.id.clone(),
         entity_label: entity.label.clone(),
         entity_java_name: entity.names.java_type.clone(),
@@ -260,11 +227,12 @@ fn resolve(entity_name: &str, field_name: &str) -> Result<ResolvedField> {
         field_label: field.label.clone(),
         field_java_name: field.names.java_member.clone(),
         field_sql_column: field.names.sql_column.clone(),
-        has_database: current_model
+        has_database: current
+            .model
             .capabilities
             .values()
             .any(|capability| capability.kind == "db"),
-        current_model,
+        current,
     };
     Ok(resolved)
 }
@@ -274,11 +242,10 @@ fn finish_replace(
     display_name: &str,
     next_source: &mut String,
     policy: FieldEvolutionPolicy,
-    patch_json: serde_json::Value,
     invocation: Invocation,
     reader_paths: &[ProjectPath],
 ) -> Result<()> {
-    let next_model = crate::model_generate_jdl::parse(next_source)?;
+    let next_model = crate::model_command::parse(next_source)?;
     let replacement: Field = next_model
         .entities
         .get(&resolved.entity_id)
@@ -296,27 +263,15 @@ fn finish_replace(
         replacement: replacement.clone(),
         policy,
     };
-    let patch_bytes = serde_json::to_vec(&json!({
-        "patch": patch_json,
-        "entity": resolved.entity_id,
-        "field": resolved.field_id,
-        "replacement": replacement,
-    }))
-    .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
-    finish_generation_with_reader_paths(
-        PreparedMutation {
-            name: format!("{}.{}", resolved.entity_label, display_name),
-            invocation,
-            model_path: resolved.model_path,
-            current_source: resolved.current_source,
-            current_model: resolved.current_model,
-            next_source: std::mem::take(next_source),
-            patch,
-            patch_bytes,
-            authored_migration: None,
-        },
-        reader_paths,
-    )
+    finish_generation(PreparedMutation {
+        name: format!("{}.{}", resolved.entity_label, display_name),
+        invocation,
+        current: resolved.current,
+        next_source: std::mem::take(next_source),
+        patch,
+        authored_migration: None,
+        reader_paths: reader_paths.to_vec(),
+    })
 }
 
 fn reject_package(package: Option<&str>) -> Result<()> {
@@ -335,7 +290,7 @@ fn rename_source_field(
     next_column: Option<&str>,
 ) -> Result<String> {
     jdl_edit::rename_field(
-        &resolved.current_source,
+        &resolved.current.source,
         &resolved.entity_java_name,
         &resolved.field_java_name,
         resolved.field_id.as_str(),

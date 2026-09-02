@@ -125,29 +125,8 @@ pub enum Dialect {
     #[default]
     Postgres,
     /// `add h2`. In-process, and the only difference that reaches the DDL is
-    /// one type name -- see [`Dialect::column_type`].
+    /// one type name, which `BuiltinSemantics` in `jails-model` rewrites.
     H2,
-}
-
-impl Dialect {
-    /// This dialect's spelling of a column type jails names in Postgres.
-    ///
-    /// **One entry, and that is the finding, not an oversight.** Every other
-    /// type `sql.rs` emits -- `text`, `integer`, `bigint`, `boolean`,
-    /// `double precision`, `numeric`, `uuid`, `date`, `timestamp` -- is in
-    /// H2's own type table verbatim, checked in
-    /// `deps/h2database/h2/src/main/org/h2/value/DataType.java`. `timestamptz`
-    /// is not: H2 knows that name only inside its PostgreSQL *wire protocol*
-    /// server, so a `create table` using it over JDBC fails to parse. The
-    /// standard spelling is what H2 takes, and Postgres takes it too -- but
-    /// `timestamptz` is what a Postgres schema is conventionally written in,
-    /// and this module does not rewrite a schema people will read.
-    pub fn column_type(self, postgres: &str) -> &str {
-        match (self, postgres) {
-            (Self::H2, "timestamptz") => "timestamp with time zone",
-            _ => postgres,
-        }
-    }
 }
 
 /// Whether a transition insists on the caller's version, or only checks one

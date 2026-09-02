@@ -1,35 +1,35 @@
-# command	owner crate	side-effect class	current entry point
+# command	owner crate	side-effect class	entry point
 about	jails-project	read-only	project::about
 new	jails	project-create	new::new
 new-cli	jails	project-create	new::new_cli
 app	jails	dispatch-only	app::run
-app init	jails-engine	project-mutation	route::app_init
-app plan	jails-engine	read-only	route::app_apply (pretend)
-app apply	jails-engine	project-mutation	route::app_apply
+app init	jails	one-shot-write	app::init
+app plan	jails	read-only	app::replay (pretend)
+app apply	jails	project-mutation	app::replay
 model	jails	dispatch-only	model_command::run
-model check	jails-model	read-only	jails_model::parse_jdl
-model fmt	jails-model/jails-workspace	project-mutation-or-read-only	model_command::format
-model plan	jails-compiler/jails-workspace	read-only+optional-report-output	Compiler::compile / materialize
-model apply	jails-workspace	project-mutation	execute
-model eject	jails-compiler/jails-workspace	project-mutation	model_eject::run
-model explain	jails-model/jails-workspace	read-only	model_explain::run
-model init	jails-workspace	project-mutation	model_init::run
-generate	jails-engine	project-mutation	route::recipe
-add	jails-engine	project-mutation	route::install
-add dependency	jails-engine	project-mutation	route::add_dependency
-sync	jails-engine	project-mutation	route::sync
-remove	jails-engine	project-mutation	route::remove
-remove dependency	jails-engine	project-mutation	route::undeclare
-remove fast-test	jails-engine	project-mutation	route::remove_fast_test
-set	jails-engine	project-mutation	route::set_property
-unset	jails-engine	project-mutation	route::undeclare
+model check	jails-model	read-only	model_command::check
+model fmt	jails	project-mutation-or-read-only	model_command::format
+model plan	jails-compiler/jails-workspace	read-only+optional-report-output	model_command::plan
+model apply	jails-workspace	project-mutation	model_command::apply
+model eject	jails	project-mutation	model_eject::run
+model explain	jails	read-only	model_explain::run
+model init	jails	project-mutation	model_init::run
+generate	jails	project-mutation	model_generate_jdl::run
+add	jails	project-mutation	model_capability::add
+add dependency	jails	project-mutation	model_capability::add_dependency
+sync	jails	project-mutation	model_command::sync
+remove	jails	project-mutation	model_capability::remove
+remove dependency	jails	project-mutation	model_capability::remove_dependency
+remove fast-test	jails	project-mutation	model_capability::remove_fast_test
+set	jails	project-mutation	model_setting::set
+unset	jails	project-mutation	model_setting::unset
 start	jails-project	service-lifecycle	compose::start
 stop	jails-project	service-lifecycle	compose::stop_cmd
 src	jails-report	read-only	source::src
 bench	jails-drive	external-process	bench::bench
-adopt	jails-engine	project-mutation	route::adopt_layout
+adopt	jails	one-shot-write	adopt::layout
 doctor	jails-report	read-only	doctor::doctor
-why	jails-report	read-only+external-process	why::why
+why	jails-report	read-only+external-process	why::command
 stats	jails-project	read-only	inspect::stats
 notes	jails-project	read-only	inspect::notes
 lint	jails-drive	read-only+external-process	lint::lint
@@ -37,32 +37,32 @@ routes	jails-project	read-only	inspect::routes
 beans	jails-project	read-only	inspect::beans
 migrate	jails-drive	external-process+service-lifecycle	migrate::check
 kafka	jails-drive	dispatch-only	kafka::kafka
-kafka topics	jails-drive	broker-read+service-lifecycle	kafka::tool
-kafka describe	jails-drive	broker-read+service-lifecycle	kafka::tool
-kafka send	jails-drive	broker-mutation+service-lifecycle	kafka::send
-kafka poison	jails-drive	broker-mutation+service-lifecycle	kafka::send
-kafka tail	jails-drive	broker-read+service-lifecycle	kafka::tool
-kafka dlt	jails-drive	broker-read+service-lifecycle	kafka::tool
-kafka lag	jails-drive	broker-read+service-lifecycle	kafka::tool
-kafka reset	jails-drive	broker-mutation+service-lifecycle	kafka::tool
+kafka topics	jails-drive	broker-read+service-lifecycle	kafka::kafka
+kafka describe	jails-drive	broker-read+service-lifecycle	kafka::kafka
+kafka send	jails-drive	broker-mutation+service-lifecycle	kafka::kafka
+kafka poison	jails-drive	broker-mutation+service-lifecycle	kafka::kafka
+kafka tail	jails-drive	broker-read+service-lifecycle	kafka::kafka
+kafka dlt	jails-drive	broker-read+service-lifecycle	kafka::kafka
+kafka lag	jails-drive	broker-read+service-lifecycle	kafka::kafka
+kafka reset	jails-drive	broker-mutation+service-lifecycle	kafka::kafka
 db	jails-drive	external-process+service-lifecycle	console::db
-console	jails-drive	external-process	console::console
-rename	jails-engine	project-mutation	route::rename
-rename resource	jails-engine	project-mutation	route::rename_resource
-destroy	jails-engine	project-mutation	route::destroy
+console	jails	external-process	tool_command::console
+rename	jails	one-shot-write	rename_source::run
+rename resource	jails	project-mutation	model_rename::run
+destroy	jails	project-mutation	model_destroy::run
 resource	jails	dispatch-only	main command dispatch
-resource status	jails-report	read-only	model_status::run or lifecycle_status::status
-resource revive	jails-engine	project-mutation	route::revive
-resource repair	jails-engine	project-mutation	route::repair
-resource field	jails	dispatch-only	main command dispatch
-resource field add	jails-engine	project-mutation	route::add_field
-resource field rename	jails-engine	project-mutation	route::rename_field
-resource field type	jails-engine	project-mutation	route::change_field_type
-resource field nullability	jails-engine	project-mutation	route::set_field_nullability
-resource field drop	jails-engine	project-mutation	route::drop_field
-resource index	jails	dispatch-only	main command dispatch
-resource index add	jails-engine	project-mutation	route::add_index
-resource index remove	jails-model/jails-compiler/jails-workspace	project-mutation	model_index::remove
+resource status	jails	read-only	model_status::run
+resource revive	jails	project-mutation	model_destroy::revive
+resource repair	jails	project-mutation	model_command::repair
+resource field	jails	dispatch-only	model_resource::run
+resource field add	jails	project-mutation	model_resource::run
+resource field rename	jails	project-mutation	model_field_evolution::rename
+resource field type	jails	project-mutation	model_field_evolution::change_type
+resource field nullability	jails	project-mutation	model_field_evolution::set_nullability
+resource field drop	jails	project-mutation	model_field_evolution::drop_field
+resource index	jails	dispatch-only	model_index::run
+resource index add	jails	project-mutation	model_index::add
+resource index remove	jails	project-mutation	model_index::remove
 test	jails-drive	external-process+conditional-project-mutation	run::test
 test daemon	jails-drive	dispatch-only	main command dispatch
 test daemon restart	jails-drive	machine-daemon+external-process	testd::testd
@@ -71,9 +71,9 @@ test daemon stop	jails-drive	machine-daemon	testd::testd
 testd	jails-drive	machine-daemon+external-process	testd::testd
 build	jails-drive	external-process	run::build
 clean	jails-drive	external-process	run::clean
-fmt	jails-engine	project-mutation+external-process	route::format
+fmt	jails-drive	project-mutation+external-process	run::format_project
 check	jails-drive	external-process	run::check
-modernize	jails-engine	project-mutation	route::modernize
+modernize	jails	one-shot-write	modernize::run
 mvn	jails-drive	external-process	run::mvn
 gradle	jails-drive	external-process	run::gradle
 run	jails-drive	external-process+service-lifecycle	run::run/run::watch
@@ -82,16 +82,16 @@ explain	jails-report	read-only	explain::explain
 commands	jails-report	read-only	commands::commands
 completion	jails	read-only	clap_complete::generate
 editor	jails	dispatch-only	editor_command::run
-editor handshake	jails	read-only	editor_command::handshake
-editor complete	jails	read-only	editor_command::complete
-editor symbols	jails	read-only	editor_command::symbols
-editor diagnostics	jails	read-only+optional-external-process	editor_command::diagnostics
+editor handshake	jails	read-only	editor_command::run
+editor complete	jails	read-only	editor_command::run
+editor symbols	jails	read-only	editor_command::run
+editor diagnostics	jails	read-only+optional-external-process	editor_command::run
 contract	jails	dispatch-only	contract_command::run
-contract emit	jails	read-only	contract_command::emit
+contract emit	jails	read-only	contract_command::run
 contract check	jails	read-only+external-process	contract_command::run
 request	jails	read-only+external-process	tool_command::request
-runner	jails-drive	read-only+external-process	console::runner
+runner	jails	read-only+external-process	tool_command::runner
 logs	jails	read-only+external-process	tool_command::logs
-db console	jails-drive	read-only+external-process	console::postgres_console
+db console	jails	read-only+external-process	tool_command::db_console
 architecture	jails	dispatch-only	cli::ArchitectureAction
 architecture baseline	jails-drive	external-tool	baseline::freeze

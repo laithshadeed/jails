@@ -4131,7 +4131,7 @@ fn canonical_projects_fail_closed_before_legacy_mutation_routes() {
         // `a_manifest_replays_into_the_model_and_converges` hold them. `init`
         // refuses: it *writes* the manifest, which beside a model is a second
         // editable source.
-        ("app init", vec!["app", "init"], "does not route"),
+        ("app init", vec!["app", "init"], "one editable source"),
     ] {
         // `adopt` and `modernize` are not refused: both run *before* a project
         // has a model and neither claims anything a later command reconciles,
@@ -12869,7 +12869,7 @@ fields = ["OPEN", "CLOSED"]
         .unwrap();
     assert!(
         !refused.status.success()
-            && String::from_utf8_lossy(&refused.stderr).contains("does not route"),
+            && String::from_utf8_lossy(&refused.stderr).contains("one editable source"),
         "`app init` writes a second editable source and must still refuse"
     );
 }
@@ -13376,7 +13376,7 @@ entity Widget {
     // Compilation is whole-model, so a selector is refused rather than
     // silently ignored.
     let scoped = jails_cmd(&root, None)
-        .args(["resource", "repair", "Widget", "--strategy", "roll-forward"])
+        .args(["resource", "repair", "Widget"])
         .output()
         .unwrap();
     assert!(!scoped.status.success());

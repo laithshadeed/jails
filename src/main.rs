@@ -292,20 +292,15 @@ fn main() -> std::process::ExitCode {
                     .and_then(|()| model_destroy::revive(selector, table, invocation))
             }
             // Canonical repair is `sync` with the deleted-managed-file guard
-            // waived, so it takes no `--strategy`: managed output is
-            // reproducible from the model, and the model is the only strategy
-            // there is. A caller who passed one is told that rather than
-            // having it silently ignored.
+            // waived, so it takes no strategy: managed output is reproducible
+            // from the model, and the model is the only strategy there is.
             //
             // A selector is refused rather than ignored: compilation is
             // whole-model, so scoping it to one resource is not something this
             // can honour. `--datasource` *is* honoured, and asks the one
             // question the files cannot answer -- whether the image Flyway
             // actually applied is the one the seal would restore.
-            ResourceCommand::Repair {
-                selector,
-                strategy: _,
-            } => {
+            ResourceCommand::Repair { selector } => {
                 if selector.is_some() {
                     Err(jails_support::Failure::Told(
                         "canonical `resource repair` repairs the whole managed tree and takes no selector: it renders `.jails/generated` from the model.\n       fix: run `jails resource repair` with no selector".to_string(),

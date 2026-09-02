@@ -53,7 +53,7 @@ fn collect() -> Result<Vec<Check>> {
     let root = crate::model_command::root()?;
     let (source, model) =
         crate::model_command::load_model_at(&root, &manifest, crate::Output::Human)?;
-    let snapshot = jails_workspace::capture(&root, &manifest, source.as_bytes(), model)
+    let snapshot = jails_workspace::capture(&root, &manifest, source.as_bytes(), model, &[])
         .map_err(|error| jails_support::Failure::Told(error.to_string()))?;
 
     let mut checks = Vec::new();

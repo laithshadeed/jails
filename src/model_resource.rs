@@ -2,11 +2,9 @@
 
 use crate::Invocation;
 use crate::cli::{GenerateArgs, ResourceFieldCommand};
-use crate::model_generate::{PreparedMutation, finish_generation_with_reader_paths, parse_field};
+use crate::model_generate::{PreparedMutation, finish_generation, parse_field};
 use jails_model::{Facet, FieldAddPolicy, FieldId, ModelPatch};
 use jails_support::{Failure, Result};
-use serde_json::json;
-use std::path::PathBuf;
 
 pub(crate) fn run(command: ResourceFieldCommand, invocation: Invocation) -> Result<()> {
     // Every arm below evolves a declared field, so the project needs a model
@@ -141,21 +139,20 @@ pub(crate) fn add_generated_field(args: GenerateArgs, invocation: Invocation) ->
 }
 
 pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Result<()> {
-    let model_path = PathBuf::from(crate::model_command::JDL_PATH);
     if request.package.is_some() {
         return Err(Failure::Told(
             "canonical entities have one stable identity and do not accept a legacy package selector.\n       fix: remove `--package` and name the entity declared in the application model"
                 .to_string(),
         ));
     }
-    let current_source = crate::model_command::read_source(&model_path)?;
-    let current_model = crate::model_generate_jdl::parse(&current_source)?;
-    let has_database = current_model
+    let current = crate::model_command::Current::load(&invocation)?;
+    let has_database = current
+        .model
         .capabilities
         .values()
         .any(|capability| capability.kind == "db");
     let requested_label = java_to_label(&request.entity);
-    let entity = current_model
+    let entity = current.model
         .entities
         .values()
         .find(|entity| {
@@ -243,8 +240,8 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
     let placement = jails_model::FieldPlacement::Last;
     let line = crate::model_generate_jdl::render_v1_field_line(&entity_label, &parsed);
     let next_source =
-        crate::model_generate_jdl::insert_field(&current_source, &entity_java_name, &line)?;
-    let next_model = crate::model_generate_jdl::parse(&next_source)?;
+        crate::model_generate_jdl::insert_field(&current.source, &entity_java_name, &line)?;
+    let next_model = crate::model_command::parse(&next_source)?;
     let field_id =
         FieldId::parse(format!("fld_{entity_label}_{}", parsed.label)).map_err(Failure::Told)?;
     let field = next_model
@@ -253,38 +250,18 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
         .and_then(|entity| entity.field(&field_id))
         .cloned()
         .ok_or_else(|| Failure::Told(format!("new field `{field_id}` did not link")))?;
-    let patch_bytes = serde_json::to_vec(&json!({
-        "kind": "add-field",
-        "entity": entity_id,
-        "field": field,
-        "policy": match &policy {
-            FieldAddPolicy::Nullable => json!({"kind": "nullable"}),
-            FieldAddPolicy::BackfillLiteral(value) => {
-                json!({"kind": "backfill-literal", "value": value})
-            }
-            FieldAddPolicy::ReaderOwnedSql(bytes) => {
-                json!({"kind": "reader-owned-sql", "bytes": bytes})
-            }
+    finish_generation(PreparedMutation {
+        name: format!("{}.{}", request.entity, parsed.java_name),
+        invocation,
+        current,
+        next_source,
+        patch: ModelPatch::AddField {
+            entity: entity_id,
+            field,
+            policy,
+            placement,
         },
-    }))
-    .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
-    finish_generation_with_reader_paths(
-        PreparedMutation {
-            name: format!("{}.{}", request.entity, parsed.java_name),
-            invocation,
-            model_path,
-            current_source,
-            current_model,
-            next_source,
-            patch: ModelPatch::AddField {
-                entity: entity_id,
-                field,
-                policy,
-                placement,
-            },
-            patch_bytes,
-            authored_migration: None,
-        },
-        &reader_paths,
-    )
+        authored_migration: None,
+        reader_paths,
+    })
 }

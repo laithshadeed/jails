@@ -14,10 +14,9 @@ mod reconcile;
 mod verify;
 
 pub use capture::{
-    capture, capture_import, capture_planned, capture_with_reader_paths, observe_build_system,
-    observe_spring_boot,
+    capture, capture_import, capture_planned, observe_build_system, observe_spring_boot,
 };
 pub use documents::maven_dependency_block;
 pub use execute::{Execution, execute};
-pub use materialize::{Restore, digest, materialize, materialize_with_model};
+pub use materialize::{Restore, digest, materialize};
 pub use verify::verify_bundle;

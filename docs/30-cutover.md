@@ -89,6 +89,3 @@ starts without a number.
 **P9.8 §2.7 — the Ecto-style SQL sandbox stays deliberately deferred.** Not a
 roadmap dependency and not a default. If the experiment is run, record the
 negative result rather than deleting the section.
-
-**P9.10 `jails schema diff` requires `.jails/app.toml`**, so it does not run on
-the shape `jails new` produces.

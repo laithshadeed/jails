@@ -57,7 +57,7 @@ fn run_as(invocation: Invocation) -> Result<()> {
         .map_err(|error| Failure::Told(format!("could not compile the new model: {error}")))?;
     let patch_bytes = serde_json::to_vec(&serde_json::json!({"kind": "init-model"}))
         .map_err(|error| Failure::Told(format!("could not encode init patch: {error}")))?;
-    let bundle = jails_workspace::materialize_with_model(
+    let bundle = jails_workspace::materialize(
         &snapshot,
         jails_contracts::CanonicalModelPatch {
             schema: "jails.model-patch.v1".to_string(),

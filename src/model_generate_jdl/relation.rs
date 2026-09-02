@@ -14,23 +14,20 @@
 //! `flyway migrate`, which is the furthest possible point from where the
 //! mistake was made -- the same rule `search`'s field list follows.
 
-use super::{MODEL_PATH, parse, read_model};
+use super::MODEL_PATH;
 use crate::Invocation;
 use crate::cli::GenerateArgs;
+use crate::model_command::parse;
 use crate::model_generate::{PreparedMutation, finish_generation};
 use crate::model_resource::java_to_label;
 use jails_model::{Entity, Facet, ModelPatch};
 use jails_support::{Failure, Result};
-use serde_json::json;
-use std::path::PathBuf;
 
 pub(super) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     reject_unsupported_options(&args)?;
-    let model_path = PathBuf::from(MODEL_PATH);
-    let current_source = read_model(&invocation)?;
-    let current_model = parse(&current_source)?;
+    let current = crate::model_command::Current::load(&invocation)?;
     let child = stored(
-        &current_model,
+        &current.model,
         args.strategy_on.as_deref().ok_or_else(|| {
             Failure::Told(format!(
                 "canonical association `{}` needs its child resource\n       fix: pass `--on <Child>` -- the foreign key column is the child's",
@@ -40,7 +37,7 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         "child",
     )?;
     let parent = stored(
-        &current_model,
+        &current.model,
         args.strategy_yields.as_deref().ok_or_else(|| {
             Failure::Told(format!(
                 "canonical association `{}` needs its parent resource\n       fix: pass `--yields <Parent>`",
@@ -76,7 +73,8 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     // than reconciled. Identity is the child and the member name; a
     // *different* mapping under the same name is still the collision the
     // parser refuses, which is what it is for.
-    if current_model
+    if current
+        .model
         .relations
         .values()
         .any(|relation| relation.label == label && relation.child == child.id)
@@ -85,7 +83,7 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         return Ok(());
     }
     let next_source = jails_model::insert_jdl_entity_member(
-        &current_source,
+        &current.source,
         &child.names.java_type,
         "relation",
         &declaration,
@@ -103,21 +101,14 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
                 args.name, child.label, parent.label
             ))
         })?;
-    let patch_bytes = serde_json::to_vec(&json!({
-        "kind": "add-relation",
-        "relation": relation,
-    }))
-    .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
     finish_generation(PreparedMutation {
         name: args.name,
         invocation,
-        model_path,
-        current_source,
-        current_model,
+        current,
         next_source,
         patch: ModelPatch::AddRelation(relation),
-        patch_bytes,
         authored_migration: None,
+        reader_paths: Vec::new(),
     })
 }
 

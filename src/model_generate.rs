@@ -24,17 +24,25 @@ use crate::{Invocation, Output};
 use jails_contracts::{CanonicalModelPatch, ModelFileUpdate, ProjectPath};
 use jails_model::{AppModel, ModelPatch};
 use jails_support::{Failure, Result};
-use std::path::PathBuf;
+use std::path::Path;
 
+/// One model mutation, ready for the pipeline every frontend shares.
+///
+/// A frontend decides *what* changes -- the edited source and the typed
+/// patch -- and nothing else: capture, compilation, materialization, the
+/// preview and the execution are one computation here, so `--pretend` and
+/// the real run cannot describe the transition differently.
 pub(crate) struct PreparedMutation {
     pub(crate) name: String,
     pub(crate) invocation: Invocation,
-    pub(crate) model_path: PathBuf,
-    pub(crate) current_source: String,
-    pub(crate) current_model: AppModel,
+    /// The source and model the mutation starts from.
+    pub(crate) current: crate::model_command::Current,
+    /// The source after the frontend's edit; equal to `current.source` for a
+    /// mutation that declares nothing.
     pub(crate) next_source: String,
+    /// The same change as a typed patch, which is what the compiler applies
+    /// and what the plan records as its input.
     pub(crate) patch: ModelPatch,
-    pub(crate) patch_bytes: Vec<u8>,
     /// A migration the *reader* authored, rather than one the compiler
     /// derived from a schema change.
     ///
@@ -46,6 +54,10 @@ pub(crate) struct PreparedMutation {
     /// `AppendMigration` operation with an allocated version and a `Missing`
     /// precondition. It is as visible in the reviewed plan as any other.
     pub(crate) authored_migration: Option<jails_contracts::RenderedMigration>,
+    /// Reader-owned files the plan edits beyond what the model implies: the
+    /// destination of an ejection, the backfill file a required field is
+    /// proved against.
+    pub(crate) reader_paths: Vec<ProjectPath>,
 }
 
 /// Report a declaration that was already there.
@@ -98,73 +110,34 @@ impl Stopwatch {
 }
 
 pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
-    finish(prepared, &[], None)
-}
-
-pub(crate) fn finish_generation_with_reader_paths(
-    prepared: PreparedMutation,
-    reader_paths: &[ProjectPath],
-) -> Result<()> {
-    finish(prepared, reader_paths, None)
-}
-
-/// Where an upgraded authoring source goes, and what it replaces.
-///
-/// **One caller, and a parameter rather than a `PreparedMutation` field.**
-/// Thirty-nine sites build a `PreparedMutation` and exactly one of them writes
-/// its result somewhere other than where it read it, so a field would be
-/// `retire: Vec::new()` thirty-eight times. This is the shape
-/// `finish_generation_with_reader_paths` already established beside it.
-pub(crate) struct CarryAcross {
-    /// The path the new source is written to.
-    pub(crate) writes_to: PathBuf,
-    /// The authoring sources retired in the same plan, so the project is
-    /// never left with two.
-    pub(crate) retires: Vec<ProjectPath>,
-}
-
-fn finish(
-    prepared: PreparedMutation,
-    reader_paths: &[ProjectPath],
-    carry: Option<CarryAcross>,
-) -> Result<()> {
     let PreparedMutation {
         name,
         invocation,
-        model_path,
-        current_source,
-        current_model,
+        current,
         next_source,
         patch,
-        patch_bytes,
         authored_migration,
+        reader_paths,
     } = prepared;
-    report::refuse_legacy_envelope(&invocation)?;
+    let model_path = Path::new(crate::model_command::JDL_PATH);
     let mut clock = Stopwatch::start(invocation.debug);
-    // The path the source is *read* from is `model_path`; the path it is
-    // written to is the same unless this is a carry-across.
-    let write_path = carry
-        .as_ref()
-        .map_or_else(|| model_path.clone(), |carry| carry.writes_to.clone());
-    let retires = carry.map(|carry| carry.retires).unwrap_or_default();
-    let canonical_model_path = write_path.to_string_lossy().replace('\\', "/");
     // The invocation's, so `jails new --app` can replay a manifest into the
     // project it is creating rather than into whatever encloses the directory
     // the reader is standing in.
     let root = invocation.root()?;
-    let mut next_model = current_model.clone();
+    let mut next_model = current.model.clone();
     next_model
         .apply(patch.clone())
         .map_err(|error| Failure::Told(format!("could not prepare model capture: {error}")))?;
-    let mut capture_paths = reader_paths.to_vec();
+    let mut capture_paths = reader_paths;
     capture_paths.extend(jails_compiler::external_project_paths(&next_model));
     capture_paths.sort();
     capture_paths.dedup();
     let snapshot = jails_workspace::capture_planned(
         &root,
-        &model_path,
-        current_source.as_bytes(),
-        current_model,
+        model_path,
+        current.source.as_bytes(),
+        current.model,
         &next_model,
         &capture_paths,
     )
@@ -175,6 +148,11 @@ fn finish(
     // applies all of them or none, and a reader who is not told that has to
     // work out by hand which half to retry. Nothing has been written at this
     // point by construction: the executor has not run.
+    // **The plan records the patch as its input**, so two mutations that edit
+    // the source identically but mean different things -- a rename that
+    // preserves the column and one that cuts over -- have different digests.
+    let patch_bytes = serde_json::to_vec(&patch)
+        .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
     let mut draft = jails_compiler::Compiler::compile(&snapshot, Some(patch)).map_err(|error| {
         Failure::Told(format!(
             "could not compile model patch: {error}\n       nothing was written"
@@ -197,7 +175,7 @@ fn finish(
             eprintln!("       fix: {}", diagnostic.fix);
         }
     }
-    let bundle = jails_workspace::materialize_with_model(
+    let bundle = jails_workspace::materialize(
         &snapshot,
         CanonicalModelPatch {
             schema: "jails.model-patch.v1".to_string(),
@@ -205,9 +183,9 @@ fn finish(
         },
         draft,
         Some(ModelFileUpdate {
-            path: ProjectPath::parse(canonical_model_path).map_err(Failure::Told)?,
+            path: ProjectPath::parse(crate::model_command::JDL_PATH).map_err(Failure::Told)?,
             bytes: next_source.into_bytes(),
-            retire: retires,
+            retire: Vec::new(),
         }),
         jails_compiler::COMPILER_VERSION,
         if invocation.force {
