@@ -34,7 +34,7 @@ pub(crate) fn run(command: EditorCommand, invocation: crate::Invocation) -> Resu
 }
 
 fn handshake(start: Option<&Path>) -> Result<()> {
-    let project = project_at(start)?;
+    let project = project_containing(start)?;
     let digest = root_digest(&project)?;
     let root = project.root();
     let mut builds = Vec::new();
@@ -157,7 +157,7 @@ struct Symbol {
 }
 
 fn symbols(kind: EditorSymbolKindArg, query: Option<&str>, start: Option<&Path>) -> Result<()> {
-    let project = project_at(start)?;
+    let project = project_containing(start)?;
     let digest = root_digest(&project)?;
     let mut found = match kind {
         EditorSymbolKindArg::Routes => inspect::collect_routes(project.root())
@@ -274,7 +274,7 @@ fn diagnostics(
     if scope == EditorDiagnosticScopeArg::Project && file.is_some() {
         return Err("`--file` is invalid for project diagnostics.\n       fix: omit it or select `--scope buffer`.".into());
     }
-    let project = project_at(start)?;
+    let project = project_containing(start)?;
     let digest = root_digest(&project)?;
     let mut rows = Vec::new();
     if let Some(file) = file {
@@ -328,7 +328,7 @@ fn diagnostic_json(
     )
 }
 
-fn project_at(start: Option<&Path>) -> Result<model::Project> {
+fn project_containing(start: Option<&Path>) -> Result<model::Project> {
     let start = match start {
         Some(path) => path.to_path_buf(),
         None => std::env::current_dir()

@@ -53,7 +53,7 @@ inside the managed tree and refuse permanently. `write_atomic` stages under
 `.jails-staged-` so `sweep_staged` can recognise its own debris, and the sweep
 runs under the lock.
 
-**`.jails/model.jdl` is the one editable source.** `model_command::read_source_at`
+**`.jails/model.jdl` is the one editable source.** `model_command::read_source`
 is the funnel every mutation reads its model through; it refuses anything
 else by name. `app plan|apply` reads a manifest and writes declarations into
 the model, one way -- that is not a second editable source, because the model
@@ -234,9 +234,9 @@ Five things to know before touching the workspace:
   declarations rather than reader-owned text, or a capability declaring the
   same key would collide with the project's own scaffolding. `new` stands in
   the *parent* of the project it creates, so its root rides on `Invocation`
-  and the `_at` family (`compile_at`, `load_model_at`, `resolve_manifest_at`,
-  `sync_at`, `materialize_seed`) is a containment boundary that stops the walk
-  from the process directory -- not a pattern to extend downward.
+  (`Invocation::for_new` pins it; `Invocation::root` is the one walk) and
+  every model function takes the invocation or the root it resolved --
+  `materialize_seed(root)` is the seed's entry, not a second walk.
 - **`src/app.rs`** -- `jails app plan|apply`: a closed manifest at
   `.jails/app.toml` (`schema`, `capabilities`, `[[generate]]` rows of
   `kind`/`name`/`fields`/`timestamps`/`indexes`/`package`/`on`/`yields`, with

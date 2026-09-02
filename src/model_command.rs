@@ -50,11 +50,13 @@ pub(crate) fn root() -> Result<PathBuf> {
     }
 }
 
-/// The same read, against a project the caller has resolved.
+/// The one read of the model, against a root the caller has resolved.
 ///
-/// `jails new --app` replays a manifest into the project it is creating, and
-/// the process directory is that project's *parent*.
-pub(crate) fn read_source_at(root: &Path, model_path: &Path) -> Result<String> {
+/// The root is an argument rather than a walk because `jails new --app`
+/// replays a manifest into the project it is creating, and the process
+/// directory is that project's *parent*; `Invocation::root` is where the
+/// walk lives.
+pub(crate) fn read_source(root: &Path, model_path: &Path) -> Result<String> {
     let source = match std::fs::read_to_string(root.join(model_path)) {
         Ok(source) => source,
         // **A project still on `.jails/model.toml` reads as a refusal, not as
@@ -78,7 +80,7 @@ pub(crate) fn read_source_at(root: &Path, model_path: &Path) -> Result<String> {
         // Returned rather than checked below: what `model init` derives is
         // `jdl 1` by construction, so putting it through the dialect test
         // would only be able to fail on a bug in the deriver.
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !owns_at(root) => {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !owns(root) => {
             return jails_project::model::Project::load(root)
                 .and_then(|project| crate::model_init::derive(&project));
         }
@@ -137,7 +139,7 @@ pub(crate) struct Current {
 
 impl Current {
     pub(crate) fn load(invocation: &Invocation) -> Result<Self> {
-        let source = read_source_at(&invocation.root()?, Path::new(JDL_PATH))?;
+        let source = read_source(&invocation.root()?, Path::new(JDL_PATH))?;
         let model = parse(&source)?;
         Ok(Self { source, model })
     }
@@ -149,17 +151,11 @@ pub(crate) fn parse(source: &str) -> Result<jails_model::AppModel> {
         .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))
 }
 
-pub(crate) fn owns() -> bool {
-    project_root().is_some_and(|root| owns_at(&root))
-}
-
-/// The same question about a root the caller already knows.
-///
-/// `owns` walks up from the process directory, which is the wrong root for
-/// every command holding an explicit one -- `jails new --app` stands in the
-/// parent of the project it is creating. Same containment boundary as the
-/// `_at` family.
-pub(crate) fn owns_at(root: &Path) -> bool {
+/// Whether this root has a model. The root is the caller's: a walk from the
+/// process directory is the wrong answer for every command holding an
+/// explicit one -- `jails new --app` stands in the parent of the project it
+/// is creating.
+pub(crate) fn owns(root: &Path) -> bool {
     root.join(JDL_PATH).is_file()
 }
 
@@ -188,7 +184,7 @@ pub(crate) fn ensure_owned(invocation: Invocation) -> Result<()> {
     // about the wrong tree -- and answer "not canonical" about a project that
     // was seeded a moment ago.
     let root = invocation.root()?;
-    if owns_at(&root) {
+    if owns(&root) {
         return Ok(());
     }
     // **Nothing is written here, and that is the point.** Running `model
@@ -211,21 +207,16 @@ pub(crate) fn ensure_owned(invocation: Invocation) -> Result<()> {
     jails_project::model::Project::load(&root).map(|_| ())
 }
 
-pub(crate) fn sync(no_start: bool, invocation: Invocation) -> Result<()> {
-    // Accepted rather than refused by name: a sync can introduce a compose
-    // service, so a script that passes the flag is saying something coherent
-    // -- it just happens to be what sync does anyway. See `sync_at`.
-    sync_at(&root()?, invocation.without_starting(no_start))
-}
-
-/// `jails sync` against a root the caller already holds.
+/// `jails sync`: recompile the model as it stands and make the tree match.
 ///
-/// **`root()` walks up from the process directory, and `jails new` is the one
-/// caller for which that is the wrong answer**: the project being created is a
-/// scratch tree, and the process is standing in its parent. Everything below
-/// this wrapper already takes an explicit root -- `capture_*`, `materialize*`
-/// and `execute` all do -- so this only stops the walk from happening.
-pub(crate) fn sync_at(root: &Path, invocation: Invocation) -> Result<()> {
+/// `no_start` is accepted rather than refused by name: a sync can introduce
+/// a compose service, so a script that passes the flag is saying something
+/// coherent -- it just happens to be what sync does anyway. The root is the
+/// invocation's, which is the process directory's walk for every command but
+/// `jails new --app`, which stands in the parent of the project it creates.
+pub(crate) fn sync(no_start: bool, invocation: Invocation) -> Result<()> {
+    let invocation = invocation.without_starting(no_start);
+    let root = &invocation.root()?;
     // **`jails.toml` is still read, and a name it gets wrong is still an
     // error.** The model is what sync applies, so nothing here acts on
     // that file's capability list -- but a `postgress` sitting in it looks
@@ -233,10 +224,10 @@ pub(crate) fn sync_at(root: &Path, invocation: Invocation) -> Result<()> {
     // to remove. Parsing it is also how `[layout]` is validated, so the read
     // is one the project needs either way.
     jails_project::config::Config::load(root)?;
-    let manifest = resolve_manifest_at(root, None)?;
-    let (source, model) = load_model_at(root, &manifest, invocation.output)?;
+    let manifest = resolve_manifest(None)?;
+    let (source, model) = load_model(root, &manifest, invocation.output)?;
     let bare = model.capabilities.is_empty();
-    let bundle = compile_at(
+    let bundle = compile(
         root,
         &manifest,
         source.as_bytes(),
@@ -312,12 +303,17 @@ pub(crate) fn run(command: ModelCommand, invocation: Invocation) -> Result<()> {
         ModelCommand::Init => crate::model_init::run(invocation),
         ModelCommand::Check { manifest, frozen } => {
             let manifest = resolve_manifest(manifest.as_deref())?;
-            check(&manifest, frozen, invocation.output)
+            check(&invocation.root()?, &manifest, frozen, invocation.output)
         }
         ModelCommand::Fmt { check } => format(check, invocation),
         ModelCommand::Plan { manifest, bundle } => {
             let manifest = resolve_manifest(manifest.as_deref())?;
-            plan(&manifest, bundle.as_deref(), invocation.output)
+            plan(
+                &invocation.root()?,
+                &manifest,
+                bundle.as_deref(),
+                invocation.output,
+            )
         }
         ModelCommand::Apply { bundle } => apply(&bundle, invocation.output),
         ModelCommand::Eject { semantic_id } => crate::model_eject::run(semantic_id, invocation),
@@ -418,10 +414,19 @@ pub(crate) fn apply(bundle_path: &Path, output: Output) -> Result<()> {
     Ok(())
 }
 
-fn check(manifest: &Path, frozen: bool, output: Output) -> Result<()> {
-    let (source, model) = load_model(manifest, output)?;
+fn check(root: &Path, manifest: &Path, frozen: bool, output: Output) -> Result<()> {
+    let (source, model) = load_model(root, manifest, output)?;
     let bundle = frozen
-        .then(|| compile(manifest, source.as_bytes(), model.clone()))
+        .then(|| {
+            compile(
+                root,
+                manifest,
+                source.as_bytes(),
+                model.clone(),
+                Repair::No,
+                Notice::Print,
+            )
+        })
         .transpose()?;
     if let Some(bundle) = &bundle
         && !bundle.plan.operations.is_empty()
@@ -562,9 +567,16 @@ pub(crate) fn preview_lines(bundle: &jails_contracts::PlanBundle) -> Vec<String>
     lines
 }
 
-fn plan(manifest: &Path, bundle_path: Option<&Path>, output: Output) -> Result<()> {
-    let (source, model) = load_model(manifest, output)?;
-    let bundle = compile(manifest, source.as_bytes(), model)?;
+fn plan(root: &Path, manifest: &Path, bundle_path: Option<&Path>, output: Output) -> Result<()> {
+    let (source, model) = load_model(root, manifest, output)?;
+    let bundle = compile(
+        root,
+        manifest,
+        source.as_bytes(),
+        model,
+        Repair::No,
+        Notice::Print,
+    )?;
     let encoded = serde_json::to_vec_pretty(&bundle)
         .map_err(|error| Failure::Told(format!("could not encode exact plan: {error}")))?;
     if let Some(path) = bundle_path {
@@ -595,9 +607,9 @@ fn plan(manifest: &Path, bundle_path: Option<&Path>, output: Output) -> Result<(
 /// which keys the model owns. Without that lock the very next command sees
 /// every key `new` wrote as reader-owned text and refuses to touch it.
 pub(crate) fn materialize_seed(root: &Path) -> Result<()> {
-    let manifest = resolve_manifest_at(root, None)?;
-    let (source, model) = load_model_at(root, &manifest, Output::Human)?;
-    let bundle = compile_at(
+    let manifest = resolve_manifest(None)?;
+    let (source, model) = load_model(root, &manifest, Output::Human)?;
+    let bundle = compile(
         root,
         &manifest,
         source.as_bytes(),
@@ -608,14 +620,6 @@ pub(crate) fn materialize_seed(root: &Path) -> Result<()> {
     jails_workspace::execute(root, &bundle)
         .map_err(|error| Failure::Told(format!("could not apply the seeded model: {error}")))?;
     Ok(())
-}
-
-fn compile(
-    manifest: &Path,
-    source: &[u8],
-    model: jails_model::AppModel,
-) -> Result<jails_contracts::PlanBundle> {
-    compile_at(&root()?, manifest, source, model, Repair::No, Notice::Print)
 }
 
 /// Whether this compilation is `jails resource repair`.
@@ -653,7 +657,7 @@ impl From<Output> for Notice {
     }
 }
 
-fn compile_at(
+fn compile(
     root: &Path,
     manifest: &Path,
     source: &[u8],
@@ -702,10 +706,10 @@ fn compile_at(
 /// writes it back. It takes no `--strategy`: there is one strategy, and it
 /// is the model.
 pub(crate) fn repair(invocation: Invocation) -> Result<()> {
-    let root = root()?;
-    let manifest = resolve_manifest_at(&root, None)?;
-    let (source, model) = load_model_at(&root, &manifest, invocation.output)?;
-    let bundle = compile_at(
+    let root = invocation.root()?;
+    let manifest = resolve_manifest(None)?;
+    let (source, model) = load_model(&root, &manifest, invocation.output)?;
+    let bundle = compile(
         &root,
         &manifest,
         source.as_bytes(),
@@ -765,13 +769,6 @@ fn frozen_failure(
 }
 
 pub(crate) fn load_model(
-    manifest: &Path,
-    output: Output,
-) -> Result<(String, jails_model::AppModel)> {
-    load_model_at(&root()?, manifest, output)
-}
-
-pub(crate) fn load_model_at(
     root: &Path,
     manifest: &Path,
     output: Output,
@@ -837,10 +834,6 @@ pub(crate) fn load_model_at(
 /// from a subdirectory. `load_model` joins the root either way, which is a
 /// no-op on an absolute path.
 pub(crate) fn resolve_manifest(explicit: Option<&Path>) -> Result<PathBuf> {
-    resolve_manifest_at(&root()?, explicit)
-}
-
-pub(crate) fn resolve_manifest_at(_root: &Path, explicit: Option<&Path>) -> Result<PathBuf> {
     if let Some(explicit) = explicit {
         return std::path::absolute(explicit).map_err(|error| {
             Failure::Told(format!(

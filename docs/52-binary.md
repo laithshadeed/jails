@@ -88,11 +88,12 @@ it to what is there after S52.4.
 
 ## Traps
 
-- **`Invocation` carries the root; the `_at` family is a containment
-  boundary.** `jails new` runs in the *parent* of the project it creates, so
-  `model_command::root` resolves the wrong directory there.
-  `Current::load` takes the invocation and does not walk. Do not extend the
-  `_at` family downward (nine functions today).
+- **`Invocation` carries the root, and every model function takes it or the
+  root it resolved.** `jails new` runs in the *parent* of the project it
+  creates, so a walk from the process directory resolves the wrong directory
+  there; `Invocation::root` is the one place the walk happens, and
+  `Invocation::for_new` pins the root instead. A function that walks on its
+  own is the defect, not a convenience.
 - **Capture reads the pre-patch model unless told otherwise.** A test that
   runs two commands and then reads the tree does not catch a frontend that
   forgot `capture_planned`; assert after each command.

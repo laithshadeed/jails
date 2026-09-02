@@ -217,7 +217,7 @@ pub(crate) fn run(command: AppCommand, invocation: crate::Invocation) -> Result<
         // starter manifest, edit it, and `app apply` replays it into the model
         // that first apply creates. Refusing everywhere would leave the
         // manifest format with no way to be written at all.
-        AppCommand::Init { manifest } => match crate::model_command::owns() {
+        AppCommand::Init { manifest } => match crate::model_command::owns(&invocation.root()?) {
             true => refuse_manifest("app init"),
             false => init(manifest.as_deref(), invocation),
         },
@@ -302,20 +302,12 @@ capabilities = []
 /// interrupted replay converges by being run again, with no journal to resume
 /// from. What it costs is atomicity: a manifest that fails on row nine leaves
 /// rows one to eight applied.
-fn replay(requested: Option<&Path>, invocation: crate::Invocation) -> Result<()> {
-    let root = invocation.root()?;
-    replay_at(&root, requested, invocation)
-}
-
-/// The same replay, against a project the caller has resolved.
 ///
-/// `jails new --app` is the caller: it stands in the parent of the project it
-/// is creating, so `model_command::root` would walk to the wrong one.
-pub(crate) fn replay_at(
-    root: &Path,
-    requested: Option<&Path>,
-    invocation: crate::Invocation,
-) -> Result<()> {
+/// The root is the invocation's. `jails new --app` is why: it stands in the
+/// parent of the project it is creating, and hands an invocation whose root
+/// is that project rather than letting the walk find the wrong one.
+pub(crate) fn replay(requested: Option<&Path>, invocation: crate::Invocation) -> Result<()> {
+    let root = &invocation.root()?;
     let invocation = invocation.at(root.to_path_buf());
     let path = manifest_path(root, requested)?;
     let (manifest, rows) = read_manifest(&path)?;
@@ -328,7 +320,7 @@ pub(crate) fn replay_at(
     // declared a moment earlier. What a plan can honestly say here is what
     // applying would declare, which is the question somebody asks before
     // running `apply` the first time.
-    if invocation.pretend && !crate::model_command::owns_at(root) {
+    if invocation.pretend && !crate::model_command::owns(root) {
         println!(
             "  model   {} would be created",
             crate::model_command::JDL_PATH
@@ -386,8 +378,8 @@ fn report_undeclared(
     if invocation.output != crate::Output::Human {
         return Ok(());
     }
-    let manifest = crate::model_command::resolve_manifest_at(root, None)?;
-    let (source, model) = crate::model_command::load_model_at(root, &manifest, invocation.output)?;
+    let manifest = crate::model_command::resolve_manifest(None)?;
+    let (source, model) = crate::model_command::load_model(root, &manifest, invocation.output)?;
     let _ = source;
     for entity in model.entities.values() {
         if !entity.active || declared.contains(&entity.names.java_type) {

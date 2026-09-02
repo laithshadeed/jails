@@ -376,26 +376,17 @@ pub(crate) const A_FRESH_READ_IS_CORRECT: &[(&str, &str)] = &[
          file at all",
     ),
     (
-        "read_source_at",
+        "read_source",
         "the model it is reading does not exist yet: a project with none reads as the \
          seed `model init` would write, and that seed is *derived from* the project -- \
          its package, its release, its build tool. There is no resolved `Project` to be \
          handed, which is the same absence `read_build_file` records",
     ),
     (
-        "load_model_at",
-        "same absence as `read_source_at`, one layer up: it parses what that returns, \
+        "load_model",
+        "same absence as `read_source`, one layer up: it parses what that returns, \
          and on a project with no model the source is the derived seed rather than a \
          file. Both halves are the construction, not a second read beside it",
-    ),
-    (
-        "sync_at",
-        "`jails.toml` is not a fact a `Project` holds for this purpose. Its `[layout]` \
-         is, and the snapshot carries that; what is read here is the *capability list*, \
-         which the canonical path does not act on -- so the read exists to refuse a name \
-         jails does not know rather than to answer a question. A capability nothing \
-         recognises sitting in that file looks applied and never will be, which is the \
-         failure a manifest exists to remove",
     ),
 ];
 

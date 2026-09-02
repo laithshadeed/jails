@@ -97,7 +97,7 @@ pub(crate) struct EntityDeclaration<'a> {
     pub(crate) package: Option<&'a str>,
 }
 
-pub(crate) fn entity_declaration_at(
+pub(crate) fn entity_declaration(
     model: &jails_model::AppModel,
     declaration: &EntityDeclaration<'_>,
 ) -> Result<String> {

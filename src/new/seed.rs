@@ -38,8 +38,7 @@ pub fn seed_manifest(
     // service effects to suppress; `sync` refuses the flag by name for the
     // same reason.
     let _ = no_start;
-    crate::app::replay_at(
-        tree.root(),
+    crate::app::replay(
         None,
         crate::Invocation::for_new(tree.root().to_path_buf(), debug),
     )?;

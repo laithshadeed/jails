@@ -16,7 +16,7 @@ pub(crate) use edit::{
 };
 use operation::operation_declaration;
 pub(crate) use render::{EntityDeclaration, normalize_package};
-use render::{entity_declaration_at, enum_declaration, field_label_of, quoted_list};
+use render::{entity_declaration, enum_declaration, field_label_of, quoted_list};
 pub(crate) use render::{java_type_name, relation_member_name, render_v1_field_line};
 
 use crate::ArtifactKind;
@@ -221,20 +221,18 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
         .transpose()?;
     let declaration = match args.kind {
         ArtifactKind::Enum => enum_declaration(&args.name, &entity_label, &fields)?,
-        ArtifactKind::Record | ArtifactKind::Value | ArtifactKind::Scaffold => {
-            entity_declaration_at(
-                &current.model,
-                &EntityDeclaration {
-                    java_name: &args.name,
-                    entity_label: &entity_label,
-                    scaffold: args.kind == ArtifactKind::Scaffold,
-                    fields: &fields,
-                    path: args.path.as_deref(),
-                    uniques: &args.uniques,
-                    package: package.as_deref(),
-                },
-            )?
-        }
+        ArtifactKind::Record | ArtifactKind::Value | ArtifactKind::Scaffold => entity_declaration(
+            &current.model,
+            &EntityDeclaration {
+                java_name: &args.name,
+                entity_label: &entity_label,
+                scaffold: args.kind == ArtifactKind::Scaffold,
+                fields: &fields,
+                path: args.path.as_deref(),
+                uniques: &args.uniques,
+                package: package.as_deref(),
+            },
+        )?,
         _ => unreachable!("run only accepts entity kinds"),
     };
     if let Some(existing) = current.model.entity(&entity_id) {

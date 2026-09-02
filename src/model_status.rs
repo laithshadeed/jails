@@ -108,7 +108,8 @@ struct Report {
 
 pub(crate) fn run(selector: &str, live: Option<Live>, invocation: Invocation) -> Result<()> {
     let manifest = crate::model_command::resolve_manifest(None)?;
-    let (source, model) = crate::model_command::load_model(&manifest, invocation.output)?;
+    let (source, model) =
+        crate::model_command::load_model(&invocation.root()?, &manifest, invocation.output)?;
     let root = crate::model_command::root()?;
     let snapshot = jails_workspace::capture(&root, &manifest, source.as_bytes(), model, &[])
         .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;

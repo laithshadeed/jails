@@ -122,13 +122,13 @@ pub(crate) fn run(old: &str, new: &str, force: bool, invocation: Invocation) -> 
 /// the old name back, and on a stored one the adapter would read
 /// `select ... from readers` while the schema history still creates `members`.
 fn refuse_declared(root: &Path, old: &str, new: &str) -> Result<()> {
-    if !crate::model_command::owns() {
+    if !crate::model_command::owns(root) {
         return Ok(());
     }
     let manifest = crate::model_command::resolve_manifest(None)?;
     // A model that does not currently parse is not a reason to refuse: this
     // command is one of the ways somebody fixes a project that is broken.
-    let Ok((_, model)) = crate::model_command::load_model_at(root, &manifest, crate::Output::Human)
+    let Ok((_, model)) = crate::model_command::load_model(root, &manifest, crate::Output::Human)
     else {
         return Ok(());
     };

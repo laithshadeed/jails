@@ -58,10 +58,8 @@ Five specific shapes, each measured:
 5. **Entry points come in families.** `capture`, `capture_planned` and
    `capture_import` remain of a family of four; `materialize` and
    `finish_generation` are one function each now, taking the model update
-   and the reader paths as arguments. The binary's `_at` family
-   (`compile_at`, `load_model_at`, `resolve_manifest_at`, `sync_at`,
-   `read_source_at`, `owns_at`, `replay_at` and kin, nine functions) is the
-   same observation: each is one caller's exception promoted to API.
+   and the reader paths as arguments, and the binary's `_at` family is gone
+   (every model function takes the invocation's root).
 
 ## The target
 
@@ -173,12 +171,13 @@ capture reads the pom, and the board's Maven-scanner row reads one.
 defaults, not functions. `materialize` and `finish_generation` are there;
 `capture_planned` and `capture_import` differ from `capture` by one argument
 each (the intended model, the model-absent precondition) and become one.
-The `_at` family in the binary is the same observation: `Invocation` already
-carries the root, and `Current::load` reads it, so a frontend never needs a
-root-taking twin.
+The binary half is done: `Invocation::root` is the one walk, every model
+function takes the invocation or the root it resolved, and
+`A_FRESH_READ_IS_CORRECT` in `tests/architecture/measure.rs` names the two
+reads that are correct without a resolved project (`read_source`,
+`load_model`: the model may not exist yet).
 
-**Exit:** the `pub fn` count in `jails-workspace` is four; the binary has no
-`_at` function.
+**Exit:** the `pub fn` count in `jails-workspace` is four.
 
 ### S60.6 — one test-execution vocabulary
 

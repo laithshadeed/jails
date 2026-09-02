@@ -31,7 +31,8 @@ const SCHEMA: &str = "jails.model-explain.v1";
 
 pub(crate) fn run(filter: Option<String>, invocation: Invocation) -> Result<()> {
     let manifest = crate::model_command::resolve_manifest(None)?;
-    let (source, model) = crate::model_command::load_model(&manifest, invocation.output)?;
+    let (source, model) =
+        crate::model_command::load_model(&invocation.root()?, &manifest, invocation.output)?;
     // Captured rather than taken from the parsed model, because the reader's
     // layer renames arrive with the workspace and a linked model carries the
     // defaults. Showing `com.example.domain` to a project whose `jails.toml`
