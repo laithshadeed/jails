@@ -888,9 +888,13 @@ fn console_launches_jshell_with_the_project_classpath() {
 fn gradle_console_uses_the_shared_existing_runtime_classpath() {
     let root = temp_dir("console-gradle-jshell");
     fs::write(root.join("settings.gradle"), "rootProject.name = 'demo'\n").unwrap();
+    // The task is what a Gradle build is asked for its classpath through; a
+    // build without it is refused rather than read for a layout (the next
+    // test), so this one carries the registration line the marked block
+    // writes.
     fs::write(
         root.join("build.gradle"),
-        "plugins { id 'java' }\nsourceCompatibility = 26\n",
+        "plugins { id 'java' }\nsourceCompatibility = 26\n\ntasks.register('jailsClasspath') {}\n",
     )
     .unwrap();
     let source = common::generated(&root, "src/main/java/com/example/demo/DemoApplication.java");
@@ -916,11 +920,19 @@ fn gradle_console_uses_the_shared_existing_runtime_classpath() {
         ),
     )
     .unwrap();
+    // What the real task prints: one `jails.classpath.<kind>=<path>` line per
+    // entry, the build's own answer rather than a layout jails assumed.
     fs::write(
         fake.join("gradle"),
         format!(
-            "#!/bin/sh\necho \"$0 $*\" >> \"{}\"\necho JAILS_RUNTIME_CLASSPATH=\nexit 0\n",
-            log.display()
+            "#!/bin/sh\necho \"$0 $*\" >> \"{log}\"\n\
+             echo jails.classpath.main-classes={root}/build/classes/java/main\n\
+             echo jails.classpath.main-resources={root}/build/resources/main\n\
+             echo jails.classpath.test-classes={root}/build/classes/java/test\n\
+             echo jails.classpath.test-resources={root}/build/resources/test\n\
+             exit 0\n",
+            log = log.display(),
+            root = root.display()
         ),
     )
     .unwrap();
@@ -937,7 +949,7 @@ fn gradle_console_uses_the_shared_existing_runtime_classpath() {
     );
     let invocation = read_log(&log);
     assert!(
-        invocation.contains("gradle -q jailsRuntimeClasspath"),
+        invocation.contains("gradle -q jailsClasspath"),
         "{invocation}"
     );
     assert!(
@@ -948,6 +960,71 @@ fn gradle_console_uses_the_shared_existing_runtime_classpath() {
     assert!(
         !invocation.contains(" classes"),
         "existing-output console must not compile: {invocation}"
+    );
+}
+
+/// A Gradle build that never registered jails' classpath task is refused by
+/// name, with the command that writes it -- and no Gradle is started to find
+/// that out, because reading the build for a layout instead would be the
+/// guess the adapter exists to refuse.
+#[test]
+fn a_gradle_build_without_the_classpath_task_refuses_the_warm_engine_and_console_by_name() {
+    let root = temp_dir("gradle-no-classpath-task");
+    fs::write(root.join("settings.gradle"), "rootProject.name = 'demo'\n").unwrap();
+    fs::write(
+        root.join("build.gradle"),
+        "plugins { id 'java' }\nsourceCompatibility = 26\n",
+    )
+    .unwrap();
+    let source = common::generated(&root, "src/main/java/com/example/demo/DemoApplication.java");
+    fs::create_dir_all(source.parent().unwrap()).unwrap();
+    fs::write(
+        &source,
+        "package com.example.demo;\npublic class DemoApplication {}\n",
+    )
+    .unwrap();
+    let classes = root.join("build/classes/java/main/com/example/demo");
+    fs::create_dir_all(&classes).unwrap();
+    fs::write(classes.join("DemoApplication.class"), "compiled").unwrap();
+
+    let fake = temp_dir("gradle-no-classpath-task-bin");
+    let log = fake.join("log.txt");
+    write_fake_maven(&fake, &["gradle", "java", "jshell"], &log);
+    fs::write(
+        fake.join("java"),
+        format!(
+            "#!/bin/sh\necho 'openjdk version \"26\"' >&2\necho \"$0 $*\" >> \"{}\"\nexit 0\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+
+    for command in [
+        vec!["console", "--main", "com.example.demo.DemoApplication"],
+        vec!["testd"],
+    ] {
+        let refused = jails_cmd(&root, Some(&fake))
+            .env_remove("JAVA_HOME")
+            .args(&command)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(!refused.status.success(), "{command:?} should refuse");
+        assert!(stderr.contains("jailsClasspath"), "{command:?}: {stderr}");
+        assert!(
+            stderr.contains("`jails test --fast`"),
+            "the refusal must name the command that writes the block: {command:?}: {stderr}"
+        );
+    }
+    let invocation = read_log(&log);
+    assert!(
+        !invocation.contains("jailsClasspath")
+            && !invocation.lines().any(|line| {
+                line.split_whitespace()
+                    .next()
+                    .is_some_and(|program| program.ends_with("/gradle"))
+            }),
+        "a build without the task must not be run for its layout: {invocation}"
     );
 }
 
@@ -1322,9 +1399,9 @@ fn a_generated_command_is_reachable_by_name_through_jails_run() {
     );
 }
 
-/// The reading commands work on a project jails did not create, and the
-/// Maven-inherent ones refuse by name: the door is any recognised build
-/// marker, not `pom.xml`.
+/// The reading commands work on a project jails did not create, and the ones
+/// that need a build jails can read refuse by name: the door is any
+/// recognised build marker, not `pom.xml`.
 #[test]
 fn a_gradle_project_gets_the_commands_that_do_not_need_maven() {
     let root = temp_dir("foreign-build");
@@ -2482,5 +2559,181 @@ fn an_adopted_reader_written_project_generates_compiles_and_keeps_its_own_bytes(
         adopted_reader_bytes(&root, Adopted::Plain),
         before,
         "a repeated generate rewrote a file it did not author"
+    );
+}
+
+/// P9.6's exit: one generated project, both build systems, and `jails test`,
+/// `--engine build` and `--engine warm` discover the same tests and report
+/// the same counts on each.
+///
+/// The project is `jails new` on both paths plus one reader-written plain
+/// test, because the warm engine's universe is `src/test/java` and a Spring
+/// context test is not warm-eligible on either build. Every command is
+/// asserted where it runs, not at the end: a second command repairs the first
+/// one's omission, and a comparison at the end would not see it.
+#[test]
+fn a_generated_project_reports_the_same_tests_on_every_engine_under_maven_and_gradle() {
+    if !real_mvn_available() || !real_java_supports_target_release() {
+        skip("mvn or a new enough JDK not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+
+    let maven_parent = temp_dir("parity-maven");
+    let created = jails_cmd(&maven_parent, None)
+        .args(["new", "demo", "--offline", "--no-git", "--no-devtools"])
+        .output()
+        .unwrap();
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let gradle_parent = temp_dir("parity-gradle");
+    let created = jails_cmd(&gradle_parent, None)
+        .args([
+            "new",
+            "demo",
+            "--gradle",
+            "--no-git",
+            "--no-devtools",
+            "--no-start",
+        ])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&created.stderr);
+    assert!(created.status.success(), "{stderr}");
+    if stderr.contains("no Gradle wrapper written") {
+        // The wrapper jar is fetched from Gradle's own repository; without it
+        // the project would run on whatever `gradle` is on PATH, which the
+        // suite pins to 8.5 for the Boot 2 example and Boot 4 cannot use.
+        skip("the Gradle wrapper jar could not be fetched, so the project has no Gradle to run");
+        return;
+    }
+    let maven = maven_parent.join("demo");
+    let gradle = gradle_parent.join("demo");
+
+    let plain_test = "package com.example.demo;\n\nimport org.junit.jupiter.api.Test;\n\n\
+                      class PlainTest {\n    @Test\n    void plain() {}\n}\n";
+    for root in [&maven, &gradle] {
+        let generated = jails_cmd(root, None)
+            .args(["g", "record", "Money", "amount:long", "currency:string"])
+            .output()
+            .unwrap();
+        assert!(
+            generated.status.success(),
+            "{}: {}{}",
+            root.display(),
+            String::from_utf8_lossy(&generated.stdout),
+            String::from_utf8_lossy(&generated.stderr)
+        );
+        // The reader's own tree, spelled out: `common::generated` resolves to
+        // the managed tree once `g record` has created it, and a test there
+        // is jails' rather than the reader's.
+        let tests = root.join("src/test/java/com/example/demo");
+        fs::create_dir_all(&tests).unwrap();
+        fs::write(tests.join("PlainTest.java"), plain_test).unwrap();
+    }
+
+    // Gradle's daemon would outlive the suite; a cold JVM per invocation is
+    // the honest cost here. The wrapper reads `GRADLE_OPTS`.
+    let run = |root: &Path, args: &[&str]| {
+        let mut command = jails_cmd_with_path(root, &path);
+        command.env("GRADLE_OPTS", "-Dorg.gradle.daemon=false");
+        let output = command.args(args).output().unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        (output.status.success(), stdout, stderr)
+    };
+    let cases = |stdout: &str| -> std::collections::BTreeSet<String> {
+        // The test report is the last line: a run that declared the launcher
+        // first prints that transition's execution report above it.
+        let last = stdout.trim().lines().last().unwrap_or_default();
+        let report: serde_json::Value = serde_json::from_str(last).unwrap_or_else(|error| {
+            panic!("the last line is not a JSON report ({error}): {stdout}")
+        });
+        report["cases"]
+            .as_array()
+            .unwrap_or_else(|| panic!("no cases in {stdout}"))
+            .iter()
+            .map(|case| {
+                format!(
+                    "{}\t{}\t{}",
+                    case["selector"].as_str().unwrap_or_default(),
+                    case["outcome"].as_str().unwrap_or_default(),
+                    case["engine"].as_str().unwrap_or_default()
+                )
+            })
+            .collect()
+    };
+    let mut expected = std::collections::BTreeSet::new();
+    for (root, build) in [(&maven, "maven"), (&gradle, "gradle")] {
+        // 1. `jails test`: nothing is compiled, so the build engine owns the
+        //    whole scope and compiles.
+        let (ok, stdout, stderr) = run(root, &["test", "--output", "json"]);
+        assert!(ok, "{build} `jails test`: {stdout}{stderr}");
+        let auto = cases(&stdout);
+        assert_eq!(auto.len(), 3, "{build} `jails test` cases: {stdout}");
+        for selector in [
+            "com.example.demo.DemoApplicationTests#contextLoads",
+            "com.example.demo.PlainTest#plain",
+            "com.example.demo.domain.MoneyTest#rejectsANullComponent",
+        ] {
+            assert!(
+                auto.contains(&format!("{selector}\tpassed\t{build}")),
+                "{build} `jails test` must run {selector} through the build engine: {stdout}"
+            );
+        }
+        // The build tool's name is the one thing the two reports differ in.
+        expected.insert(
+            auto.iter()
+                .map(|case| case.replace(build, "build"))
+                .collect::<Vec<_>>(),
+        );
+
+        // 2. `--engine build`: the same three, explicitly.
+        let (ok, stdout, stderr) = run(root, &["test", "--engine", "build", "--output", "json"]);
+        assert!(ok, "{build} `--engine build`: {stdout}{stderr}");
+        assert_eq!(
+            cases(&stdout),
+            auto,
+            "{build} `--engine build` must discover what `jails test` did: {stdout}"
+        );
+
+        // 3. `--fast` declares the launcher in the model, which reaches the
+        //    build file as a dependency -- and on Gradle as the block that
+        //    carries the classpath task -- so the warm engine has what it
+        //    needs on both.
+        let (ok, stdout, stderr) = run(root, &["test", "--fast", "PlainTest"]);
+        assert!(ok, "{build} `--fast`: {stdout}{stderr}");
+
+        // 4. `--engine warm`, strict: the plain test, through the daemon.
+        let (ok, stdout, stderr) = run(
+            root,
+            &[
+                "test",
+                "PlainTest",
+                "--engine",
+                "warm",
+                "--compile",
+                "none",
+                "--output",
+                "json",
+            ],
+        );
+        let _ = run(root, &["testd", "--stop"]);
+        assert!(ok, "{build} `--engine warm`: {stdout}{stderr}");
+        assert_eq!(
+            cases(&stdout),
+            std::collections::BTreeSet::from([
+                "com.example.demo.PlainTest#plain\tpassed\ttestd-v2".to_string()
+            ]),
+            "{build} `--engine warm` must run exactly the plain test: {stdout}"
+        );
+    }
+    assert_eq!(
+        expected.len(),
+        1,
+        "Maven and Gradle must report the same tests: {expected:?}"
     );
 }

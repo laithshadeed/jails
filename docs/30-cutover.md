@@ -53,10 +53,3 @@ implementation, so it needs the readable boundary path (`Message.record`,
 and the linker's -- before it can be written. The `modernize` half closed:
 on a modelled project it recompiles the model against the versions it moved,
 the way `jails sync` does.
-
-## Product direction that is yours
-
-**P9.6 §5.1 — Gradle behavioural parity** for the warm test engine, `jails
-fmt` and `jails console`. **Exit:** `jails test`, `--engine build` and
-`--engine warm` discover the same tests and report the same counts on both
-build systems.

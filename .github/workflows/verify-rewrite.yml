@@ -111,7 +111,8 @@ jobs:
           path: |
             ~/.m2/repository
             ~/.gradle/caches/modules-2
-          key: jvm-deps-${{ runner.os }}-v2
+            ~/.gradle/wrapper/dists
+          key: jvm-deps-${{ runner.os }}-v3
 
       # The proof cache: every real-toolchain Maven run the last green runs
       # proved, keyed on the project's bytes (`tests/support/mvn.rs`). Unlike
@@ -252,4 +253,5 @@ jobs:
           path: |
             ~/.m2/repository
             ~/.gradle/caches/modules-2
-          key: jvm-deps-${{ runner.os }}-v2
+            ~/.gradle/wrapper/dists
+          key: jvm-deps-${{ runner.os }}-v3

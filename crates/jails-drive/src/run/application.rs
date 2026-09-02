@@ -47,13 +47,16 @@ pub(crate) struct RuntimeClasspath {
     pub entries: Vec<std::path::PathBuf>,
 }
 
+/// `command` is the one the reader typed, for the refusal a Gradle build
+/// without jails' classpath task gets.
 pub(crate) fn runtime_classpath(
     project: &Project,
     compile: RunCompile,
+    command: &str,
     debug: bool,
 ) -> Result<RuntimeClasspath> {
     Ok(RuntimeClasspath {
-        entries: classpath::resolve_entries(project, compile, debug)?,
+        entries: classpath::resolve_entries(project, compile, command, debug)?,
     })
 }
 
@@ -76,7 +79,7 @@ pub(super) fn run(options: RunOptions, args: &[String], debug: bool) -> Result<(
         RunLauncher::BuildTool => build_tool_run(&application_args, debug),
         RunLauncher::Jar => run_jar(&project, options.compile, &application_args, debug),
         RunLauncher::Auto | RunLauncher::Classpath => {
-            let resolved = classpath::resolve(&project, options.compile, debug)?;
+            let resolved = classpath::resolve(&project, options.compile, "run", debug)?;
             let java = java_executable(&project, debug)?;
             println!(
                 "jails: classpath-resolved; launching {}",
@@ -107,7 +110,7 @@ fn direct_command(
 }
 
 fn watch(project: &Project, compile: RunCompile, args: &[OsString], debug: bool) -> Result<()> {
-    let resolved = classpath::resolve(project, compile, debug)?;
+    let resolved = classpath::resolve(project, compile, "run", debug)?;
     let java = java_executable(project, debug)?;
     let mut command = direct_command(project, &java, resolved, args)?;
     if debug {
@@ -151,7 +154,7 @@ fn watch(project: &Project, compile: RunCompile, args: &[OsString], debug: bool)
         }
     });
     let mut inputs = super::fingerprint::fingerprint(project.root());
-    let mut outputs = classpath::output_id(project);
+    let mut outputs = classpath::output_id(project, "run", debug);
     loop {
         std::thread::sleep(std::time::Duration::from_millis(100));
         if let Some(status) = child
@@ -188,7 +191,7 @@ fn watch(project: &Project, compile: RunCompile, args: &[OsString], debug: bool)
             }
             match compile {
                 RunCompile::Auto | RunCompile::Build => {
-                    if let Err(error) = classpath::refresh(project, debug) {
+                    if let Err(error) = classpath::refresh(project, "run", debug) {
                         eprintln!(
                             "jails: compile failed; application remains on its prior output: {error}"
                         );
@@ -202,7 +205,7 @@ fn watch(project: &Project, compile: RunCompile, args: &[OsString], debug: bool)
                 RunCompile::Ide => unreachable!("resolve refuses an unnegotiated IDE epoch"),
             }
         }
-        let current_outputs = classpath::output_id(project);
+        let current_outputs = classpath::output_id(project, "run", debug);
         if current_outputs != outputs {
             outputs = current_outputs;
             println!("jails: restart-observed; compiled output changed");

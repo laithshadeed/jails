@@ -1,4 +1,8 @@
 //! Content-addressed Maven/Gradle runtime classpath resolution.
+//!
+//! `command` on every entry point is what the reader typed -- `run`,
+//! `console`, `runner` -- so a Gradle build that cannot answer for its
+//! classpath is refused in that command's name (`launcher::gradle_report`).
 
 use super::super::RunCompile;
 use crate::project::Project;
@@ -16,12 +20,12 @@ pub(super) struct Resolved {
     pub main_class: String,
 }
 
-pub(super) fn refresh(project: &Project, debug: bool) -> Result<()> {
-    resolve(project, RunCompile::Build, debug).map(|_| ())
+pub(super) fn refresh(project: &Project, command: &str, debug: bool) -> Result<()> {
+    resolve(project, RunCompile::Build, command, debug).map(|_| ())
 }
 
-pub(super) fn output_id(project: &Project) -> String {
-    let mut paths = outputs(project)
+pub(super) fn output_id(project: &Project, command: &str, debug: bool) -> String {
+    let mut paths = outputs(project, command, debug)
         .into_iter()
         .flatten()
         .flat_map(|output| walk(&output))
@@ -38,9 +42,14 @@ pub(super) fn output_id(project: &Project) -> String {
     hex(&domain_hash("JAILS-RUNTIME-OUTPUT-SET-1", &bytes))
 }
 
-pub(super) fn resolve(project: &Project, compile: RunCompile, debug: bool) -> Result<Resolved> {
+pub(super) fn resolve(
+    project: &Project,
+    compile: RunCompile,
+    command: &str,
+    debug: bool,
+) -> Result<Resolved> {
     Ok(Resolved {
-        entries: resolve_entries(project, compile, debug)?,
+        entries: resolve_entries(project, compile, command, debug)?,
         main_class: main_class(project)?,
     })
 }
@@ -48,9 +57,10 @@ pub(super) fn resolve(project: &Project, compile: RunCompile, debug: bool) -> Re
 pub(super) fn resolve_entries(
     project: &Project,
     compile: RunCompile,
+    command: &str,
     debug: bool,
 ) -> Result<Vec<PathBuf>> {
-    let outputs = outputs(project)?;
+    let outputs = outputs(project, command, debug)?;
     let prior_cache = read_cache(project);
     let cache_mismatch = prior_cache
         .as_ref()
@@ -90,10 +100,10 @@ pub(super) fn resolve_entries(
     }
     let dependencies = match read_cache(project).filter(|cache| cache.current(project, &outputs)) {
         Some(cache) if !must_compile => cache.entries,
-        _ => resolve_dependencies(project, debug)?,
+        _ => resolve_dependencies(project, command, debug)?,
     };
     let entries = canonical_classpath(outputs, dependencies)?;
-    write_cache(project, &entries)?;
+    write_cache(project, command, debug, &entries)?;
     Ok(entries)
 }
 
@@ -115,7 +125,7 @@ fn compile_outputs(project: &Project, debug: bool) -> Result<()> {
     }
 }
 
-fn resolve_dependencies(project: &Project, debug: bool) -> Result<Vec<PathBuf>> {
+fn resolve_dependencies(project: &Project, command: &str, debug: bool) -> Result<Vec<PathBuf>> {
     match project.build() {
         crate::build::Build::Maven => {
             let pom = fs::read_to_string(project.root().join("pom.xml")).unwrap_or_default();
@@ -147,7 +157,12 @@ fn resolve_dependencies(project: &Project, debug: bool) -> Result<Vec<PathBuf>> 
                 .map_err(|error| format!("failed to read Maven runtime classpath: {error}"))?;
             Ok(std::env::split_paths(text.trim()).collect())
         }
-        crate::build::Build::Gradle => gradle_dependencies(project, debug),
+        // The same answer the warm test engine reads, from the same cached
+        // Gradle invocation: `configurations.runtimeClasspath`, resolved by
+        // the build itself.
+        crate::build::Build::Gradle => {
+            Ok(crate::launcher::gradle_report(project, command, debug)?.runtime)
+        }
         other => Err(format!(
             "jails cannot resolve a {} runtime classpath\n       fix: use a supported Maven or Gradle build",
             other.name()
@@ -156,36 +171,18 @@ fn resolve_dependencies(project: &Project, debug: bool) -> Result<Vec<PathBuf>> 
     }
 }
 
-fn gradle_dependencies(project: &Project, debug: bool) -> Result<Vec<PathBuf>> {
-    let spec = crate::process::CommandSpec::new(super::super::gradlew::binary(project.root()))
-        .args(["-q", "jailsRuntimeClasspath"])
-        .current_dir(project.root())
-        .output(crate::process::OutputMode::Capture);
-    let done = crate::process::run(&spec, crate::process::Diagnostics::from_flag(debug))?;
-    if !done.status.success() {
-        return Err(
-            "Gradle could not resolve the jails runtime classpath\n       fix: add the generated `jailsRuntimeClasspath` task or use `--launcher build-tool`"
-                .into(),
-        );
-    }
-    let stdout = done.stdout_string();
-    let line = stdout
-        .lines()
-        .find_map(|line| line.strip_prefix("JAILS_RUNTIME_CLASSPATH="))
-        .ok_or_else(|| {
-            "Gradle did not report JAILS_RUNTIME_CLASSPATH\n       fix: add the generated runtime classpath task"
-                .to_string()
-        })?;
-    Ok(std::env::split_paths(line).collect())
-}
-
-fn outputs(project: &Project) -> Result<Vec<PathBuf>> {
+/// The main output directories: one under Maven, and under Gradle the
+/// classes directories followed by the resources directory, as the build
+/// stated them rather than as the convention would have them.
+fn outputs(project: &Project, command: &str, debug: bool) -> Result<Vec<PathBuf>> {
     match project.build() {
         crate::build::Build::Maven => Ok(vec![project.root().join("target/classes")]),
-        crate::build::Build::Gradle => Ok(vec![
-            project.root().join("build/classes/java/main"),
-            project.root().join("build/resources/main"),
-        ]),
+        crate::build::Build::Gradle => {
+            let report = crate::launcher::gradle_report(project, command, debug)?;
+            let mut outputs = report.main_classes;
+            outputs.extend(report.main_resources);
+            Ok(outputs)
+        }
         other => Err(format!(
             "jails cannot locate {} application output\n       fix: use a supported Maven or Gradle build",
             other.name()
@@ -195,11 +192,17 @@ fn outputs(project: &Project) -> Result<Vec<PathBuf>> {
 }
 
 fn outputs_current(project: &Project, outputs: &[PathBuf]) -> bool {
-    let (classes, resources) = match project.build() {
-        crate::build::Build::Maven => (&outputs[0], &outputs[0]),
-        crate::build::Build::Gradle => (&outputs[0], &outputs[1]),
-        _ => return false,
+    // Gradle lists the classes directories first and the resources
+    // directory last (`outputs`); a single-language project has exactly two.
+    let (Some(classes), Some(resources)) = (outputs.first(), outputs.last()) else {
+        return false;
     };
+    if !matches!(
+        project.build(),
+        crate::build::Build::Maven | crate::build::Build::Gradle
+    ) {
+        return false;
+    }
     tree_current(
         &project.root().join("src/main/java"),
         classes,
@@ -343,8 +346,8 @@ fn read_cache(project: &Project) -> Option<Cache> {
     Some(Cache { snapshot, entries })
 }
 
-fn write_cache(project: &Project, entries: &[PathBuf]) -> Result<()> {
-    let outputs = outputs(project)?;
+fn write_cache(project: &Project, command: &str, debug: bool, entries: &[PathBuf]) -> Result<()> {
+    let outputs = outputs(project, command, debug)?;
     let mut text = format!(
         "version=2\nroot={}\nsnapshot={}\n",
         root_id(project),
@@ -478,18 +481,19 @@ mod tests {
         fs::write(&source, "class App {}\n").unwrap();
         fs::write(&class, "compiled").unwrap();
         let project = Project::inspect(root).unwrap();
-        let entries = canonical_classpath(outputs(&project).unwrap(), vec![]).unwrap();
-        write_cache(&project, &entries).unwrap();
+        let entries =
+            canonical_classpath(outputs(&project, "run", false).unwrap(), vec![]).unwrap();
+        write_cache(&project, "run", false, &entries).unwrap();
         assert!(
             read_cache(&project)
                 .unwrap()
-                .current(&project, &outputs(&project).unwrap())
+                .current(&project, &outputs(&project, "run", false).unwrap())
         );
         fs::write(&source, "class App { int changed; }\n").unwrap();
         assert!(
             !read_cache(&project)
                 .unwrap()
-                .current(&project, &outputs(&project).unwrap())
+                .current(&project, &outputs(&project, "run", false).unwrap())
         );
     }
 
@@ -515,7 +519,7 @@ mod tests {
             let project = Project::inspect(&root).unwrap();
             snapshots.push(snapshot(
                 &project,
-                &outputs(&project).unwrap(),
+                &outputs(&project, "run", false).unwrap(),
                 &[
                     class.parent().unwrap().parent().unwrap().to_path_buf(),
                     dependency,

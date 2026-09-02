@@ -110,6 +110,7 @@ pub fn open(
     let classpath = joined_classpath(&run::runtime_classpath(
         project,
         crate::run::RunCompile::Auto,
+        "db",
         debug,
     )?)?;
     let mut cmd = Command::new(java);

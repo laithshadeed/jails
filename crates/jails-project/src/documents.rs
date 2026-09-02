@@ -518,7 +518,16 @@ fn gradle_dependency_block(
             block.push_str(&format!("    {configuration} '{coordinate}'\n"));
         }
     }
-    block.push_str(&format!("}}\n// /{DEPENDENCY_MARKER}\n"));
+    // **The block carries jails' classpath task beside the dependencies it
+    // declares.** The warm test engine, `jails console` and `jails runner`
+    // need the classpath the build resolves and the directories it writes,
+    // and on Gradle the only exact answer is the build's own -- so the
+    // question is registered as a task in the one block jails owns, and a
+    // build without the block is refused by name rather than read for a
+    // layout. See `gradle::classpath_task`.
+    block.push_str("}\n\n");
+    block.push_str(&crate::gradle::classpath_task(kotlin));
+    block.push_str(&format!("// /{DEPENDENCY_MARKER}\n"));
     Some(block)
 }
 
@@ -721,6 +730,64 @@ mod tests {
         assert!(removed.contains("plugins { id 'java' }"));
         assert!(!removed.contains("jails:dependencies"));
         assert!(!removed.contains("org.jsoup:jsoup"));
+    }
+
+    /// The block carries jails' classpath task beside the dependencies, in
+    /// the build's dialect, and leaves with them: a Gradle project the model
+    /// declares nothing into has no task and no block, and is refused by name
+    /// when asked for a classpath rather than read for a layout.
+    #[test]
+    fn the_gradle_block_carries_the_classpath_task_and_removes_it_with_the_dependencies() {
+        let dependency = dependency(
+            "org.junit.platform",
+            "junit-platform-console",
+            None,
+            jails_model::DependencyScope::Test,
+        );
+        let groovy = reconcile_gradle_dependencies(
+            "plugins { id 'java' }\n",
+            std::slice::from_ref(&dependency),
+            false,
+        )
+        .unwrap();
+        assert!(
+            groovy.contains("tasks.register('jailsClasspath')"),
+            "{groovy}"
+        );
+        assert!(
+            groovy.contains("configurations.testRuntimeClasspath"),
+            "{groovy}"
+        );
+        assert!(crate::gradle::declares_classpath_task(&groovy));
+        // Inside the markers, so the reader's bytes are untouched and the
+        // whole thing is one owned block.
+        let open = groovy.find("// jails:dependencies").unwrap();
+        let close = groovy.find("// /jails:dependencies").unwrap();
+        let task = groovy.find("tasks.register('jailsClasspath')").unwrap();
+        assert!(open < task && task < close, "{groovy}");
+        // A second plan renders the same block: idempotent by bytes.
+        assert_eq!(
+            reconcile_gradle_dependencies(&groovy, std::slice::from_ref(&dependency), false)
+                .unwrap(),
+            groovy
+        );
+
+        let kotlin = reconcile_gradle_dependencies(
+            "plugins { java }\n",
+            std::slice::from_ref(&dependency),
+            true,
+        )
+        .unwrap();
+        assert!(
+            kotlin.contains("tasks.register(\"jailsClasspath\")"),
+            "{kotlin}"
+        );
+        assert!(kotlin.contains("configurations[\"testRuntimeClasspath\"]"));
+        assert!(crate::gradle::declares_classpath_task(&kotlin));
+
+        let removed = reconcile_gradle_dependencies(&groovy, &[], false).unwrap();
+        assert!(!removed.contains("jailsClasspath"), "{removed}");
+        assert!(!crate::gradle::declares_classpath_task(&removed));
     }
 
     /// A reader-owned duplicate is refused by whole coordinate, not by

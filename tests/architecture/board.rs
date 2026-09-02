@@ -48,7 +48,12 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // 80 -> 78: S60.4 deleted the second project model, and with
                 // it the two `root: &Path` constructors that re-derived the
                 // pom's facts beside the capture that already had them.
-                ceiling: 78,
+                //
+                // 78 -> 77: P9.6 made `launcher::test_classpath` take the
+                // resolved `Project`, because which build it asks -- Maven's
+                // `dependency:build-classpath` or Gradle's `jailsClasspath`
+                // task -- is a fact the `Project` already holds.
+                ceiling: 77,
                 // Withdrawn, not reached: the count includes modules whose
                 // subject *is* a path, so a target under the ceiling reads as
                 // a demand to stop writing modules. The row below is the

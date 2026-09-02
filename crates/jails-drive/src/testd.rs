@@ -35,16 +35,23 @@ pub fn testd(action: Action, debug: bool) -> Result<()> {
         Action::Status => client.status(),
         Action::Restart => {
             client.stop_quietly();
-            let classpath = launcher::test_classpath(project.root(), debug)?;
+            let classpath = launcher::test_classpath(&project, "testd", debug)?;
             client.ensure_running(&project, &classpath, debug)?;
             println!("testd: running ({})", client.socket().display());
             Ok(())
         }
         Action::Run(filter) => {
             let requested = filter.into_iter().collect::<Vec<_>>();
-            render(run_report_in(&project, &requested, 0, debug, None)?)
+            render(run_report_in(
+                &project, "testd", &requested, 0, debug, None,
+            )?)
         }
-        Action::Affected => render(affected_report_in(&project, debug, None)?),
+        Action::Affected => render(affected_report_in(
+            &project,
+            "testd --affected",
+            debug,
+            None,
+        )?),
     }
 }
 
@@ -55,18 +62,22 @@ pub(crate) fn run_report_timeout(
     timeout: Option<std::time::Duration>,
 ) -> Result<TestReport> {
     let project = Project::discover()?;
-    build::require_maven(project.build(), "test --engine warm")?;
-    run_report_in(&project, requested, epoch, debug, timeout)
+    let command = "test --engine warm";
+    build::require_maven(project.build(), command)?;
+    run_report_in(&project, command, requested, epoch, debug, timeout)
 }
 
+/// One warm run. `command` is what the reader typed, so a Gradle build that
+/// cannot answer for its classpath is refused in that command's name.
 fn run_report_in(
     project: &Project,
+    command: &str,
     requested: &[String],
     epoch: u64,
     debug: bool,
     timeout: Option<std::time::Duration>,
 ) -> Result<TestReport> {
-    if let Some(stale) = launcher::staleness(project.root()) {
+    if let Some(stale) = launcher::staleness(project.root(), project.build()) {
         return Err(format!(
             "testd not taken: {}\n       fix: compile through `jails test --engine build` and retry",
             stale.explain()
@@ -85,7 +96,7 @@ fn run_report_in(
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    let classpath = launcher::test_classpath(project.root(), debug)?;
+    let classpath = launcher::test_classpath(project, command, debug)?;
     let client = client::Client::for_project(project)?;
     client.ensure_running(project, &classpath, debug)?;
     client.run(&classpath, &selectors, epoch, timeout)
@@ -96,16 +107,22 @@ pub(crate) fn affected_report_timeout(
     timeout: Option<std::time::Duration>,
 ) -> Result<TestReport> {
     let project = Project::discover()?;
-    build::require_maven(project.build(), "test --affected")?;
-    affected_report_in(&project, debug, timeout)
+    let command = "test --affected";
+    build::require_maven(project.build(), command)?;
+    affected_report_in(&project, command, debug, timeout)
 }
 
 fn affected_report_in(
     project: &Project,
+    command: &str,
     debug: bool,
     timeout: Option<std::time::Duration>,
 ) -> Result<TestReport> {
-    match affected::select(project.root(), debug) {
+    // Where the classes are is the build's answer, asked before the graph is
+    // read from them. On Maven it is free; on Gradle it is the same cached
+    // answer the daemon's classpath comes from.
+    let layout = launcher::output_layout(project, command, debug)?;
+    match affected::select(project.root(), project.build(), &layout, debug) {
         affected::Selection::Nothing { epoch } => {
             println!("testd: no affected tests in epoch {epoch}");
             Ok(TestReport {
@@ -119,7 +136,7 @@ fn affected_report_in(
         }
         affected::Selection::Everything { epoch, reasons } => {
             println!("testd: running everything -- {}", reasons.join("; "));
-            let mut report = run_report_in(project, &[], epoch, debug, timeout)?;
+            let mut report = run_report_in(project, command, &[], epoch, debug, timeout)?;
             report.fallback_reasons.extend(reasons);
             Ok(report)
         }
@@ -133,7 +150,7 @@ fn affected_report_in(
                 "testd: {} test class(es) reachable from the working tree's changes",
                 tests.len()
             );
-            run_report_in(project, &tests, epoch, debug, timeout)
+            run_report_in(project, command, &tests, epoch, debug, timeout)
         }
     }
 }

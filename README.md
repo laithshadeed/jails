@@ -1452,19 +1452,31 @@ project.
 and `watch` all work on one, and `jails gradle` is the escape hatch `jails mvn`
 is for Maven. `jails test --failed`, `--json` and `--slowest` work too: Gradle
 writes the same JUnit XML Surefire does, in a different directory.
-`--fast`, `--affected`, `testd` and `console` refuse by name — they need a
-classpath resolved through Maven, and a flag that silently ran the whole suite
-instead would look like it worked.
 
-`jails add format` configures Spotless on a Gradle build too, splicing
-`id 'com.diffplug.spotless' version '…'` into the existing `plugins {}` block
-(and refusing when there is none — that block is only legal as the script's
-first statement, and jails will not guess where the top of your build file is).
-`jails fmt` itself is Maven-only: it runs the formatter in a sandbox laid out
-from the transaction so the reformat is a reviewed diff, and it drives that
-sandbox with Maven. On Gradle it refuses and points at `./gradlew
-spotlessApply`, which the project is by then configured for and which `check`
-already enforces.
+**The warm test engine, `--affected`, `testd`, `console` and `runner` work on
+Gradle too, and they never guess at the build's layout.** What each needs is
+a resolved classpath and the output directories, and those are the build's
+own answers: the `// jails:dependencies` block jails owns in `build.gradle`
+registers a `jailsClasspath` task that prints `configurations.runtimeClasspath`,
+`testRuntimeClasspath` and every source set's output, and jails invokes it
+through the wrapper and caches the answer under `.jails/run/` until any
+Gradle input file changes. `jails test`, `--engine build` and `--engine warm`
+discover the same tests and report the same counts on either build. A Gradle
+project that has no such block yet — one jails did not create, before its
+first canonical command — is refused by name with the way out: `jails test
+--fast` declares the test launcher, which writes the block. Gradle's
+up-to-date check is content-based, so a source that was touched without
+changing keeps its class older than itself; the warm engine then reports the
+outputs stale and hands the run to the build engine, which is the safe
+direction.
+
+`jails add format` and `jails fmt` refuse on Gradle, by name. Spotless is
+applied with `id 'com.diffplug.spotless'` inside `plugins {}`, which Gradle
+only accepts as the script's first statement, and jails' Gradle adapter only
+ever appends a marked block. The appended alternative — `buildscript {}` plus
+`apply plugin:` after `plugins {}` — was measured on Gradle 9.7 and fails
+evaluation, so there is no shape that keeps the adapter's contract. Apply the
+plugin yourself and run `./gradlew spotlessApply`; `check` then enforces it.
 
 **Maven stays the default.** `jails new` with no `--gradle` creates a Maven
 project and goes on doing so. `--gradle` is for the case the reading work was
@@ -1711,7 +1723,10 @@ Deferred out of v1 on purpose — this is meant to stay a small tool:
   block to `build.gradle` or `build.gradle.kts` and touches nothing else, so
   the two DSLs differ by the syntax of that block rather than by a grammar
   jails has to understand; a project holding both build scripts refuses rather
-  than picking one. The bar is answer exactly or refuse, never guess.
+  than picking one. The bar is answer exactly or refuse, never guess — which
+  is why a classpath is *asked* of the build through the task in that block,
+  and why `format` and `fmt` stay refused on Gradle: the plugin entry they
+  need cannot be appended, and that was measured rather than assumed.
 - A runtime bean/route view (booting the context and asking Spring itself).
   `routes` and `beans` read source instead, which is instant and works on a
   project that does not start — at the cost of anything decided at runtime.

@@ -17,6 +17,19 @@ generated Java, and no plugin system with lifecycle hooks. Check `README.md`'s
 refuse, never guess.** A tool that half-understands a build file and reports a
 dependency the build does not have is the worst outcome available, worse than
 refusing. The Gradle adapter appends one marked block and touches nothing else.
+**What a driving command needs from a build -- a resolved classpath and the
+output directories -- is asked of Gradle, never read off it**: the
+`// jails:dependencies` block carries a `jailsClasspath` task
+(`gradle::classpath_task`) that prints `configurations.runtimeClasspath`,
+`testRuntimeClasspath` and each source set's output as
+`jails.classpath.<kind>=<path>` lines; `launcher::gradle_report` invokes it,
+caches the answer under `.jails/run/` against every Gradle input file and
+the canonical root, and refuses a build without the task by name, with
+`jails test --fast` as the fix. The warm test engine, `--affected`, `console`,
+`runner` and `db` all come through that one answer, so Gradle's layout is
+assumed nowhere. `gradle::declared` reads *every* top-level `dependencies { }`
+block, because jails' own is the second one and what it declares is on the
+classpath.
 
 ## The compiler
 
@@ -173,10 +186,15 @@ chart and editor settings live under `templates/add/` and are substituted with
 as a placeholder reads those files' own syntax as keys. `format!` renders `{{`
 as `{`, which silently changes PromQL.
 
-**Canonical `format` refuses on Gradle, by name.** Spotless needs an
-`id 'com.diffplug.spotless'` entry inside `plugins { }`, legal only as the
-first statement of the script, and the Gradle adapter's contract is that it
-appends a marked block and touches nothing else.
+**Canonical `format` refuses on Gradle, by name, and so does `jails fmt`.**
+Spotless needs an `id 'com.diffplug.spotless'` entry inside `plugins { }`,
+legal only as the first statement of the script, and the Gradle adapter's
+contract is that it appends a marked block and touches nothing else. The
+appended alternative was measured, not assumed: a `buildscript { }` +
+`apply plugin:` block after `plugins { }` fails evaluation on Gradle 9.7 with
+"only buildscript {}, pluginManagement {} and other plugins {} script blocks
+are allowed before plugins {} blocks", so the one shape the contract permits
+is the one Gradle refuses. Do not propose it again.
 
 `add dependency` / `remove dependency` and `set` / `unset` are not
 capabilities: each is a stable model node (`(target, key)` for a setting), and
@@ -460,8 +478,19 @@ would be the second copy.
   console launcher over already-compiled classes. The console artifact's
   version must equal the project's JUnit version (`junit-bom` constrains every
   artifact to one number from JUnit 6). `staleness()` must never read "no
-  class files" as "nothing is stale". `--fast` is the no-mvnd path and the
-  substrate for `testd`; do not describe it as faster than the default.
+  class files" as "nothing is stale", and it takes the `Build` because the
+  tree it reads is `target/` under Maven and `build/` under Gradle. **The
+  output directories are an `OutputLayout`, not two paths**: Maven's classes
+  and resources share a directory, Gradle keeps four apart, and `affected`
+  asks the layout which one holds a class. `test_classpath` takes the
+  `Project` and the command's name; on Gradle it goes through
+  `gradle_report`, which is also where `console`'s runtime classpath comes
+  from. Gradle's up-to-date check is content-based, so a source touched
+  without a change keeps its class older than itself and the fast path
+  refuses until the class is rewritten -- the safe direction, and the reason
+  a `touch` is not a way to exercise the warm engine in a test. `--fast` is
+  the no-mvnd path and the substrate for `testd`; do not describe it as
+  faster than the default.
 - **`crates/jails-drive/src/testing.rs` is the one test-execution
   vocabulary**: one `TestPlan`, one `TestReport`, and the selector, scope,
   engine, partition, case and outcome they are made of. It carries no
@@ -481,7 +510,8 @@ would be the second copy.
   number in `protocol.rs` is what makes a client from another release restart
   a daemon rather than talk past it. **The classpath is split in two and
   must stay that way**: the daemon holds the dependencies and hands only
-  `target/classes` and `target/test-classes` to JUnit as `--class-path`, so
+  the output directories (`target/classes` and `target/test-classes`; the
+  four Gradle states) to JUnit as `--class-path`, so
   JUnit builds a child loader per run; put the outputs on the daemon's classpath
   and parent-first delegation serves the stale class forever. **It does not
   compile**: the editor's language server writes `target/classes` on save with
@@ -490,7 +520,8 @@ would be the second copy.
   jails jar. A run that produces no cases refuses rather than completes, with
   the head of JUnit's output and every `Caused by:` line in the refusal frame.
 - **`crates/jails-drive/src/affected.rs`** -- `testd --affected`: a reverse
-  dependency index over the constant pools in `target/`. **Unknown widens**: no
+  dependency index over the constant pools in the build's output directories
+  (an `OutputLayout`, handed in by the caller). **Unknown widens**: no
   git, a source with no compiled class, nothing compiled -- each returns
   `Everything` with the reason printed. "Changed" is what git reports, not a
   marker jails writes, because a marker makes the same command select
@@ -505,7 +536,9 @@ would be the second copy.
   `topics_in()` locates a `TOPIC` constant with `blanked()` and reads the value
   from the original source.
 - **`crates/jails-drive/src/console.rs`** -- `db`/`dbconsole` (`psql` or
-  `sqlite3`) and `console` (`jshell` over the Maven classpath). Interactive;
+  `sqlite3`) and `console` (`jshell` over the project's runtime classpath,
+  resolved by `run/application/classpath.rs` from `dependency:build-classpath`
+  on Maven and from the `jailsClasspath` task on Gradle). Interactive;
   inherit stdio.
 - **`crates/jails-drive/src/bench.rs`** -- runs the k6 script `add loadtest`
   wrote. It does not parse k6's output; k6's own thresholds decide.

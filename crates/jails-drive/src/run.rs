@@ -389,8 +389,7 @@ fn test_report_once_with_fallback(
         options.failed = false;
     }
     let requested = execution_requested.as_slice();
-    let compiled_outputs_current =
-        build == crate::build::Build::Maven && crate::launcher::staleness(&root).is_none();
+    let compiled_outputs_current = crate::launcher::staleness(&root, build).is_none();
     let plan = test_plan::plan(&root, build, requested, &options, compiled_outputs_current)?;
     if options.explain_selection || options.fast {
         test_plan::explain(&plan);
@@ -503,13 +502,19 @@ pub fn check(debug: bool) -> Result<()> {
 /// needs its plugin inside `plugins { }`, which is only legal as the script's
 /// first statement, so a project that never installed it has no goal to run
 /// and guessing where the top of somebody's build file is produces a script
-/// that no longer evaluates.
+/// that no longer evaluates. The appended form was measured, not assumed: a
+/// `buildscript { }` + `apply plugin:` block after `plugins { }` fails
+/// evaluation on Gradle 9.7 ("only buildscript {}, pluginManagement {} and
+/// other plugins {} script blocks are allowed before plugins {} blocks"), so
+/// the one shape the adapter's contract permits is the one Gradle refuses.
 pub fn format_project(debug: bool) -> Result<()> {
     let (root, build) = either_root("fmt")?;
     if build == crate::build::Build::Gradle {
         return Err(jails_support::Failure::Told(
-            "`jails fmt` needs a Maven project.\n       fix: run the Gradle formatting task \
-             directly -- jails does not model formatter ownership on Gradle."
+            "`jails fmt` needs a Maven project.\n       Spotless is applied inside `plugins { }`, \
+             which must be the script's first statement, and jails' Gradle adapter only appends \
+             a marked block -- so no jails command owns a formatter here.\n       fix: apply \
+             `com.diffplug.spotless` in `plugins { }` yourself and run `./gradlew spotlessApply`."
                 .to_string(),
         ));
     }

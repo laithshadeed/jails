@@ -1,9 +1,10 @@
 //! Which tests can the last edit possibly have broken?
 //!
-//! The index is a reverse-dependency map built from
-//! the constant pools already sitting in `target/` -- see [`classfile`]
-//! for the one question asked of each file -- so nothing has to be compiled,
-//! configured or kept in step by hand.
+//! The index is a reverse-dependency map built from the constant pools
+//! already sitting in the build's output directories (`target/` under Maven,
+//! wherever the build says under Gradle) -- see [`classfile`] for the one
+//! question asked of each file -- so nothing has to be compiled, configured
+//! or kept in step by hand.
 //!
 //! **Three rules, and the third is the one that keeps it honest.**
 //!
@@ -46,7 +47,17 @@ pub(crate) enum Selection {
 }
 
 /// The test classes reachable from what has changed in the working tree.
-pub(crate) fn select(root: &Path, debug: bool) -> Selection {
+///
+/// `layout` is where this build writes its classes and resources -- fixed
+/// under Maven, stated by the build under Gradle -- so the graph is read from
+/// the directories the build actually filled rather than from a `target/`
+/// that a Gradle project does not have.
+pub(crate) fn select(
+    root: &Path,
+    build: crate::build::Build,
+    layout: &crate::launcher::OutputLayout,
+    debug: bool,
+) -> Selection {
     let input = match input_snapshot(root) {
         Ok(input) => input,
         Err(reason) => {
@@ -57,12 +68,14 @@ pub(crate) fn select(root: &Path, debug: bool) -> Selection {
         }
     };
 
-    let main = root.join("target/classes");
-    let tests = root.join("target/test-classes");
     let mut graph = Graph::default();
     let mut reasons = Vec::new();
-    graph.absorb(&main, false, &mut reasons);
-    graph.absorb(&tests, true, &mut reasons);
+    for main in layout.classes(false) {
+        graph.absorb(main, false, &mut reasons);
+    }
+    for tests in layout.classes(true) {
+        graph.absorb(tests, true, &mut reasons);
+    }
     let graph_digest = graph.digest();
     let epoch = match epoch::record(root, input, graph_digest) {
         Ok(recorded) => recorded,
@@ -76,7 +89,7 @@ pub(crate) fn select(root: &Path, debug: bool) -> Selection {
     if graph.owners.is_empty() {
         reasons.push("nothing is compiled yet".into());
     }
-    if let Some(stale) = crate::launcher::staleness(root) {
+    if let Some(stale) = crate::launcher::staleness(root, build) {
         return Selection::Stale {
             epoch,
             reasons: vec![stale.explain()],
@@ -105,7 +118,7 @@ pub(crate) fn select(root: &Path, debug: bool) -> Selection {
         };
     }
     if let Some(path) = changed.iter().find(|path| !is_java_source(path)) {
-        if resource_output_is_current(root, path) {
+        if resource_output_is_current(root, layout, path) {
             return Selection::Everything {
                 epoch,
                 reasons: vec![format!(
@@ -125,7 +138,7 @@ pub(crate) fn select(root: &Path, debug: bool) -> Selection {
 
     if let Some(path) = changed
         .iter()
-        .find(|path| !java_output_is_current(root, &graph, path))
+        .find(|path| !java_output_is_current(layout, &graph, path))
     {
         return Selection::Stale {
             epoch,
@@ -160,7 +173,11 @@ pub(crate) fn select(root: &Path, debug: bool) -> Selection {
     }
 }
 
-fn java_output_is_current(project: &Path, graph: &Graph, source: &Path) -> bool {
+fn java_output_is_current(
+    layout: &crate::launcher::OutputLayout,
+    graph: &Graph,
+    source: &Path,
+) -> bool {
     let Some(classes) = seed_classes(graph, source) else {
         return false;
     };
@@ -168,28 +185,32 @@ fn java_output_is_current(project: &Path, graph: &Graph, source: &Path) -> bool 
         return false;
     };
     classes.into_iter().all(|class| {
-        let output = if graph.owners.get(&class) == Some(&true) {
-            project.join("target/test-classes")
-        } else {
-            project.join("target/classes")
-        };
-        output
-            .join(format!("{class}.class"))
-            .metadata()
-            .and_then(|metadata| metadata.modified())
-            .is_ok_and(|compiled| compiled >= source_time)
+        let is_test = graph.owners.get(&class) == Some(&true);
+        // Whichever output directory holds it: Gradle compiles each language
+        // into its own, and the class is in exactly one of them.
+        layout.classes(is_test).iter().any(|output| {
+            output
+                .join(format!("{class}.class"))
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .is_ok_and(|compiled| compiled >= source_time)
+        })
     })
 }
 
-fn resource_output_is_current(project: &Path, source: &Path) -> bool {
-    for (input, output) in [
-        ("src/main/resources", "target/classes"),
-        ("src/test/resources", "target/test-classes"),
-    ] {
+fn resource_output_is_current(
+    project: &Path,
+    layout: &crate::launcher::OutputLayout,
+    source: &Path,
+) -> bool {
+    for (input, is_test) in [("src/main/resources", false), ("src/test/resources", true)] {
         let input = project.join(input);
         if let Ok(relative) = source.strip_prefix(&input) {
-            return std::fs::read(source).ok()
-                == std::fs::read(project.join(output).join(relative)).ok();
+            let expected = std::fs::read(source).ok();
+            return layout
+                .resources(is_test)
+                .iter()
+                .any(|output| std::fs::read(output.join(relative)).ok() == expected);
         }
     }
     false

@@ -41,14 +41,14 @@ pub(super) fn tasks(root: &Path, names: &[&str], debug: bool) -> Result<()> {
 /// under `build/test-results/<task>/` instead of `target/*-reports/`.
 /// `crate::reports` reads both.
 ///
-/// `--fast` and `--affected` cannot take the warm engine here, and the plan
-/// records why rather than ignoring them. Those two need a *resolved
-/// classpath*, which jails gets from `dependency:build-classpath`; Gradle has
-/// no equivalent without adding a task to a file the reader owns, and doing
-/// that for a convenience is a different bargain from splicing a dependency
-/// they asked for. A flag that silently ran the whole suite instead would look
-/// like it worked -- the fast-path rule from `launcher.rs`, one level up: a
-/// fast path falls back *loudly*.
+/// This is the *build* engine's half only. The warm engine (`--fast`,
+/// `--engine warm`, `--affected`) runs the same on either build once it has a
+/// resolved classpath and the output directories, and on Gradle it gets both
+/// from the `jailsClasspath` task jails' marked block registers
+/// (`launcher::gradle_report`); a build without the task is refused by name
+/// there. A flag that silently ran the whole suite instead would look like it
+/// worked -- the fast-path rule from `launcher.rs`, one level up: a fast path
+/// falls back *loudly*.
 pub(super) fn test_report(
     root: &Path,
     requested: &[String],

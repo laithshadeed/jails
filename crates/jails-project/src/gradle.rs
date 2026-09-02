@@ -134,8 +134,20 @@ fn blanked(text: &str) -> String {
 /// build's own classpath -- where they change nothing and are invisible at
 /// compile time.
 fn top_level_body(text: &str, name: &str) -> Option<std::ops::Range<usize>> {
+    top_level_bodies(text, name).into_iter().next()
+}
+
+/// Every top-level `name { ... }` block's body, in file order.
+///
+/// A script may open the same block more than once and Gradle merges them,
+/// which is exactly what jails' own `// jails:dependencies` block does after
+/// the reader's `dependencies { }`. A reader that stopped at the first would
+/// answer "not declared" for anything the second one holds -- the confident
+/// wrong answer, about jails' own writing.
+fn top_level_bodies(text: &str, name: &str) -> Vec<std::ops::Range<usize>> {
     let scan = blanked(text);
     let bytes = scan.as_bytes();
+    let mut bodies = Vec::new();
     let mut depth = 0usize;
     let mut i = 0usize;
     while i < bytes.len() {
@@ -154,26 +166,35 @@ fn top_level_body(text: &str, name: &str) -> Option<std::ops::Range<usize>> {
                 }
                 let open = j;
                 let mut inner = 0usize;
+                let mut close = None;
                 while j < bytes.len() {
                     match bytes[j] {
                         b'{' => inner += 1,
                         b'}' => {
                             inner -= 1;
                             if inner == 0 {
-                                return Some(open + 1..j);
+                                close = Some(j);
+                                break;
                             }
                         }
                         _ => {}
                     }
                     j += 1;
                 }
-                return None;
+                // An unclosed block ends the scan: nothing after it can be
+                // read with any confidence.
+                let Some(close) = close else {
+                    return bodies;
+                };
+                bodies.push(open + 1..close);
+                i = close + 1;
+                continue;
             }
             _ => {}
         }
         i += 1;
     }
-    None
+    bodies
 }
 
 /// Whether `word` starts at `at` and is not part of a longer identifier.
@@ -536,33 +557,39 @@ fn declared(text: &str) -> Option<Vec<Declared>> {
     // report "cannot tell" about every dependency, which is the pessimistic
     // twin of the confident wrong answer: it refuses work that is perfectly
     // safe.
-    let Some(body) = top_level_body(text, "dependencies") else {
+    // **Every `dependencies { }` block, not the first**: jails' own marked
+    // block is a second one, and what it declares is on the classpath.
+    let bodies = top_level_bodies(text, "dependencies");
+    if bodies.is_empty() {
         return Some(Vec::new());
-    };
+    }
     let scan = blanked(text);
     let mut found = Vec::new();
-    for (offset, line) in line_spans(&scan[body.clone()]) {
-        let start = body.start + offset;
-        let stripped = line.trim();
-        if stripped.is_empty() || stripped == "}" {
-            continue;
-        }
-        let Some(configuration) = stripped.split(['(', ' ', '\t']).next() else {
-            continue;
-        };
-        if !is_configuration(configuration) {
-            // A `constraints {}` brace, a conditional, an `exclude` -- not a
-            // dependency declaration, and not this reader's business.
-            if stripped.starts_with('}') || stripped.ends_with('{') {
+    for body in bodies {
+        for (offset, line) in line_spans(&scan[body.clone()]) {
+            let start = body.start + offset;
+            let stripped = line.trim();
+            if stripped.is_empty() || stripped == "}" {
                 continue;
             }
-            return None;
+            let Some(configuration) = stripped.split(['(', ' ', '\t']).next() else {
+                continue;
+            };
+            if !is_configuration(configuration) {
+                // A `constraints {}` brace, a conditional, an `exclude` -- not
+                // a dependency declaration, and not this reader's business.
+                if stripped.starts_with('}') || stripped.ends_with('{') {
+                    continue;
+                }
+                return None;
+            }
+            let original = &text[start..start + line.len()];
+            // A configuration jails recognises, declaring something it cannot
+            // read -- a variable, a version catalog alias, a project reference
+            // -- makes the whole file unanswerable rather than this one line
+            // skippable.
+            found.push(coordinate_of(original)?);
         }
-        let original = &text[start..start + line.len()];
-        // A configuration jails recognises, declaring something it cannot read
-        // -- a variable, a version catalog alias, a project reference -- makes
-        // the whole file unanswerable rather than this one line skippable.
-        found.push(coordinate_of(original)?);
     }
     Some(found)
 }
@@ -772,6 +799,174 @@ pub(crate) fn main_class(text: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// The task jails' marked block registers so a Gradle build can be *asked*
+/// for its classpaths rather than guessed at.
+///
+/// **What the warm test engine, `jails console` and `jails runner` need from
+/// a build is a resolved classpath and the output directories, and Gradle can
+/// answer both exactly** -- `configurations.runtimeClasspath`,
+/// `configurations.testRuntimeClasspath` and each source set's `output` are
+/// the build's own answers, computed by the build itself. Maven has
+/// `dependency:build-classpath` for the first half and a fixed `target/`
+/// layout for the second; Gradle has neither as a command-line question, so
+/// the question is written into the build as a task and jails invokes it.
+/// Reading `build.gradle` for a `buildDir` override or assuming
+/// `build/classes/java/main` would be the guess this module exists to refuse.
+///
+/// It prints rather than writes: a file under `build/` is only where jails
+/// expects it while `layout.buildDirectory` is the default, and a reader who
+/// relocated it would get a refusal about a file that is right there. Each
+/// line is `jails.classpath.<kind>=<path>`, one path per line, read back by
+/// [`parse_classpath_report`] -- the two are statements of one format and
+/// live beside each other on purpose.
+///
+/// Every input is captured at configuration time and only iterated in
+/// `doLast`, which is what keeps the task valid under the configuration cache.
+pub fn classpath_task(kotlin: bool) -> String {
+    if kotlin {
+        format!(
+            "tasks.register(\"{CLASSPATH_TASK}\") {{\n\
+             \x20   description = \"Prints the classpaths and output directories jails reads.\"\n\
+             \x20   val mainClasses = sourceSets[\"main\"].output.classesDirs\n\
+             \x20   val mainResources = sourceSets[\"main\"].output.resourcesDir\n\
+             \x20   val testClasses = sourceSets[\"test\"].output.classesDirs\n\
+             \x20   val testResources = sourceSets[\"test\"].output.resourcesDir\n\
+             \x20   val runtime = configurations[\"runtimeClasspath\"]\n\
+             \x20   val testRuntime = configurations[\"testRuntimeClasspath\"]\n\
+             \x20   doLast {{\n\
+             \x20       mainClasses.forEach {{ println(\"{PREFIX}main-classes=$it\") }}\n\
+             \x20       println(\"{PREFIX}main-resources=$mainResources\")\n\
+             \x20       testClasses.forEach {{ println(\"{PREFIX}test-classes=$it\") }}\n\
+             \x20       println(\"{PREFIX}test-resources=$testResources\")\n\
+             \x20       runtime.forEach {{ println(\"{PREFIX}runtime=$it\") }}\n\
+             \x20       testRuntime.forEach {{ println(\"{PREFIX}test-runtime=$it\") }}\n\
+             \x20   }}\n\
+             }}\n",
+            PREFIX = CLASSPATH_LINE_PREFIX
+        )
+    } else {
+        format!(
+            "tasks.register('{CLASSPATH_TASK}') {{\n\
+             \x20   description = 'Prints the classpaths and output directories jails reads.'\n\
+             \x20   def mainClasses = sourceSets.main.output.classesDirs\n\
+             \x20   def mainResources = sourceSets.main.output.resourcesDir\n\
+             \x20   def testClasses = sourceSets.test.output.classesDirs\n\
+             \x20   def testResources = sourceSets.test.output.resourcesDir\n\
+             \x20   def runtime = configurations.runtimeClasspath\n\
+             \x20   def testRuntime = configurations.testRuntimeClasspath\n\
+             \x20   doLast {{\n\
+             \x20       mainClasses.each {{ println \"{PREFIX}main-classes=${{it}}\" }}\n\
+             \x20       println \"{PREFIX}main-resources=${{mainResources}}\"\n\
+             \x20       testClasses.each {{ println \"{PREFIX}test-classes=${{it}}\" }}\n\
+             \x20       println \"{PREFIX}test-resources=${{testResources}}\"\n\
+             \x20       runtime.each {{ println \"{PREFIX}runtime=${{it}}\" }}\n\
+             \x20       testRuntime.each {{ println \"{PREFIX}test-runtime=${{it}}\" }}\n\
+             \x20   }}\n\
+             }}\n",
+            PREFIX = CLASSPATH_LINE_PREFIX
+        )
+    }
+}
+
+/// The name of the task [`classpath_task`] registers.
+pub const CLASSPATH_TASK: &str = "jailsClasspath";
+
+/// What every line the task prints starts with, so Gradle's own output --
+/// deprecation notices, a daemon status line -- cannot be read as a path.
+const CLASSPATH_LINE_PREFIX: &str = "jails.classpath.";
+
+/// Whether this build registers [`CLASSPATH_TASK`].
+///
+/// Exact by construction: the registration line is one [`classpath_task`]
+/// wrote, in either dialect, and a project that spells its own task by the
+/// same name is one jails would invoke and misread -- so the test is for
+/// jails' spelling, not the name.
+pub fn declares_classpath_task(text: &str) -> bool {
+    let groovy = format!("tasks.register('{CLASSPATH_TASK}')");
+    let kotlin = format!("tasks.register(\"{CLASSPATH_TASK}\")");
+    text.contains(&groovy) || text.contains(&kotlin)
+}
+
+/// What the build answered: its output directories and resolved classpaths.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ClasspathReport {
+    /// `sourceSets.main.output.classesDirs` -- one per language compiled.
+    pub main_classes: Vec<std::path::PathBuf>,
+    /// `sourceSets.main.output.resourcesDir`.
+    pub main_resources: Vec<std::path::PathBuf>,
+    /// `sourceSets.test.output.classesDirs`.
+    pub test_classes: Vec<std::path::PathBuf>,
+    /// `sourceSets.test.output.resourcesDir`.
+    pub test_resources: Vec<std::path::PathBuf>,
+    /// `configurations.runtimeClasspath`, resolved: the dependency files only.
+    pub runtime: Vec<std::path::PathBuf>,
+    /// `configurations.testRuntimeClasspath`, resolved: the dependency files
+    /// only, never the outputs above.
+    pub test_runtime: Vec<std::path::PathBuf>,
+}
+
+/// Read what [`classpath_task`] printed.
+///
+/// Any line without the prefix is Gradle's own and ignored; a prefixed line
+/// with a kind this version does not know is an error, because the task and
+/// this reader are shipped together and a mismatch means the block on disk
+/// was written by a different jails.
+pub fn parse_classpath_report(stdout: &str) -> std::result::Result<ClasspathReport, String> {
+    let mut report = ClasspathReport::default();
+    let mut seen = false;
+    for line in stdout.lines() {
+        let Some(rest) = line.trim_end().strip_prefix(CLASSPATH_LINE_PREFIX) else {
+            continue;
+        };
+        let Some((kind, path)) = rest.split_once('=') else {
+            return Err(format!(
+                "Gradle printed a classpath line jails cannot read: `{line}`\n       fix: re-plan so `{CLASSPATH_TASK}` is the task this jails writes"
+            ));
+        };
+        let target = match kind {
+            "main-classes" => &mut report.main_classes,
+            "main-resources" => &mut report.main_resources,
+            "test-classes" => &mut report.test_classes,
+            "test-resources" => &mut report.test_resources,
+            "runtime" => &mut report.runtime,
+            "test-runtime" => &mut report.test_runtime,
+            other => {
+                return Err(format!(
+                    "Gradle printed a classpath kind jails does not know: `{other}`\n       fix: re-plan so `{CLASSPATH_TASK}` is the task this jails writes"
+                ));
+            }
+        };
+        if path.is_empty() {
+            continue;
+        }
+        target.push(std::path::PathBuf::from(path));
+        seen = true;
+    }
+    if !seen {
+        return Err(format!(
+            "Gradle ran `{CLASSPATH_TASK}` and printed no classpath\n       fix: re-plan so `{CLASSPATH_TASK}` is the task this jails writes, then retry"
+        ));
+    }
+    Ok(report)
+}
+
+/// The refusal for a build that has no [`CLASSPATH_TASK`] to ask.
+///
+/// One text for every command that needs the answer, so the way out is the
+/// same wherever the reader meets the wall. The block that carries the task
+/// is the one the compiler renders from the model's dependencies, and
+/// `jails test --fast` is the command that declares one on any project.
+pub fn missing_classpath_task(command: &str) -> String {
+    format!(
+        "`jails {command}` needs the classpath this Gradle build resolves, and the build does not \
+         register jails' `{CLASSPATH_TASK}` task.\n       The task lives in the `// jails:dependencies` \
+         block the model renders into `build.gradle`; jails will not guess at the build's \
+         layout without it.\n       fix: run `jails test --fast` once -- it declares the test \
+         launcher and writes the block -- or `jails sync` if the model already declares a \
+         dependency."
+    )
 }
 
 #[cfg(test)]
@@ -1098,6 +1293,68 @@ dependencies {
         let found = declared(tricky).expect("readable");
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].artifact_id, "h2");
+    }
+
+    /// Gradle merges every `dependencies { }` block in a script, and jails'
+    /// own marked block is the second one. A reader that stopped at the first
+    /// answered "not declared" about the launcher jails had just written --
+    /// the confident wrong answer, about its own output.
+    #[test]
+    fn every_dependencies_block_is_read_not_only_the_first() {
+        let two = "plugins { id 'java' }\n\ndependencies {\n    implementation 'org.jspecify:jspecify:1.0.0'\n}\n\n// jails:dependencies\ndependencies {\n    testImplementation 'org.junit.platform:junit-platform-console'\n}\n\ntasks.register('jailsClasspath') {\n    doLast { println 'x' }\n}\n// /jails:dependencies\n";
+        assert_eq!(
+            has_dependency(two, "org.junit.platform", "junit-platform-console"),
+            Some(true)
+        );
+        assert_eq!(has_dependency(two, "org.jspecify", "jspecify"), Some(true));
+        assert_eq!(has_dependency(two, "org.jsoup", "jsoup"), Some(false));
+        // An unreadable line in the second block makes the whole file
+        // unanswerable, exactly as one in the first does.
+        let catalog = two.replace(
+            "testImplementation 'org.junit.platform:junit-platform-console'",
+            "testImplementation libs.junit.console",
+        );
+        assert_eq!(has_dependency(&catalog, "org.jspecify", "jspecify"), None);
+    }
+
+    /// The task and the reader of what it prints are two statements of one
+    /// format; a line Gradle prints for itself is not a path, and a kind this
+    /// jails does not know is a block another jails wrote.
+    #[test]
+    fn the_classpath_task_is_read_back_by_its_own_reader() {
+        for kotlin in [false, true] {
+            let task = classpath_task(kotlin);
+            assert!(declares_classpath_task(&task), "{task}");
+            assert!(task.contains("configurations"), "{task}");
+            // Captured at configuration time, printed in `doLast`: the task
+            // is valid under the configuration cache.
+            assert!(task.contains("doLast"), "{task}");
+        }
+        assert!(!declares_classpath_task("plugins { id 'java' }\n"));
+
+        let report = parse_classpath_report(
+            "Configuration cache is an incubating feature.\n\
+             jails.classpath.main-classes=/p/build/classes/java/main\n\
+             jails.classpath.main-classes=/p/build/classes/kotlin/main\n\
+             jails.classpath.main-resources=/p/build/resources/main\n\
+             jails.classpath.test-classes=/p/build/classes/java/test\n\
+             jails.classpath.test-resources=/p/build/resources/test\n\
+             jails.classpath.runtime=/m2/a.jar\n\
+             jails.classpath.test-runtime=/m2/a.jar\n\
+             jails.classpath.test-runtime=/m2/junit-platform-console.jar\n\
+             BUILD SUCCESSFUL\n",
+        )
+        .unwrap();
+        assert_eq!(report.main_classes.len(), 2);
+        assert_eq!(report.main_resources.len(), 1);
+        assert_eq!(report.test_classes.len(), 1);
+        assert_eq!(report.runtime.len(), 1);
+        assert_eq!(report.test_runtime.len(), 2);
+
+        let unknown = parse_classpath_report("jails.classpath.provided=/x.jar\n").unwrap_err();
+        assert!(unknown.contains("does not know"), "{unknown}");
+        let nothing = parse_classpath_report("BUILD SUCCESSFUL\n").unwrap_err();
+        assert!(nothing.contains("printed no classpath"), "{nothing}");
     }
 }
 

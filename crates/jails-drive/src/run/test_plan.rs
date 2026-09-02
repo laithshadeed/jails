@@ -50,9 +50,12 @@ pub(super) fn plan(
         );
     }
 
-    let build_only_reason = if build_engine != TestEngine::Maven {
-        Some("the warm engine is unavailable for this build system")
-    } else if options.compile == crate::testing::TestCompilePolicy::Build {
+    // The warm engine takes either build: what it needs is a resolved
+    // classpath and the output directories, which Maven answers through
+    // `dependency:build-classpath` and Gradle through the task jails' marked
+    // block registers (`launcher::test_classpath`). A build that cannot
+    // answer refuses there, by name, not here by kind.
+    let build_only_reason = if options.compile == crate::testing::TestCompilePolicy::Build {
         Some("the build tool is the explicit compile owner")
     } else if !compiled_outputs_current {
         Some("compiled test outputs are stale")
@@ -65,7 +68,6 @@ pub(super) fn plan(
     };
 
     if options.engine == TestEnginePolicy::Warm
-        && build_engine == TestEngine::Maven
         && options.scope == crate::testing::TestScope::Unit
         && !options.database_schema
         && options.tags.is_empty()

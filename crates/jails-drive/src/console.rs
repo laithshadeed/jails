@@ -173,6 +173,7 @@ pub fn spring_console(
         } else {
             run::RunCompile::None
         },
+        "console",
         debug,
     )?;
     let classpath = joined_classpath(&resolved)?;
@@ -221,6 +222,7 @@ pub fn runner(
         } else {
             run::RunCompile::None
         },
+        "runner",
         debug,
     )?;
     let classpath = joined_classpath(&resolved)?;
