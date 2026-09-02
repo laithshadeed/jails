@@ -72,13 +72,6 @@ count how many of the 25 are exactly that shape after S55.2 and turn those
 into the table `Pack` already implies. The ones that are not (`db`, `api`,
 `kafka`, `format`) keep their functions.
 
-**S55.6 -- The SQL answer `doctor` needs.** `schema_lineage::columns_from`
-reads the columns back out of migration text; the compiler already knows
-them. Expose one function that returns the columns the storage lowering
-emits for an entity -- the list `emit_sql.rs` feeds to the DDL, the select,
-the insert and the row mapper -- so `doctor` compares the model against the
-migrations rather than parsing SQL.
-
 **S55.7 -- `tests/cli/generate.rs`.** 7,948 lines and 110 tests, most of
 them "generate X, then read a file". After S55.2 the assertions about the
 package line and the import block are one property, not a hundred; name the

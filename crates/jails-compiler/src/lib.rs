@@ -27,6 +27,7 @@ mod emit_resource_http;
 mod emit_seed;
 mod emit_sql;
 pub use emit_sql::closed_set::narrowing_refusal as enum_narrowing_refusal;
+pub use emit_sql::storage_columns;
 mod emit_unit;
 mod refuse;
 

@@ -354,8 +354,11 @@ pub(crate) fn has_database(model: &AppModel) -> bool {
 fn create_table(model: &AppModel, entity: &Entity) -> Result<Vec<String>, CompileError> {
     let mut columns = Vec::new();
     let mut indexes = Vec::new();
-    for field in entity.fields.iter() {
-        columns.push(initial_column(field, sql_type(model, field)?)?);
+    // Which columns this table has is [`storage_columns`]'s answer, and the
+    // DDL is rendered from the same list rather than from a second walk --
+    // `doctor` asks that function the same question.
+    for (field, name) in entity.fields.iter().zip(declared_columns(entity)) {
+        columns.push(initial_column(field, &name, sql_type(model, field)?)?);
         // **Named, and a table constraint rather than a column check.** The
         // widening migration drops it by name and adds the next one, so the
         // two have to agree about what it is called.
@@ -414,6 +417,35 @@ fn create_table(model: &AppModel, entity: &Entity) -> Result<Vec<String>, Compil
         output.push(create_index(entity, index)?);
     }
     Ok(output)
+}
+
+/// The columns a stored entity's `create table` declares, in order.
+fn declared_columns(entity: &Entity) -> Vec<String> {
+    entity
+        .fields
+        .iter()
+        .map(|field| field.names.sql_column.clone())
+        .collect()
+}
+
+/// Every column the storage lowering emits for one stored entity.
+///
+/// **The one answer to "what columns does this table have".** The DDL above is
+/// rendered from the same list, and `doctor` compares this model's answer with
+/// the accepted model's rather than reading the columns back out of migration
+/// text -- a reader of emitted SQL is a second description of a decision this
+/// function already made, and the two drift silently.
+///
+/// The declared fields in declaration order, plus the generated search column
+/// where a search projection names this entity: it is a real column of the
+/// table, added by its own `alter table`, and a caller listing what the table
+/// has that left it out would be wrong.
+pub fn storage_columns(model: &AppModel, entity: &Entity) -> Vec<String> {
+    let mut columns = declared_columns(entity);
+    if search::indexes(model, entity) {
+        columns.push(search::COLUMN.to_string());
+    }
+    columns
 }
 
 fn create_index(entity: &Entity, index: &Index) -> Result<String, CompileError> {

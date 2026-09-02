@@ -20,6 +20,17 @@ pub(crate) const CONFIGURATION: &str = "english";
 /// The generated column's name, one per searched table.
 pub(crate) const COLUMN: &str = "search_vector";
 
+/// Whether a search projection names this entity, and so whether the table
+/// carries the generated column below.
+///
+/// Read off the model rather than off the emitted SQL: the column is one of
+/// the table's, and anything listing what the table has has to include it.
+pub(super) fn indexes(model: &AppModel, entity: &jails_model::Entity) -> bool {
+    model.projections.values().any(|projection| {
+        matches!(projection.kind, ProjectionKind::Search { .. }) && projection.entity == entity.id
+    })
+}
+
 /// Append the column and index for every newly declared search projection.
 pub(super) fn derive_into(
     next: &AppModel,

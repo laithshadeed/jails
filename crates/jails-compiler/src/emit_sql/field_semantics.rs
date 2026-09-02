@@ -9,8 +9,12 @@ pub(super) enum SqlDefault {
     Expression(String),
 }
 
-pub(super) fn initial_column(field: &Field, sql_type: &str) -> Result<String, CompileError> {
-    let mut column = format!("    {} {sql_type}", field.names.sql_column);
+pub(super) fn initial_column(
+    field: &Field,
+    name: &str,
+    sql_type: &str,
+) -> Result<String, CompileError> {
+    let mut column = format!("    {name} {sql_type}");
     match sql_default(field)? {
         Some(SqlDefault::Identity) => column.push_str(" generated always as identity"),
         Some(SqlDefault::Expression(value)) => column.push_str(&format!(" default {value}")),
@@ -25,10 +29,7 @@ pub(super) fn initial_column(field: &Field, sql_type: &str) -> Result<String, Co
         column.push_str(" unique");
     }
     if field.non_blank {
-        column.push_str(&format!(
-            " check (length(btrim({})) > 0)",
-            field.names.sql_column
-        ));
+        column.push_str(&format!(" check (length(btrim({name})) > 0)"));
     }
     if let Some(check) = length_check(field) {
         column.push_str(&format!(" check ({check})"));

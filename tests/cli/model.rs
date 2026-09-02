@@ -12629,15 +12629,77 @@ app Bare {
     );
 }
 
-/// An incoherence `doctor` reports: the Java carries a component the schema
-/// history does not.
+/// An incoherence `doctor` reports: the record carries a component the
+/// accepted schema does not.
 ///
 /// Every file is byte-identical to what jails wrote, so nothing else has a
-/// reason to complain, and only a query at runtime would find it.
+/// reason to complain, and only a query at runtime would find it. Both sides
+/// are `jails_compiler::storage_columns` -- asked of the declared model and of
+/// the same entity in the model the lock accepted -- rather than a reader of
+/// the migration text, which was a second description of the same decision.
 #[test]
-fn doctor_names_a_column_the_record_carries_and_the_migrations_do_not() {
+fn doctor_names_a_column_the_record_carries_and_the_accepted_schema_does_not() {
+    let model = |components: &str| {
+        format!(
+            r#"jdl 1
+app Ward {{
+ pkg com.example.ward
+ java 26
+ platform spring
+ build maven
+ storage postgres
+}}
+entity Bed {{
+ id: uuid @pk
+ label: string
+{components} use repo
+}}
+"#
+        )
+    };
+    let root = jdl_project("jdl-v1-doctor-lineage", &model(""));
+    write_spring_fixture(&root);
+    let synced = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+
+    let accepted = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    let accepted = String::from_utf8_lossy(&accepted.stdout).to_string();
+    assert!(
+        accepted
+            .lines()
+            .any(|line| line.starts_with("ok") && line.contains("schema Bed")),
+        "a synced project is coherent:\n{accepted}"
+    );
+
+    // A component the lock has not accepted is a column the table does not
+    // have, whatever the Java says.
+    fs::write(root.join(".jails/model.jdl"), model(" occupant: string\n")).unwrap();
+    let torn = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    let reported = String::from_utf8_lossy(&torn.stdout).to_string();
+    assert!(
+        reported.contains("is missing occupant") && reported.contains("which `Bed` carries"),
+        "the missing column should be named, with the record that needs it:\n{reported}"
+    );
+    // A failure, not a note. Asserted on the row rather than on the exit
+    // status, which this fixture also fails for an unrelated reason.
+    assert!(
+        reported
+            .lines()
+            .any(|line| line.contains("is missing occupant") && line.starts_with("FAIL")),
+        "the incoherence is a failure, not a note:\n{reported}"
+    );
+}
+
+/// A migration whose bytes were changed by hand is the *seal's* question, and
+/// it is reported there rather than by re-reading the SQL for a column list.
+#[test]
+fn doctor_names_a_migration_edited_after_it_was_published() {
     let root = jdl_project(
-        "jdl-v1-doctor-lineage",
+        "jdl-v1-doctor-seal",
         r#"jdl 1
 app Ward {
  pkg com.example.ward
@@ -12682,33 +12744,13 @@ entity Bed {
         .join("\n");
     fs::write(&migration, format!("{torn}\n")).unwrap();
 
-    let torn = jails_cmd(&root, None).arg("doctor").output().unwrap();
-    let reported = String::from_utf8_lossy(&torn.stdout).to_string();
+    let edited = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    let reported = String::from_utf8_lossy(&edited.stdout).to_string();
     assert!(
-        reported.contains("is missing label") && reported.contains("which `Bed` carries"),
-        "the missing column should be named, with the record that needs it:\n{reported}"
-    );
-    // A failure, not a note. Asserted on the row rather than on the exit
-    // status, which this fixture also fails for an unrelated reason.
-    assert!(
-        reported
-            .lines()
-            .any(|line| line.contains("is missing label") && line.starts_with("FAIL")),
-        "the incoherence is a failure, not a note:\n{reported}"
-    );
-
-    // A lineage this reader cannot fold is not an accusation. Unknown widens.
-    fs::write(
-        &migration,
-        "create table bed_things using something_else;\n",
-    )
-    .unwrap();
-    let unreadable = jails_cmd(&root, None).arg("doctor").output().unwrap();
-    let unreadable = String::from_utf8_lossy(&unreadable.stdout).to_string();
-    assert!(
-        !unreadable.contains("schema Bed"),
-        "a migration outside the statements jails emits produces no check at all, \
-         neither a pass nor an accusation:\n{unreadable}"
+        reported.lines().any(|line| line.starts_with("FAIL")
+            && line.contains("sealed migrations")
+            && line.contains("V001__create_beds.sql")),
+        "an edited migration is named by the seal, as a failure:\n{reported}"
     );
 }
 

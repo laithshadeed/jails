@@ -15,7 +15,6 @@ pub mod commands;
 mod diagnostic;
 pub mod doctor;
 pub mod explain;
-pub mod schema_lineage;
 pub mod source;
 pub mod why;
 pub mod why_subject;

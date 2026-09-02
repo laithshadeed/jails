@@ -321,47 +321,46 @@ fn published_history(
     .fix("restore the file from version control, then write a new forward migration for the change")
 }
 
-/// Does every column a stored entity's Java carries exist in its migrations?
+/// Does every column a stored entity's record carries exist in the schema the
+/// lock accepted?
 ///
 /// "Are these the bytes jails wrote" is a different question from "is this
 /// project coherent": a torn transaction or a half-carried rename leaves the
-/// Java carrying a component the schema history does not, with every file
+/// Java carrying a component the accepted schema does not, with every file
 /// byte-identical to what jails wrote, and only a query at runtime would
 /// find it.
 ///
-/// The SQL reader is `jails-report`'s, not a second one. Two readers of the
-/// handful of statements the compiler emits would drift, and the drift would
-/// be invisible: each would keep answering confidently about a different
-/// project.
+/// **Both sides are the compiler's own answer.** `storage_columns` says what
+/// columns the storage lowering emits for an entity, and the check asks it
+/// twice -- once of the declared model, once of the same entity by stable ID
+/// in the accepted model. Reading the columns back out of migration text
+/// would be a second description of a decision the compiler already made, and
+/// the two would drift with nothing to say which was right.
 ///
-/// **Unknown widens.** A lineage the reader cannot fold -- a hand-written
-/// migration, a statement outside that handful, no `create table` at all --
-/// produces no check rather than an accusation.
+/// **Unknown widens.** No accepted model, or an entity the accepted model
+/// does not have, produces no check rather than an accusation: an entity
+/// nothing has accepted yet is what `model accepted` above already reports.
 fn schema_lineage(snapshot: &jails_contracts::WorkspaceSnapshot) -> Vec<Check> {
     let mut checks = Vec::new();
-    let texts = snapshot
-        .migration_history
-        .records
-        .iter()
-        .filter_map(|record| snapshot.files.get(&record.path))
-        .filter_map(|file| std::str::from_utf8(&file.bytes).ok())
-        .collect::<Vec<_>>();
-    if texts.len() != snapshot.migration_history.records.len() {
+    let Some(accepted) = snapshot.accepted_model.as_ref() else {
         return checks;
-    }
+    };
     for entity in snapshot.model.model.entities.values() {
         if !entity.active || !entity.facets.contains(&jails_model::Facet::Repository) {
             continue;
         }
-        let table = entity.names.sql_table.as_str();
-        let Some(declared) = jails_report::schema_lineage::columns_from(&texts, table) else {
+        let Some(before) = accepted.entities.get(&entity.id) else {
             continue;
         };
-        let missing = entity
-            .fields
+        let declared = jails_compiler::storage_columns(accepted, before)
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        let table = entity.names.sql_table.as_str();
+        let carried = jails_compiler::storage_columns(&snapshot.model.model, entity);
+        let missing = carried
             .iter()
-            .map(|field| field.names.sql_column.as_str())
             .filter(|column| !declared.contains(*column))
+            .map(String::as_str)
             .collect::<Vec<_>>();
         let title = format!("schema {}", entity.names.java_type);
         checks.push(match missing.is_empty() {

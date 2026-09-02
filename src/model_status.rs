@@ -252,9 +252,8 @@ fn inspect(
     };
 
     // A migration is this entity's when it names its table. The reader is
-    // bounded to the statements the compiler emits, the same bound
-    // `schema_lineage` works under: anything else widens to unknown rather
-    // than being parsed.
+    // bounded to the statements the compiler emits: anything else widens to
+    // unknown rather than being parsed.
     let mut migrations = Vec::new();
     let mut unreadable = false;
     if stored {
