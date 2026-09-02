@@ -95,28 +95,29 @@ already been paid for once:
   drifts. `TypeRef::parse` had exactly that — a private copy of "is this a
   Java identifier" beside `naming.rs`'s keyword-aware one — and it emitted
   `import enum.PENDING.PAID;` into a file that could not compile.
-- **The aliases in `BuiltinSemantics` are not v1's, and the CLI hides it.**
-  `text`, `String`, `bool` and the other Java spellings are canonicalised on
-  the way *in* — by the pre-v1 importer (`jdl.rs::normalize_type`) and by the
-  compact CLI syntax (`src/model_field_parse.rs::normalize_type`) — while
-  `jdl 1` itself matches `BuiltinType::from_token`, which compares the
-  canonical token alone. So the two layers disagree, and only a hand-edited
-  model shows it:
+- **The aliases in `BuiltinSemantics` are the CLI's, and `jdl 1` refuses
+  them by name.** `text`, `String`, `bool` and the other Java spellings are
+  canonicalised on the way *in* — by the compact CLI syntax
+  (`src/model_field_parse.rs::normalize_type`) and by the one-shot upgrade —
+  while `jdl 1` matches `BuiltinType::from_token`, which compares the
+  canonical token alone. The two layers used to disagree *silently*: a
+  hand-written `title: String` linked as an external type in the base package,
+  because a capitalised bare name is a type the project owns, and only an
+  attribute on it said anything —
 
   ```
-  $ jails g record Alias title:String!        # CLI: normalized on the way in
-  entity Alias { title: string @notBlank }
-
-  # the same thing typed into .jails/model.jdl:
   title: String @notBlank
   [model-non-blank-type] `non_blank` is valid only for builtin `string` fields
   ```
 
-  `String` is an *external type reference* in v1, so the refusal lands on the
-  attribute rather than on the type, one step from the mistake. A field
-  carrying no attribute gets no refusal at all. This is the first thing to
-  check when a hand-written field "links but is wrong", and §22 is where the
-  front ends stop disagreeing.
+  — which lands on the attribute, one step from the mistake, and a field
+  carrying no attribute got no refusal at all. `TypeRef::parse` now asks
+  `BuiltinType::from_alias` first and refuses the bare spelling, naming the
+  canonical token. **Only the bare one**: `com.example.Path` is a type the
+  project declares whose final segment collides, and its package says so. And
+  `currency` deliberately has no aliases, so `Currency` stays a project type —
+  an enum of the currencies a project deals in is an ordinary thing to
+  generate.
 
 ## How you know you are green
 

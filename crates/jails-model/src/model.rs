@@ -389,6 +389,24 @@ impl TypeRef {
         // `import enum.PENDING.PAID;` -- a file that cannot compile, written
         // with no diagnostic. One authority now: `naming::valid_java_type`
         // for the type, `naming::valid_java_package_segment` for the rest.
+        // **A Java spelling of a builtin is refused, not resolved as a project
+        // type.** `BuiltinSemantics::aliases` records `String`, `UUID`,
+        // `LocalDate` and the rest so the CLI and the pre-v1 importer can
+        // canonicalise them on the way in; `jdl 1` matches the canonical token
+        // alone, so a hand-written `title: String` used to link as an external
+        // type in the base package. Nothing said so: the field rendered as a
+        // component of a type the project does not declare, and an attribute
+        // on it refused one step from the mistake -- `non_blank` is valid only
+        // for builtin `string` fields -- about the attribute rather than the
+        // type. Only a bare spelling is refused; `com.example.Path` is a
+        // project type whose final segment happens to collide, and its package
+        // says so.
+        if let Some(builtin) = BuiltinType::from_alias(value) {
+            return Err(format!(
+                "`{value}` is the Java spelling of jails' builtin `{}`, and `jdl 1` states the canonical one",
+                builtin.semantics().token
+            ));
+        }
         let (package, name) = match value.rsplit_once('.') {
             Some((package, name)) => (package, name),
             None => ("", value),
@@ -476,5 +494,39 @@ mod tests {
         // wording: `jails g enum` is not the answer to a typo.
         let typo = TypeRef::parse("notatype").unwrap_err();
         assert!(typo.contains("unknown field type"), "{typo}");
+    }
+
+    /// The spelling the CLI accepts and `jdl 1` does not.
+    ///
+    /// Both halves again: the alias refuses and names the canonical token, and
+    /// a qualified type whose final segment *is* an alias still resolves --
+    /// `com.example.Path` is a type the project declares and its package says
+    /// so, which is the difference this rule turns on.
+    #[test]
+    fn a_java_spelling_of_a_builtin_refuses_and_names_the_canonical_token() {
+        for (alias, token) in [
+            ("String", "string"),
+            ("UUID", "uuid"),
+            ("LocalDate", "date"),
+            ("BigDecimal", "decimal"),
+            ("Boolean", "boolean"),
+        ] {
+            let message = TypeRef::parse(alias).unwrap_err();
+            assert!(
+                message.contains(&format!("`{token}`")),
+                "{alias}: {message}"
+            );
+        }
+        assert_eq!(
+            TypeRef::parse("com.example.Path"),
+            Ok(TypeRef::External("com.example.Path".to_string()))
+        );
+        // `currency` has no aliases on purpose -- an enum of the currencies a
+        // project deals in is an ordinary thing to generate -- so the
+        // capitalised spelling stays a project type.
+        assert_eq!(
+            TypeRef::parse("Currency"),
+            Ok(TypeRef::External("Currency".to_string()))
+        );
     }
 }

@@ -528,6 +528,19 @@ impl BuiltinType {
             .map(|(builtin, _)| *builtin)
     }
 
+    /// The builtin an *alias* names, and only an alias.
+    ///
+    /// **`canonicalize` cannot answer this**, because it returns the token
+    /// unchanged for anything it does not recognise -- so it says nothing
+    /// about whether a spelling was one of ours. A caller deciding what to do
+    /// about `String` needs the difference between "this is `string` written
+    /// the Java way" and "this is a type the project owns".
+    pub fn from_alias(token: &str) -> Option<Self> {
+        ALL.iter()
+            .find(|(_, row)| row.aliases.contains(&token))
+            .map(|(builtin, _)| *builtin)
+    }
+
     /// The canonical spelling of whatever a declaration wrote.
     ///
     /// An unrecognised token is returned unchanged: it is a project type, and
