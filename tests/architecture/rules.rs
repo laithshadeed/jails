@@ -318,6 +318,7 @@ fn layers_lists_each_module_once() {
 const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-model", "app", 2),
     ("jails-model", "artifact", 2),
+    ("jails-model", "build", 2),
     ("jails-model", "builtin", 2),
     ("jails-model", "capability", 2),
     ("jails-model", "component", 2),

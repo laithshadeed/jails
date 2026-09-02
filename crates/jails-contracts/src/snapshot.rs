@@ -19,7 +19,7 @@
 //! repairs, for `path.rs`'s reason: these are keys.
 
 use crate::{Layout, ProjectPath, RenderedTree};
-use jails_model::AppModel;
+use jails_model::{AppModel, BuildSystem};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -49,14 +49,6 @@ impl ContentDigest {
 pub struct VersionedModel {
     pub model: AppModel,
     pub source_digest: Option<ContentDigest>,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum BuildSystem {
-    Maven,
-    Gradle,
-    Unknown,
 }
 
 /// Facts observed once at the capture boundary.

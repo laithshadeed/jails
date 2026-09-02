@@ -7,6 +7,7 @@
 
 mod app;
 pub mod artifact;
+mod build;
 mod builtin;
 pub mod capability;
 mod component;
@@ -39,6 +40,7 @@ mod unit;
 
 pub use app::ProjectIntent;
 pub use artifact::ArtifactKind;
+pub use build::BuildSystem;
 pub use builtin::{BuiltinSemantics, LiteralKind};
 pub use capability::CapabilityKind;
 pub use component::{

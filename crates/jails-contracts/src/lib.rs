@@ -15,6 +15,8 @@ pub use draft::{
     Provenance, ReaderFacetKind, RenderedFile, RenderedMigration, RenderedReaderFacet,
     RenderedTree, SemanticPlan,
 };
+/// The build language, from the crate that owns every closed vocabulary.
+pub use jails_model::BuildSystem;
 pub use jails_model::{Head, Layer, Layout, Package};
 pub use path::ProjectPath;
 pub use plan::{
@@ -22,8 +24,8 @@ pub use plan::{
     TreeManifest,
 };
 pub use snapshot::{
-    BuildSystem, CapturedFile, ContentDigest, DirectoryPrecondition, ExternalType,
-    ExternalTypeIndex, FilePrecondition, MigrationHistory, MigrationRecord, OwnedPatchState,
-    ProjectFacts, SnapshotPreconditions, VersionedModel, WorkspaceSnapshot,
+    CapturedFile, ContentDigest, DirectoryPrecondition, ExternalType, ExternalTypeIndex,
+    FilePrecondition, MigrationHistory, MigrationRecord, OwnedPatchState, ProjectFacts,
+    SnapshotPreconditions, VersionedModel, WorkspaceSnapshot,
 };
 pub use templates::{TemplateOverride, TemplateOverrides};
