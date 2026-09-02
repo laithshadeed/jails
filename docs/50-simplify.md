@@ -34,47 +34,34 @@ other.
 Production lines are non-blank, non-comment lines with every `#[cfg(test)]`
 module removed. Raw lines are `wc -l`. Method at the end of this section.
 
-| crate | production | raw | `#[test]` |
-|---|---:|---:|---:|
-| `jails-model` | 15,996 | 20,631 | 79 |
-| root `src/` (the binary) | 14,852 | 20,317 | 55 |
-| `jails-compiler` | 14,376 | 21,526 | 80 |
-| `jails-protocol` | 8,556 | 17,013 | 238 |
-| `jails-project` | 8,443 | 14,909 | 190 |
-| `jails-drive` | 8,265 | 11,463 | 94 |
-| `jails-prepare` | 6,647 | 10,892 | 115 |
-| `jails-report` | 4,352 | 6,627 | 55 |
-| `jails-workspace` | 4,226 | 6,467 | 37 |
-| `jails-support` | 3,302 | 6,839 | 115 |
-| `jails-commit` | 2,558 | 4,955 | 62 |
-| `jails-spec` | 879 | 1,702 | 9 |
-| `jails-java` | 774 | 1,546 | 24 |
-| `jails-generate` | 641 | 1,324 | 12 |
-| `jails-contracts` | 588 | 1,021 | 5 |
-| `jails-codemod` | 427 | 1,017 | 17 |
-| `jails-codec-derive` | 243 | 323 | 1 |
-| `jails-state` | 92 | 271 | 6 |
-| `jails-testkit` | 0 | 45 | 0 |
-| **total** | **95,217** | **148,888** | **1,194** |
+| crate | production | raw |
+|---|---:|---:|
+| `jails-compiler` | 14,376 | 21,356 |
+| root `src/` (the binary) | 13,457 | 18,385 |
+| `jails-model` | 11,935 | 15,924 |
+| `jails-drive` | 7,186 | 10,165 |
+| `jails-workspace` | 4,226 | 6,409 |
+| `jails-project` | 3,945 | 7,327 |
+| `jails-report` | 3,403 | 5,442 |
+| `jails-support` | 2,633 | 5,459 |
+| `jails-java` | 752 | 1,505 |
+| `jails-spec` | 641 | 1,239 |
+| `jails-contracts` | 588 | 1,012 |
+| `jails-codemod` | 361 | 795 |
+| `jails-codec-derive` | 243 | 323 |
+| `jails-testkit` | 0 | 36 |
+| **total** | **63,746** | **95,377** |
 
-Beside the crates: `tests/` is 50,080 raw lines and 596 tests (`tests/cli/model.rs`
-alone is 14,392 lines, 159 tests); `templates/` is 197 files, 12,172 lines;
-`CLAUDE.md` is 2,895 lines, `README.md` 1,927, `ARCHITECTURE.md` 402.
+Beside the crates: `tests/` is 46,486 raw lines (`tests/cli/model.rs` alone is
+about 14,000); `templates/` is 142 files.
 
 ## What the measurement found
 
-Six facts, each the seed of one or more plans. Every one was read off the
-tree, and each plan carries the command that re-checks it.
-
-1. **The legacy transaction kernel is unreachable from the binary.** Nothing in
-   `src/` depends on `jails-commit`; `jails-prepare` is reached from exactly one
-   function, `dispatch::finish_invocation`, for the JSON *error* envelope; and
-   `jails-commit` is reached from two read-only sites, `migrate::apply_effect`
-   (a frozen migration out of the object store) and `managed_drift`'s
-   `unfinished_transactions`. Nothing creates `.jails/ledger.toml` any more.
-   That kernel is `jails-prepare` + `jails-commit` + `jails-state` + most of
-   `jails-protocol` + the codec: about **18,600 production lines, 35,000 raw,
-   and 415 unit tests that test only it.** Plan `51`.
+The facts below seed the plans. Every one was read off the tree, and each
+plan carries the command that re-checks it. The transaction kernel, the SQL
+workspace built on its vocabulary, the two compatibility parsers, the
+one-shot upgrade and the orphaned templates are deleted already; what
+remains is the shape of what survives.
 
 2. **Ordinary `jails new` is canonical.** `new/spring.rs` seeds a model
    through `seed_canonical_model` on both the online and offline paths, so
@@ -88,24 +75,12 @@ tree, and each plan carries the command that re-checks it.
    Ten `owns()` switches in seven files still guard legacy branches whose other
    side no longer exists. Plan `52`.
 
-4. **Two compatibility parsers exist to feed one one-shot.** `source.rs`
-   (`.jails/model.toml`), `jdl.rs` (the pre-v1 draft), `jdl/upgrade.rs` and
-   the `jdl/emit` renderer -- about 3,500 raw lines in `jails-model` -- are
-   reachable only through `jails model upgrade --to 1`, and jails is not
-   released, so the projects they would carry across are this repository's
-   own. Plan `54`.
+5. **The compiler assembles Java in 838 `format!(` sites**, each carrying its
+   own copy of the package line, the import block and the class shell. Plan
+   `55`.
 
-5. **Fifty-five of 197 template files are rendered by nothing** -- 2,310 lines
-   under `templates/spring/` and `templates/generate/`, orphaned when the
-   legacy generator was deleted. And the compiler assembles Java in 838
-   `format!(` sites, each carrying its own copy of the package line, the import
-   block and the class shell. Plan `55`.
-
-6. **The tool crates still carry both halves of the strangler.** Five files
-   parse Maven XML (P13.2); `jails-generate`'s SQL projection duplicates the
-   compiler's; `jails-spec`'s field spec duplicates `jails-model`'s builtin
-   registry; `jails-project` has modules with no caller outside
-   `jails-prepare`. Plan `53`.
+6. **The tool crates still carry a second Maven parser** (P13.2) and a
+   second project model beside the snapshot. Plan `53`.
 
 Reproduce the table with this, from the repository root. It is the
 approximation the baseline was taken with; `tests/architecture/measure.rs` is
@@ -148,11 +123,11 @@ adds a new shape is not progress.
 
 | plan | agent | owns | what it deletes | expected |
 |---|---|---|---|---:|
-| `docs/51-kernel.md` | **1 -- kernel** | `crates/jails-{prepare,commit,state,protocol,codec-derive}/**`, `crates/jails-support/src/codec*`, `crates/jails-spec/**`, `src/dispatch.rs`, the ledger readers in `jails-report`, `tests/protocol-golden/**`, the G1 canary, `docs/30-cutover.md` | the legacy transaction kernel and everything that exists to read its ledger | −18,000 production |
+| `docs/51-kernel.md` | **1 -- kernel** | `crates/jails-codec-derive/**`, `crates/jails-support/src/codec*`, `crates/jails-spec/**`, `src/dispatch.rs`, `tests/protocol-golden/**`, `docs/30-cutover.md` | the codec the daemon's wire still uses, once the wire is one protocol | −1,000 production |
 | `docs/52-binary.md` | **2 -- binary** | `src/**` (except `src/dispatch.rs` and `src/model_upgrade.rs`), `tests/cli/**` (except `generate.rs`, `capabilities.rs`, `tooling.rs`, `examples.rs`, `reports.rs`), `docs/feature-inventory.tsv`, `README.md`'s command sections | sixteen copies of one pipeline, every `owns()` branch, `jails app`'s legacy backend, `new`'s write path | −4,000 production |
-| `docs/53-tool-crates.md` | **3 -- tool crates** | `crates/jails-{project,generate,java,drive,report,workspace,support,codemod,contracts}/**` (minus plan 1's files), `tests/cli/{tooling,capabilities,reports,examples}.rs`, `tests/corpus/**`, `tests/baseline.rs`, `tests/architecture_allowances.rs` | the second Maven parser, the second SQL projection, the second field spec, dead `jails-project` modules, `jails-generate` | −6,000 production |
-| `docs/54-language.md` | **4 -- language** | `crates/jails-model/**`, `src/model_upgrade.rs`, `docs/10-language.md`, `docs/01-jdl-v1.md` §22 | the two compatibility parsers, the upgrade, the renderer that serves only it, a second patch path if there is one | −3,500 production |
-| `docs/55-compiler.md` | **5 -- compiler** | `crates/jails-compiler/**`, `templates/**`, `tests/golden/**`, `tests/golden.rs`, `tests/agreement.rs`, `tests/cli/generate.rs`, `docs/20-generated-java.md` | 55 orphaned templates, the per-emitter copies of the Java shell, the second proof renderer | −2,500 templates, −2,500 production |
+| `docs/53-tool-crates.md` | **3 -- tool crates** | `crates/jails-{project,java,drive,report,workspace,support,codemod,contracts}/**` (minus plan 1's files), `tests/cli/{tooling,capabilities,reports,examples}.rs`, `tests/corpus/**`, `tests/baseline.rs`, `tests/architecture_allowances.rs` | the second Maven parser, the second project model, the two test-execution vocabularies | −4,000 production |
+| `docs/54-language.md` | **4 -- language** | `crates/jails-model/**`, `docs/10-language.md` | a second patch path if there is one, the parser's repeated attribute handling | −1,500 production |
+| `docs/55-compiler.md` | **5 -- compiler** | `crates/jails-compiler/**`, `templates/**`, `tests/golden/**`, `tests/golden.rs`, `tests/agreement.rs`, `tests/cli/generate.rs`, `docs/20-generated-java.md` | the per-emitter copies of the Java shell, the second proof renderer | −2,500 production |
 
 The expected column is an estimate from the reading above, written down so
 the result can be compared with it. **A plan that lands fewer lines than
@@ -175,14 +150,12 @@ agent's path while there. Whoever lands second resolves the trivial conflict.
 
 **R3 -- one landing order, three dependencies.** Everything else is parallel.
 
-- Plan `51` step S51.2 lands **first**, within the first day: the surviving
-  vocabulary of `jails-protocol` moves to `jails-spec` with `pub use`
-  re-exports left behind, so no other agent's imports change. Until it lands,
-  nobody else touches a `jails_protocol::` import.
-- Plan `53`'s deletion of `jails-project` modules that only `jails-prepare`
-  reaches waits for plan `51` step S51.4. Everything else in `53` starts now.
-- Plan `54`'s parser deletion removes the `.jails/model.toml` and upgrade tests
-  from `tests/cli/model.rs`, which plan `52` owns. R2 covers it.
+- Plan `51`'s codec decision (S51.4) waits on plan `53`'s S53.5, because the
+  daemon's wire is the codec's last user.
+- Plan `52`'s one pipeline (S52.1) and plan `54`'s `Edit` (S60.1) are the same
+  change seen from two crates; agree the `Edit` shape before either starts.
+- Plan `53`'s S53.3 and plan `55`'s S55.6 both touch what `doctor` compares
+  migrations against; land S55.6 first.
 
 **R4 -- the shared files keep their resolution rules** from
 `docs/00-contracts.md`: `tests/golden/**` is regenerated and the diff is read;
@@ -231,7 +204,7 @@ blocks on and may be retired whole by plan `51`, and the ownership table in
 
 ## The end state, so it can be recognised
 
-Ten crates, not eighteen: `jails-model`, `jails-contracts`, `jails-compiler`,
+Ten crates, not thirteen: `jails-model`, `jails-contracts`, `jails-compiler`,
 `jails-workspace`, `jails-codemod` (dependency-free, for both ladders),
 `jails-support`, `jails-spec` (the shared CLI vocabulary and nothing
 derived), `jails-project` (reader-owned files, with the Java reader folded in),

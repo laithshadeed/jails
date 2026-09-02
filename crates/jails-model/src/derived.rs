@@ -93,7 +93,11 @@ impl DerivedRoleKey {
         }
     }
 
-    pub fn slotted(owner: impl Into<String>, role: DerivedRole, slot: impl Into<String>) -> Self {
+    pub(crate) fn slotted(
+        owner: impl Into<String>,
+        role: DerivedRole,
+        slot: impl Into<String>,
+    ) -> Self {
         Self {
             owner: owner.into(),
             role,
@@ -239,7 +243,7 @@ impl DerivedValue {
 /// and digested with the model. Reconciling it moves files in every project
 /// generated so far, which is why it is recorded rather than quietly
 /// corrected — JDL v1 §3.1 rule 4 makes conventions part of `jdl 1`.
-pub fn package_conventions(
+pub(crate) fn package_conventions(
     project: &ProjectIntent,
     into: &mut BTreeMap<DerivedRoleKey, DerivedValue>,
 ) {
@@ -466,9 +470,8 @@ mod tests {
     ///
     /// **On a column, because JDL v1 has no way to pin an entity's table** --
     /// an entity takes `id` and `retired` and nothing else, so `sql-table` is
-    /// always the pluralizer's answer for a v1 source. `.jails/model.toml` can
-    /// state one, which is why the record still compares against the
-    /// convention rather than assuming it.
+    /// always the pluralizer's answer for a v1 source. The record still
+    /// compares against the convention rather than assuming it.
     #[test]
     fn a_written_name_replaces_the_convention_it_displaced() {
         let model = crate::parse_jdl(

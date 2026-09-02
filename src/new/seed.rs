@@ -115,7 +115,7 @@ pub(super) fn write_agents(tree: &publish::Tree<'_>, java: &str) -> Result<()> {
     if path.exists() {
         return Ok(());
     }
-    let package = crate::generate::base_package(tree.root())
+    let package = jails_spec::spec::paths::base_package(tree.root())
         .unwrap_or_else(|_| "the package declared by the application entry point".to_string());
     let rules = crate::lint::agents_rules();
     let body = format!(

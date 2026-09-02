@@ -45,14 +45,6 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
-/// The environment and process rules one runner version guarantees.
-///
-/// Changing any of those rules requires a new schema value: the minimal
-/// environment keys, the relative working directory, the stdin policy, the
-/// output caps and the process-group behaviour are all part of what a tool's
-/// identity means.
-pub const RUNNER_SCHEMA: u32 = 1;
-
 /// At most this much of each stream is kept. Beyond it the bytes are dropped
 /// and a truncation bit is set — a diagnostic that grows without bound is a
 /// diagnostic nobody reads and a memory profile nobody predicted.

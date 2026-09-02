@@ -51,7 +51,7 @@ pub(super) fn v1_declaration(
             // `SqlName::conventional_table` performs on the way to them. A
             // default route is reader-visible API, so it stays on the one
             // function that produces it.
-            jails_generate::sql::table_name(name).replace('_', "-")
+            jails_model::plural_snake_case(&class_to_snake(name)).replace('_', "-")
         ))
     } else if args.method.is_some() || args.consumes.is_some() {
         // **A method or request format without a path is not a missing path.**
@@ -431,4 +431,21 @@ pub(super) fn reject_v1_options(args: &GenerateArgs, kind: ComponentKind) -> Res
         ));
     }
     Ok(())
+}
+
+/// `LedgerEntry` to `ledger_entry`: the class name in the spelling the
+/// pluraliser and the SQL projection both read.
+fn class_to_snake(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 4);
+    for (index, ch) in name.chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if index > 0 {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }

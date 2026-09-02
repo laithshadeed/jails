@@ -7,7 +7,7 @@
 //! planning code must not reach back into the filesystem for facts already
 //! represented here.
 
-use jails_protocol::identity::ProjectPath;
+use jails_support::identity::ProjectPath;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -16,20 +16,6 @@ use crate::compose::Service as ComposeService;
 use crate::config::Config;
 use crate::pom::{self, Dependency, Flavor};
 use jails_support::Result;
-
-/// What a project calls its wire properties.
-///
-/// Two answers, because Boot's Jackson auto-configuration offers one knob that
-/// matters here and a project either turned it on or did not. Anything jails
-/// cannot read is `AsWritten`, which is what every project got before this
-/// existed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WireNaming {
-    /// The component name, as the field spec spells it.
-    AsWritten,
-    /// `snake_case`, because `spring.jackson.property-naming-strategy` says so.
-    SnakeCase,
-}
 
 /// One file a recipe intends to create, with its bytes already rendered.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,11 +42,7 @@ pub struct SpringTestImport {
     pub class: &'static str,
 }
 
-impl SpringTestImport {
-    pub fn fqcn(&self) -> String {
-        format!("{}.{}", self.pkg, self.class)
-    }
-}
+impl SpringTestImport {}
 
 /// Everything one recipe intends to change, computed before it is applied.
 ///
@@ -76,7 +58,7 @@ pub struct Change {
     /// that does it: keyed by artifact id, a Gradle project's claim is filed
     /// under a plugin it does not have, and every consumer has to map the
     /// coordinate back onto its purpose before it can act.
-    pub plugins: Vec<(jails_protocol::feature::BuildFeature, String)>,
+    pub plugins: Vec<(crate::feature::BuildFeature, String)>,
     pub files: Vec<Artifact>,
     pub compose: Vec<ComposeService>,
     pub properties: Vec<String>,
@@ -128,19 +110,11 @@ pub struct Change {
 /// and a path would make it look like the same one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommandRegistration {
-    pub dispatcher: jails_protocol::identity::JavaType,
-    pub command: jails_protocol::identity::JavaType,
+    pub dispatcher: jails_support::identity::JavaType,
+    pub command: jails_support::identity::JavaType,
 }
 
-impl CommandRegistration {
-    /// From two qualified names, which is what a recipe has.
-    pub fn parse(dispatcher: &str, command: &str) -> Result<Self> {
-        Ok(Self {
-            dispatcher: jails_protocol::identity::JavaType::parse(dispatcher)?,
-            command: jails_protocol::identity::JavaType::parse(command)?,
-        })
-    }
-}
+impl CommandRegistration {}
 
 /// One `# jails:<marker>` block, as a change states it.
 ///
@@ -161,17 +135,7 @@ pub struct MarkedBlock {
     pub settings: Vec<String>,
 }
 
-impl MarkedBlock {
-    /// The block's content, as `codemod` renders it between the markers.
-    pub fn rendered(&self) -> String {
-        let mut out = String::new();
-        for line in &self.settings {
-            out.push_str(line);
-            out.push('\n');
-        }
-        out
-    }
-}
+impl MarkedBlock {}
 
 impl Change {
     /// Associatively combine independently planned recipe changes.
@@ -380,11 +344,6 @@ impl Layers {
             .map(String::as_str)
             .unwrap_or(default)
     }
-
-    /// The same lookup under the name `Config` spells it.
-    pub fn layer<'a>(&'a self, default: &'a str) -> &'a str {
-        self.named(default)
-    }
 }
 
 /// What an unreadable build file means. See `Project::boot_major`.
@@ -435,23 +394,6 @@ impl Project {
             }
             _ => Some(pom::has_dependency(&self.pom, group_id, artifact_id)),
         }
-    }
-
-    /// Whether a change should plan to add this dependency.
-    ///
-    /// **Reads may be optimistic here, because the write is authoritative.**
-    /// Planning to add something already present is a no-op -- both splices
-    /// return "nothing to do" -- and planning to add it into a build file
-    /// jails cannot read is a *refusal* raised by the splice, naming the file.
-    /// So an unreadable build resolves to "plan it" and the honest error
-    /// arrives from the one place that can be sure, rather than from a guess
-    /// made here.
-    ///
-    /// The opposite composition is what would hurt: treating "cannot read" as
-    /// "already there" silently drops a dependency the generated code needs,
-    /// and the reader meets it as a compile error in a file they did not write.
-    pub fn lacks_dependency(&self, group_id: &str, artifact_id: &str) -> bool {
-        self.declares_dependency(group_id, artifact_id) != Some(true)
     }
 
     /// Resolve project facts exactly once from a known Maven module root.
@@ -597,15 +539,11 @@ impl Project {
     /// without this it reports "records none -- nothing to reconcile" about a
     /// project whose model declares them.
     ///
-    /// Both spellings, because `.jails/model.toml` is a compatibility input
-    /// and recognising only the current one would give those projects the
-    /// wrong answer rather than none. Recognised by the file rather than by
-    /// an import: this crate does not depend on the canonical ladder, and
-    /// which file holds a project's declarations is the one fact about it
-    /// that a reader-facing report needs.
+    /// Recognised by the file rather than by an import: this crate does not
+    /// depend on the compiler ladder, and which file holds a project's
+    /// declarations is the one fact about it a reader-facing report needs.
     pub fn is_modelled(&self) -> bool {
         self.root.join(".jails/model.jdl").is_file()
-            || self.root.join(".jails/model.toml").is_file()
     }
 
     /// What builds this project.
@@ -773,33 +711,15 @@ impl Project {
         crate::pom::webmvc_test_import_for(self.boot_major())
     }
 
-    /// The components of a record that already exists in this project.
-    ///
-    /// `Project` owns the one window onto disk, so the recipes above it stay
-    /// pure. Recipes reach it through [`Slice::record`], which knows which
-    /// layer owns the resource.
-    pub fn record_in(&self, package: &str, ty: &str) -> Option<Vec<crate::spec::Field>> {
-        crate::spec::fields_of_record(&self.source_of(package, ty)?)
-    }
-
     /// The source of a type this project owns, through the projection first.
     ///
     /// The one window, and it hands back the text rather than the components
     /// of a record, because an aggregate transition has more than one question
     /// to ask about a type that exists only in the plan -- an enum's first
     /// constant is the other one.
-    pub fn source_of(&self, package: &str, ty: &str) -> Option<String> {
+    pub(crate) fn source_of(&self, package: &str, ty: &str) -> Option<String> {
         let relative = format!("src/main/java/{}/{ty}.java", package.replace('.', "/"));
         self.projected_text(&relative)
-    }
-
-    /// Whether this project has a type at all, as the plan leaves it.
-    ///
-    /// A recipe that checks `Path::is_file` instead refuses a manifest row
-    /// whose prerequisite is two rows above it -- present in the plan, absent
-    /// on disk, and about to be written by the same commit.
-    pub fn has_type(&self, package: &str, ty: &str) -> bool {
-        self.source_of(package, ty).is_some()
     }
 
     /// Whether a type this project owns is an enum.
@@ -820,99 +740,13 @@ impl Project {
     /// from disk. This is public because SQL generators need the same truthful
     /// view as Java generators when an earlier manifest row creates a
     /// migration that a later row must inspect.
-    pub fn projected_text(&self, path: &str) -> Option<String> {
+    pub(crate) fn projected_text(&self, path: &str) -> Option<String> {
         let projected = self.overlay.as_ref().and_then(|overlay| {
             let key = ProjectPath::parse(path).ok()?;
             let bytes = overlay.get(&key)?;
             String::from_utf8(bytes.clone()).ok()
         });
         projected.or_else(|| std::fs::read_to_string(self.root.join(path)).ok())
-    }
-
-    /// What this project calls its JSON properties on the wire.
-    ///
-    /// **Read off the property that actually decides it**, never configured
-    /// twice: `spring.jackson.property-naming-strategy` is what Boot hands the
-    /// mapper, so a project that says `SNAKE_CASE` there is a project whose
-    /// wire is snake_case, and jails does not need to be told again. Same rule
-    /// as `sql_dialect`, which reads the driver rather than the manifest.
-    ///
-    /// It matters beyond JSON: Spring's *data binder* has no naming strategy,
-    /// so a form post at a `@ModelAttribute` endpoint binds by the component
-    /// name unless each one carries `@BindParam`. Without this, a project
-    /// whose JSON is `user_id` would have its form fields silently arrive as
-    /// `null` -- the same value on the wire reaching two different names.
-    pub fn wire_naming(&self) -> WireNaming {
-        match self
-            .projected_text("src/main/resources/application.properties")
-            .and_then(|text| {
-                text.lines().rev().find_map(|line| {
-                    line.trim()
-                        .strip_prefix("spring.jackson.property-naming-strategy")?
-                        .trim_start()
-                        .strip_prefix('=')
-                        .map(|value| value.trim().to_string())
-                })
-            })
-            .as_deref()
-        {
-            Some("SNAKE_CASE") => WireNaming::SnakeCase,
-            _ => WireNaming::AsWritten,
-        }
-    }
-
-    /// Every Java source under `src/main/java`, as the plan leaves them.
-    ///
-    /// Disk plus the overlay, with the overlay winning. A recipe that has to
-    /// *find* something in the project -- the dispatcher a generated command
-    /// registers itself in -- cannot walk disk alone: in an aggregate apply
-    /// the `g cli` row that creates the dispatcher and the `g command` row
-    /// that registers into it are one transition, and the file the second
-    /// needs has not been written when the second plans.
-    ///
-    /// A map rather than a list of pairs: the two halves are a path and its
-    /// text, and a positional pair of those two compiles when you swap them.
-    pub fn projected_main_sources(&self) -> BTreeMap<PathBuf, String> {
-        self.projected_sources("src/main/java")
-    }
-
-    /// Whether this project declares a top-level type by that simple name.
-    ///
-    /// Read through the projection, so a transaction that is *about* to write
-    /// the type sees it -- the same rule every other planning read follows.
-    /// Used to ask whether a capability's own class is present: `add api`
-    /// installs a sealed `ApiException` and an exhaustive handler, and until
-    /// something throws one the whole RFC 9457 surface is unreachable code.
-    pub fn declares_type(&self, name: &str) -> bool {
-        self.projected_main_sources()
-            .values()
-            .filter_map(|source| crate::java::type_info(source))
-            .any(|info| info.name == name)
-    }
-
-    /// The same, for the test tree.
-    pub fn projected_test_sources(&self) -> BTreeMap<PathBuf, String> {
-        self.projected_sources("src/test/java")
-    }
-
-    fn projected_sources(&self, tree: &str) -> BTreeMap<PathBuf, String> {
-        let root = self.root.join(tree);
-        let mut found: BTreeMap<PathBuf, String> = BTreeMap::new();
-        for path in crate::java::source_files(&root) {
-            if let Ok(text) = std::fs::read_to_string(&path) {
-                found.insert(path, text);
-            }
-        }
-        let prefix = format!("{tree}/");
-        for (path, bytes) in self.overlay.iter().flat_map(|overlay| overlay.iter()) {
-            if !path.as_str().starts_with(&prefix) || !path.as_str().ends_with(".java") {
-                continue;
-            }
-            if let Ok(text) = String::from_utf8(bytes.clone()) {
-                found.insert(self.root.join(path.as_str()), text);
-            }
-        }
-        found
     }
 
     /// Every file name directly under a project-relative directory, as the
@@ -940,31 +774,12 @@ impl Project {
         found
     }
 
-    /// Whether this project-relative directory exists, as the plan will leave
-    /// it.
-    ///
-    /// A directory an earlier row of the same transition creates counts. It is
-    /// the same question `projected_names_in` answers, asked of the directory
-    /// rather than of its contents.
-    pub fn has_directory(&self, relative: &str) -> bool {
-        self.root.join(relative).is_dir() || !self.projected_names_in(relative).is_empty()
-    }
-
     pub fn main(&self, layer: Layer, package: Option<&str>) -> PathBuf {
         crate::spec::main_dir(&self.root, &self.package(layer, package))
     }
 
     pub fn test(&self, layer: Layer, package: Option<&str>) -> PathBuf {
         crate::spec::test_dir(&self.root, &self.package(layer, package))
-    }
-
-    /// Main/test source roots for a package already resolved by the caller.
-    pub fn main_in(&self, package: &str) -> PathBuf {
-        crate::spec::main_dir(&self.root, package)
-    }
-
-    pub fn test_in(&self, package: &str) -> PathBuf {
-        crate::spec::test_dir(&self.root, package)
     }
 }
 
@@ -974,90 +789,6 @@ fn resolve_package(base: &str, requested: &str) -> String {
         requested.to_string()
     } else {
         crate::spec::subpackage(base, requested)
-    }
-}
-
-/// Where one generated slice's classes go, and the rule that decides.
-///
-/// `--package` places the **operation** being generated. The resource that
-/// operation targets already exists in the project's configured scaffold
-/// layers, so moving the operation must not make jails look for a second copy
-/// of the resource in the override package. Stated at every call site, that
-/// rule is a string per layer per renderer; one value carries the project,
-/// the override, and the rule.
-#[derive(Clone, Copy)]
-pub struct Slice<'a> {
-    project: &'a Project,
-    package: Option<&'a str>,
-}
-
-impl<'a> Slice<'a> {
-    pub fn new(project: &'a Project, package: Option<&'a str>) -> Self {
-        Self { project, package }
-    }
-
-    /// The package this slice's own classes go in, honouring `--package`.
-    pub fn placed(&self, layer: Layer) -> String {
-        self.project.package(layer, self.package)
-    }
-
-    /// The package a layer conventionally owns, ignoring `--package`.
-    ///
-    /// This is where an already-generated resource lives, and it is a
-    /// different question from where this slice's classes go.
-    pub fn owned(&self, layer: Layer) -> String {
-        self.project.package(layer, None)
-    }
-
-    /// The application's base package, which is where `add security` writes
-    /// `ScopeAuthorizer`.
-    pub fn base(&self) -> &'a str {
-        self.project.base()
-    }
-
-    pub fn project(&self) -> &'a Project {
-        self.project
-    }
-
-    /// The application's own base package, with `--package` applied.
-    ///
-    /// Capabilities that write one configuration class per application
-    /// (`actuator`, `security`, `cors`, `observability`) live here rather than
-    /// in a layer: there is one of each, and it belongs beside the app.
-    pub fn root_package(&self) -> String {
-        self.project.package_named("", self.package)
-    }
-
-    /// The `--package` override itself, for the few helpers that still key
-    /// recorded state on it rather than on a resolved package.
-    pub fn override_package(&self) -> Option<&'a str> {
-        self.package
-    }
-
-    /// The components of an already-generated record in its conventional home.
-    pub fn record(&self, layer: Layer, ty: &str) -> Option<Vec<crate::spec::Field>> {
-        self.project.record_in(&self.owned(layer), ty)
-    }
-
-    /// Source roots for this slice's own classes in a layer.
-    pub fn main(&self, layer: Layer) -> PathBuf {
-        self.project.main(layer, self.package)
-    }
-
-    pub fn test(&self, layer: Layer) -> PathBuf {
-        self.project.test(layer, self.package)
-    }
-
-    /// The project root, for the apply-side helpers that genuinely address
-    /// the filesystem rather than plan against it.
-    pub fn root(&self) -> &'a Path {
-        self.project.root()
-    }
-
-    /// The project's build flavour, which decides versioned-vs-managed
-    /// dependencies and therefore whether a spliced pom is readable at all.
-    pub fn flavor(&self) -> Flavor {
-        self.project.flavor()
     }
 }
 

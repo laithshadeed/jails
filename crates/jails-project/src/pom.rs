@@ -117,7 +117,7 @@ pub fn assertj(flavor: Flavor) -> Dependency {
 
 /// Kept in step with `new.rs`'s generated pom deliberately: a project jails
 /// created and a project jails adopted should end up with the same AssertJ.
-pub const ASSERTJ_VERSION: &str = "3.27.7";
+pub(crate) const ASSERTJ_VERSION: &str = "3.27.7";
 
 pub fn read(root: &Path) -> Result<String> {
     let path = root.join("pom.xml");
@@ -292,9 +292,6 @@ fn versionless_dependencies(pom: &str) -> Vec<(String, String)> {
 struct Tag {
     name: String,
     start: usize,
-    /// One past the `>`, so `xml[open.end..close.start]` is exactly the
-    /// element's content.
-    end: usize,
     closing: bool,
     self_closing: bool,
 }
@@ -337,7 +334,6 @@ fn scan_tags(xml: &str) -> Vec<Tag> {
             tags.push(Tag {
                 name,
                 start: i,
-                end: i + gt + 1,
                 closing,
                 self_closing,
             });
@@ -484,203 +480,6 @@ fn last_child_indent(pom: &str, close: usize) -> Option<String> {
     line_indent(pom, at).map(|s| s.to_string())
 }
 
-/// Remove a project-level `<dependency>` matching `group_id`/`artifact_id`.
-/// Returns `Ok(None)` when it is not declared -- `remove` is idempotent the
-/// same way `add` is. Skips `<dependencyManagement>` so a BOM entry is never
-/// mistaken for the real declaration.
-pub(crate) fn remove_dependency(
-    pom: &str,
-    group_id: &str,
-    artifact_id: &str,
-) -> Result<Option<String>> {
-    let Some((start, end)) = project_child_span(
-        pom,
-        "dependency",
-        &["project", "dependencies"],
-        group_id,
-        artifact_id,
-    ) else {
-        return Ok(None);
-    };
-    Ok(Some(cut(pom, start, end)))
-}
-
-/// Remove a `project/build/plugins` `<plugin>` whose artifactId matches.
-///
-/// Taking the last plugin out also takes the nest out, because `add_plugin`
-/// creates `<build><plugins>` when a POM has neither -- and an inverse that
-/// removes only half of what it added leaves an empty scaffold behind after
-/// every `destroy`. Only an element that is genuinely empty is collapsed, and
-/// never past `<build>`: a `<build>` still holding `<finalName>`,
-/// `<resources>` or `<pluginManagement>` stays exactly as it was.
-///
-/// The one case this is not a byte-exact inverse of is a POM that already
-/// carried an empty `<plugins>` before jails ever touched it. That is a
-/// scaffold with no meaning to Maven, and distinguishing it would need to know
-/// which branch `add_plugin` took, which is state this format owner does not
-/// keep.
-pub(crate) fn remove_plugin(pom: &str, artifact_id: &str) -> Result<Option<String>> {
-    let Some((start, end)) = plugin_span(pom, artifact_id) else {
-        return Ok(None);
-    };
-    let mut out = cut(pom, start, end);
-    if let Some((start, end)) = empty_element_span(&out, "plugins", &["project", "build"]) {
-        out = cut(&out, start, end);
-    }
-    if let Some((start, end)) = empty_element_span(&out, "build", &["project"]) {
-        out = cut(&out, start, end);
-    }
-    Ok(Some(out))
-}
-
-/// Byte span of `parent_path/name` when it holds nothing at all.
-///
-/// "Nothing at all" is whitespace only. A comment inside it counts as content
-/// and keeps the element, which is the safe direction: a reader who wrote a
-/// note there meant to keep the element it is in.
-fn empty_element_span(xml: &str, name: &str, parent_path: &[&str]) -> Option<(usize, usize)> {
-    let tags = scan_tags(xml);
-    let mut stack: Vec<&str> = Vec::new();
-    let mut open: Option<&Tag> = None;
-
-    for tag in &tags {
-        if tag.closing {
-            if tag.name == name
-                && let Some(start) = open
-                && stack.len() == parent_path.len() + 1
-            {
-                let inner = &xml[start.end..tag.start];
-                if inner.trim().is_empty() {
-                    let close_end = tag.start + format!("</{name}>").len();
-                    return Some(span_including_line(
-                        xml,
-                        start.start,
-                        close_end.min(xml.len()),
-                    ));
-                }
-                open = None;
-            }
-            stack.pop();
-            continue;
-        }
-        if tag.self_closing {
-            // `<plugins/>` is already the collapsed form and holds nothing, so
-            // it is removed whole rather than looked into.
-            if tag.name == name && stack.as_slice() == parent_path {
-                return Some(span_including_line(xml, tag.start, tag.end));
-            }
-            continue;
-        }
-        if tag.name == name && stack.as_slice() == parent_path {
-            open = Some(tag);
-        }
-        stack.push(&tag.name);
-    }
-    None
-}
-
-fn cut(xml: &str, start: usize, end: usize) -> String {
-    let mut out = String::with_capacity(xml.len() - (end - start));
-    out.push_str(&xml[..start]);
-    out.push_str(&xml[end..]);
-    out
-}
-
-fn span_including_line(xml: &str, start: usize, end: usize) -> (usize, usize) {
-    let line_start = xml[..start].rfind('\n').map(|i| i + 1).unwrap_or(0);
-    let start = if xml[line_start..start]
-        .chars()
-        .all(|c| c == ' ' || c == '\t')
-    {
-        line_start
-    } else {
-        start
-    };
-    let end = if xml[end..].starts_with('\n') {
-        end + 1
-    } else if xml[end..].starts_with("\r\n") {
-        end + 2
-    } else {
-        end
-    };
-    (start, end)
-}
-
-/// Byte span of a project-level `<dependency>` whose groupId and artifactId
-/// match. `parent_path` is the element stack that must surround the opening
-/// tag (`["project", "dependencies"]`).
-fn project_child_span(
-    xml: &str,
-    element: &str,
-    parent_path: &[&str],
-    group_id: &str,
-    artifact_id: &str,
-) -> Option<(usize, usize)> {
-    let tags = scan_tags(xml);
-    let mut stack: Vec<&str> = Vec::new();
-    let mut open_at: Option<usize> = None;
-    let group = format!("<groupId>{group_id}</groupId>");
-    let artifact = format!("<artifactId>{artifact_id}</artifactId>");
-
-    for tag in &tags {
-        if tag.closing {
-            if tag.name == element
-                && let Some(start) = open_at
-            {
-                let close_end = tag.start + format!("</{element}>").len();
-                let block = &xml[start..close_end.min(xml.len())];
-                if block.contains(&group) && block.contains(&artifact) {
-                    return Some(span_including_line(xml, start, close_end));
-                }
-                open_at = None;
-            }
-            stack.pop();
-            continue;
-        }
-        if tag.self_closing {
-            continue;
-        }
-        if tag.name == element && stack.as_slice() == parent_path {
-            open_at = Some(tag.start);
-        }
-        stack.push(&tag.name);
-    }
-    None
-}
-
-fn plugin_span(xml: &str, artifact_id: &str) -> Option<(usize, usize)> {
-    let tags = scan_tags(xml);
-    let mut stack: Vec<&str> = Vec::new();
-    let mut open_at: Option<usize> = None;
-    let artifact = format!("<artifactId>{artifact_id}</artifactId>");
-    let parent: &[&str] = &["project", "build", "plugins"];
-
-    for tag in &tags {
-        if tag.closing {
-            if tag.name == "plugin"
-                && let Some(start) = open_at
-            {
-                let close_end = tag.start + "</plugin>".len();
-                let block = &xml[start..close_end.min(xml.len())];
-                if block.contains(&artifact) {
-                    return Some(span_including_line(xml, start, close_end));
-                }
-                open_at = None;
-            }
-            stack.pop();
-            continue;
-        }
-        if tag.self_closing {
-            continue;
-        }
-        if tag.name == "plugin" && stack.as_slice() == parent {
-            open_at = Some(tag.start);
-        }
-        stack.push(&tag.name);
-    }
-    None
-}
-
 // ---------------------------------------------------------------------------
 // build plugins
 // ---------------------------------------------------------------------------
@@ -803,7 +602,7 @@ fn indent_block(body: &str, indent: &str) -> String {
 // up into the generator layer for them.
 
 mod retarget;
-pub use retarget::{with_parent_version, with_release_level};
+pub(crate) use retarget::{with_parent_version, with_release_level};
 
 /// The Boot `(major, minor)` this pom's parent declares, when it declares one.
 ///
@@ -813,7 +612,7 @@ pub use retarget::{with_parent_version, with_release_level};
 /// auto-configuration into `spring-boot-flyway` at 4.0 -- three boundaries
 /// inside two majors, and `add db` needs all three. `None` means the parent is
 /// absent or unreadable, which is a different answer from "old".
-pub fn spring_boot_version_of(pom: &str) -> Option<(u32, u32)> {
+pub(crate) fn spring_boot_version_of(pom: &str) -> Option<(u32, u32)> {
     let after = &pom[pom.find("spring-boot-starter-parent")?..];
     let start = after.find("<version>")? + "<version>".len();
     let end = after[start..].find("</version>")?;
@@ -874,53 +673,6 @@ pub fn main_class(pom: &str) -> Option<&str> {
     let value = pom[start..end].trim();
     (!value.is_empty()).then_some(value)
 }
-
-/// Point the packaged jar at a different class, leaving every other byte
-/// alone. `None` when the POM declares no main class at all -- a Spring Boot
-/// project, where the plugin finds `@SpringBootApplication` itself.
-pub(crate) fn with_main_class(pom: &str, fqcn: &str) -> Option<String> {
-    let open = "<mainClass>";
-    let start = pom.find(open)? + open.len();
-    let end = pom[start..].find("</mainClass>")? + start;
-    let mut out = String::with_capacity(pom.len() + fqcn.len());
-    out.push_str(&pom[..start]);
-    out.push_str(fqcn);
-    out.push_str(&pom[end..]);
-    Some(out)
-}
-
-/// The module that starts a project's compose services for `spring-boot:run`.
-///
-/// Optional, because it is a development convenience rather than something the
-/// application needs at run time -- and because `spring-boot-docker-compose`
-/// cannot drive podman-compose, which is why `add db` also writes
-/// `spring.docker.compose.enabled=false`. The two are not in tension: the
-/// property is a per-project answer to a broken provider, and the dependency
-/// is what the property is *about*.
-pub const SPRING_DOCKER_COMPOSE: Dependency = Dependency {
-    group_id: "org.springframework.boot",
-    artifact_id: "spring-boot-docker-compose",
-    version: None,
-    scope: None,
-    optional: true,
-};
-
-/// The module the Boot 4 servlet test slice lives in.
-///
-/// The rename of `@WebMvcTest` is the visible half and the smaller one. Boot 4
-/// split the slice into `spring-boot-webmvc-test`, and
-/// `spring-boot-starter-test` does not bring it in -- verified in
-/// `deps/spring-boot/starter/spring-boot-starter-test/build.gradle`, which
-/// lists `spring-boot-test-autoconfigure` and not this. A generated
-/// `@WebMvcTest` compiles only when this is declared, so it lives beside the
-/// import it belongs to.
-pub const WEBMVC_TEST_STARTER: Dependency = Dependency {
-    group_id: "org.springframework.boot",
-    artifact_id: "spring-boot-starter-webmvc-test",
-    version: None,
-    scope: Some("test"),
-    optional: false,
-};
 
 /// `@AutoConfigureMockMvc`'s package, moved in the same Boot 4 change.
 ///
@@ -1211,121 +963,6 @@ mod tests {
         let out = add_dependency(PLAIN_POM, &optional).unwrap().unwrap();
         assert!(out.contains("<artifactId>commons-csv</artifactId>"));
         assert!(out.contains("<optional>true</optional>"));
-    }
-
-    #[test]
-    fn remove_dependency_is_the_inverse_of_add() {
-        let added = add_dependency(PLAIN_POM, &CSV).unwrap().unwrap();
-        let removed = remove_dependency(&added, CSV.group_id, CSV.artifact_id)
-            .unwrap()
-            .unwrap();
-        assert_eq!(removed, PLAIN_POM);
-    }
-
-    #[test]
-    fn remove_dependency_is_idempotent() {
-        assert!(
-            remove_dependency(PLAIN_POM, CSV.group_id, CSV.artifact_id)
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn remove_dependency_skips_the_dependency_management_block() {
-        let pom = r#"<project>
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>org.apache.commons</groupId>
-                <artifactId>commons-csv</artifactId>
-                <version>1.0</version>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
-    <dependencies>
-        <dependency>
-            <groupId>com.example</groupId>
-            <artifactId>real</artifactId>
-        </dependency>
-    </dependencies>
-</project>
-"#;
-        assert!(
-            remove_dependency(pom, "org.apache.commons", "commons-csv")
-                .unwrap()
-                .is_none()
-        );
-        assert!(pom.contains("commons-csv"));
-    }
-
-    #[test]
-    fn remove_plugin_is_the_inverse_of_add() {
-        let pom = "<project>\n    <build>\n        <plugins>\n            <plugin>\n                <artifactId>real</artifactId>\n            </plugin>\n        </plugins>\n    </build>\n</project>\n";
-        let added = add_plugin(pom, "spotless-maven-plugin", SPOTLESS)
-            .unwrap()
-            .unwrap();
-        let removed = remove_plugin(&added, "spotless-maven-plugin")
-            .unwrap()
-            .unwrap();
-        assert_eq!(removed, pom);
-    }
-
-    /// `add_plugin` creates the whole `<build><plugins>` nest, so removing the
-    /// plugin has to take it back out. Otherwise every `destroy` leaves an
-    /// empty scaffold in a POM the reader owns.
-    #[test]
-    fn remove_plugin_takes_back_the_nest_add_plugin_created() {
-        let pom = "<project>\n    <artifactId>demo</artifactId>\n</project>\n";
-        let added = add_plugin(pom, "spotless-maven-plugin", SPOTLESS)
-            .unwrap()
-            .unwrap();
-        assert!(added.contains("<build>"), "{added}");
-        let removed = remove_plugin(&added, "spotless-maven-plugin")
-            .unwrap()
-            .unwrap();
-        assert_eq!(removed, pom);
-    }
-
-    /// A `<build>` that holds anything else keeps it. The collapse is of what
-    /// became empty, never of the element it happened to be inside.
-    #[test]
-    fn remove_plugin_keeps_a_build_that_still_says_something() {
-        let pom = "<project>\n    <build>\n        <finalName>demo</finalName>\n        \
-                   <plugins>\n            <plugin>\n                \
-                   <artifactId>spotless-maven-plugin</artifactId>\n            </plugin>\n        \
-                   </plugins>\n    </build>\n</project>\n";
-        let out = remove_plugin(pom, "spotless-maven-plugin")
-            .unwrap()
-            .unwrap();
-        assert!(out.contains("<finalName>demo</finalName>"), "{out}");
-        assert!(out.contains("<build>"), "{out}");
-        assert!(!out.contains("<plugins>"), "the empty nest went:\n{out}");
-    }
-
-    /// A comment inside the nest is content, and keeps it. Deleting the
-    /// element a reader wrote a note in would be deleting the note.
-    #[test]
-    fn remove_plugin_keeps_a_nest_someone_left_a_note_in() {
-        let pom = "<project>\n    <build>\n        <plugins>\n            <plugin>\n                \
-                   <artifactId>spotless-maven-plugin</artifactId>\n            </plugin>\n            \
-                   <!-- the formatter used to live here -->\n        </plugins>\n    \
-                   </build>\n</project>\n";
-        let out = remove_plugin(pom, "spotless-maven-plugin")
-            .unwrap()
-            .unwrap();
-        assert!(out.contains("the formatter used to live here"), "{out}");
-        assert!(out.contains("<plugins>"), "{out}");
-    }
-
-    #[test]
-    fn remove_plugin_leaves_sibling_plugins() {
-        let pom = "<project>\n    <build>\n        <plugins>\n            <plugin>\n                <artifactId>real</artifactId>\n            </plugin>\n            <plugin>\n                <artifactId>spotless-maven-plugin</artifactId>\n            </plugin>\n        </plugins>\n    </build>\n</project>\n";
-        let out = remove_plugin(pom, "spotless-maven-plugin")
-            .unwrap()
-            .unwrap();
-        assert!(out.contains("<artifactId>real</artifactId>"));
-        assert!(!out.contains("spotless-maven-plugin"));
     }
 
     #[test]

@@ -46,7 +46,3 @@ run = [
 [tasks.test]
 description = "The gate's test phase, without the toolchain tier (the inner-loop run)"
 run = "cargo test --workspace"
-
-[tasks.verify-rewrite-g1-canary]
-description = "Build the frozen legacy revision and compare iterative, rerun, and destroy semantics"
-run = "./scripts/verify-rewrite-g1-canary.sh"

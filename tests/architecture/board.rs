@@ -40,7 +40,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // sweep. None of those threads a root further down. The disease
                 // is a root threaded through a call graph so each level can
                 // re-derive facts, and the row below counts that on its own.
-                ceiling: 87,
+                ceiling: 81,
                 // Withdrawn, not reached: the count includes modules whose
                 // subject *is* a path, so a target under the ceiling reads as
                 // a demand to stop writing modules. The row below is the
@@ -395,7 +395,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // `Project::is_modelled` does not do. Raise it once, with the
                 // reason, when a check is added: a ceiling quietly absorbing a
                 // rise is how a ratchet becomes decoration.
-                ceiling: 1522,
+                ceiling: 1505,
                 // Withdrawn, not reached: none of the hand-written checks is a
                 // re-encoded dependency fact, so a lower target measures a
                 // saving that is not there. Ratchet against growth.
@@ -470,8 +470,8 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // no per-entity ordering it does not give. What the number
                 // stops is the next template quietly adding another paragraph
                 // nobody can check beside them.
-                ceiling: 22,
-                target: 22,
+                ceiling: 23,
+                target: 23,
                 why: "A wrong explanation is believed, and a comment restating a decision is \
                       the fastest thing in a codebase to go stale. Generated prose is worse \
                       again: it is asserted by a template that has no way to confirm it, and \

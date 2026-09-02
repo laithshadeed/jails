@@ -41,7 +41,7 @@ small and early.
 | `refuse_legacy_mutation` calls | 9 |
 | `src/new/**` | 2,543 raw |
 | `src/cli.rs` + `src/cli/*.rs` | 2,350 raw |
-| `schema_command`, `sql_command`, `editor_command`, `contract_command`, `tool_command` | 2,350 raw |
+| `editor_command`, `contract_command`, `tool_command` | 1,400 raw |
 | `tests/cli/model.rs` | 14,392 lines, 159 tests |
 
 ```
@@ -67,8 +67,6 @@ own exact-field-shape checks run before the edit, not after.
 **S52.2 -- Delete every `owns()` branch.** Ten sites, seven files. For each,
 the other side is a project this binary cannot create:
 
-- `schema_command`: the `!owns()` half of `resource status` reaches
-  `lifecycle_status`, which agent 1 deletes (S51.3d). Delete the branch.
 - `app.rs`: the legacy backend and the "one transition" prose (about 200
   lines), `refuse_legacy_mutation` and its nine callers. `app apply` is the
   canonical replay; `app init` writes the manifest and keeps its refusal
@@ -77,17 +75,12 @@ the other side is a project this binary cannot create:
   `model_command`: each branch that asks whether the project is canonical.
   `model_command::owns` itself survives as the one place that answers
   "is there a model here", and only `project_root` calls it.
-- The ledger refusal agent 1 hands you (S51.3f): one `is_file` on
-  `.jails/ledger.toml` in `project_root`, with a `fix:` naming the commit
-  tagged by agent 4 (S54.1) as the last binary that could carry it across.
+- A project holding `.jails/ledger.toml` and no model is refused by name:
+  one `is_file` in `project_root` with a `fix:`.
 
-**S52.3 -- `new` without the legacy write path.** `new/spring.rs` writes three
-files through `jails_generate::write_new_file`, which is the last edge from
-the binary into `jails-generate`. Those files are template renders into a
-reserved `Tree`; import normalisation and `package-info.java` are the
-compiler's on every later write, and the three templates already carry sorted
-imports. Write them with `tree.put` and drop the dependency. Then the online
-and offline bodies in `spring.rs` are the same forty lines but for
+**S52.3 -- `new`'s three seeds.** `src/new/write.rs` writes `App.java`, its
+test and a `package-info.java` by hand before the model takes over. The
+online and offline bodies in `spring.rs` are the same forty lines but for
 `download_starter`; fold them. `gradle_project.rs` (759 raw) is the third
 copy of "seed a project and a model": measure what it shares with `plain.rs`
 before deciding how much of it is Gradle.
@@ -101,9 +94,8 @@ exists to distinguish them. Fold. `feature-inventory.tsv`'s *owner crate* and
 from what `main.rs` actually dispatches to, and keep
 `every_inventoried_command_path_is_invoked_by_a_test` green while you do.
 
-**S52.5 -- The surfaces with no page.** `Command::Sql`, `Introspect`, `Pull`,
-`Schema`, `Editor`, `Contract`, `Request`, `Runner`, `Logs` and
-`Architecture` are 2,350 raw lines of frontend over about 4,000 in
+**S52.5 -- The surfaces with no page.** `Command::Editor`, `Contract`,
+`Request`, `Runner`, `Logs` and `Architecture` are frontends over
 `jails-drive` and `jails-project`. Measure each against `README.md`'s
 `Commands` section and against `every_advertised_command_path_has_a_journey`.
 A command with a section and a journey stays (R7). A command with neither is
@@ -111,22 +103,15 @@ A command with a section and a journey stays (R7). A command with neither is
 not touched until they answer. Do not delete a command on your own reading of
 whether it is used.
 
-**S52.6 -- `tests/cli/model.rs`.** 14,392 lines is not a test file anyone
-reads. Three moves, in order. First, the tests whose subject is
-`.jails/model.toml`, the pre-v1 draft or `jails model upgrade` go with agent
-4's parsers (S54.1; R2 -- they delete, you review). Second, name the
-duplicates: tests that prove one property through one path twice -- a
+**S52.6 -- `tests/cli/model.rs`.** 14,000 lines is not a test file anyone
+reads. Two moves, in order. First, name the duplicates: tests that prove one property through one path twice -- a
 "refuses X" test per frontend where the refusal now comes from the one
-pipeline is the likely shape after S52.1. Third, split what remains by
-subject into `tests/cli/model/*.rs` so a reader can find one; a split
-changes no line count and is done last so it does not hide the first two.
+pipeline is the likely shape after S52.1. Second, split what remains by subject into `tests/cli/model/*.rs` so a
+reader can find one; a split changes no line count and is done last so it
+does not hide the first.
 
-**S52.7 -- The prose.** `README.md` says `jails model import` exists (it does
-not), shows the pre-v1 spelling as "the operational default" and says ordinary
-`new` is legacy. The `Commands` section is yours; `Canonical application
-compiler` is shared with agent 4 by section. `CLAUDE.md`'s *Layout* entries
-for `src/` describe files by their old names (`invoke`, `generate.rs`
-dispatch). Rewrite to what is there after S52.1.
+**S52.7 -- The prose.** `README.md`'s `Commands` section is yours; rewrite
+it to what is there after S52.1 and S52.4.
 
 ## Traps
 

@@ -8,14 +8,6 @@
 //! like the example, and deleting the documentation instead of the
 //! registration on removal.
 
-/// The statements inside `commands()`, between the map's creation and the
-/// `return` -- the only region where a registration counts.
-pub fn registry_body(source: &str) -> Option<&str> {
-    let anchor = source.find("return commands;")?;
-    let start = source[..anchor].rfind("new LinkedHashMap")?;
-    Some(&source[start..anchor])
-}
-
 /// What makes a file a jails command dispatcher: the registry type it
 /// dispatches over, and the line `register_command` splices above. Both are
 /// checked, because either alone shows up in files that are not dispatchers.
@@ -51,37 +43,4 @@ pub fn splice_registration(source: &str, command_class: &str, import: &str) -> O
     with_import.push_str(import);
     with_import.push_str(&out[package_end..]);
     Some(crate::tidy::normalize_imports(&with_import))
-}
-
-/// The exact inverse of `splice_registration`: take the dispatch line for
-/// `command_class` back out, and the import that only existed to serve it.
-///
-/// Returns `None` when there is no such line, so the caller can stay quiet
-/// rather than rewriting a file it did not change. Scoped to the registry
-/// body, like the splice, so a Javadoc example is never mistaken for a
-/// registration.
-pub fn unsplice_registration(source: &str, command_class: &str) -> Option<String> {
-    let call = format!("commands.put({command_class}.NAME, {command_class}::run);");
-    let body = registry_body(source)?;
-    if !body.contains(&call) {
-        return None;
-    }
-
-    let import = format!(".{command_class};");
-    let kept: Vec<&str> = source
-        .lines()
-        .filter(|line| {
-            let trimmed = line.trim();
-            if trimmed == call {
-                return false;
-            }
-            !(trimmed.starts_with("import ") && trimmed.ends_with(&import))
-        })
-        .collect();
-
-    let mut out = kept.join("\n");
-    if source.ends_with('\n') {
-        out.push('\n');
-    }
-    Some(out)
 }

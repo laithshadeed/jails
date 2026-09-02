@@ -21,19 +21,14 @@ toml = "1.1.4"
 
 jails-codec-derive = { path = "crates/jails-codec-derive" }
 jails-codemod = { path = "crates/jails-codemod" }
-jails-commit = { path = "crates/jails-commit" }
 jails-compiler = { path = "crates/jails-compiler" }
 jails-contracts = { path = "crates/jails-contracts" }
 jails-drive = { path = "crates/jails-drive" }
-jails-generate = { path = "crates/jails-generate" }
 jails-java = { path = "crates/jails-java" }
 jails-model = { path = "crates/jails-model" }
-jails-prepare = { path = "crates/jails-prepare" }
 jails-project = { path = "crates/jails-project" }
-jails-protocol = { path = "crates/jails-protocol" }
 jails-report = { path = "crates/jails-report" }
 jails-spec = { path = "crates/jails-spec" }
-jails-state = { path = "crates/jails-state" }
 jails-support = { path = "crates/jails-support" }
 jails-testkit = { path = "crates/jails-testkit" }
 jails-workspace = { path = "crates/jails-workspace" }
@@ -59,12 +54,7 @@ edition.workspace = true
 [dependencies]
 jails-drive.workspace = true
 jails-report.workspace = true
-jails-commit.workspace = true
-jails-prepare.workspace = true
 jails-codemod.workspace = true
-# `new` writes its three seed files through `generate::write_new_file`; the
-# edge goes when `docs/52-binary.md` S52.3 lands.
-jails-generate.workspace = true
 jails-project.workspace = true
 jails-spec.workspace = true
 jails-java.workspace = true
@@ -74,8 +64,6 @@ jails-compiler.workspace = true
 jails-workspace.workspace = true
 clap.workspace = true
 clap_complete = "4.6.7"
-jails-protocol.workspace = true
-jails-state.workspace = true
 jails-support.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

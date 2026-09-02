@@ -855,7 +855,7 @@ pub(crate) const BUILTIN_RS: &str = "jails-model/src/builtin.rs";
 /// separates "asks the pom a question" from "has an opinion about its
 /// structure", and it is the second that duplicates. The exemption belongs to
 /// the question, not to the file that happens to ask it.
-pub(crate) const MAVEN_XML_PARSERS: usize = 5;
+pub(crate) const MAVEN_XML_PARSERS: usize = 4;
 
 /// `# jails:` marker literals outside the crate that owns the format.
 ///
@@ -998,7 +998,7 @@ pub(crate) const WIRE_RS: &str = "jails-support/src/codec/wire.rs";
 /// The next move on this row is either a `#[codec(validate)]` that calls the
 /// constructor after decoding, or accepting the number, which is what "target
 /// withdrawn" already says.
-pub(crate) const HAND_WRITTEN_CODECS: usize = 90;
+pub(crate) const HAND_WRITTEN_CODECS: usize = 17;
 
 /// The other three files a gate here names. Paths for the same reason: a
 /// second `doctor.rs` or `codemod.rs` anywhere in the workspace would silently
@@ -1020,7 +1020,7 @@ pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 /// carries its next step on the type (`#[codec(unknown_fix = "...")]`) rather
 /// than in the one place the message is built, so the wording cannot drift
 /// per type.
-pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 325;
+pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 111;
 
 /// A refusal that builds a message and does not say what to do next.
 ///

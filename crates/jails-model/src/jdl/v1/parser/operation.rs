@@ -154,9 +154,9 @@ impl Parser<'_> {
                 // No compatibility projection: a synthesised `sets` of
                 // *every* parameter subtracts neither the row selector nor
                 // the version, and a single `yields` keeps only the first
-                // `emit`. `.jails/model.toml` still spells the flat pair and
-                // the linker folds it in; a JDL v1 source carries the rich
-                // form, so it leaves the compatibility fields empty and the
+                // `emit`. The linker folds the flat pair in when a source
+                // carries it; a JDL v1 source carries the rich form, so it
+                // leaves the compatibility fields empty and the
                 // one representation is the linked semantics.
                 let sets = Vec::new();
                 let yields = None;

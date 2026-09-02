@@ -50,10 +50,6 @@ fn owns_terminal_output(path: &Path) -> bool {
         // canonical needs to know that generation has moved to
         // `.jails/generated` and their own sources have not.
         || relative == "src/model_init.rs"
-        // A CLI command module whose contract includes telling the reader what
-        // the upgrade changes about the model before the plan is shown; JDL v1
-        // §22 requires that review step.
-        || relative == "src/model_upgrade.rs"
         // A read-only report whose entire contract is terminal output:
         // JDL v1 §18.4 asks that a derived name be *inspectable*, and a
         // command that returned the records to a caller with nowhere to print
@@ -417,66 +413,25 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-workspace", "reconcile", 5),
     ("jails-workspace", "verify", 5),
     // jails-protocol: the validated values every closed format is built from.
-    ("jails-protocol", "compatibility", 3),
-    ("jails-protocol", "durable", 3),
-    ("jails-protocol", "intent", 3),
-    ("jails-protocol", "observe", 3),
-    ("jails-protocol", "vocabulary", 3),
     // jails-state: `.jails/` and what a directory holds. Below the Java
     // project on purpose -- `jails-commit` needs both and neither is about Java.
-    ("jails-state", "compat", 4),
-    ("jails-state", "listing", 4),
     // jails-project: the resolved project and everything jails records about it.
-    ("jails-project", "application_manifest", 5),
-    ("jails-project", "query_workspace", 5),
     ("jails-project", "gradle", 5),
     ("jails-project", "pom", 5),
     ("jails-project", "maven", 5),
     ("jails-project", "capability", 5),
     ("jails-project", "config", 5),
     ("jails-project", "synonyms", 5),
-    ("jails-project", "capture", 5),
     ("jails-project", "compose", 5),
-    ("jails-project", "named_query", 5),
+    ("jails-project", "feature", 5),
     ("jails-project", "model", 5),
     ("jails-project", "modernize", 5),
     ("jails-project", "project", 5),
-    ("jails-project", "projection", 5),
     ("jails-project", "properties", 5),
-    ("jails-project", "query_compiler", 5),
-    ("jails-project", "schema", 5),
-    ("jails-project", "generated_files", 5),
     ("jails-project", "inspect", 5),
     // jails-generate: everything that decides what Java to write.
-    ("jails-generate", "sql", 6),
-    ("jails-generate", "generate", 6),
     // jails-prepare: turning desire into an exact executable transition.
-    ("jails-prepare", "command", 6),
-    ("jails-prepare", "desire", 6),
-    ("jails-prepare", "operation", 6),
-    ("jails-prepare", "pipeline", 6),
-    ("jails-prepare", "prepare", 6),
-    ("jails-prepare", "prepared_after", 6),
-    ("jails-prepare", "receipt", 6),
-    ("jails-prepare", "merge", 6),
-    ("jails-prepare", "reconcile", 6),
-    ("jails-prepare", "recovery", 6),
-    ("jails-prepare", "report", 6),
-    ("jails-prepare", "review", 6),
-    ("jails-prepare", "sandbox", 6),
-    ("jails-prepare", "serialize", 6),
-    ("jails-prepare", "timing", 6),
-    ("jails-prepare", "tool", 6),
     // jails-commit: making a prepared transaction durable, and recovering one.
-    ("jails-commit", "activate", 7),
-    ("jails-commit", "execute", 7),
-    ("jails-commit", "fault", 7),
-    ("jails-commit", "gc", 7),
-    ("jails-commit", "runtime", 7),
-    ("jails-commit", "journal", 7),
-    ("jails-commit", "outcome", 7),
-    ("jails-commit", "recover", 7),
-    ("jails-commit", "store", 7),
     // jails-report: commands that answer a question. Read-only by contract,
     // and below `jails-drive` so the contract is structural.
     ("jails-report", "doctor", 7),
@@ -487,8 +442,6 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-report", "explain", 7),
     ("jails-report", "commands", 7),
     ("jails-report", "source", 7),
-    ("jails-report", "lifecycle_status", 7),
-    ("jails-report", "managed_drift", 7),
     // jails-drive: commands that start something.
     ("jails-drive", "run", 8),
     ("jails-drive", "launcher", 8),
@@ -502,16 +455,12 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-drive", "bench", 8),
     ("jails-drive", "reports", 8),
     ("jails-drive", "lint", 8),
-    ("jails-drive", "datasource", 8),
-    ("jails-drive", "live_sql", 8),
     ("jails-drive", "testing", 8),
     // jails-cli: the binary and the whole-project lifecycle commands.
     ("jails", "new", 9),
     ("jails", "adopt", 9),
     ("jails", "modernize", 9),
     ("jails", "app", 9),
-    ("jails", "sql_command", 9),
-    ("jails", "schema_command", 9),
     ("jails", "editor_command", 9),
     ("jails", "contract_command", 9),
     ("jails", "tool_command", 9),
@@ -533,7 +482,6 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails", "model_setting", 9),
     ("jails", "model_status", 9),
     ("jails", "model_migration", 9),
-    ("jails", "model_upgrade", 9),
     ("jails", "canonical_support", 9),
     ("jails", "parse_error", 9),
     ("jails", "facade", 9),
@@ -626,7 +574,6 @@ const SUBPROCESS_CLASSIFICATION: &[(&str, &str)] = &[
     ("console", "read-only client"),
     ("contract_command", "read-only client"),
     ("tool_command", "read-only client"),
-    ("live_sql", "read-only probe"),
     ("doctor", "read-only probe"),
     // Asks `git merge-file` what it can do, on three throwaway files in a
     // scratch directory, and reads the exit status. It writes nothing the
@@ -644,7 +591,6 @@ const SUBPROCESS_CLASSIFICATION: &[(&str, &str)] = &[
     // The executor's own runner and tool resolver.
     ("process", "the one executor"),
     ("hermetic", "the one executor"),
-    ("sandbox", "the one executor"),
 ];
 
 /// Which module a file belongs to: `(crate, module)`.
@@ -1038,7 +984,7 @@ fn every_inventoried_command_path_is_invoked_by_a_test() {
         .filter_map(|line| line.split('\t').next())
         .collect();
     assert!(
-        commands.len() > 100,
+        commands.len() > 90,
         "the inventory reader found only {} command paths -- it has lost the \
          file and this gate would pass over anything",
         commands.len()
@@ -1155,88 +1101,6 @@ fn collect_rust_sources(dir: &Path, out: &mut String) {
             out.push('\n');
         }
     }
-}
-
-/// The two pluralizers agree, word for word.
-///
-/// JDL v1 §9.7 specifies one table-naming rule;
-/// `jails-protocol::SqlName::conventional_table` and
-/// `jails_model::plural_snake_case` both implement it, and the two crates
-/// cannot depend on each other. Two pluralisers that drift serve `/categorys`
-/// over a table called `categories`, and one that says `task` where the other
-/// says `tasks` points every generated statement at a table the database does
-/// not have. So: one *rule*, two implementations, and a gate that fails the
-/// moment they answer differently.
-///
-/// Delete this test when `jails-protocol`'s copy goes, not before.
-#[test]
-fn both_pluralizers_answer_the_same_for_every_specified_rule() {
-    // Every branch of JDL v1 §9.7, plus the compounds that make the "final word"
-    // rule observable, plus the words a guesser would get wrong.
-    const WORDS: &[&str] = &[
-        "reward",
-        "work_item",
-        "address",
-        "box",
-        "quiz",
-        "batch",
-        "dish",
-        "category",
-        "toy",
-        "knife",
-        "shelf",
-        "cliff",
-        "status",
-        "person",
-        "child",
-        "man",
-        "woman",
-        "foot",
-        "tooth",
-        "goose",
-        "mouse",
-        "support_person",
-        "pocket_knife",
-        "equipment",
-        "information",
-        "money",
-        "news",
-        "series",
-        "species",
-        "staff",
-        "audio",
-        "metadata",
-        "data",
-        "ox",
-        "note",
-        "task",
-        "invoice",
-        "company",
-        "party",
-        "day",
-    ];
-    let mut disagreements = Vec::new();
-    for word in WORDS {
-        let canonical = jails_model::plural_snake_case(word);
-        let name = jails_protocol::identity::Name::parse(word)
-            .unwrap_or_else(|error| panic!("`{word}` is not a valid name: {error}"));
-        let legacy = jails_protocol::identity::SqlName::conventional_table(&name)
-            .as_str()
-            .to_string();
-        if canonical != legacy {
-            disagreements.push(format!(
-                "  {word}: canonical `{canonical}`, legacy `{legacy}`"
-            ));
-        }
-    }
-    assert!(
-        disagreements.is_empty(),
-        "the canonical and legacy pluralizers disagree:\n{}\n\n\
-         Both implement JDL v1 §9.7 and both are used on projects that \
-         cross between them, so a disagreement renames a table under a running \
-         application. Fix whichever one departs from the spec.",
-        disagreements.join("\n")
-    );
 }
 
 /// Every file that runs this project's automation: scripts, hooks, workflows.

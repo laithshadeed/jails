@@ -200,6 +200,12 @@ pub struct Layout {
 }
 
 impl Layout {
+    #[cfg(test)]
+    /// Whether this project renamed nothing, so its packages are the defaults.
+    pub fn is_default(&self) -> bool {
+        self.renames.is_empty()
+    }
+
     /// The `[layout]` table of a `jails.toml`.
     ///
     /// Hand-parsed for the reason the rest of jails hand-parses this file, and
@@ -258,36 +264,11 @@ impl Layout {
             Head::Facet(facet) => facet,
         }
     }
-
-    /// Whether this project renamed nothing, so its packages are the defaults.
-    pub fn is_default(&self) -> bool {
-        self.renames.is_empty()
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_project_with_no_file_keeps_every_default_name() {
-        let layout = Layout::default();
-        assert!(layout.is_default());
-        for layer in Layer::ALL {
-            assert_eq!(layout.head(Head::Layer(layer)), layer.package());
-        }
-    }
-
-    #[test]
-    fn a_rename_applies_to_its_layer_and_to_nothing_else() {
-        let layout = Layout::parse(
-            "# a comment\n[layout]\nadapters = \"persistence\"\n\n[project]\nadapters = \"ignored\"\n",
-        )
-        .unwrap();
-        assert_eq!(layout.head(Head::Layer(Layer::Adapters)), "persistence");
-        assert_eq!(layout.head(Head::Layer(Layer::Web)), "web");
-        assert!(!layout.is_default());
-    }
 
     /// An unknown key is an error, because silently meaning "no rename"
     /// produces a tree nobody asked for.
@@ -335,6 +316,25 @@ mod tests {
                 seen.insert(suffix.clone()),
                 "{package:?} duplicates `{suffix}`"
             );
+        }
+    }
+    #[test]
+    fn a_rename_applies_to_its_layer_and_to_nothing_else() {
+        let layout = Layout::parse(
+            "# a comment\n[layout]\nadapters = \"persistence\"\n\n[project]\nadapters = \"ignored\"\n",
+        )
+        .unwrap();
+        assert_eq!(layout.head(Head::Layer(Layer::Adapters)), "persistence");
+        assert_eq!(layout.head(Head::Layer(Layer::Web)), "web");
+        assert!(!layout.is_default());
+    }
+
+    #[test]
+    fn a_project_with_no_file_keeps_every_default_name() {
+        let layout = Layout::default();
+        assert!(layout.is_default());
+        for layer in Layer::ALL {
+            assert_eq!(layout.head(Head::Layer(layer)), layer.package());
         }
     }
 }

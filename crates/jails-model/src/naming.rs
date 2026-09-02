@@ -184,7 +184,7 @@ pub(crate) fn valid_route(route: &str) -> bool {
 /// `..` is rejected outright: Spring resolves it, so `/api/../secret` mounts
 /// somewhere other than where it reads as mounting, and a route that is not
 /// the route it looks like is worse than one that is refused.
-pub fn route_problem(route: &str) -> Option<String> {
+pub(crate) fn route_problem(route: &str) -> Option<String> {
     let Some((method, path)) = route.split_once(' ') else {
         return Some(format!(
             "`{route}` has no method: a route is `METHOD /path`"

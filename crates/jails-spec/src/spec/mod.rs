@@ -11,10 +11,13 @@
 //! `inspect` all do. Answered from the generator layer, those modules reach
 //! upward, and a cycle is a boundary nothing can enforce.
 
-pub mod field;
+pub mod constant;
+pub mod coordinate;
 pub mod kind;
 pub mod layout;
+pub mod manifest;
 pub mod paths;
+pub mod policy;
+pub mod suffix;
 
-pub use field::*;
 pub use paths::*;

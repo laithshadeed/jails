@@ -75,7 +75,7 @@ fn application_properties(project: &crate::model::Project) -> String {
 /// where a reader would look. A URL assembled at run time from an environment
 /// variable is invisible here, which is the same limit `jails routes` states
 /// about a path built at run time.
-pub fn declared_url(project: &crate::model::Project) -> Option<String> {
+pub(crate) fn declared_url(project: &crate::model::Project) -> Option<String> {
     let properties = application_properties(project);
     let url = property(&properties, "spring.datasource.url")?;
     url.starts_with("jdbc:h2:").then(|| url.to_string())

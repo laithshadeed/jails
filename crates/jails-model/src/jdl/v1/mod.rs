@@ -3,9 +3,8 @@
 //! `.jails/model.jdl` is the file a reader edits, and `docs/01-jdl-v1.md` is
 //! its specification. This module is the whole language: a lossless lexer, a CST
 //! that keeps every input byte, syntax-preserving edits, a formatter, and a
-//! parser that produces the same `source::Document` the TOML input does — so
-//! the linker below is shared and the two dialects cannot diverge about what a
-//! declaration *means*.
+//! parser that produces the closed `source::Document` the linker reads — so
+//! what a declaration *means* is decided once, below the syntax.
 //!
 //! **Lossless is the requirement, not a nicety.** Every CLI mutation is a
 //! syntax edit on this file: `g record`, `add`, `set`, `resource field rename`
@@ -13,12 +12,6 @@
 //! their comments and their ordering in it. A parse that discarded trivia
 //! could only rewrite the file whole, and rewriting a file somebody edits is
 //! how a tool stops being trusted with it.
-//!
-//! `is_v1` decides which dialect a document is in, and it deliberately falls
-//! back to reading the first non-comment line when lexing fails: a document
-//! that says `jdl 1` and then has a syntax error must be reported as broken
-//! v1, never silently retried as pre-v1 — where the same bytes would mean
-//! something else.
 
 mod cst;
 mod edit;
@@ -40,42 +33,15 @@ pub use token::{Span, Token, TokenKind};
 
 use crate::{AppModel, Diagnostics};
 
-pub(super) fn is_v1(input: &str) -> bool {
-    let Ok(tokens) = token::lex(input) else {
-        return first_non_comment_line(input)
-            .is_some_and(|line| line.split_whitespace().next() == Some("jdl"));
-    };
-    let mut syntax = tokens.iter().filter(|token| {
-        !matches!(
-            token.kind,
-            TokenKind::Whitespace
-                | TokenKind::Comment
-                | TokenKind::Newline
-                | TokenKind::TriviaNewline
-                | TokenKind::Eof
-        )
-    });
-    syntax
-        .next()
-        .is_some_and(|token| token.text(input) == "jdl")
-}
-
 pub fn parse_cst(input: &str) -> Result<DocumentCst, Diagnostics> {
     let tokens = token::lex(input)?;
     Ok(parser::parse(input, tokens)?.cst)
 }
 
-pub(super) fn parse(input: &str) -> Result<AppModel, Diagnostics> {
+pub fn parse(input: &str) -> Result<AppModel, Diagnostics> {
     let tokens = token::lex(input)?;
     let parsed = parser::parse(input, tokens)?;
     crate::linker::link(parsed.source)
-}
-
-fn first_non_comment_line(input: &str) -> Option<&str> {
-    input.lines().find_map(|line| {
-        let line = line.trim();
-        (!line.is_empty() && !line.starts_with("//")).then_some(line)
-    })
 }
 
 #[cfg(test)]
@@ -117,30 +83,6 @@ entity Task @id(ent_task) {
   index [title desc]
 }
 "#;
-
-    #[test]
-    fn cst_round_trips_every_byte_and_finds_declaration_spans() {
-        let cst = parse_cst(CORE).unwrap();
-        assert_eq!(cst.reconstruct(), CORE);
-        assert_eq!(cst.declarations.len(), 6);
-        let task = cst
-            .declarations
-            .iter()
-            .find(|declaration| declaration.name.as_deref() == Some("Task"))
-            .unwrap();
-        assert!(cst.declaration_text(task).starts_with("entity Task"));
-        assert!(
-            cst.declaration_text(task)
-                .trim_end_matches(['\r', '\n'])
-                .ends_with('}')
-        );
-        let edited = cst
-            .replace_declaration(task, "entity WorkItem @id(ent_task) {}\n")
-            .unwrap();
-        assert!(edited.contains("// retained lead comment\n"));
-        assert!(edited.contains("entity WorkItem @id(ent_task) {}\n"));
-        assert!(!edited.contains("entity Task @id(ent_task)"));
-    }
 
     #[test]
     fn v1_lowers_directly_to_the_existing_typed_linker_boundary() {
@@ -432,13 +374,6 @@ entity Task {
 
         let unsupported = crate::parse_jdl("jdl 2\n").unwrap_err();
         assert_eq!(unsupported.diagnostics[0].code, "JDL0001");
-    }
-
-    #[test]
-    fn v1_parser_has_no_toml_frontend_dependency() {
-        let parser = include_str!("parser.rs");
-        assert!(!parser.contains("parse_toml"));
-        assert!(!parser.contains("toml::"));
     }
 
     #[test]
@@ -994,5 +929,35 @@ entity Beta {
                 .iter()
                 .any(|diagnostic| diagnostic.code == "model-relation-cascade-cycle")
         );
+    }
+    #[test]
+    fn v1_parser_has_no_toml_frontend_dependency() {
+        let parser = include_str!("parser.rs");
+        assert!(!parser.contains("parse_toml"));
+        assert!(!parser.contains("toml::"));
+    }
+
+    #[test]
+    fn cst_round_trips_every_byte_and_finds_declaration_spans() {
+        let cst = parse_cst(CORE).unwrap();
+        assert_eq!(cst.reconstruct(), CORE);
+        assert_eq!(cst.declarations.len(), 6);
+        let task = cst
+            .declarations
+            .iter()
+            .find(|declaration| declaration.name.as_deref() == Some("Task"))
+            .unwrap();
+        assert!(cst.declaration_text(task).starts_with("entity Task"));
+        assert!(
+            cst.declaration_text(task)
+                .trim_end_matches(['\r', '\n'])
+                .ends_with('}')
+        );
+        let edited = cst
+            .replace_declaration(task, "entity WorkItem @id(ent_task) {}\n")
+            .unwrap();
+        assert!(edited.contains("// retained lead comment\n"));
+        assert!(edited.contains("entity WorkItem @id(ent_task) {}\n"));
+        assert!(!edited.contains("entity Task @id(ent_task)"));
     }
 }

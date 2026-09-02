@@ -1,13 +1,11 @@
 //! Read-only editor protocol projections derived from ordinary project facts.
 
-use crate::cli::{
-    EditorCommand, EditorDiagnosticScopeArg, EditorEvidenceArg, EditorSymbolKindArg, Output,
-};
+use crate::cli::{EditorCommand, EditorDiagnosticScopeArg, EditorSymbolKindArg, Output};
 use crate::{Cli, inspect, model, pom};
 use clap::CommandFactory;
-use jails_protocol::identity::ObjectId;
 use jails_support::Result;
 use jails_support::codec::domain_hash;
+use jails_support::identity::ObjectId;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -29,20 +27,9 @@ pub(crate) fn run(command: EditorCommand, invocation: crate::Invocation) -> Resu
         EditorCommand::Symbols { kind, query, path } => {
             symbols(kind, query.as_deref(), path.as_deref())
         }
-        EditorCommand::Diagnostics {
-            scope,
-            file,
-            path,
-            evidence,
-            datasource,
-        } => diagnostics(
-            scope,
-            file.as_deref(),
-            path.as_deref(),
-            evidence,
-            datasource.as_deref(),
-            invocation.debug,
-        ),
+        EditorCommand::Diagnostics { scope, file, path } => {
+            diagnostics(scope, file.as_deref(), path.as_deref())
+        }
     }
 }
 
@@ -200,7 +187,6 @@ fn symbols(kind: EditorSymbolKindArg, query: Option<&str>, start: Option<&Path>)
                 line: bean.line.saturating_sub(1),
             })
             .collect(),
-        EditorSymbolKindArg::Queries => query_symbols(&project),
         EditorSymbolKindArg::Tests => source_symbols(&project, true),
         EditorSymbolKindArg::Types => source_symbols(&project, false),
     };
@@ -231,24 +217,6 @@ fn symbols(kind: EditorSymbolKindArg, query: Option<&str>, start: Option<&Path>)
         rows
     );
     Ok(())
-}
-
-fn query_symbols(project: &model::Project) -> Vec<Symbol> {
-    jails_project::query_workspace::check_offline(project, None, None)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|query| Symbol {
-            label: query.source.id.name.as_str().to_string(),
-            id: format!(
-                "query:{}.{}",
-                query.source.id.slice.as_str(),
-                query.source.id.name.as_str()
-            ),
-            detail: Some(query.source.cardinality.label().to_string()),
-            path: Some(query.source.path.to_string()),
-            line: 0,
-        })
-        .collect()
 }
 
 fn source_symbols(project: &model::Project, tests: bool) -> Vec<Symbol> {
@@ -302,9 +270,6 @@ fn diagnostics(
     scope: EditorDiagnosticScopeArg,
     file: Option<&Path>,
     start: Option<&Path>,
-    evidence: EditorEvidenceArg,
-    datasource: Option<&str>,
-    debug: bool,
 ) -> Result<()> {
     if scope == EditorDiagnosticScopeArg::Project && file.is_some() {
         return Err("`--file` is invalid for project diagnostics.\n       fix: omit it or select `--scope buffer`.".into());
@@ -321,52 +286,6 @@ fn diagnostics(
                 &error.to_string(),
                 Some(&path.to_string_lossy()),
                 0,
-                evidence,
-            ));
-        }
-    }
-    if scope == EditorDiagnosticScopeArg::Project {
-        for finding in jails_project::query_workspace::migration_lint(&project, None)? {
-            rows.push(diagnostic_json(
-                "migration-risk",
-                "warning",
-                &finding.summary,
-                Some(finding.path.as_str()),
-                usize::try_from(finding.statement.saturating_sub(1)).unwrap_or(usize::MAX),
-                evidence,
-            ));
-        }
-        if matches!(
-            evidence,
-            EditorEvidenceArg::Offline | EditorEvidenceArg::Live
-        ) && let Err(error) = jails_project::query_workspace::check_offline(&project, None, None)
-        {
-            rows.push(diagnostic_json(
-                "sql-unverified",
-                "error",
-                &error.to_string(),
-                None,
-                0,
-                evidence,
-            ));
-        }
-    }
-    if evidence == EditorEvidenceArg::Live {
-        let datasource = datasource.ok_or_else(|| "live editor diagnostics require `--datasource`.\n       fix: name an already reachable declared datasource.".to_string())?;
-        if let Err(error) = jails_drive::live_sql::observe(
-            &project,
-            datasource,
-            jails_drive::live_sql::LiveServices::Existing,
-            "public",
-            debug,
-        ) {
-            rows.push(diagnostic_json(
-                "live-evidence-unavailable",
-                "error",
-                &error.to_string(),
-                None,
-                0,
-                evidence,
             ));
         }
     }
@@ -397,7 +316,6 @@ fn diagnostic_json(
     message: &str,
     path: Option<&str>,
     line: usize,
-    evidence: EditorEvidenceArg,
 ) -> String {
     let primary = path.map(|path| format!("{{\"path\":{},\"range\":{{\"start\":{{\"line\":{},\"byte_column\":0}},\"end\":{{\"line\":{},\"byte_column\":0}}}}}}", js(path), line, line.saturating_add(1))).unwrap_or_else(|| "null".into());
     format!(
@@ -406,7 +324,7 @@ fn diagnostic_json(
         js(severity),
         js(message),
         primary,
-        js(&format!("{evidence:?}").to_ascii_lowercase())
+        "\"parsed\""
     )
 }
 

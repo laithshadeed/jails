@@ -165,18 +165,13 @@ to** -- this is the prose, and prose goes stale.
 | `jails-workspace` | capture, exact materialization, verification and the single executor |
 | `jails-codemod` | the marked block, the `@Import` splice, `blanked`; **no dependencies at all**, so both `jails-compiler` and `jails-project` can reach it |
 | `jails-support` | write, run, encode and name: `apply` (the only module that writes), `process`, `hermetic`, `scratch`, `git`, `unified`, `lock`, the validating newtypes, `Result` and `Failure` |
-| `jails-spec` | the closed CLI vocabularies (`spec::kind`), the compact field syntax (`spec::field`), `find_project_root`, the eleven layers, and `build` -- which build tool a directory uses and nothing more |
+| `jails-spec` | the closed CLI vocabularies (`spec::kind`, `policy`, `coordinate`, `constant`, `suffix`), `find_project_root`, the eleven layers, and `build` -- which build tool a directory uses and nothing more |
 | `jails-java` | the small Java reader, the class-file constant-pool reader, template rendering |
 | `jails-testkit` | `hold_cwd()`, taken as a `[dev-dependency]`; not `#[cfg(test)]`, because a dependent crate's tests cannot see one |
-| `jails-project` | one resolved `Project`, and every reader-owned file jails reads or edits: `config` (`jails.toml`), `compose`, `pom`, `gradle`, `inspect`, the SQL query workspace |
-| `jails-drive` | commands that **start something**: `run`, `test`, `testd`, `affected`, `migrate`, `kafka`, `console`, `bench`, `lint`, `live_sql`; the one edge back down is `run` to `report::why` |
+| `jails-project` | one resolved `Project`, and every reader-owned file jails reads or edits: `config` (`jails.toml`), `compose`, `pom`, `gradle`, `inspect` |
+| `jails-drive` | commands that **start something**: `run`, `test`, `testd`, `affected`, `migrate`, `kafka`, `console`, `bench`, `lint`; the one edge back down is `run` to `report::why` |
 | `jails-report` | commands that **answer a question**: `doctor`, `why`, `explain`, `src`, `commands`; read-only because the crate sits below `jails-drive` |
 | `jails` (root) | the binary: `main`, `cli`, `dispatch`, `new`, `app`, the `model_*` frontends, and `tests/` |
-
-`jails-prepare`, `jails-commit`, `jails-state`, `jails-protocol`,
-`jails-codec-derive` and `jails-generate` are scheduled for deletion; nothing
-the binary can create reaches them. `docs/51-kernel.md` and
-`docs/53-tool-crates.md` own that.
 
 Five things to know before touching the workspace:
 
@@ -753,9 +748,8 @@ the companion test is emitted whole and `@Disabled`, naming the component.
   select-then-insert reopens the race. Domain-blind by construction.
 - **A name that already carries its kind's suffix must not get it twice.**
   `strip_redundant_suffix` runs in `generate` and `destroy`; `scaffold` is
-  exempt because it spans Controller, Service and Repository at once. It is
-  a `jails-protocol` symbol today and moves to `jails-spec` under
-  `docs/51-kernel.md` S51.2.
+  exempt because it spans Controller, Service and Repository at once
+  (`jails_spec::spec::suffix`).
 - **`record`/`command` are the plain-Java kinds.** `command` registers itself
   in the project's dispatcher, found by *shape* (`is_dispatcher`: the registry
   type plus the `return commands;` anchor), one line spliced idempotently, with

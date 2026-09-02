@@ -185,10 +185,8 @@ sealed history.
 ```
 jails doctor [--json]        # environment, drift, sealed migration bytes, and lineage column replay
 jails migrate --check        # apply every migration to a scratch database
-jails migrate lint           # classify destructive statements (works from declared driver)
 jails routes | beans | stats | notes | lint | src <Type>
 jails why [logfile]          # root-cause a failure from a table of real signatures
-jails history | show <id> | undo <id>
 ```
 
 `routes` and `beans` read source, never a running context — they work on a
@@ -224,7 +222,7 @@ build engine and says so. `jails fmt` refuses on Gradle by name (use
 with the command that adds it to *this* project:
 `jails add dependency org.springframework.boot:spring-boot-devtools --scope runtime`.
 
-### SQL, schema and contracts
+### Contracts
 
 ```
 jails sql check [--offline|--live --datasource NAME] [--frozen]
@@ -343,8 +341,6 @@ The declarative engine handles lifecycle deltas:
   review `--pretend` before running it on a slice you have hand-edited.
 - **`jails add format` runs `spotless:apply` once** over jails' own output and
   the lock advances with it, so `doctor` stays clean.
-- **`schema diff` requires `.jails/app.toml`**; `migrate lint` runs on both
-  imperative and manifest projects using the project's declared SQL driver.
 - **A `transition` selects by `id` unless `--select <field>` names another**,
   and that key may come from the URL: `--select userId --path
   '/admin_api/conversations/{userId}/status'` drops the selector from the

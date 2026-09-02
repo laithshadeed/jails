@@ -61,7 +61,7 @@ tree. The empty value pins git's own default, which every git supports.
   directories match exactly; every protocol fixture is read by something;
   every advertised failpoint is named outside the registry.
 - **G1 — the product loop.** `tests/product_loop.rs`, 38 scenarios plus the
-  corpus, each run against the one binary. See P13.11.
+  corpus, each run against the binary.
 - **G2 — behavior journeys.** Every advertised command path maps to a test,
   held in two places: `every_advertised_command_path_has_a_journey`
   (`tests/cli/developer_tools.rs`) walks `jails commands --json` and requires
@@ -150,14 +150,6 @@ Do not re-propose these:
   scratch.
 
 ## Open items
-
-**P13.11 G1 has no second implementation.** The product loop's 38 scenarios
-run one binary, and the corpus test takes a second binary only from
-`JAILS_LEGACY_BIN`, which nothing sets except
-`scripts/verify-rewrite-g1-canary.sh` on a weekly schedule against a frozen
-revision that predates JDL v1. **Exit:** `docs/51-kernel.md` S51.6 withdraws
-the differential claim and deletes the canary; G1 is then the regression suite
-it already is.
 
 **P13.12 The document cross-reference gate stops at `docs/`.**
 `rules::every_cross_reference_in_the_documents_resolves` reads every markdown

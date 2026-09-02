@@ -32,7 +32,6 @@ impl AppModel {
     /// [`crate::facet`], [`crate::index`] or [`crate::unit`].
     fn apply_one(&mut self, patch: ModelPatch) -> Result<(), String> {
         match patch {
-            ModelPatch::ReplaceModel(replacement) => *self = *replacement,
             ModelPatch::Batch(patches) => apply_batch(self, patches)?,
             ModelPatch::SetDialect(dialect) => self.project.dialect = dialect,
 
@@ -412,12 +411,6 @@ fn add_field(
     // model has to equal what re-parsing those bytes yields.
     match placement {
         FieldPlacement::Last => target.fields.push(field),
-        FieldPlacement::ByLabel => {
-            let position = target
-                .fields
-                .partition_point(|existing| existing.label < field.label);
-            target.fields.insert(position, field);
-        }
     }
     Ok(())
 }

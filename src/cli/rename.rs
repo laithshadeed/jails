@@ -29,7 +29,7 @@ pub(crate) enum RenameStrategy {
     Rolling,
 }
 
-impl From<RenameStrategy> for jails_protocol::request::RenameStrategy {
+impl From<RenameStrategy> for jails_spec::spec::policy::RenameStrategy {
     fn from(value: RenameStrategy) -> Self {
         match value {
             RenameStrategy::PreserveTable => Self::PreserveTable,
@@ -46,7 +46,7 @@ pub(crate) enum ExternalRenamePolicy {
     Rename,
 }
 
-impl From<ExternalRenamePolicy> for jails_protocol::request::ExternalRenamePolicy {
+impl From<ExternalRenamePolicy> for jails_spec::spec::policy::ExternalRenamePolicy {
     fn from(value: ExternalRenamePolicy) -> Self {
         match value {
             ExternalRenamePolicy::Preserve => Self::Preserve,

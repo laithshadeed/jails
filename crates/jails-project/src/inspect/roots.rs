@@ -41,7 +41,7 @@ pub enum SourceSet {
 }
 
 /// Every `.java` file under the roots that exist, in root order.
-pub fn source_files_in(roots: &[(PathBuf, &'static str)]) -> Vec<PathBuf> {
+pub(crate) fn source_files_in(roots: &[(PathBuf, &'static str)]) -> Vec<PathBuf> {
     roots
         .iter()
         .flat_map(|(path, _)| crate::java::source_files(path))

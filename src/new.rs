@@ -21,6 +21,7 @@ mod plain;
 mod publish;
 mod seed;
 mod spring;
+mod write;
 
 pub use plain::new_cli;
 pub use spring::new;

@@ -9,20 +9,16 @@ use jails_support::Result;
 use jails_support::codec::{Codec, DIGEST_BYTES, Decoder, Encoder};
 use jails_support::identity::{ObjectId, ProjectPath};
 
-pub const TESTD_V2_PROTOCOL_MIN: u16 = 2;
-pub const TESTD_V2_PROTOCOL_MAX: u16 = 2;
-pub const TESTD_V2_MAX_PAYLOAD: usize = 8 * 1024 * 1024;
+pub(crate) const TESTD_V2_PROTOCOL_MIN: u16 = 2;
+pub(crate) const TESTD_V2_PROTOCOL_MAX: u16 = 2;
+pub(crate) const TESTD_V2_MAX_PAYLOAD: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct RequestId([u8; DIGEST_BYTES]);
+pub(crate) struct RequestId([u8; DIGEST_BYTES]);
 
 impl RequestId {
     pub fn from_bytes(bytes: [u8; DIGEST_BYTES]) -> Self {
         Self(bytes)
-    }
-
-    pub fn as_bytes(&self) -> &[u8; DIGEST_BYTES] {
-        &self.0
     }
 }
 
@@ -38,7 +34,7 @@ impl Codec for RequestId {
 }
 
 #[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct SecretBytes([u8; DIGEST_BYTES]);
+pub(crate) struct SecretBytes([u8; DIGEST_BYTES]);
 
 impl SecretBytes {
     pub fn from_bytes(bytes: [u8; DIGEST_BYTES]) -> Self {
@@ -68,7 +64,7 @@ impl Codec for SecretBytes {
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct OutputPath(String);
+pub(crate) struct OutputPath(String);
 
 impl OutputPath {
     pub fn parse(text: &str) -> Result<Self> {
@@ -86,10 +82,6 @@ impl OutputPath {
             .into());
         }
         Ok(Self(text.to_string()))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
     }
 }
 
@@ -110,7 +102,7 @@ impl Codec for OutputPath {
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, jails_codec_derive::Codec)]
-pub struct OutputEntryV1 {
+pub(crate) struct OutputEntryV1 {
     pub path: OutputPath,
     pub size: u64,
     pub modified_ns: u64,
@@ -118,7 +110,7 @@ pub struct OutputEntryV1 {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OutputSnapshotV1 {
+pub(crate) struct OutputSnapshotV1 {
     pub entries: Vec<OutputEntryV1>,
 }
 
@@ -155,7 +147,7 @@ impl Codec for OutputSnapshotV1 {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 #[codec(unknown_fix = "upgrade both testd protocol peers")]
-pub enum TestIsolation {
+pub(crate) enum TestIsolation {
     #[codec(tag = 0)]
     Isolated,
     #[codec(tag = 1)]
@@ -164,7 +156,7 @@ pub enum TestIsolation {
 
 #[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 #[codec(unknown_fix = "upgrade both testd protocol peers")]
-pub enum TestEventV2 {
+pub(crate) enum TestEventV2 {
     #[codec(tag = 0)]
     Ready { epoch: u64, output_current: bool },
     #[codec(tag = 1)]
@@ -179,14 +171,14 @@ pub enum TestEventV2 {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
-pub struct TestdDiagnosticV1 {
+pub(crate) struct TestdDiagnosticV1 {
     pub code: String,
     pub message: String,
     pub fix: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum TestdRequestV2 {
+pub(crate) enum TestdRequestV2 {
     Hello {
         request_id: RequestId,
         protocol_min: u16,
@@ -331,7 +323,7 @@ impl Codec for TestdRequestV2 {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum TestdResponseV2 {
+pub(crate) enum TestdResponseV2 {
     Hello {
         request_id: RequestId,
         protocol: u16,
@@ -424,7 +416,7 @@ impl Codec for TestdResponseV2 {
     }
 }
 
-pub fn encode_frame<T: Codec>(value: &T) -> Result<Vec<u8>> {
+pub(crate) fn encode_frame<T: Codec>(value: &T) -> Result<Vec<u8>> {
     let mut encoder = Encoder::new();
     value.encode(&mut encoder)?;
     let payload = encoder.finish()?;
@@ -442,7 +434,7 @@ pub fn encode_frame<T: Codec>(value: &T) -> Result<Vec<u8>> {
     Ok(frame)
 }
 
-pub fn decode_frame<T: Codec>(frame: &[u8]) -> Result<T> {
+pub(crate) fn decode_frame<T: Codec>(frame: &[u8]) -> Result<T> {
     let header: [u8; 4] = frame
         .get(..4)
         .ok_or("testd frame is missing its 4-byte length\n       fix: restart the daemon with a matching jails version")?

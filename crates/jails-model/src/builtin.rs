@@ -500,7 +500,7 @@ impl BuiltinType {
     }
 
     /// The builtin a canonical token names, if it names one.
-    pub fn from_token(token: &str) -> Option<Self> {
+    pub(crate) fn from_token(token: &str) -> Option<Self> {
         ALL.iter()
             .find(|(_, row)| row.token == token)
             .map(|(builtin, _)| *builtin)
@@ -513,7 +513,7 @@ impl BuiltinType {
     /// about whether a spelling was one of ours. A caller deciding what to do
     /// about `String` needs the difference between "this is `string` written
     /// the Java way" and "this is a type the project owns".
-    pub fn from_alias(token: &str) -> Option<Self> {
+    pub(crate) fn from_alias(token: &str) -> Option<Self> {
         ALL.iter()
             .find(|(_, row)| row.aliases.contains(&token))
             .map(|(builtin, _)| *builtin)

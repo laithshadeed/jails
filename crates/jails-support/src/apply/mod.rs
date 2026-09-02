@@ -154,7 +154,7 @@ pub fn put(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
 ///
 /// The mode is only applied on Unix. Windows has no permission bit to set and
 /// runs `gradlew.bat` instead, so there is nothing to do and nothing to fail.
-pub fn put_executable(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
+pub(crate) fn put_executable(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
     let (path, contents) = (path.as_ref(), contents.as_ref());
     ensure_parent(path)?;
     fs::write(path, contents)

@@ -24,16 +24,8 @@
 use crate::Result;
 use crate::codec::{self, Codec, DIGEST_BYTES, Decoder, Encoder};
 
-mod component;
-mod literal;
-mod route;
 mod sql;
-mod wire;
-pub use component::FieldName;
-pub use literal::LiteralValue;
-pub use route::RoutePath;
 pub use sql::SqlName;
-pub use wire::WireName;
 
 // ---------------------------------------------------------------------------
 // Digests
@@ -47,10 +39,6 @@ pub struct ObjectId([u8; DIGEST_BYTES]);
 /// Identifies one logical operation across its attempts.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
 pub struct OperationId([u8; DIGEST_BYTES]);
-
-/// Identifies one prepared transaction; also names its directory.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
-pub struct TransactionId([u8; DIGEST_BYTES]);
 
 macro_rules! digest_newtype {
     ($name:ident) => {
@@ -95,7 +83,6 @@ macro_rules! digest_newtype {
 
 digest_newtype!(ObjectId);
 digest_newtype!(OperationId);
-digest_newtype!(TransactionId);
 
 // ---------------------------------------------------------------------------
 // Java names
@@ -163,7 +150,7 @@ impl Package {
         Ok(Self(text.to_string()))
     }
 
-    pub fn is_base(&self) -> bool {
+    pub(crate) fn is_base(&self) -> bool {
         self.0.is_empty()
     }
 
@@ -331,137 +318,6 @@ const RESERVED: &[&str] = &[
     "null",
 ];
 
-/// Every public type in `java.lang`, which the compiler imports into every
-/// file whether or not anybody asked.
-///
-/// A table rather than a refusal: `Name` is "a type name, a field name, a
-/// package segment", so it validates *references* as well as declarations, and
-/// refusing `String` here would refuse `value:String`. Only a declaration
-/// shadows, and only the rendered plan knows there is one.
-///
-/// The defect it guards: `jails g record String value:string` would write
-/// `public record String(String value)`, whose component is typed as the
-/// record rather than as text -- a package member outranks the implicit
-/// import. It compiles, its generated test compiles, and the caller who asked
-/// for a string field silently gets a self-reference. `RESERVED` cannot catch
-/// it because every Java reserved word is lowercase and a type name is
-/// capitalised before the check.
-///
-/// Read off the JDK, not recalled: the class list of `java.base`'s
-/// `java/lang/` filtered to the ones `javap` reports as `public`, on the JDK
-/// this project targets. A hand-written subset would be a check that silently
-/// stops applying to whatever it omitted.
-pub const JAVA_LANG: &[&str] = &[
-    "AbstractMethodError",
-    "Appendable",
-    "ArithmeticException",
-    "ArrayIndexOutOfBoundsException",
-    "ArrayStoreException",
-    "AssertionError",
-    "AutoCloseable",
-    "Boolean",
-    "BootstrapMethodError",
-    "Byte",
-    "Character",
-    "CharSequence",
-    "Class",
-    "ClassCastException",
-    "ClassCircularityError",
-    "ClassFormatError",
-    "ClassLoader",
-    "ClassNotFoundException",
-    "ClassValue",
-    "Cloneable",
-    "CloneNotSupportedException",
-    "Comparable",
-    "Deprecated",
-    "Double",
-    "Enum",
-    "EnumConstantNotPresentException",
-    "Error",
-    "Exception",
-    "ExceptionInInitializerError",
-    "Float",
-    "FunctionalInterface",
-    "IllegalAccessError",
-    "IllegalAccessException",
-    "IllegalArgumentException",
-    "IllegalCallerException",
-    "IllegalMonitorStateException",
-    "IllegalStateException",
-    "IllegalThreadStateException",
-    "IncompatibleClassChangeError",
-    "IndexOutOfBoundsException",
-    "InheritableThreadLocal",
-    "InstantiationError",
-    "InstantiationException",
-    "Integer",
-    "InternalError",
-    "InterruptedException",
-    "IO",
-    "Iterable",
-    "LayerInstantiationException",
-    "LazyConstant",
-    "LinkageError",
-    "Long",
-    "MatchException",
-    "Math",
-    "Module",
-    "ModuleLayer",
-    "NegativeArraySizeException",
-    "NoClassDefFoundError",
-    "NoSuchFieldError",
-    "NoSuchFieldException",
-    "NoSuchMethodError",
-    "NoSuchMethodException",
-    "NullPointerException",
-    "Number",
-    "NumberFormatException",
-    "Object",
-    "OutOfMemoryError",
-    "Override",
-    "Package",
-    "Process",
-    "ProcessBuilder",
-    "ProcessHandle",
-    "Readable",
-    "Record",
-    "ReflectiveOperationException",
-    "Runnable",
-    "Runtime",
-    "RuntimeException",
-    "RuntimePermission",
-    "SafeVarargs",
-    "ScopedValue",
-    "SecurityException",
-    "SecurityManager",
-    "Short",
-    "StackOverflowError",
-    "StackTraceElement",
-    "StackWalker",
-    "StrictMath",
-    "String",
-    "StringBuffer",
-    "StringBuilder",
-    "StringIndexOutOfBoundsException",
-    "SuppressWarnings",
-    "System",
-    "Thread",
-    "ThreadDeath",
-    "ThreadGroup",
-    "ThreadLocal",
-    "Throwable",
-    "TypeNotPresentException",
-    "UnknownError",
-    "UnsatisfiedLinkError",
-    "UnsupportedClassVersionError",
-    "UnsupportedOperationException",
-    "VerifyError",
-    "VirtualMachineError",
-    "Void",
-    "WrongThreadException",
-];
-
 fn validate_identifier(text: &str, what: &str) -> Result<()> {
     if text.is_empty() {
         return Err(format!("{what} is empty").into());
@@ -603,15 +459,6 @@ impl ProjectPath {
     pub fn as_str(&self) -> &str {
         &self.0
     }
-
-    /// Whether this is one of the explicitly reachable paths under `.jails`.
-    pub fn is_machine_adjacent(&self) -> bool {
-        self.0.starts_with(".jails/")
-    }
-
-    pub fn is_sql_contract(&self) -> bool {
-        self.0 == SQL_CONTRACTS || self.0.starts_with(&format!("{SQL_CONTRACTS}/"))
-    }
 }
 impl Codec for ProjectPath {
     fn encode(&self, encoder: &mut Encoder) -> Result<()> {
@@ -626,29 +473,6 @@ impl Codec for ProjectPath {
 impl std::fmt::Display for ProjectPath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
-    }
-}
-
-/// A stored object's address **and its length**.
-///
-/// The length travels with the id because every consumer needs it before
-/// reading -- to check a limit, to size a buffer, to tell a truncated object
-/// from a missing one -- and a length recorded somewhere else is a length
-/// that can disagree with the bytes. Nothing else repeats either fact.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
-pub struct ObjectRef {
-    pub id: ObjectId,
-    pub len: u64,
-}
-
-impl ObjectRef {
-    pub fn new(id: ObjectId, len: u64) -> Self {
-        Self { id, len }
-    }
-}
-impl std::fmt::Display for ObjectRef {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}+{}", self.id, self.len)
     }
 }
 
@@ -972,17 +796,5 @@ mod tests {
         assert_eq!(JavaType::decode(&mut decoder).unwrap(), ty);
         assert_eq!(ObjectId::decode(&mut decoder).unwrap(), object);
         decoder.finish().unwrap();
-    }
-
-    #[test]
-    fn a_digest_id_is_lowercase_hex_and_round_trips_byte_identically() {
-        let id = TransactionId::from_bytes(jails_support::codec::sha256(b"abc"));
-        let text = id.to_hex();
-        assert_eq!(
-            text,
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        );
-        assert_eq!(TransactionId::parse_hex(&text).unwrap(), id);
-        assert!(TransactionId::parse_hex(&text.to_uppercase()).is_err());
     }
 }

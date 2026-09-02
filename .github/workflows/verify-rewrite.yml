@@ -40,9 +40,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          # The canary workflow freezes a revision with `git archive`.
-          fetch-depth: 0
 
       # Pull the container images while the Rust build is still running. The
       # test phase is subprocess-bound, and a registry pull is work that need

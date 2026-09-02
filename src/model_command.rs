@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 
 const CHECK_SCHEMA: &str = "jails.model-check.v1";
 pub(crate) const JDL_PATH: &str = ".jails/model.jdl";
-pub(crate) const TOML_PATH: &str = ".jails/model.toml";
+/// The file a project wrote before `jdl 1`. Nothing reads it; a project that
+/// still has one is refused by name so a model is never seeded beside it.
+const TOML_PATH: &str = ".jails/model.toml";
 
 /// The project a command is about: the nearest ancestor that is one.
 ///
@@ -26,7 +28,6 @@ pub(crate) fn project_root() -> Option<PathBuf> {
     let mut dir = std::env::current_dir().ok()?;
     loop {
         if dir.join(JDL_PATH).is_file()
-            || dir.join(TOML_PATH).is_file()
             || jails_spec::build::detect(&dir) != jails_spec::build::Build::Bare
         {
             return Some(dir);
@@ -69,18 +70,13 @@ pub(crate) fn read_source_at(root: &Path, model_path: &Path) -> Result<String> {
     let source = match std::fs::read_to_string(root.join(model_path)) {
         Ok(source) => source,
         // **A project still on `.jails/model.toml` reads as a refusal, not as
-        // an absence.** The compatibility input is the second editable model
-        // `docs/00-contracts.md` forbids, so every mutation asks for
-        // `.jails/model.jdl` and this is where a project that has not moved
-        // yet is told how to. It stays *readable* -- `sync`, `model check`
-        // and `model upgrade` all work on one -- and only an edit is refused,
-        // which is what makes the upgrade a route rather than a wall.
+        // an absence.** Nothing in this binary reads that file, and deriving a
+        // seed beside it would strand its declarations outside the model that
+        // owns them, so the file is named rather than passed over.
         Err(error)
             if error.kind() == std::io::ErrorKind::NotFound && root.join(TOML_PATH).is_file() =>
         {
-            return Err(Failure::Told(format!(
-                "`{TOML_PATH}` is the temporary compatibility input and no longer accepts edits.\n       fix: run `jails model upgrade --to 1` to move this project onto `{JDL_PATH}`, then retry"
-            )));
+            return Err(refuse_retired_toml());
         }
         // The same rule as `load_model_at`: a project with no model reads as
         // the model `model init` would write, so the first mutation patches a
@@ -105,25 +101,30 @@ pub(crate) fn read_source_at(root: &Path, model_path: &Path) -> Result<String> {
             )));
         }
     };
-    // **One editable JDL dialect, and it is `jdl 1`.** A pre-v1 draft still
-    // *parses*, so `sync`, `model check` and `model upgrade` work on one;
-    // what it does not do is accept an edit, so there is no second front end
-    // for every mutating command. `model upgrade` reads the file directly,
-    // because its whole input is the source this refuses.
-    if model_path.ends_with(JDL_PATH) && !is_jdl_v1(&source) {
-        return Err(Failure::Told(format!(
-            "`{JDL_PATH}` is a pre-v1 JDL draft and no longer accepts edits.\n       fix: run `jails model upgrade --to 1`, then retry"
-        )));
+    // **One model language, and it is `jdl 1`.** The header is checked here
+    // rather than left to the parser so the refusal names the file and what
+    // it has to be, before any command reads a declaration out of it.
+    if model_path.ends_with(JDL_PATH) && !starts_with_jdl_header(&source) {
+        return Err(refuse_not_jdl_1());
     }
     Ok(source)
 }
 
-/// The header test, and the only thing that decides which dialect a source is.
-///
-/// A `jdl 1` document opens with the version line; a draft opens with
-/// `application`. Comments and blank lines come first in both, so the first
-/// line that is neither is the one that answers it.
-pub(crate) fn is_jdl_v1(source: &str) -> bool {
+fn refuse_retired_toml() -> Failure {
+    Failure::Told(format!(
+        "`{TOML_PATH}` is not a model this jails reads.\n       fix: write the model as `jdl 1` in `{JDL_PATH}` and remove `{TOML_PATH}`"
+    ))
+}
+
+fn refuse_not_jdl_1() -> Failure {
+    Failure::Told(format!(
+        "`{JDL_PATH}` does not start with `jdl 1`.\n       fix: the model must be `jdl 1`; rewrite it and check with `jails model check`"
+    ))
+}
+
+/// The header test: the first line that is neither blank nor a comment opens
+/// with `jdl`.
+fn starts_with_jdl_header(source: &str) -> bool {
     source
         .lines()
         .find_map(|line| {
@@ -144,7 +145,7 @@ pub(crate) fn owns() -> bool {
 /// parent of the project it is creating. Same containment boundary as the
 /// `_at` family.
 pub(crate) fn owns_at(root: &Path) -> bool {
-    root.join(JDL_PATH).is_file() || root.join(TOML_PATH).is_file()
+    root.join(JDL_PATH).is_file()
 }
 
 /// Give this project a model if it has none, so a mutation has somewhere to go.
@@ -304,7 +305,6 @@ pub(crate) fn run(command: ModelCommand, invocation: Invocation) -> Result<()> {
             let manifest = resolve_manifest(manifest.as_deref())?;
             check(&manifest, frozen, invocation.output)
         }
-        ModelCommand::Upgrade { to } => crate::model_upgrade::run(to, invocation),
         ModelCommand::Fmt { check } => format(check, invocation),
         ModelCommand::Plan { manifest, bundle } => {
             let manifest = resolve_manifest(manifest.as_deref())?;
@@ -694,17 +694,10 @@ fn compile_at(
 /// `sync` refuses on a deleted managed file, so this is the one command that
 /// writes it back. It takes no `--strategy`: there is one strategy, and it
 /// is the model.
-pub(crate) fn repair(datasource: Option<&str>, invocation: Invocation) -> Result<()> {
+pub(crate) fn repair(invocation: Invocation) -> Result<()> {
     let root = root()?;
     let manifest = resolve_manifest_at(&root, None)?;
     let (source, model) = load_model_at(&root, &manifest, invocation.output)?;
-    // **The database has the last word on a migration that already ran.**
-    // Repair restores a sealed migration byte-for-byte from the lock, which is
-    // right when the file was edited after being applied and *wrong* when a
-    // different image is what actually ran: Flyway would then refuse on the
-    // checksum for ever, about a file jails had just "repaired". Asked, the
-    // database says which of the two happened; unasked, this stays a question
-    // about files and the reader is told nothing it cannot see.
     let bundle = compile_at(
         &root,
         &manifest,
@@ -713,9 +706,6 @@ pub(crate) fn repair(datasource: Option<&str>, invocation: Invocation) -> Result
         Repair::DeletedManagedFiles,
         invocation.output.into(),
     )?;
-    if let Some(datasource) = datasource {
-        crate::schema_command::refuse_divergent_flyway_history(&bundle, datasource, &invocation)?;
-    }
     let execution = jails_workspace::execute(&root, &bundle)
         .map_err(|error| Failure::Told(format!("could not repair managed output: {error}")))?;
     if invocation.output == Output::Human {
@@ -796,6 +786,9 @@ pub(crate) fn load_model_at(
         Err(error)
             if error.kind() == std::io::ErrorKind::NotFound && manifest == Path::new(JDL_PATH) =>
         {
+            if root.join(TOML_PATH).is_file() {
+                return Err(refuse_retired_toml());
+            }
             // A project jails cannot read has no seed to derive, and the
             // honest answer there is still that the model is missing --
             // reporting why the *derivation* failed would answer a question
@@ -809,12 +802,7 @@ pub(crate) fn load_model_at(
         }
         Err(error) => return io_failure(manifest, &error, output),
     };
-    let parsed = if manifest.extension().and_then(|value| value.to_str()) == Some("jdl") {
-        jails_model::parse_jdl(&source)
-    } else {
-        jails_model::parse_toml(&source)
-    };
-    match parsed {
+    match jails_model::parse_jdl(&source) {
         Ok(model) => Ok((source, model)),
         Err(diagnostics) if output == Output::Human => Err(Failure::Told(
             diagnostics.to_string().trim_end().to_string(),
@@ -845,15 +833,7 @@ pub(crate) fn resolve_manifest(explicit: Option<&Path>) -> Result<PathBuf> {
     resolve_manifest_at(&root()?, explicit)
 }
 
-pub(crate) fn resolve_manifest_at(root: &Path, explicit: Option<&Path>) -> Result<PathBuf> {
-    let jdl_path = root.join(JDL_PATH);
-    let toml_path = root.join(TOML_PATH);
-    let (jdl, toml) = (jdl_path.as_path(), toml_path.as_path());
-    if jdl.is_file() && toml.is_file() {
-        return Err(Failure::Told(format!(
-            "this project has two editable application models: `{JDL_PATH}` and `{TOML_PATH}`.\n       fix: keep the JDL authoring source and remove the TOML compatibility source after reviewing that they describe the same model"
-        )));
-    }
+pub(crate) fn resolve_manifest_at(_root: &Path, explicit: Option<&Path>) -> Result<PathBuf> {
     if let Some(explicit) = explicit {
         return std::path::absolute(explicit).map_err(|error| {
             Failure::Told(format!(
@@ -861,9 +841,6 @@ pub(crate) fn resolve_manifest_at(root: &Path, explicit: Option<&Path>) -> Resul
                 explicit.display()
             ))
         });
-    }
-    if toml.is_file() && !jdl.is_file() {
-        return Ok(PathBuf::from(TOML_PATH));
     }
     Ok(PathBuf::from(JDL_PATH))
 }

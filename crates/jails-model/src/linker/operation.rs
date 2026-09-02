@@ -166,9 +166,8 @@ pub(super) fn link(
                         entity_fields,
                         linker,
                     );
-                    // `.jails/model.toml` spells only the flat `order_by`
-                    // list, which has nowhere to put a direction, so it folds
-                    // in as ascending. A source that spells the rich form
+                    // The flat `order_by` list has nowhere to put a
+                    // direction, so it folds in as ascending. A source that spells the rich form
                     // wins.
                     if semantics.order.is_empty() {
                         semantics.order = order_by
@@ -238,9 +237,9 @@ pub(super) fn link(
                         &events,
                         linker,
                     );
-                    // `.jails/model.toml` spells only the flat `sets`/`yields`
-                    // pair, so it is folded into the rich fields here and the
-                    // linked transition keeps one home per fact. A source that
+                    // The flat `sets`/`yields` pair is folded into the rich
+                    // fields here, so the linked transition keeps one home
+                    // per fact. A source that
                     // spells the rich form wins.
                     if semantics.update.is_empty() {
                         semantics.update = sets;
@@ -284,8 +283,7 @@ pub(super) fn link(
                     linker,
                 );
                 // **The flat spelling folds into the rich one, here.** `fields`
-                // is `.jails/model.toml`'s and the pre-v1 draft's way of saying
-                // what an event carries, and it can only name fields of the
+                // is the flat way of saying what an event carries, and it can only name fields of the
                 // target entity. `semantics.parameters` can also carry a
                 // `Typed` component -- an event's own identity, a timestamp --
                 // which the flat form cannot express at all.

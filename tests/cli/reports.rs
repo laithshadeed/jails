@@ -624,41 +624,6 @@ fn doctor_names_a_migration_that_was_written_and_never_filled_in() {
     assert!(!report.contains("contain no SQL"), "{report}");
 }
 
-/// `migrate lint` needs no manifest: the dialect is answerable from the
-/// migrations and the driver the project declares, which is the authority
-/// `Project::sql_dialect` uses.
-#[test]
-fn migrate_lint_reads_the_migrations_and_the_driver_without_a_manifest() {
-    let root = temp_dir("migrate-lint-no-manifest");
-    write_spring_fixture(&root);
-    let migrations = root.join("src/main/resources/db/migration");
-    fs::create_dir_all(&migrations).unwrap();
-    assert!(!root.join(".jails/app.toml").exists());
-
-    let clean = jails_cmd(&root, None)
-        .args(["migrate", "lint"])
-        .output()
-        .unwrap();
-    assert!(clean.status.success(), "{clean:?}");
-    assert!(
-        String::from_utf8_lossy(&clean.stdout).contains("no destructive"),
-        "{clean:?}"
-    );
-
-    fs::write(
-        migrations.join("V001__drop_orders.sql"),
-        "drop table orders;\n",
-    )
-    .unwrap();
-    let output = jails_cmd(&root, None)
-        .args(["migrate", "lint"])
-        .output()
-        .unwrap();
-    let report = String::from_utf8_lossy(&output.stdout);
-    assert!(report.contains("destructive"), "{report}");
-    assert!(report.contains("V001__drop_orders.sql"), "{report}");
-}
-
 #[test]
 fn doctor_reports_resolved_developer_tool_paths_and_versions() {
     let root = temp_dir("doctor-tools");
@@ -870,70 +835,6 @@ fn why_bean_emits_a_source_bounded_cause_graph() {
     assert!(stdout.contains(r#""cause_graph":{"nodes":["#), "{stdout}");
     assert!(stdout.contains("no source-visible provider"), "{stdout}");
     assert_eq!(snapshot_tree(&root), before, "why bean wrote project state");
-}
-
-#[test]
-fn why_migration_and_query_report_offline_evidence_without_writes() {
-    let root = temp_dir("why-sql-subjects");
-    write_why_sql_project(&root);
-    let before = snapshot_tree(&root);
-
-    let migration = jails_cmd(&root, None)
-        .args(["why", "migration", "V001", "--json"])
-        .output()
-        .unwrap();
-    assert!(migration.status.success(), "{:?}", migration);
-    let stdout = String::from_utf8_lossy(&migration.stdout);
-    assert!(stdout.contains(r#""subject":"migration:V001""#), "{stdout}");
-    assert!(stdout.contains("normalized schema object"), "{stdout}");
-
-    let query = jails_cmd(&root, None)
-        .args(["why", "query", "FindOrder", "--json"])
-        .output()
-        .unwrap();
-    assert!(query.status.success(), "{:?}", query);
-    let stdout = String::from_utf8_lossy(&query.stdout);
-    assert!(
-        stdout.contains(r#""subject":"query:FindOrder""#),
-        "{stdout}"
-    );
-    assert!(stdout.contains("verified-offline"), "{stdout}");
-    assert_eq!(
-        snapshot_tree(&root),
-        before,
-        "why SQL subjects wrote project state"
-    );
-}
-
-fn write_why_sql_project(root: &Path) {
-    write_project_skeleton(root);
-    fs::create_dir_all(root.join(".jails")).unwrap();
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
-    fs::create_dir_all(root.join("src/main/resources/db/queries")).unwrap();
-    fs::write(
-        root.join(".jails/app.toml"),
-        r#"schema = "jails.app.v1"
-[application]
-name = "Example"
-base_package = "com.example.demo"
-java_release = 26
-dialect = "postgresql"
-[slices.Orders]
-[slices.Orders.queries.FindOrder]
-source = "src/main/resources/db/queries/FindOrder.sql"
-"#,
-    )
-    .unwrap();
-    fs::write(
-        root.join("src/main/resources/db/migration/V001__orders.sql"),
-        "CREATE TABLE orders (id uuid PRIMARY KEY, title text NOT NULL);\n",
-    )
-    .unwrap();
-    fs::write(
-        root.join("src/main/resources/db/queries/FindOrder.sql"),
-        "-- jails:name FindOrder\n-- jails:cardinality optional\n-- jails:param id uuid\nSELECT id, title FROM orders WHERE id = :id;\n",
-    )
-    .unwrap();
 }
 
 #[test]

@@ -111,15 +111,15 @@ pub fn new_cli(request: &Request<'_>) -> Result<()> {
     // is what gives a new-cli project's own base package the null-marked
     // `package-info.java` every other package gets -- a lookup from the CWD
     // finds the surrounding project or nothing.
-    crate::generate::write_new_file(
+    super::write::write_new_file(
         tree,
         &src_dir.join("App.java"),
-        &crate::generate::cli_java(&package, "App", name),
+        &super::write::cli_java(&package, "App", name),
     )?;
-    crate::generate::write_new_file(
+    super::write::write_new_file(
         tree,
         &test_dir.join("AppTest.java"),
-        &crate::generate::cli_test(&package, "App"),
+        &super::write::cli_test(&package, "App"),
     )?;
 
     write_fixtures_dir(&tree)?;

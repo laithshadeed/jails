@@ -36,9 +36,7 @@ capture change they make. `templates/new/**` is rendered by the binary (agent
 | `format!(` sites | 838 |
 | of which `emit_unit.rs` / `emit_sql.rs` / `emit_operation/proof.rs` | 67 / 46 / 40 |
 | `Compiler::compile` | 508 lines, one function |
-| `templates/` | 197 files, 12,172 lines |
-| templates rendered by nothing | **55 files, 2,310 lines** |
-| `templates/spring/` | 140 files, 9,010 lines |
+| `templates/` | 142 files, held live by `every_template_is_named_by_a_rust_source` |
 | `tests/cli/generate.rs` | 7,948 lines, 110 tests |
 
 The orphan count, re-measured from the repository root -- templates are
@@ -52,15 +50,6 @@ for f in $(find templates -type f); do rel=${f#templates/}; b=$(basename $f)
 ```
 
 ## Steps
-
-**S55.1 -- Delete the orphaned templates.** Fifty-five files: four of the
-five under `templates/generate/` and fifty-one under `templates/spring/`,
-every one a body the legacy generator rendered and the compiler never did.
-Run the listing above, delete what it prints, run the golden suite, read the
-diff -- it must be empty, which is the proof they were orphans. Then add a
-test beside `every_kind_and_capability_has_a_golden_scenario` that fails on
-a template file no source names, so the next deletion of a generator cannot
-leave its bodies behind.
 
 **S55.2 -- One Java shell.** Every emitter writes the package line, the
 import block, the class or record header and, for a test, the JUnit
@@ -100,11 +89,12 @@ count how many of the 25 are exactly that shape after S55.2 and turn those
 into the table `Pack` already implies. The ones that are not (`db`, `api`,
 `kafka`, `format`) keep their functions.
 
-**S55.6 -- The SQL answer agent 3 needs (S53.4).** Expose one function that
-returns the columns the storage lowering emits for an entity -- the same
-list `emit_sql.rs` feeds to the DDL, the select, the insert and the row
-mapper -- so `jails-generate`'s second projection can be deleted. It is a
-`pub fn` over a linked `AppModel`, no snapshot needed.
+**S55.6 -- The SQL answer `doctor` needs.** `schema_lineage::columns_from`
+reads the columns back out of migration text; the compiler already knows
+them. Expose one function that returns the columns the storage lowering
+emits for an entity -- the list `emit_sql.rs` feeds to the DDL, the select,
+the insert and the row mapper -- so `doctor` compares the model against the
+migrations rather than parsing SQL.
 
 **S55.7 -- `tests/cli/generate.rs`.** 7,948 lines and 110 tests, most of
 them "generate X, then read a file". After S55.2 the assertions about the
@@ -141,9 +131,8 @@ described as both.
 
 ## Items you close elsewhere
 
-`docs/00-contracts.md` §1.7's *orphaned templates* and *per-emitter copies of
-the Java shell* rows, and its §1.8 recorded exception if S55.8 lands the
-model fact.
+`docs/00-contracts.md` §1.7's *per-emitter copies of the Java shell* row,
+and its §1.8 recorded exception if S55.8 lands the model fact.
 
 ## Green
 

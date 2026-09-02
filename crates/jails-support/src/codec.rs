@@ -65,19 +65,16 @@ mod wire;
 // Deriving the two shapes that are not decisions
 // ---------------------------------------------------------------------------
 /// 4,096 bytes per project path.
-pub const MAX_PATH_BYTES: usize = 4 * 1024;
+pub(crate) const MAX_PATH_BYTES: usize = 4 * 1024;
 /// 1 MiB per ordinary string or diagnostic.
-pub const MAX_STRING_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_STRING_BYTES: usize = 1024 * 1024;
 /// 1,000,000 entries in any one collection.
 pub(crate) const MAX_COLLECTION_ENTRIES: u32 = 1_000_000;
-/// The default per-object ceiling. A command may lower it; raising it needs an
-/// explicit CLI or config value.
-pub const DEFAULT_MAX_OBJECT_BYTES: u64 = 256 * 1024 * 1024;
 /// The aggregate cap on any one inline record, which per-field limits do not
 /// replace: a record of a million small strings is still a record too big.
-pub const MAX_PROTOCOL_RECORD: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_PROTOCOL_RECORD: usize = 64 * 1024 * 1024;
 /// Recursive values carry a checked counter rather than recursing freely.
-pub const MAX_CODEC_DEPTH: usize = 64;
+pub(crate) const MAX_CODEC_DEPTH: usize = 64;
 
 /// A digest, ID or any other fixed 32-byte value.
 pub const DIGEST_BYTES: usize = 32;
@@ -317,15 +314,6 @@ impl<'a> Decoder<'a> {
         Ok(())
     }
 
-    /// Whether the complete input has been claimed.
-    ///
-    /// Versioned container decoders use this only at an explicitly documented
-    /// append-only compatibility boundary; ordinary values still call
-    /// [`Self::finish`] and reject unread tails.
-    pub fn is_finished(&self) -> bool {
-        self.at == self.bytes.len()
-    }
-
     fn take(&mut self, count: usize) -> Result<&'a [u8]> {
         let end = self
             .at
@@ -465,7 +453,7 @@ impl<'a> Decoder<'a> {
     }
 
     /// The inverse of [`Encoder::maybe`].
-    pub fn perhaps<T: Codec>(&mut self) -> Result<Option<T>> {
+    pub(crate) fn perhaps<T: Codec>(&mut self) -> Result<Option<T>> {
         self.option(T::decode)
     }
 
@@ -566,39 +554,6 @@ pub fn unhex(text: &str) -> Result<[u8; DIGEST_BYTES]> {
         let hi = nibble(bytes[index * 2])?;
         let lo = nibble(bytes[index * 2 + 1])?;
         *slot = (hi << 4) | lo;
-    }
-    Ok(out)
-}
-
-/// Lowercase hex for an arbitrary byte string. Presentation only, like
-/// [`hex`], but for payloads rather than fixed-width digests.
-pub fn hex_bytes(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(char::from_digit((byte >> 4) as u32, 16).expect("a nibble is a hex digit"));
-        out.push(char::from_digit((byte & 0x0f) as u32, 16).expect("a nibble is a hex digit"));
-    }
-    out
-}
-
-/// The inverse of [`hex_bytes`]. Odd length and uppercase both reject, so one
-/// byte string has exactly one spelling.
-pub fn unhex_bytes(text: &str) -> Result<Vec<u8>> {
-    if !text.len().is_multiple_of(2) {
-        return Err(format!(
-            "hex has an odd length ({}); every byte is two characters",
-            text.len()
-        )
-        .into());
-    }
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(text.len() / 2);
-    // `as_chunks::<2>()` rather than `chunks_exact(2)`: the size is a
-    // constant, so this hands back `&[u8; 2]` and the length is the type's
-    // rather than a runtime property nobody re-checks. The length guard above
-    // has already refused an odd-length string, so the remainder is empty.
-    for pair in bytes.as_chunks::<2>().0 {
-        out.push((nibble(pair[0])? << 4) | nibble(pair[1])?);
     }
     Ok(out)
 }
@@ -938,21 +893,6 @@ mod tests {
         );
         assert!(unhex("abc").unwrap_err().contains("expected 64"));
         assert!(unhex(&"g".repeat(64)).unwrap_err().contains("hexadecimal"));
-    }
-
-    #[test]
-    fn an_object_body_is_u64_framed_and_capped() {
-        let mut encoder = Encoder::new();
-        encoder.object(b"body", DEFAULT_MAX_OBJECT_BYTES).unwrap();
-        let bytes = encoder.finish().unwrap();
-        assert_eq!(hex_of(&bytes), concat!("0000000000000004", "626f6479"));
-
-        let mut decoder = Decoder::new(&bytes).unwrap();
-        assert_eq!(decoder.object(DEFAULT_MAX_OBJECT_BYTES).unwrap(), b"body");
-        decoder.finish().unwrap();
-
-        let mut lowered = Decoder::new(&bytes).unwrap();
-        assert!(lowered.object(2).unwrap_err().contains("over the 2-byte"));
     }
 
     /// 100,000 bytes hashed by coreutils' `sha256sum`, compared byte for byte.

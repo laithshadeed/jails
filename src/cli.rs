@@ -24,14 +24,10 @@ use clap::{Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use std::path::PathBuf;
 
-mod schema;
-pub(crate) use schema::*;
 mod editor;
 pub(crate) use editor::*;
 mod tools;
 pub(crate) use tools::*;
-mod sql;
-pub(crate) use sql::*;
 mod rename;
 pub(crate) use rename::*;
 mod testing;
@@ -186,9 +182,6 @@ pub(crate) enum ResourceCommand {
     Status {
         /// Simple entity name or fully qualified generated Java type
         selector: String,
-        /// Also request live catalog evidence from this datasource
-        #[arg(long)]
-        datasource: Option<String>,
     },
     /// Restore projections for preserved storage without another create migration
     Revive {
@@ -210,9 +203,6 @@ pub(crate) enum ResourceCommand {
         /// The only automatic repair policy: preserve history and move forward
         #[arg(long, value_enum)]
         strategy: Option<RepairStrategy>,
-        /// Include evidence from this datasource when available
-        #[arg(long)]
-        datasource: Option<String>,
     },
     /// Evolve one field through a new forward migration
     Field {
@@ -340,7 +330,7 @@ pub(crate) enum ColumnRenamePolicy {
     Rolling,
 }
 
-impl From<ColumnRenamePolicy> for jails_protocol::request::ColumnRenamePolicy {
+impl From<ColumnRenamePolicy> for jails_spec::spec::policy::ColumnRenamePolicy {
     fn from(value: ColumnRenamePolicy) -> Self {
         match value {
             ColumnRenamePolicy::Preserve => Self::Preserve,
@@ -356,7 +346,7 @@ pub(crate) enum TypeChangeStrategy {
     ExpandContract,
 }
 
-impl From<TypeChangeStrategy> for jails_protocol::request::TypeChangeStrategy {
+impl From<TypeChangeStrategy> for jails_spec::spec::policy::TypeChangeStrategy {
     fn from(value: TypeChangeStrategy) -> Self {
         match value {
             TypeChangeStrategy::Safe => Self::Safe,
@@ -496,34 +486,6 @@ pub(crate) enum Command {
     Model {
         #[command(subcommand)]
         command: ModelCommand,
-    },
-    /// Check and generate typed named-SQL contracts
-    Sql {
-        #[command(subcommand)]
-        command: SqlCommand,
-    },
-    /// Observe a live system without changing project or service state
-    Introspect {
-        #[command(subcommand)]
-        command: IntrospectCommand,
-    },
-    /// Render a canonical import proposal from live schema evidence
-    Pull {
-        #[arg(long, value_name = "NAME")]
-        datasource: String,
-        #[arg(long, default_value = "public")]
-        schema: String,
-        #[arg(long, value_name = "GLOB")]
-        table: Option<String>,
-        #[arg(long, value_name = "SLICE")]
-        into_slice: Option<String>,
-        #[arg(long, value_enum, default_value = "existing")]
-        services: RunServicesArg,
-    },
-    /// Compare declared, migration-derived, and live schema authorities
-    Schema {
-        #[command(subcommand)]
-        command: SchemaCommand,
     },
     /// Versioned, read-only protocol for editor adapters
     Editor {
@@ -819,8 +781,6 @@ pub(crate) enum Command {
     /// migrations writes. Doctor can say whether anything will run them;
     /// this says whether they work.
     Migrate {
-        #[command(subcommand)]
-        command: Option<MigrateCommand>,
         /// Apply to a scratch database and drop it. The only mode there is --
         /// jails does not run migrations against a real database, Flyway
         /// does. Accepted so the documented `jails migrate --check` keeps

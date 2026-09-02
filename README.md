@@ -814,17 +814,6 @@ there the unit is a whole service block rather than a setting.)
   contract so it stays safe mid-debug, and it can only answer whether anything
   *will* run the migrations — this answers whether they work. Exits non-zero on
   failure.
-- `jails introspect db --datasource <name> [--schema public] [--table <glob>]
-  [--format human|json|manifest]` — what a live PostgreSQL datasource actually
-  contains: tables, columns, indexes and constraints, read and reported without
-  mutating anything. `--services` decides what to do when the service is not
-  running, and `start` is refused rather than implied — a read-only command
-  that starts a container is not read-only.
-- `jails pull --datasource <name> [--schema public] [--table <glob>]
-  [--into-slice <slice>]` — the same evidence rendered as a **canonical import
-  proposal**: what the model would have to declare for the compiler to produce
-  the schema that is already there. It proposes; it does not write the model.
-  A database is evidence about a schema, not an authority over the model.
 - `jails kafka <topics|describe|send|poison|tail|dlt|lag|reset> [--no-start]`
   — the broker counterpart to `jails db`. Everything runs inside the compose
   broker container, so there is nothing to install: the Kafka CLI tools ship

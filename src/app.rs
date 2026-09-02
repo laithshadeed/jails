@@ -272,7 +272,7 @@ capabilities = []
 # fields = [\"id:uuid@pk\", \"title:string!\"]
 # timestamps = true
 ",
-        jails_protocol::compatibility::APP_MANIFEST_SCHEMA
+        jails_spec::spec::manifest::APP_MANIFEST_SCHEMA
     );
     if invocation.pretend {
         println!("  create  {}", target.display());
@@ -408,7 +408,7 @@ fn report_undeclared(
         // reported.
         crate::model_destroy::run(
             crate::model_destroy::Request {
-                kind: crate::generate::ArtifactKind::Record,
+                kind: crate::ArtifactKind::Record,
                 name: entity.names.java_type.clone(),
                 package: false,
                 storage: None,

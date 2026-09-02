@@ -28,7 +28,6 @@ mod model;
 mod new;
 mod portable_plan;
 mod reports;
-mod sql;
 mod tooling;
 
 use common::*;

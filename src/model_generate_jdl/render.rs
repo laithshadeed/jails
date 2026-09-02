@@ -211,7 +211,7 @@ pub(crate) fn enum_declaration(java_name: &str, label: &str, values: &[String]) 
     let values = values
         .iter()
         .map(|value| {
-            jails_protocol::declaration::ConstantSpec::parse(value)
+            jails_spec::spec::constant::ConstantSpec::parse(value)
                 .map(|constant| constant.canonical())
         })
         .collect::<Result<Vec<_>>>()?;

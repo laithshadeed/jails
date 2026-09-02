@@ -44,88 +44,12 @@ impl SqlName {
         &self.0
     }
 
-    /// Whether PostgreSQL requires this otherwise-valid identifier to be
-    /// quoted because it is part of the SQL grammar. Generated SQL uses
-    /// unquoted names deliberately, so callers must refuse these at the
-    /// declaration boundary.
-    pub fn is_postgres_reserved(value: &str) -> bool {
-        matches!(
-            value.to_ascii_lowercase().as_str(),
-            "all"
-                | "any"
-                | "array"
-                | "asc"
-                | "as"
-                | "cast"
-                | "check"
-                | "collate"
-                | "column"
-                | "constraint"
-                | "cross"
-                | "current_date"
-                | "current_time"
-                | "current_user"
-                | "desc"
-                | "distinct"
-                | "end"
-                | "except"
-                | "foreign"
-                | "from"
-                | "full"
-                | "grant"
-                | "group"
-                | "having"
-                | "ilike"
-                | "in"
-                | "inner"
-                | "into"
-                | "is"
-                | "join"
-                | "leading"
-                | "left"
-                | "like"
-                | "limit"
-                | "natural"
-                | "offset"
-                | "on"
-                | "only"
-                | "or"
-                | "order"
-                | "outer"
-                | "primary"
-                | "references"
-                | "right"
-                | "select"
-                | "similar"
-                | "some"
-                | "table"
-                | "then"
-                | "to"
-                | "union"
-                | "unique"
-                | "user"
-                | "using"
-                | "when"
-                | "where"
-                | "window"
-                | "with"
-        )
-    }
-
     /// The one conventional physical table spelling for a logical entity.
     ///
     /// Storage adoption and generators both call this function so a rename
     /// cannot preserve one inferred table while generated SQL uses another.
     pub fn conventional_table(entity: &Name) -> Self {
         Self(plural_snake_case(entity.as_str()))
-    }
-
-    /// The one conventional physical column spelling for a Java component.
-    ///
-    /// Declaration validation and SQL generation both call this function so
-    /// two distinct Java names cannot quietly become one unquoted column.
-    pub fn conventional_column(component: &Name) -> Self {
-        Self(snake_case(component.as_str()))
     }
 }
 

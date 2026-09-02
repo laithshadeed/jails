@@ -36,7 +36,7 @@ impl Operation {
     /// The route this operation answers on, declared or derived.
     ///
     /// **Read this rather than the flat `route: Option<String>` beside it.**
-    /// The flat field is the `.jails/model.toml` spelling; it is a rendering
+    /// The flat field is the source's flat spelling; it is a rendering
     /// of this one and carries no method or request format of its own. An
     /// emitter reading the flat field sees nothing for an operation whose
     /// route the convention derived, and a missing route is how an operation
@@ -110,8 +110,7 @@ pub struct Query {
 /// `select [id]` is applied as an update, and a single `yields` drops the
 /// second `emit` on a transition.
 ///
-/// The source shape still accepts both because `.jails/model.toml` spells
-/// only the flat one. Folding that in happens at the linker boundary, where
+/// The source shape still accepts both. Folding the flat one in happens at the linker boundary, where
 /// every other wire-to-semantic conversion happens, so the linked model has
 /// one home per fact.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

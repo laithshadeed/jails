@@ -7,7 +7,6 @@ use std::path::PathBuf;
 pub(crate) enum EditorSymbolKindArg {
     Routes,
     Beans,
-    Queries,
     Tests,
     Types,
 }
@@ -16,13 +15,6 @@ pub(crate) enum EditorSymbolKindArg {
 pub(crate) enum EditorDiagnosticScopeArg {
     Buffer,
     Project,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-pub(crate) enum EditorEvidenceArg {
-    Parsed,
-    Offline,
-    Live,
 }
 
 #[derive(Subcommand)]
@@ -62,10 +54,5 @@ pub(crate) enum EditorCommand {
         file: Option<PathBuf>,
         #[arg(long)]
         path: Option<PathBuf>,
-        #[arg(long, value_enum, default_value = "parsed")]
-        evidence: EditorEvidenceArg,
-        /// Required for live evidence; live diagnostics never start services
-        #[arg(long, requires_if("live", "evidence"))]
-        datasource: Option<String>,
     },
 }

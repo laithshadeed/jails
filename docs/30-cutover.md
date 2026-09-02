@@ -42,12 +42,11 @@ mise run verify-rewrite
 
 # Open items
 
-**P13.2 Five production files parse Maven XML; the design asks for one.**
+**P13.2 Four production files parse Maven XML; the design asks for one.**
 `jails-project/src/pom.rs` is the reader being replaced;
 `jails-workspace/src/{capture,documents}.rs` and `documents/build_feature.rs`
-are the document backend; `jails-protocol/src/vocabulary/coordinate.rs` reads
-a plugin block as a protocol value. The ratchet exists so a sixth answer
-cannot appear. `jails-workspace/src/capture/observe.rs`'s `junit_version` is
+are the document backend. The ratchet exists so a fifth answer cannot
+appear. `jails-workspace/src/capture/observe.rs`'s `junit_version` is
 below the bar: it matches one element to read one artifact's version.
 
 **Exit:** the board's *production files parsing Maven XML with their own

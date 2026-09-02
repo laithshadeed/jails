@@ -95,15 +95,11 @@ fn run_as(invocation: Invocation) -> Result<()> {
 
 /// One editable source: a project that has a model is refused by name.
 pub(crate) fn refuse_if_modelled(root: &Path) -> Result<()> {
-    for existing in [
-        crate::model_command::JDL_PATH,
-        crate::model_command::TOML_PATH,
-    ] {
-        if root.join(existing).is_file() {
-            return Err(Failure::Told(format!(
-                "this project already has an application model at `{existing}`.\n       fix: edit it, or run `jails sync`; `model init` is for a project that has none"
-            )));
-        }
+    let existing = crate::model_command::JDL_PATH;
+    if root.join(existing).is_file() {
+        return Err(Failure::Told(format!(
+            "this project already has an application model at `{existing}`.\n       fix: edit it, or run `jails sync`; `model init` is for a project that has none"
+        )));
     }
     // **A project holding `.jails/ledger.toml` is refused by name.** Nothing
     // in this binary can read or write one, so the honest answer names the

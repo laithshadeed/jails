@@ -1,21 +1,5 @@
 use super::*;
 
-/// The compatibility input, kept for the one test whose subject is that two
-/// editable model sources refuse rather than one of them winning. Every other
-/// fixture here is `jdl 1`: the mutating commands do not accept the TOML
-/// front end, so a test that exercised one *through* it would be testing the
-/// front end rather than the command.
-const TOML_MODEL: &str = r#"
-schema = "jails.model.v1"
-
-[project]
-id = "project_notes"
-name = "Notes"
-base_package = "com.example.notes"
-java_release = 26
-dialect = "postgresql"
-"#;
-
 /// The smallest `jdl 1` model a Spring fixture can carry, for the tests that
 /// build everything else with `jails g`.
 ///
@@ -3520,21 +3504,6 @@ enum Status @id(ent_status) {
         "{}",
         String::from_utf8_lossy(&frozen.stderr)
     );
-}
-
-#[test]
-fn two_editable_model_sources_refuse_instead_of_choosing_an_authority() {
-    let root = jdl_project("model-two-sources", NOTES_JDL);
-    fs::write(root.join(".jails/model.toml"), TOML_MODEL).unwrap();
-    let before = snapshot_tree(&root);
-    let refused = jails_cmd(&root, None).args(["sync"]).output().unwrap();
-    assert!(!refused.status.success());
-    let stderr = String::from_utf8(refused.stderr).unwrap();
-    assert!(
-        stderr.contains("two editable application models"),
-        "{stderr}"
-    );
-    assert_eq!(snapshot_tree(&root), before);
 }
 
 #[test]
@@ -10373,8 +10342,8 @@ entity Task {
 /// Adding a field leaves the model and the source it just wrote agreeing.
 ///
 /// `AddField` is positional, and "already sorted by label" must not be read
-/// as "the source states no order": that is true for `.jails/model.toml` and
-/// false for a JDL v1 entity that happens to be declared alphabetically,
+/// as "the source states no order": a JDL v1 entity can be declared
+/// alphabetically by chance,
 /// where appending `delta` to `alpha, beta, gamma` would put it third in the
 /// model and fourth in the file.
 ///
@@ -10461,240 +10430,6 @@ entity Task {
         "a TOML table re-parses by label, so the record must too:\n{}",
         String::from_utf8_lossy(&frozen.stderr)
     );
-}
-
-/// JDL v1 §22's bridge, end to end on a real project.
-///
-/// The property that matters is not that the file changed shape -- it is that
-/// **nothing was re-identified**. The two dialects derive a field's stable ID
-/// from different things (`fld_<entity label>_<field>` against
-/// `fld_<entity id>_<field>`), so a translation that only fixed the syntax
-/// would hand the next `sync` a model where every field is new: a dropped
-/// column and an added one, against a table that is already there. So this
-/// asserts the generated tree is byte-identical across the upgrade, which is
-/// the observable form of "the identities held".
-#[test]
-fn jdl_upgrade_moves_a_pre_v1_draft_onto_v1_without_re_identifying_anything() {
-    let root = temp_dir("jdl-upgrade-to-v1");
-    write_spring_fixture(&root);
-    fs::create_dir_all(root.join(".jails")).unwrap();
-    let draft = "// the demo application\n\
-                 application Demo @id(project_demo)\n\
-                 package com.example.demo\n\
-                 java 26\n\
-                 dialect postgresql\n\
-                 \n\
-                 capability api @id(cap_api)\n\
-                 dependency org.apache.commons:commons-csv = \"1.13.0\"\n\
-                 setting server.port = \"8080\"\n\
-                 \n\
-                 entity Task @id(ent_task) @scaffold {\n\
-                 \x20 id: uuid @pk\n\
-                 \x20 title: string!\n\
-                 \x20 done: boolean?\n\
-                 }\n";
-    fs::write(root.join(".jails/model.jdl"), draft).unwrap();
-
-    let sync = jails_cmd(&root, None).arg("sync").output().unwrap();
-    assert!(
-        sync.status.success(),
-        "{}",
-        String::from_utf8_lossy(&sync.stderr)
-    );
-    let before = generated_tree(&root);
-    assert!(
-        before.keys().any(|path| path.ends_with("domain/Task.java")),
-        "{before:?}"
-    );
-
-    // A draft compiles and does not accept an edit: a draft is read-only
-    // rather than maintained, and the refusal has to name the way out,
-    // because otherwise the project is stuck on a front end nothing edits.
-    let refused = jails_cmd(&root, None)
-        .args(["g", "record", "Note", "title:string!"])
-        .output()
-        .unwrap();
-    assert!(!refused.status.success());
-    let told = String::from_utf8_lossy(&refused.stderr);
-    assert!(told.contains("pre-v1 JDL draft"), "{told}");
-    assert!(told.contains("jails model upgrade --to 1"), "{told}");
-    assert_eq!(generated_tree(&root), before, "the refusal wrote a plan");
-
-    let upgrade = jails_cmd(&root, None)
-        .args(["model", "upgrade", "--to", "1"])
-        .output()
-        .unwrap();
-    assert!(
-        upgrade.status.success(),
-        "{}",
-        String::from_utf8_lossy(&upgrade.stderr)
-    );
-
-    let upgraded = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
-    assert!(upgraded.starts_with("jdl 1\n"), "{upgraded}");
-    assert!(upgraded.contains("platform spring"), "{upgraded}");
-    assert!(upgraded.contains("build maven"), "{upgraded}");
-    assert!(upgraded.contains("storage postgres"), "{upgraded}");
-    assert!(upgraded.contains("// the demo application"), "{upgraded}");
-    assert!(upgraded.contains("@id(ent_task)"), "{upgraded}");
-
-    // **Every artifact that existed still exists, byte for byte, except the
-    // record.** That is the identity property stated observably: a re-keyed
-    // field would change a JDBC column, an artifact id, or a file path, and
-    // all three are in this comparison.
-    let after = generated_tree(&root);
-    // The advice and its test are the *one* exception, and it is the same
-    // documented fact the note below reports rather than a second one: the
-    // upgrade gains the `db` capability, `DuplicateKeyException` is Spring's
-    // from `spring-tx`, and that arrives with the JDBC starter. The arm is
-    // asserted by name below, so this is a narrowed comparison rather than a
-    // hole.
-    let gains_the_conflict_arm = |path: &str| {
-        path.ends_with("api/ApiExceptionHandler.java")
-            || path.ends_with("api/ApiExceptionHandlerTest.java")
-    };
-    // The second consequence of the same gained capability, and the reason it
-    // is a *removal* rather than a change: with no storage the in-memory
-    // adapter is the bean that keeps a scaffold able to start, and once the
-    // JDBC adapter carries `@Repository` a second implementation of the same
-    // port would make two beans qualify for one injection point.
-    // Its companion goes with it, and not as a second exception: a test whose
-    // subject is no longer emitted has nothing to construct. The contract it
-    // called stays, because the JDBC proof that replaces it calls the same one.
-    let replaced_by_the_jdbc_bean = |path: &str| {
-        path.ends_with("adapters/memory/InMemoryTaskRepository.java")
-            || path.ends_with("adapters/memory/InMemoryTaskRepositoryTest.java")
-    };
-    for (path, bytes) in &before {
-        let Some(upgraded) = after.get(path) else {
-            assert!(
-                replaced_by_the_jdbc_bean(path),
-                "`{path}` disappeared across the upgrade"
-            );
-            let jdbc = after
-                .keys()
-                .find(|candidate| candidate.ends_with("adapters/jdbc/JdbcTaskRepository.java"))
-                .unwrap_or_else(|| panic!("the in-memory bean went with nothing to replace it"));
-            assert!(after[jdbc].contains("@Repository"), "{jdbc}");
-            continue;
-        };
-        if gains_the_conflict_arm(path) {
-            assert!(
-                !bytes.contains("DuplicateKeyException"),
-                "`{path}` already handled a duplicate key before the upgrade"
-            );
-            assert!(
-                upgraded.contains("DuplicateKeyException"),
-                "`{path}` gained the `db` capability without the 409 arm that \
-                 makes a unique-constraint violation a conflict rather than a 500"
-            );
-            continue;
-        }
-        assert_eq!(upgraded, bytes, "`{path}` changed across the upgrade");
-    }
-
-    // The two dialects agree on declaration order, so `domain/Task.java` is
-    // in the comparison above and the upgrade prints no note about a moved
-    // positional constructor.
-    let told = String::from_utf8_lossy(&upgrade.stdout);
-    assert!(told.contains("note: the `db` capability"), "{told}");
-    assert!(
-        !told.contains("declaration order"),
-        "the upgrade still moves a record's constructor: {told}"
-    );
-
-    // And the order itself is the declared one, on both sides of the upgrade.
-    let record = after
-        .get("main/java/com/example/demo/domain/Task.java")
-        .unwrap();
-    let components = record
-        .split_once("public record Task(")
-        .unwrap()
-        .1
-        .split_once(')')
-        .unwrap()
-        .0;
-    assert!(
-        components.find("UUID id").unwrap() < components.find("String title").unwrap(),
-        "{components}"
-    );
-    assert!(
-        components.find("String title").unwrap()
-            < components.find("Optional<Boolean> done").unwrap(),
-        "{components}"
-    );
-
-    // The storage axis is the other one: `dialect postgresql` has no v1
-    // spelling that leaves the `db` capability out, so the JDBC adapter it
-    // implies arrives with it.
-    assert!(
-        after
-            .keys()
-            .any(|path| path.ends_with("adapters/jdbc/JdbcTaskRepository.java")),
-        "{:?}",
-        after.keys().collect::<Vec<_>>()
-    );
-
-    // The upgraded source is the one file nobody hand-wrote, so it must
-    // already satisfy the formatter and must be idempotent under `sync`.
-    let formatted = jails_cmd(&root, None)
-        .args(["model", "fmt", "--check"])
-        .output()
-        .unwrap();
-    assert!(
-        formatted.status.success(),
-        "{}",
-        String::from_utf8_lossy(&formatted.stderr)
-    );
-    let resync = jails_cmd(&root, None).arg("sync").output().unwrap();
-    assert!(
-        resync.status.success(),
-        "{}",
-        String::from_utf8_lossy(&resync.stderr)
-    );
-    assert_eq!(
-        generated_tree(&root),
-        after,
-        "`sync` after the upgrade is not a no-op"
-    );
-
-    // Upgrading twice is a refusal, not a second rewrite.
-    let again = jails_cmd(&root, None)
-        .args(["model", "upgrade", "--to", "1"])
-        .output()
-        .unwrap();
-    assert!(!again.status.success());
-    assert!(
-        String::from_utf8_lossy(&again.stderr).contains("already JDL v1"),
-        "{}",
-        String::from_utf8_lossy(&again.stderr)
-    );
-}
-
-/// Every file under the managed root, so two trees can be compared as one
-/// value.
-fn generated_tree(root: &Path) -> std::collections::BTreeMap<String, String> {
-    let mut tree = std::collections::BTreeMap::new();
-    let generated = root.join(".jails/generated");
-    if !generated.exists() {
-        return tree;
-    }
-    let mut stack = vec![generated.clone()];
-    while let Some(directory) = stack.pop() {
-        for entry in fs::read_dir(&directory).unwrap() {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                stack.push(path);
-            } else {
-                let relative = path.strip_prefix(&generated).unwrap();
-                tree.insert(
-                    relative.to_string_lossy().replace('\\', "/"),
-                    fs::read_to_string(&path).unwrap_or_default(),
-                );
-            }
-        }
-    }
-    tree
 }
 
 /// `g client` on a canonical project.
@@ -13032,40 +12767,6 @@ fn a_project_that_only_recorded_its_layout_can_still_become_canonical() {
     );
 }
 
-/// `jails sql check` reads `.jails/app.toml`, and a project without one gets a
-/// refusal with a reason -- not an OS error naming an internal path the
-/// reader never wrote.
-#[test]
-fn sql_check_says_why_a_canonical_project_has_no_application_manifest() {
-    let root = jdl_project(
-        "jdl-v1-sql-check-manifest",
-        r#"jdl 1
-app Vault {
- pkg com.example.vault
- java 26
- platform plain
- build maven
- storage none
-}
-"#,
-    );
-    write_plain_fixture(&root);
-
-    let refused = jails_cmd(&root, None)
-        .args(["sql", "check"])
-        .output()
-        .unwrap();
-    let refused = String::from_utf8_lossy(&refused.stderr).to_string();
-    assert!(
-        refused.contains("legacy application manifest") && refused.contains("fix:"),
-        "an absent manifest is a refusal with a reason:\n{refused}"
-    );
-    assert!(
-        !refused.contains("os error"),
-        "and not an OS error about an internal path:\n{refused}"
-    );
-}
-
 /// `.jails/app.toml` is an import format, not a second editable source.
 ///
 /// A `[[generate]]` row is a `GenerateArgs` -- the same value `jails g`
@@ -14019,133 +13720,46 @@ fn the_specification_complete_example_links_except_its_one_recorded_gap() {
     fs::remove_dir_all(&root).ok();
 }
 
-/// A project on `.jails/model.toml` has a route to `jdl 1`, and takes it once.
-/// The compatibility input is not a second *editable* model source: `model
-/// check` reads it, `jails g record` refuses it by name, and `model upgrade`
-/// is the way across.
-///
-/// Three things are asserted because each has its own way of going wrong: the
-/// JDL is written, the TOML is **retired in the same plan** (leaving both is
-/// the forbidden state, and a crash between two plans would make it
-/// permanent), and every stable id survives -- an upgrade that renumbered
-/// `ent_note` would silently orphan the generated tree it names.
-///
-/// The axes are the fourth: `.jails/model.toml` carries neither `platform` nor
-/// `build`. JDL v1 §22 says they are observed and "never guessed", so a plain
-/// project must come out `platform plain` rather than the default.
+/// One model language. A `.jails/model.jdl` that does not open with `jdl 1`,
+/// and a project that still has only `.jails/model.toml`, are each refused by
+/// name with the file the model has to be.
 #[test]
-fn a_toml_project_upgrades_onto_jdl_v1_and_the_toml_is_retired_with_it() {
-    let root = temp_dir("toml-carry-across");
-    common::write_plain_fixture(&root);
+fn a_model_that_is_not_jdl_1_is_refused_by_name() {
+    let root = jdl_project("model-not-jdl-1", "application Notes\n");
+    let refused = jails_cmd(&root, None)
+        .args(["g", "record", "Task", "id:uuid"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success(), "{refused:?}");
+    let told = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        told.contains("`.jails/model.jdl` does not start with `jdl 1`"),
+        "{told}"
+    );
+    assert!(told.contains("fix: the model must be `jdl 1`"), "{told}");
+    fs::remove_dir_all(&root).ok();
+
+    let root = temp_dir("model-only-toml");
+    write_spring_fixture(&root);
     fs::create_dir_all(root.join(".jails")).unwrap();
-    // Written by hand, because the front end does not accept an edit: `jails
-    // g record` refuses on a TOML model and names this command, which is the
-    // property asserted below.
-    //
-    // The operation states its inputs as a flat `fields` list. The TOML
-    // front end lets that stand in for parameters and `emit_java::input` reads
-    // it, so it is the request's whole shape -- and JDL v1 has no flat
-    // spelling for it. The renderer refuses it by name and the upgrade
-    // materialises the parameters, which is the only reason a project with a
-    // command can be carried across at all.
     fs::write(
         root.join(".jails/model.toml"),
-        r#"
-schema = "jails.model.v1"
-
-[project]
-id = "project_demo"
-name = "Demo"
-base_package = "com.example.demo"
-java_release = 26
-dialect = "none"
-
-[entities.note]
-id = "ent_note"
-facets = ["record"]
-
-[entities.note.fields.id]
-id = "fld_note_id"
-type = "uuid"
-primary_key = true
-
-[entities.note.fields.title]
-id = "fld_note_title"
-type = "string"
-
-[operations.create_note]
-kind = "command"
-id = "op_create_note"
-on = "note"
-fields = ["title"]
-"#,
+        "schema = \"jails.model.v1\"\n",
     )
     .unwrap();
-
-    // It compiles, and it does not accept an edit. Both halves matter:
-    // refusing to *read* would leave a project unable to see its own model
-    // before upgrading, and accepting an edit would make the compatibility
-    // input a second editable model source.
-    let synced = jails_cmd(&root, None).arg("sync").output().unwrap();
-    assert!(
-        synced.status.success(),
-        "{}",
-        String::from_utf8_lossy(&synced.stderr)
-    );
-    let before = generated_tree(&root);
-    let refused = jails_cmd(&root, None)
-        .args(["g", "record", "Tag", "id:uuid@pk"])
-        .output()
-        .unwrap();
-    assert!(!refused.status.success());
-    let told = String::from_utf8_lossy(&refused.stderr);
-    assert!(told.contains("temporary compatibility input"), "{told}");
-    assert!(told.contains("jails model upgrade --to 1"), "{told}");
-    assert_eq!(generated_tree(&root), before, "the refusal wrote a plan");
-
-    let upgraded = jails_cmd(&root, None)
-        .args(["model", "upgrade", "--to", "1"])
-        .output()
-        .unwrap();
-    assert!(upgraded.status.success(), "{upgraded:?}");
-    let told = String::from_utf8_lossy(&upgraded.stdout);
-    assert!(
-        told.contains("create_note` states its inputs as parameters"),
-        "the translation was silent:\n{told}"
-    );
-
-    assert!(
-        !root.join(".jails/model.toml").exists(),
-        "the compatibility input outlived the plan that replaced it"
-    );
-    let jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
-    assert!(jdl.starts_with("jdl 1"), "{jdl}");
-    assert!(
-        jdl.contains("platform plain"),
-        "the axes were guessed:\n{jdl}"
-    );
-    assert!(jdl.contains("build maven"), "the axes were guessed:\n{jdl}");
-    for id in [
-        "project_demo",
-        "ent_note",
-        "fld_note_id",
-        "fld_note_title",
-        "op_create_note",
+    for command in [
+        ["g", "record", "Task", "id:uuid"].as_slice(),
+        ["model", "check"].as_slice(),
     ] {
-        assert!(jdl.contains(id), "stable id `{id}` did not survive:\n{jdl}");
+        let refused = jails_cmd(&root, None).args(command).output().unwrap();
+        assert!(!refused.status.success(), "{command:?}: {refused:?}");
+        let told = String::from_utf8_lossy(&refused.stderr);
+        assert!(
+            told.contains("`.jails/model.toml` is not a model this jails reads"),
+            "{command:?}: {told}"
+        );
+        assert!(told.contains("write the model as `jdl 1`"), "{told}");
     }
-    // Named for the Java member the flat list rendered, so the request field
-    // an existing caller sends is the one it still sends.
-    assert!(
-        jdl.contains("command CreateNote(title)"),
-        "the flat input list was dropped:\n{jdl}"
-    );
-
-    // And the project keeps working on the source it was moved to.
-    let after = jails_cmd(&root, None)
-        .args(["g", "record", "Tag", "id:uuid@pk"])
-        .output()
-        .unwrap();
-    assert!(after.status.success(), "{after:?}");
+    assert!(!root.join(".jails/model.jdl").exists());
     fs::remove_dir_all(&root).ok();
 }

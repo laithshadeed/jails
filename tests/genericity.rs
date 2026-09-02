@@ -70,31 +70,22 @@ const ALLOWED: &[AllowedConcept] = &[
     AllowedConcept {
         word: "ledger",
         files: &[
-            "crates/jails-project/src/generated_files.rs",
             // The read-only machine-state facade classifies the ledger file.
-            "crates/jails-state/src/compat.rs",
             // `ProjectPath` must refuse `.jails/ledger.toml` by name, and the
             // test that proves it has to spell the path it is refusing.
             "crates/jails-support/src/identity.rs",
             // The schema-2 envelope is the ledger file format; its constants
             // and messages name the thing they describe.
-            "crates/jails-protocol/src/durable/envelope.rs",
             // Bootstrap order is *defined* by reading the ledger first, so it
             // cannot be described without naming it.
-            "crates/jails-protocol/src/observe/bootstrap.rs",
             // `LedgerIntent` is what a plan says the store should hold
             // afterwards, and the guard it carries is the ledger generation.
-            "crates/jails-protocol/src/intent/plan.rs",
             // A transition is chosen against the ledger's pending-conflict
             // state, and its tests construct one to prove the pairing.
-            "crates/jails-protocol/src/intent/transition.rs",
             // A frozen conflict carries the complete ledger state a
             // resolution will promote; that is what it is.
-            "crates/jails-protocol/src/durable/pending.rs",
             // A prepared transaction guards the ledger file it will replace,
             // and its semantics carry the intent for it.
-            "crates/jails-prepare/src/prepare.rs",
-            "crates/jails-prepare/src/operation.rs",
             // `model init` refuses a project that already has one: a project
             // jails has generated into keeps its declarations rather than
             // discarding them. Saying which file it found is what makes that
@@ -103,33 +94,20 @@ const ALLOWED: &[AllowedConcept] = &[
             // Preparation guards the ledger generation the plan was computed
             // against, renders the image the commit will write, and atomically
             // records lifecycle transitions in that same durable image.
-            "crates/jails-prepare/src/pipeline.rs",
-            "crates/jails-prepare/src/pipeline/ledger.rs",
-            "crates/jails-prepare/src/pipeline/ledger/lifecycle.rs",
             // A report, a receipt and a command envelope each say what
             // happened to the ledger file, which is the name of the thing.
             // The after-image a prepared transaction hashes *is* the ledger
             // image the commit will write, before and after.
-            "crates/jails-prepare/src/prepared_after.rs",
-            "crates/jails-prepare/src/report.rs",
-            "crates/jails-prepare/src/receipt.rs",
-            "crates/jails-prepare/src/command.rs",
-            "crates/jails-prepare/src/serialize.rs",
             // Reading the store *is* reading `ledger.toml`, and the reader
             // cannot name the file it opens without naming it.
-            "crates/jails-commit/src/store.rs",
             // A journal names the ledger-committed phase, which is the point
             // after which recovery must roll forward rather than back.
-            "crates/jails-commit/src/journal.rs",
             // The commit point *is* the ledger write; the executor cannot
             // describe its own protocol without naming it.
-            "crates/jails-commit/src/execute.rs",
             // Recovery classifies the ledger first: it is what says whether
             // the commit point was crossed.
-            "crates/jails-commit/src/recover.rs",
             // The failpoint names are the commit protocol's own steps, and
             // three of them are the ledger transition.
-            "crates/jails-commit/src/fault.rs",
         ],
         reason: "jails' own bookkeeping file, which collides \
                  with App D's domain by accident -- the word is the storage's, not the \

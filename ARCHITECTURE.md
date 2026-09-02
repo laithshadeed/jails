@@ -98,13 +98,6 @@ crate a module belongs to.
 | `jails-report` | commands that answer a question: `doctor`, `why`, `explain`, `src`, `commands`; read-only by construction, since the crate sits below `jails-drive` |
 | `jails` (root) | the binary: the clap definition in `src/cli.rs`, the dispatch in `src/main.rs`, and the `src/model_*.rs` frontends that edit the model and run the pipeline |
 
-### Scheduled for deletion
-
-`jails-prepare`, `jails-commit`, `jails-state`, `jails-protocol`,
-`jails-codec-derive` and `jails-generate` are the previous transaction kernel
-and generator. Nothing the binary can create reaches them. `docs/51-kernel.md`
-and `docs/53-tool-crates.md` are the plans that remove them.
-
 ## The gates
 
 `mise run verify-rewrite` is the one answer to "is this green": format, clippy,

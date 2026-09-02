@@ -196,12 +196,6 @@ impl Precondition {
             .into()),
         }
     }
-
-    /// True when a caller may omit the header, so the version arrives boxed
-    /// and `null` means "no precondition was given".
-    pub fn is_optional(self) -> bool {
-        matches!(self, Self::Optional)
-    }
 }
 
 /// How a generated endpoint reads the request it is sent.
@@ -253,14 +247,6 @@ impl WireFormat {
         match self {
             Self::Json => "RequestBody",
             Self::Form => "ModelAttribute",
-        }
-    }
-
-    /// The `org.springframework.web.bind.annotation` type that annotation is.
-    pub fn binding_import(self) -> &'static str {
-        match self {
-            Self::Json => "import org.springframework.web.bind.annotation.RequestBody;\n",
-            Self::Form => "import org.springframework.web.bind.annotation.ModelAttribute;\n",
         }
     }
 }
@@ -332,21 +318,6 @@ impl HttpMethod {
             Self::Patch => "PatchExchange",
             Self::Delete => "DeleteExchange",
         }
-    }
-
-    /// The method name a stub handler takes.
-    pub fn handler_name(self) -> &'static str {
-        self.label()
-    }
-
-    /// Whether a request of this method conventionally carries a body, and so
-    /// whether `--on <Type>` becomes a `@RequestBody` parameter.
-    ///
-    /// GET and DELETE are excluded because a body on either is not forbidden
-    /// by HTTP but is ignored by most of the stack between the caller and the
-    /// handler -- a parameter that silently never binds is worse than none.
-    pub fn takes_a_body(self) -> bool {
-        matches!(self, Self::Post | Self::Put | Self::Patch)
     }
 }
 

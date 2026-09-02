@@ -67,7 +67,7 @@ impl EndpointMethod {
         }
     }
 
-    pub fn takes_body(self) -> bool {
+    pub(crate) fn takes_body(self) -> bool {
         matches!(self, Self::Post | Self::Put | Self::Patch)
     }
 

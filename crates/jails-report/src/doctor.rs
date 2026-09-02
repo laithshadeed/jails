@@ -103,28 +103,6 @@ fn report_json(checks: &[Check]) -> Result<()> {
     Ok(())
 }
 
-/// What jails' own bookkeeping says about itself.
-///
-/// Absent is not a finding: a project jails has never touched is the ordinary
-/// case and has nothing to repair. Only `Unreadable` is, and it is a failure
-/// rather than a warning, because nothing that writes can run until it is
-/// resolved.
-fn machine_state_check(project: &Project) -> Vec<Check> {
-    let jails_state::compat::MachineState::Unreadable(why) =
-        jails_state::compat::read(project.root())
-    else {
-        return Vec::new();
-    };
-    // `why` is the whole refusal every mutating command already prints, fix
-    // line included, so the reader meets one sentence rather than two
-    // descriptions of one file -- and this check cannot drift from the
-    // refusal it is reporting.
-    let (detail, fix) = why
-        .split_once("\n       fix: ")
-        .unwrap_or((why.as_str(), ""));
-    vec![Check::new(Status::Fail, "jails state", detail.trim()).fix(fix.trim())]
-}
-
 fn run_checks(project: &Project) -> Vec<Check> {
     let root = project.root();
     let pom_text = project.pom();
@@ -138,7 +116,6 @@ fn run_checks(project: &Project) -> Vec<Check> {
     // in the command a reader runs when something is wrong. `compat` already
     // classifies it into exactly three answers; this asks it, and says
     // nothing of its own.
-    checks.extend(machine_state_check(project));
     // Nothing below reads a pom that is not there; the first check said why.
     if matches!(project.build(), crate::build::Build::Foreign(_)) {
         checks.extend(template_override_checks());
@@ -164,11 +141,6 @@ fn run_checks(project: &Project) -> Vec<Check> {
     checks.extend(hot_reload_checks(project));
     checks.extend(port_checks(root));
     checks.extend(capability_drift_checks(project));
-    checks.extend(crate::managed_drift::managed_output_checks(project));
-    checks.extend(crate::managed_drift::migration_seal_checks(project));
-    checks.extend(crate::managed_drift::disabled_generated_tests(project));
-    checks.extend(crate::managed_drift::empty_migration_checks(project));
-    checks.extend(crate::schema_lineage::schema_lineage_checks(project));
     checks.extend(template_override_checks());
     checks.push(beans_check(root));
     checks

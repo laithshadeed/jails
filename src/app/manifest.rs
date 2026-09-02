@@ -11,7 +11,7 @@
 //! way.
 
 use super::*;
-use jails_protocol::compatibility::APP_MANIFEST_SCHEMA;
+use jails_spec::spec::manifest::APP_MANIFEST_SCHEMA;
 
 pub(super) fn manifest_path(root: &Path, requested: Option<&Path>) -> Result<PathBuf> {
     let path = match requested {

@@ -214,15 +214,11 @@ against this list.
 | area | destination | deletion |
 |---|---|---|
 | `jails-spec::Field` plus protocol `FieldSpec` | one field-syntax parser producing model fields; `BuiltinSemantics` as the one type table | the derivation tables |
-| the transaction kernel (`jails-prepare`, `jails-commit`, `jails-state`, most of `jails-protocol`) | the executor, the compiler lock, one JSON envelope in the binary | five crates |
 | generated Java/SQL reparsing | `AppModel` and the snapshot | source-as-database paths |
 | hand codecs, tags and serializers | `serde` for the JSON surface | the wire-format machinery |
 | `Project`/`ProjectContext`/snapshot overlap | a snapshot-backed project view | post-capture disk reads |
 | duplicate Maven XML scanners | one document backend in `jails-workspace` | `pom.rs`'s scanner |
-| `jails-generate`'s SQL projection | the compiler's storage lowering | the second projection |
 | sixteen copies of one frontend pipeline | one mutation pipeline in `model_command` | the copies and every `owns()` branch |
-| two compatibility parsers and the upgrade | one front end, `jdl 1`, behind a git tag for the one-shot | the parsers and the renderer that serves only them |
-| orphaned templates | nothing | 55 files |
 | per-emitter copies of the Java shell | one `JavaUnit` | the copies |
 
 The largest deletion does not come from shorter render functions. It comes

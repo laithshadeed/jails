@@ -16,12 +16,6 @@ pub(crate) enum ModelCommand {
         #[arg(long)]
         frozen: bool,
     },
-    /// Rewrite the pre-v1 JDL draft as JDL v1, preserving every stable id
-    Upgrade {
-        /// JDL language version to upgrade to
-        #[arg(long, value_name = "VERSION")]
-        to: u16,
-    },
     /// Canonically format the JDL authoring source
     Fmt {
         /// Refuse without writing when the source is not canonically formatted

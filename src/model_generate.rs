@@ -123,11 +123,6 @@ pub(crate) struct CarryAcross {
     pub(crate) retires: Vec<ProjectPath>,
 }
 
-/// Move a project's authoring source to a new file, retiring the old one.
-pub(crate) fn finish_carry_across(prepared: PreparedMutation, carry: CarryAcross) -> Result<()> {
-    finish(prepared, &[], Some(carry))
-}
-
 fn finish(
     prepared: PreparedMutation,
     reader_paths: &[ProjectPath],

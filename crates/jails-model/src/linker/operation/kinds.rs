@@ -19,8 +19,7 @@ use super::*;
 pub(super) struct Declaration<'a> {
     pub(super) label: &'a str,
     pub(super) path: &'a str,
-    /// The flat `METHOD /path` spelling, which is the *only* place a
-    /// `.jails/model.toml` project states its route.
+    /// The flat `METHOD /path` spelling.
     pub(super) route: Option<&'a str>,
 }
 
@@ -459,9 +458,8 @@ pub(super) fn link_event_semantics(
 /// The flat `METHOD /path` spelling, as the typed route the rest of the
 /// compiler reads.
 ///
-/// **`.jails/model.toml` has no rich route to link**, so this is the whole
-/// declaration for a project on the compatibility input -- reading only the
-/// rich one would turn a declared `GET /notes/search` into the derived
+/// **A source may carry the flat route alone**, and reading only the rich one
+/// would turn a declared `GET /notes/search` into the derived
 /// `POST /queries/open-notes`. The same fold this linker applies to `sets`,
 /// `yields` and `fields`.
 ///

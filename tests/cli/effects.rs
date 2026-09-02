@@ -204,7 +204,7 @@ fn postgres_17_accepts_the_retirement_jails_wrote() {
     };
     let applied_v1 = sql(&["-v", "ON_ERROR_STOP=1", "-f", v1.to_str().unwrap()]);
     assert!(applied_v1.status.success(), "{applied_v1:?}");
-    let checksum_v1 = jails_drive::live_sql::flyway_checksum(&fs::read(&v1).unwrap()).unwrap();
+    let checksum_v1 = jails_drive::migrate::flyway_checksum(&fs::read(&v1).unwrap()).unwrap();
     let history = format!(
         "CREATE TABLE flyway_schema_history (installed_rank integer PRIMARY KEY, version varchar(50), description varchar(200) NOT NULL, type varchar(20) NOT NULL, script varchar(1000) NOT NULL, checksum integer, installed_by varchar(100) NOT NULL, installed_on timestamp NOT NULL DEFAULT now(), execution_time integer NOT NULL, success boolean NOT NULL); INSERT INTO flyway_schema_history VALUES (1, '1', 'create tasks', 'SQL', 'V001__create_tasks.sql', {checksum_v1}, 'app', now(), 0, true);"
     );
@@ -251,7 +251,7 @@ fn postgres_17_accepts_the_retirement_jails_wrote() {
     ]);
     assert_eq!(String::from_utf8_lossy(&absent.stdout).trim(), "t");
 
-    let checksum_v2 = jails_drive::live_sql::flyway_checksum(&fs::read(&v2).unwrap()).unwrap();
+    let checksum_v2 = jails_drive::migrate::flyway_checksum(&fs::read(&v2).unwrap()).unwrap();
     let recorded_v2 = sql(&[
         "-v",
         "ON_ERROR_STOP=1",

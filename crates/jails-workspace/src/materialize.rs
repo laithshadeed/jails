@@ -813,117 +813,10 @@ mod tests {
     use super::*;
     use jails_compiler::Compiler;
 
-    const MODEL: &str = r#"
-schema = "jails.model.v1"
-
-[project]
-id = "project_notes"
-name = "Notes"
-base_package = "com.example.notes"
-java_release = 26
-dialect = "postgresql"
-
-[entities.note]
-id = "ent_note"
-facets = ["record"]
-
-[entities.note.fields.id]
-id = "fld_note_id"
-type = "uuid"
-primary_key = true
-"#;
-
-    #[test]
-    fn materialization_is_exact_and_self_verifying() {
-        let model = jails_model::parse_toml(MODEL).unwrap();
-        let snapshot = WorkspaceSnapshot::detached(model);
-        let draft = Compiler::compile(&snapshot, None).unwrap();
-        let bundle = materialize(
-            &snapshot,
-            CanonicalModelPatch::reconcile(),
-            draft,
-            jails_compiler::COMPILER_VERSION,
-            Restore::Refuse,
-        )
-        .unwrap();
-        assert_eq!(bundle.plan.operations.len(), 2);
-        assert!(matches!(
-            bundle.plan.operations.last(),
-            Some(PlannedOperation::ReplaceStateFile { path, .. })
-                if path.as_str() == crate::capture::COMPILER_LOCK
-        ));
-        crate::verify::verify_bundle(&bundle).unwrap();
-
-        let mut damaged = bundle;
-        let bytes = damaged.blobs.values_mut().next().unwrap();
-        bytes.push(b'x');
-        assert!(crate::verify::verify_bundle(&damaged).is_err());
-    }
-
-    /// **The property `apply never replans` rests on.**
-    ///
-    /// Identical `WorkspaceSnapshot + CanonicalModelPatch + CompilerVersion`
-    /// yields an identical plan digest. Every other guarantee in the protocol
-    /// is downstream of it --
-    /// preview shows a digest, the reader confirms that digest, and the
-    /// executor applies a bundle rather than recomputing one. If the same
-    /// three inputs could produce two digests, the thing reviewed and the
-    /// thing applied would be related only by hope.
-    ///
-    /// **The compile is run twice, not the materialization**, because the
-    /// interesting half is the compiler: a `HashMap` iterated into a `Vec`, a
-    /// timestamp, a path read from the environment, or an unsorted set would
-    /// all be invisible in one run and fatal here. This is the whole model,
-    /// not a fragment, so it exercises the maps every emitter builds.
-    #[test]
-    fn the_same_snapshot_patch_and_compiler_produce_the_same_plan_digest() {
-        let model = jails_model::parse_toml(MODEL).unwrap();
-        let snapshot = WorkspaceSnapshot::detached(model);
-        let digest = || {
-            let draft = Compiler::compile(&snapshot, None).unwrap();
-            materialize(
-                &snapshot,
-                CanonicalModelPatch::reconcile(),
-                draft,
-                jails_compiler::COMPILER_VERSION,
-                Restore::Refuse,
-            )
-            .unwrap()
-            .plan
-            .digest
-        };
-        assert_eq!(digest(), digest());
-    }
-
-    /// ... and a different compiler version is a different plan.
-    ///
-    /// The other half of the same rule, and the one that makes the first
-    /// half safe to rely on: a digest that ignored the compiler version would
-    /// let a bundle reviewed under one renderer be applied by another, which
-    /// reopens the question "did preview and apply run the same
-    /// computation?".
-    #[test]
-    fn a_different_compiler_version_is_a_different_plan() {
-        let model = jails_model::parse_toml(MODEL).unwrap();
-        let snapshot = WorkspaceSnapshot::detached(model);
-        let digest = |version: &str| {
-            let draft = Compiler::compile(&snapshot, None).unwrap();
-            materialize(
-                &snapshot,
-                CanonicalModelPatch::reconcile(),
-                draft,
-                version,
-                Restore::Refuse,
-            )
-            .unwrap()
-            .plan
-            .digest
-        };
-        assert_ne!(
-            digest(jails_compiler::COMPILER_VERSION),
-            digest("jails.compiler.test-only")
-        );
-    }
+    /// One entity and nothing else: the smallest model with a managed tree.
+    const MODEL: &str = "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  \
+         java 26\n  platform spring\n  build maven\n  storage none\n}\n\n\
+         entity Note @id(ent_note) {\n  id: uuid @id(fld_note_id) @pk\n}\n";
 
     /// A model that reaches **every persisted struct**, so the goldens below
     /// cover the format rather than the part of it a fixture happens to use.
@@ -1171,63 +1064,9 @@ primary_key = true
                 .expect_err("a lock that disagrees with its own digest must refuse");
         assert!(error.contains("compiler.lock"), "{error}");
     }
-
-    /// A different patch is a different plan, for the same reason.
-    ///
-    /// The input is part of the reviewed identity: two plans that write the
-    /// same bytes for different reasons are not the same plan, and a digest
-    /// that could not tell them apart would let a confirmation be replayed
-    /// against a request nobody made.
-    #[test]
-    fn a_different_patch_input_is_a_different_plan() {
-        let model = jails_model::parse_toml(MODEL).unwrap();
-        let snapshot = WorkspaceSnapshot::detached(model);
-        let digest = |input: CanonicalModelPatch| {
-            let draft = Compiler::compile(&snapshot, None).unwrap();
-            materialize(
-                &snapshot,
-                input,
-                draft,
-                jails_compiler::COMPILER_VERSION,
-                Restore::Refuse,
-            )
-            .unwrap()
-            .plan
-            .digest
-        };
-        assert_ne!(
-            digest(CanonicalModelPatch::reconcile()),
-            digest(CanonicalModelPatch {
-                schema: "jails.model-patch.v1".to_string(),
-                bytes: br#"{"kind":"batch","patches":[]}"#.to_vec(),
-            })
-        );
-    }
-
-    #[test]
-    fn an_absent_empty_managed_tree_is_already_converged() {
-        let source = MODEL.split("\n[entities.note]").next().unwrap();
-        let model = jails_model::parse_toml(source).unwrap();
-        let snapshot = WorkspaceSnapshot::detached(model);
-        let draft = Compiler::compile(&snapshot, None).unwrap();
-        let bundle = materialize(
-            &snapshot,
-            CanonicalModelPatch::reconcile(),
-            draft,
-            jails_compiler::COMPILER_VERSION,
-            Restore::Refuse,
-        )
-        .unwrap();
-        assert!(matches!(
-            bundle.plan.operations.as_slice(),
-            [PlannedOperation::ReplaceStateFile { .. }]
-        ));
-        crate::verify::verify_bundle(&bundle).unwrap();
-    }
-
     #[test]
     fn a_partially_published_tree_converges_before_lock_acceptance() {
-        let model = jails_model::parse_toml(MODEL).unwrap();
+        let model = jails_model::parse_jdl(MODEL).unwrap();
         let snapshot = WorkspaceSnapshot::detached(model);
         let draft = Compiler::compile(&snapshot, None).unwrap();
         let bundle = materialize(
@@ -1263,5 +1102,150 @@ primary_key = true
                 *bundle.blobs.get(&entry.blob).unwrap()
             );
         }
+    }
+
+    #[test]
+    fn an_absent_empty_managed_tree_is_already_converged() {
+        let source = MODEL.split("\nentity Note").next().unwrap();
+        let model = jails_model::parse_jdl(source).unwrap();
+        let snapshot = WorkspaceSnapshot::detached(model);
+        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let bundle = materialize(
+            &snapshot,
+            CanonicalModelPatch::reconcile(),
+            draft,
+            jails_compiler::COMPILER_VERSION,
+            Restore::Refuse,
+        )
+        .unwrap();
+        assert!(matches!(
+            bundle.plan.operations.as_slice(),
+            [PlannedOperation::ReplaceStateFile { .. }]
+        ));
+        crate::verify::verify_bundle(&bundle).unwrap();
+    }
+
+    /// A different patch is a different plan, for the same reason.
+    ///
+    /// The input is part of the reviewed identity: two plans that write the
+    /// same bytes for different reasons are not the same plan, and a digest
+    /// that could not tell them apart would let a confirmation be replayed
+    /// against a request nobody made.
+    #[test]
+    fn a_different_patch_input_is_a_different_plan() {
+        let model = jails_model::parse_jdl(MODEL).unwrap();
+        let snapshot = WorkspaceSnapshot::detached(model);
+        let digest = |input: CanonicalModelPatch| {
+            let draft = Compiler::compile(&snapshot, None).unwrap();
+            materialize(
+                &snapshot,
+                input,
+                draft,
+                jails_compiler::COMPILER_VERSION,
+                Restore::Refuse,
+            )
+            .unwrap()
+            .plan
+            .digest
+        };
+        assert_ne!(
+            digest(CanonicalModelPatch::reconcile()),
+            digest(CanonicalModelPatch {
+                schema: "jails.model-patch.v1".to_string(),
+                bytes: br#"{"kind":"batch","patches":[]}"#.to_vec(),
+            })
+        );
+    }
+
+    /// ... and a different compiler version is a different plan.
+    ///
+    /// The other half of the same rule, and the one that makes the first
+    /// half safe to rely on: a digest that ignored the compiler version would
+    /// let a bundle reviewed under one renderer be applied by another, which
+    /// reopens the question "did preview and apply run the same
+    /// computation?".
+    #[test]
+    fn a_different_compiler_version_is_a_different_plan() {
+        let model = jails_model::parse_jdl(MODEL).unwrap();
+        let snapshot = WorkspaceSnapshot::detached(model);
+        let digest = |version: &str| {
+            let draft = Compiler::compile(&snapshot, None).unwrap();
+            materialize(
+                &snapshot,
+                CanonicalModelPatch::reconcile(),
+                draft,
+                version,
+                Restore::Refuse,
+            )
+            .unwrap()
+            .plan
+            .digest
+        };
+        assert_ne!(
+            digest(jails_compiler::COMPILER_VERSION),
+            digest("jails.compiler.test-only")
+        );
+    }
+
+    /// **The property `apply never replans` rests on.**
+    ///
+    /// Identical `WorkspaceSnapshot + CanonicalModelPatch + CompilerVersion`
+    /// yields an identical plan digest. Every other guarantee in the protocol
+    /// is downstream of it --
+    /// preview shows a digest, the reader confirms that digest, and the
+    /// executor applies a bundle rather than recomputing one. If the same
+    /// three inputs could produce two digests, the thing reviewed and the
+    /// thing applied would be related only by hope.
+    ///
+    /// **The compile is run twice, not the materialization**, because the
+    /// interesting half is the compiler: a `HashMap` iterated into a `Vec`, a
+    /// timestamp, a path read from the environment, or an unsorted set would
+    /// all be invisible in one run and fatal here. This is the whole model,
+    /// not a fragment, so it exercises the maps every emitter builds.
+    #[test]
+    fn the_same_snapshot_patch_and_compiler_produce_the_same_plan_digest() {
+        let model = jails_model::parse_jdl(MODEL).unwrap();
+        let snapshot = WorkspaceSnapshot::detached(model);
+        let digest = || {
+            let draft = Compiler::compile(&snapshot, None).unwrap();
+            materialize(
+                &snapshot,
+                CanonicalModelPatch::reconcile(),
+                draft,
+                jails_compiler::COMPILER_VERSION,
+                Restore::Refuse,
+            )
+            .unwrap()
+            .plan
+            .digest
+        };
+        assert_eq!(digest(), digest());
+    }
+
+    #[test]
+    fn materialization_is_exact_and_self_verifying() {
+        let model = jails_model::parse_jdl(MODEL).unwrap();
+        let snapshot = WorkspaceSnapshot::detached(model);
+        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let bundle = materialize(
+            &snapshot,
+            CanonicalModelPatch::reconcile(),
+            draft,
+            jails_compiler::COMPILER_VERSION,
+            Restore::Refuse,
+        )
+        .unwrap();
+        assert_eq!(bundle.plan.operations.len(), 2);
+        assert!(matches!(
+            bundle.plan.operations.last(),
+            Some(PlannedOperation::ReplaceStateFile { path, .. })
+                if path.as_str() == crate::capture::COMPILER_LOCK
+        ));
+        crate::verify::verify_bundle(&bundle).unwrap();
+
+        let mut damaged = bundle;
+        let bytes = damaged.blobs.values_mut().next().unwrap();
+        bytes.push(b'x');
+        assert!(crate::verify::verify_bundle(&damaged).is_err());
     }
 }

@@ -17,29 +17,22 @@
 //! its client from the same route list, and a command layer above the
 //! generators could not be reached from there.
 
-pub mod application_manifest;
-pub mod capability;
-pub mod capture;
 /// The marked-block splice, from its own dependency-free crate so that every
 /// tree can reach one implementation: a format with several owners is several
 /// answers to what `remove db` deletes. Module code says `crate::codemod`.
 pub use jails_codemod as codemod;
+pub mod capability;
 pub mod compose;
 pub mod config;
-pub mod generated_files;
+pub mod feature;
 pub mod gradle;
 pub mod inspect;
 pub mod maven;
 pub mod model;
 pub mod modernize;
-pub mod named_query;
 pub mod pom;
 pub mod project;
-pub mod projection;
 pub mod properties;
-pub mod query_compiler;
-pub mod query_workspace;
-pub mod schema;
 pub mod synonyms;
 
 // The lower crates, re-exported so every module in this one keeps saying
@@ -48,7 +41,3 @@ pub mod synonyms;
 pub use jails_java::{java, template};
 pub use jails_spec::{build, spec};
 pub(crate) use jails_support::{json, process};
-
-// `.jails/` classification lives one layer down; re-exported so module code
-// says `crate::compat`.
-pub use jails_state::compat;

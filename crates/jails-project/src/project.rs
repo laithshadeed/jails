@@ -50,7 +50,7 @@ impl ProjectContext {
         Self::discover_from(&cwd)
     }
 
-    pub fn discover_from(start: &Path) -> Result<Self> {
+    pub(crate) fn discover_from(start: &Path) -> Result<Self> {
         let start = fs::canonicalize(start)
             .map_err(|e| format!("failed to resolve {}: {e}", start.display()))?;
         let start = if start.is_file() {

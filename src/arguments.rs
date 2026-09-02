@@ -32,11 +32,13 @@ impl DependencyScope {
 /// A coordinate with a third part is almost always a `group:artifact:version`
 /// pasted from somewhere -- so the refusal names `--version` rather than
 /// repeating the shape back.
-pub(crate) fn maven_coordinate(text: &str) -> Result<jails_protocol::coordinate::MavenCoordinate> {
+pub(crate) fn maven_coordinate(
+    text: &str,
+) -> Result<jails_spec::spec::coordinate::MavenCoordinate> {
     let mut parts = text.split(':');
     match (parts.next(), parts.next(), parts.next()) {
         (Some(group), Some(artifact), None) if !group.is_empty() && !artifact.is_empty() => {
-            jails_protocol::coordinate::MavenCoordinate::parse(group, artifact)
+            jails_spec::spec::coordinate::MavenCoordinate::parse(group, artifact)
         }
         (_, _, Some(_)) => Err(format!(
             "`{text}` names a version as well as a coordinate.\n       \

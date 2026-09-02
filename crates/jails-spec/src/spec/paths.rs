@@ -128,13 +128,3 @@ pub fn main_dir(root: &Path, pkg: &str) -> PathBuf {
 pub fn test_dir(root: &Path, pkg: &str) -> PathBuf {
     root.join("src/test/java").join(pkg_dir(pkg))
 }
-
-/// An `import` line for `{from}.{class}`, or nothing at all when the two
-/// packages are the same -- importing a sibling is a compile error.
-pub fn import_of(user: &str, owner: &str, class: &str) -> String {
-    if user == owner {
-        String::new()
-    } else {
-        format!("import {owner}.{class};\n")
-    }
-}

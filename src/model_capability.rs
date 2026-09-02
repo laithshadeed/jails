@@ -225,7 +225,7 @@ pub(crate) fn remove(
 }
 
 pub(crate) fn add_dependency(
-    coordinate: jails_protocol::coordinate::MavenCoordinate,
+    coordinate: jails_spec::spec::coordinate::MavenCoordinate,
     version: Option<String>,
     scope: DependencyScope,
     invocation: Invocation,
@@ -307,7 +307,7 @@ pub(crate) fn add_dependency(
 }
 
 pub(crate) fn remove_dependency(
-    coordinate: jails_protocol::coordinate::MavenCoordinate,
+    coordinate: jails_spec::spec::coordinate::MavenCoordinate,
     invocation: Invocation,
 ) -> Result<()> {
     let coordinate = coordinate.to_string();

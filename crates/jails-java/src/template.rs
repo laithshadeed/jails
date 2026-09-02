@@ -228,7 +228,7 @@ pub fn render(template: impl AsRef<str>, values: &[(&str, &str)]) -> String {
 /// jails' bug for their typo would be the wrong error entirely. Template
 /// materialisation happens inside planning, where a refusal has to be a value
 /// rather than an abort.
-pub fn try_render(
+pub(crate) fn try_render(
     template: impl AsRef<str>,
     values: &[(&str, &str)],
 ) -> std::result::Result<String, String> {

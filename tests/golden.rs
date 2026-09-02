@@ -520,6 +520,78 @@ fn every_kind_and_capability_has_a_golden_scenario() {
     }
 }
 
+/// Every template file is named by some Rust source.
+///
+/// A template is reached only through `template!`, `template_here!` or
+/// `template_at!`, each an `include_str!` of a literal path, so a template no
+/// source names by path or basename is a body nothing renders: the generator
+/// that rendered it was deleted and its bodies were left behind (S55.1
+/// deleted fifty-five of them). The scan is `crates/*/src` and `src`, the
+/// production tree; a mention under `tests/` would keep an orphan alive.
+#[test]
+fn every_template_is_named_by_a_rust_source() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut sources = String::new();
+    let mut rust_files = 0usize;
+    read_rust_into(&root.join("src"), &mut sources, &mut rust_files);
+    for entry in fs::read_dir(root.join("crates")).expect("crates/ is missing") {
+        let crate_dir = entry.expect("failed to read a crates/ entry").path();
+        read_rust_into(&crate_dir.join("src"), &mut sources, &mut rust_files);
+    }
+    assert!(
+        rust_files >= 200 && sources.len() > 1_000_000,
+        "the source scan found {rust_files} .rs files and {} bytes -- it has lost \
+         the code, and this gate would pass over an orphaned template",
+        sources.len()
+    );
+
+    let templates = root.join("templates");
+    let mut on_disk = Vec::new();
+    collect_files(&templates, &mut on_disk);
+    assert!(
+        on_disk.len() >= 100,
+        "only {} files under templates/ -- the scan has lost the tree",
+        on_disk.len()
+    );
+
+    let mut orphans = Vec::new();
+    for path in on_disk {
+        let relative = path
+            .strip_prefix(&templates)
+            .unwrap()
+            .to_str()
+            .expect("a template with a non-UTF-8 path")
+            .replace('\\', "/");
+        let basename = relative.rsplit('/').next().unwrap();
+        if !sources.contains(&relative) && !sources.contains(basename) {
+            orphans.push(relative);
+        }
+    }
+    orphans.sort();
+    assert!(
+        orphans.is_empty(),
+        "{} template file(s) are named by no Rust source under crates/*/src or src:\n  {}\n\n\
+         fix: delete them -- a template nothing renders is a body the generator \
+         that used it left behind -- or name it from the emitter that renders it",
+        orphans.len(),
+        orphans.join("\n  ")
+    );
+}
+
+/// Every file below `dir`, recursively, in no particular order.
+fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    for entry in
+        fs::read_dir(dir).unwrap_or_else(|error| panic!("{} is unreadable: {error}", dir.display()))
+    {
+        let path = entry.expect("failed to read a directory entry").path();
+        if path.is_dir() {
+            collect_files(&path, out);
+        } else {
+            out.push(path);
+        }
+    }
+}
+
 /// Every golden directory belongs to a scenario, and every scenario has one.
 ///
 /// A missing golden fails loudly the first time its scenario runs; an orphan
@@ -578,6 +650,7 @@ fn every_protocol_fixture_is_read_by_something() {
         read_rust_into(
             &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(area),
             &mut sources,
+            &mut 0,
         );
     }
     assert!(
@@ -607,16 +680,18 @@ fn every_protocol_fixture_is_read_by_something() {
     );
 }
 
-/// Every `.rs` file under `dir`, concatenated. For the reference scan above.
-fn read_rust_into(dir: &Path, out: &mut String) {
+/// Every `.rs` file under `dir`, concatenated, counting the files read. For
+/// the reference scans above.
+fn read_rust_into(dir: &Path, out: &mut String, files: &mut usize) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
     for entry in entries {
         let path = entry.expect("failed to read a directory entry").path();
         if path.is_dir() {
-            read_rust_into(&path, out);
+            read_rust_into(&path, out, files);
         } else if path.extension().is_some_and(|ext| ext == "rs") {
+            *files += 1;
             out.push_str(&without_comments(
                 &fs::read_to_string(&path).unwrap_or_default(),
             ));

@@ -9,9 +9,7 @@ clap.workspace = true
 jails-codemod.workspace = true
 jails-support.workspace = true
 jails-java.workspace = true
-jails-protocol.workspace = true
 jails-spec.workspace = true
-jails-state.workspace = true
 # Syntax and source spans only. PostgreSQL semantics stay bounded to migration
 # facts the catalog compiler can prove; unsupported DDL becomes an opaque
 # blocker instead of being guessed from a permissive parser.

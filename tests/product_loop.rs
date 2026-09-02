@@ -87,24 +87,6 @@ impl Subject {
     }
 }
 
-/// A second binary to compare against, when `JAILS_LEGACY_BIN` names one.
-///
-/// `None` on an ordinary run: the gate builds no second binary, and absent is
-/// the honest answer -- a comparison subject that is the binary under test
-/// compares it with itself and passes whatever either does. The same value as
-/// `CARGO_BIN_EXE_jails` is refused for that reason.
-fn legacy_binary() -> Option<OsString> {
-    let named = std::env::var_os("JAILS_LEGACY_BIN")?;
-    assert_ne!(
-        Path::new(&named).canonicalize().ok(),
-        Path::new(env!("CARGO_BIN_EXE_jails")).canonicalize().ok(),
-        "JAILS_LEGACY_BIN names the binary under test, so the differential \
-         subjects would be one binary compared with itself.\n       \
-         fix: point it at a binary built from an earlier revision, or unset it"
-    );
-    Some(named)
-}
-
 fn subjects(label: &str) -> [Subject; 1] {
     subjects_with_fixture(label, false)
 }
@@ -2893,12 +2875,6 @@ fn the_corpus_policy_covers_every_checked_in_project() {
 
 /// Every corpus project, through the product.
 ///
-/// **One binary unless `JAILS_LEGACY_BIN` names a second.** A comparison
-/// subject built from the same binary compares it with itself, so every
-/// assertion passes and none of them means anything; a second subject is
-/// absent rather than fake, and [`legacy_binary`] refuses a value that is the
-/// binary under test.
-///
 /// **The corpus is bytes rather than a Rust table, and that is the point.**
 /// `write_adopted_fixture` covers one adopted shape and cannot grow without
 /// somebody escaping a project into string literals; this grows by dropping a
@@ -2912,24 +2888,16 @@ fn the_corpus_policy_covers_every_checked_in_project() {
 fn every_corpus_project_is_treated_the_same() {
     for entry in corpus_policy() {
         let source = corpus_root().join(&entry.name);
-        let subjects = legacy_binary()
-            .into_iter()
-            .map(|binary| ("legacy", binary))
-            .chain(std::iter::once((
-                "canonical",
-                OsString::from(env!("CARGO_BIN_EXE_jails")),
-            )))
-            .map(|(name, binary)| {
-                let root = temp_dir(&format!("corpus-{}-{name}", entry.name));
-                copy_corpus(&source, &root);
-                Subject {
-                    name,
-                    binary,
-                    record: root.join("pom.xml"),
-                    root,
-                }
-            })
-            .collect::<Vec<_>>();
+        let subjects = {
+            let root = temp_dir(&format!("corpus-{}", entry.name));
+            copy_corpus(&source, &root);
+            vec![Subject {
+                name: "jails",
+                binary: OsString::from(env!("CARGO_BIN_EXE_jails")),
+                record: root.join("pom.xml"),
+                root,
+            }]
+        };
 
         for subject in &subjects {
             let before = reader_tree(&subject.root);

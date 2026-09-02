@@ -28,92 +28,24 @@ use std::time::Duration;
 
 use crate::compose;
 use crate::find_project_root;
-use jails_project::model::Project;
-use jails_protocol::database::MigrationInputV1;
-use jails_support::codec::sha256;
-use jails_support::identity::ObjectId;
 
-/// Apply one committed migration set to an already available datasource. No
-/// service is started, and every live migration path is checked against the
-/// committed descriptor before Flyway sees any bytes.
-pub fn apply_effect(
-    project: &Project,
-    datasource: &str,
-    migrations: &[MigrationInputV1],
-    debug: bool,
-) -> Result<()> {
-    use crate::process::{CommandSpec, Diagnostics, OutputMode};
-
-    if migrations.is_empty() {
-        return Err(concat!(
-            "the migration effect contains no inputs.\n       ",
-            "fix: retry from the command that generated the migration receipt."
-        )
-        .into());
-    }
-    let candidate = crate::datasource::select(
-        project,
-        datasource,
-        crate::datasource::LiveServices::Existing,
-    )?;
-    if !crate::process::on_path("flyway") {
-        return Err(concat!(
-            "Flyway is not on PATH, so the committed migration effect was not applied.\n       ",
-            "fix: install the Flyway CLI, then retry the recorded effect."
-        )
-        .into());
-    }
-
-    let store = jails_commit::store::Store::at(project.root());
-    let scratch = jails_support::scratch::ScratchDir::in_temp("jails-flyway-effect")?;
-    for migration in migrations {
-        let live_path = project.root().join(migration.path.as_str());
-        let live = std::fs::read(&live_path).map_err(|error| {
-            format!(
-                "migration-effect-stale: `{}` no longer has the committed bytes ({error}).\n       fix: restore the committed migration history before retrying the effect.",
-                migration.path
-            )
-        })?;
-        let live_digest = ObjectId::from_bytes(sha256(&live));
-        if live_digest != migration.content_digest {
-            return Err(format!(
-                "migration-effect-stale: `{}` changed after the effect was prepared.\n       fix: restore its committed bytes before retrying; published migrations are append-only.",
-                migration.path
-            )
-            .into());
+/// Flyway's checksum of a migration: CRC32 over the lines, ignoring line
+/// endings and a leading byte-order mark, which is how Flyway itself
+/// computes it.
+pub fn flyway_checksum(bytes: &[u8]) -> Result<i32> {
+    let text = std::str::from_utf8(bytes).map_err(|_| {
+        "a Flyway SQL migration is not UTF-8.\n       fix: restore the encoded migration bytes before comparing live history."
+            .to_string()
+    })?;
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut crc = u32::MAX;
+    for byte in text.lines().flat_map(str::bytes) {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            crc = (crc >> 1) ^ (0xedb8_8320 & 0_u32.wrapping_sub(crc & 1));
         }
-        let frozen = jails_commit::store::read_object(&store.objects(), &migration.content_digest)?;
-        let file_name = migration
-            .path
-            .as_str()
-            .rsplit('/')
-            .next()
-            .ok_or_else(|| format!("migration `{}` has no file name", migration.path))?;
-        jails_support::apply::put_in_scratch(scratch.path().join(file_name), frozen)?;
     }
-
-    let connection = &candidate.connection;
-    let jdbc = format!(
-        "jdbc:postgresql://{}:{}/{}",
-        connection.host, connection.port, connection.database
-    );
-    let locations = format!("filesystem:{}", scratch.path().display());
-    let spec = CommandSpec::new("flyway")
-        .arg("migrate")
-        .env("FLYWAY_URL", &jdbc)
-        .env("FLYWAY_USER", &connection.user)
-        .secret_env("FLYWAY_PASSWORD", &connection.password)
-        .env("FLYWAY_LOCATIONS", &locations)
-        .output(OutputMode::Capture);
-    let done = crate::process::run(&spec, Diagnostics::from_flag(debug))?;
-    if !done.status.success() {
-        return Err(format!(
-            "migration effect failed for datasource at {}.\n       fix: inspect Flyway's database-side history and retry the recorded effect after correcting the forward migration.",
-            candidate.endpoint_label()
-        )
-        .into());
-    }
-    scratch.close()
+    Ok((!crc) as i32)
 }
 
 /// Apply the project's migrations to a scratch database, then drop it.

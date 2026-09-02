@@ -43,6 +43,11 @@ pub struct DocumentCst {
 }
 
 impl DocumentCst {
+    #[cfg(test)]
+    pub fn declaration_text(&self, declaration: &DeclarationCst) -> &str {
+        &self.source[declaration.span.start..declaration.span.end]
+    }
+
     pub(super) fn new(
         source: String,
         tokens: Vec<Token>,
@@ -59,10 +64,6 @@ impl DocumentCst {
 
     pub fn source(&self) -> &str {
         &self.source
-    }
-
-    pub fn declaration_text(&self, declaration: &DeclarationCst) -> &str {
-        &self.source[declaration.span.start..declaration.span.end]
     }
 
     pub fn member_text(&self, member: &MemberCst) -> &str {

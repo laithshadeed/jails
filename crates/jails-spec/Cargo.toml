@@ -8,7 +8,6 @@ edition.workspace = true
 # completion list for it; the derive lives with the enum.
 clap.workspace = true
 jails-support.workspace = true
-jails-java.workspace = true
 
 [lints]
 workspace = true

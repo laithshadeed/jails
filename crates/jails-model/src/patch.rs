@@ -14,9 +14,6 @@
 //! preserve-column versus single-cutover, which backfill file a required
 //! column is proved against — and that intent is the only thing that tells the
 //! compiler whether a migration is owed.
-//!
-//! `ReplaceModel` is the documented exception and says on itself why it exists
-//! and why nothing else may use it.
 
 use crate::id::{
     CapabilityId, ComponentId, DependencyId, EntityId, FieldId, IndexId, OperationId, SettingId,
@@ -29,23 +26,6 @@ use crate::{Component, SourceUnit};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ModelPatch {
     Batch(Vec<ModelPatch>),
-    /// Replace the whole model, for a source-language upgrade.
-    ///
-    /// **The one patch that is not an edit**, and it exists for exactly one
-    /// caller: `jails model upgrade --to 1` rewrites `.jails/model.jdl` from
-    /// the pre-v1 draft into JDL v1, and the two dialects do not link to the
-    /// same model -- v1 materializes projections, links operation parameters
-    /// and reads `storage` as a capability, none of which any sequence of
-    /// field- and entity-level patches describes.
-    ///
-    /// It is deliberately not general. Every other mutation carries evolution
-    /// *intent* the new model cannot state -- retire versus drop, a backfill
-    /// policy, which column a rename preserves -- so routing an ordinary edit
-    /// through here would lose the one thing the patch is for. The upgrade has
-    /// no such intent: the model is the same application, re-read by a
-    /// stricter parser, and `jails_model::upgrade` proves every stable ID and
-    /// physical name survived before this variant is ever built.
-    ReplaceModel(Box<crate::AppModel>),
     /// The storage axis this project declares, as a SQL dialect.
     ///
     /// **A capability patch cannot carry it, and `add db` is both.** In JDL
@@ -204,14 +184,9 @@ pub enum FieldAddPolicy {
 /// can answer this, so it is asked.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FieldPlacement {
-    /// The source states field order and the edit appended: either JDL
-    /// dialect. v1's parser records the order its CST walked, and the pre-v1
-    /// renderer carries `field_order` across its TOML hop.
+    /// The source states field order and the edit appended: `jdl 1` records
+    /// the order its CST walked, so a new field goes last.
     Last,
-    /// The source states no order, so re-parsing sorts by label: a
-    /// `.jails/model.toml` table, the compatibility input, which deliberately
-    /// learns nothing new.
-    ByLabel,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

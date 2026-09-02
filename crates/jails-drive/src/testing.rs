@@ -15,7 +15,7 @@ pub mod testd;
 
 /// A class or class-and-method selector accepted by every test engine.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct TestSelector(String);
+pub(crate) struct TestSelector(String);
 
 impl TestSelector {
     pub fn parse(text: &str) -> Result<Self> {
@@ -128,7 +128,7 @@ closed_enum!(TestEngine { Maven = 0, Gradle = 1, TestdV2 = 2 });
 #[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 #[codec(unknown_fix = "upgrade jails so both protocol \
                  peers use a compatible version")]
-pub enum SelectionReason {
+pub(crate) enum SelectionReason {
     #[codec(tag = 0)]
     Requested,
     #[codec(tag = 1)]
@@ -144,7 +144,7 @@ pub enum SelectionReason {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
-pub struct TestPartition {
+pub(crate) struct TestPartition {
     pub engine: TestEngine,
     pub selectors: Vec<TestSelector>,
     pub reasons: Vec<SelectionReason>,
@@ -152,7 +152,7 @@ pub struct TestPartition {
 
 /// The complete, engine-independent decision made before any test runs.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TestExecutionPlanV1 {
+pub(crate) struct TestExecutionPlanV1 {
     pub scope: TestScope,
     pub requested: Vec<TestSelector>,
     pub compile: TestCompilePolicy,
@@ -243,7 +243,7 @@ impl Codec for TestExecutionPlanV1 {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TestCompileOwner {
+pub(crate) enum TestCompileOwner {
     Ide,
     Maven,
     Gradle,
@@ -252,7 +252,7 @@ pub enum TestCompileOwner {
 closed_enum!(TestCompileOwner { Ide = 0, Maven = 1, Gradle = 2, None = 3 });
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TestOutcome {
+pub(crate) enum TestOutcome {
     Passed,
     Failed,
     Skipped,
@@ -261,7 +261,7 @@ pub enum TestOutcome {
 closed_enum!(TestOutcome { Passed = 0, Failed = 1, Skipped = 2, Error = 3 });
 
 #[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
-pub struct TestCaseResultV1 {
+pub(crate) struct TestCaseResultV1 {
     pub engine: TestEngine,
     pub compile_owner: TestCompileOwner,
     pub selector: TestSelector,
@@ -276,7 +276,7 @@ pub struct TestCaseResultV1 {
 
 /// One ordered report regardless of how many engines executed its cases.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TestReportV1 {
+pub(crate) struct TestReportV1 {
     pub epoch: u64,
     /// The execution owner's verdict. A build can fail before producing a
     /// case, so this cannot be reconstructed from `cases`.

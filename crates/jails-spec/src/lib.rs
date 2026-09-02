@@ -19,8 +19,3 @@
 
 pub mod build;
 pub mod spec;
-
-// The lower crates, re-exported so every module in this one keeps saying
-// `crate::…` wherever it ships. Only this block knows which crate a module
-// actually lives in, which is what makes moving one a one-line change.
-pub(crate) use jails_java::java;
