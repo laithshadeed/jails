@@ -235,6 +235,7 @@ const DB_PACKAGE_OVERRIDES: &[PackageOverride] = &[PackageOverride {
 /// a plain Maven project with `storage postgres` gets the driver and Flyway
 /// from `storage::storage_dependencies` and nothing here.
 pub(super) const DB_PACK: Pack = Pack {
+    substitutions: &[("POSTGRES_IMAGE", "postgres:17-alpine")],
     fragments: NO_FRAGMENTS,
     files: DB_FILES,
     files_when: BootCondition::Spring,
@@ -249,6 +250,7 @@ pub(super) const DB_PACK: Pack = Pack {
 };
 
 pub(super) const H2_PACK: Pack = Pack {
+    substitutions: &[("test_url", "jdbc:h2:mem:test")],
     fragments: NO_FRAGMENTS,
     files: H2_FILES,
     files_when: BootCondition::Any,

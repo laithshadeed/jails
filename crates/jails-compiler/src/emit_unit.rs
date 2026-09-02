@@ -420,7 +420,9 @@ fn controller_test(test: ControllerTest<'_>) -> (BTreeSet<String>, String) {
         "org.junit.jupiter.api.Test".to_string(),
         "org.springframework.beans.factory.annotation.Autowired".to_string(),
         "org.springframework.boot.test.context.SpringBootTest".to_string(),
-        mockmvc_autoconfigure_import(boot_major).to_string(),
+        crate::emit_capability::AUTOCONFIGURE_MOCKMVC
+            .resolve(boot_major)
+            .to_string(),
     ]);
     if !exercisable {
         imports.insert("org.junit.jupiter.api.Disabled".to_string());
@@ -456,20 +458,6 @@ fn controller_test(test: ControllerTest<'_>) -> (BTreeSet<String>, String) {
         "@SpringBootTest\n@AutoConfigureMockMvc\nclass {stem}ControllerTest {{\n\n    @Autowired private {mvc_type} mvc;\n\n    @Test\n{disabled}    void {handler}Answers(){throws} {{\n{invocation}\n    }}\n\n    // Reader-owned tests belong below this stable boundary.\n}}"
     );
     (imports, body)
-}
-
-/// `@AutoConfigureMockMvc`'s package, which Boot 4 moved with no shim.
-///
-/// The same sniff `emit_capability` does for its own templates. Below Boot 4
-/// -- and when the version cannot be read at all -- the older package is the
-/// safe answer: a project too old to have the new one is exactly the project
-/// that would fail to compile.
-fn mockmvc_autoconfigure_import(boot_major: Option<u32>) -> &'static str {
-    if boot_major.is_some_and(|major| major >= 4) {
-        "org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc"
-    } else {
-        "org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc"
-    }
 }
 
 fn lower_controller(

@@ -68,7 +68,7 @@ const CORS_FILES: &[JavaFile] = &[
             4,
             crate::template!("spring/cors_config_test_classic_java.java"),
         )),
-        imports: &[],
+        imports: &[Import::Moved(AUTOCONFIGURE_MOCKMVC)],
         source_set: SourceSet::Test,
         class_name: cors_test_class,
         template_class: cors_test_class,
@@ -80,7 +80,7 @@ const OBSERVABILITY_FILES: &[JavaFile] = &[
         suffix: "metrics_config",
         template: crate::template!("spring/metrics_config_java.java"),
         before_boot: None,
-        imports: &[],
+        imports: &[Import::Moved(METER_REGISTRY_CUSTOMIZER)],
         source_set: SourceSet::Main,
         class_name: metrics_config_class,
         template_class: metrics_config_class,
@@ -146,7 +146,7 @@ const SECURITY_FILES: &[JavaFile] = &[
         suffix: "config_test",
         template: crate::template!("spring/security_test_java.java"),
         before_boot: None,
-        imports: &[],
+        imports: &[Import::Moved(WEBMVC_TEST)],
         source_set: SourceSet::Test,
         class_name: security_config_test_class,
         template_class: security_config_test_class,
@@ -187,7 +187,7 @@ const SSE_FILES: &[JavaFile] = &[
         before_boot: None,
         // The controller holds the hub, and `package_overrides` files it under
         // `web` while the hub stays in the base package.
-        imports: &["EventHub"],
+        imports: &[Import::Own("EventHub")],
         source_set: SourceSet::Main,
         class_name: event_stream_controller_class,
         template_class: event_name,
@@ -555,6 +555,7 @@ pub(super) const fn property(key: &'static str, value: &'static str) -> Property
 }
 
 pub(super) const ACTUATOR_PACK: Pack = Pack {
+    substitutions: NO_SUBSTITUTIONS,
     fragments: NO_FRAGMENTS,
     files: ACTUATOR_FILES,
     files_when: BootCondition::Any,
@@ -569,6 +570,7 @@ pub(super) const ACTUATOR_PACK: Pack = Pack {
 };
 
 pub(super) const CACHE_PACK: Pack = Pack {
+    substitutions: NO_SUBSTITUTIONS,
     fragments: NO_FRAGMENTS,
     files: CACHE_FILES,
     files_when: BootCondition::Any,
@@ -590,6 +592,7 @@ pub(super) const CACHE_PACK: Pack = Pack {
 /// separately. Without it a burn-rate alert cannot tell which pod is failing,
 /// which is the question an alert exists to answer.
 pub(super) const K8S_PACK: Pack = Pack {
+    substitutions: NO_SUBSTITUTIONS,
     fragments: NO_FRAGMENTS,
     files: &[],
     files_when: BootCondition::Any,
@@ -611,6 +614,7 @@ const K8S_PROPERTIES: &[PropertySpec] = &[PropertySpec {
 }];
 
 pub(super) const API_PACK: Pack = Pack {
+    substitutions: NO_SUBSTITUTIONS,
     fragments: API_FRAGMENTS,
     files: API_FILES,
     files_when: BootCondition::Any,
@@ -637,6 +641,7 @@ const API_DEPENDENCIES: &[DependencySpec] = &[DependencySpec {
 }];
 
 pub(super) const CORS_PACK: Pack = Pack {
+    substitutions: NO_SUBSTITUTIONS,
     fragments: NO_FRAGMENTS,
     files: CORS_FILES,
     files_when: BootCondition::Any,
@@ -651,6 +656,7 @@ pub(super) const CORS_PACK: Pack = Pack {
 };
 
 pub(super) const OBSERVABILITY_PACK: Pack = Pack {
+    substitutions: NO_SUBSTITUTIONS,
     fragments: NO_FRAGMENTS,
     files: OBSERVABILITY_FILES,
     files_when: BootCondition::Any,
@@ -665,6 +671,7 @@ pub(super) const OBSERVABILITY_PACK: Pack = Pack {
 };
 
 pub(super) const SECURITY_PACK: Pack = Pack {
+    substitutions: NO_SUBSTITUTIONS,
     fragments: NO_FRAGMENTS,
     files: SECURITY_FILES,
     files_when: BootCondition::Any,
@@ -679,6 +686,7 @@ pub(super) const SECURITY_PACK: Pack = Pack {
 };
 
 pub(super) const SSE_PACK: Pack = Pack {
+    substitutions: &[("path", "events")],
     fragments: NO_FRAGMENTS,
     files: SSE_FILES,
     files_when: BootCondition::Any,
@@ -693,6 +701,7 @@ pub(super) const SSE_PACK: Pack = Pack {
 };
 
 pub(super) const REDIS_PACK: Pack = Pack {
+    substitutions: &[("REDIS_IMAGE", "redis:7-alpine")],
     fragments: NO_FRAGMENTS,
     files: REDIS_FILES,
     files_when: BootCondition::Any,

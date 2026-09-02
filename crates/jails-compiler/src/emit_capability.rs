@@ -52,16 +52,77 @@ struct JavaFile {
     suffix: &'static str,
     template: crate::Template,
     before_boot: Option<(u32, crate::Template)>,
-    /// Classes of the pack's *default* package this file names. Declared here
-    /// rather than spelled as an `import` line in the template, because the
-    /// statement is needed only when `package_overrides` puts the file
-    /// somewhere else -- and a conditional line is not something a `.java`
-    /// template can carry.
-    imports: &'static [&'static str],
+    /// What this file imports that its template cannot state for itself.
+    imports: &'static [Import],
     source_set: SourceSet,
     class_name: fn(&Capability) -> String,
     template_class: fn(&Capability) -> String,
 }
+
+/// An import a pack's row names rather than its template.
+///
+/// **A `.java` template cannot carry a conditional import line**, and the two
+/// cases below are both conditional. Naming them on the row keeps the template
+/// a real Java file and keeps the decision beside the rest of the pack's data,
+/// where the next reader looks.
+enum Import {
+    /// A class of the pack's *default* package this file names. The statement
+    /// is needed only when `package_overrides` puts the file somewhere else,
+    /// which `JavaUnit::import_from` decides.
+    Own(&'static str),
+    /// A type whose package the captured Boot version decides.
+    Moved(MovedImport),
+}
+
+/// A type whose package a Spring Boot major moved.
+///
+/// **A version fact read off the captured project, never assumed.** Boot 4
+/// moved `@AutoConfigureMockMvc`, `@WebMvcTest` and `MeterRegistryCustomizer`
+/// with no shim, so a file naming the wrong one fails on a package that does
+/// not exist -- in a file the reader did not write, which is exactly the
+/// compile error a generator exists to remove. Both spellings sit here side by
+/// side so the pair cannot be edited one at a time.
+#[derive(Clone, Copy)]
+pub(crate) struct MovedImport {
+    /// The Boot major that moved it.
+    moved_at: u32,
+    /// Where it lives from that major up.
+    at_or_above: &'static str,
+    /// Where it lived below -- and the answer when the version cannot be read
+    /// at all, because a project too old to have the new package is exactly
+    /// the project that would fail to compile.
+    below: &'static str,
+}
+
+impl MovedImport {
+    pub(crate) fn resolve(self, boot_major: Option<u32>) -> &'static str {
+        match boot_major.is_some_and(|major| major >= self.moved_at) {
+            true => self.at_or_above,
+            false => self.below,
+        }
+    }
+}
+
+/// `@AutoConfigureMockMvc`, which Boot 4 moved out of the servlet test slice.
+pub(crate) const AUTOCONFIGURE_MOCKMVC: MovedImport = MovedImport {
+    moved_at: 4,
+    at_or_above: "org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc",
+    below: "org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc",
+};
+
+/// `@WebMvcTest`, which moved with it.
+const WEBMVC_TEST: MovedImport = MovedImport {
+    moved_at: 4,
+    at_or_above: "org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest",
+    below: "org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest",
+};
+
+/// `MeterRegistryCustomizer`, which Boot 4 moved out of `actuate.autoconfigure`.
+const METER_REGISTRY_CUSTOMIZER: MovedImport = MovedImport {
+    moved_at: 4,
+    at_or_above: "org.springframework.boot.micrometer.metrics.autoconfigure.MeterRegistryCustomizer",
+    below: "org.springframework.boot.actuate.autoconfigure.metrics.MeterRegistryCustomizer",
+};
 
 struct DependencySpec {
     group: &'static str,
@@ -138,6 +199,16 @@ struct Fragment {
 }
 
 struct Pack {
+    /// What this pack's own templates spell as `{{key}}`: an image tag, a
+    /// URL, a route segment.
+    ///
+    /// **On the row, not in one bag every pack is substituted through.** A
+    /// shared list applies `redis:7-alpine` to `mail`'s templates and
+    /// `axllent/mailpit` to `redis`'s -- harmless only for as long as no two
+    /// packs pick the same key, which is a property nothing checks and which
+    /// the next pinned image breaks. A pack's own facts belong beside its
+    /// files, its dependencies and its properties.
+    substitutions: &'static [(&'static str, &'static str)],
     fragments: &'static [Fragment],
     files: &'static [JavaFile],
     files_when: BootCondition,
@@ -157,6 +228,7 @@ struct Pack {
     minimum_boot: Option<(u32, &'static str)>,
 }
 
+const NO_SUBSTITUTIONS: &[(&str, &str)] = &[];
 const NO_RESOURCES: &[ResourceFile] = &[];
 const NO_PROPERTIES: &[PropertySpec] = &[];
 const NO_PACKAGE_OVERRIDES: &[PackageOverride] = &[];
@@ -292,11 +364,14 @@ pub(crate) fn lower_and_emit(
                     &package,
                     &template_class,
                     capability,
-                    boot_major,
+                    pack.substitutions,
                     &fragments,
                 ));
-                for class in file.imports {
-                    unit.import_from(&default_package, class);
+                for import in file.imports {
+                    match import {
+                        Import::Own(class) => unit.import_from(&default_package, class),
+                        Import::Moved(moved) => unit.import(moved.resolve(boot_major)),
+                    }
                 }
                 with_test_container(model, file.source_set, &mut unit);
                 emit(
@@ -499,17 +574,19 @@ fn template_for(file: &JavaFile, boot_major: Option<u32>) -> crate::Template {
 
 /// Fill in a pack template's placeholders. Substitution only: what varies
 /// structurally is a fragment the caller rendered, and an import the pack
-/// needs is the unit's, not a placeholder here.
+/// needs is a name on its row that `JavaUnit` adds to the one import block --
+/// never a placeholder here, because a rendered `import` statement is exactly
+/// what makes two emitters able to write one twice.
 fn substitute(
     template: &str,
     package: &str,
     class: &str,
     capability: &Capability,
-    boot_major: Option<u32>,
+    substitutions: &[(&str, &str)],
     fragments: &[(&str, &str)],
 ) -> String {
     let mut template = template.to_string();
-    for (key, body) in fragments {
+    for (key, body) in fragments.iter().chain(substitutions) {
         template = template.replace(&format!("{{{{{key}}}}}"), body);
     }
     template
@@ -517,24 +594,10 @@ fn substitute(
         .replace("{{web}}", package)
         .replace("{{class}}", class)
         .replace("{{name}}", class)
-        .replace("{{path}}", "events")
-        .replace("{{REDIS_IMAGE}}", "redis:7-alpine")
-        .replace("{{image}}", "axllent/mailpit:v1.21")
         .replace("{{KAFKA_TESTCONTAINERS_CONFIG}}", class)
         .replace("{{TESTCONTAINERS_CONFIG}}", class)
-        .replace("{{POSTGRES_IMAGE}}", "postgres:17-alpine")
         .replace("{{database}}", &sqlite_database_class(capability))
         .replace("{{migrations}}", &sqlite_migrations_class(capability))
-        .replace("{{test_url}}", "jdbc:h2:mem:test")
-        .replace(
-            "{{mockmvc_import}}",
-            mockmvc_autoconfigure_import(boot_major),
-        )
-        .replace(
-            "{{customizer_import}}",
-            meter_registry_customizer_import(boot_major),
-        )
-        .replace("{{webmvc_test_import}}", webmvc_test_import(boot_major))
 }
 
 /// **The build's own identity wins over the model's application name.** A
@@ -562,30 +625,6 @@ pub(crate) fn validation_package(boot_major: Option<u32>) -> &'static str {
     match boot_major {
         Some(major) if major < 3 => "javax",
         _ => "jakarta",
-    }
-}
-
-fn mockmvc_autoconfigure_import(boot_major: Option<u32>) -> &'static str {
-    if boot_major.is_some_and(|major| major >= 4) {
-        "org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc"
-    } else {
-        "org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc"
-    }
-}
-
-fn meter_registry_customizer_import(boot_major: Option<u32>) -> &'static str {
-    if boot_major.is_some_and(|major| major >= 4) {
-        "org.springframework.boot.micrometer.metrics.autoconfigure.MeterRegistryCustomizer"
-    } else {
-        "org.springframework.boot.actuate.autoconfigure.metrics.MeterRegistryCustomizer"
-    }
-}
-
-fn webmvc_test_import(boot_major: Option<u32>) -> &'static str {
-    if boot_major.is_some_and(|major| major >= 4) {
-        "org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest"
-    } else {
-        "org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest"
     }
 }
 

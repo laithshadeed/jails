@@ -259,6 +259,7 @@ const KAFKA_PACKAGE_OVERRIDES: &[PackageOverride] = &[PackageOverride {
 }];
 
 pub(super) const KAFKA_PACK: Pack = Pack {
+    substitutions: NO_SUBSTITUTIONS,
     fragments: NO_FRAGMENTS,
     files: KAFKA_FILES,
     files_when: BootCondition::Spring,
@@ -273,6 +274,7 @@ pub(super) const KAFKA_PACK: Pack = Pack {
 };
 
 pub(super) const MAIL_PACK: Pack = Pack {
+    substitutions: &[("image", "axllent/mailpit:v1.21")],
     fragments: NO_FRAGMENTS,
     files: MAIL_FILES,
     files_when: BootCondition::Spring,

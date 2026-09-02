@@ -56,13 +56,6 @@ emitter re-walks are the candidate. A split that moves the same lines into
 five functions is not this pass; the module-size ratchet cannot tell the two
 apart and you can.
 
-**S55.5 -- Packs as data.** `emit_capability/{basic,spring,project_file}.rs`
-are 1,400 production lines over 25 capabilities. A capability that is one
-template plus a dependency set plus a property set is a row, not a function;
-count how many of the 25 are exactly that shape after S55.2 and turn those
-into the table `Pack` already implies. The ones that are not (`db`, `api`,
-`kafka`, `format`) keep their functions.
-
 **S55.7 -- `tests/cli/generate.rs`.** 7,948 lines and 110 tests, most of
 them "generate X, then read a file". After S55.2 the assertions about the
 package line and the import block are one property, not a hundred; name the
