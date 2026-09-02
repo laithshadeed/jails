@@ -9,9 +9,9 @@ Item numbers are stable and never reused.
 # 20 — The generated Java, and the IR
 
 **Read `docs/00-contracts.md` first.** The simplification pass's compiler
-plan (`docs/55-compiler.md`) closed every item it held and is gone;
-`git log -p -- docs/55-compiler.md` is its record. `docs/60-abstraction.md`
-S60.3 is the direction these paths move in now.
+plan (plan 55) closed every item it held and its file is gone; the git log
+of that path is its record. `docs/60-abstraction.md` S60.3 is the direction
+these paths move in now.
 
 ## What you own
 
