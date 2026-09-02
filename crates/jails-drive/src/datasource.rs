@@ -9,8 +9,8 @@ use jails_project::model::Project;
 use jails_protocol::database::{
     DatasourceSource, RedactedEndpoint, ResolvedDatasource, SqlDialect,
 };
-use jails_protocol::identity::ProjectPath;
 use jails_support::Result;
+use jails_support::identity::ProjectPath;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LiveServices {

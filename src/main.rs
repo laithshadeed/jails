@@ -1,14 +1,52 @@
-// Lower crates are re-exported so existing facade paths stay stable.
+//! The binary: the clap tree, and dispatch to it.
+//!
+//! **Argument parsing and nothing else.** Every subcommand's work lives in a
+//! crate below; what is here is the `clap` derive tree, the module list, and
+//! `main`'s translation of a `Failure` into an exit status. That boundary is
+//! what lets `jails commands` walk this same tree to describe the CLI, so
+//! there is no second list of subcommands, kinds or capabilities anywhere.
+//!
+//! Two conventions the tree depends on and neither is decorative: anything
+//! meant to be typed interactively uses `visible_alias`, because a hidden
+//! `alias` is invisible to `clap_complete`; and any argument with a closed
+//! value set is a `ValueEnum` rather than a `String` matched by hand, because
+//! that is the only shape a static completion list can be generated from.
+//!
+//! A failure exits non-zero through an *empty* `Err` where the command has
+//! already printed its own report, so `main` does not add a redundant
+//! `jails: ` line under a formatted one.
+
+mod adopt;
 mod app;
 mod arguments;
+mod canonical_support;
 mod cli;
 mod contract_command;
 mod dispatch;
 mod editor_command;
 mod facade;
-mod history_command;
+mod model_capability;
+mod model_command;
+mod model_destroy;
+mod model_doctor;
+mod model_eject;
+mod model_explain;
+mod model_field_evolution;
+mod model_generate;
+mod model_generate_jdl;
+mod model_index;
+mod model_init;
+mod model_migration;
+mod model_rename;
+mod model_resource;
+mod model_setting;
+mod model_status;
+mod model_upgrade;
+mod modernize;
 mod new;
+mod parse_error;
 mod plan_command;
+mod rename_source;
 mod schema_command;
 mod sql_command;
 mod template_macro;
@@ -16,8 +54,8 @@ mod tool_command;
 
 // What the CLI accepts lives in `cli`; what it does is the match below.
 pub(crate) use cli::{
-    Cli, Command, Declare, Invocation, Output, ResourceCommand, ResourceFieldCommand,
-    ResourceIndexCommand, SqlCommand, Undeclare,
+    Cli, Command, Declare, Invocation, Output, ResourceCommand, ResourceIndexCommand, SqlCommand,
+    Undeclare,
 };
 pub(crate) use facade::*;
 
@@ -25,90 +63,21 @@ use clap::{CommandFactory, Parser};
 
 pub(crate) use template_macro::template_here;
 
-/// A closed vocabulary jails does not have, and the thing it has instead.
-///
-/// `bugs.md` B55: `jails add websocket` answered with clap's bare list of the
-/// 25 capabilities and pointed at nothing, while `jails g socket <Name>` is
-/// the whole slice -- handler, registration, test, and the starter that makes
-/// them run. A reader who knows the word and not the spelling is one command
-/// away from what they want and gets a wall of alternatives instead.
-///
-/// A table, one edit per entry, the `why.rs` shape. Only for words with a
-/// *real* answer: a synonym pointing at nothing would be worse than clap's
-/// list, which at least tells you what does exist.
-///
-/// And only for words clap does not already accept. `postgres` was in the
-/// first version of this table and is a `visible_alias` for `db`, so the entry
-/// was dead code claiming the capability does not exist.
-const INSTEAD: &[(&str, &str)] = &[
-    (
-        "websocket",
-        "there is no `websocket` capability -- `jails g socket <Name>` is the slice: a \
-         TextWebSocketHandler,\n       its WebSocketConfigurer registration, a test, and the \
-         spring-boot-starter-websocket that makes them run.\n       fix: jails g socket Chat \
-         (or, for the dependency alone, jails add dependency \
-         org.springframework.boot:spring-boot-starter-websocket)",
-    ),
-    (
-        "socket",
-        "there is no `socket` capability -- `jails g socket <Name>` is a generator kind rather \
-         than a capability,\n       because it needs a name to write a handler for.\n       fix: \
-         jails g socket Chat",
-    ),
-    (
-        "devtools",
-        "there is no `devtools` capability -- it is one dependency and no code, so it goes \
-         through the verb for that.\n       fix: jails add dependency \
-         org.springframework.boot:spring-boot-devtools --scope runtime",
-    ),
-    (
-        "flyway",
-        "there is no `flyway` capability -- `db` installs Flyway along with the datasource, the \
-         compose service\n       and the test wiring, because a migration tool with no database \
-         is not a slice.\n       fix: jails add db",
-    ),
-    (
-        "websockets",
-        "there is no `websockets` capability -- `jails g socket <Name>` is the slice.\n       fix: \
-         jails g socket Chat",
-    ),
-];
-
-/// Answer a rejected closed-vocabulary value with what jails has instead.
-///
-/// Everything else is clap's own error, rendered by clap. This only intercepts
-/// the case where jails knows a better answer than "here are 25 other words".
-fn unparsed(error: clap::Error) -> std::process::ExitCode {
-    let rendered = error.render().to_string();
-    let named = rendered
-        .split_once("invalid value '")
-        .and_then(|(_, rest)| rest.split_once('\''))
-        .map(|(value, _)| value.to_ascii_lowercase());
-    if let Some(named) = named
-        && let Some((_, instead)) = INSTEAD.iter().find(|(word, _)| *word == named)
-    {
-        eprintln!("jails: {instead}");
-        return std::process::ExitCode::from(2);
-    }
-    let _ = error.print();
-    match error.use_stderr() {
-        true => std::process::ExitCode::from(2),
-        false => std::process::ExitCode::SUCCESS,
-    }
-}
-
 fn main() -> std::process::ExitCode {
     if let Some(result) = plan_command::requested() {
         return dispatch::finish(result);
     }
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
-        Err(error) => return unparsed(error),
+        Err(error) => return parse_error::render(error),
     };
     let debug = cli.debug;
     let pretend = cli.pretend;
 
     let invocation = Invocation {
+        // The process directory, unless a caller resolves one: see
+        // `Invocation::at`.
+        root: None,
         pretend,
         debug,
         output: cli.output,
@@ -117,6 +86,14 @@ fn main() -> std::process::ExitCode {
         plan_out: cli.plan_out,
         plan_in: cli.plan_in,
         command_path: cli::command_path_from_env(),
+        force: false,
+        // **Only `add` starts a service, and that is the CLI's own shape.**
+        // `--no-start` exists on the commands that install or run something;
+        // `jails g scaffold` on a project that already declares a database
+        // has never brought one up, and making every mutation run the plan's
+        // effects would. The `Add` arm reads the flag; everything else leaves
+        // what is running alone.
+        no_start: true,
     };
     let failure_output = invocation.output;
     let failure_path = invocation.command_path.clone();
@@ -125,6 +102,7 @@ fn main() -> std::process::ExitCode {
         Command::New(args) => new::new(new::request(&args, debug, pretend)),
         Command::NewCli(args) => new::new_cli(&new::cli_request(&args, debug, pretend)),
         Command::App { command } => app::run(command, invocation),
+        Command::Model { command } => model_command::run(command, invocation),
         Command::Sql { command } => sql_command::run(command, invocation),
         Command::Introspect { command } => schema_command::introspect(command, invocation),
         Command::Pull {
@@ -144,13 +122,6 @@ fn main() -> std::process::ExitCode {
         Command::Schema { command } => schema_command::schema(command, invocation),
         Command::Editor { command } => editor_command::run(command, invocation),
         Command::Contract { command } => contract_command::run(command, invocation),
-        Command::History(history) => history_command::history(history.limit, invocation.output),
-        Command::Show(show) => {
-            history_command::show(&show.transaction, invocation.diff, show.why, invocation.output)
-        }
-        Command::Undo(undo) => dispatch::mutate(invocation, false, |run| {
-            jails_engine::route::undo_files(run, &undo.transaction, undo.merge)
-        }),
         Command::Request { request } => tool_command::request(
             tool_command::HttpRequest {
                 method: request.method,
@@ -186,25 +157,15 @@ fn main() -> std::process::ExitCode {
             invocation,
         ),
         Command::Architecture { action } => match action {
-            cli::ArchitectureAction::Baseline => {
-                jails_drive::baseline::freeze(invocation.debug)
-            }
+            cli::ArchitectureAction::Baseline => jails_drive::baseline::freeze(invocation.debug),
         },
         Command::Generate(args) => {
-            // Built once, outside the closure: a route may be called twice --
-            // a plan for a confirmation, then the commit -- and the intent is
-            // the same request both times.
-            let default_literal = args.default_literal.clone();
-            let backfill_file = args.backfill_file.clone();
-            let intent = jails_engine::route::Intent::from(args);
-            dispatch::mutate(invocation, false, |run| {
-                jails_engine::route::recipe_with_field_data(
-                    run,
-                    &intent,
-                    default_literal.as_deref(),
-                    backfill_file.as_deref(),
-                )
-            })
+            return dispatch::finish_invocation(
+                model_command::ensure_owned(invocation.clone())
+                    .and_then(|()| model_generate_jdl::run(args, invocation)),
+                failure_output,
+                &failure_path,
+            );
         }
         Command::Add {
             declare:
@@ -214,14 +175,9 @@ fn main() -> std::process::ExitCode {
                     scope,
                 }),
             ..
-        } => arguments::maven_coordinate(&coordinate).and_then(|coordinate| {
-            dispatch::mutate(invocation, false, |run| {
-                jails_engine::route::add_dependency(
-                    run,
-                    coordinate.clone(),
-                    version.clone(),
-                    scope.resolved(),
-                )
+        } => model_command::ensure_owned(invocation.clone()).and_then(|()| {
+            arguments::maven_coordinate(&coordinate).and_then(|coordinate| {
+                model_capability::add_dependency(coordinate, version, scope.canonical(), invocation)
             })
         }),
         Command::Add {
@@ -230,125 +186,94 @@ fn main() -> std::process::ExitCode {
             no_start,
             package,
             declare: None,
-        } => dispatch::mutate(invocation, no_start, |run| {
-            // Every capability is checked before any is applied. Each one is
-            // its own transition, so without this `jails add db security` on a
-            // plain Maven project would install the database and *then* refuse
-            // -- leaving the reader with half of what they asked for and no
-            // word about which half.
-            add::preflight_in(
-                run.project(),
-                &capabilities,
-                name.as_deref(),
-                package.as_deref(),
-            )?;
-            let asked = dispatch::declarations(&capabilities, name.as_deref(), package.as_deref())?;
-            dispatch::one_transition_each(run, &asked, jails_engine::route::install)
-        }),
-        Command::Sync { no_start } => dispatch::mutate(invocation, no_start, |run| {
-            // Most projects never write a manifest, so an empty list is not an
-            // error and "nothing to do" would not explain itself. Said before
-            // the transition rather than inside it: what follows is a real
-            // reconciliation of an empty list, and this is advice about the
-            // file that would give it something to do.
-            if run.project().declarations().is_empty() {
-                println!(
-                    "note: no capabilities are declared in jails.toml, so there is nothing \
-                     to reconcile.\n      `jails add <capability>` records one; `sync` then \
-                     makes the project match the list."
-                );
-            }
-            jails_engine::route::sync(run)
-        }),
+        } => {
+            let invocation = invocation.without_starting(no_start);
+            return dispatch::finish_invocation(
+                model_command::ensure_owned(invocation.clone())
+                    .and_then(|()| model_capability::add(capabilities, name, package, invocation)),
+                failure_output,
+                &failure_path,
+            );
+        }
+        Command::Sync { no_start } => model_command::ensure_owned(invocation.clone())
+            .and_then(|()| model_command::sync(no_start, invocation)),
         Command::Remove {
             capabilities,
             name,
             force,
             package,
             undeclare,
-        } => match undeclare {
-            // `mutate`, not `mutate_confirmed`: the prompt on `remove
-            // <capability>` is there because deleting generated files is a
-            // decision about bytes the reader may have edited. Retiring a
-            // declared resource unsplices exactly what jails spliced and
-            // touches nothing else, so there is nothing to authorise.
-            Some(Undeclare::Dependency { coordinate }) => arguments::maven_coordinate(&coordinate)
-                .map(jails_protocol::entity::DeclaredId::Dependency)
-                .and_then(|id| {
-                    dispatch::mutate(invocation, false, |run| {
-                        jails_engine::route::undeclare(run, id.clone())
-                    })
-                }),
-            Some(Undeclare::FastTest) => {
-                dispatch::mutate(invocation, false, jails_engine::route::remove_fast_test)
-            }
-            None => dispatch::mutate_confirmed(invocation, false, force, |run| {
-                let asked =
-                    dispatch::declarations(&capabilities, name.as_deref(), package.as_deref())?;
-                dispatch::one_transition_each(run, &asked, jails_engine::route::remove)
-            }),
-        },
-        Command::Set { setting, tests } => {
-            arguments::split_setting(&setting).and_then(|(key, value)| {
-                dispatch::mutate(invocation, false, |run| {
-                    jails_engine::route::set_property(run, key.clone(), value.clone(), tests)
-                })
-            })
+        } => {
+            let invocation = invocation.forcing(force);
+            let result =
+                model_command::ensure_owned(invocation.clone()).and_then(|()| match undeclare {
+                    None => model_capability::remove(capabilities, name, package, invocation),
+                    Some(Undeclare::Dependency { coordinate }) => {
+                        arguments::maven_coordinate(&coordinate).and_then(|coordinate| {
+                            model_capability::remove_dependency(coordinate, invocation)
+                        })
+                    }
+                    Some(Undeclare::FastTest { force }) => {
+                        model_capability::remove_fast_test(invocation.forcing(force))
+                    }
+                });
+            return dispatch::finish_invocation(result, failure_output, &failure_path);
         }
-        Command::Unset { key, tests } => arguments::declared_property(&key, tests).and_then(|id| {
-            dispatch::mutate(invocation, false, |run| {
-                jails_engine::route::undeclare(run, id.clone())
-            })
-        }),
+        Command::Set { setting, tests } => model_command::ensure_owned(invocation.clone())
+            .and_then(|()| {
+                arguments::split_setting(&setting)
+                    .and_then(|(key, value)| model_setting::set(key, value, tests, invocation))
+            }),
+        Command::Unset { key, tests } => model_command::ensure_owned(invocation.clone())
+            .and_then(|()| model_setting::unset(key, tests, invocation)),
         Command::Rename {
             command,
             old,
             new,
             force,
-        } => match command {
-            Some(cli::RenameCommand::Resource {
-                from,
-                to,
-                strategy,
-                table,
-                api,
-                route,
-                force,
-            }) => dispatch::mutate(invocation, false, |run| {
-                jails_engine::route::rename_resource(
-                    run,
-                    jails_engine::route::RenameResourceInvocation {
-                        selector: &from,
-                        new: &to,
-                        strategy: strategy.into(),
-                        target_table: table.as_deref(),
-                        api: api.into(),
-                        target_route: route.as_deref(),
-                        force,
-                    },
-                )
-            }),
-            Some(cli::RenameCommand::Storage {
-                resource,
-                complete,
-                old_version_retired,
-                force,
-            }) => dispatch::mutate(invocation, false, |run| {
-                jails_engine::route::rename_storage(
-                    run,
-                    &resource,
-                    &complete,
-                    old_version_retired,
-                    force,
-                )
-            }),
-            None => match (old, new) {
-                (Some(old), Some(new)) => dispatch::mutate(invocation, false, |run| {
-                    jails_engine::route::rename(run, &old, &new, force)
-                }),
-                _ => Err("legacy rename requires OLD and NEW.\n       fix: use `jails rename resource <slice>.<current-name> <new-name> --strategy preserve-table|single-cutover|rolling`".into()),
-            },
-        },
+        } => {
+            // **Two different operations under one verb, and they stay
+            // apart.** `rename resource` moves a *declared* resource -- the
+            // model, the table and the managed tree together. The bare
+            // `rename OLD NEW` is a textual identifier sweep over the reader's
+            // own sources, for a type the model does not declare; it needs no
+            // model and initialises none, which is why it is dispatched before
+            // `ensure_owned` rather than inside it.
+            if command.is_none() {
+                let (Some(old), Some(new)) = (old, new) else {
+                    let result = Err(jails_support::Failure::Told(
+                        "`jails rename` takes either a resource -- `rename resource <current> <new> --strategy ...` -- or two simple type names.\n       fix: name what you are renaming".to_string(),
+                    ));
+                    return dispatch::finish_invocation(result, failure_output, &failure_path);
+                };
+                let result = rename_source::run(&old, &new, force, invocation);
+                return dispatch::finish_invocation(result, failure_output, &failure_path);
+            }
+            let result =
+                model_command::ensure_owned(invocation.clone()).and_then(|()| match command {
+                    Some(cli::RenameCommand::Resource {
+                        from,
+                        to,
+                        strategy,
+                        table,
+                        api,
+                        route,
+                        force: _,
+                    }) => model_rename::run(
+                        model_rename::Request {
+                            from,
+                            to,
+                            strategy,
+                            table,
+                            api,
+                            route,
+                        },
+                        invocation,
+                    ),
+                    None => unreachable!("the textual rename is dispatched above"),
+                });
+            return dispatch::finish_invocation(result, failure_output, &failure_path);
+        }
         Command::Destroy {
             kind,
             name,
@@ -358,135 +283,69 @@ fn main() -> std::process::ExitCode {
             confirm_table,
             migrate,
             datasource,
-        } => dispatch::mutate_confirmed(invocation, false, force, |run| {
-            let storage = arguments::storage_retirement(storage, confirm_table.clone())?;
-            let migration_effect = migrate.then_some(datasource.as_deref()).flatten();
-            jails_engine::route::destroy(
-                run,
-                kind,
-                &name,
-                package.as_deref(),
-                force,
-                storage,
-                migration_effect,
-            )
-        }),
+        } => {
+            // The migration flags are the legacy engine's vocabulary:
+            // canonical removal is model subtraction plus an explicit storage
+            // policy, and `--storage drop` is the confirmation they stood in
+            // for. `--force` survives with a narrower meaning -- the reader
+            // saying that edits to the files being removed may go with them.
+            let invocation = invocation.forcing(force);
+            let result = model_command::ensure_owned(invocation.clone()).and_then(|()| {
+                model_destroy::run(
+                    model_destroy::Request {
+                        kind,
+                        name,
+                        package: package.is_some(),
+                        storage,
+                        confirm_table,
+                        migration_effect: migrate || datasource.is_some(),
+                    },
+                    invocation,
+                )
+            });
+            return dispatch::finish_invocation(result, failure_output, &failure_path);
+        }
         Command::Resource { command } => match command {
             ResourceCommand::Status {
                 selector,
                 datasource,
-            } => schema_command::resource_status(
-                &selector,
-                datasource.as_deref(),
-                invocation,
-            ),
+            } => schema_command::resource_status(&selector, datasource.as_deref(), invocation),
             ResourceCommand::Revive { selector, table } => {
-                dispatch::mutate(invocation, false, |run| {
-                    jails_engine::route::revive(run, &selector, &table)
-                })
+                model_command::ensure_owned(invocation.clone())
+                    .and_then(|()| model_destroy::revive(selector, table, invocation))
             }
+            // Canonical repair is `sync` with the deleted-managed-file guard
+            // waived, so it takes no `--strategy`: managed output is
+            // reproducible from the model, and the model is the only strategy
+            // there is. A caller who passed one is told that rather than
+            // having it silently ignored.
+            //
+            // A selector is refused rather than ignored: compilation is
+            // whole-model, so scoping it to one resource is not something this
+            // can honour. `--datasource` *is* honoured, and asks the one
+            // question the files cannot answer -- whether the image Flyway
+            // actually applied is the one the seal would restore.
             ResourceCommand::Repair {
                 selector,
                 strategy: _,
                 datasource,
-            } => dispatch::mutate(invocation, false, |run| {
-                jails_engine::route::repair(run, &selector, datasource.as_deref())
-            }),
-            ResourceCommand::Index { command } => match command {
-                ResourceIndexCommand::Add {
-                    entity,
-                    columns,
-                    package,
-                } => dispatch::mutate(invocation, false, |run| {
-                    jails_engine::route::add_index(run, &entity, &columns, package.as_deref())
-                }),
-            },
-            ResourceCommand::Field { command } => match command {
-                ResourceFieldCommand::Add {
-                    entity,
-                    field_spec,
-                    default_literal,
-                    backfill_file,
-                    package,
-                } => dispatch::mutate(invocation, false, |run| {
-                    jails_engine::route::add_field_with_data(
-                        run,
-                        &entity,
-                        &field_spec,
-                        package.as_deref(),
-                        default_literal.as_deref(),
-                        backfill_file.as_deref(),
-                    )
-                }),
-                ResourceFieldCommand::Rename {
-                    entity,
-                    field,
-                    new_name,
-                    column,
-                    package,
-                } => dispatch::mutate(invocation, false, |run| {
-                    jails_engine::route::rename_field(
-                        run,
-                        &entity,
-                        &field,
-                        &new_name,
-                        column.into(),
-                        package.as_deref(),
-                    )
-                }),
-                ResourceFieldCommand::Type {
-                    entity,
-                    field,
-                    to,
-                    strategy,
-                    package,
-                } => dispatch::mutate(invocation, false, |run| {
-                    jails_engine::route::change_field_type(
-                        run,
-                        &entity,
-                        &field,
-                        &to,
-                        strategy.into(),
-                        package.as_deref(),
-                    )
-                }),
-                ResourceFieldCommand::Nullability {
-                    entity,
-                    field,
-                    nullable,
-                    required: _,
-                    backfill_file,
-                    package,
-                } => dispatch::mutate(invocation, false, |run| {
-                    jails_engine::route::set_field_nullability_with_data(
-                        run,
-                        &entity,
-                        &field,
-                        nullable,
-                        backfill_file.as_deref(),
-                        package.as_deref(),
-                    )
-                }),
-                ResourceFieldCommand::Drop {
-                    entity,
-                    field,
-                    confirm_column,
-                    package,
-                } => dispatch::mutate(invocation, false, |run| {
-                    jails_engine::route::drop_field(
-                        run,
-                        &entity,
-                        &field,
-                        &confirm_column,
-                        package.as_deref(),
-                    )
-                }),
-            },
+            } => {
+                if selector.is_some() {
+                    Err(jails_support::Failure::Told(
+                        "canonical `resource repair` repairs the whole managed tree and takes no selector: it renders `.jails/generated` from the model.\n       fix: run `jails resource repair` with no selector".to_string(),
+                    ))
+                } else {
+                    model_command::ensure_owned(invocation.clone())
+                        .and_then(|()| model_command::repair(datasource.as_deref(), invocation))
+                }
+            }
+            ResourceCommand::Index { command } => model_index::run(command, invocation),
+            ResourceCommand::Field { command } => model_resource::run(command, invocation),
         },
         Command::Start { services } => compose::start(&services, debug),
         Command::Stop { services } => compose::stop_cmd(&services, debug),
-        Command::Adopt => dispatch::mutate(invocation, false, jails_engine::route::adopt_layout),
-        Command::Modernize => dispatch::mutate(invocation, false, jails_engine::route::modernize),
+        Command::Adopt => adopt::layout(invocation),
+        Command::Modernize => modernize::run(invocation),
         Command::Src { type_name, json } => source::src(&type_name, json),
         Command::Bench {
             vus,
@@ -500,7 +359,7 @@ fn main() -> std::process::ExitCode {
             },
             debug,
         ),
-        Command::Doctor { json } => doctor::doctor(json),
+        Command::Doctor { json } => doctor::doctor(json, crate::model_doctor::checks()),
         Command::Why {
             log,
             name,
@@ -627,9 +486,8 @@ fn main() -> std::process::ExitCode {
                         ))
                     || (affected && engine != cli::TestEngineArg::Build)
                 {
-                    true => {
-                        dispatch::precondition(invocation, jails_engine::route::install_fast_test)
-                    }
+                    true => model_command::ensure_owned(invocation.clone())
+                        .and_then(|()| model_capability::ensure_fast_test(invocation)),
                     false => Ok(()),
                 }
             });
@@ -658,7 +516,10 @@ fn main() -> std::process::ExitCode {
         }
         Command::Build => run::build(debug),
         Command::Clean => run::clean(debug),
-        Command::Fmt => dispatch::mutate(invocation, false, jails_engine::route::format),
+        // A canonical project's generated tree is compiler output, so the
+        // only thing left for a formatter to touch is the reader's own code.
+        // See `run::format_project`.
+        Command::Fmt => run::format_project(debug),
         Command::Check => run::check(debug),
         Command::Mvn { args } => run::mvn(&args, debug),
         Command::Gradle { args } => run::gradle(&args, debug),
@@ -713,12 +574,11 @@ fn main() -> std::process::ExitCode {
 
 /// These two assert against jails' *real* CLI, so they live with it.
 ///
-/// They used to sit in `commands.rs` and reach for `crate::Cli`, which was one
-/// layer above that module — invisible while everything was one crate, and a
-/// cycle the moment the tooling became one. `commands` takes the
-/// `clap::Command` as an argument now and exposes its two walkers, so the
-/// property being tested is unchanged: this is the command that parses the
-/// arguments, not a fixture resembling it.
+/// They cannot live in `commands.rs`: reaching for `crate::Cli` from there is
+/// a cycle, since that module is one layer below the binary. `commands` takes
+/// the `clap::Command` as an argument and exposes its two walkers, so what is
+/// asserted here is the command that parses the arguments rather than a
+/// fixture resembling it.
 #[cfg(test)]
 mod tests {
     use super::*;

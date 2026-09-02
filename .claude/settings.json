@@ -5,9 +5,21 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd /home/laith/code/jails && { cargo build --workspace -q && cargo test --workspace -q && cargo install --path . -q; } >/tmp/jails-stop-hook.log 2>&1 || echo '{\"systemMessage\": \"jails: cargo build/test/install failed after this turn -- see /tmp/jails-stop-hook.log\"}'",
-            "timeout": 120,
-            "statusMessage": "cargo build && test && install (jails)"
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && { mise run verify-rewrite && cargo install --path . -q; } >/tmp/jails-stop-hook.log 2>&1 || echo '{\"systemMessage\": \"jails: verify-rewrite failed after this turn -- see /tmp/jails-stop-hook.log\"}'",
+            "timeout": 600,
+            "statusMessage": "mise run verify-rewrite (jails)"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh",
+            "timeout": 900,
+            "statusMessage": "installing the pinned JDK, Maven, Gradle and container engine (jails)"
           }
         ]
       }

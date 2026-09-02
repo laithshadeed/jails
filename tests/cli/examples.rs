@@ -7,6 +7,7 @@
 
 use super::*;
 use std::collections::BTreeSet;
+use std::process::Command;
 
 const POLICY: &str = include_str!("../../examples/proof-policy.tsv");
 const MINICOM_MANIFEST: &str = concat!(
@@ -99,17 +100,22 @@ fn example_manifest_policy_covers_every_checked_in_manifest() {
     }
 }
 
-/// A post-commit effect that fails must not unmake the project.
+/// A broken container engine cannot touch what `jails new --app` produces.
 ///
+/// **The original property was weaker, and it is worth keeping the history.**
 /// `jails new --app` publishes by rename, so an error thrown out of the
 /// manifest apply discarded the whole scratch tree. A compose service that
 /// would not start -- an ordinary state on a machine where something else
-/// already holds `:5432` -- therefore printed `ledger create`, exited 1, and
-/// left no directory: no `jails:` line, no project, and no way to tell which
-/// of the two had happened.
+/// already holds `:5432` -- printed `ledger create`, exited 1, and left no
+/// directory: no `jails:` line, no project, and no way to tell which of the
+/// two had happened. The fix made the effect report *against a project that
+/// exists*, so this test asserted an exit of 1 beside a complete tree.
 ///
-/// The effect is explicitly post-*commit*. It must be reported against a
-/// project that exists.
+/// A canonical project has no post-commit effects at all -- the model is
+/// compiled and its exact plan executed, and nothing external is started, which
+/// is the same reason `sync` refuses `--no-start` by name. So the failure this
+/// was written for cannot occur, and the guarantee is now the stronger one:
+/// the engine being unusable changes nothing about what is generated.
 #[test]
 fn a_failed_post_commit_effect_reports_against_a_project_that_exists() {
     let parent = temp_dir("new-app-effect-failure");
@@ -155,15 +161,21 @@ fn a_failed_post_commit_effect_reports_against_a_project_that_exists() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(output.status.code(), Some(1), "{rendered}");
-    assert!(rendered.contains("effect"), "{rendered}");
+    assert_eq!(output.status.code(), Some(0), "{rendered}");
     let project = parent.join("effectapp");
     assert!(project.is_dir(), "the project was discarded:\n{rendered}");
+    // Into the managed tree, because the project is canonical from its first
+    // command: `jails new` seeds `.jails/model.jdl`, and the manifest replays
+    // into it through the same frontends `jails g` uses.
     assert!(
         project
-            .join("src/main/java/com/example/effectapp/domain/Deal.java")
+            .join(".jails/generated/main/java/com/example/effectapp/domain/Deal.java")
             .is_file(),
         "the manifest's own output is missing:\n{rendered}"
+    );
+    assert!(
+        project.join(".jails/model.jdl").is_file(),
+        "the project is not canonical:\n{rendered}"
     );
 }
 
@@ -218,7 +230,11 @@ fn generated_unheld_gradle_example() -> &'static PathBuf {
                 "--jar-version",
                 "0.1.0",
                 "--deps",
-                "web,data-jdbc,h2",
+                // Not `h2`: the manifest declares it as a capability, and a
+                // dependency the reader's own build block also names is a
+                // second editable source for the same fact -- which the
+                // Gradle adapter refuses rather than adopting.
+                "web,data-jdbc",
                 "--no-devtools",
                 "--no-git",
                 // The manifest declares Compose services. Proving it
@@ -309,25 +325,45 @@ fn unheld_maven_example_manifest_passes_real_verification() {
     assert_eq!(
         maven_report_summary(root, "surefire-reports"),
         MavenReportSummary {
-            // 17 -> 18 reports, 53 -> 54 tests: `UnreadForEmailQueryController
-            // Test`, from the `--via User` query that is the Django original's
-            // whole customer-facing surface (missing.md M5, plan.md P8.1).
-            // 18 -> 19, 54 -> 55: `EnsureUserControllerTest`, from the
-            // get-or-create the Django ping handler opens with (M6, P8.3).
-            // 19 -> 20: `UserSeederTest`, which binds the shipped
-            // `db/seeds/users.json` to the record on every build -- the file
-            // is otherwise read only under the seed profile (M10, P8.9).
-            // 20 -> 21: `MessagesByDirectionQueryControllerTest`, from the
-            // optional filter M16 asked for -- the admin list's three
-            // independent filters, any subset (P10.5).
-            reports: 21,
-            // 51 -> 52: `SendMessageUseCaseTest` gained the case missing.md
-            // M3 says would have caught a create that never assigns a key.
-            // 52 -> 53: `MarkAsReadControllerTest` gained the case for a
-            // request with no `If-Match`, which used to apply blind.
-            // 55 -> 56 with `UserSeederTest`'s one case.
-            // 56 -> 57 with the optional-filter query's controller test.
-            tests: 57,
+            // **These are the canonical compiler's numbers, and they are
+            // lower than the legacy engine's 21 and 57.** The difference is
+            // not lost checks but a different shape: canonical emits an
+            // `HttpPort` for an entity where legacy emitted a controller and
+            // its test, and it has no per-operation use-case unit test because
+            // an operation *is* its port plus a JDBC adapter, and the adapter
+            // is proved against a real database below rather than against a
+            // mock here.
+            //
+            // What is pinned here is one controller test per routed operation
+            // -- `SendMessage`, `MarkAsRead`, `Conversation`, `UnreadForEmail`
+            // and `EnsureUser` -- each issuing a real request through the
+            // dispatcher with a body built from the model's own JSON samples.
+            // Canonical emitted the adapters and nothing that proved them
+            // until this pin was written.
+            //
+            // 15 -> 17 reports, 33 -> 35 tests: `MessageControllerTest` and
+            // `UserControllerTest`, from the `http` facet finally serving the
+            // resource it declares. It emitted a port nothing implemented, so
+            // the sentence above about canonical emitting an `HttpPort` "where
+            // legacy emitted a controller and its test" no longer describes a
+            // difference in shape -- it described a missing endpoint.
+            //
+            // 17 -> 18 reports, 35 -> 42 tests: `ArchitectureTest`, whose
+            // seven ArchUnit rules the compiler now emits for any model that
+            // serves a resource. It is the one generated test that checks the
+            // *reader's* code as well as jails' own, which is why it counts
+            // for seven where a controller test counts for one.
+            //
+            // 18 -> 20 reports, 42 -> 46 tests: `MessageDtoTest` and
+            // `UserDtoTest`, two cases each. A scaffold declares the request
+            // boundary now, so every resource ships the request and response
+            // records and the test that holds them to what a caller supplies.
+            // 46 -> 48: the error model gained the two outcomes a transition
+            // can have when its `If-Match` does not match -- 412 for a version
+            // that moved on, 404 for a row that is not there. Both reached the
+            // client as a 500 before, which is what alerting pages on.
+            reports: 20,
+            tests: 48,
             failures: 0,
             errors: 0,
             skipped: 0,
@@ -336,22 +372,36 @@ fn unheld_maven_example_manifest_passes_real_verification() {
     assert_eq!(
         maven_report_summary(root, "failsafe-reports"),
         MavenReportSummary {
-            // 5 -> 6 reports, 6 -> 7 tests: `JdbcUnreadForEmailQueryIT` runs
-            // the join against real PostgreSQL.
-            // 6 -> 7, 7 -> 8: `EnsuringEnsureUserUseCaseIT`, which is the only
-            // place `on conflict` means anything -- and the only check that
-            // the column it names actually carries a unique index.
-            // 7 -> 8, 8 -> 11: `JdbcAdminPresenceIT`'s three cases, which
-            // are the ones a module-level dict cannot pass -- a second node
-            // sees the join, one node leaving does not evict the other, and a
-            // claim nobody refreshed stops counting (M4b, P8.5).
-            // 8 -> 9, 11 -> 12: `JdbcMessagesByDirectionQueryIT`. This is the
-            // one that matters for P10.5 -- it runs
-            // `cast(:direction as text) is null or ...` against a real
-            // PostgreSQL, which is the form the database needs and the reason
-            // the cast is there rather than a bare `:x is null`.
-            reports: 9,
-            tests: 12,
+            // **Failsafe ran nothing at all before this.** The canonical
+            // path never added the plugin, so every `*IT` it emitted -- the
+            // presence adapter's included -- sat in a project that could not
+            // run it while `mvn verify` reported success. That is the exact
+            // failure `CLAUDE.md` records for the legacy engine, reintroduced.
+            //
+            // The four here are one per JDBC query adapter plus the presence
+            // adapter's three cases. They store a row through the entity's own
+            // repository and read it back through the operation, against the
+            // real PostgreSQL `add db` wires -- which is the only place a
+            // quoted join alias, a foreign key, a `timestamptz` bind and
+            // `cast(:x as text) is null` mean anything. Writing them found
+            // three defects nothing else could: a `--via` join that reached no
+            // emitter, an `Instant` the driver cannot infer a type for, and a
+            // `generated always as identity` key that made `save` impossible.
+            //
+            // 4 -> 7 reports, 6 -> 9 tests: the write half. `SendMessage` and
+            // `EnsureUser` are commands and `MarkAsRead` is a transition, and
+            // their `insert ... returning` and `update ... returning` were
+            // asserted by nothing -- so only the repository adapter's
+            // parameters went through `bound_value`, and an enum reached
+            // PostgreSQL raw. `Can't infer the SQL type to use for an instance
+            // of MessageDirection`, from a statement that compiled.
+            //
+            // 7 -> 10 reports, 9 -> 13 tests: three declared relations gained
+            // an `AssociationIT` each. A foreign key is the one thing in a
+            // generated project no unit test can observe, and the catalogue
+            // half of that proof is what catches a mapping written backwards.
+            reports: 10,
+            tests: 13,
             failures: 0,
             errors: 0,
             skipped: 0,
@@ -359,30 +409,79 @@ fn unheld_maven_example_manifest_passes_real_verification() {
     );
 }
 
-fn pinned_gradle_toolchain_available() -> bool {
-    std::process::Command::new("gradle")
-        .arg("--version")
-        .output()
-        .is_ok_and(|output| {
-            let version = String::from_utf8_lossy(&output.stdout);
-            output.status.success()
-                && version.contains("Gradle 8.5")
-                && version.lines().any(|line| line.starts_with("JVM: 21"))
-        })
+/// The pinned Gradle 8.5 / JDK 21 pair, **located rather than inherited**.
+///
+/// This test used to require the whole gate to be re-entered under
+/// `mise x java@21 gradle@8.5`, because it read `gradle` and `JAVA_HOME`
+/// straight off the ambient environment. That cost a second `cargo test`
+/// invocation running exactly one test, serialised after everything else --
+/// 29.15s measured, against a cargo overhead of 0.1s, so essentially all of
+/// it was the Gradle build waiting its turn. Located here instead, the test
+/// runs inside the ordinary suite and those 29s overlap a 299s test phase
+/// rather than following it.
+///
+/// The ambient pair is still honoured first, so running this test by hand
+/// under `mise x` behaves exactly as it did. `mise where` is the fallback,
+/// and mise is not an extra dependency: it is what invokes the gate.
+fn pinned_gradle_toolchain() -> Option<(PathBuf, Option<PathBuf>)> {
+    if pinned_gradle_reports_eight_five(Command::new("gradle")) {
+        return Some((PathBuf::from("gradle"), None));
+    }
+    // `mise which --tool=` resolves the executable itself. `mise where` was
+    // the obvious call and is the wrong one: it answers with the *install
+    // root*, and the layout under it is not uniform -- Gradle 8.5 unpacks to
+    // `<root>/gradle-8.5/bin/gradle`, so a joined `bin/gradle` does not exist
+    // and the probe silently reported the toolchain missing.
+    let located = |tool: &str, exe: &str| {
+        let output = Command::new("mise")
+            .args(["which", exe, &format!("--tool={tool}")])
+            .output()
+            .ok()?;
+        output
+            .status
+            .success()
+            .then(|| PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_owned()))
+            .filter(|path| path.is_file())
+    };
+    // Gradle wants a JDK *home*, and what is resolvable is the `java` binary
+    // inside `<home>/bin`, so the home is two levels up from it.
+    let java_home = located("java@21", "java")?
+        .parent()?
+        .parent()?
+        .to_path_buf();
+    let gradle = located("gradle@8.5", "gradle")?;
+    let mut probe = Command::new(&gradle);
+    probe.env("JAVA_HOME", &java_home);
+    pinned_gradle_reports_eight_five(probe).then_some((gradle, Some(java_home)))
+}
+
+/// Whether this command is Gradle 8.5 running on JDK 21, both of which the
+/// example proof policy pins and neither of which is the repository default.
+fn pinned_gradle_reports_eight_five(mut command: Command) -> bool {
+    command.arg("--version").output().is_ok_and(|output| {
+        let version = String::from_utf8_lossy(&output.stdout);
+        output.status.success()
+            && version.contains("Gradle 8.5")
+            && version.lines().any(|line| {
+                line.strip_prefix("JVM:")
+                    .is_some_and(|value| value.trim_start().starts_with("21"))
+            })
+    })
 }
 
 #[test]
 fn unheld_gradle_example_manifest_builds_on_its_pinned_toolchain() {
-    if !pinned_gradle_toolchain_available() {
+    let Some((gradle, java_home)) = pinned_gradle_toolchain() else {
         skip("Gradle 8.5 running on JDK 21 is required by the example proof policy");
         return;
-    }
+    };
     let root = generated_unheld_gradle_example();
-    let status = std::process::Command::new("gradle")
-        .current_dir(root)
-        .args(["--no-daemon", "build"])
-        .status()
-        .unwrap();
+    let mut build = Command::new(&gradle);
+    build.current_dir(root).args(["--no-daemon", "build"]);
+    if let Some(java_home) = &java_home {
+        build.env("JAVA_HOME", java_home);
+    }
+    let status = build.status().unwrap();
     assert!(
         status.success(),
         "the exact minicom-spring manifest failed Gradle build"

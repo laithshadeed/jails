@@ -149,7 +149,7 @@ fn lineage_columns(
     let mut created = false;
     for seal in &lifecycle.migrations {
         let bytes = std::fs::read(project.root().join(seal.path.as_str())).ok()?;
-        if jails_protocol::identity::ObjectId::from_bytes(jails_support::codec::sha256(&bytes))
+        if jails_support::identity::ObjectId::from_bytes(jails_support::codec::sha256(&bytes))
             != seal.content_digest
         {
             // Already reported as a broken seal. Reading it would be reading
@@ -167,6 +167,22 @@ fn lineage_columns(
 /// Returns `None` for anything this reader does not recognise *about this
 /// table*, which is what keeps a hand-written or hand-edited lineage from
 /// producing a confident wrong answer.
+/// Fold migration texts, in order, into the column set for one table.
+///
+/// The canonical half of this check needs the same reader, and two readers of
+/// the statements jails emits would drift the way every duplicated reader in
+/// this repository has. `None` means the lineage is not readable -- a
+/// statement outside the handful the compiler writes, or no `create table` at
+/// all -- and unknown widens rather than accusing.
+pub fn columns_from(migrations: &[&str], table: &str) -> Option<BTreeSet<String>> {
+    let mut columns = BTreeSet::new();
+    let mut created = false;
+    for text in migrations {
+        apply(text, table, &mut columns, &mut created)?;
+    }
+    created.then_some(columns)
+}
+
 fn apply(
     text: &str,
     table: &str,

@@ -40,22 +40,22 @@ flowchart TD
 
 ### Key Submodules
 
-- [`generate::scaffold`](file:///home/laith/code/jails/crates/jails-generate/src/generate/scaffold.rs):
+- [`generate::scaffold`](../../crates/jails-generate/src/generate/scaffold.rs):
   - Emits the domain record, repository port, JDBC repository, in-memory repository fake, service, DTOs, controller, migration, and fixtures.
   - Automatically annotates only the JDBC repository as `@Repository` when a database starter is present; otherwise annotates the in-memory fake.
-- [`spring::usecase`](file:///home/laith/code/jails/crates/jails-generate/src/spring/resource.rs):
+- [`spring::usecase`](../../crates/jails-generate/src/spring/resource.rs):
   - Generates command objects and application ports.
-- [`spring::outbox`](file:///home/laith/code/jails/crates/jails-generate/src/spring/outbox.rs):
+- [`spring::outbox`](../../crates/jails-generate/src/spring/outbox.rs):
   - Generates transactional outbox relay pattern for events.
-- [`sql`](file:///home/laith/code/jails/crates/jails-generate/src/sql.rs):
+- [`sql`](../../crates/jails-generate/src/sql.rs):
   - Unifies column DDL, parameter binding, and row mapping from a single field definition so SQL schema and Java code cannot drift.
-- [`add`](file:///home/laith/code/jails/crates/jails-generate/src/add.rs):
+- [`add`](../../crates/jails-generate/src/add.rs):
   - Defines preflight checks, installation recipes, and inverse uninstallation procedures for all capabilities.
 
 ---
 
 ## How It Connects to Other Crates
 
-- **Orchestrated by [`jails-engine`](file:///home/laith/code/jails/crates/jails-engine/README.md)**: Receives user input from CLI routes and returns planned file recipes.
-- **Uses [`jails-project`](file:///home/laith/code/jails/crates/jails-project/README.md)**: Splices dependencies into `pom.xml` and adds services to `compose.yaml`.
-- **Uses [`jails-java`](file:///home/laith/code/jails/crates/jails-java/README.md)**: Renders templates and formats Java AST imports.
+- **Orchestrated by [`jails-engine`](../../crates/jails-engine/README.md)**: Receives user input from CLI routes and returns planned file recipes.
+- **Uses [`jails-project`](../../crates/jails-project/README.md)**: Splices dependencies into `pom.xml` and adds services to `compose.yaml`.
+- **Uses [`jails-java`](../../crates/jails-java/README.md)**: Renders templates and formats Java AST imports.

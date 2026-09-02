@@ -100,6 +100,9 @@ pub(crate) fn invocation() -> Result<Option<Invocation>> {
         .into());
     }
     Ok(plan_in.map(|path| Invocation {
+        // The process directory, unless a caller resolves one: see
+        // `Invocation::at`.
+        root: None,
         pretend: false,
         debug,
         output,
@@ -108,6 +111,8 @@ pub(crate) fn invocation() -> Result<Option<Invocation>> {
         plan_out: None,
         plan_in: Some(path),
         command_path: crate::cli::command_path_from_env(),
+        no_start: false,
+        force: false,
     }))
 }
 

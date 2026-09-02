@@ -10,7 +10,7 @@ import java.util.Optional;
 public final class FuzzyMemoMatchRule implements MatchRule {
 
     @Override
-    public Optional<MatchOutcome> apply(MatchCandidate candidate) {
+    public Optional<MatchOutcome> evaluate(MatchCandidate candidate) {
         var left = normalize(candidate.sourceEntry().memo());
         var right = normalize(candidate.targetEntry().memo());
         if (left.isPresent() && left.equals(right)) {

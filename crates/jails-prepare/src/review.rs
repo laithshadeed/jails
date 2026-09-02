@@ -1,6 +1,6 @@
 //! Runtime-only review material for a prepared transition.
 //!
-//! The durable [`PreparedChange`](crate::prepare::PreparedChange) deliberately
+//! The durable [`crate::prepare::PreparedChange`] deliberately
 //! carries content addresses rather than preimage bytes. A terminal diff needs
 //! the bytes too, but they must not change the operation identity, journal, or
 //! receipt. This module is that boundary: preparation derives one review from
@@ -353,7 +353,43 @@ struct DiffLine<'a> {
     text: &'a str,
 }
 
+/// The most matrix `line_diff` may allocate, in cells.
+///
+/// **The guard upstream is on bytes and the cost here is quadratic in lines**,
+/// which is a gap wide enough to lose a machine through. `text_lines` refuses
+/// a file over 2 MB; 2 MB of ordinary source is around thirty thousand lines,
+/// and thirty thousand squared at eight bytes a cell is **seven gigabytes** in
+/// a single allocation.
+///
+/// That is not a bound worth reasoning about abstractly, because it was
+/// measured: one `jails resource field add ... --diff` was **6.8 GB resident**
+/// and by itself the entire memory profile of the test suite -- every other
+/// test binary and every other module peaked under 106 MB. It is also what an
+/// OOM killer took a developer's 30 GB desktop down over, and the kill left
+/// two containers running for four hours afterwards.
+///
+/// Four million cells is 32 MB of matrix, which comfortably covers every file
+/// jails generates and every reader file it merges into.
+const MAX_DIFF_CELLS: usize = 4_000_000;
+
+/// Both sides in full, in the order a reader expects, when the two are too far
+/// apart to look for common lines between them.
+///
+/// This is what a diff degrades to anyway once the LCS is mostly misses, and
+/// it is honest about having stopped looking rather than quietly truncating
+/// one side.
+fn replaced_wholesale<'a>(before: &'a [String], after: &'a [String]) -> Vec<DiffLine<'a>> {
+    before
+        .iter()
+        .map(|text| DiffLine { prefix: '-', text })
+        .chain(after.iter().map(|text| DiffLine { prefix: '+', text }))
+        .collect()
+}
+
 fn line_diff<'a>(before: &'a [String], after: &'a [String]) -> Vec<DiffLine<'a>> {
+    if before.len().saturating_mul(after.len()) > MAX_DIFF_CELLS {
+        return replaced_wholesale(before, after);
+    }
     let width = after.len() + 1;
     let mut lcs = vec![0usize; (before.len() + 1) * width];
     for old in (0..before.len()).rev() {
@@ -438,6 +474,47 @@ mod tests {
 
     fn path() -> ProjectPath {
         ProjectPath::parse("src/main/resources/application.properties").unwrap()
+    }
+
+    /// The bound that keeps a preview from taking the machine down with it.
+    ///
+    /// Two files of thirty thousand lines are *inside* `text_lines`' 2 MB
+    /// guard and were 7 GB of LCS matrix, which is how one
+    /// `resource field add --diff` came to be the whole suite's memory
+    /// profile. The assertion is on the shape rather than on resident bytes,
+    /// because a test that measures its own RSS measures the allocator: above
+    /// the budget every line of both sides is reported, and none is dropped.
+    #[test]
+    fn a_diff_too_large_to_align_reports_both_sides_whole_instead_of_allocating() {
+        let before: Vec<String> = (0..30_000).map(|n| format!("before {n}\n")).collect();
+        let after: Vec<String> = (0..30_000).map(|n| format!("after {n}\n")).collect();
+        assert!(
+            before.len() * after.len() > MAX_DIFF_CELLS,
+            "the fixture must actually exceed the budget"
+        );
+
+        let lines = line_diff(&before, &after);
+
+        assert_eq!(lines.len(), before.len() + after.len());
+        assert!(lines[..before.len()].iter().all(|line| line.prefix == '-'));
+        assert!(lines[before.len()..].iter().all(|line| line.prefix == '+'));
+    }
+
+    /// Below the budget the real alignment still runs, so the guard cannot be
+    /// "fixed" by making every diff a wholesale replacement.
+    #[test]
+    fn a_diff_within_the_budget_still_finds_the_lines_the_two_sides_share() {
+        let before = ["keep\n".to_string(), "drop\n".to_string()];
+        let after = ["keep\n".to_string(), "add\n".to_string()];
+
+        let lines = line_diff(&before, &after);
+
+        let kept: Vec<_> = lines
+            .iter()
+            .filter(|line| line.prefix == ' ')
+            .map(|line| line.text)
+            .collect();
+        assert_eq!(kept, ["keep\n"], "a shared line was not aligned");
     }
 
     #[test]

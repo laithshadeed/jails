@@ -128,7 +128,7 @@ mod tests {
     /// except by editing `PATH` for every command.
     #[test]
     fn an_explicit_maven_command_wins() {
-        let _guard = jails_testkit::CWD_LOCK.lock();
+        let _guard = jails_testkit::hold_cwd();
         let dir = jails_support::scratch::ScratchDir::in_temp("jails-maven-override")
             .unwrap()
             .keep();
@@ -166,6 +166,10 @@ mod tests {
     /// `about` must report the command that will actually be executed.
     #[test]
     fn about_and_run_resolve_the_same_maven() {
+        // `an_explicit_maven_command_wins` temporarily mutates JAILS_MAVEN.
+        // Hold the same process-global-state lock so the two resolver calls
+        // below observe one environment snapshot when tests run in parallel.
+        let _guard = jails_testkit::hold_cwd();
         let root = std::env::temp_dir();
         assert_eq!(
             crate::project::maven_command_for_tests(&root),

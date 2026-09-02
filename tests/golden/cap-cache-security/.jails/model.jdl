@@ -1,0 +1,14 @@
+jdl 1
+app Demo @id(project_demo) {
+  pkg com.example.demo
+  java 26
+  platform spring
+  build maven
+  storage none
+}
+
+cap cache @id(cap_cache)
+
+cap security @id(cap_security)
+
+cap cors @id(cap_cors)

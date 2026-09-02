@@ -314,43 +314,16 @@ fn validate_layout_directory(directory: &str) -> Result<()> {
 }
 
 /// What must already be true for this change to be applicable.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum SemanticPrecondition {
+    #[codec(tag = 0)]
     RequiresCapability(CapabilityId),
+    #[codec(tag = 1)]
     RequiresFact(ProjectFactKey),
+    #[codec(tag = 2)]
     ResourceOwned(ResourceKey),
+    #[codec(tag = 3)]
     ResourceUnclaimed(ResourceKey),
-}
-
-impl SemanticPrecondition {
-    fn tag(&self) -> u8 {
-        match self {
-            Self::RequiresCapability(_) => 0,
-            Self::RequiresFact(_) => 1,
-            Self::ResourceOwned(_) => 2,
-            Self::ResourceUnclaimed(_) => 3,
-        }
-    }
-}
-impl Codec for SemanticPrecondition {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::RequiresCapability(id) => id.encode(encoder),
-            Self::RequiresFact(key) => key.encode(encoder),
-            Self::ResourceOwned(key) | Self::ResourceUnclaimed(key) => key.encode(encoder),
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::RequiresCapability(CapabilityId::decode(decoder)?),
-            1 => Self::RequiresFact(ProjectFactKey::decode(decoder)?),
-            2 => Self::ResourceOwned(ResourceKey::decode(decoder)?),
-            3 => Self::ResourceUnclaimed(ResourceKey::decode(decoder)?),
-            other => Err(format!("unknown semantic precondition tag {other}"))?,
-        })
-    }
 }
 
 /// What this change teaches the fact map.

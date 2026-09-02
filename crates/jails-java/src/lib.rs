@@ -12,11 +12,17 @@
 //! class the reader owns, here rather than in a recipe because two engines
 //! now perform it and a second copy of a surgical edit drifts.
 
-pub mod annotate;
+// **Re-exported, not owned.** Both moved to `jails-codemod`, which has no
+// dependencies at all, because `jails-workspace` needs the `@Import` splice
+// and no canonical crate may depend on this one. Every caller here is
+// unchanged.
+pub use jails_codemod::{annotate, dispatch, tidy};
+
 pub mod classfile;
-pub mod dispatch;
-pub mod identifier;
+/// Identifier surgery lives in `jails-support`: `snake_case` and the bounded
+/// replacements are string operations that know nothing about Java, and
+/// `jails_support::identity` needs `snake_case`, so they must sit below it.
+pub use jails_support::identifier;
 pub mod java;
 
 pub mod template;
-pub mod tidy;

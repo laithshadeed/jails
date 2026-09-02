@@ -26,59 +26,21 @@ use std::collections::BTreeSet;
 /// All three fields together: a transaction id alone would match a receipt
 /// that has since been rewritten, and a generation alone would match a
 /// different transaction at the same generation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct ReceiptGuard {
     pub transaction: TransactionId,
     pub generation: u64,
     pub record_checksum: ObjectId,
 }
 
-impl Codec for ReceiptGuard {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.transaction.encode(encoder)?;
-        encoder.u64(self.generation);
-        self.record_checksum.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            transaction: TransactionId::decode(decoder)?,
-            generation: decoder.u64()?,
-            record_checksum: ObjectId::decode(decoder)?,
-        })
-    }
-}
-
 /// The operation a frozen conflict came from.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct ConflictOrigin {
     pub operation: OperationId,
     pub transaction: TransactionId,
     pub generation: u64,
     pub receipt: ReceiptGuard,
     pub pending: PendingIdentity,
-}
-
-impl Codec for ConflictOrigin {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.operation.encode(encoder)?;
-        self.transaction.encode(encoder)?;
-        encoder.u64(self.generation);
-        self.receipt.encode(encoder)?;
-        self.pending.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            operation: OperationId::decode(decoder)?,
-            transaction: TransactionId::decode(decoder)?,
-            generation: decoder.u64()?,
-            receipt: ReceiptGuard::decode(decoder)?,
-            pending: PendingIdentity::decode(decoder)?,
-        })
-    }
 }
 
 /// Finish what the conflicted operation started, with the human's resolutions.
@@ -157,27 +119,12 @@ impl Codec for AbortPlan {
 }
 
 /// Why an effect is being run again.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum EffectResumeReason {
+    #[codec(tag = 0)]
     Interrupted,
+    #[codec(tag = 1)]
     ExplicitRetry,
-}
-
-impl EffectResumeReason {
-    fn tag(self) -> u8 {
-        match self {
-            Self::Interrupted => 0,
-            Self::ExplicitRetry => 1,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Result<Self> {
-        Ok(match tag {
-            0 => Self::Interrupted,
-            1 => Self::ExplicitRetry,
-            other => Err(format!("unknown effect resume reason tag {other}"))?,
-        })
-    }
 }
 
 /// Re-run one committed operation's post-commit effect.
@@ -185,7 +132,7 @@ impl EffectResumeReason {
 /// `expected_state` is the guard, and the reason this is not simply "run the
 /// effect again": an effect that has since succeeded must not be retried, and
 /// the only way to know is to say what state this plan was made against.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct EffectRetryPlan {
     pub invocation: InvocationFingerprint,
     pub receipt: ReceiptGuard,
@@ -195,33 +142,6 @@ pub struct EffectRetryPlan {
     pub effect: PostCommitEffect,
     pub expected_state: EffectState,
     pub reason: EffectResumeReason,
-}
-
-impl Codec for EffectRetryPlan {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.invocation.encode(encoder)?;
-        self.receipt.encode(encoder)?;
-        self.operation.encode(encoder)?;
-        encoder.u32(self.effect_index);
-        self.effect_id.encode(encoder)?;
-        self.effect.encode(encoder)?;
-        self.expected_state.encode(encoder)?;
-        encoder.tag(self.reason.tag());
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            invocation: InvocationFingerprint::decode(decoder)?,
-            receipt: ReceiptGuard::decode(decoder)?,
-            operation: OperationId::decode(decoder)?,
-            effect_index: decoder.u32()?,
-            effect_id: EffectId::decode(decoder)?,
-            effect: PostCommitEffect::decode(decoder)?,
-            expected_state: EffectState::decode(decoder)?,
-            reason: EffectResumeReason::from_tag(decoder.tag()?)?,
-        })
-    }
 }
 
 /// What a run does to the project.
@@ -243,11 +163,12 @@ impl CommitPlan {
         match (&self, project) {
             (Self::Apply(_), LoadedProject::Ready(_)) => Ok(self),
             (Self::Finalise(_) | Self::Abort(_), LoadedProject::Pending(_)) => Ok(self),
-            // The two verbs this used to name -- `jails continue` and `jails
-            // abort` -- do not exist. `PendingIdentity`, `ResolutionIdentity`
-            // and `RestoreIdentity` are here with no route behind them
-            // (research.md §3.3), so the message sent a reader to a command
-            // that would answer "unrecognized subcommand". A `fix:` line that
+            // **The message names no verb, because there is none to name.**
+            // `jails continue` and `jails abort` do not exist:
+            // `PendingIdentity`, `ResolutionIdentity` and `RestoreIdentity` are
+            // here with no route behind them (research.md §3.3), so naming
+            // either sends a reader to "unrecognized subcommand". A `fix:` line
+            // that
             // refuses is worse than none: it leaves the reader unable to tell
             // which of jails' answers to believe. Say what is true instead,
             // and say that finishing it forward is a gap rather than
@@ -255,8 +176,8 @@ impl CommitPlan {
             (Self::Apply(_), LoadedProject::Pending(_)) => Err(jails_support::Failure::Told(
                 "this project has a frozen conflict, and jails cannot finish one yet -- \
                  the resolve verbs are not built.\n       fix: move the marked files aside \
-                 and run the command again, or restore them from `jails history` and \
-                 `jails undo`. Both leave the project in a state jails can plan against."
+                 and run the command again. That leaves the project in a state jails can \
+                 plan against; your own version control is where the previous one lives."
                     .to_string(),
             )),
             (Self::Finalise(_) | Self::Abort(_), LoadedProject::Ready(_)) => Err(

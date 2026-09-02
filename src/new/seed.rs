@@ -36,7 +36,19 @@ pub fn seed_manifest(
     })?;
     tree.put(".jails/app.toml", &source)?;
     println!("  manifest {}", manifest.display());
-    crate::app::apply_in(tree.root(), no_start, debug)
+    // A seeded model means the manifest replays into it through the same
+    // frontends `jails g` uses, at the root of the tree being published --
+    // never the process directory, which is this project's parent.
+    // `no_start` is not passed on because the canonical path has no external
+    // service effects to suppress; `sync` refuses the flag by name for the
+    // same reason.
+    let _ = no_start;
+    crate::app::replay_at(
+        tree.root(),
+        None,
+        crate::Invocation::for_new(tree.root().to_path_buf(), debug),
+    )?;
+    Ok(crate::app::Applied::Clean)
 }
 
 /// Whether the manifest run left a failure the caller still has to report.
@@ -52,7 +64,6 @@ pub fn seed_manifest(
 pub(super) fn reported(applied: crate::app::Applied) -> Result<()> {
     match applied {
         crate::app::Applied::Clean => Ok(()),
-        crate::app::Applied::CommittedThenReported => Err(jails_support::Failure::Reported),
     }
 }
 
@@ -158,4 +169,45 @@ pub(super) fn git_init(tree: &publish::Tree<'_>, debug: bool) {
         Ok(status) => eprintln!("jails: git init exited with {status}, skipping"),
         Err(e) => eprintln!("jails: failed to run git init: {e}"),
     }
+}
+
+/// The `.jails/model.jdl` a freshly created project starts with, and the first
+/// canonical plan applied to it.
+///
+/// **This is what makes `jails new` produce a canonical project.**
+/// `model_command::owns` is "does `.jails/model.jdl` exist", so before this
+/// every project jails created took the legacy path and the compiler could
+/// only be reached by a model somebody wrote by hand.
+///
+/// The plan is applied here, inside the scratch tree, rather than left for the
+/// reader's first command. The lock it writes is what records which property
+/// keys and dependency coordinates the model owns; without it the next command
+/// reads every one of them as reader-owned text and refuses to reconcile it.
+pub(super) fn seed_canonical_model(
+    tree: &publish::Tree<'_>,
+    app: Option<&Path>,
+    source: String,
+) -> Result<()> {
+    // `--app` is seeded like any other project: a manifest replays into the
+    // model rather than being refused beside it, and `seed_manifest` runs that
+    // replay against this tree's root.
+    let _ = app;
+    tree.put_named(".jails/model.jdl", source, ".jails/model.jdl")?;
+    crate::model_command::materialize_seed(tree.root())
+}
+
+/// One `app` node, with whatever declarations the caller appends after it.
+///
+/// `storage none` because a new project has no schema yet; `add db` is what
+/// changes that, and it is a model patch like any other.
+pub(super) fn app_node(
+    name: &str,
+    package: &str,
+    java: &str,
+    platform: &str,
+    build: &str,
+) -> String {
+    format!(
+        "jdl 1\n\napp {name} {{\n  pkg {package}\n  java {java}\n  platform {platform}\n  build {build}\n  storage none\n}}\n"
+    )
 }

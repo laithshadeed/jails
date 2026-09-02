@@ -149,7 +149,27 @@ pub(crate) fn test_classpath(root: &Path, debug: bool) -> Result<TestClasspath> 
     })
 }
 
-fn is_fresh(cache: &Path, source: &Path) -> bool {
+/// Whether a cached `dependency:build-classpath` answer can still be believed.
+///
+/// **One owner, because there are two callers and they had drifted into two
+/// copies of the same predicate** -- this one and the runtime classpath's.
+///
+/// **An empty file is not a cached answer.** `dependency:build-classpath`
+/// creates its output before it has resolved anything, so a Maven run that
+/// dies partway leaves a blank cache with a fresh mtime, and mtime alone reads
+/// that as "the classpath is empty". Nothing then re-resolves it: `jails
+/// console` and `jails runner` launch with `target/classes` and no
+/// dependencies, and fail at the first library class with nothing in the
+/// message pointing at `target/`. Re-running Maven for a genuinely empty
+/// classpath costs one round trip; believing one costs a wrong answer that
+/// looks like the project's fault. The runtime caller cannot even reach that
+/// case -- it returns early when the pom declares no dependency at all.
+pub(crate) fn is_fresh(cache: &Path, source: &Path) -> bool {
+    match std::fs::read_to_string(cache) {
+        Ok(text) if text.trim().is_empty() => return false,
+        Ok(_) => {}
+        Err(_) => return false,
+    }
     let Ok(cached) = std::fs::metadata(cache).and_then(|meta| meta.modified()) else {
         return false;
     };

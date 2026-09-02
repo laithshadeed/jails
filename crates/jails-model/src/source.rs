@@ -1,0 +1,622 @@
+//! The `serde` shape of `.jails/model.toml`, and only that.
+//!
+//! **A wire format, deliberately separate from `AppModel`.** Everything here
+//! is `Deserialize`-only, uses plain `String` keys, and carries
+//! `deny_unknown_fields` on every struct — so a typo in a hand-edited model is
+//! an error naming the key rather than a silently ignored line. The
+//! authoritative model has validated IDs, resolved references and linked
+//! semantics; this has none of that, because a parser that validated as it
+//! decoded could only report the first problem it met.
+//!
+//! Nothing outside this module may hold one of these values. `Linker` turns a
+//! `Document` into an `AppModel`, running every stable-ID constructor and every
+//! reference check, and reporting all of them at once as `Diagnostics`.
+//!
+//! `.jails/model.toml` is a *temporary compatibility input* — `.jails/model.jdl`
+//! is the authoring boundary, and never both — so this module is on the
+//! cutover's deletion list rather than a shape to extend. A new declaration
+//! belongs in the JDL v1 parser; adding it here as well would give a project
+//! two editable sources for one fact.
+
+use crate::model::{DependencyScope, Facet, SettingTarget};
+use crate::{ComponentKind, EndpointMethod, RequestFormat, UnitKind};
+use serde::Deserialize;
+use std::collections::{BTreeMap, BTreeSet};
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Document {
+    pub(crate) schema: String,
+    pub(crate) project: Project,
+    #[serde(default)]
+    pub(crate) capabilities: BTreeMap<String, Capability>,
+    #[serde(default)]
+    pub(crate) dependencies: BTreeMap<String, Dependency>,
+    #[serde(default)]
+    pub(crate) settings: BTreeMap<String, Setting>,
+    #[serde(default)]
+    pub(crate) ejections: BTreeMap<String, Ejection>,
+    #[serde(default)]
+    pub(crate) units: BTreeMap<String, Unit>,
+    #[serde(default)]
+    pub(crate) components: BTreeMap<String, Component>,
+    #[serde(default)]
+    pub(crate) entities: BTreeMap<String, Entity>,
+    #[serde(default)]
+    pub(crate) operations: BTreeMap<String, Operation>,
+    #[serde(default)]
+    pub(crate) projection_rules: Vec<ProjectionRule>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Project {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) base_package: String,
+    pub(crate) java_release: u16,
+    pub(crate) dialect: String,
+    #[serde(default = "spring_platform")]
+    pub(crate) platform: String,
+    #[serde(default = "maven_build")]
+    pub(crate) build: String,
+}
+
+fn spring_platform() -> String {
+    "spring".to_string()
+}
+
+fn maven_build() -> String {
+    "maven".to_string()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Capability {
+    pub(crate) id: String,
+    pub(crate) kind: String,
+    pub(crate) name: Option<String>,
+    pub(crate) package: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Dependency {
+    pub(crate) id: String,
+    pub(crate) group: String,
+    pub(crate) artifact: String,
+    pub(crate) version: Option<String>,
+    #[serde(default = "compile_scope")]
+    pub(crate) scope: DependencyScope,
+}
+
+const fn compile_scope() -> DependencyScope {
+    DependencyScope::Compile
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Setting {
+    pub(crate) id: String,
+    pub(crate) key: String,
+    pub(crate) value: String,
+    pub(crate) target: SettingTarget,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Ejection {
+    pub(crate) id: String,
+    pub(crate) target: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Unit {
+    pub(crate) id: String,
+    pub(crate) kind: UnitKind,
+    pub(crate) java_name: Option<String>,
+    pub(crate) package: Option<String>,
+    #[serde(default)]
+    pub(crate) variants: Vec<String>,
+    #[serde(default)]
+    pub(crate) on: Option<String>,
+    #[serde(default)]
+    pub(crate) yields: Option<String>,
+    #[serde(default)]
+    pub(crate) method: Option<EndpointMethod>,
+    pub(crate) path: Option<String>,
+    #[serde(default)]
+    pub(crate) consumes: Option<RequestFormat>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Component {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) kind: ComponentKind,
+    #[serde(default)]
+    pub(crate) parameters: Vec<ComponentParameter>,
+    pub(crate) on: Option<String>,
+    pub(crate) yields: Option<String>,
+    pub(crate) route: Option<OperationRoute>,
+    #[serde(default)]
+    pub(crate) bindings: Vec<ParameterBinding>,
+    #[serde(default)]
+    pub(crate) variants: Vec<ComponentVariant>,
+    pub(crate) source: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ComponentParameter {
+    pub(crate) name: String,
+    #[serde(rename = "type")]
+    pub(crate) type_name: String,
+    #[serde(default = "required")]
+    pub(crate) required: bool,
+    #[serde(default)]
+    pub(crate) constraints: ParameterConstraints,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ComponentVariant {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    #[serde(default)]
+    pub(crate) parameters: Vec<ComponentParameter>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Entity {
+    pub(crate) id: String,
+    #[serde(default = "active")]
+    pub(crate) active: bool,
+    pub(crate) java_name: Option<String>,
+    pub(crate) table: Option<String>,
+    /// Where this entity's Java goes, instead of the layer packages.
+    ///
+    /// Relative to the application's base package, exactly as a capability's
+    /// is, and empty means the base itself. A slice that wants its record,
+    /// repository, service and controller together says so once here rather
+    /// than in each generator's call site.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) package: Option<String>,
+    #[serde(default)]
+    pub(crate) facets: BTreeSet<Facet>,
+    #[serde(default)]
+    pub(crate) values: Vec<String>,
+    #[serde(default)]
+    pub(crate) fields: BTreeMap<String, Field>,
+    /// Declaration order, when the frontend has one to give.
+    ///
+    /// A Java record's component order is ABI, so `jdl-sol.md` §7.3 makes this
+    /// semantic -- but a TOML table is unordered by spec and `toml` 1.1 has no
+    /// `preserve_order`, so a `BTreeMap` is the only shape the compatibility
+    /// input can deserialize into. JDL walks a CST and does know, so it fills
+    /// this and the linker follows it; an empty list means "no order was
+    /// stated", and label order is then the only answer available.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) field_order: Vec<String>,
+    #[serde(default)]
+    pub(crate) indexes: BTreeMap<String, Index>,
+    #[serde(default)]
+    pub(crate) constraints: Vec<EntityConstraint>,
+    #[serde(default)]
+    pub(crate) relations: BTreeMap<String, Relation>,
+    #[serde(default)]
+    pub(crate) projections: Vec<Projection>,
+}
+
+const fn active() -> bool {
+    true
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Field {
+    pub(crate) id: String,
+    pub(crate) java_name: Option<String>,
+    pub(crate) column: Option<String>,
+    #[serde(rename = "type")]
+    pub(crate) type_name: String,
+    #[serde(default = "required")]
+    pub(crate) required: bool,
+    #[serde(default)]
+    pub(crate) non_blank: bool,
+    #[serde(default)]
+    pub(crate) primary_key: bool,
+    #[serde(default)]
+    pub(crate) unique: bool,
+    #[serde(default)]
+    pub(crate) indexed: bool,
+    pub(crate) min_length: Option<u32>,
+    pub(crate) max_length: Option<u32>,
+    #[serde(default)]
+    pub(crate) semantics: FieldSemantics,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FieldSemantics {
+    #[serde(default)]
+    pub(crate) positive: bool,
+    #[serde(default)]
+    pub(crate) nonnegative: bool,
+    pub(crate) scope: Option<FieldScope>,
+    #[serde(default)]
+    pub(crate) version: bool,
+    pub(crate) default: Option<Value>,
+    #[serde(default)]
+    pub(crate) updated: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FieldScope {
+    pub(crate) claim: Option<String>,
+}
+
+const fn required() -> bool {
+    true
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Index {
+    pub(crate) id: String,
+    pub(crate) name: Option<String>,
+    pub(crate) columns: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Projection {
+    pub(crate) kind: String,
+    #[serde(default)]
+    pub(crate) fields: Vec<String>,
+    pub(crate) path: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ProjectionRule {
+    pub(crate) projections: Vec<Projection>,
+    pub(crate) selector: ProjectionSelector,
+    #[serde(default)]
+    pub(crate) except: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum ProjectionSelector {
+    All,
+    Named(Vec<String>),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EntityConstraint {
+    pub(crate) id: String,
+    pub(crate) kind: ConstraintKind,
+    pub(crate) name: Option<String>,
+    pub(crate) fields: Vec<String>,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum ConstraintKind {
+    PrimaryKey,
+    Unique,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Relation {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) target: String,
+    pub(crate) sql_name: Option<String>,
+    pub(crate) mappings: Vec<RelationMapping>,
+    #[serde(default)]
+    pub(crate) on_delete: ReferentialAction,
+    #[serde(default)]
+    pub(crate) on_update: ReferentialAction,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RelationMapping {
+    pub(crate) local: String,
+    pub(crate) remote: String,
+}
+
+#[derive(Clone, Copy, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum ReferentialAction {
+    #[default]
+    Restrict,
+    Cascade,
+    SetNull,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) enum Operation {
+    Command {
+        id: String,
+        java_name: Option<String>,
+        on: String,
+        #[serde(default)]
+        fields: Vec<String>,
+        route: Option<String>,
+        #[serde(default)]
+        semantics: CommandSemantics,
+    },
+    Query {
+        id: String,
+        java_name: Option<String>,
+        on: String,
+        #[serde(default)]
+        filters: Vec<String>,
+        #[serde(default)]
+        order_by: Vec<String>,
+        limit: Option<u32>,
+        route: Option<String>,
+        #[serde(default)]
+        semantics: QuerySemantics,
+    },
+    Transition {
+        id: String,
+        java_name: Option<String>,
+        on: String,
+        #[serde(default)]
+        fields: Vec<String>,
+        #[serde(default)]
+        sets: Vec<String>,
+        yields: Option<String>,
+        route: Option<String>,
+        #[serde(default)]
+        semantics: TransitionSemantics,
+    },
+    Event {
+        id: String,
+        java_name: Option<String>,
+        on: Option<String>,
+        #[serde(default)]
+        fields: Vec<String>,
+        #[serde(default)]
+        semantics: EventSemantics,
+    },
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CommandSemantics {
+    #[serde(default)]
+    pub(crate) parameters: Vec<OperationParameter>,
+    #[serde(default)]
+    pub(crate) assignments: Vec<Assignment>,
+    #[serde(default)]
+    pub(crate) resolutions: Vec<Resolution>,
+    #[serde(default)]
+    pub(crate) conflict_key: Vec<String>,
+    #[serde(default)]
+    pub(crate) emits: Vec<String>,
+    /// `direct` or `outbox`; anything else is a diagnostic at link time.
+    #[serde(default)]
+    pub(crate) delivery: Option<String>,
+    #[serde(default)]
+    pub(crate) bindings: Vec<ParameterBinding>,
+    pub(crate) route: Option<OperationRoute>,
+    #[serde(default)]
+    pub(crate) internal: bool,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct QuerySemantics {
+    #[serde(default)]
+    pub(crate) parameters: Vec<OperationParameter>,
+    #[serde(default)]
+    pub(crate) joins: Vec<Join>,
+    #[serde(default)]
+    pub(crate) order: Vec<Ordering>,
+    pub(crate) limit: Option<u32>,
+    #[serde(default)]
+    pub(crate) bindings: Vec<ParameterBinding>,
+    pub(crate) route: Option<OperationRoute>,
+    #[serde(default)]
+    pub(crate) internal: bool,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TransitionSemantics {
+    #[serde(default)]
+    pub(crate) parameters: Vec<OperationParameter>,
+    #[serde(default)]
+    pub(crate) select: Vec<String>,
+    #[serde(default)]
+    pub(crate) update: Vec<String>,
+    #[serde(default)]
+    pub(crate) assignments: Vec<Assignment>,
+    pub(crate) precondition: Option<Precondition>,
+    #[serde(default)]
+    pub(crate) emits: Vec<String>,
+    #[serde(default)]
+    pub(crate) bindings: Vec<ParameterBinding>,
+    pub(crate) route: Option<OperationRoute>,
+    #[serde(default)]
+    pub(crate) internal: bool,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EventSemantics {
+    #[serde(default)]
+    pub(crate) parameters: Vec<OperationParameter>,
+    pub(crate) partition_by: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OperationParameter {
+    pub(crate) name: String,
+    pub(crate) source: ParameterSource,
+    #[serde(default = "required")]
+    pub(crate) required: bool,
+    #[serde(default)]
+    pub(crate) optional_filter: bool,
+    #[serde(default)]
+    pub(crate) constraints: ParameterConstraints,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) enum ParameterSource {
+    Field {
+        path: String,
+    },
+    Typed {
+        #[serde(rename = "type")]
+        type_name: String,
+    },
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ParameterConstraints {
+    pub(crate) default: Option<Value>,
+    #[serde(default)]
+    pub(crate) non_blank: bool,
+    pub(crate) min_length: Option<u32>,
+    pub(crate) max_length: Option<u32>,
+    #[serde(default)]
+    pub(crate) positive: bool,
+    #[serde(default)]
+    pub(crate) nonnegative: bool,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "kebab-case")]
+pub(crate) enum Value {
+    String(String),
+    Integer(String),
+    Decimal(String),
+    Boolean(bool),
+    EnumConstant(String),
+    Function(FunctionCall),
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FunctionCall {
+    pub(crate) name: String,
+    #[serde(default)]
+    pub(crate) arguments: Vec<Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Assignment {
+    pub(crate) field: String,
+    pub(crate) value: Value,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Resolution {
+    pub(crate) target: String,
+    pub(crate) remote_value: String,
+    pub(crate) remote_lookup: String,
+    pub(crate) parameter: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Join {
+    pub(crate) entity: String,
+    pub(crate) alias: String,
+    pub(crate) mappings: Vec<FieldMapping>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FieldMapping {
+    pub(crate) local: String,
+    pub(crate) remote: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Ordering {
+    pub(crate) field: String,
+    #[serde(default)]
+    pub(crate) direction: SortDirection,
+}
+
+#[derive(Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum SortDirection {
+    #[default]
+    Asc,
+    Desc,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum Precondition {
+    Required,
+    Optional,
+    None,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OperationRoute {
+    pub(crate) method: EndpointMethod,
+    pub(crate) path: String,
+    pub(crate) consumes: Option<RequestFormat>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ParameterBinding {
+    pub(crate) parameter: String,
+    pub(crate) source: BindingSource,
+    pub(crate) wire_name: Option<String>,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum BindingSource {
+    Path,
+    Query,
+    Header,
+    Claim,
+    Form,
+}
+
+impl Operation {
+    pub(crate) fn id(&self) -> &str {
+        match self {
+            Self::Command { id, .. }
+            | Self::Query { id, .. }
+            | Self::Transition { id, .. }
+            | Self::Event { id, .. } => id,
+        }
+    }
+
+    pub(crate) fn java_name(&self) -> Option<&str> {
+        match self {
+            Self::Command { java_name, .. }
+            | Self::Query { java_name, .. }
+            | Self::Transition { java_name, .. }
+            | Self::Event { java_name, .. } => java_name.as_deref(),
+        }
+    }
+}

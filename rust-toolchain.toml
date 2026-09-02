@@ -1,0 +1,19 @@
+# The compiler the one gate runs on.
+#
+# `simplify-sol.md`'s G0 wants a single answer to "is this green", and an
+# unpinned compiler makes that answer depend on the day. It already did:
+# `cargo clippy --workspace --all-targets -- -D warnings` was red on 1.94 over
+# `nonminimal_bool` in `jails-java`, code nobody had edited, because
+# `is_none_or` stabilised and a new lint started firing. A gate that can go red
+# from someone else's release is not a gate you can read.
+#
+# `mise.toml` pins the JDK, Maven, mvnd and Gradle for exactly this reason and
+# said nothing about rustc. This is that same decision, in the file rustup and
+# every `cargo` invocation already read, so the local loop and CI cannot
+# disagree about it.
+#
+# Raising it is deliberate work: bump the channel, run the gate, and fix what
+# the new lints find in the same change.
+[toolchain]
+channel = "1.94.1"
+components = ["rustfmt", "clippy"]

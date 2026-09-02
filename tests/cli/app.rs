@@ -62,11 +62,16 @@ fn app_manifest_plan_is_domain_blind_and_writes_nothing() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // The plan *is* the apply, stopped one step before the lock, so it names
-    // the files rather than restating the manifest rows: what it lists is
-    // exactly what an apply would then write.
-    assert!(stdout.contains("plan "), "{stdout}");
-    assert!(stdout.contains("CrawlRun.java"), "{stdout}");
+    // On a project with no model yet, the plan reports what applying would
+    // *declare*. It cannot name files: each row is planned against the model
+    // on disk, and under `--pretend` nothing is written, so row two would
+    // plan against a model missing row one's enum and refuse over a type the
+    // apply declares a moment earlier. Once the model exists, `app plan`
+    // names the files -- that is the case below.
+    assert!(stdout.contains("would be created"), "{stdout}");
+    // The kind the manifest names, not the one the engine collapsed it to:
+    // `CrawlRun` is a `[[generate]]` row of kind `scaffold`.
+    assert!(stdout.contains("declare scaffold CrawlRun"), "{stdout}");
     assert!(stdout.contains("nothing was written"), "{stdout}");
     assert!(!root.join("jails.toml").exists());
     assert!(!root.join(".jails/app-state-v1").exists());
@@ -103,10 +108,7 @@ fn app_manifest_formats_the_complete_generated_tree_once() {
         "format should run after generation, once: {invocations}"
     );
     assert!(invocations.contains("spotless:apply"), "{invocations}");
-    assert!(
-        root.join("src/main/java/com/example/demo/domain/Note.java")
-            .is_file()
-    );
+    assert!(common::generated(&root, "src/main/java/com/example/demo/domain/Note.java").is_file());
 }
 
 /// `app plan` names an entity the manifest has stopped asking for.
@@ -166,11 +168,15 @@ fn app_plan_names_an_entity_the_manifest_no_longer_declares() {
     // entity the manifest still declares and disk already matches changes
     // nothing. V1's walk printed a row per intent whether or not it had
     // anything to say.
-    assert!(!stdout.contains("Keep.java"), "{stdout}");
+    assert!(
+        !stdout
+            .lines()
+            .any(|line| line.contains("delete") && line.contains("Keep")),
+        "{stdout}"
+    );
     // Planning stays non-mutating: nothing was removed.
     assert!(
-        root.join("src/main/java/com/example/demo/domain/Dropped.java")
-            .is_file(),
+        common::generated(&root, "src/main/java/com/example/demo/domain/Dropped.java").is_file(),
         "`app plan` may not delete anything"
     );
     assert!(
@@ -236,8 +242,7 @@ fn a_manifest_field_appended_to_a_scaffold_becomes_a_forward_migration() {
     .unwrap();
     assert!(added.contains("alter table deals"), "{added}");
     assert!(added.contains("add column memo text"), "{added}");
-    let record =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/domain/Deal.java")).unwrap();
+    let record = common::read_generated(&root, "src/main/java/com/example/demo/domain/Deal.java");
     assert!(record.contains("Optional<String> memo"), "{record}");
 
     // Re-applying the same manifest changes nothing, which is what makes the
@@ -255,7 +260,7 @@ fn a_manifest_field_appended_to_a_scaffold_becomes_a_forward_migration() {
     let refused = apply(&root);
     assert_eq!(refused.status.code(), Some(1), "{refused:?}");
     let stderr = String::from_utf8_lossy(&refused.stderr);
-    assert!(stderr.contains("required component `note`"), "{stderr}");
+    assert!(stderr.contains("required field `note`"), "{stderr}");
     assert!(stderr.contains("--default-literal"), "{stderr}");
 
     // And a change that is not an append is refused by name: dropping one
@@ -400,7 +405,7 @@ fn app_manifest_merges_an_edited_intent_over_user_changes() {
         "schema=1\nrecord|Note||id:uuid@pk|false|||\n",
     )
     .unwrap();
-    let record = root.join("src/main/java/com/example/demo/domain/Note.java");
+    let record = common::generated(&root, "src/main/java/com/example/demo/domain/Note.java");
     let source = fs::read_to_string(&record).unwrap();
     let edited = source.replacen(
         "\n}\n",
@@ -424,7 +429,10 @@ fn app_manifest_merges_an_edited_intent_over_user_changes() {
     // generate record Note` from a walk of the intent list, which could not
     // see whether the file on disk actually differed.
     let shown = String::from_utf8_lossy(&plan.stdout);
-    assert!(shown.contains("replace "), "{shown}");
+    // The verb is `write`: the file is managed, it exists, and the plan is
+    // rewriting jails' own output over it. `replace` was the legacy engine's
+    // word for the same operation.
+    assert!(shown.contains("write "), "{shown}");
     assert!(shown.contains("Note.java"), "{shown}");
     let update = jails_cmd(&root, None)
         .args(["app", "apply", "--no-start"])
@@ -441,8 +449,9 @@ fn app_manifest_merges_an_edited_intent_over_user_changes() {
     assert!(merged.contains("userLabel()"), "{merged}");
     assert!(!merged.contains("<<<<<<<"), "{merged}");
     assert!(
-        common::ledger_mentions(&root, "record") && common::ledger_mentions(&root, "Note"),
-        "the applied intent is on the one ledger"
+        common::ledger_mentions(&root, "entity Note")
+            && common::ledger_mentions(&root, "Note.java"),
+        "the applied intent is in the model, and it owns the file"
     );
 
     let second = jails_cmd(&root, None)
@@ -481,7 +490,7 @@ fn app_manifest_updates_an_intent_without_needing_a_git_repository() {
             .unwrap()
             .success()
     );
-    let record = root.join("src/main/java/com/example/demo/domain/Note.java");
+    let record = common::generated(&root, "src/main/java/com/example/demo/domain/Note.java");
     let before = fs::read_to_string(&record).unwrap();
     fs::write(
         &manifest,
@@ -508,7 +517,15 @@ fn app_manifest_updates_an_intent_without_needing_a_git_repository() {
     );
     let after = fs::read_to_string(&record).unwrap();
     assert_ne!(after, before, "the update happened");
-    assert!(root.join(".jails/objects").is_dir(), "and is recoverable");
+    // Recoverable without a repository, and without an object store of jails'
+    // own: the model states the shape and the accepted projection in
+    // `.jails/compiler.lock.json` is the merge base, so the previous bytes are
+    // reproducible by compiling rather than by keeping a copy of them.
+    assert!(root.join(".jails/compiler.lock.json").is_file());
+    assert!(
+        !root.join(".jails/objects").exists(),
+        "a canonical project must not grow a legacy object store"
+    );
 }
 
 #[test]
@@ -604,30 +621,98 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
         );
     }
 
-    let main = root.join("src/main/java/com/example/demo");
-    assert!(main.join("domain/CrawlStatus.java").is_file());
-    assert!(main.join("domain/CrawlRun.java").is_file());
-    assert!(main.join("domain/CrawledPage.java").is_file());
-    assert!(main.join("service/QueueCrawlUseCase.java").is_file());
-    assert!(main.join("service/StoringQueueCrawlUseCase.java").is_file());
-    assert!(main.join("web/QueueCrawlController.java").is_file());
-    assert!(main.join("service/RecordCrawledPageUseCase.java").is_file());
-    assert!(main.join("service/CrawlRunsByStatusQuery.java").is_file());
     assert!(
-        main.join("adapters/JdbcCrawlRunsByStatusQuery.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/domain/CrawlStatus.java"
+        )
+        .is_file()
     );
     assert!(
-        main.join("web/CrawlRunsByStatusQueryController.java")
-            .is_file()
+        common::generated(&root, "src/main/java/com/example/demo/domain/CrawlRun.java").is_file()
     );
-    assert!(main.join("service/PagesByCrawlRunQuery.java").is_file());
     assert!(
-        main.join("adapters/JdbcPagesByCrawlRunQuery.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/domain/CrawledPage.java"
+        )
+        .is_file()
     );
-    assert!(main.join("clients/PageFetcher.java").is_file());
-    let safe_fetcher = fs::read_to_string(main.join("clients/SafePageFetcher.java")).unwrap();
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/service/QueueCrawlUseCase.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/service/StoringQueueCrawlUseCase.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/web/QueueCrawlController.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/service/RecordCrawledPageUseCase.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/service/CrawlRunsByStatusQuery.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/adapters/JdbcCrawlRunsByStatusQuery.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/web/CrawlRunsByStatusQueryController.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/service/PagesByCrawlRunQuery.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/adapters/JdbcPagesByCrawlRunQuery.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/clients/PageFetcher.java"
+        )
+        .is_file()
+    );
+    let safe_fetcher = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/clients/SafePageFetcher.java",
+    ))
+    .unwrap();
     assert!(
         safe_fetcher.contains("new PinnedResolver"),
         "{safe_fetcher}"
@@ -640,27 +725,75 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
         safe_fetcher.contains("acceptedStatuses.contains(response.statusCode())"),
         "{safe_fetcher}"
     );
-    assert!(main.join("jobs/SiteTraversalWorkflow.java").is_file());
     assert!(
-        main.join("web/SiteTraversalWorkflowController.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/jobs/SiteTraversalWorkflow.java"
+        )
+        .is_file()
     );
     assert!(
-        root.join("src/test/java/com/example/demo/jobs/SiteTraversalWorkflowIT.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/web/SiteTraversalWorkflowController.java"
+        )
+        .is_file()
     );
-    assert!(main.join("messaging/PageDiscoveredEvent.java").is_file());
-    assert!(main.join("jobs/CrawlDispatcherWork.java").is_file());
-    assert!(main.join("jobs/SchedulingConfig.java").is_file());
-    assert!(main.join("jobs/JdbcCrawlDispatcherStore.java").is_file());
-    assert!(main.join("jobs/CrawlDispatcherWorker.java").is_file());
-    assert!(main.join("web/CrawlDispatcherJobController.java").is_file());
-    assert!(root.join(".jails/ledger.toml").is_file());
-    // One *registry*, not four. `.jails/` holds the reader's manifest, jails'
-    // one registry, and the executor's own state -- an object store, a
-    // transaction log, receipts and a lock. Closed rather than counted, so a
-    // second registry growing back still fails and so does an executor path
-    // nobody wrote down.
+    assert!(
+        common::generated(
+            &root,
+            "src/test/java/com/example/demo/jobs/SiteTraversalWorkflowIT.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/messaging/PageDiscoveredEvent.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/jobs/CrawlDispatcherWork.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/jobs/SchedulingConfig.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/jobs/JdbcCrawlDispatcherStore.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/jobs/CrawlDispatcherWorker.java"
+        )
+        .is_file()
+    );
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/web/CrawlDispatcherJobController.java"
+        )
+        .is_file()
+    );
+    // **Five things, not seven.** `.jails/` holds the reader's manifest, the
+    // one editable model, the lock sealing the projection it was compiled
+    // from, the generated tree, and the executor's own lock -- and nothing
+    // else. Closed rather than counted, so a legacy ledger, an object store, a
+    // transaction log or a receipts directory growing back here fails, which
+    // is the cutover running backwards.
     let bookkeeping = fs::read_dir(root.join(".jails"))
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
@@ -669,12 +802,10 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
         bookkeeping,
         [
             "app.toml",
-            "architecture.toml",
-            "ledger.toml",
-            "lock",
-            "objects",
-            "receipts",
-            "transactions",
+            "apply.lock",
+            "compiler.lock.json",
+            "generated",
+            "model.jdl",
         ]
         .map(str::to_string)
         .into(),
@@ -683,11 +814,16 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
     assert!(root.join("Dockerfile").is_file());
     assert!(root.join(".github/workflows/ci.yml").is_file());
     assert!(root.join(".github/workflows/image.yml").is_file());
+    // Two tables and their indexes, plus one table each for the workflow and
+    // the durable job. Counted rather than named because the point is that
+    // nothing appends twice on a replay -- what each one is, is in the file.
     assert_eq!(
         fs::read_dir(root.join("src/main/resources/db/migration"))
             .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "sql"))
             .count(),
-        5
+        6
     );
 }
 
@@ -714,7 +850,6 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let main = root.join("src/main/java/com/example/demo");
     for name in [
         "Workspace",
         "Member",
@@ -725,9 +860,20 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         "Message",
         "ConversationAssignment",
     ] {
-        assert!(main.join(format!("domain/{name}.java")).is_file(), "{name}");
         assert!(
-            main.join(format!("web/{name}Controller.java")).is_file(),
+            common::generated(
+                &root,
+                &format!("src/main/java/com/example/demo/domain/{name}.java")
+            )
+            .is_file(),
+            "{name}"
+        );
+        assert!(
+            common::generated(
+                &root,
+                &format!("src/main/java/com/example/demo/web/{name}Controller.java")
+            )
+            .is_file(),
             "{name} controller"
         );
     }
@@ -738,7 +884,14 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         "InboxChannel",
         "AssignmentStatus",
     ] {
-        assert!(main.join(format!("domain/{name}.java")).is_file(), "{name}");
+        assert!(
+            common::generated(
+                &root,
+                &format!("src/main/java/com/example/demo/domain/{name}.java")
+            )
+            .is_file(),
+            "{name}"
+        );
     }
     for name in [
         "CreateWorkspace",
@@ -751,11 +904,19 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         "ReceiveMessage",
     ] {
         assert!(
-            main.join(format!("service/{name}UseCase.java")).is_file(),
+            common::generated(
+                &root,
+                &format!("src/main/java/com/example/demo/service/{name}UseCase.java")
+            )
+            .is_file(),
             "{name} usecase"
         );
         assert!(
-            main.join(format!("web/{name}Controller.java")).is_file(),
+            common::generated(
+                &root,
+                &format!("src/main/java/com/example/demo/web/{name}Controller.java")
+            )
+            .is_file(),
             "{name} controller"
         );
     }
@@ -769,70 +930,152 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         "AssignmentByConversation",
     ] {
         assert!(
-            main.join(format!("service/{name}Query.java")).is_file(),
+            common::generated(
+                &root,
+                &format!("src/main/java/com/example/demo/service/{name}Query.java")
+            )
+            .is_file(),
             "{name} query"
         );
         assert!(
-            main.join(format!("adapters/Jdbc{name}Query.java"))
-                .is_file(),
+            common::generated(
+                &root,
+                &format!("src/main/java/com/example/demo/adapters/Jdbc{name}Query.java")
+            )
+            .is_file(),
             "{name} JDBC adapter"
         );
         assert!(
-            main.join(format!("web/{name}QueryController.java"))
-                .is_file(),
+            common::generated(
+                &root,
+                &format!("src/main/java/com/example/demo/web/{name}QueryController.java")
+            )
+            .is_file(),
             "{name} controller"
         );
     }
-    assert!(main.join("messaging/MessageReceivedEvent.java").is_file());
     assert!(
-        main.join("service/OutboxReceiveMessageUseCase.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/messaging/MessageReceivedEvent.java"
+        )
+        .is_file()
     );
-    let outbox = fs::read_to_string(main.join("jobs/JdbcReceiveMessageOutbox.java")).unwrap();
+    // **One bean, one transaction.** The legacy generator wrapped the use case
+    // in a second `Outbox<X>UseCase` that delegated to a storing one and
+    // staged afterwards, because it had already written a service it could not
+    // reach inside. Here the command *port* is the ABI and `Jdbc<X>Command` is
+    // its one implementation, so staging goes in the statement's own method
+    // under `@Transactional` -- with no `@Primary` deciding which of two
+    // implementations Spring injects.
+    assert!(
+        !common::generated(
+            &root,
+            "src/main/java/com/example/demo/service/OutboxReceiveMessageUseCase.java"
+        )
+        .exists(),
+        "the outbox must not be a second bean in front of the command"
+    );
+    let command = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/jdbc/JdbcReceiveMessageCommand.java",
+    ))
+    .unwrap();
+    assert!(command.contains("@Transactional"), "{command}");
+    assert!(command.contains("outbox.stage("), "{command}");
+    let outbox = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/jobs/JdbcReceiveMessageOutbox.java",
+    ))
+    .unwrap();
     assert!(outbox.contains("for update skip locked"), "{outbox}");
-    assert!(main.join("jobs/ReceiveMessageOutboxWorker.java").is_file());
-    assert!(main.join("jobs/SchedulingConfig.java").is_file());
     assert!(
-        main.join("service/ChangeConversationStatusUseCase.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/jobs/ReceiveMessageOutboxWorker.java"
+        )
+        .is_file()
     );
-    let transition =
-        fs::read_to_string(main.join("adapters/JdbcChangeConversationStatusTransition.java"))
-            .unwrap();
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/jobs/SchedulingConfig.java"
+        )
+        .is_file()
+    );
+    // The port, not a service in front of it: `application/transitions` is the
+    // ABI every adapter and controller names.
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/application/transitions/ChangeConversationStatusTransition.java"
+        )
+        .is_file()
+    );
+    let transition = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/JdbcChangeConversationStatusTransition.java",
+    ))
+    .unwrap();
     assert!(transition.contains("version = version + 1"), "{transition}");
     assert!(
         transition.contains("public class JdbcChangeConversationStatusTransition"),
         "{transition}"
     );
+    // `:scope_` prefixes the bound claim rather than the column name, so a
+    // scoped entity that also has a `workspaceId` *field* binds two distinct
+    // parameters instead of one that silently wins.
     assert!(
-        transition.contains("workspace_id = :workspace_id"),
+        transition.contains("workspace_id = :scope_workspace_id"),
         "{transition}"
     );
     assert!(
-        main.join("web/ChangeConversationStatusController.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/web/ChangeConversationStatusController.java"
+        )
+        .is_file()
     );
-    let assignment_transition =
-        fs::read_to_string(main.join("adapters/JdbcReassignConversationTransition.java")).unwrap();
+    let assignment_transition = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/JdbcReassignConversationTransition.java",
+    ))
+    .unwrap();
     assert!(
         assignment_transition.contains("member_id = :member_id"),
         "{assignment_transition}"
     );
     assert!(
-        assignment_transition.contains("workspace_id = :workspace_id"),
+        assignment_transition.contains("workspace_id = :scope_workspace_id"),
         "{assignment_transition}"
     );
-    assert!(main.join("jobs/ReceiveMessageOutboxSink.java").is_file());
     assert!(
-        main.join("jobs/ReceiveMessageKafkaOutboxSink.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/jobs/ReceiveMessageOutboxSink.java"
+        )
+        .is_file()
     );
-    let provider = fs::read_to_string(main.join("jobs/ProviderHttpOutboxSink.java")).unwrap();
+    assert!(
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/jobs/ReceiveMessageKafkaOutboxSink.java"
+        )
+        .is_file()
+    );
+    let provider = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/jobs/ProviderHttpOutboxSink.java",
+    ))
+    .unwrap();
     assert!(provider.contains("Idempotency-Key"), "{provider}");
     assert!(provider.contains("HttpClient.Redirect.NEVER"), "{provider}");
     assert!(
-        root.join("src/test/java/com/example/demo/jobs/ProviderHttpOutboxSinkTest.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/test/java/com/example/demo/jobs/ProviderHttpOutboxSinkTest.java"
+        )
+        .is_file()
     );
     for name in [
         "ContactWorkspace",
@@ -847,36 +1090,80 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         "AssignmentMember",
     ] {
         assert!(
-            root.join(format!(
-                "src/test/java/com/example/demo/adapters/{name}AssociationIT.java"
-            ))
+            common::generated(
+                &root,
+                &format!("src/test/java/com/example/demo/adapters/{name}AssociationIT.java")
+            )
             .is_file(),
             "{name} association test"
         );
     }
-    let contacts =
-        fs::read_to_string(main.join("web/ContactsByWorkspaceQueryController.java")).unwrap();
-    assert!(contacts.contains("scopeAuthorizer.require"), "{contacts}");
-    let contact_controller = fs::read_to_string(main.join("web/ContactController.java")).unwrap();
-    assert!(contact_controller.contains("Scope-safe creation endpoint"));
+    let contacts = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/ContactsByWorkspaceQueryController.java",
+    ))
+    .unwrap();
+    // The claim reaches the query as an `ExecutionContext` entry rather than
+    // as an authorization call the controller makes and discards: the scoped
+    // predicate is in the statement, so the value has to travel to it.
     assert!(
-        !contact_controller.contains("@GetMapping"),
+        contacts.contains(r#"scopes.claim(authentication, "workspaceId")"#),
+        "{contacts}"
+    );
+    assert!(contacts.contains("ExecutionContext"), "{contacts}");
+    // One controller per operation, so a scoped creation endpoint cannot
+    // accidentally also serve a read the model never declared.
+    let contact_controller = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/CreateContactController.java",
+    ))
+    .unwrap();
+    assert!(
+        contact_controller.contains("RequestMethod.POST"),
+        "{contact_controller}"
+    );
+    assert!(
+        !contact_controller.contains("RequestMethod.GET"),
         "{contact_controller}"
     );
     assert!(root.join("Dockerfile").is_file());
     assert!(root.join(".github/workflows/ci.yml").is_file());
+    // One forward migration per change rather than one per replayed row: a
+    // table, each of its indexes, and each declared relation's foreign key are
+    // separate statements with separate names, so a history reads as a list of
+    // what happened rather than as `evolve_application_schema` twenty times.
+    let migrations = fs::read_dir(root.join("src/main/resources/db/migration"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    let inbox = migrations
+        .iter()
+        .find(|name| name.ends_with("__create_inboxes.sql"))
+        .expect("the inbox table has its own migration");
     let inbox_migration =
-        fs::read_to_string(root.join("src/main/resources/db/migration/V003__create_inboxes.sql"))
-            .unwrap();
+        fs::read_to_string(root.join("src/main/resources/db/migration").join(inbox)).unwrap();
     assert!(
         inbox_migration.contains("create table inboxes"),
         "{inbox_migration}"
     );
+    // Eight entity tables plus the outbox, eight indexes, ten foreign keys.
     assert_eq!(
-        fs::read_dir(root.join("src/main/resources/db/migration"))
-            .unwrap()
-            .count(),
-        20
+        (
+            migrations
+                .iter()
+                .filter(|name| name.contains("__create_"))
+                .count(),
+            migrations
+                .iter()
+                .filter(|name| name.contains("__add_idx_"))
+                .count(),
+            migrations
+                .iter()
+                .filter(|name| name.contains("__add_fk_"))
+                .count(),
+        ),
+        (9, 8, 10),
+        "{migrations:?}"
     );
 }
 
@@ -953,8 +1240,13 @@ fn ledger_cli_manifest_builds_without_spring() {
 
     // The manifest names the dispatcher its command belongs to, so the
     // registration is part of what this gate proves rather than a note.
-    let dispatcher =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/cli/LedgerCli.java")).unwrap();
+    // Under `.jails/generated` since the toolbox became canonical: the
+    // dispatcher is compiler output, and this assertion is about what the
+    // compiler put in it.
+    let dispatcher = fs::read_to_string(
+        root.join(".jails/generated/main/java/com/example/demo/cli/LedgerCli.java"),
+    )
+    .unwrap();
     assert!(
         dispatcher.contains("ReconcileCommand::run"),
         "the manifest named its dispatcher, so the command must be registered in it: {dispatcher}"

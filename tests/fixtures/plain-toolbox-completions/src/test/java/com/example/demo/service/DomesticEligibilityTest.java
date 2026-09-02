@@ -13,7 +13,7 @@ class DomesticEligibilityTest {
         var rule = new DomesticEligibility();
         var transaction = new Transaction(UUID.randomUUID(), 500L, "GB");
 
-        assertThat(rule.matches(transaction)).isTrue();
+        assertThat(rule.appliesTo(transaction)).isTrue();
     }
 
     @Test
@@ -21,6 +21,6 @@ class DomesticEligibilityTest {
         var rule = new DomesticEligibility();
         var transaction = new Transaction(UUID.randomUUID(), 500L, "FR");
 
-        assertThat(rule.matches(transaction)).isFalse();
+        assertThat(rule.appliesTo(transaction)).isFalse();
     }
 }

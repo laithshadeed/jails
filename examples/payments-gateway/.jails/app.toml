@@ -25,7 +25,7 @@ timestamps = true
 [[generate]]
 kind = "scaffold"
 name = "Payment"
-fields = ["id:uuid@pk", "merchantId:uuid@index@scope", "idempotencyKey:string!@unique", "amountMinor:long@positive", "currency:string!", "method:PaymentMethod", "status:PaymentStatus@index", "version:long@nonnegative", "authorisedAt:instant?", "capturedAt:instant?"]
+fields = ["id:uuid@pk", "merchantId:uuid@index@scope", "idempotencyKey:string!@unique", "amountMinor:long@positive", "currency:string!", "method:PaymentMethod", "status:PaymentStatus@default(AUTHORISED)@index", "version:long@nonnegative", "authorisedAt:instant?", "capturedAt:instant?"]
 timestamps = true
 indexes = ["merchant_id, created_at desc", "status, created_at"]
 
@@ -99,14 +99,11 @@ name = "AcquirerSettlement"
 on = "AuthorisePayment"
 yields = "PaymentAuthorised"
 
-# Durable work carries the command it will invoke, so its fields are that
-# command's, in order. Jails refuses anything else rather than storing a
-# payload it cannot replay -- and it cannot derive them for you, because the
-# `@scope` markers that make the work tenant-safe do not survive into the
-# generated record.
-[[generate]]
-kind = "durable-job"
-name = "SettlementDispatcher"
-fields = ["id:uuid", "merchantId:uuid@scope", "idempotencyKey:string!", "amountMinor:long", "currency:string!", "method:PaymentMethod"]
-on = "AuthorisePayment"
-yields = "Payment"
+# **No durable job here, and the refusal is the finding.** `SettlementDispatcher`
+# would enqueue `AuthorisePayment`, which is scoped by `merchantId` -- and
+# `@scope` means the value is proved at the request boundary and read from the
+# execution context, never from the caller's input, so it is exactly what a
+# queue row does not hold. jails refuses rather than manufacturing a context
+# from the payload, which would assert a claim nobody proved. A tenant-scoped
+# durable queue needs a column for the proven claims and a contract for who may
+# write it; that is a design decision, not a generator gap.

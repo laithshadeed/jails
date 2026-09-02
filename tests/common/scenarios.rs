@@ -9,7 +9,7 @@
 //! derives *which* kinds and capabilities are exercised from the steps
 //! themselves rather than from a list somebody maintains by hand.
 
-use super::{temp_dir, write_plain_fixture, write_spring_fixture};
+use super::{TARGET_RELEASE, temp_dir, write_plain_fixture, write_spring_fixture};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -42,6 +42,38 @@ pub struct Scenario {
 /// capabilities out of the binary's own help and fails when one has no
 /// scenario here, so a kind can no longer be added without its snapshot.
 pub const SCENARIOS: &[Scenario] = &[
+    // ---- the canonical compiler ----
+    //
+    // **The one scenario whose output is `.jails/generated`.** Every other
+    // entry here drives the legacy generator, so before this existed
+    // `grep -rl "jails/generated" tests/golden` returned nothing: the product
+    // of the new architecture had no byte snapshot anywhere and nothing failed
+    // when a canonical emitter changed what it wrote (`audit.md` A5.1).
+    //
+    // Seeded with a model rather than driven by `g` commands, because the
+    // model *is* the input on this path -- and one model reaching many
+    // emitters is a better snapshot than many models reaching one each: it is
+    // where the packages, the imports and the shared files have to agree with
+    // each other.
+    Scenario {
+        name: "canonical-tree",
+        fixture: Fixture::Spring,
+        seed: &[(
+            ".jails/model.jdl",
+            "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+             platform spring\n  build maven\n  storage postgres\n}\n\ncap json\n\n\
+             entity Note @id(ent_note) {\n  use repo\n  use factory\n  \
+             id: uuid @id(fld_note_id) @pk\n  title: string @id(fld_note_title) @notBlank\n  \
+             status: string @id(fld_note_status)\n\n  index [status] @id(idx_note_status)\n\n  \
+             command Create(title, status) @id(op_note_create) {\n    emit Created\n  }\n\n  \
+             query Open(status) @id(op_note_open) {\n    limit 20\n  }\n\n  \
+             transition Rename(title) @id(op_note_rename) {\n    update [title]\n  }\n\n  \
+             event Created(id, title) @id(op_note_created)\n}\n\n\
+             component sealed Outcome @id(cmp_outcome) {\n  variant Accepted\n  \
+             variant Rejected\n}\n\ncomponent service Notifier @id(cmp_notifier) {\n}\n",
+        )],
+        steps: &[&["sync"]],
+    },
     // ---- generators, plain Maven ----
     Scenario {
         name: "record",
@@ -75,6 +107,7 @@ pub const SCENARIOS: &[Scenario] = &[
         fixture: Fixture::Spring,
         seed: &[("src/main/resources/db/migration/.gitkeep", "")],
         steps: &[
+            &["add", "db", "--no-start"],
             &["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
             &[
                 "g",
@@ -166,7 +199,10 @@ pub const SCENARIOS: &[Scenario] = &[
         name: "repo",
         fixture: Fixture::Plain,
         seed: &[],
-        steps: &[&["g", "repo", "Note", "id:uuid", "title:string"]],
+        steps: &[
+            &["g", "record", "Note", "id:uuid@pk", "title:string"],
+            &["g", "repo", "Note"],
+        ],
     },
     Scenario {
         name: "migration",
@@ -179,16 +215,19 @@ pub const SCENARIOS: &[Scenario] = &[
         name: "scaffold-spring",
         fixture: Fixture::Spring,
         seed: &[],
-        steps: &[&[
-            "g",
-            "scaffold",
-            "Note",
-            "id:uuid@pk",
-            "title:string!",
-            "createdAt:instant",
-            "--index",
-            "title, created_at desc",
-        ]],
+        steps: &[
+            &["add", "db", "--no-start"],
+            &[
+                "g",
+                "scaffold",
+                "Note",
+                "id:uuid@pk",
+                "title:string!",
+                "createdAt:instant@default(now())",
+                "--index",
+                "title, created_at desc",
+            ],
+        ],
     },
     Scenario {
         name: "controller-service",
@@ -268,10 +307,25 @@ pub const SCENARIOS: &[Scenario] = &[
         steps: &[&["g", "socket", "Chat"]],
     },
     Scenario {
+        // `add kafka` first, because `g event` requires it: all four files it
+        // writes import `org.springframework.kafka`, and without the starter
+        // the generate used to report success over a project that could not
+        // compile -- bugs.md B58.
         name: "event",
         fixture: Fixture::Spring,
         seed: &[],
-        steps: &[&["g", "event", "Transaction"]],
+        steps: &[
+            &["add", "kafka", "--no-start"],
+            &["g", "record", "Transaction", "id:uuid", "amount:long"],
+            &[
+                "g",
+                "event",
+                "TransactionSettled",
+                "id:uuid",
+                "--on",
+                "Transaction",
+            ],
+        ],
     },
     // ---- capabilities, plain Maven ----
     Scenario {
@@ -441,7 +495,7 @@ pub const SCENARIOS: &[Scenario] = &[
                 "amount:long@positive",
                 "status:PayoutStatus@index",
                 "version:long@nonnegative",
-                "createdAt:instant",
+                "createdAt:instant@default(now())",
             ],
             &[
                 "g",
@@ -480,13 +534,14 @@ pub const SCENARIOS: &[Scenario] = &[
         seed: &[],
         steps: &[
             &["add", "db", "--no-start"],
+            &["add", "json", "--no-start"],
             &[
                 "g",
                 "scaffold",
                 "Owner",
                 "id:uuid@pk",
                 "name:string!",
-                "createdAt:instant",
+                "createdAt:instant@default(now())",
             ],
             &[
                 "g",
@@ -495,7 +550,7 @@ pub const SCENARIOS: &[Scenario] = &[
                 "id:uuid@pk",
                 "ownerId:uuid@index",
                 "name:string!",
-                "createdAt:instant",
+                "createdAt:instant@default(now())",
             ],
             &[
                 "g",
@@ -548,13 +603,17 @@ pub const SCENARIOS: &[Scenario] = &[
         steps: &[
             &["add", "db", "--no-start"],
             &["add", "json", "--no-start"],
+            // `g event` requires Kafka: every file it writes imports
+            // `org.springframework.kafka`, and this scenario's whole point is
+            // an outbox that publishes. bugs.md B58.
+            &["add", "kafka", "--no-start"],
             &[
                 "g",
                 "scaffold",
                 "Message",
                 "id:uuid@pk",
                 "body:string!",
-                "createdAt:instant",
+                "createdAt:instant@default(now())",
             ],
             // `--on Message` is what makes the topic ordered per message
             // rather than per event: the partition key becomes `messageId`.
@@ -605,7 +664,7 @@ pub const SCENARIOS: &[Scenario] = &[
                 "Owner",
                 "id:uuid@pk",
                 "email:string!@unique",
-                "createdAt:instant",
+                "createdAt:instant@default(now())",
             ],
             &[
                 "g",
@@ -614,7 +673,7 @@ pub const SCENARIOS: &[Scenario] = &[
                 "id:uuid@pk",
                 "ownerId:uuid@index",
                 "name:string!",
-                "createdAt:instant",
+                "createdAt:instant@default(now())",
             ],
             &[
                 "g",
@@ -647,7 +706,7 @@ pub const SCENARIOS: &[Scenario] = &[
                 "Person",
                 "id:uuid@pk",
                 "email:string!@unique",
-                "createdAt:instant",
+                "createdAt:instant@default(now())",
             ],
             &[
                 "g",
@@ -758,7 +817,7 @@ pub const SCENARIOS: &[Scenario] = &[
                 "id:long@pk",
                 "body:string!",
                 "seen:boolean",
-                "version:long",
+                "version:long@version",
             ],
             &[
                 "g",
@@ -847,7 +906,7 @@ pub const SCENARIOS: &[Scenario] = &[
                 "id:long@pk",
                 "body:string!",
                 "seen:boolean",
-                "version:long",
+                "version:long@version",
             ],
             &[
                 "g",
@@ -976,7 +1035,7 @@ pub const SCENARIOS: &[Scenario] = &[
                 "id:long@pk",
                 "userId:long",
                 "subject:string!",
-                "version:long",
+                "version:long@version",
             ],
             &[
                 "g",
@@ -1049,6 +1108,31 @@ const CASES_MARKDOWN: &str = "\
 - then it is failed
 ";
 
+/// The model a scenario starts from, when it does not seed one of its own.
+///
+/// **Every scenario is canonical.** The fixtures are hand-written poms with no
+/// `.jails/` in them, which is the shape a *reader's* project has -- and until
+/// this existed that shape was the legacy engine's, so the whole table
+/// exercised the implementation being deleted and the compiler had one golden
+/// tree to its name. Seeding the app block here is exactly what `jails model
+/// init` writes for a foreign project, so the table now measures the path a
+/// reader is on after the on-ramp.
+///
+/// `storage none`: storage is a capability in JDL v1, and every scenario that
+/// wants a database says so with `add db`, `add h2` or `add sqlite`. Declaring
+/// `postgres` here would refuse on the plain-Maven fixtures and fight the
+/// scenario that installs h2 over the same `spring.datasource.url`.
+fn starting_model(fixture: Fixture) -> String {
+    let platform = match fixture {
+        Fixture::Spring => "spring",
+        Fixture::Plain => "plain",
+    };
+    format!(
+        "jdl 1\napp Demo @id(project_demo) {{\n  pkg com.example.demo\n  java {TARGET_RELEASE}\n  \
+         platform {platform}\n  build maven\n  storage none\n}}\n"
+    )
+}
+
 /// A scratch project with the scenario's fixture and seed files in place,
 /// before any jails command has run.
 pub fn prepare(scenario: &Scenario) -> PathBuf {
@@ -1056,6 +1140,15 @@ pub fn prepare(scenario: &Scenario) -> PathBuf {
     match scenario.fixture {
         Fixture::Plain => write_plain_fixture(&root),
         Fixture::Spring => write_spring_fixture(&root),
+    }
+    let seeds_model = scenario
+        .seed
+        .iter()
+        .any(|(rel, _)| *rel == ".jails/model.jdl");
+    if !seeds_model {
+        let path = root.join(".jails/model.jdl");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, starting_model(scenario.fixture)).unwrap();
     }
     for (rel, contents) in scenario.seed {
         let path = root.join(rel);

@@ -6,16 +6,318 @@ short commands. It does not generate or depend on an ORM.
 
 ## Architecture & Internals
 
-For a deep dive into the internal design, crate dependency graph, transaction commit pipeline, and developer onboarding guide, see [**`ARCHITECTURE.md`**](file:///home/laith/code/jails/ARCHITECTURE.md).
+For the canonical compiler design, current cutover boundary, legacy crate graph,
+and contributor guide, see [**`ARCHITECTURE.md`**](ARCHITECTURE.md).
 
 ## Build
 
 ```
-cargo build && cargo test && cargo install --path .
+cargo build --workspace && cargo test --workspace && cargo install --path .
 ```
 
 Installs to `~/.cargo/bin/jails`. Shell completion:
 `source <(jails completion bash)`.
+
+## Canonical application compiler
+
+Jails is moving from independent file generators to one deterministic
+application compiler. The intended canonical project has one human-authored
+desired-state model at `.jails/model.jdl`; human-friendly commands edit that
+model, and generated
+Java is a merge-managed projection below `.jails/generated/`. On the next
+generation, disjoint hand edits survive and overlapping edits refuse before
+anything is written. Ejection is the explicit escape hatch for an
+implementation artifact: it atomically transfers the captured live file,
+including hand edits, to `src/main/java` while its record/port ABI stays
+managed.
+
+Canonical mode is explicit while the compiler does not cover every advertised
+generator and capability. `new-cli` and `new --app` seed a model and are
+canonical; ordinary `jails new` still produces a legacy project, so existing
+Spring workflows keep working. `.jails/model.jdl` opts into the JDL front end;
+`.jails/model.toml` remains a temporary compatibility front end for existing
+canonical projects. All currently implemented canonical mutations edit JDL
+directly. A project may never contain both.
+
+A project jails did not create reaches the model through `jails model init`
+(no ledger, or one holding nothing to carry) or `jails model import` (a ledger
+with record and enum declarations). `jails adopt` first is fine: it records a
+`jails.toml` layout row and nothing else, and `model init` treats a ledger as a
+reason to refuse only when it holds something the importer could carry.
+
+The checked-in syntax below is the pre-v1 compatibility spelling used by
+today's CLI editors. The normative `jdl 1` frontend is now executable in the
+model crate: it has lossless tokens/CST spans and direct typed lowering for the
+core app/domain/project declarations, without a TOML round trip. Operations,
+relations, components, global selectors, and CLI mutation cutover are still in
+progress, so this compatibility spelling remains the operational default.
+
+```jdl
+application Notes @id(project_notes)
+package com.example.notes
+java 26
+dialect postgresql
+
+entity Note @id(ent_note) @scaffold {
+  id: uuid @id(fld_note_id) @pk
+  title: string!(1..200) @id(fld_note_title)
+
+  command CreateNote(title) @id(op_create_note) {
+    route: /notes
+  }
+}
+```
+
+The current compiler entry points are:
+
+```text
+jails model check [--manifest .jails/model.jdl] [--frozen]
+jails model plan  [--manifest .jails/model.jdl] [--bundle plan.json]
+jails model apply --bundle plan.json
+jails model eject <implementation-boundary-id>
+jails model import
+jails sync
+```
+
+`plan` captures the workspace once and writes a content-addressed exact plan.
+`apply` verifies and executes those reviewed bytes without recompiling.
+Reapplying the same bundle converges to zero writes, and stale preconditions
+fail before publication. `check --frozen` is the CI assertion that committed
+managed output exactly matches the model and compiler version.
+`sync` is the direct canonical reconcile command: it compiles the current
+model and executes the same exact plan without entering the legacy recipe,
+object, receipt, or journal stack.
+Canonical `add` currently owns `fake`, `db`, `api`, `csv`, `json`, `http`,
+`testkit`, `sqlite`, `h2`, `actuator`, `cache`, `cors`, `observability`,
+`security`, `sse`, `redis`, `kafka`, `mail`, `toxiproxy`, `coverage`, and
+`loadtest`. CSV,
+JSON, HTTP, Fake, Testkit, SQLite, H2, Actuator, Cache, CORS, Observability,
+Security, SSE, Redis, Kafka, Mail, Toxiproxy, and Coverage are declarative
+compiler packs:
+each emitted file has its own merge identity, while all files in one
+replaceable implementation share a capability-scoped ejection boundary.
+Testkit's generated fixture is merge-managed and ejectable with its Java files;
+Maven and Gradle receive the corresponding generated test-resource root.
+SQLite's Java implementation follows the same merge/ejection rule, while its
+first SQL migration enters the ordinary append-only migration history. Later
+generation, capability removal, and Java ejection preserve that SQL and any
+reader edit to it.
+H2 proves the same pack registry can own version-sensitive Spring dependencies
+and main/test property sets: its Java test remains merge-managed/ejectable,
+while unrelated reader properties survive reconciliation and removal.
+Actuator uses the same data-shaped backend for its endpoint contract test,
+Spring-managed starter, and narrowly exposed management properties. Ejecting
+`cap_actuator` transfers only the test implementation to `src/test/java`; the
+capability remains in the model, so its dependency and property contract stays
+managed while the transferred Java continues to build and run.
+Cache projects its configuration and executable cache proof as two separately
+merge-managed files under one replaceable Java boundary. Ejecting `cap_cache`
+transfers both; the bounded Caffeine settings and Spring-managed dependencies
+remain compiler-owned while reader properties remain byte-preserved.
+CORS follows the same two-file boundary for its configuration and real
+preflight test. The captured Boot version selects classic `MockMvc` before
+Boot 4 or `MockMvcTester` on Boot 4+, including the moved test starter and
+annotation import. Its exact-origin property remains compiler-owned after
+`cap_cors` transfers both editable Java files.
+Observability projects its metrics configuration, typed metric facade, unit
+test, and real Prometheus scrape test as four independently merge-managed files
+under `cap_observability`. Boot 4's moved `MeterRegistryCustomizer` import is
+selected from the captured version. Ejection transfers all four Java files;
+the Actuator/Prometheus dependencies and bounded metrics, tracing, and access
+log properties remain managed.
+Security projects its development/production filter chains, scope authorizer,
+and two executable tests as five merge-managed files under `cap_security`.
+Its compiler profile enforces the Boot 3 main-source floor, selects the Boot 4
+`WebMvcTest` package and starter when required, and keeps all security
+dependencies managed after Java ejection. Shared dependency reconciliation
+means removing or ejecting Security cannot strand an independently declared
+CORS implementation.
+SSE projects its concurrent emitter hub, scheduling configuration, web-layer
+controller, and four-test concurrency proof as independently merge-managed
+files under `cap_sse`. A declarative package override keeps the controller in
+the owned web package while `--package` relocates the root implementation.
+Ejection transfers all four exact live files; the Web dependency and bounded
+scheduler-pool property remain managed by the still-declared capability.
+Redis projects its TTL-enforcing store and Testcontainers integration proof as
+two independently merge-managed Java files. Its marked Compose service is a
+reader-document facet: the lock records only the generated service block, so
+hand edits inside that block use BASE/OURS/THEIRS while unrelated services and
+YAML remain byte-preserved. Dependencies, three bounded properties, and the
+Failsafe integration-test feature come from the same declarative pack.
+Kafka uses the same reader-facet boundary for its marked broker service and
+projects four independently merge-managed Java files: poison-message policy,
+the domain exception, its unit proof, and a reusable Testcontainers fixture.
+Spring projects receive the serializer/deserializer, consumer-group and
+durability properties plus managed dependencies; plain Maven receives the
+pinned Kafka client without Spring source.
+Mail projects its synchronous sender and container-backed delivery proof as two
+merge-managed files, with Failsafe wiring derived from the integration-test
+source set. Its marked Mailpit service is another reader-document facet, so
+reader edits inside the service and elsewhere in Compose survive regeneration.
+Boot 4 uses the mail test twin; earlier Boot lines use the ordinary test starter.
+Toxiproxy is a framework-neutral test implementation boundary: `Faults` and its
+executable proof are independently merge-managed under `cap_toxiproxy`, while
+their two exact test dependencies remain compiler-owned. Legacy and canonical
+generation render the same shared Java templates. Regeneration preserves edits
+to either file, and ejection or removal transfers or removes only this pair.
+Coverage is the zero-source form of the same registry. The declaration lowers
+to a typed build feature: a marked JaCoCo gate in Maven or Gradle, with exact
+plugin versions and thresholds matching the compatibility engine. Reader build
+edits outside the marked block survive; edits inside it refuse the entire plan;
+removal deletes only that feature. A real Maven `verify` E2E proves the report
+and threshold are executable rather than merely present in XML.
+Loadtest is the first generic merge-managed whole-project-file projection. Its
+six files stay at `load-tests/`, but each keeps an exact accepted BASE like
+generated Java: disjoint hand edits survive route regeneration, overlaps
+refuse the whole plan, and clean removal deletes only those files. Routes come
+from typed controller and operation nodes instead of rescanning generated Java.
+The compiler lock keeps exactly one accepted projection—generated files plus
+embedded reader-document facets—as the generic three-way merge BASE, together
+with its compiler version and integrity digest.
+This is what preserves reader edits when an emitter changes; it is not object
+history, a receipt stream, or a recovery journal.
+`test --fast` follows the same rule: its JUnit console launcher is a stable
+`fast-test` capability and exact test dependency. `remove fast-test` removes
+that declaration and dependency without consulting legacy ownership state.
+
+`model import` is the first one-way compatibility bridge. It currently accepts
+legacy projects whose recorded persistent declarations are records and enums.
+For each managed Java artifact it reads the legacy object-store render as BASE,
+the live Java as OURS, and the canonical render as THEIRS. That includes the
+Spring enum converter as its own artifact, so edits to either the enum ABI or
+converter survive. A clean result moves to the managed tree and removes the old
+reader paths in the same exact plan; a conflict or stale live file refuses
+before the model or managed tree is written. The old ledger is left
+byte-for-byte unchanged as migration evidence, but canonical commands stop
+consulting it once a canonical model exists. The importer writes JDL directly;
+it never creates the TOML compatibility form. Other legacy generator and capability
+declarations refuse until their translation is lossless.
+
+`model eject` is the explicit ownership-transfer escape hatch for one adapter
+implementation boundary, such as `art_cap_fake_ent_note_repository`. A
+boundary may contain one file or a cohesive set such as a controller and its
+test. Each file keeps its own stable artifact ID for merge history. Ejection
+moves the captured live units—including disjoint hand edits—from
+`.jails/generated/main/java` to the corresponding `src/main/java` or
+`src/test/java` paths, and records an
+`eject <implementation-boundary-id> @id(...)`
+declaration in the same
+exact plan. Existing reader files are never overwritten, every prospective
+destination is captured as a missing-file precondition, and later compilations
+leave the ejected source completely alone. Ejection is intentionally one-way;
+reader edits are ownership, not drift for Jails to reclaim. Records, ports and
+operation interfaces remain managed ABI.
+
+`jails rename resource Task WorkItem --strategy preserve-table` changes the
+Java projection while preserving the entity's stable ID, SQL table, routes,
+and other external names. BASE and THEIRS are paired by artifact ID rather
+than path, so a hand-written method in `Task.java` is three-way merged into
+`WorkItem.java`; an overlapping edit or an existing destination refuses before
+the model, lock, migration history, or generated tree is touched. Typed
+single-cutover and rolling storage renames are not canonical backends yet and
+therefore refuse in canonical projects.
+
+Canonical field evolution uses the same stable IDs, merge, and exact-plan
+path. `resource field rename ... --column preserve` changes only the Java
+projection and emits no SQL; `--column single-cutover` appends an explicit
+`rename column`. `resource field type ... --strategy safe` accepts only proven
+PostgreSQL widenings. Nullability changes append `drop/set not null`, with a
+reader-owned SQL file captured as exact plan input before `set not null`.
+Dropping a field requires its exact physical column and refuses while any
+operation still references its stable field ID. All of these re-render every
+affected artifact through the generic three-way merge, so disjoint methods and
+wording edits survive while an overlap refuses before the model, generated
+tree, compiler lock, or migration history changes. Rolling rename and
+expand/contract remain explicit multi-release campaigns and currently refuse.
+
+`jails g factory <Record>` adds an entity facet rather than recording a second
+recipe. The testkit builder is derived from the entity's typed fields, so later
+field evolution updates the record and factory in one plan while preserving
+disjoint edits in each. The factory has its own one-file implementation
+boundary; ejecting it transfers only that test implementation and leaves the
+record ABI managed.
+
+`jails g dto <Record>` likewise adds one entity facet. The request, response,
+and generated contract test each retain their own three-way merge history, so
+hand edits in any of the three survive later field evolution. They remain
+managed wire ABI rather than ejectable implementations; `destroy dto` removes
+only those three projections and leaves the domain record intact.
+
+Model operations are compiler input rather than inert documentation.
+`command`, `query`, `transition`, and `event` declarations lower to typed,
+managed Java ABI; explicit Java projections, routes, query limits, referenced
+fields, and primary-key types survive linking into those units. Familiar
+`g usecase`, `g query`, `g transition`, and `g event` commands now append those
+typed declarations as `ModelPatch` operations. With canonical `add db`, all
+three executable operation kinds lower to Spring `JdbcClient` adapters.
+Commands insert complete rows, generate omitted UUID primary keys, map omitted
+optional fields to SQL null, and refuse when a required value has no modeled
+source. Queries apply required and presence-sensitive optional filters,
+semantic ordering, and a default ceiling of 100. Transitions perform bounded
+primary-key updates, can use non-set inputs as guards, and publish their modeled
+domain event inside the transaction. Every implementation is merge-managed and
+independently ejectable while its command/query/transition port stays managed
+ABI.
+
+Canonical Java keeps the existing field ABI: required `int`, `long`, `double`,
+and `boolean` declarations remain primitives, while nullable forms become
+`Optional<Integer>`, `Optional<Long>`, `Optional<Double>`, and
+`Optional<Boolean>`. The differential legacy/new runner enforces this split in
+the iterative record workflow rather than treating it as a cosmetic output
+difference.
+
+This is an active cutover, not a claim that the legacy engine is gone. In any
+project explicitly carrying `.jails/model.jdl` or compatibility
+`.jails/model.toml`, familiar `jails g record`, `jails g value`,
+`jails g scaffold`, `jails g factory`, `jails g dto`, `jails g repo`, `jails g class`,
+`jails g interface`, `jails g service`, `jails g sealed`, `jails g strategy`,
+`jails g controller`,
+`jails g test`, and `jails g integration-test` syntax lower to typed semantic nodes, while
+`usecase`, `query`, `transition`, and `event` lower to semantic operations,
+through one `ModelPatch` path; remaining generator kinds currently refuse rather
+than falling through to the legacy state machine. A scaffold is one entity with record,
+repository, service and HTTP facets, not a second orchestration pipeline. Maven
+and Gradle projects receive exact, marked reader-file patches that add managed
+main and test roots to the corresponding source sets; every patch is captured
+in the reviewed plan and guarded by its before-image. Standalone tests emit one
+merge-managed test artifact. Integration tests also request one semantic build
+feature: Maven renders Failsafe with both execution goals, while Gradle renders
+separate unit/integration tasks and wires the latter into `check`. Destroying
+the last integration test removes the marked feature block; hand-editing that
+block causes a pre-write refusal. Compiler-owned capability profiles now include `fake`
+(in-memory repository adapters), `db` (JDBC repositories, accepted-schema
+migrations, and executable operation adapters), and `api` (Spring HTTP adapters for
+routed command, query and transition ports). Adding/removing a profile recompiles its boundary-scoped
+implementations; unsupported capabilities refuse instead of entering the
+legacy planner. Arbitrary
+`add dependency group:artifact` declarations are first-class model nodes: the
+compiler reconciles the complete set into one exact, marked Maven or Gradle
+block, and semantic removal recompiles that block without a reverse POM
+planner. `set` and `unset` likewise edit stable setting nodes and compile the
+complete main or test property set through a lossless reader-file adapter. It
+preserves unrelated bytes, repairs model-owned keys, refuses to claim an
+existing reader-owned key, and records a missing properties file as an exact
+stale-plan precondition. Composite/ordered indexes are first-class entity
+nodes: `resource index add` appends one forward create migration, while
+`resource index remove ... --confirm-index <exact-name>` subtracts that stable
+node and appends a forward drop migration. Ordinary compilation reproduces the
+accepted index set from the model. Stored entities also have an
+explicit lifecycle: `--storage preserve` retires projections without touching
+the table, `resource revive --table <exact-table>` restores them, and
+`--storage drop --confirm-table <exact-table>` appends one forward drop
+migration. Multi-release schema campaigns, business operation implementations,
+the remaining capability backends, and compose remain to be
+moved before the old planner, ledger, and commit engine can be deleted.
+
+Canonical `destroy` is subtraction, not a reverse generator. Destroying a
+record/scaffold removes its entity declaration and recompiles the whole managed
+tree; destroying a usecase/query/transition/event removes its operation. A
+table-backed entity additionally requires `--storage preserve|drop`; preserve
+keeps the inactive schema node for exact revival, while drop requires the
+accepted table name. The linker refuses removal while semantic edges still
+reference the target. No `--force` is required because removal is an exact
+semantic plan; a hand-edited artifact that would disappear refuses before
+writes.
 
 ## Commands
 
@@ -165,9 +467,8 @@ their exit codes, so `jails doctor --json && deploy` behaves like
   Compose is skipped in tests and without a DataSource Spring cannot pick a
   driver — so adding the capability and walking away would break the
   `contextLoads` test that came with the project. It is an `@Import` rather
-  than a global `spring.factories` registration (which jails used to write)
-  so that pure slices and `@WebMvcTest`s do not each start a PostgreSQL they
-  never query. JDBC would also
+  than a global `spring.factories` registration, so that pure slices and
+  `@WebMvcTest`s do not each start a PostgreSQL they never query. JDBC would also
   CGLIB-proxy every `@Repository`, which breaks `final` classes, so `add db`
   sets `spring.persistence.exceptiontranslation.enabled=false` (this
   capability is raw SQL, not JPA). `jails add` starts postgres immediately when Docker is
@@ -229,6 +530,11 @@ there the unit is a whole service block rather than a setting.)
   or everything in `compose.yaml` when invoked with no arguments.
 - `jails stop [db|kafka]...` — stop those containers (`db` is the postgres
   service). Does not delete `compose.yaml`.
+- `jails logs [services...] [--follow] [--since <when>] [--tail <n>]` — bounded
+  logs from the compose services `compose.yaml` declares, defaulting to every
+  one of them and to the last 200 lines. Bounded by default because the case
+  this exists for is reading what a service said while it failed to start, and
+  an unbounded dump of a container that has been up for a week buries it.
 - `jails add|a api` — the error-handling slice every Spring service writes by
   hand: a `@RestControllerAdvice` extending Spring's own
   `ResponseEntityExceptionHandler`, so framework exceptions keep their
@@ -264,9 +570,8 @@ there the unit is a whole service block rather than a setting.)
   collection: `--method post --on ChatRequest --returns ChatReply --path
   /v1/chat/completions` generates one `@PostExchange` method taking and
   returning those types. Naming none of the three keeps the collection shape.
-  The three flags used to be accepted and silently discarded — the command
-  reported success for work it had not done, which is the failure class jails
-  is otherwise scrupulous about.
+  All three are applied or refused, never accepted and discarded: reporting
+  success for work not done is the failure class jails is scrupulous about.
 
   **Each client gets its own registration.** `@ImportHttpServices` carries one
   group name, so a single shared config scanned by package meant a second
@@ -378,7 +683,8 @@ there the unit is a whole service block rather than a setting.)
   `destroy` and a re-plan both know it; it is validated rather than passed
   through, because it is text jails writes into an annotation.
 
-  **`--order-by` and `--limit` say what the adapter used to decide silently.**
+  **`--order-by` and `--limit` say out loud what the adapter would otherwise
+  decide silently.**
   `--order-by 'sentAt desc, id'` names components of `--on` (or the columns
   they map to), each optionally `asc`/`desc` and nothing else — arbitrary SQL
   is refused here rather than recorded as trusted generated SQL, the same rule
@@ -431,8 +737,8 @@ there the unit is a whole service block rather than a setting.)
   search over a record that already exists. The `tsvector` is a **generated
   column**, not a trigger, and that is the whole kind: a trigger has one silent
   failure — somebody adds an UPDATE path that does not fire it, the row's text
-  changes, the vector does not, and the row stops matching a search it used to
-  match, with nothing erroring. `generated always as (…) stored` cannot drift,
+  changes, the vector does not, and the row silently stops matching a search
+  that should find it. `generated always as (…) stored` cannot drift,
   because PostgreSQL maintains it. Every column is wrapped in `coalesce(x, '')`
   (`||` with a NULL operand yields NULL, which would blank the whole vector),
   the text search configuration is named in the expression rather than left to
@@ -528,6 +834,15 @@ there the unit is a whole service block rather than a setting.)
 - `jails add|a ci` — a least-privilege GitHub Actions `clean verify` gate with
   timeouts, concurrency cancellation, Maven caching, and immutable action
   commit pins.
+- `jails add|a k8s` — a Helm chart under `deploy/chart` (`Chart.yaml`,
+  `values.yaml`, deployment, service, configmap and a `PrometheusRule`). The
+  management port is separate from the serving one, so liveness and readiness
+  probes are reachable without exposing actuator to traffic, and the rule ships
+  SLO burn-rate alerts over the metrics `add observability` registers. It
+  **refuses by name** rather than guessing: it needs Spring, plus `actuator`,
+  `observability` and `docker`, and says which one is missing and the command
+  that installs it. A chart that deploys an image the project does not build is
+  worse than no chart.
 - `jails add|a h2` — an in-process database with the browser console wired up.
   Generated DDL switches dialect with it: the driver decides, and the one type
   name that differs is `timestamptz`, which H2 knows only inside its PostgreSQL
@@ -560,6 +875,11 @@ there the unit is a whole service block rather than a setting.)
   setting in `application.properties`, as an owned resource. Same reason: jails
   knows which keys it wrote, so `remove` and `sync` keep working and two owners
   of one key are a collision rather than a silent last-wins.
+
+  In a canonical project, each `(main|test, key)` is a stable model node.
+  Changing the value retains its identity; the compiler reconciles the whole
+  target set while preserving comments and unrelated keys byte-for-byte. A
+  reader-owned declaration of the same key is refused before any write.
 
   `--tests` writes `src/test/resources/config/application.properties` instead
   — that path and not the obvious one, because `classpath:/config/` outranks
@@ -671,16 +991,16 @@ there the unit is a whole service block rather than a setting.)
   mentions it skipped. Neovim's `grn` (jdt.ls) is scope-aware and better where
   it works — this is for when the language server is not attached or the
   project does not currently compile.
-- `jails rename resource <Slice.Current> <New> --strategy
-  preserve-table|single-cutover|rolling` — coordinate the durable entity,
-  generated Java, table binding, migration history, and owned SQL literals.
-  `preserve-table` is the safe default shape: it changes the logical Java name
-  while retaining the physical table and external route. `single-cutover`
-  appends one forward PostgreSQL migration and refuses reader-owned SQL,
-  opaque routines/views/triggers, or unowned storage-object names. `rolling`
-  records a durable campaign and requires the exact reported
-  `rename storage ... --old-version-retired` attestation before it appends the
-  physical cutover.
+- `jails rename resource <Current> <New> --strategy
+  preserve-table|single-cutover` — coordinate the declaration, the generated
+  Java, the table binding, the migration history, and owned SQL literals in
+  one reviewed plan. `preserve-table` is the safe shape: it changes the
+  logical Java name while retaining the physical table and external route.
+  `single-cutover` appends one forward PostgreSQL migration and refuses
+  reader-owned SQL, opaque routines/views/triggers, or unowned storage-object
+  names. `--strategy rolling` is refused by name: a rolling or
+  expand/contract rename is a *campaign* of ordinary plans run as the readers
+  are ready, and the tool will not own the waiting between them.
 - Every mutating command accepts `--pretend --plan-out <file>`. The named plan
   is atomically written mode 0600 outside the project transaction and contains
   the exact prepared bytes plus root, generation, protocol, toolchain,
@@ -707,6 +1027,19 @@ there the unit is a whole service block rather than a setting.)
   contract so it stays safe mid-debug, and it can only answer whether anything
   *will* run the migrations — this answers whether they work. Exits non-zero on
   failure.
+- `jails introspect db --datasource <name> [--schema public] [--table <glob>]
+  [--format human|json|manifest]` — what a live PostgreSQL datasource actually
+  contains: tables, columns, indexes and constraints, read and reported without
+  mutating anything. `--services` decides what to do when the service is not
+  running, and `start` is refused rather than implied — a read-only command
+  that starts a container is not read-only.
+- `jails pull --datasource <name> [--schema public] [--table <glob>]
+  [--into-slice <slice>]` — the same evidence rendered as a **canonical import
+  proposal**: what the model would have to declare for the compiler to produce
+  the schema that is already there. It proposes; it does not write the model.
+  That is the same one-way, fail-closed rule `jails model import` follows, for
+  the same reason — a database is evidence about a schema, not an authority
+  over the model.
 - `jails kafka <topics|describe|send|poison|tail|dlt|lag|reset> [--no-start]`
   — the broker counterpart to `jails db`. Everything runs inside the compose
   broker container, so there is nothing to install: the Kafka CLI tools ship
@@ -808,6 +1141,12 @@ there the unit is a whole service block rather than a setting.)
   compile + tests (`mvn clean verify`). Both need `jails add format`. The
   `clean` is load-bearing: Maven's incremental compile leaves deleted tests
   in `target/`, and Surefire will still run them.
+- `jails lint` — a closed set of source checks for APIs and shortcuts that
+  **compile** but conflict with what jails generates: `@MockBean` where Boot 4
+  wants `@MockitoBean`, and its siblings. No compiler and no Maven, so it
+  answers on a project that does not build. The same table is rendered into the
+  generated `AGENTS.md`, which is what stops the machine check and the guidance
+  given to a coding agent drifting apart.
 - `jails completion <bash|zsh|fish|elvish|powershell>` — shell completion.
 
 `generate`, `destroy`, `add` and `remove` all take `--package <sub>` to override where
@@ -1166,11 +1505,21 @@ creation-time, so an index a table turns out to need later had no verb:
 jails resource index add Message 'customer_id, created_at desc'
 ```
 
-One forward migration, the columns checked the same way, and the index recorded
-on the entity so a re-plan reproduces it. The same index twice is refused
-rather than written twice. An index is the easy half of what `resource field
-add` already does — a new column has to argue about a data plan for a populated
-table and an index has none.
+Adding writes one forward migration, checks the columns the same way, and
+records the index on the entity so a re-plan reproduces it. Removing requires
+the exact physical index name and writes a later `drop index`; the accepted
+create migration is never rewritten:
+
+```
+jails resource index remove Message 'customer_id, created_at desc' \
+  --confirm-index idx_message_index_ab12cd34ef56
+```
+
+A wrong confirmation, missing shape, or direct model deletion refuses before
+any byte changes. The same index twice is refused rather than written twice.
+An index is the easy half of what `resource field add` already does — a new
+column has to argue about a data plan for a populated table and an index has
+none.
 
 The enum's sample is the first constant by *name*: `Currency.GBP`, not
 `Currency.values()[0]`, so reordering the enum cannot silently change what the
@@ -1260,10 +1609,11 @@ reimplements none of its project-generation logic.
 
 Most of jails never touches a build tool — `routes`, `beans`, `stats`,
 `notes`, `why`, `explain`, `rename`, `doctor` and most of `generate` read
-source and write source. They used to be refused anyway, because the door
-looked only for `pom.xml`. It now looks for any build marker it recognises
-(`pom.xml`, `build.gradle`, `build.gradle.kts`, `settings.gradle`, `build.xml`,
-`BUILD.bazel`), nearest wins.
+source and write source, and none of them needs Maven to answer. The door
+looks for any build marker it recognises (`pom.xml`, `build.gradle`,
+`build.gradle.kts`, `settings.gradle`, `build.xml`, `BUILD.bazel`), nearest
+wins — keying it on `pom.xml` alone refuses all of them on a foreign
+project.
 
 **A Groovy `build.gradle` is read and spliced, not merely recognised.**
 `add`, `generate`, `doctor`, `about`, `build`, `clean`, `check`, `test`, `run`
@@ -1330,6 +1680,25 @@ It never writes `[project] capabilities`. That list is what `jails sync`
 applies, and inferring it would have `sync` install things nobody asked for.
 
 Run `jails adopt --pretend` first.
+
+`jails model init` is the step after it. `adopt` records a `jails.toml` layout
+row through the legacy engine, so a ledger exists afterwards — and a
+ledger is a reason to refuse only when it holds something the importer could
+carry. An unreadable one still refuses, and separately: it might hold
+declarations, and seeding a model beside them would strand the project's
+contents outside the model that now owns them.
+
+### `jails architecture baseline`
+
+`g scaffold` writes an ArchUnit fitness suite, and on a project written before
+jails arrived it fails over the reader's own code. `baseline` records today's
+violations so the rules fail only on **new** ones — the four manual steps
+setting up ArchUnit's freeze store, as one command.
+
+Nothing on disk is rewritten. The permission is granted for one run through
+system properties, so `archunit.properties` stays strict in the repository and
+a new violation still fails the build. A baseline that edited the rules would
+be indistinguishable, six months later, from never having had them.
 
 ### A path that addresses its filters
 
@@ -1398,10 +1767,10 @@ whose message is about binding rather than about the value.
 
 ### `--consumes json|form`
 
-Every endpoint jails generated used to be `@Valid @RequestBody` — a JSON body.
 `$.post(url, {email})`, which is what a jQuery page and an HTML form send, is
-`application/x-www-form-urlencoded`, and a `@RequestBody` endpoint answers it
-**415** with a message about a content type rather than about the code.
+`application/x-www-form-urlencoded`. A `@Valid @RequestBody` endpoint — a JSON
+body — answers that **415**, with a message about a content type rather than
+about the code, so the binding has to be stated rather than assumed.
 
 ```
 jails g usecase Ping email:string! --on User --consumes form --path /customer_api/ping
@@ -1441,8 +1810,8 @@ Two places, and which one is decided by what the project already has:
   (`spring.sql.init`), when there is no Flyway. `jails destroy` takes exactly
   that block back out and leaves the tables you wrote alone.
 
-A project with **neither** is told so, by name, with both fixes. It used to get
-no DDL and no message — a repository, a JDBC adapter and an `IT` against a table
+A project with **neither** is told so, by name, with both fixes. Saying
+nothing leaves it with a repository, a JDBC adapter and an `IT` against a table
 that does not exist.
 
 ### `jails modernize` (alias `upgrade`)
@@ -1502,12 +1871,57 @@ override in effect for exactly that reason.
 
 Deferred out of v1 on purpose — this is meant to stay a small tool:
 
-- **Kotlin-DSL Gradle** (`build.gradle.kts`). The Groovy DSL is read and
-  spliced; the Kotlin one is a different grammar and stays foreign rather than
-  half-understood.
+- **Kotlin-DSL Gradle** (`build.gradle.kts`) **on the legacy path.** The Groovy
+  DSL is read and spliced there; the Kotlin one is a different grammar and
+  stays foreign rather than half-understood, so `build.gradle.kts` is
+  recognised as a project root — the commands that need no build file keep
+  working — and nothing parses it.
+
+  The **canonical** path does handle both. Its Gradle adapter appends one
+  marked block and touches nothing else, so the two DSLs differ by the syntax
+  of that block rather than by a grammar it has to understand; a project
+  holding both build scripts refuses rather than picking one. That is the bar
+  `gradle.rs` was always held to — answer exactly or refuse, never guess — met
+  by narrowing the question instead of by writing a second parser.
 - A runtime bean/route view (booting the context and asking Spring itself).
   `routes` and `beans` read source instead, which is instant and works on a
   project that does not start — at the cost of anything decided at runtime.
 - A plugin system with lifecycle hooks or third-party code. Overriding a
   *template* is supported (see below); running arbitrary code inside jails is
   not, and the difference is the point — data is extensible, logic is not.
+- **Pagination.** A query declaring `limit` caps the rows and nothing more:
+  the port gets a `DEFAULT_LIMIT`, the adapter gets a `limit` clause, and a
+  caller handed exactly that many rows cannot tell a full page from a complete
+  result. No cursor, no total, no truncation flag. Ask for a limit you can
+  live with, or eject the adapter and page it yourself.
+- **One API style, chosen per command rather than per project.** A scaffold
+  serves REST over a resource path; a `command`, `query` or `transition`
+  serves whatever its own `route` says, which is commonly `POST` — including
+  for reads. `g scaffold --path` and an explicit `route` on each operation let
+  a project be made consistent, but consistency is something you ask for every
+  time rather than something the project settles once.
+- **A layer for capability configuration.** A capability's own classes —
+  `CorsConfig`, `MetricsConfig`, `AppMetrics` and the rest — are written into
+  the base package, where a generated *kind* goes through the package
+  convention instead. Placing them properly means a new package in a closed
+  convention table, which moves those files in every project generated so far;
+  until that is worth doing, they sit beside the application class.
+- **Generated tests prove wiring, not domain behaviour.** They check that a
+  route dispatches, that a record rejects what its constraints forbid, that a
+  listener reaches its port, and that a migration's schema is the one the
+  model declared. They do not check the rules of your domain, they seed every
+  string field with `"sample"`, and there is no generated concurrency test for
+  the CAS an `@version` column exists for. Treat them as a floor to build on.
+- **`jails g action <Name> --on <Controller>`** — splicing a handler and its
+  test into an existing controller. `g controller` always writes a new
+  standalone file, so related routes end up in separate classes unless you
+  move them by hand.
+- **An operator or back-office surface.** jails generates the REST surface and
+  nothing to administer it — no CRUD console, no admin views. This is the one
+  thing a Django or Rails port expects for free and does not get here; it is a
+  scope line rather than a plan.
+- **An endpoint accepting both JSON and a form body.** `consumes json` and
+  `consumes form` each work; one route accepting either is not expressible.
+- **Lightweight in-process presence.** `g presence` generates the
+  PostgreSQL-backed, cluster-safe version. A single-node in-memory variant
+  would be a different recipe and does not exist.

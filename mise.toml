@@ -5,3 +5,143 @@
 java = "openjdk-26.0.2"
 maven = "3.9.16"
 mvnd = "1.0.6"
+gradle = "8.5"
+
+# The lint half, separately callable because `pre-commit` needs it without the
+# suite: a multi-minute pre-commit is one people learn to skip with
+# `--no-verify`, which makes it worse than no hook. It is a task rather than a
+# line in two places because those two places had already drifted -- the hook
+# ran clippy without `-D warnings`, so an unused import passed `pre-commit` and
+# failed `pre-push` and CI. Same flags, one definition.
+[tasks.lint]
+description = "Format and lint exactly as the gate does"
+run = [
+  "cargo fmt --all --check",
+  "cargo clippy --workspace --all-targets -- -D warnings",
+]
+
+[tasks.verify-rewrite]
+description = "Run the single mandatory rewrite verification gate"
+depends = ["lint"]
+# **`cargo build --workspace` used to run here, and it was a barrier, not a
+# build.** Everything it produced, the line below produces too: `cargo test
+# --workspace` builds every library, every binary -- `target/debug/jails`
+# included, which the integration tests spawn some thousands of times -- and
+# then the test harnesses on top of them. What running it separately added was
+# an ordering constraint. No test harness could start compiling until the last
+# library had finished linking, and this workspace is a deep chain (support ->
+# java/spec -> protocol -> state -> project -> generate -> ... -> engine ->
+# jails), so on four cores both halves spend much of their time with cores idle
+# waiting on one crate. Handed to cargo as a single graph it fills those gaps
+# with test-harness work for crates already built.
+#
+# Measured cold with `CARGO_INCREMENTAL=0`, deps cached, every workspace crate
+# cleaned: 87.9s + 126.1s = 214.0s split, against 177.7s merged. That was once
+# described here as "exactly the state each CI run starts in"; it is not. CI
+# runs with incremental *on*, deliberately -- turning it off was tried and cost
+# the gate 90-120s of wall clock, which CLAUDE.md records -- so read these two
+# figures against each other rather than as the gate's absolute cost. The same shape as CI's own log, where
+# the two phases were 82.9s and 124.7s.
+#
+# `simplify-sol.md`'s G0 names `cargo build --workspace` in the gate. What G0
+# asks for is that one command compiles the whole workspace and runs every
+# test; this one does both, and a compile error still stops the run at the
+# first error, in the same place it did before.
+#
+# **The binaries run one after another, and that is the measured answer rather
+# than a limitation.** They ran concurrently for a while, through a python
+# runner that started sixteen at a time; that bought a real overlap while no
+# single binary dominated, and stopped buying one once `cli` grew to be
+# essentially the whole run. What it never stopped costing was memory -- its
+# budget counted Maven processes and never their footprint -- and it was
+# SIGKILLed by the OOM killer 179s into a run capped at 10 GB, where plain
+# `cargo test --workspace` finishes the same 1991 tests in 275.7s inside 8 GB.
+# It is deleted; CLAUDE.md's "How the suite stays fast" carries the numbers.
+#
+# The Maven permit budget stays a `flock` shared across processes
+# (`tests/common/mod.rs`). It is no longer needed to stop one runner
+# oversubscribing the machine, but it is what keeps the budget true when a
+# second shell runs the suite while the first still is -- which an in-process
+# `Mutex` cannot see.
+#
+# It is one answer to "is this green", and now with no python3 dependency for
+# the gate at all.
+#
+# **One command, and the Gradle example no longer needs a second.** It used to
+# be skipped here and then run by a `cargo test` of its own under
+# `mise x java@21 gradle@8.5`, because it read `gradle` and `JAVA_HOME` off the
+# ambient environment and the repository default is JDK 26. That second
+# invocation ran exactly one test, after everything else had finished: 29.15s
+# measured, of which cargo's own freshness check was 0.1s -- so essentially all
+# of it was one Gradle build waiting its turn.
+#
+# `pinned_gradle_toolchain()` locates the pinned pair instead of inheriting it,
+# so the test runs inside the ordinary suite where its ~16s overlaps a ~300s
+# test phase rather than following it. Running it by hand under `mise x` still
+# works: the ambient pair is honoured first.
+# **`JAILS_GIT_DIFF_ALGORITHM=` pins the gate to git's own default**, and the
+# empty value is the point: it is the one setting every git ever shipped
+# supports, so the gate gives one answer on a runner with git 2.55 and on a
+# laptop with 2.43.
+#
+# Without it the gate is not deterministic. `git merge-file` grew
+# `--diff-algorithm` after 2.43, so jails asks the machine and uses histogram
+# where it can; histogram and myers can resolve an ambiguous three-way merge
+# differently, and the merged bytes go into the managed tree and the accepted
+# projection. `simplify-sol.md`'s G0 asks for one answer to "is this green",
+# and a gate whose merges depend on the distribution underneath it is two
+# answers wearing one name.
+#
+# What this costs is that the gate never exercises the histogram path. That is
+# the right trade: which hunks git picks is git's business and is covered by
+# its own suite, while the parts that are jails' -- that the probe matches a
+# direct invocation, and that the flag lands between the caller's flags and the
+# operands -- are unit-tested on whatever git the machine has.
+#
+# **`cargo doc` is in the gate because nothing was checking the doc links.**
+# This repository's comments are dense with `[`Type`]` and `[`module`]`
+# references and rustdoc resolves every one of them -- so a module that moves
+# leaves a link naming an item that no longer exists, and rustdoc says so at
+# `warning` level, which nothing read. Twenty-five had accumulated, several of
+# them pointing at modules that had changed crates.
+#
+# It is `--no-deps` and warm, so it is ~28s on top of a ~217s gate, and it is
+# in `verify-rewrite` rather than in `lint` deliberately: `lint` is what
+# `.githooks/pre-commit` runs, and nearly tripling the pre-commit wait is a
+# worse trade than catching a stale link one push later.
+run = [
+  "RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps",
+  "rm -rf target/jails-test-profile",
+  "JAILS_GIT_DIFF_ALGORITHM= JAILS_TOOLCHAIN=1 cargo test --workspace; status=$?; ./scripts/subprocess-summary.sh; exit $status",
+]
+
+[tasks.test]
+description = "The gate's test phase, without the toolchain tier (the inner-loop run)"
+# **Plain `cargo test`, and the concurrent python runner it replaced was
+# measured out rather than argued out.**
+#
+# `scripts/run-tests.py` ran the 30 test binaries 16 at a time, longest first,
+# on the reasoning that `cargo test` runs them one after another and so leaves
+# a machine idle. That reasoning stopped holding once one binary grew to
+# dominate: `cli` is 42.7s of a 68.0s sum with the tier off, and 275.7s of the
+# whole run with it on, so the other 29 binaries overlap into its shadow and
+# concurrency across binaries has almost nothing left to win.
+#
+# What it still cost was unbounded memory. Sixteen binaries at once, each free
+# to start JVMs, with a budget that counted Maven *processes* and never their
+# footprint: measured here at **SIGKILL from the OOM killer 179s into a run
+# capped at 10 GB**, having printed only `30 binaries, 16 at a time`. The same
+# 1991 tests under `cargo test --workspace` finish in **275.7s inside 8 GB**.
+# One of those two is a gate and the other is a way to lose a laptop.
+#
+# It buffered, too, so the kill produced an empty log -- the one moment the
+# output mattered most.
+#
+# The Maven permit budget it needed a shared `flock` for lives in
+# `tests/common/mod.rs` and is unaffected: it is process-wide by construction,
+# so it still bounds toolchain concurrency however the binaries are launched.
+run = "cargo test --workspace"
+
+[tasks.verify-rewrite-g1-canary]
+description = "Build the frozen legacy revision and compare iterative, rerun, and destroy semantics"
+run = "./scripts/verify-rewrite-g1-canary.sh"

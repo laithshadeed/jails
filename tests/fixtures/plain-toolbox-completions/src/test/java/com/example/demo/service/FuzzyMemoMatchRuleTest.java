@@ -19,7 +19,7 @@ class FuzzyMemoMatchRuleTest {
         var left = new Entry("BANK-1", date, money, Optional.of(" Coffee,   Lunch "));
         var right = new Entry("BOOK-9", date, money, Optional.of("coffee, lunch"));
 
-        assertThat(new FuzzyMemoMatchRule().apply(new MatchCandidate(left, right)))
+        assertThat(new FuzzyMemoMatchRule().evaluate(new MatchCandidate(left, right)))
                 .contains(MatchOutcome.MATCHED);
     }
 
@@ -32,7 +32,7 @@ class FuzzyMemoMatchRuleTest {
         var different = new Entry("BOOK-9", date, money, Optional.of("tea"));
         var rule = new FuzzyMemoMatchRule();
 
-        assertThat(rule.apply(new MatchCandidate(left, absent))).isEmpty();
-        assertThat(rule.apply(new MatchCandidate(left, different))).isEmpty();
+        assertThat(rule.evaluate(new MatchCandidate(left, absent))).isEmpty();
+        assertThat(rule.evaluate(new MatchCandidate(left, different))).isEmpty();
     }
 }

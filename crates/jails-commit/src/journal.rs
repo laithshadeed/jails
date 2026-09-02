@@ -49,7 +49,7 @@ pub(crate) const MAX_RECORD: usize = codec::MAX_PROTOCOL_RECORD;
 /// A project moved or replaced under a running transaction is not the project
 /// the plan was made against, and a path comparison would not notice: the
 /// same path can name a different directory.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct RootIdentity {
     pub device: u64,
     pub inode: u64,
@@ -67,21 +67,6 @@ impl RootIdentity {
         })
     }
 }
-impl Codec for RootIdentity {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.u64(self.device);
-        encoder.u64(self.inode);
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            device: decoder.u64()?,
-            inode: decoder.u64()?,
-        })
-    }
-}
-
 /// How far a transaction got.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum JournalState {
@@ -131,7 +116,7 @@ impl Codec for JournalState {
             reason,
         } = self
         {
-            encoder.tag(resume.tag());
+            resume.encode(encoder)?;
             encoder.option(path.as_ref(), |e, path| path.encode(e))?;
             reason.encode(encoder)?;
         }
@@ -145,7 +130,7 @@ impl Codec for JournalState {
             2 => Self::LedgerCommitted,
             3 => Self::Complete,
             4 => Self::Blocked {
-                resume: ResumeState::from_tag(decoder.tag()?)?,
+                resume: ResumeState::decode(decoder)?,
                 path: decoder.option(ProjectPath::decode)?,
                 reason: BlockReason::decode(decoder)?,
             },
@@ -155,33 +140,16 @@ impl Codec for JournalState {
 }
 
 /// The phase a blocked transaction would resume from.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum ResumeState {
+    #[codec(tag = 0)]
     Prepared,
+    #[codec(tag = 1)]
     Active,
+    #[codec(tag = 2)]
     LedgerCommitted,
+    #[codec(tag = 3)]
     Complete,
-}
-
-impl ResumeState {
-    fn tag(self) -> u8 {
-        match self {
-            Self::Prepared => 0,
-            Self::Active => 1,
-            Self::LedgerCommitted => 2,
-            Self::Complete => 3,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Result<Self> {
-        Ok(match tag {
-            0 => Self::Prepared,
-            1 => Self::Active,
-            2 => Self::LedgerCommitted,
-            3 => Self::Complete,
-            other => Err(format!("unknown resume state tag {other}"))?,
-        })
-    }
 }
 
 /// What a live path actually was, when it was neither image the plan named.
@@ -250,28 +218,23 @@ pub(crate) enum ObservedImage {
 }
 
 /// Why a transaction stopped.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum BlockReason {
+    #[codec(tag = 0)]
     UnknownLiveImage { actual: ActualImage },
+    #[codec(tag = 1)]
     Unreadable { error_kind: String },
+    #[codec(tag = 2)]
     RootChanged,
+    #[codec(tag = 3)]
     CorruptJournal,
+    #[codec(tag = 4)]
     CorruptObject(ObjectId),
+    #[codec(tag = 5)]
     MultipleTransactions,
 }
 
 impl BlockReason {
-    fn tag(&self) -> u8 {
-        match self {
-            Self::UnknownLiveImage { .. } => 0,
-            Self::Unreadable { .. } => 1,
-            Self::RootChanged => 2,
-            Self::CorruptJournal => 3,
-            Self::CorruptObject(_) => 4,
-            Self::MultipleTransactions => 5,
-        }
-    }
-
     /// What a person is told, and what they can do about it.
     pub fn explain(&self) -> String {
         match self {
@@ -301,40 +264,6 @@ impl BlockReason {
         }
     }
 }
-impl Codec for BlockReason {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::UnknownLiveImage { actual } => {
-                actual.encode(encoder)?;
-                Ok(())
-            }
-            Self::Unreadable { error_kind } => encoder.string(error_kind),
-            Self::CorruptObject(id) => {
-                id.encode(encoder)?;
-                Ok(())
-            }
-            Self::RootChanged | Self::CorruptJournal | Self::MultipleTransactions => Ok(()),
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::UnknownLiveImage {
-                actual: ActualImage::decode(decoder)?,
-            },
-            1 => Self::Unreadable {
-                error_kind: decoder.string()?,
-            },
-            2 => Self::RootChanged,
-            3 => Self::CorruptJournal,
-            4 => Self::CorruptObject(ObjectId::decode(decoder)?),
-            5 => Self::MultipleTransactions,
-            other => Err(format!("unknown block reason tag {other}"))?,
-        })
-    }
-}
-
 /// The durable record of one transaction.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JournalV1 {

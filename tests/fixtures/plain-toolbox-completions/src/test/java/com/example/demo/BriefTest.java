@@ -37,7 +37,7 @@ class BriefTest {
     @DisplayName("rejects blank ids")
     void rejectsBlankIds() {
         assertThatIllegalArgumentException()
-                .isThrownBy(() -> CanonicalTransaction.of(
+                .isThrownBy(() -> new CanonicalTransaction(
                         "  ",
                         LocalDate.of(2026, 8, 1),
                         1_200L,

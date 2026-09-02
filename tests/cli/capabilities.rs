@@ -5,7 +5,7 @@ use super::*;
 #[test]
 fn add_db_no_start_skips_docker_compose_up() {
     let root = temp_dir("add-db-no-start");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     let fake = temp_dir("add-db-no-start-bin");
     let log = fake.join("log.txt");
     write_fake_maven(&fake, &["docker"], &log);
@@ -41,7 +41,7 @@ fn add_db_no_start_skips_docker_compose_up() {
 #[test]
 fn an_effect_that_failed_names_the_flag_that_avoids_it() {
     let root = temp_dir("effect-failed-fix");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     let fake = temp_dir("effect-failed-fix-bin");
     let log = fake.join("log.txt");
     // No `docker` on PATH at all, which is the machine this was reported from.
@@ -62,7 +62,7 @@ fn an_effect_that_failed_names_the_flag_that_avoids_it() {
 
     // And the flag it names really does make the same command succeed.
     let root = temp_dir("effect-failed-fix-ok");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     let output = jails_cmd(&root, Some(&fake))
         .args(["add", "db", "--no-start"])
         .output()
@@ -87,7 +87,9 @@ fn add_errors_outside_a_project() {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("no pom.xml"));
+    let told = String::from_utf8_lossy(&output.stderr);
+    assert!(told.contains("not a Java project"), "{told}");
+    assert!(told.contains("jails new"), "{told}");
 }
 
 /// The bar is what the *generated code* needs, not what jails defaults new
@@ -138,10 +140,135 @@ fn add_accepts_a_project_pinned_to_an_lts_below_the_jails_default() {
     );
 }
 
+/// bugs.md B57: re-running an installed capability bricked a project that has
+/// a compose service, terminally.
+///
+/// The second `add` reported the missing object behind `.jails/transactions/`
+/// and every mutating command after it -- `add`, `sync`, `g record` -- failed
+/// with the same line, so `jails sync`, whose whole job is re-applying
+/// recorded capabilities, was the command that could not run.
+///
+/// Preparation carries the previous ledger image forward when no row changed,
+/// so that a run which did nothing still reports "already set up". The object
+/// behind that image belongs to the commit that wrote it and was promoted to
+/// the durable store, so this transaction's own object directory never held
+/// it. Normally none of that is reached, because such a change is a no-op --
+/// `is_no_op` is exactly those conditions plus an empty effect list. A compose
+/// service supplies the effect, which makes the change non-trivial while
+/// leaving the ledger untouched, and the run walks into staging an object that
+/// was never there.
+///
+/// So the test needs all three: a capability that declares a compose service,
+/// a second capability, and that second one run twice. `sqlite` was the
+/// control that never reproduced -- a database capability with no service.
+#[test]
+fn reinstalling_a_capability_beside_a_compose_service_leaves_the_project_usable() {
+    let root = temp_dir("add-twice-with-compose");
+    write_spring_fixture(&root);
+
+    for arguments in [
+        &["add", "db", "--no-start"][..],
+        &["add", "cors"][..],
+        &["add", "cors"][..],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{arguments:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // Terminal, not transient, was the whole shape of B57: what proves it
+    // fixed is the commands *after* the second install, not that install.
+    for arguments in [
+        &["sync", "--no-start"][..],
+        &["g", "record", "Note", "title:string!"][..],
+    ] {
+        let output = jails_cmd(&root, None).args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{arguments:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // And `doctor` no longer reports an unfinished transaction whose fix --
+    // run the same command again -- was the reproduction.
+    let doctor = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    let report = String::from_utf8_lossy(&doctor.stdout);
+    assert!(
+        !report.contains("started and did not finish"),
+        "doctor still reports an interrupted transaction:\n{report}"
+    );
+}
+
+/// bugs.md B58: `g event` wrote Kafka code into a project with no Kafka.
+///
+/// All four generated files import `org.springframework.kafka`, so the
+/// generate reported success, listed its files, and left a project where
+/// `mvn compile` fails on code the reader never wrote.
+///
+/// It refuses rather than splicing the coordinate, unlike `g dto` and
+/// `g client`: a listener needs what `add kafka` writes around it -- the
+/// `DefaultErrorHandler`, the dead-letter routing, the
+/// `ErrorHandlingDeserializer` -- so supplying only the dependency would trade
+/// a compile error for a listener that compiles and drops poison messages
+/// silently.
+#[test]
+fn generating_an_event_without_kafka_refuses_and_names_the_capability() {
+    let root = temp_dir("event-without-kafka");
+    write_spring_fixture(&root);
+
+    let written = jails_cmd(&root, None)
+        .args(["g", "event", "Shipped"])
+        .output()
+        .unwrap();
+    // **The compiler closes this the other way round.** An event declaration
+    // is a payload record and nothing else; the listener, the error handler
+    // and the dead-letter routing belong to the `kafka` capability, so a
+    // project without it gets no line of Spring Kafka rather than a refusal.
+    // The property is the same one and is now structural: there is no
+    // arrangement of commands that writes an import the build cannot resolve.
+    assert!(written.status.success(), "{written:?}");
+    let payload = common::read_generated(
+        &root,
+        "src/main/java/com/example/demo/domain/events/ShippedEvent.java",
+    );
+    assert!(!payload.contains("springframework.kafka"), "{payload}");
+    assert!(
+        !root
+            .join("src/main/java/com/example/demo/messaging")
+            .exists(),
+        "an event without the capability still wrote the messaging package"
+    );
+
+    // And it is a precondition, not a ban: with the capability installed the
+    // same command works.
+    let installed = jails_cmd(&root, None)
+        .args(["add", "kafka", "--no-start"])
+        .output()
+        .unwrap();
+    assert!(
+        installed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&installed.stderr)
+    );
+    let generated = jails_cmd(&root, None)
+        .args(["g", "event", "Shipped"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+}
+
 #[test]
 fn add_dry_run_changes_nothing() {
     let root = temp_dir("add-dry-run");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     let before = fs::read_to_string(root.join("pom.xml")).unwrap();
 
     let output = jails_cmd(&root, None)
@@ -172,7 +299,7 @@ fn add_dry_run_changes_nothing() {
 #[test]
 fn add_is_idempotent() {
     let root = temp_dir("add-idempotent");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
 
     assert!(
         jails_cmd(&root, None)
@@ -212,7 +339,7 @@ fn add_is_idempotent() {
 #[test]
 fn add_name_override_renames_the_generated_class() {
     let root = temp_dir("add-named");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
 
     assert!(
         jails_cmd(&root, None)
@@ -222,12 +349,18 @@ fn add_name_override_renames_the_generated_class() {
             .success()
     );
     assert!(
-        root.join("src/main/java/com/example/demo/adapters/TransactionReader.java")
-            .exists()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/adapters/TransactionReader.java"
+        )
+        .exists()
     );
     assert!(
-        root.join("src/test/java/com/example/demo/adapters/TransactionReaderTest.java")
-            .exists()
+        common::generated(
+            &root,
+            "src/test/java/com/example/demo/adapters/TransactionReaderTest.java"
+        )
+        .exists()
     );
 }
 
@@ -271,7 +404,7 @@ fn add_csv_produces_a_project_that_compiles_and_passes_tests() {
 #[test]
 fn add_sqlite_writes_a_first_migration_and_both_classes() {
     let root = temp_dir("add-sqlite-files");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
 
     assert!(
         jails_cmd(&root, None)
@@ -281,19 +414,35 @@ fn add_sqlite_writes_a_first_migration_and_both_classes() {
             .success()
     );
     assert!(
-        root.join("src/main/java/com/example/demo/adapters/Database.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/adapters/Database.java"
+        )
+        .is_file()
     );
     assert!(
-        root.join("src/main/java/com/example/demo/adapters/Migrations.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/adapters/Migrations.java"
+        )
+        .is_file()
     );
     assert!(
-        root.join("src/test/java/com/example/demo/adapters/DatabaseTest.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/test/java/com/example/demo/adapters/DatabaseTest.java"
+        )
+        .is_file()
     );
+    // **One migration naming rule across the tool**, `V<version>__<what>.sql`,
+    // which is what lets the materializer allocate the next version from the
+    // history it observed rather than from a name a capability chose. sqlite's
+    // runner is jails' own `Migrations`, which sorts by filename and does not
+    // care -- but Flyway, which `storage postgres` uses, reads only that shape,
+    // and two conventions in one `db/migration` directory is how a migration
+    // comes to sit there being ignored.
     assert!(
-        root.join("src/main/resources/db/migration/001_init.sql")
+        root.join("src/main/resources/db/migration/V001__sqlite_init.sql")
             .is_file()
     );
 }
@@ -301,7 +450,7 @@ fn add_sqlite_writes_a_first_migration_and_both_classes() {
 #[test]
 fn add_db_installs_postgres_flyway_and_testcontainers_without_an_orm() {
     let root = temp_dir("add-db-files");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     let fake = temp_dir("add-db-bin");
     let log = fake.join("log.txt");
     write_fake_maven(&fake, &["docker"], &log);
@@ -357,9 +506,19 @@ fn add_db_installs_postgres_flyway_and_testcontainers_without_an_orm() {
         invocation.contains(&format!("--project-directory {}", root.display())),
         "expected the project directory: {invocation}"
     );
+    // The frozen document is staged *outside* the project. A canonical project
+    // has no `.jails/objects` -- that is the legacy store, and creating one
+    // here would be the cutover leaking backwards -- so what is checked is the
+    // property rather than the old location: whatever `--file` names, it is not
+    // the live `compose.yaml` this transition just published.
+    let live = format!("--file {}", root.join("compose.yaml").display());
     assert!(
-        invocation.contains(".jails/objects/"),
+        !invocation.contains(&live),
         "expected the frozen document rather than the live compose.yaml: {invocation}"
+    );
+    assert!(
+        !root.join(".jails/objects").exists(),
+        "a canonical project must not grow a legacy object store"
     );
 }
 
@@ -373,7 +532,7 @@ fn add_db_on_spring_wires_docker_compose_support() {
 
     assert!(
         jails_cmd(&root, Some(&fake))
-            .args(["add", "db"])
+            .args(["add", "db", "--no-start"])
             .status()
             .unwrap()
             .success()
@@ -386,7 +545,10 @@ fn add_db_on_spring_wires_docker_compose_support() {
         "@ServiceConnection and the container-bean lifecycle live there: {pom}"
     );
     assert!(pom.contains("<optional>true</optional>"));
-    let config = root.join("src/test/java/com/example/demo/TestcontainersConfig.java");
+    let config = common::generated(
+        &root,
+        "src/test/java/com/example/demo/TestcontainersConfig.java",
+    );
     assert!(config.is_file(), "missing {}", config.display());
     let config_src = fs::read_to_string(&config).unwrap();
     assert!(
@@ -404,9 +566,10 @@ fn add_db_on_spring_wires_docker_compose_support() {
     // The @SpringBootTest that came with the project has to be wired, or JDBC
     // auto-config fails it with "Failed to determine a suitable driver class"
     // on a test the user never wrote.
-    let tests =
-        fs::read_to_string(root.join("src/test/java/com/example/demo/DemoApplicationTests.java"))
-            .unwrap();
+    let tests = common::read_generated(
+        &root,
+        "src/test/java/com/example/demo/DemoApplicationTests.java",
+    );
     assert!(
         tests.contains("@Import(TestcontainersConfig.class)"),
         "{tests}"
@@ -433,9 +596,10 @@ fn add_db_on_spring_wires_docker_compose_support() {
             .unwrap()
             .success()
     );
-    let tests =
-        fs::read_to_string(root.join("src/test/java/com/example/demo/DemoApplicationTests.java"))
-            .unwrap();
+    let tests = common::read_generated(
+        &root,
+        "src/test/java/com/example/demo/DemoApplicationTests.java",
+    );
     assert!(!tests.contains("TestcontainersConfig"), "{tests}");
     assert!(!config.is_file());
     assert!(
@@ -482,14 +646,20 @@ fn remove_db_refuses_while_a_scaffold_still_needs_it() {
 
     assert!(!refused.status.success(), "{refused:?}");
     let stderr = String::from_utf8_lossy(&refused.stderr);
-    assert!(stderr.contains("pointing at nothing"), "{stderr}");
-    assert!(stderr.contains("scaffold Article"), "{stderr}");
+    // The canonical refusal names the accepted storage rather than the
+    // declaration that still wants it: retiring a table is a schema-evolution
+    // step with a forward migration, and that is the fix it points at.
+    assert!(stderr.contains("abandon accepted storage"), "{stderr}");
+    assert!(stderr.contains("fix: "), "{stderr}");
     assert_eq!(snapshot_tree(&root), before, "refusal mutated the project");
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
     assert!(pom.contains("spring-boot-starter-jdbc"), "{pom}");
     assert!(
-        root.join("src/main/java/com/example/demo/adapters/JdbcArticleRepository.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/adapters/JdbcArticleRepository.java"
+        )
+        .is_file()
     );
 }
 
@@ -511,7 +681,10 @@ fn add_db_on_spring_wires_every_test_through_an_imported_configuration() {
     write_fake_maven(&fake, &["docker"], &log);
 
     fs::write(
-        root.join("src/test/java/com/example/demo/PostgresContainerConfig.java"),
+        common::generated(
+            &root,
+            "src/test/java/com/example/demo/PostgresContainerConfig.java",
+        ),
         r#"package com.example.demo;
 
 import org.springframework.beans.factory.support.BeanDefinitionRegistry;
@@ -546,7 +719,7 @@ public class PostgresContainerConfig
 "#,
     )
     .unwrap();
-    let api = root.join("src/test/java/com/example/demo/api");
+    let api = common::generated(&root, "src/test/java/com/example/demo/api");
     fs::create_dir_all(&api).unwrap();
     fs::write(
         api.join("ExtraSliceTest.java"),
@@ -567,15 +740,16 @@ class ExtraSliceTest {
 
     assert!(
         jails_cmd(&root, Some(&fake))
-            .args(["add", "db"])
+            .args(["add", "db", "--no-start"])
             .status()
             .unwrap()
             .success()
     );
 
-    let config =
-        fs::read_to_string(root.join("src/test/java/com/example/demo/TestcontainersConfig.java"))
-            .unwrap();
+    let config = common::read_generated(
+        &root,
+        "src/test/java/com/example/demo/TestcontainersConfig.java",
+    );
     assert!(
         !config.contains("ApplicationContextInitializer"),
         "the global registration is what this migration removes: {config}"
@@ -584,9 +758,10 @@ class ExtraSliceTest {
 
     // Both @SpringBootTest classes get the import, including the one in a
     // different package -- which needs the extra import statement too.
-    let tests =
-        fs::read_to_string(root.join("src/test/java/com/example/demo/DemoApplicationTests.java"))
-            .unwrap();
+    let tests = common::read_generated(
+        &root,
+        "src/test/java/com/example/demo/DemoApplicationTests.java",
+    );
     assert!(
         tests.contains("@Import(TestcontainersConfig.class)"),
         "{tests}"
@@ -635,7 +810,10 @@ fn add_db_on_spring_makes_context_loads_pass() {
     // The failure `add db` actually hits in a real app: JDBC auto-config
     // CGLIB-proxies every `@Repository`, and jails-style classes are `final`.
     fs::write(
-        root.join("src/main/java/com/example/demo/InMemoryThingRepository.java"),
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/InMemoryThingRepository.java",
+        ),
         r#"package com.example.demo;
 
 import org.springframework.stereotype.Repository;
@@ -650,7 +828,7 @@ public final class InMemoryThingRepository {}
     // reconciled. Put this cross-package test in place first: creating it
     // afterwards accidentally made the regression depend on a developer
     // PostgreSQL listening on localhost:5432.
-    let api = root.join("src/test/java/com/example/demo/api");
+    let api = common::generated(&root, "src/test/java/com/example/demo/api");
     fs::create_dir_all(&api).unwrap();
     fs::write(
         api.join("ExtraSliceTest.java"),
@@ -698,14 +876,14 @@ class ExtraSliceTest {
 #[test]
 fn add_kafka_stacks_onto_db_compose_and_remove_undoes_one_side() {
     let root = temp_dir("add-kafka-stack");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     let fake = temp_dir("add-kafka-bin");
     let log = fake.join("log.txt");
     write_fake_maven(&fake, &["docker"], &log);
 
     assert!(
         jails_cmd(&root, Some(&fake))
-            .args(["add", "db", "kafka"])
+            .args(["add", "db", "kafka", "--no-start"])
             .status()
             .unwrap()
             .success()
@@ -751,7 +929,7 @@ fn add_kafka_stacks_onto_db_compose_and_remove_undoes_one_side() {
 #[test]
 fn remove_is_the_inverse_of_add_csv() {
     let root = temp_dir("remove-csv");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     assert!(
         jails_cmd(&root, None)
             .args(["add", "csv"])
@@ -759,9 +937,16 @@ fn remove_is_the_inverse_of_add_csv() {
             .unwrap()
             .success()
     );
-    let reader = root.join("src/main/java/com/example/demo/adapters/CsvReader.java");
-    assert!(reader.is_file());
+    let reader = common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/CsvReader.java",
+    );
+    assert!(reader.is_file(), "{}", common::managed_listing(&root));
 
+    // `--force` because nothing is connected to answer the prompt: a piped
+    // command that cannot be asked has not consented, and the alternative --
+    // treating silence as a no and exiting 0 -- is a script that believes it
+    // removed something.
     let output = jails_cmd(&root, None)
         .args(["remove", "csv", "--force"])
         .output()
@@ -781,10 +966,14 @@ fn remove_is_the_inverse_of_add_csv() {
     assert!(!pom.contains("commons-csv"), "{pom}");
 }
 
+/// **The prompt names the files, and `--force` is what skips it.**
+///
+/// It used to be asked with `--force` supplied, which is the one spelling that
+/// means "do not ask" -- so the `n` went nowhere and the removal went through.
 #[test]
 fn remove_without_force_prompts_and_aborts_on_no() {
     let root = temp_dir("remove-prompt");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     assert!(
         jails_cmd(&root, None)
             .args(["add", "csv"])
@@ -792,6 +981,11 @@ fn remove_without_force_prompts_and_aborts_on_no() {
             .unwrap()
             .success()
     );
+    let reader = common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/CsvReader.java",
+    );
+    let written = fs::read_to_string(&reader).unwrap();
 
     let mut child = jails_cmd(&root, None)
         .args(["remove", "csv"])
@@ -804,11 +998,22 @@ fn remove_without_force_prompts_and_aborts_on_no() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("aborted"), "{stdout}");
-    assert!(
-        root.join("src/main/java/com/example/demo/adapters/CsvReader.java")
-            .is_file(),
-        "aborted remove must leave the files"
+    assert!(stdout.contains("CsvReader.java"), "{stdout}");
+    assert_eq!(
+        fs::read_to_string(&reader).unwrap(),
+        written,
+        "an aborted remove must leave the files"
     );
+
+    // And `--force` is what does not ask.
+    assert!(
+        jails_cmd(&root, None)
+            .args(["remove", "csv", "--force"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(!reader.exists(), "the forced removal left its file");
 }
 
 /// Capabilities have to compose: adding all three must leave one pom with
@@ -838,7 +1043,7 @@ fn capabilities_stack_without_clobbering_each_other() {
             "expected exactly one {artifact} dependency"
         );
     }
-    let pkg = root.join("src/main/java/com/example/demo");
+    let pkg = common::generated(&root, "src/main/java/com/example/demo");
     assert!(pkg.join("adapters/CsvReader.java").is_file());
     assert!(pkg.join("adapters/Database.java").is_file());
     assert!(pkg.join("adapters/Json.java").is_file());
@@ -853,7 +1058,7 @@ fn add_accepts_multiple_capabilities_in_one_invocation() {
     write_fake_maven(&fake, &["docker"], &log);
 
     let output = jails_cmd(&root, Some(&fake))
-        .args(["add", "db", "json", "testkit"])
+        .args(["add", "db", "json", "testkit", "--no-start"])
         .output()
         .unwrap();
     assert!(
@@ -871,9 +1076,9 @@ fn add_accepts_multiple_capabilities_in_one_invocation() {
             "missing {artifact}: {pom}"
         );
     }
-    let main = root.join("src/main/java/com/example/demo");
+    let main = common::generated(&root, "src/main/java/com/example/demo");
     assert!(main.join("adapters/Json.java").is_file());
-    let test = root.join("src/test/java/com/example/demo");
+    let test = common::generated(&root, "src/test/java/com/example/demo");
     assert!(test.join("testkit/Clocks.java").is_file());
 }
 
@@ -934,8 +1139,11 @@ fn add_cors_on_the_default_boot_version_compiles_and_runs_its_own_test() {
     }
     let path = real_path_without_mvnd();
     let root = verified_spring_toolbox(&path);
-    let test = fs::read_to_string(root.join("src/test/java/com/example/demo/CorsConfigTest.java"))
-        .expect("add cors did not write its test into the Boot 4 toolbox");
+    let test = fs::read_to_string(common::generated(
+        root,
+        "src/test/java/com/example/demo/CorsConfigTest.java",
+    ))
+    .expect("add cors did not write its test into the Boot 4 toolbox");
     assert!(
         test.contains("servlet.assertj.MockMvcTester"),
         "the toolbox rendered the legacy variant, so the default branch is still unexecuted"
@@ -1017,9 +1225,13 @@ fn add_db_matches_the_modules_this_boot_version_has_or_refuses_by_name() {
     );
 
     // A supported Boot 3: Flyway's auto-configuration is where it always was,
-    // so the split-out module must not be named -- and both Flyway artifacts
-    // are pinned to one version, which is correct whether or not this
-    // project's parent manages them and keeps the pair moving together.
+    // so the split-out module must not be named. Both Flyway artifacts go in
+    // versionless here, because 3.3 is exactly the release whose BOM starts
+    // managing `flyway-database-postgresql` -- the legacy engine pinned them
+    // unconditionally to avoid giving 3.1 and 3.3 separate answers, and the
+    // compiler gives the separate answer instead. Inventing a version Boot
+    // already manages is how the pair comes to disagree with the rest of the
+    // curated set.
     let supported = build("three", "3.3.5");
     assert!(
         jails_cmd(&supported, None)
@@ -1030,9 +1242,29 @@ fn add_db_matches_the_modules_this_boot_version_has_or_refuses_by_name() {
     );
     let gradle = fs::read_to_string(supported.join("build.gradle")).unwrap();
     assert!(!gradle.contains("spring-boot-flyway"), "{gradle}");
-    assert!(gradle.contains("flyway-core:"), "{gradle}");
-    assert!(gradle.contains("flyway-database-postgresql:"), "{gradle}");
+    assert!(gradle.contains("org.flywaydb:flyway-core'"), "{gradle}");
+    assert!(
+        gradle.contains("org.flywaydb:flyway-database-postgresql'"),
+        "{gradle}"
+    );
     assert!(gradle.contains("spring-boot-testcontainers"), "{gradle}");
+
+    // And below that boundary the pin is back, because nothing else supplies
+    // one and a versionless Gradle dependency simply fails to resolve.
+    let unmanaged = build("early", "3.2.12");
+    assert!(
+        jails_cmd(&unmanaged, None)
+            .args(["add", "db", "--no-start"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let gradle = fs::read_to_string(unmanaged.join("build.gradle")).unwrap();
+    assert!(gradle.contains("org.flywaydb:flyway-core:"), "{gradle}");
+    assert!(
+        gradle.contains("org.flywaydb:flyway-database-postgresql:"),
+        "{gradle}"
+    );
 }
 
 /// The Spring flavor branch: `add json` must *omit* the version so Spring
@@ -1103,7 +1335,7 @@ fn add_db_upgrades_an_out_of_date_properties_block() {
 
     assert!(
         jails_cmd(&root, Some(&fake))
-            .args(["add", "db"])
+            .args(["add", "db", "--no-start"])
             .status()
             .unwrap()
             .success()
@@ -1119,8 +1351,11 @@ fn add_db_upgrades_an_out_of_date_properties_block() {
         next.contains("spring.docker.compose.enabled=false"),
         "{next}"
     );
-    // The block is replaced, not duplicated.
-    assert_eq!(next.matches("# jails:db").count(), 1, "{next}");
+    // **The markers dissolve.** A capability's properties are claimed one key
+    // at a time now, so the block the engine wrote around them is adopted and
+    // its comment lines go -- and the key inside it is written once, by the
+    // capability that owns it, rather than twice.
+    assert!(!next.contains("# jails:db"), "{next}");
     assert_eq!(
         next.matches("spring.persistence.exceptiontranslation.enabled=false")
             .count(),
@@ -1145,10 +1380,10 @@ fn add_api_generates_problem_detail_handling_that_compiles_and_passes() {
         .unwrap();
     assert!(status.success());
 
-    let handler = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/api/ApiExceptionHandler.java"),
-    )
-    .unwrap();
+    let handler = common::read_generated(
+        &root,
+        "src/main/java/com/example/demo/api/ApiExceptionHandler.java",
+    );
     // Spring's own base class, so framework exceptions keep their statuses.
     assert!(
         handler.contains("extends ResponseEntityExceptionHandler"),
@@ -1319,9 +1554,9 @@ fn a_spring_capability_is_refused_in_a_plain_maven_project() {
          <properties><maven.compiler.release>27</maven.compiler.release></properties></project>",
     )
     .unwrap();
-    fs::create_dir_all(root.join("src/main/java/com/example/demo")).unwrap();
+    fs::create_dir_all(common::generated(&root, "src/main/java/com/example/demo")).unwrap();
     fs::write(
-        root.join("src/main/java/com/example/demo/App.java"),
+        common::generated(&root, "src/main/java/com/example/demo/App.java"),
         "package com.example.demo;\npublic class App {}\n",
     )
     .unwrap();
@@ -1398,7 +1633,7 @@ fn add_kafka_and_generate_event_compile_against_real_spring() {
 
     assert!(
         jails_cmd(&root, Some(&fake))
-            .args(["add", "kafka"])
+            .args(["add", "kafka", "--no-start"])
             .status()
             .unwrap()
             .success()
@@ -1449,32 +1684,45 @@ fn add_kafka_and_generate_event_compile_against_real_spring() {
             .success()
     );
 
-    let listener = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/messaging/PayoutSettledListener.java"),
-    )
-    .unwrap();
+    let listener = common::read_generated(
+        &root,
+        "src/main/java/com/example/demo/messaging/PayoutSettledListener.java",
+    );
     // No catch: swallowing here commits an offset for a message that was
     // never processed, which is data loss wearing a success badge.
     assert!(!listener.contains("catch ("), "{listener}");
 
-    let publisher = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/messaging/PayoutSettledPublisher.java"),
-    )
-    .unwrap();
+    let publisher = common::read_generated(
+        &root,
+        "src/main/java/com/example/demo/messaging/PayoutSettledPublisher.java",
+    );
     // Keyed sends: ordering is per partition, and a null key round-robins.
     assert!(
         publisher.contains("kafka.send(topic, String.valueOf(event.id()), event)"),
         "{publisher}"
     );
 
-    let event = fs::read_to_string(
-        root.join("src/main/java/com/example/demo/messaging/PayoutSettledEvent.java"),
-    )
-    .unwrap();
-    assert!(
-        event.contains(
-            "record PayoutSettledEvent(UUID id, UUID payoutId, BigDecimal amount, Instant occurredAt)"
-        ),
+    let event = common::read_generated(
+        &root,
+        "src/main/java/com/example/demo/messaging/PayoutSettledEvent.java",
+    );
+    // One component per line, in declaration order: a Java record's positional
+    // constructor is ABI, so the order is what the assertion is about.
+    let components = event
+        .lines()
+        .skip_while(|line| !line.starts_with("public record PayoutSettledEvent("))
+        .skip(1)
+        .take_while(|line| !line.starts_with(')'))
+        .map(|line| line.trim().trim_end_matches(',').to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        components,
+        [
+            "UUID id",
+            "UUID payoutId",
+            "BigDecimal amount",
+            "Instant occurredAt"
+        ],
         "{event}"
     );
 
@@ -1511,8 +1759,7 @@ fn add_security_writes_an_explicit_chain_that_denies_by_default() {
     }
 
     let config =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/SecurityConfig.java"))
-            .unwrap();
+        common::read_generated(&root, "src/main/java/com/example/demo/SecurityConfig.java");
     // Default deny: a new endpoint is protected until someone says otherwise.
     assert!(config.contains(".anyRequest()"), "{config}");
     assert!(config.contains(".authenticated()"), "{config}");
@@ -1566,7 +1813,7 @@ fn add_redis_wires_a_ttl_enforcing_store_and_a_compose_service() {
 
     assert!(
         jails_cmd(&root, Some(&fake))
-            .args(["add", "redis"])
+            .args(["add", "redis", "--no-start"])
             .status()
             .unwrap()
             .success()
@@ -1578,9 +1825,10 @@ fn add_redis_wires_a_ttl_enforcing_store_and_a_compose_service() {
     // that only works because something was already cached.
     assert!(!compose.contains("redis-data"), "{compose}");
 
-    let store =
-        fs::read_to_string(root.join("src/main/java/com/example/demo/adapters/KeyValueStore.java"))
-            .unwrap();
+    let store = common::read_generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/KeyValueStore.java",
+    );
     // Every write carries a lifetime. `set(k, v)` with no expiry stores a key
     // forever, which is a memory leak that survives restarts.
     assert!(store.contains("set(key, value, ttl)"), "{store}");
@@ -1667,7 +1915,7 @@ fn add_preflight_holds_when_the_refused_capability_is_named_first() {
 #[test]
 fn add_records_what_it_applied_and_remove_takes_it_back_out() {
     let root = temp_dir("manifest-round-trip");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
 
     assert!(
         jails_cmd(&root, None)
@@ -1676,10 +1924,17 @@ fn add_records_what_it_applied_and_remove_takes_it_back_out() {
             .unwrap()
             .success()
     );
-    let manifest = fs::read_to_string(root.join("jails.toml")).unwrap();
+    // The model is the manifest: a canonical project declares what it is made
+    // of in the one editable source every later command reads, so there is no
+    // second list that can disagree with it.
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(
-        manifest.contains(r#"capabilities = ["csv"]"#),
-        "add did not record the capability it applied:\n{manifest}"
+        model.contains("cap csv @id(cap_csv)"),
+        "add did not record the capability it applied:\n{model}"
+    );
+    assert!(
+        !root.join("jails.toml").exists(),
+        "a canonical project must not grow a second capability list"
     );
 
     assert!(
@@ -1689,10 +1944,10 @@ fn add_records_what_it_applied_and_remove_takes_it_back_out() {
             .unwrap()
             .success()
     );
-    let manifest = fs::read_to_string(root.join("jails.toml")).unwrap();
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(
-        manifest.contains("capabilities = []"),
-        "remove left the capability declared, so the next sync would restore it:\n{manifest}"
+        !model.contains("csv"),
+        "remove left the capability declared, so the next sync would restore it:\n{model}"
     );
 }
 
@@ -1702,12 +1957,18 @@ fn add_records_what_it_applied_and_remove_takes_it_back_out() {
 #[test]
 fn sync_applies_what_the_manifest_declares() {
     let root = temp_dir("manifest-sync");
-    write_plain_fixture(&root);
-    fs::write(
-        root.join("jails.toml"),
-        "[layout]\nadapters = \"persistence\"\n\n[project]\ncapabilities = [\"csv\"]\n",
-    )
-    .unwrap();
+    write_spring_fixture(&root);
+    // The model *is* the manifest, and the case this test exists for is a
+    // declaration that arrived without its output: somebody edited the model
+    // in an editor, or merged a branch that added a capability. `sync` is the
+    // command that makes the tree match what the file says.
+    common::become_canonical(&root);
+    let model = root.join(".jails/model.jdl");
+    let declared = format!(
+        "{}\ncap csv @id(cap_csv)\n",
+        fs::read_to_string(&model).unwrap().trim_end()
+    );
+    fs::write(&model, declared).unwrap();
 
     // --pretend first: it answers "what is this project missing?".
     let preview = jails_cmd(&root, None)
@@ -1719,9 +1980,7 @@ fn sync_applies_what_the_manifest_declares() {
     assert!(shown.contains("plan "), "{shown}");
     assert!(shown.contains("create "), "{shown}");
     assert!(
-        !root
-            .join("src/main/java/com/example/demo/persistence")
-            .exists(),
+        !root.join(".jails/generated").exists(),
         "--dry-run wrote files"
     );
 
@@ -1733,9 +1992,13 @@ fn sync_applies_what_the_manifest_declares() {
             .success()
     );
     assert!(
-        root.join("src/main/java/com/example/demo/persistence/CsvReader.java")
-            .is_file(),
-        "sync did not apply the declared capability into the configured layer"
+        common::generated(
+            &root,
+            "src/main/java/com/example/demo/adapters/CsvReader.java"
+        )
+        .is_file(),
+        "sync did not apply the declared capability:\n{}",
+        common::managed_listing(&root)
     );
 }
 
@@ -1744,7 +2007,7 @@ fn sync_applies_what_the_manifest_declares() {
 #[test]
 fn sync_over_a_correct_project_changes_nothing() {
     let root = temp_dir("manifest-sync-idempotent");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     jails_cmd(&root, None)
         .args(["add", "csv"])
         .status()
@@ -1766,7 +2029,7 @@ fn sync_over_a_correct_project_changes_nothing() {
 #[test]
 fn sync_without_a_manifest_explains_rather_than_fails() {
     let root = temp_dir("manifest-sync-absent");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
 
     let output = jails_cmd(&root, None).args(["sync"]).output().unwrap();
     assert!(output.status.success());
@@ -1810,13 +2073,16 @@ fn sync_refuses_a_manifest_naming_a_capability_that_does_not_exist() {
 #[test]
 fn remove_names_generated_files_that_were_edited_before_deleting_them() {
     let root = temp_dir("remove-edited-files");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     jails_cmd(&root, None)
         .args(["add", "csv"])
         .status()
         .unwrap();
 
-    let generated = root.join("src/main/java/com/example/demo/adapters/CsvReader.java");
+    let generated = common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/CsvReader.java",
+    );
     let mut edited = fs::read_to_string(&generated).unwrap();
     edited.push_str("\n// an afternoon of work\n");
     fs::write(&generated, edited).unwrap();
@@ -1864,27 +2130,46 @@ fn remove_says_nothing_about_files_that_were_not_edited() {
 #[test]
 fn dry_run_remove_names_edited_files() {
     let root = temp_dir("remove-edited-dry-run");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     jails_cmd(&root, None)
         .args(["add", "csv"])
         .status()
         .unwrap();
 
-    let generated = root.join("src/main/java/com/example/demo/adapters/CsvReader.java");
+    let generated = common::generated(
+        &root,
+        "src/main/java/com/example/demo/adapters/CsvReader.java",
+    );
     fs::write(
         &generated,
         "package com.example.demo.adapters;\nclass CsvReader {}\n",
     )
     .unwrap();
 
-    let output = jails_cmd(&root, None)
+    // A dry run reports what would happen, and what would happen is a
+    // refusal: jails does not throw away bytes it did not write. The file is
+    // named, and so is the flag that authorises losing the edits.
+    let refused = jails_cmd(&root, None)
         .args(["remove", "csv", "--dry-run"])
         .output()
         .unwrap();
-    assert!(output.status.success());
+    assert!(!refused.status.success());
+    let told = String::from_utf8_lossy(&refused.stderr);
+    assert!(told.contains("CsvReader.java"), "{told}");
+    assert!(told.contains("`--force`"), "{told}");
+    assert!(generated.is_file(), "--dry-run deleted the file");
+
+    // And with the authorisation, the same dry run names it before it goes.
+    let output = jails_cmd(&root, None)
+        .args(["remove", "csv", "--dry-run", "--force"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let shown = String::from_utf8_lossy(&output.stdout);
-    // Named before it goes. Without `--force` the same list is what the
-    // confirmation puts to the reader, so an edit is never lost silently.
     assert!(shown.contains("delete "), "{shown}");
     assert!(shown.contains("CsvReader.java"), "{shown}");
     assert!(generated.is_file(), "--dry-run deleted the file");
@@ -1956,7 +2241,7 @@ fn add_mail_produces_a_project_that_compiles() {
 #[test]
 fn a_declared_dependency_is_spliced_and_can_be_taken_back_out() {
     let root = temp_dir("declare-dependency");
-    write_plain_fixture(&root);
+    write_spring_fixture(&root);
     let before = fs::read_to_string(root.join("pom.xml")).unwrap();
 
     let output = jails_cmd(&root, None)
@@ -2079,12 +2364,17 @@ fn a_set_property_is_owned_and_the_test_overlay_is_additive() {
 /// on and what client libraries retry.
 ///
 /// The advice can only name `DuplicateKeyException` when `spring-tx` is on the
-/// classpath, which arrives with the JDBC starter — so this is conditional, and
-/// the interesting half is the *order*. `add db api` gets it in one command
-/// because each capability is its own transition and the project is re-resolved
-/// between them. `add api` first cannot, because the plan is a pure function of
-/// the project at the moment it ran; `doctor` says so and `jails sync` repairs
-/// it, which is the contract rather than a workaround.
+/// classpath, which arrives with the JDBC starter -- so this is conditional,
+/// and the interesting half used to be the *order*.
+///
+/// **This is where the legacy engine's drift story went.** There, `add api`
+/// first planned against a pom that did not yet have the starter, `doctor`
+/// reported the gap and `jails sync` re-planned every recorded capability to
+/// repair it. The compiler recompiles the whole model on every command, so
+/// there is no half-planned state to report and no order to get wrong. The
+/// precondition survives where it is real: an *operation* that answers a
+/// route through a `JdbcClient` adapter refuses when the model declares no
+/// SQL storage, because that project cannot start.
 #[test]
 fn a_duplicate_key_answers_409_whichever_order_db_and_api_arrived() {
     let handler = "src/main/java/com/example/demo/api/ApiExceptionHandler.java";
@@ -2102,16 +2392,39 @@ fn a_duplicate_key_answers_409_whichever_order_db_and_api_arrived() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let advice = fs::read_to_string(together.join(handler)).unwrap();
+    let advice = common::read_generated(&together, handler);
     assert!(
         advice.contains("DuplicateKeyException"),
         "one command, both capabilities: the advice must map it\n{advice}"
     );
 
+    // The two orders that are not one command. `db` then `api` is the same
+    // project, because the compiler renders from the whole model rather than
+    // from what the last command happened to see.
+    let forwards = temp_dir("conflict-forwards");
+    write_spring_fixture(&forwards);
+    for capability in ["db", "api"] {
+        let output = jails_cmd(&forwards, Some(&fake))
+            .args(["add", capability, "--no-start"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "add {capability}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    assert_eq!(
+        common::read_generated(&forwards, handler),
+        advice,
+        "one command and two must render the same advice"
+    );
+
+    // And so is `api` then `db`, which is the order the legacy engine could
+    // not get right: its `api` plan was a pure function of the pom it saw, so
+    // the advice it wrote was permanently missing the arm.
     let backwards = temp_dir("conflict-backwards");
     write_spring_fixture(&backwards);
-    let fake = temp_dir("conflict-backwards-bin");
-    write_fake_maven(&fake, &["docker"], &fake.join("log.txt"));
     for capability in ["api", "db"] {
         let output = jails_cmd(&backwards, Some(&fake))
             .args(["add", capability, "--no-start"])
@@ -2123,45 +2436,9 @@ fn a_duplicate_key_answers_409_whichever_order_db_and_api_arrived() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    let advice = fs::read_to_string(backwards.join(handler)).unwrap();
-    assert!(
-        !advice.contains("DuplicateKeyException"),
-        "`add api` planned before the database existed, so it cannot have named it"
-    );
-
-    // Reported, not silently wrong. A capability's plan is a pure function of
-    // the project, so growing a project in this order is ordinary -- what must
-    // not happen is nothing saying so.
-    let doctor = jails_cmd(&backwards, Some(&fake))
-        .arg("doctor")
-        .output()
-        .unwrap();
-    let report = String::from_utf8_lossy(&doctor.stdout);
-    assert!(
-        report.contains("DuplicateKeyException") && report.contains("jails sync"),
-        "doctor must name the drift and the repair:\n{report}"
-    );
-
-    let output = jails_cmd(&backwards, Some(&fake))
-        .args(["sync", "--no-start"])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let advice = fs::read_to_string(backwards.join(handler)).unwrap();
-    assert!(
-        advice.contains("DuplicateKeyException"),
-        "`jails sync` re-plans every recorded capability, which is the repair\n{advice}"
-    );
-    let doctor = jails_cmd(&backwards, Some(&fake))
-        .arg("doctor")
-        .output()
-        .unwrap();
-    assert!(
-        String::from_utf8_lossy(&doctor.stdout).contains("a duplicate key answers 409"),
-        "and doctor agrees afterwards"
+    assert_eq!(
+        common::read_generated(&backwards, handler),
+        advice,
+        "the compiler renders from the whole model, so neither order is special"
     );
 }

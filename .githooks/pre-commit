@@ -1,28 +1,25 @@
 #!/bin/sh
 # jails pre-commit: format + lint. Fast checks only (~10s) -- the test suite
-# runs in pre-push, since a multi-minute pre-commit is one people learn to
-# skip with --no-verify, which makes it worse than no hook.
+# runs in pre-push, since a multi-minute pre-commit is one people learn to skip
+# with --no-verify, which makes it worse than no hook.
+#
+# It runs `mise run lint`, which is the same task `verify-rewrite` depends on,
+# so this hook and the gate cannot disagree about what "lint-clean" means. They
+# did: this ran clippy without `-D warnings`, so an unused import passed here
+# and failed at pre-push and in CI.
 #
 # Installed via `git config core.hooksPath .githooks` (see README).
 # Bypass a single commit with: git commit --no-verify
 #
-# Note: these check the WORKING TREE, not the staged snapshot. A partial
+# Note: this checks the WORKING TREE, not the staged snapshot. A partial
 # `git add -p` is therefore not fully validated -- deliberate, since building
 # the staged tree in a temp dir costs more than it catches here.
 set -e
 
-echo "pre-commit: cargo fmt --all --check"
-if ! cargo fmt --all --check >/dev/null 2>&1; then
-    echo "  FAIL: formatting differs."
-    echo "  fix: cargo fmt --all"
+if ! command -v mise >/dev/null 2>&1; then
+    echo "pre-commit: mise is not on PATH, so the lint task cannot run."
+    echo "  fix: install mise (https://mise.jdx.dev), or commit with --no-verify"
     exit 1
 fi
 
-echo "pre-commit: cargo clippy --workspace --all-targets"
-if ! cargo clippy --workspace --all-targets --quiet 2>&1; then
-    echo "  FAIL: clippy found problems (clippy::all is deny -- see Cargo.toml [lints])."
-    echo "  fix: cargo clippy --fix --all-targets, or address them by hand"
-    exit 1
-fi
-
-echo "pre-commit: ok"
+exec mise run lint

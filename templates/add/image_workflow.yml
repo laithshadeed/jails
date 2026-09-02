@@ -1,0 +1,27 @@
+name: image
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@{{CHECKOUT_SHA}} # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Build production image
+        run: docker build --pull --tag application:test .
+      - name: Assert non-root runtime
+        run: test "$(docker image inspect application:test --format '{{.Config.User}}')" = "10001:10001"

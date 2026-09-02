@@ -20,7 +20,7 @@ use std::io::{IsTerminal, Read};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use crate::generate::find_project_root;
+use crate::find_project_root;
 use crate::pom;
 use jails_support::Result;
 
@@ -60,7 +60,7 @@ pub fn command(
         if input.is_some() || name.is_some() {
             return Err("`--last` cannot be combined with a log path or subject.\n       fix: run `jails why --last` by itself.".into());
         }
-        let root = crate::generate::find_project_root()?;
+        let root = crate::find_project_root()?;
         return why(Some(&root.join(".jails/last-run.log")), debug, json);
     }
     if let Some(name) = name {
@@ -429,7 +429,7 @@ const RULES: &[Rule] = &[
                 fixes: vec![
                     format!("lsof -i :{port}     # find it"),
                     format!("kill $(lsof -t -i :{port})"),
-                    format!("Or set server.port to something free in application.properties"),
+                    "Or set server.port to something free in application.properties".to_string(),
                 ],
             }
         },

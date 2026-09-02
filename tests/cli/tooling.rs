@@ -84,7 +84,7 @@ fn test_flags_rerun_failures_stop_early_and_name_the_slowest() {
 
     // A file and a line: JUnit has no FileSelector, so jails resolves the
     // enclosing @Test itself. This is what an editor keybinding sends.
-    let test_file = root.join("src/test/java/com/example/demo/PayoutTest.java");
+    let test_file = common::generated(&root, "src/test/java/com/example/demo/PayoutTest.java");
     fs::create_dir_all(test_file.parent().unwrap()).unwrap();
     fs::write(
         &test_file,
@@ -307,7 +307,7 @@ fn test_command_explains_the_canonical_partition() {
 fn compile_none_never_compiles_ineligible_warm_tests_and_strict_warm_refuses() {
     let root = temp_dir("mock-test-isolation");
     write_plain_fixture(&root);
-    let source = root.join("src/test/java/com/example/demo/ContextTest.java");
+    let source = common::generated(&root, "src/test/java/com/example/demo/ContextTest.java");
     fs::create_dir_all(source.parent().unwrap()).unwrap();
     fs::write(
         &source,
@@ -465,7 +465,7 @@ fn check_command_invokes_mvn_clean_verify() {
 #[test]
 fn build_tool_launcher_uses_spring_boot_run_for_spring_projects() {
     let root = temp_dir("mock-run-spring");
-    let pkg_dir = root.join("src/main/java/com/example/demo");
+    let pkg_dir = common::generated(&root, "src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
     fs::write(
         pkg_dir.join("App.java"),
@@ -511,7 +511,7 @@ fn gradle_build_tool_launcher_preserves_the_same_application_vector() {
     let root = temp_dir("mock-run-gradle-spring");
     fs::write(root.join("settings.gradle"), "rootProject.name = 'demo'\n").unwrap();
     fs::write(root.join("build.gradle"), "plugins { id 'java' }\n").unwrap();
-    let pkg_dir = root.join("src/main/java/com/example/demo");
+    let pkg_dir = common::generated(&root, "src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
     fs::write(
         pkg_dir.join("App.java"),
@@ -550,7 +550,7 @@ fn gradle_build_tool_launcher_preserves_the_same_application_vector() {
 #[test]
 fn run_starts_compose_services_only_when_explicitly_requested() {
     let root = temp_dir("mock-run-compose");
-    let pkg_dir = root.join("src/main/java/com/example/demo");
+    let pkg_dir = common::generated(&root, "src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
     fs::write(
         pkg_dir.join("App.java"),
@@ -562,9 +562,22 @@ fn run_starts_compose_services_only_when_explicitly_requested() {
         "<project>org.springframework.boot</project>",
     )
     .unwrap();
+    // A real port with a real listener on it, declared in the compose file
+    // jails reads. `run --services start` will not launch Spring until the
+    // declared PostgreSQL accepts TCP connections, and a fake `docker` that
+    // exits 0 starts no container -- so without this the command spends its
+    // whole thirty-second readiness budget failing to reach a server that was
+    // never going to exist, for a test whose question is only whether compose
+    // went up before Spring. See `common::listening_loopback_port`.
+    let (_postgres, postgres_port) = listening_loopback_port();
     fs::write(
         root.join("compose.yaml"),
-        "services:\n  postgres:\n    image: postgres:17-alpine\n",
+        // The block-sequence spelling `add db` itself writes: the host port
+        // is read off a `- "host:container"` item, and an inline flow
+        // sequence is not that shape.
+        format!(
+            "services:\n  postgres:\n    image: postgres:17-alpine\n    ports:\n      - \"{postgres_port}:5432\"\n"
+        ),
     )
     .unwrap();
     let fake_dir = temp_dir("mock-run-compose-bin");
@@ -602,6 +615,19 @@ fn migrate_check_does_not_restart_a_database_that_already_answers() {
     let fake = temp_dir("migrate-ready-postgres-bin");
     let log = fake.join("log.txt");
     write_fake_maven(&fake, &["docker", "psql"], &log);
+    // `migrate --check` sends SQL on stdin. A fake that exits without
+    // consuming it races the parent writer and can produce EPIPE under the
+    // full parallel suite, even though the command contract is otherwise
+    // satisfied. Model psql's stdin behavior so this remains deterministic.
+    fs::write(
+        fake.join("psql"),
+        format!(
+            "#!/bin/sh\necho \"$0 $*\" >> \"{}\"\nwhile IFS= read -r _; do :; done\nexit 0\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    set_executable(&fake.join("psql"));
 
     let output = jails_cmd(&root, Some(&fake))
         .args(["migrate", "--check"])
@@ -808,10 +834,26 @@ fn console_launches_jshell_with_the_project_classpath() {
         "compiled",
     )
     .unwrap();
-    fs::write(root.join("target/jails-runtime-classpath"), "").unwrap();
     let fake = temp_dir("console-jshell-bin");
     let log = fake.join("log.txt");
     write_fake_maven(&fake, &["mvn", "java", "jshell"], &log);
+    // **The fake `mvn` writes the file it is told to, because the real one
+    // does.** This used to seed `target/jails-runtime-classpath` by hand so
+    // the read after the resolve had something to find, and that seed is now
+    // indistinguishable from an already-resolved classpath: `jails console`
+    // reuses one that is newer than the pom, so the resolve this test exists
+    // to observe was correctly skipped and the test failed on its absence. A
+    // stand-in that answers the question differently from the tool it stands
+    // in for will eventually be believed over the tool.
+    fs::write(
+        fake.join("mvn"),
+        format!(
+            "#!/bin/sh\necho \"$0 $*\" >> \"{}\"\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    -Dmdep.outputFile=*) : > \"${{arg#-Dmdep.outputFile=}}\" ;;\n  esac\ndone\nexit 0\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    set_executable(&fake.join("mvn"));
     fs::write(
         fake.join("java"),
         format!(
@@ -855,7 +897,7 @@ fn gradle_console_uses_the_shared_existing_runtime_classpath() {
         "plugins { id 'java' }\nsourceCompatibility = 26\n",
     )
     .unwrap();
-    let source = root.join("src/main/java/com/example/demo/DemoApplication.java");
+    let source = common::generated(&root, "src/main/java/com/example/demo/DemoApplication.java");
     fs::create_dir_all(source.parent().unwrap()).unwrap();
     fs::write(
         &source,
@@ -916,7 +958,7 @@ fn gradle_console_uses_the_shared_existing_runtime_classpath() {
 #[test]
 fn run_command_compiles_before_attempting_a_plain_main_class() {
     let root = temp_dir("mock-run-plain");
-    let pkg_dir = root.join("src/main/java/com/example/demo");
+    let pkg_dir = common::generated(&root, "src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
     fs::write(root.join("pom.xml"), "<project></project>").unwrap();
     fs::write(
@@ -979,7 +1021,7 @@ fn run_no_build_refuses_an_unproven_jar_instead_of_running_whatever_exists() {
 #[test]
 fn run_no_build_errors_clearly_when_target_is_missing() {
     let root = temp_dir("no-build-missing-plain");
-    let pkg_dir = root.join("src/main/java/com/example/demo");
+    let pkg_dir = common::generated(&root, "src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
     fs::write(root.join("pom.xml"), "<project></project>").unwrap();
     fs::write(
@@ -1007,7 +1049,7 @@ fn run_no_build_runs_already_compiled_plain_classes_without_mvn() {
         return;
     }
     let root = temp_dir("no-build-plain-real");
-    let pkg_dir = root.join("src/main/java/com/example/demo");
+    let pkg_dir = common::generated(&root, "src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
     fs::write(root.join("pom.xml"), "<project></project>").unwrap();
     let source = pkg_dir.join("App.java");
@@ -1090,7 +1132,7 @@ fn run_no_build_runs_already_compiled_plain_classes_without_mvn() {
 #[test]
 fn direct_launch_refuses_a_selected_jdk_older_than_the_project_release() {
     let root = temp_dir("run-old-jdk");
-    let source = root.join("src/main/java/com/example/demo/App.java");
+    let source = common::generated(&root, "src/main/java/com/example/demo/App.java");
     let class = root.join("target/classes/com/example/demo/App.class");
     fs::create_dir_all(source.parent().unwrap()).unwrap();
     fs::create_dir_all(class.parent().unwrap()).unwrap();
@@ -1139,7 +1181,7 @@ fn direct_launch_refuses_a_selected_jdk_older_than_the_project_release() {
 #[test]
 fn jar_launch_reuses_only_a_byte_current_proved_artifact() {
     let root = temp_dir("run-proved-jar");
-    let source = root.join("src/main/java/com/example/demo/App.java");
+    let source = common::generated(&root, "src/main/java/com/example/demo/App.java");
     fs::create_dir_all(source.parent().unwrap()).unwrap();
     fs::write(root.join("pom.xml"), "<project/>\n").unwrap();
     fs::write(&source, "package com.example.demo;\nclass App {}\n").unwrap();
@@ -1291,10 +1333,11 @@ fn a_generated_command_is_reachable_by_name_through_jails_run() {
 #[test]
 fn a_gradle_project_gets_the_commands_that_do_not_need_maven() {
     let root = temp_dir("foreign-build");
-    let main = root.join("src/main/java/com/acme/shop");
+    let main = common::generated(&root, "src/main/java/com/acme/shop");
     fs::create_dir_all(&main).unwrap();
     // A multi-module Gradle build: only `settings.gradle` at the top.
     fs::write(root.join("settings.gradle"), "rootProject.name = 'shop'\n").unwrap();
+
     fs::write(
         main.join("ShopApplication.java"),
         "package com.acme.shop;\n\npublic class ShopApplication {}\n",
@@ -1310,23 +1353,24 @@ fn a_gradle_project_gets_the_commands_that_do_not_need_maven() {
         String::from_utf8_lossy(&stats.stderr)
     );
 
-    // Generating works, and says what the missing pom cost this output.
+    // Generating refuses, and names the one thing this build never said:
+    // which Java release the code jails writes has to compile against. A
+    // multi-module root declares it per module, so there is no answer here
+    // and no defensible default -- jails' own target on a project whose
+    // modules build with 17 is code that does not compile.
     let generated = jails_cmd(&root, None)
         .args(["generate", "record", "Order", "id:uuid@pk", "total:long"])
         .output()
         .unwrap();
-    let report = String::from_utf8_lossy(&generated.stdout);
+    assert!(!generated.status.success());
+    let refusal = String::from_utf8_lossy(&generated.stderr);
+    assert!(refusal.contains("Java release"), "{refusal}");
+    assert!(refusal.contains("Gradle toolchain"), "{refusal}");
+    assert!(refusal.contains("built by Gradle"), "{refusal}");
     assert!(
-        generated.status.success(),
-        "{report}{}",
-        String::from_utf8_lossy(&generated.stderr)
+        !common::generated(&root, "src/main/java/com/acme/shop/domain/Order.java").is_file(),
+        "the refusal still wrote the record"
     );
-    assert!(
-        root.join("src/main/java/com/acme/shop/domain/Order.java")
-            .is_file()
-    );
-    assert!(report.contains("Gradle project"), "{report}");
-    assert!(report.contains("plain JDBC"), "{report}");
 
     // The Maven-inherent ones refuse, and the refusal names a way forward.
     for command in ["test", "build", "check", "clean"] {
@@ -1336,7 +1380,10 @@ fn a_gradle_project_gets_the_commands_that_do_not_need_maven() {
         assert!(stderr.contains("built by Gradle"), "{command}: {stderr}");
         assert!(stderr.contains("routes"), "{command}: {stderr}");
     }
-    let refused = jails_cmd(&root, None).args(["add", "db"]).output().unwrap();
+    let refused = jails_cmd(&root, None)
+        .args(["add", "db", "--no-start"])
+        .output()
+        .unwrap();
     assert!(!refused.status.success(), "add must not half-install");
 
     // doctor says so first, and does not report on a pom that is not there.
@@ -1554,7 +1601,7 @@ fn modernize_takes_a_boot_2_gradle_project_to_the_versions_jails_generates_again
         "create table users (\n  id integer primary key,\n  created_at datetime\n);\n",
     )
     .unwrap();
-    let base = root.join("src/main/java/com/example/demo");
+    let base = common::generated(&root, "src/main/java/com/example/demo");
     fs::create_dir_all(&base).unwrap();
     fs::write(
         base.join("Reader.java"),
@@ -1663,7 +1710,7 @@ fn modernize_takes_a_boot_2_gradle_project_to_the_versions_jails_generates_again
 fn adopt_teaches_jails_where_an_existing_project_keeps_things() {
     let root = temp_dir("adopt");
     write_plain_fixture(&root);
-    let base = root.join("src/main/java/com/example/demo");
+    let base = common::generated(&root, "src/main/java/com/example/demo");
     for (dir, class) in [
         ("controllers", "OrderController"),
         ("persistence", "JdbcOrderRepository"),
@@ -1746,7 +1793,7 @@ fn auto_engine_merges_warm_and_build_partitions_without_losing_a_selector() {
     let path = real_path_without_mvnd();
     let root = temp_dir("mixed-test-partitions");
     write_plain_fixture(&root);
-    let tests = root.join("src/test/java/com/example/demo");
+    let tests = common::generated(&root, "src/test/java/com/example/demo");
     fs::create_dir_all(&tests).unwrap();
     fs::write(
         tests.join("PlainTest.java"),
@@ -1804,20 +1851,63 @@ fn a_timed_warm_run_cancels_the_request_and_recycles_the_daemon() {
     let path = real_path_without_mvnd();
     let root = temp_dir("timed-warm-test");
     write_plain_fixture(&root);
-    let tests = root.join("src/test/java/com/example/demo");
+    let tests = common::generated(&root, "src/test/java/com/example/demo");
     fs::create_dir_all(&tests).unwrap();
+    // **One owner for how long `SlowTest` sleeps**, because the assertion at
+    // the end of this test discriminates on exactly that number: a run that
+    // was *not* cancelled cannot finish before the sleep does. Written out
+    // twice, a change to the fixture silently weakens the bound instead of
+    // moving it.
+    const SLOW_TEST_SLEEP: std::time::Duration = std::time::Duration::from_secs(30);
+
     fs::write(
         tests.join("SlowTest.java"),
-        "package com.example.demo;\nimport org.junit.jupiter.api.Test;\nclass SlowTest { @Test void slow() throws Exception { Thread.sleep(30_000); } }\n",
+        format!(
+            "package com.example.demo;\nimport org.junit.jupiter.api.Test;\n\
+             class SlowTest {{ @Test void slow() throws Exception {{ Thread.sleep({}); }} }}\n",
+            SLOW_TEST_SLEEP.as_millis()
+        ),
+    )
+    .unwrap();
+    // **The warm-up compiles `SlowTest` without running it, and leaves a
+    // daemon up.** What is being proved below is that a one-second budget
+    // cancels a request still in flight, so the fixture's test sleeps thirty
+    // seconds and the warm-up must not be the thing that waits for it: naming
+    // `PingTest` as the selector leaves `SlowTest` compiled and unrun, which
+    // is what the timed run needs since it passes `--compile none`. A bare
+    // `jails test --fast` sits through all thirty, which measured 33.7s at the
+    // tail of `tests/cli` on an otherwise idle box -- straight onto the
+    // suite's wall clock.
+    fs::write(
+        tests.join("PingTest.java"),
+        "package com.example.demo;\nimport org.junit.jupiter.api.Test;\nclass PingTest { @Test void ping() {} }\n",
     )
     .unwrap();
 
     let prepared = jails_cmd_with_path(&root, &path)
-        .args(["test", "--fast"])
+        .args(["test", "--fast", "PingTest"])
         .output()
         .unwrap();
     if !prepared.status.success() {
-        skip("could not prepare the timed warm-test fixture");
+        skip(&format!(
+            "could not prepare the timed warm-test fixture: {}{}",
+            String::from_utf8_lossy(&prepared.stdout),
+            String::from_utf8_lossy(&prepared.stderr)
+        ));
+        return;
+    }
+
+    // **The daemon has to be up before the clock starts.** `--fast` is the
+    // launcher, not `testd`, so without this the timed run pays a cold JVM
+    // boot and the daemon's own `--scan-class-path` warm-up inside the window
+    // it is measuring -- which is not what a one-second budget is about, and
+    // which drifts past any wall-clock bound as soon as the machine is busy.
+    let daemon = jails_cmd_with_path(&root, &path)
+        .args(["test", "PingTest", "--engine", "warm", "--compile", "none"])
+        .output()
+        .unwrap();
+    if !daemon.status.success() {
+        skip("could not start testd for the timed warm-test fixture");
         return;
     }
 
@@ -1849,9 +1939,22 @@ fn a_timed_warm_run_cancels_the_request_and_recycles_the_daemon() {
         report.contains("active request was cancelled") && report.contains("testd was recycled"),
         "the timeout must explain both cancellation and isolation cleanup: {report}"
     );
+    // **Bounded by the sleep, not by a guess at how fast the machine is.**
+    //
+    // This was `< 10s` and failed at 19.9s on a contended box -- while both
+    // assertions above passed, so the request *had* been cancelled and the
+    // daemon *had* been recycled. Ten seconds was never the property; it was
+    // an estimate of scheduling latency, which is the one quantity a loaded
+    // machine is free to change without anything being wrong.
+    //
+    // The property is that cancellation returned control before the work
+    // would have finished on its own, and `SLOW_TEST_SLEEP` is exactly that
+    // line: a run that waited the sleep out cannot come in under it, whatever
+    // the machine is doing.
     assert!(
-        elapsed < std::time::Duration::from_secs(10),
-        "the 1s timeout took {elapsed:?}"
+        elapsed < SLOW_TEST_SLEEP,
+        "the 1s timeout took {elapsed:?}, which is not less than the {SLOW_TEST_SLEEP:?} \
+         `SlowTest` sleeps -- so the request was not cancelled early"
     );
 
     let status = jails_cmd_with_path(&root, &path)
@@ -1892,7 +1995,7 @@ fn testd_refuses_stale_classes_and_sees_a_recompile_after_it_started() {
     write_plain_fixture(&root);
     // The plain fixture ships no test, and a daemon that finds nothing to run
     // would satisfy every assertion below for the wrong reason.
-    let test_dir = root.join("src/test/java/com/example/demo");
+    let test_dir = common::generated(&root, "src/test/java/com/example/demo");
     std::fs::create_dir_all(&test_dir).unwrap();
     let test_source = test_dir.join("AppTest.java");
     std::fs::write(
@@ -1924,7 +2027,11 @@ fn testd_refuses_stale_classes_and_sees_a_recompile_after_it_started() {
         .output()
         .unwrap();
     if !prepared.status.success() {
-        skip("could not prepare the fixture with `test --fast`");
+        skip(&format!(
+            "could not prepare the fixture with `test --fast`: {}{}",
+            String::from_utf8_lossy(&prepared.stdout),
+            String::from_utf8_lossy(&prepared.stderr)
+        ));
         return;
     }
 
@@ -2038,7 +2145,11 @@ fn testd_affected_selects_transitively_and_widens_when_it_cannot_know() {
         .output()
         .unwrap();
     if !prepared.status.success() {
-        skip("could not prepare the fixture with `test --fast`");
+        skip(&format!(
+            "could not prepare the fixture with `test --fast`: {}{}",
+            String::from_utf8_lossy(&prepared.stdout),
+            String::from_utf8_lossy(&prepared.stderr)
+        ));
         return;
     }
 
@@ -2085,7 +2196,7 @@ fn testd_affected_selects_transitively_and_widens_when_it_cannot_know() {
 
     // Change Money, which OrderTest reaches only *through* Order. Recompile
     // first, or the staleness gate refuses before the selector is consulted.
-    let money = root.join("src/main/java/com/example/demo/Money.java");
+    let money = common::generated(&root, "src/main/java/com/example/demo/Money.java");
     std::fs::write(
         &money,
         "package com.example.demo;\n\npublic record Money(long amount) {\n    // edited\n}\n",
@@ -2197,4 +2308,120 @@ fn bench_states_the_profile_it_is_about_to_run() {
     let argv = fs::read_to_string(root.join("k6.log")).unwrap();
     assert!(argv.contains("run"), "{argv}");
     assert!(argv.contains("load-tests/load-test.js"), "{argv}");
+}
+
+/// A project jails did not write: adopted, edited, generated into, and built.
+///
+/// `simplify-sol.md`'s G5 asks for *sanitized adopted and reader-edited
+/// Spring/plain projects*, and this is the gap the proof corpus had: every
+/// manifest in `examples/proof-policy.tsv` is jails' own output, so nothing in
+/// the suite proved the tool against a codebase it did not generate. A
+/// generator can be perfectly correct about its own layout and still be wrong
+/// about somebody else's.
+///
+/// The pom here is hand-written rather than `write_plain_fixture`'s: a
+/// different groupId, a different artifactId, a source layout jails would not
+/// have chosen, and classes with bodies. Nothing in it came from jails.
+///
+/// Three things are proved, in order. Adoption reads the foreign layout;
+/// generation into it produces Java that a real compiler accepts *beside* the
+/// reader's; and the reader's files come back byte-identical. The last is the
+/// one that would be easiest to break and hardest to notice.
+#[test]
+fn an_adopted_reader_written_project_generates_compiles_and_keeps_its_own_bytes() {
+    if !real_mvn_available() {
+        skip("mvn not found on PATH");
+        return;
+    }
+    if !real_java_supports_target_release() {
+        skip(&format!(
+            "javac on PATH does not support --release {TARGET_RELEASE}"
+        ));
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = temp_dir("adopted-foreign-project");
+    // The fixture lives in `tests/common` because `tests/differential.rs` runs
+    // the same project through both implementations. Two copies of a project
+    // that is *defined* by being foreign would drift into two different
+    // foreignnesses.
+    write_adopted_fixture(&root, Adopted::Plain);
+    let before = adopted_reader_bytes(&root, Adopted::Plain);
+
+    // 1. Adoption reads a layout jails did not choose.
+    let adopted = jails_cmd_with_path(&root, &path)
+        .arg("adopt")
+        .output()
+        .unwrap();
+    assert!(
+        adopted.status.success(),
+        "adopt failed on a reader-written project: {}",
+        String::from_utf8_lossy(&adopted.stderr)
+    );
+    let report = String::from_utf8_lossy(&adopted.stdout);
+    assert!(
+        report.contains("web") && report.contains("persistence"),
+        "adopt did not recognise the reader's directories: {report}"
+    );
+
+    // 2. Generation lands beside the reader's code and compiles with it.
+    let generated = jails_cmd_with_path(&root, &path)
+        .args(["g", "record", "Receipt", "id:uuid", "total:long"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "generate failed in an adopted project: {}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+
+    let built = real_maven_cmd(&root, &path)
+        .args(["-B", "test"])
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "an adopted project did not build after `g record`:\n{}\n{}",
+        String::from_utf8_lossy(&built.stdout),
+        String::from_utf8_lossy(&built.stderr)
+    );
+
+    // 3. The reader's bytes are the reader's.
+    assert_eq!(
+        adopted_reader_bytes(&root, Adopted::Plain),
+        before,
+        "jails rewrote a file it did not author"
+    );
+
+    // 4. Rerun is idempotent, which is what `simplify-sol.md`'s differential
+    // list asks for. Re-declaring the same record is not a collision to refuse
+    // -- identity is the entity, so this is an update that changes nothing --
+    // and the check that matters is that it *says* so and writes nothing.
+    let generated_at =
+        common::generated(&root, "src/main/java/net/acme/legacy/domain/Receipt.java");
+    let generated_before = fs::read_to_string(&generated_at).unwrap();
+    let again = jails_cmd_with_path(&root, &path)
+        .args(["g", "record", "Receipt", "id:uuid", "total:long"])
+        .output()
+        .unwrap();
+    assert!(
+        again.status.success(),
+        "a repeated generate failed instead of settling: {}",
+        String::from_utf8_lossy(&again.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&again.stdout).contains("nothing to do"),
+        "a repeated generate did not report itself a no-op: {}",
+        String::from_utf8_lossy(&again.stdout)
+    );
+    assert_eq!(
+        fs::read_to_string(&generated_at).unwrap(),
+        generated_before,
+        "a repeated generate rewrote its own output"
+    );
+    assert_eq!(
+        adopted_reader_bytes(&root, Adopted::Plain),
+        before,
+        "a repeated generate rewrote a file it did not author"
+    );
 }

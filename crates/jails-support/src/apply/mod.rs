@@ -12,7 +12,7 @@
 //! ledger hung off `write_new_file` alone has a hole precisely where a
 //! capability updates a file it previously wrote. That is not a bug anybody
 //! introduced carelessly -- it is what happens when "route writes through the
-//! helper" is a convention instead of a boundary. `tests/architecture.rs`
+//! helper" is a convention instead of a boundary. `tests/architecture/`
 //! makes it a boundary by failing when `fs::write` appears anywhere else.
 //!
 //! ## The four ways to write, and why they are different
@@ -116,6 +116,45 @@ pub fn replace(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> 
     ensure_parent(path)?;
     Ok(fs::write(path, contents)
         .map_err(|error| format!("failed to write {}: {error}", path.display()))?)
+}
+
+/// Write a file jails renders once from an authority outside the model.
+///
+/// **A named category, not a loophole.** Every managed artifact goes through
+/// `jails-workspace::execute`, which is the only canonical project writer:
+/// it locks, rechecks preconditions and publishes exact after-images, and the
+/// model is what tells it which files exist. These do not have a model entry
+/// and never will -- their authority is somewhere else entirely, and nothing
+/// reconciles them because there is nothing to reconcile against:
+///
+/// - `jails adopt` writes a `[layout]` table in `jails.toml`. That is
+///   *configuration jails reads*, which is the opposite of a thing jails owns
+///   and would later take away.
+/// - `jails modernize` bumps versions in the reader's build file.
+/// - `jails contract emit --out` projects a document out of source that
+///   already exists.
+/// - `jails sql generate` renders adapters for queries declared in the
+///   reader's `.sql` manifest.
+/// - `jails rename <Old> <New>` rewrites the reader's own Java in place.
+///
+/// Re-running is how each is refreshed, which is exactly why a transaction
+/// would buy nothing: there is no accepted state for the next run to diverge
+/// from. The name is deliberately long for [`put_outside_project`]'s reason --
+/// nothing that writes a *managed* artifact should reach one by accident.
+pub fn put_one_shot(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
+    put(path, contents)
+}
+
+/// Delete a file no transaction owns, for the same reason [`put_one_shot`]
+/// writes one.
+///
+/// `jails rename <Old> <New>` moves a reader's own source: the new name is
+/// written first and the old one removed after, so an interruption leaves the
+/// file readable under both names rather than under neither. Neither half is a
+/// managed artifact, so there is no accepted state for a transaction to
+/// protect -- and re-running is how a partial rename is finished.
+pub fn remove_one_shot(path: impl AsRef<Path>) -> Result<()> {
+    remove(path)
 }
 
 /// Write content that already accounts for whatever was there.
@@ -692,7 +731,7 @@ mod tests {
 /// other, so nothing distinguished a write into the staging tree from a write
 /// into a live project, and the gate could only assume the worst. A function
 /// that takes a `Tree` is a function that cannot reach a published project --
-/// [`Tree::inside`] refuses a path outside it. `pending.md` §5.
+/// `Tree::inside` refuses a path outside it. `pending.md` §5.
 ///
 /// It lives here rather than beside `jails new` because the generators write
 /// into it too: `generate::write_new_file` is called only from the publication

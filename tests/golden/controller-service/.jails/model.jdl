@@ -1,0 +1,12 @@
+jdl 1
+app Demo @id(project_demo) {
+  pkg com.example.demo
+  java 26
+  platform spring
+  build maven
+  storage none
+}
+
+component controller Health @id(cmp_controller_health) {}
+
+component service Billing @id(cmp_service_billing) {}

@@ -110,7 +110,7 @@ dependencies = [
  "heck",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -208,26 +208,46 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "clap_complete",
+ "fs2",
+ "jails-codemod",
  "jails-commit",
+ "jails-compiler",
+ "jails-contracts",
  "jails-drive",
- "jails-engine",
  "jails-generate",
  "jails-java",
+ "jails-model",
  "jails-prepare",
  "jails-project",
  "jails-protocol",
  "jails-report",
  "jails-spec",
+ "jails-state",
  "jails-support",
  "jails-testkit",
+ "jails-workspace",
  "serde_json",
  "tempfile",
 ]
 
 [[package]]
+name = "jails-codec-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "jails-codemod"
+version = "0.1.0"
+
+[[package]]
 name = "jails-commit"
 version = "0.1.0"
 dependencies = [
+ "jails-codec-derive",
  "jails-commit",
  "jails-prepare",
  "jails-protocol",
@@ -236,12 +256,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "jails-compiler"
+version = "0.1.0"
+dependencies = [
+ "jails-codemod",
+ "jails-contracts",
+ "jails-model",
+ "serde_json",
+]
+
+[[package]]
+name = "jails-contracts"
+version = "0.1.0"
+dependencies = [
+ "jails-model",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "jails-drive"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "jails-codec-derive",
+ "jails-codemod",
  "jails-commit",
- "jails-generate",
  "jails-java",
  "jails-project",
  "jails-protocol",
@@ -249,25 +289,6 @@ dependencies = [
  "jails-spec",
  "jails-support",
  "tempfile",
-]
-
-[[package]]
-name = "jails-engine"
-version = "0.1.0"
-dependencies = [
- "clap",
- "jails-commit",
- "jails-drive",
- "jails-generate",
- "jails-java",
- "jails-prepare",
- "jails-project",
- "jails-protocol",
- "jails-report",
- "jails-spec",
- "jails-support",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -288,13 +309,24 @@ dependencies = [
 name = "jails-java"
 version = "0.1.0"
 dependencies = [
+ "jails-codemod",
  "jails-support",
+]
+
+[[package]]
+name = "jails-model"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml",
 ]
 
 [[package]]
 name = "jails-prepare"
 version = "0.1.0"
 dependencies = [
+ "jails-codec-derive",
  "jails-java",
  "jails-project",
  "jails-protocol",
@@ -307,6 +339,7 @@ name = "jails-project"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "jails-codemod",
  "jails-java",
  "jails-protocol",
  "jails-spec",
@@ -325,6 +358,8 @@ name = "jails-protocol"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "jails-codec-derive",
+ "jails-codemod",
  "jails-java",
  "jails-spec",
  "jails-support",
@@ -367,6 +402,7 @@ name = "jails-support"
 version = "0.1.0"
 dependencies = [
  "fs2",
+ "jails-codec-derive",
  "nix",
  "tempfile",
 ]
@@ -374,6 +410,22 @@ dependencies = [
 [[package]]
 name = "jails-testkit"
 version = "0.1.0"
+
+[[package]]
+name = "jails-workspace"
+version = "0.1.0"
+dependencies = [
+ "fs2",
+ "jails-codemod",
+ "jails-compiler",
+ "jails-contracts",
+ "jails-model",
+ "jails-support",
+ "jails-workspace",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
 
 [[package]]
 name = "libc"
@@ -487,7 +539,7 @@ checksum = "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -526,6 +578,17 @@ name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+
+[[package]]
+name = "syn"
+version = "2.0.119"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "872831b642d1a07999a962a351ed35b955ea2cfc8f3862091e2a240a84f17297"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
 
 [[package]]
 name = "syn"

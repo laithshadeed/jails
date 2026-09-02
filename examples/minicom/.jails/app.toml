@@ -20,13 +20,13 @@ fields = ["TO_USER", "FROM_USER"]
 [[generate]]
 kind = "scaffold"
 name = "User"
-fields = ["id:long@pk", "email:string!@unique"]
+fields = ["id:long@pk@default(identity())", "email:string!@unique"]
 timestamps = true
 
 [[generate]]
 kind = "scaffold"
 name = "Message"
-fields = ["id:long@pk", "userId:long@index", "body:string!", "isRead:boolean", "timeStamp:instant@index", "direction:MessageDirection", "version:long@nonnegative"]
+fields = ["id:long@pk@default(identity())", "userId:long@index", "body:string!", "isRead:boolean", "timeStamp:instant@index", "direction:MessageDirection", "version:long@nonnegative"]
 timestamps = true
 indexes = ["user_id, time_stamp desc"]
 
@@ -44,23 +44,42 @@ yields = "User"
 # No `id`: `Message.id` is `long@pk`, so PostgreSQL assigns it and the create
 # returns the row it wrote. Naming it here used to be accepted and then
 # silently dropped by the insert.
+#
+# `isRead`, `timeStamp` and `version` are carried for the opposite reason: the
+# canonical compiler refuses to construct a required field it was not given,
+# where the legacy engine inserted whatever the column defaulted to and said
+# nothing. Carrying them is one honest shape; the other is a typed field
+# default on the entity, which this file *can* reach -- a `fields` entry here
+# is the same string `jails g` parses, so `@default(...)` works in a manifest
+# exactly as it does on the command line. The proof apps beside this one use
+# it for audit columns a caller has no business supplying.
 [[generate]]
 kind = "usecase"
 name = "SendMessage"
-fields = ["userId:long", "body:string!", "direction:MessageDirection"]
+fields = ["userId:long", "body:string!", "direction:MessageDirection", "isRead:boolean", "timeStamp:instant", "version:long@nonnegative"]
 on = "Message"
+path = "/api/send"
 
-# POST /api/read  ->  Message.mark_read()
+# POST /api/read/{id}  ->  Message.mark_read()
+#
+# The key is in the URL, not the body. Django's handler read `message_id` out
+# of the posted JSON; a canonical transition refuses a route without `{id}`,
+# because the thing being transitioned is what the URL names.
 #
 # `version` is jails asking for something neither framework had: Django's
 # `save()` and Rails' `update` last-write-wins, so two readers marking the
 # same message read at once silently lose one update. A transition refuses
 # without it.
+#
+# `id` is not in the list because a transition does not *set* the key it
+# selects by -- it arrives from the URL. Naming it here asked the compiler to
+# rewrite a primary key, which it refuses by name.
 [[generate]]
 kind = "transition"
 name = "MarkAsRead"
-fields = ["id:long", "isRead:boolean", "version:long@nonnegative"]
+fields = ["isRead:boolean", "version:long@nonnegative"]
 on = "Message"
+path = "/api/read/{id}"
 
 # POST /api/conversation  ->  User.all_messages()
 [[generate]]
@@ -68,6 +87,7 @@ kind = "query"
 name = "Conversation"
 fields = ["userId:long"]
 on = "Message"
+path = "/api/conversation"
 
 # POST /customer_api/ping {email} — the whole customer-facing surface of the
 # Django original, and the one endpoint jails could not express: `Message` has

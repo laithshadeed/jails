@@ -1,32 +1,35 @@
-//! Everything that decides what Java to write.
+//! What survives of the pre-compiler generator: the write path, and the
+//! SQL projection of a field spec.
 //!
-//! [`generate`] dispatches one `ArtifactKind` to the recipe that renders it,
-//! [`spring`] holds the kinds and capabilities that need a Spring Boot parent,
-//! [`add`] grows a project by a whole slice (dependency, code, test and where
-//! needed a compose service), and [`sql`] is the SQL/JDBC projection of the
-//! same field spec the domain side reads.
+//! **This crate was 23,809 lines and is 1,300.** It held four halves that
+//! called each other freely -- `generate` dispatching an `ArtifactKind` to a
+//! recipe, `spring` holding the kinds and capabilities that need a Boot
+//! parent, `add` growing a project by a whole slice, and [`sql`] projecting
+//! the field spec -- and three of them are gone, because `jails-compiler`
+//! emits all thirty-nine advertised kinds and all twenty-five capabilities,
+//! and every mutating command seeds a model before it runs. Nothing dispatched
+//! to a recipe any more; nothing planned a capability any more.
 //!
-//! These four call each other freely and ship together on purpose. `generate`
-//! dispatches into `spring`, `spring` renders through `generate`'s shared
-//! helpers, and separating them would buy a boundary that neither wants. The
-//! boundary that matters is the one *below*: nothing here is reachable from
-//! `jails-project` or lower, which is what the twelve-module cycle used to
-//! make impossible.
+//! Two things kept the rest alive and they are what is left. [`generate`] owns
+//! the rules keyed off emitted bytes -- import normalisation,
+//! `package-info.java`, `ensure_failsafe`, `ensure_assertj` -- which the binary
+//! still calls on the way to disk. [`sql`] answers what one record component
+//! is on both sides of the JDBC boundary, which `jails-report`'s schema
+//! lineage still asks.
+//!
+//! The boundary that matters is the one *below*: nothing here is reachable
+//! from `jails-project` or lower. That is the edge which keeps the ladder
+//! acyclic, and it is the one to defend.
 
-pub mod add;
-pub(crate) mod architecture;
 pub mod generate;
-pub mod named_query;
-pub mod spring;
 pub mod sql;
 
 // The lower crates, re-exported so every module in this one keeps saying
 // `crate::…` wherever it ships. Only this block knows which crate a module
 // actually lives in, which is what makes moving one a one-line change.
 pub use jails_java::{java, template};
-pub(crate) use jails_project::{compose, generated_files, gradle, inspect, model, pom, project};
+pub(crate) use jails_project::{model, pom};
 pub use jails_spec::{build, spec};
-pub(crate) use jails_support::json;
 
 /// This crate's templates live at the repository root, two levels up from its
 /// own manifest.

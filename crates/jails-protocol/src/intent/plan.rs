@@ -10,7 +10,7 @@ use crate::Result;
 use crate::change::{ChangeAttribution, DesiredChange, decode_all, encode_all};
 use crate::entity::{EntityId, EntitySpec, OneShotId, OneShotSpec, OwnerId};
 use crate::resource::{DesiredResource, OneShotLifecycle, OneShotState};
-use jails_support::codec::{Codec, Decoder, Encoder, ordered};
+use jails_support::codec::{Codec, Decoder, Encoder};
 use std::collections::BTreeSet;
 
 mod subject;
@@ -128,70 +128,20 @@ impl Codec for LedgerIntent {
 }
 
 /// An entity row as this plan wants it recorded.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct DesiredAppliedEntity {
     pub id: EntityId,
     pub owners: BTreeSet<OwnerId>,
     pub spec: EntitySpec,
 }
 
-impl Codec for DesiredAppliedEntity {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.id.encode(encoder)?;
-        encoder.count(self.owners.len())?;
-        let mut previous: Option<&OwnerId> = None;
-        for owner in &self.owners {
-            ordered(previous, owner)?;
-            previous = Some(owner);
-            encoder.tag(owner.tag());
-        }
-        self.spec.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        let id = EntityId::decode(decoder)?;
-        let count = decoder.count()?;
-        let mut owners = BTreeSet::new();
-        let mut previous: Option<OwnerId> = None;
-        for _ in 0..count {
-            let owner = OwnerId::from_tag(decoder.tag()?)?;
-            ordered(previous.as_ref(), &owner)?;
-            previous = Some(owner);
-            owners.insert(owner);
-        }
-        Ok(Self {
-            id,
-            owners,
-            spec: EntitySpec::decode(decoder)?,
-        })
-    }
-}
-
 /// A one-shot receipt as this plan wants it recorded.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct DesiredOneShotReceipt {
     pub id: OneShotId,
     pub spec: OneShotSpec,
     pub state: OneShotState,
     pub lifecycle: OneShotLifecycle,
-}
-
-impl Codec for DesiredOneShotReceipt {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.id.encode(encoder)?;
-        self.spec.encode(encoder)?;
-        self.state.encode(encoder)?;
-        self.lifecycle.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            id: OneShotId::decode(decoder)?,
-            spec: OneShotSpec::decode(decoder)?,
-            state: OneShotState::decode(decoder)?,
-            lifecycle: OneShotLifecycle::decode(decoder)?,
-        })
-    }
 }
 
 /// The ordered changes, what they are for, and what the store is to say.

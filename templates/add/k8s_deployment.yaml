@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{NAME}}
+  labels:
+    app.kubernetes.io/name: {{NAME}}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{NAME}}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{NAME}}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: {{NAME}}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: o11y
+              containerPort: 8081
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          envFrom:
+            - configMapRef:
+                name: {{NAME}}
+          readinessProbe:
+            httpGet:
+              path: /management/health/readiness
+              port: o11y
+            failureThreshold: 3
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /management/health/liveness
+              port: o11y
+            failureThreshold: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources: {{ toYaml .Values.resources | nindent 12 }}

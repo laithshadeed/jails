@@ -50,52 +50,25 @@ use jails_support::codec::{Codec, Decoder, Encoder, ordered};
 use std::collections::BTreeSet;
 
 /// Which human input a frozen candidate depended on.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, jails_codec_derive::Codec)]
+#[codec(label = "desired input")]
 pub enum DesiredInputId {
+    #[codec(tag = 0)]
     HumanConfig,
+    #[codec(tag = 1)]
     AppManifest(ManifestSourceId),
+    #[codec(tag = 2)]
     DirectRequest,
+    #[codec(tag = 3)]
     CasesBrief(SourceInputId),
 }
 
-impl DesiredInputId {
-    fn tag(&self) -> u8 {
-        match self {
-            Self::HumanConfig => 0,
-            Self::AppManifest(_) => 1,
-            Self::DirectRequest => 2,
-            Self::CasesBrief(_) => 3,
-        }
-    }
-}
-impl Codec for DesiredInputId {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::AppManifest(source) => source.encode(encoder),
-            Self::CasesBrief(source) => source.encode(encoder),
-            Self::HumanConfig | Self::DirectRequest => Ok(()),
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::HumanConfig,
-            1 => Self::AppManifest(ManifestSourceId::decode(decoder)?),
-            2 => Self::DirectRequest,
-            3 => Self::CasesBrief(SourceInputId::decode(decoder)?),
-            other => Err(format!("unknown desired input tag {other}"))?,
-        })
-    }
-}
-
 /// What that input has to still be for the candidate to remain applicable.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, jails_codec_derive::Codec)]
 pub enum DesiredInputGuard {
-    Exact {
-        sha256: ObjectId,
-        len: u64,
-    },
+    #[codec(tag = 0)]
+    Exact { sha256: ObjectId, len: u64 },
+    #[codec(tag = 1)]
     /// An input this same transaction would have produced. Guarded by its
     /// path as well, because the bytes alone would match a file somewhere
     /// else that happened to be identical.
@@ -104,103 +77,25 @@ pub enum DesiredInputGuard {
         sha256: ObjectId,
         len: u64,
     },
+    #[codec(tag = 2)]
     Absent,
 }
 
-impl DesiredInputGuard {
-    fn tag(&self) -> u8 {
-        match self {
-            Self::Exact { .. } => 0,
-            Self::ProjectedTransactionOutput { .. } => 1,
-            Self::Absent => 2,
-        }
-    }
-}
-impl Codec for DesiredInputGuard {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::Exact { sha256, len } => {
-                sha256.encode(encoder)?;
-                encoder.u64(*len);
-                Ok(())
-            }
-            Self::ProjectedTransactionOutput { path, sha256, len } => {
-                path.encode(encoder)?;
-                sha256.encode(encoder)?;
-                encoder.u64(*len);
-                Ok(())
-            }
-            Self::Absent => Ok(()),
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Exact {
-                sha256: ObjectId::decode(decoder)?,
-                len: decoder.u64()?,
-            },
-            1 => Self::ProjectedTransactionOutput {
-                path: ProjectPath::decode(decoder)?,
-                sha256: ObjectId::decode(decoder)?,
-                len: decoder.u64()?,
-            },
-            2 => Self::Absent,
-            other => Err(format!("unknown desired input guard tag {other}"))?,
-        })
-    }
-}
-
 /// One frozen input and its guard.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, jails_codec_derive::Codec)]
 pub struct FrozenDesiredInput {
     pub id: DesiredInputId,
     pub guard: DesiredInputGuard,
 }
 
-impl Codec for FrozenDesiredInput {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.id.encode(encoder)?;
-        self.guard.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            id: DesiredInputId::decode(decoder)?,
-            guard: DesiredInputGuard::decode(decoder)?,
-        })
-    }
-}
-
 /// One output in the frozen candidate.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct PendingOutput {
     pub path: ProjectPath,
     pub contributors: BTreeSet<ResourceOwner>,
     pub current: crate::conflict::PendingCurrent,
     pub base: StoredFileImage,
     pub renderer: RendererStamp,
-}
-
-impl Codec for PendingOutput {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.path.encode(encoder)?;
-        encoder.set(&self.contributors)?;
-        self.current.encode(encoder)?;
-        self.base.encode(encoder)?;
-        self.renderer.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            path: ProjectPath::decode(decoder)?,
-            contributors: decoder.set()?,
-            current: crate::conflict::PendingCurrent::decode(decoder)?,
-            base: StoredFileImage::decode(decoder)?,
-            renderer: RendererStamp::decode(decoder)?,
-        })
-    }
 }
 
 /// One resource row in the frozen candidate.
@@ -229,7 +124,7 @@ impl Codec for PendingResource {
 }
 
 /// One one-shot receipt in the frozen candidate.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct PendingOneShot {
     pub id: OneShotId,
     pub spec: OneShotSpec,
@@ -237,70 +132,13 @@ pub struct PendingOneShot {
     pub lifecycle: OneShotLifecycle,
 }
 
-impl Codec for PendingOneShot {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.id.encode(encoder)?;
-        self.spec.encode(encoder)?;
-        self.state.encode(encoder)?;
-        self.lifecycle.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            id: OneShotId::decode(decoder)?,
-            spec: OneShotSpec::decode(decoder)?,
-            state: OneShotState::decode(decoder)?,
-            lifecycle: OneShotLifecycle::decode(decoder)?,
-        })
-    }
-}
-
 /// The complete logical state a successful resolution promotes.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct PendingLedgerState {
     pub applied: Vec<AppliedEntity>,
     pub one_shots: Vec<PendingOneShot>,
     pub resources: Vec<PendingResource>,
     pub outputs: Vec<PendingOutput>,
-}
-
-impl Codec for PendingLedgerState {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.count(self.applied.len())?;
-        for entity in &self.applied {
-            entity.encode(encoder)?;
-        }
-        encoder.count(self.one_shots.len())?;
-        for one_shot in &self.one_shots {
-            one_shot.encode(encoder)?;
-        }
-        encoder.count(self.resources.len())?;
-        for resource in &self.resources {
-            resource.encode(encoder)?;
-        }
-        encoder.count(self.outputs.len())?;
-        for output in &self.outputs {
-            output.encode(encoder)?;
-        }
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        let mut state = Self::default();
-        for _ in 0..decoder.count()? {
-            state.applied.push(AppliedEntity::decode(decoder)?);
-        }
-        for _ in 0..decoder.count()? {
-            state.one_shots.push(PendingOneShot::decode(decoder)?);
-        }
-        for _ in 0..decoder.count()? {
-            state.resources.push(PendingResource::decode(decoder)?);
-        }
-        for _ in 0..decoder.count()? {
-            state.outputs.push(PendingOutput::decode(decoder)?);
-        }
-        Ok(state)
-    }
 }
 
 /// The whole frozen conflict.

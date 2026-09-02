@@ -1,17 +1,24 @@
-//! Apply a small, declarative application manifest through Jails' existing
-//! capability and generator engines.
+//! Apply a small, declarative application manifest.
 //!
 //! This is deliberately domain-blind. A crawler and a support inbox are two
 //! different lists of the same generic intents; neither gets a command,
 //! branch, enum, or template in Jails core.
+//!
+//! **Two backends, and which one runs is the project's answer, not a flag.**
+//! A legacy project applies the manifest through the capability and generator
+//! engines, as one transition with a journal to resume from. A canonical
+//! project *replays* it row by row into the model, through the same frontends
+//! `jails g` and `jails add` use -- see [`replay`] for why that is not a
+//! second editable source, and [`refuse_manifest`] for the one subcommand
+//! that still refuses.
 
 mod manifest;
 use manifest::*;
 
-use crate::add::Capability;
-use crate::generate::{self, ArtifactKind};
+use crate::ArtifactKind;
+use crate::Capability;
+use crate::cli::GenerateArgs;
 use clap::{Subcommand, ValueEnum};
-use jails_engine::route::Intent;
 use jails_support::Result;
 use std::collections::HashSet;
 use std::fs;
@@ -56,6 +63,8 @@ struct GenerateIntent {
     fields: Vec<String>,
     timestamps: bool,
     indexes: Vec<String>,
+    /// Composite unique keys the table carries beside its primary key.
+    uniques: Vec<String>,
     package: Option<String>,
     strategy_on: Option<String>,
     strategy_yields: Option<String>,
@@ -84,7 +93,7 @@ struct GenerateIntent {
 }
 
 impl GenerateIntent {
-    /// The row, as the engine takes it.
+    /// The row, as `jails g` takes it.
     ///
     /// One type rather than two. `pending.md` §6.2: a `[[generate]]` row used
     /// to become a `ResolvedIntent` here, which became a `route::Intent` at
@@ -94,7 +103,7 @@ impl GenerateIntent {
     /// the deprecated `strategy_on`/`strategy_yields` spellings are resolved
     /// by the parser that read them, which is the only place that should ever
     /// have known they exist.
-    fn finish(self, number: usize) -> Result<Intent> {
+    fn finish(self, number: usize) -> Result<GenerateArgs> {
         let kind = self
             .kind
             .ok_or_else(|| format!("[[generate]] #{number} is missing `kind`"))?;
@@ -108,6 +117,7 @@ impl GenerateIntent {
             .fields
             .iter()
             .chain(self.indexes.iter())
+            .chain(self.uniques.iter())
             .chain(self.package.iter())
             .chain(self.strategy_on.iter())
             .chain(self.strategy_yields.iter())
@@ -123,15 +133,20 @@ impl GenerateIntent {
                 .into());
             }
         }
-        Ok(Intent {
+        Ok(GenerateArgs {
             kind,
             name,
             fields: self.fields,
             timestamps: self.timestamps,
             indexes: self.indexes,
+            uniques: self.uniques,
             package: self.package,
-            on: self.strategy_on,
-            yields: self.strategy_yields,
+            strategy_on: self.strategy_on,
+            strategy_yields: self.strategy_yields,
+            // Field evolution only, and a manifest declares no evolution:
+            // every row is a thing to exist, not a change to one that does.
+            default_literal: None,
+            backfill_file: None,
             via: self.via,
             order_by: self.order_by,
             limit: self.limit,
@@ -149,7 +164,7 @@ impl GenerateIntent {
 
 /// The recipe name as the ledger spells it -- clap's canonical value, never
 /// an alias, or one kind would be stored under two names.
-fn recipe_of(intent: &Intent) -> String {
+fn recipe_of(intent: &GenerateArgs) -> String {
     intent
         .kind
         .to_possible_value()
@@ -159,8 +174,8 @@ fn recipe_of(intent: &Intent) -> String {
 }
 
 /// The name the ledger row carries, which is what the duplicate check keys on.
-fn recorded_name_of(intent: &Intent) -> String {
-    generate::recorded_name(intent.kind, &intent.name)
+fn recorded_name_of(intent: &GenerateArgs) -> String {
+    crate::recorded_name(intent.kind, &intent.name)
 }
 
 /// Identity **and** content, as one string.
@@ -173,7 +188,7 @@ fn recorded_name_of(intent: &Intent) -> String {
 /// `(recipe_of, recorded_name_of, package)`; this stays only for whole-intent
 /// equivalence.
 #[cfg(test)]
-fn fingerprint(intent: &Intent) -> String {
+fn fingerprint(intent: &GenerateArgs) -> String {
     format!(
         "{}|{}|{}|{}|{}|{}|{}|{}",
         recipe_of(intent),
@@ -182,8 +197,8 @@ fn fingerprint(intent: &Intent) -> String {
         intent.fields.join(","),
         intent.timestamps,
         intent.indexes.join(","),
-        intent.on.as_deref().unwrap_or(""),
-        intent.yields.as_deref().unwrap_or(""),
+        intent.strategy_on.as_deref().unwrap_or(""),
+        intent.strategy_yields.as_deref().unwrap_or(""),
     )
 }
 
@@ -197,39 +212,247 @@ fn fingerprint(intent: &Intent) -> String {
 /// against a typed comparison precisely because two implementations of one
 /// question disagree. Here `plan` *is* `apply` stopped one step before the
 /// lock, so what it names is exactly what the apply then writes.
+/// `app init` *writes* a manifest, which would be a second editable authority
+/// beside the model, so a canonical project refuses it.
+///
+/// **Only `init`.** `plan` and `apply` replay instead -- see [`replay`]. The
+/// distinction is between writing a second editable source and reading one
+/// once: a replay puts declarations into the model, and the model is what
+/// every later command reads.
+///
+/// What all three used to refuse was a parallel *engine*. Every other mutating
+/// command was gated at the dispatch match and this one was not, which made
+/// `app apply` the one way to reach the legacy engine from a project that owns
+/// `.jails/model.jdl`: it planned `jails.toml`, a legacy ledger and capability
+/// Java into `src/main/java`, outside the managed tree, against a model it had
+/// never read. Two editable authorities writing one project is the disease
+/// this compiler exists to cure, and a *planner* that can still be invoked is
+/// not a cured one.
+fn refuse_manifest(command: &str) -> Result<()> {
+    crate::model_command::refuse_legacy_mutation(
+        command,
+        "declare capabilities and generators in the canonical model and run `jails sync`; `.jails/app.toml` is the legacy manifest and is not a second source",
+    )
+}
+
 pub(crate) fn run(command: AppCommand, invocation: crate::Invocation) -> Result<()> {
     match command {
-        AppCommand::Init { manifest } => crate::dispatch::mutate(invocation, false, |run| {
-            jails_engine::route::app_init(run, manifest.as_deref().and_then(Path::to_str))
-        }),
+        // **`app init` writes a manifest, which beside a model is the second
+        // editable source the cutover forbids -- so it refuses on a canonical
+        // project and only there.** On a project with no model it is the
+        // on-ramp it always was: write the starter manifest, edit it, and
+        // `app apply` replays it into the model that first apply creates.
+        // Refusing everywhere left the manifest format with no way to be
+        // written at all.
+        AppCommand::Init { manifest } => match crate::model_command::owns() {
+            true => refuse_manifest("app init"),
+            false => init(manifest.as_deref(), invocation),
+        },
+        // A plan reports and writes nothing, model included: seeding one here
+        // would make `app plan` the command that turns a project canonical.
         AppCommand::Plan { manifest } => {
-            crate::dispatch::mutate(invocation.pretending(), false, |run| {
-                declared(run, manifest.as_deref())
-            })
+            crate::model_command::ensure_owned(invocation.clone().pretending())
+                .and_then(|()| replay(manifest.as_deref(), invocation.pretending()))
         }
         AppCommand::Apply { manifest, no_start } => {
-            crate::dispatch::mutate(invocation, no_start, |run| {
-                declared(run, manifest.as_deref())
-            })
+            // A manifest's capabilities are replayed through `add`, so its
+            // compose services are started the same way -- and suppressed the
+            // same way.
+            let invocation = invocation.without_starting(no_start);
+            crate::model_command::ensure_owned(invocation.clone())
+                .and_then(|()| replay(manifest.as_deref(), invocation))
         }
     }
 }
 
-/// The whole manifest, declared as one transition.
+/// Seed `.jails/app.toml` and hand the file to the reader.
 ///
-/// One pass, not two. V1 reconciled every capability a second time because a
-/// capability wires itself into what the project has, and a test a *later*
-/// row writes was invisible to the row that needed to wire it. That is fixed
-/// where it belongs -- the capability writing a `@SpringBootTest` puts the
-/// container import in itself -- so a second pass would only run the formatter
-/// twice and open a transaction with nothing in it.
-fn declared(
-    run: &jails_engine::route::Run,
+/// **One file, whose bytes stop being jails' the moment it lands.** Nothing is
+/// recorded about it: what the manifest goes on to declare is `app apply`'s
+/// business, and a claim here would be a claim on a document jails does not
+/// write again. So it is a one-shot write rather than a transition, for the
+/// same reason `adopt` and `modernize` are.
+///
+/// Seeding is not regeneration, which is why an existing manifest is a refusal
+/// rather than a merge. The bytes below are a skeleton nobody keeps; a
+/// manifest that exists is a document somebody has been writing, and merging
+/// one into the other produces a file neither of them meant.
+fn init(manifest: Option<&Path>, invocation: crate::Invocation) -> Result<()> {
+    let root = crate::model_command::root()?;
+    let target = manifest.map_or_else(|| root.join(DEFAULT_MANIFEST), |path| root.join(path));
+    if target.exists() {
+        return Err(jails_support::Failure::Told(format!(
+            "application manifest already exists: {}.\n       fix: edit it, or pass --manifest with a new path",
+            target.display()
+        )));
+    }
+    let skeleton = format!(
+        "\
+# Generic application intent. Add capabilities, then one [[generate]] table per slice.
+schema = {}
+capabilities = []
+
+# [[generate]]
+# kind = \"scaffold\"
+# name = \"Note\"
+# fields = [\"id:uuid@pk\", \"title:string!\"]
+# timestamps = true
+",
+        jails_protocol::compatibility::APP_MANIFEST_SCHEMA
+    );
+    if invocation.pretend {
+        println!("  create  {}", target.display());
+        println!("nothing was written.");
+        return Ok(());
+    }
+    jails_support::apply::put_one_shot(&target, skeleton)?;
+    println!("  create  {}", target.display());
+    println!("Edit it, then run `jails app apply` to replay it into the model.");
+    Ok(())
+}
+
+/// Replay a manifest into the model, one row at a time.
+///
+/// **The manifest becomes an import format rather than a second engine**, and
+/// that is the difference between this and the refusal it replaces. A row is a
+/// `GenerateArgs` -- the same value `jails g` parses -- so every row goes
+/// through the frontend that already knows how to declare it, and every
+/// capability through `model_capability`. Nothing here decides what a row
+/// means; the manifest's own syntax is the only thing this file knows that the
+/// CLI does not.
+///
+/// Refusing was defensible while the alternative was a parallel engine: two
+/// *editable* sources is what the cutover forbids. A one-way replay is not
+/// one, for the same reason `model import` is not -- it writes declarations
+/// into the model and the model is what every later command reads.
+///
+/// **Row by row rather than one transition, and that is an improvement.**
+/// Each frontend is idempotent -- a second `g record Order id:uuid` reports
+/// `0 files written` -- so an interrupted replay converges by being run again,
+/// where the legacy path needed a journal to resume from. What it costs is
+/// atomicity: a manifest that fails on row nine leaves rows one to eight
+/// applied. The legacy engine's own answer to that was the journal, and a
+/// canonical project has no journal by design.
+fn replay(requested: Option<&Path>, invocation: crate::Invocation) -> Result<()> {
+    let root = invocation.root()?;
+    replay_at(&root, requested, invocation)
+}
+
+/// The same replay, against a project the caller has resolved.
+///
+/// `jails new --app` is the caller: it stands in the parent of the project it
+/// is creating, so `model_command::root` would walk to the wrong one.
+pub(crate) fn replay_at(
+    root: &Path,
     requested: Option<&Path>,
-) -> Result<jails_engine::route::Outcome> {
-    let path = manifest_path(run.project().root(), requested)?;
-    let (manifest, intents) = read_manifest(&path)?;
-    jails_engine::route::app_apply(run, &manifest.capabilities, &intents)
+    invocation: crate::Invocation,
+) -> Result<()> {
+    let invocation = invocation.at(root.to_path_buf());
+    let path = manifest_path(root, requested)?;
+    let (manifest, rows) = read_manifest(&path)?;
+    // **A plan against a project with no model reports the manifest itself.**
+    // Every frontend below needs a model to patch, and seeding one would make
+    // `app plan` the command that turns a project canonical -- so what a plan
+    // can honestly say here is what applying would declare, which is the whole
+    // question somebody asks before running `apply` the first time.
+    // **A plan against a project with no model reports the manifest itself.**
+    // Each row is planned against the model on disk, and under `--pretend`
+    // nothing is written -- so row two would plan against a model that does
+    // not yet have row one's enum in it and refuse over a type the apply
+    // would have declared a moment earlier. What a plan can honestly say
+    // here is what applying would declare, which is the question somebody
+    // asks before running `apply` the first time. `plan.md` tracks threading
+    // the accumulated model through a dry replay so this can name files too.
+    if invocation.pretend && !crate::model_command::owns_at(root) {
+        println!(
+            "  model   {} would be created",
+            crate::model_command::JDL_PATH
+        );
+        for capability in &manifest.capabilities {
+            println!("  declare capability {}", capability.label());
+        }
+        for row in &rows {
+            println!(
+                "  declare {} {}",
+                crate::model_generate::kind_name(row.kind),
+                row.name
+            );
+        }
+        println!("nothing was written.");
+        return Ok(());
+    }
+    // Every capability in one patch, then every row. The manifest already
+    // parsed its capability list into the closed vocabulary, so there is no
+    // second lookup to get wrong here.
+    if !manifest.capabilities.is_empty() {
+        crate::model_capability::add(
+            manifest.capabilities.clone(),
+            None,
+            None,
+            invocation.clone(),
+        )?;
+    }
+    let declared = rows
+        .iter()
+        .map(|row| row.name.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    for row in rows {
+        crate::model_generate_jdl::run(row, invocation.clone())?;
+    }
+    report_undeclared(root, &declared, &invocation)
+}
+
+/// Name what the model still declares and the manifest no longer does.
+///
+/// **A manifest is desired state, so a row that left is a statement.** The
+/// replay only ever adds -- every frontend it drives is a declaration -- so
+/// without this a deleted row is silently nothing, and `app plan` answers "no
+/// change" about a manifest that dropped an entire resource.
+///
+/// It reports rather than removes. Retiring a stored entity needs a storage
+/// policy, and choosing one on the reader's behalf is the one thing a
+/// declarative replay must not do: `preserve` and `drop` differ by whether the
+/// rows still exist afterwards.
+fn report_undeclared(
+    root: &Path,
+    declared: &std::collections::BTreeSet<String>,
+    invocation: &crate::Invocation,
+) -> Result<()> {
+    if invocation.output != crate::Output::Human {
+        return Ok(());
+    }
+    let manifest = crate::model_command::resolve_manifest_at(root, None)?;
+    let (source, model) = crate::model_command::load_model_at(root, &manifest, invocation.output)?;
+    let _ = source;
+    for entity in model.entities.values() {
+        if !entity.active || declared.contains(&entity.names.java_type) {
+            continue;
+        }
+        println!(
+            "  undeclared {} -- the manifest no longer declares it",
+            entity.names.java_type
+        );
+        // **The plan for removing it, and its refusal is the command's.** A
+        // manifest that stops declaring a row is asking for it to go, and a
+        // row with a table behind it cannot go without somebody saying what
+        // happens to the data. Swallowing that refusal left `app apply`
+        // exiting 0 over a retirement it had not performed and could not
+        // perform -- the reader's next `app apply` would report the same line
+        // again, forever. A row with no table plans cleanly and is only
+        // reported.
+        crate::model_destroy::run(
+            crate::model_destroy::Request {
+                kind: crate::generate::ArtifactKind::Record,
+                name: entity.names.java_type.clone(),
+                package: false,
+                storage: None,
+                confirm_table: None,
+                migration_effect: false,
+            },
+            invocation.clone().pretending(),
+        )?;
+    }
+    Ok(())
 }
 
 /// Apply a manifest against a project root the caller already knows.
@@ -240,53 +463,17 @@ fn declared(
 /// user is standing in.
 /// What applying a manifest left behind.
 ///
-/// Two outcomes rather than one `Result`, because `jails new --app` has to
-/// treat them differently: a manifest that could not be applied leaves no
-/// project, and a manifest that *was* applied leaves one whether or not a
-/// post-commit effect succeeded.
+/// One variant now, and it is kept as a type rather than collapsed to `()`
+/// because the *caller* is what makes the distinction real: `jails new --app`
+/// publishes by rename, so an error thrown out of the apply discards the whole
+/// scratch tree. The legacy engine could commit and then fail a post-commit
+/// effect -- a compose service that would not start -- which had to be
+/// reported without unmaking the project. The canonical replay has no
+/// post-commit effect to fail, so that second outcome no longer arises.
 pub(crate) enum Applied {
-    /// The transaction committed and everything after it succeeded.
+    /// The replay finished and everything after it succeeded.
     Clean,
-    /// The transaction committed; something after it failed, and the reason
-    /// has already been printed.
-    CommittedThenReported,
 }
-
-pub(crate) fn apply_in(root: &Path, no_start: bool, debug: bool) -> Result<Applied> {
-    let discovering = std::time::Instant::now();
-    let project = crate::model::Project::load(root)?;
-    let mut run = jails_engine::route::Run::committing(&project).with_timing(
-        jails_prepare::timing::TimingPhase::Discover,
-        discovering.elapsed(),
-    );
-    if no_start {
-        run = run.without_start();
-    }
-    if debug {
-        run = run.with_debug();
-    }
-    let recovered = jails_engine::route::finish_interrupted(&project)?;
-    let outcome = declared(&run, None)?.after_recovery(recovered);
-    let committed = outcome.is_committed();
-    match crate::dispatch::report(
-        &outcome,
-        &["app".to_string(), "apply".to_string()],
-        crate::Output::Human,
-        jails_prepare::review::ReviewSelection::default(),
-        debug,
-    ) {
-        Ok(()) => Ok(Applied::Clean),
-        Err(error) if committed => {
-            // Printed already. Returning it as a value rather than an error
-            // is what lets the caller finish publishing the project the
-            // commit is in before it reports the failure.
-            let _ = error;
-            Ok(Applied::CommittedThenReported)
-        }
-        Err(error) => Err(error),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,8 +502,11 @@ mod tests {
 
         let (_, new_intents) = parse_manifest(canonical).unwrap();
         let (_, old_intents) = parse_manifest(&legacy).unwrap();
-        assert_eq!(new_intents[0].on.as_deref(), Some("WorkItem"));
-        assert_eq!(new_intents[0].yields.as_deref(), Some("WorkQueued"));
+        assert_eq!(new_intents[0].strategy_on.as_deref(), Some("WorkItem"));
+        assert_eq!(
+            new_intents[0].strategy_yields.as_deref(),
+            Some("WorkQueued")
+        );
         // Identical intents, so identical state keys: renaming the key in a
         // manifest must not make `app apply` see a new intent and refuse on
         // files that already exist.

@@ -30,34 +30,12 @@ use std::collections::BTreeSet;
 // ---------------------------------------------------------------------------
 
 /// Who this change is on behalf of.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum ChangeAttribution {
+    #[codec(tag = 0)]
     Resource(ResourceOwner),
+    #[codec(tag = 1)]
     Maintenance(MaintenanceAttribution),
-}
-
-impl Codec for ChangeAttribution {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Resource(owner) => {
-                encoder.tag(0);
-                owner.encode(encoder)
-            }
-            Self::Maintenance(kind) => {
-                encoder.tag(1);
-                encoder.tag(kind.tag());
-                Ok(())
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Resource(ResourceOwner::decode(decoder)?),
-            1 => Self::Maintenance(MaintenanceAttribution::from_tag(decoder.tag()?)?),
-            other => Err(format!("unknown change attribution tag {other}"))?,
-        })
-    }
 }
 
 /// The maintenance operations that own no entity.
@@ -66,45 +44,22 @@ impl Codec for ChangeAttribution {
 /// the reports name them, and because a maintenance change's resources are
 /// charged to nobody — which is only safe when the set of things that can do
 /// it is closed.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum MaintenanceAttribution {
+    #[codec(tag = 0)]
     AppInit,
+    #[codec(tag = 1)]
     Rename,
+    #[codec(tag = 2)]
     AdoptLayout,
+    #[codec(tag = 4)]
     Format,
+    #[codec(tag = 5)]
     ContractProjection,
+    #[codec(tag = 6)]
     Undo,
+    #[codec(tag = 7)]
     Modernize,
-}
-
-impl MaintenanceAttribution {
-    fn tag(self) -> u8 {
-        match self {
-            Self::AppInit => 0,
-            Self::Rename => 1,
-            Self::AdoptLayout => 2,
-            Self::Format => 4,
-            Self::ContractProjection => 5,
-            Self::Undo => 6,
-            Self::Modernize => 7,
-        }
-    }
-
-    /// Tag 3 was `AdoptLegacy`, and is not reused: a tag reaches a recovered
-    /// journal, so a number that meant one thing must not come to mean
-    /// another.
-    fn from_tag(tag: u8) -> Result<Self> {
-        Ok(match tag {
-            0 => Self::AppInit,
-            1 => Self::Rename,
-            2 => Self::AdoptLayout,
-            4 => Self::Format,
-            5 => Self::ContractProjection,
-            6 => Self::Undo,
-            7 => Self::Modernize,
-            other => Err(format!("unknown maintenance attribution tag {other}"))?,
-        })
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -238,29 +193,11 @@ impl Codec for DesiredChange {
     }
 }
 
-pub(crate) fn encode_all<T>(
-    encoder: &mut Encoder,
-    values: &[T],
-    mut encode: impl FnMut(&T, &mut Encoder) -> Result<()>,
-) -> Result<()> {
-    encoder.count(values.len())?;
-    for value in values {
-        encode(value, encoder)?;
-    }
-    Ok(())
-}
-
-pub(crate) fn decode_all<T>(
-    decoder: &mut Decoder<'_>,
-    mut decode: impl FnMut(&mut Decoder<'_>) -> Result<T>,
-) -> Result<Vec<T>> {
-    let count = decoder.count()?;
-    let mut values = Vec::new();
-    for _ in 0..count {
-        values.push(decode(decoder)?);
-    }
-    Ok(values)
-}
+/// The sequence codec every closed jails format uses, re-exported so the
+/// modules beside this one keep their existing spelling. It lives in
+/// `jails-support` because it knows nothing about a plan: `testing` needs it
+/// and must outlive this crate.
+pub(crate) use jails_support::codec::{decode_all, encode_all};
 
 #[cfg(test)]
 pub(crate) mod tests {

@@ -1,0 +1,10 @@
+jdl 1
+app Demo @id(project_demo) {
+  pkg com.example.demo
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+component presence Room @id(cmp_presence_room) {}

@@ -13,11 +13,42 @@
             <version>5.11.4</version>
             <scope>test</scope>
         </dependency>
+        <!-- jails:dependencies -->
         <dependency>
             <groupId>org.assertj</groupId>
             <artifactId>assertj-core</artifactId>
             <version>3.27.7</version>
             <scope>test</scope>
         </dependency>
+        <!-- /jails:dependencies -->
     </dependencies>
+    <build>
+        <plugins>
+            <!-- jails:generated-source-roots -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <version>3.6.1</version>
+                <executions>
+                    <execution>
+                        <id>jails-generated-test-source-root</id>
+                        <phase>generate-test-sources</phase>
+                        <goals><goal>add-test-source</goal></goals>
+                        <configuration>
+                            <sources><source>.jails/generated/test/java</source></sources>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>jails-generated-test-resources-source-root</id>
+                        <phase>generate-test-resources</phase>
+                        <goals><goal>add-test-resource</goal></goals>
+                        <configuration>
+                            <resources><resource><directory>.jails/generated/test/resources</directory></resource></resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- /jails:generated-source-roots -->
+        </plugins>
+    </build>
 </project>

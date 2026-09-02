@@ -9,7 +9,7 @@ mod h2;
 pub use h2::Client as H2Client;
 
 use crate::compose;
-use crate::generate::find_project_root;
+use crate::find_project_root;
 use crate::run;
 use jails_support::Result;
 use std::fs;

@@ -51,7 +51,7 @@ use jails_support::codec::{self, Codec, Decoder, Encoder, ordered};
 /// Length and mode are not optional validation details. Commit, reconciliation
 /// and conflict finalisation compare the complete image, because a file with
 /// the right bytes and the wrong mode is not the file that was meant.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct LiveFileImage {
     pub sha256: ObjectId,
     pub len: u64,
@@ -59,7 +59,7 @@ pub struct LiveFileImage {
 }
 
 /// The desired bytes and their mode, by reference into the object store.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct StoredFileImage {
     pub object: ObjectRef,
     pub mode: FileMode,
@@ -71,35 +71,12 @@ pub struct StoredFileImage {
 /// "this path is meant to have no file" is a claim a plan makes and must be
 /// able to record — an `Option::None` in a map is indistinguishable from a
 /// path nobody mentioned.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum FileImage {
+    #[codec(tag = 0)]
     Absent,
+    #[codec(tag = 1)]
     Present { object: ObjectRef, mode: FileMode },
-}
-
-impl Codec for FileImage {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Absent => encoder.tag(0),
-            Self::Present { object, mode } => {
-                encoder.tag(1);
-                object.encode(encoder)?;
-                mode.encode(encoder)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Absent,
-            1 => Self::Present {
-                object: ObjectRef::decode(decoder)?,
-                mode: FileMode::decode(decoder)?,
-            },
-            other => Err(format!("unknown file image tag {other}"))?,
-        })
-    }
 }
 
 /// The identity of one frozen pending conflict.
@@ -107,7 +84,7 @@ impl Codec for FileImage {
 /// A newtype rather than a bare [`ObjectId`] because it is compared against
 /// stored values on every resume, and comparing it to the wrong digest is a
 /// mistake the type system can prevent for free.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub struct PendingIdentity(ObjectId);
 
 impl PendingIdentity {
@@ -119,17 +96,6 @@ impl PendingIdentity {
         self.0
     }
 }
-impl Codec for PendingIdentity {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.0.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self(ObjectId::decode(decoder)?))
-    }
-}
-
 impl std::fmt::Display for PendingIdentity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
@@ -137,25 +103,10 @@ impl std::fmt::Display for PendingIdentity {
 }
 
 /// One path a human resolved, and what they resolved it to.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct ResolutionIdentity {
     pub path: ProjectPath,
     pub resolved: FileImage,
-}
-
-impl Codec for ResolutionIdentity {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.path.encode(encoder)?;
-        self.resolved.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            path: ProjectPath::decode(decoder)?,
-            resolved: FileImage::decode(decoder)?,
-        })
-    }
 }
 
 /// One path an abort puts back, with **both** images.
@@ -163,28 +114,11 @@ impl Codec for ResolutionIdentity {
 /// `guarded_from` is what the abort expects to find. Restoring without
 /// checking it would overwrite an edit the user made after the conflict was
 /// frozen — the one thing an abort must never do.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct RestoreIdentity {
     pub path: ProjectPath,
     pub guarded_from: FileImage,
     pub restore_to: FileImage,
-}
-
-impl Codec for RestoreIdentity {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.path.encode(encoder)?;
-        self.guarded_from.encode(encoder)?;
-        self.restore_to.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            path: ProjectPath::decode(decoder)?,
-            guarded_from: FileImage::decode(decoder)?,
-            restore_to: FileImage::decode(decoder)?,
-        })
-    }
 }
 
 /// A POSIX mode, restricted to the permission bits.
@@ -226,70 +160,17 @@ impl Codec for FileMode {
     }
 }
 
-impl Codec for LiveFileImage {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.sha256.encode(encoder)?;
-        encoder.u64(self.len);
-        self.mode.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            sha256: ObjectId::decode(decoder)?,
-            len: decoder.u64()?,
-            mode: FileMode::decode(decoder)?,
-        })
-    }
-}
-
-impl Codec for StoredFileImage {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.object.encode(encoder)?;
-        self.mode.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            object: ObjectRef::decode(decoder)?,
-            mode: FileMode::decode(decoder)?,
-        })
-    }
-}
-
 /// What a pending output's final content will be.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum PendingCurrent {
     /// A clean or unaffected path: its postimage is known now and frozen.
+    #[codec(tag = 0)]
     Exact(LiveFileImage),
     /// A conflicted path: not knowable until the user resolves it. Recorded as
     /// an explicit "learned later" rather than a placeholder that would look
     /// like a real image.
+    #[codec(tag = 1)]
     ResolveFromLive,
-}
-
-impl Codec for PendingCurrent {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Exact(image) => {
-                encoder.tag(0);
-                image.encode(encoder)
-            }
-            Self::ResolveFromLive => {
-                encoder.tag(1);
-                Ok(())
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Exact(LiveFileImage::decode(decoder)?),
-            1 => Self::ResolveFromLive,
-            other => return Err(format!("unknown pending current tag {other}").into()),
-        })
-    }
 }
 
 /// The three tokens that delimit a conflict hunk.
@@ -399,25 +280,11 @@ impl Codec for PendingConflictPath {
 
 /// A path the transaction wrote cleanly, frozen so the resume does not have to
 /// re-derive it from a tree that is mid-conflict.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct FrozenPath {
     pub path: ProjectPath,
+    /// `None` is a deletion: the path's postimage is that it is absent.
     pub postimage: Option<LiveFileImage>,
-}
-
-impl Codec for FrozenPath {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.path.encode(encoder)?;
-        // `None` is a deletion: the path's postimage is that it is absent.
-        encoder.option(self.postimage.as_ref(), |e, image| image.encode(e))
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            path: ProjectPath::decode(decoder)?,
-            postimage: decoder.option(LiveFileImage::decode)?,
-        })
-    }
 }
 
 /// Compute the finalisation identity of a frozen conflict.

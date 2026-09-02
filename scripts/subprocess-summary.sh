@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# **What the suite's toolchain subprocesses cost, printed on every gate run.**
+#
+# `tests/common/mod.rs` records this whatever happens -- one small TSV per test
+# binary under `target/jails-test-profile` -- and CLAUDE.md is explicit about
+# why it is not behind a flag: "it has to be on by default or it is not there
+# on the run that raises the question". For a while the concurrent python
+# runner did the printing, and deleting that runner silently took the report
+# with it, leaving the gate measuring its own cost and showing nobody.
+#
+# The number to read is **mean concurrency against the machine's cores**. Equal
+# to the core count means the run is packed and only removing work can help;
+# well below it means there are idle cores and the schedule is the problem.
+set -uo pipefail
+shopt -s nullglob
+files=(target/jails-test-profile/*.tsv)
+((${#files[@]})) || { echo "subprocess profile: nothing recorded"; exit 0; }
+awk -F'\t' '
+  $1=="span_ms"  { if ($2>span) span=$2 }
+  $1=="queue_ms" { queue+=$2 }
+  $1=="tool"     { runs[$2]+=$3; ms[$2]+=$4; total+=$4 }
+  END {
+    if (total==0 || span==0) { print "subprocess profile: nothing recorded"; exit }
+    printf "subprocess cost:"
+    for (t in ms) printf " %s %.1fs over %d;", t, ms[t]/1000, runs[t]
+    printf "\n%.1fs of subprocess work in a %.1fs span (mean concurrency %.2f), %.1fs queued for a permit\n",
+      total/1000, span/1000, total/span, queue/1000
+  }' "${files[@]}"

@@ -64,11 +64,16 @@ run jails g value Decision id:string! workItemId:string! action:ActionClass \
 # A human override. The reason is mandatory -- `string!` is the requirement
 # "human override with mandatory reason" expressed as a type, so an empty
 # justification cannot be constructed.
-run jails g value Override decisionId:string! actor:string! reason:string! at:instant
+# `Override` was the original name. Inside its own package it shadows
+# `java.lang.Override`, which every Java file imports implicitly -- so an
+# `Override` component would be typed as the record being declared. It
+# compiles, which is why nothing downstream would report it, and jails
+# refuses the name for exactly that reason.
+run jails g value DecisionOverride decisionId:string! actor:string! reason:string! at:instant
 
 # The audit package: the full chain, with every version that shaped it.
 run jails g value AuditPackage workItemId:string! 'decisions:list<Decision>' \
-                               'overrides:list<Override>' \
+                               'overrides:list<DecisionOverride>' \
                                'versions:map<string,string>' \
                                'issues:list<ValidationIssue>'
 
@@ -107,8 +112,8 @@ section "? suffix" "supersede rather than delete"
 has "$DOMAIN/Decision.java" 'Optional<String> supersededBy' 'superseded pointer is Optional'
 
 section "! suffix" "mandatory override reason"
-has "$DOMAIN/Override.java" 'reason.*(isEmpty|isBlank)' 'blank override reason rejected'
-has "$DOMAIN/Override.java" 'Instant at'                'override is timestamped'
+has "$DOMAIN/DecisionOverride.java" 'reason.*(isEmpty|isBlank)' 'blank override reason rejected'
+has "$DOMAIN/DecisionOverride.java" 'Instant at'                'override is timestamped'
 
 section "g repo" "replayable persistence"
 exists "$APP/DecisionRepository.java"            'decision port'

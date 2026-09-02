@@ -1,0 +1,18 @@
+jdl 1
+app Demo @id(project_demo) {
+  pkg com.example.demo
+  java 26
+  platform spring
+  build maven
+  storage none
+}
+
+entity Verification @id(ent_verification) {
+  success: boolean @id(fld_verification_success)
+}
+
+component controller Verify @id(cmp_controller_verify) {
+  on verification
+  yields verification
+  route POST "/verify"
+}

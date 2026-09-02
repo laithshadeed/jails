@@ -1,3 +1,14 @@
+//! `Status` and `Check` — the shape every `doctor` answer has.
+//!
+//! Four outcomes, and the fourth is the one that matters: `Skip` means the
+//! check could not run from here, and it is never counted as a failure. A
+//! report that turned "I could not look" into "this is fine" is worse than no
+//! report, because the reader stops looking too.
+//!
+//! Every `Fail` carries a `fix:` line — an integration test asserts it across
+//! the whole binary — for the same reason a `Diagnostic` does in `jails-model`:
+//! a refusal that does not say what to do next leaves the reader guessing.
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {
     /// Checked, and fine.
@@ -54,5 +65,18 @@ impl Check {
     pub fn fix(mut self, command: impl Into<String>) -> Self {
         self.fix = command.into();
         self
+    }
+
+    /// Add a clause to the detail this check already carries.
+    ///
+    /// For a check whose *verdict* is settled but whose reader still needs a
+    /// caveat -- a tool that resolved, beside one that did not.
+    pub fn note(mut self, extra: impl AsRef<str>) -> Self {
+        self.detail = format!("{} -- {}", self.detail, extra.as_ref());
+        self
+    }
+
+    pub fn status(&self) -> Status {
+        self.status
     }
 }

@@ -15,7 +15,10 @@
 //! auto-configuration. The output says which kind of answer it is giving.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+pub mod roots;
+
+use crate::inspect::roots::{SourceSet, scanned, source_files_in, source_roots};
+use std::path::{Path, PathBuf};
 
 use crate::java::Target;
 use crate::spec::find_project_root;
@@ -56,7 +59,10 @@ pub fn routes(json: bool) -> Result<()> {
         return Ok(());
     }
     if found.is_empty() {
-        println!("No routes found under src/main/java.");
+        println!(
+            "No routes found under {}.",
+            scanned(&source_roots(&root, SourceSet::Main))
+        );
         println!(
             "jails reads @GetMapping/@PostMapping/... and `implements HttpHandler` out of the\n\
              source; a path assembled at runtime is invisible to it."
@@ -79,9 +85,8 @@ pub fn routes(json: bool) -> Result<()> {
 }
 
 pub fn collect_routes(root: &Path) -> Vec<Route> {
-    let src = root.join("src/main/java");
     let mut found = Vec::new();
-    for path in crate::java::source_files(&src) {
+    for path in source_files_in(&source_roots(root, SourceSet::Main)) {
         let Ok(source) = std::fs::read_to_string(&path) else {
             continue;
         };
@@ -315,7 +320,10 @@ pub fn beans(pattern: Option<&str>, json: bool) -> Result<()> {
         return Ok(());
     }
     if filtered.is_empty() {
-        println!("No Spring beans found under src/main/java.");
+        println!(
+            "No Spring beans found under {}.",
+            scanned(&source_roots(&root, SourceSet::Main))
+        );
         println!(
             "jails reads @Component/@Service/@Repository/@Controller/@Configuration and\n\
              @Bean methods out of the source; a bean registered by auto-configuration\n\
@@ -408,10 +416,9 @@ pub fn beans(pattern: Option<&str>, json: bool) -> Result<()> {
 /// declares at all (needed to tell "your own type, unregistered" apart from
 /// "something Spring provides").
 pub fn collect_beans(root: &Path) -> (Vec<Bean>, BTreeSet<String>) {
-    let src = root.join("src/main/java");
     let mut beans = Vec::new();
     let mut project_types = BTreeSet::new();
-    for path in crate::java::source_files(&src) {
+    for path in source_files_in(&source_roots(root, SourceSet::Main)) {
         let Ok(source) = std::fs::read_to_string(&path) else {
             continue;
         };
@@ -773,8 +780,14 @@ pub fn stats(json: bool) -> Result<()> {
     // Through the project's own config, so a renamed layer is counted under
     // the name the project actually uses.
     let layers = crate::config::Config::load(&root)?.layers();
-    let main = collect_stats(&root.join("src/main/java"), &layers);
-    let test = collect_stats(&root.join("src/test/java"), &layers);
+    let main = collect_stats(
+        &source_files_in(&source_roots(&root, SourceSet::Main)),
+        &layers,
+    );
+    let test = collect_stats(
+        &source_files_in(&source_roots(&root, SourceSet::Test)),
+        &layers,
+    );
 
     if json {
         return stats_json(&main, &test);
@@ -782,7 +795,10 @@ pub fn stats(json: bool) -> Result<()> {
 
     let rows: Vec<&LayerStats> = main.iter().filter(|r| r.files > 0).collect();
     if rows.is_empty() {
-        println!("No Java sources under src/main/java.");
+        println!(
+            "No Java sources under {}.",
+            scanned(&source_roots(&root, SourceSet::Main))
+        );
         return Ok(());
     }
 
@@ -856,7 +872,13 @@ fn stats_json(main: &[LayerStats], test: &[LayerStats]) -> Result<()> {
     Ok(())
 }
 
-fn collect_stats(src: &Path, layers: &[(String, &'static str)]) -> Vec<LayerStats> {
+/// Tally the given files per layer.
+///
+/// Takes the files rather than a directory because a canonical project's Java
+/// is split across the reader's tree and the one the compiler writes, and a
+/// count that saw only the first half reported a domain of zero files for a
+/// project full of records.
+fn collect_stats(files: &[PathBuf], layers: &[(String, &'static str)]) -> Vec<LayerStats> {
     let mut rows: Vec<LayerStats> = layers
         .iter()
         .map(|(_, label)| LayerStats {
@@ -873,11 +895,11 @@ fn collect_stats(src: &Path, layers: &[(String, &'static str)]) -> Vec<LayerStat
         code: 0,
     });
 
-    for path in crate::java::source_files(src) {
-        let Ok(source) = std::fs::read_to_string(&path) else {
+    for path in files {
+        let Ok(source) = std::fs::read_to_string(path) else {
             continue;
         };
-        let row = layer_index(&path, layers);
+        let row = layer_index(path, layers);
         let lines = source.lines().count();
         // "Code" excludes blanks and comment lines. Javadoc is most of a
         // jails-generated file, and counting it would make every layer look

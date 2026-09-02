@@ -16,15 +16,21 @@
 //! version facts and a new transaction protocol in one diff. So the recipes
 //! keep producing `model::Change` and this module says what it means.
 //!
-//! ## What it deliberately refuses
+//! ## The contribution that used to be refused
 //!
-//! One contribution has no home in the closed protocol yet: a Spring test
-//! import. It is *refused by name* rather than dropped. A translator that
-//! silently loses a contribution produces a desired state that is missing
-//! something no test asked about — and the first symptom is a project that
-//! compiles and does not start, which is exactly the failure the whole
-//! ownership model exists to stop. §R6.3's row for `add::test_wiring` is where
-//! the missing variant is designed; until it exists, this says so.
+//! A Spring test import had no home in the closed protocol, and was *refused
+//! by name* rather than dropped — because a translator that silently loses a
+//! contribution produces a desired state missing something no test asked
+//! about, and the first symptom is a project that compiles and does not
+//! start, which is the failure the whole ownership model exists to stop.
+//!
+//! §R6.3's `add::test_wiring` row designed the variant and it is built:
+//! `ResourceKey::SpringTestImport` keyed by the file it edits, so there is one
+//! claim per `@SpringBootTest` rather than one for the whole project. That
+//! grain is the point — a test written after this ran is not covered by a
+//! claim about a file it is not in, which is what makes the next `add` or
+//! `sync` notice it. `state_test_import` is the translation and
+//! `a_spring_test_import_is_claimed_once_per_test_it_edits` holds it.
 //!
 //! ## Ownership, not authorship
 //!

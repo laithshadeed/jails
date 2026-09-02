@@ -30,7 +30,7 @@ use crate::database::QueryId;
 use crate::entity::{CapabilitySpec, EntityId, OneShotId, TypeTargetId};
 use crate::feature::BuildFeature;
 use crate::identity::{JavaType, MarkerId, ProjectPath, PropertyKey, ServiceName, VolumeName};
-use jails_support::codec::{Codec, Decoder, Encoder, ordered};
+use jails_support::codec::{Codec, Decoder, Encoder};
 use std::collections::BTreeSet;
 
 // ---------------------------------------------------------------------------
@@ -53,7 +53,9 @@ impl CanonicalYamlMapping {
                 "compose mapping contains CR; canonical YAML is LF-only".to_string(),
             ));
         }
-        if text.contains("# jails:") || text.contains("# /jails:") {
+        if text.contains(jails_codemod::Marked::OPEN_PREFIX)
+            || text.contains(jails_codemod::Marked::CLOSE_PREFIX)
+        {
             return Err(jails_support::Failure::Told(
                 "compose mapping contains a jails marker; markers belong to the format owner"
                     .to_string(),
@@ -105,41 +107,12 @@ impl Codec for CanonicalYamlMapping {
 }
 
 /// One managed compose service.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub struct ComposeServiceSpec {
     pub name: ServiceName,
     pub marker: MarkerId,
     pub mapping: CanonicalYamlMapping,
     pub volumes: BTreeSet<VolumeName>,
-}
-
-impl Codec for ComposeServiceSpec {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.name.encode(encoder)?;
-        self.marker.encode(encoder)?;
-        self.mapping.encode(encoder)?;
-        encoder.count(self.volumes.len())?;
-        let mut previous: Option<&VolumeName> = None;
-        for volume in &self.volumes {
-            ordered(previous, volume)?;
-            previous = Some(volume);
-            volume.encode(encoder)?;
-        }
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        let name = ServiceName::decode(decoder)?;
-        let marker = MarkerId::decode(decoder)?;
-        let mapping = CanonicalYamlMapping::decode(decoder)?;
-        let volumes: BTreeSet<VolumeName> = decoder.set()?;
-        Ok(Self {
-            name,
-            marker,
-            mapping,
-            volumes,
-        })
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -151,10 +124,13 @@ impl Codec for ComposeServiceSpec {
 /// Declaration order is tag order (§R1.4's table), and the derived ordering is
 /// therefore the wire ordering — which is what lets a set of keys be encoded
 /// canonically without a second sort rule.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub enum ResourceKey {
+    #[codec(tag = 0)]
     WholeFile(ProjectPath),
+    #[codec(tag = 1)]
     MavenDependency(MavenCoordinate),
+    #[codec(tag = 2)]
     /// What the build has to *do*, not the plugin that does it.
     ///
     /// `pending.md` §3: this was a Maven coordinate, which is not a name Gradle
@@ -163,20 +139,20 @@ pub enum ResourceKey {
     /// is one rendering of the feature and the Gradle block is the other; the
     /// key is what they are both renderings *of*.
     BuildFeature(BuildFeature),
+    #[codec(tag = 3)]
     ComposeService(ServiceName),
-    Property {
-        path: ProjectPath,
-        key: PropertyKey,
-    },
-    MarkedBlock {
-        path: ProjectPath,
-        marker: MarkerId,
-    },
+    #[codec(tag = 4)]
+    Property { path: ProjectPath, key: PropertyKey },
+    #[codec(tag = 5)]
+    MarkedBlock { path: ProjectPath, marker: MarkerId },
+    #[codec(tag = 6)]
     CommandRegistration {
         dispatcher: JavaType,
         command: JavaType,
     },
+    #[codec(tag = 7)]
     HumanConfigCapability(crate::entity::CapabilityId),
+    #[codec(tag = 8)]
     /// One `@TestConfiguration` imported into one `@SpringBootTest`.
     ///
     /// Keyed by the file *and* the class, because the same capability imports
@@ -184,10 +160,8 @@ pub enum ResourceKey {
     /// is an independent claim: a test added later gets its own row, and a
     /// second capability importing a different config into the same file does
     /// not collide with this one.
-    SpringTestImport {
-        path: ProjectPath,
-        class: JavaType,
-    },
+    SpringTestImport { path: ProjectPath, class: JavaType },
+    #[codec(tag = 9)]
     /// The `<mainClass>` a build file declares.
     ///
     /// Keyed by the build file, because a project has exactly one packaged
@@ -195,6 +169,7 @@ pub enum ResourceKey {
     /// has to see -- not a last-writer-wins that decides in silence which of
     /// two `main` methods the jar starts.
     MavenMainClass(ProjectPath),
+    #[codec(tag = 10)]
     /// One reader-owned named SQL contract. Query identity survives moving the
     /// source file; generated files are projections of this claim.
     Query(QueryId),
@@ -228,69 +203,6 @@ impl ResourceKey {
         )
     }
 }
-impl Codec for ResourceKey {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::WholeFile(path) => path.encode(encoder),
-            Self::MavenDependency(coordinate) => coordinate.encode(encoder),
-            Self::BuildFeature(feature) => feature.encode(encoder),
-            Self::ComposeService(name) => name.encode(encoder),
-            Self::Property { path, key } => {
-                path.encode(encoder)?;
-                key.encode(encoder)
-            }
-            Self::MarkedBlock { path, marker } => {
-                path.encode(encoder)?;
-                marker.encode(encoder)
-            }
-            Self::CommandRegistration {
-                dispatcher,
-                command,
-            } => {
-                dispatcher.encode(encoder)?;
-                command.encode(encoder)
-            }
-            Self::HumanConfigCapability(id) => id.encode(encoder),
-            Self::SpringTestImport { path, class } => {
-                path.encode(encoder)?;
-                class.encode(encoder)
-            }
-            Self::MavenMainClass(path) => path.encode(encoder),
-            Self::Query(id) => id.encode(encoder),
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::WholeFile(ProjectPath::decode(decoder)?),
-            1 => Self::MavenDependency(MavenCoordinate::decode(decoder)?),
-            2 => Self::BuildFeature(BuildFeature::decode(decoder)?),
-            3 => Self::ComposeService(ServiceName::decode(decoder)?),
-            4 => Self::Property {
-                path: ProjectPath::decode(decoder)?,
-                key: PropertyKey::decode(decoder)?,
-            },
-            5 => Self::MarkedBlock {
-                path: ProjectPath::decode(decoder)?,
-                marker: MarkerId::decode(decoder)?,
-            },
-            6 => Self::CommandRegistration {
-                dispatcher: JavaType::decode(decoder)?,
-                command: JavaType::decode(decoder)?,
-            },
-            7 => Self::HumanConfigCapability(crate::entity::CapabilityId::decode(decoder)?),
-            8 => Self::SpringTestImport {
-                path: ProjectPath::decode(decoder)?,
-                class: JavaType::decode(decoder)?,
-            },
-            9 => Self::MavenMainClass(ProjectPath::decode(decoder)?),
-            10 => Self::Query(QueryId::decode(decoder)?),
-            other => Err(format!("unknown resource key tag {other}"))?,
-        })
-    }
-}
-
 /// A property's value, and the prose that introduces it.
 ///
 /// A capability's properties are not only settings: `add db` writes
@@ -363,30 +275,38 @@ impl Codec for PropertySetting {
 
 /// What gets written for a resource. Same tags as [`ResourceKey`], and the two
 /// must agree — see [`ResourceValue::agrees_with`].
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum ResourceValue {
+    #[codec(tag = 0)]
     /// A whole file's content is the file, not the record: the record only
     /// says the path is claimed.
     WholeFile,
+    #[codec(tag = 1)]
     MavenDependency(DependencySpec),
+    #[codec(tag = 2)]
     /// The Maven rendering of a [`ResourceKey::BuildFeature`] claim.
     ///
     /// Still Maven-shaped, and correctly so: the value is what jails splices
     /// into a *pom*, and `projection.rs` renders the Gradle side from the key.
     BuildPlugin(PluginSpec),
+    #[codec(tag = 3)]
     ComposeService(ComposeServiceSpec),
+    #[codec(tag = 4)]
     Property(PropertySetting),
+    #[codec(tag = 5)]
     MarkedBlock(String),
-    CommandRegistration {
-        command: JavaType,
-    },
+    #[codec(tag = 6)]
+    CommandRegistration { command: JavaType },
+    #[codec(tag = 7)]
     HumanConfigCapability(CapabilitySpec),
+    #[codec(tag = 8)]
     SpringTestImport {
         class: JavaType,
         /// The `import` statement the annotation needs when the config lives
         /// in another package, already rendered. Empty when it does not.
         statement: String,
     },
+    #[codec(tag = 9)]
     /// The entry point this claim installs, and the one it displaced.
     ///
     /// `previous` is what makes the claim reversible. There is no way to
@@ -394,10 +314,8 @@ pub enum ResourceValue {
     /// and a retirement that guessed -- deleting the element, or writing back
     /// whatever `App` a project happens to have -- would leave the jar
     /// starting a class nobody chose.
-    MavenMainClass {
-        class: JavaType,
-        previous: JavaType,
-    },
+    MavenMainClass { class: JavaType, previous: JavaType },
+    #[codec(tag = 10)]
     /// The contract's bytes live in an owned whole-file projection. This unit
     /// value records the shared semantic claim without duplicating them.
     Query,
@@ -478,66 +396,21 @@ impl ResourceValue {
         }
     }
 }
-impl Codec for ResourceValue {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::WholeFile => Ok(()),
-            Self::MavenDependency(spec) => spec.encode(encoder),
-            Self::BuildPlugin(spec) => spec.encode(encoder),
-            Self::ComposeService(spec) => spec.encode(encoder),
-            Self::Property(setting) => setting.encode(encoder),
-            Self::MarkedBlock(value) => encoder.string(value),
-            Self::CommandRegistration { command } => command.encode(encoder),
-            Self::HumanConfigCapability(spec) => spec.encode(encoder),
-            Self::SpringTestImport { class, statement } => {
-                class.encode(encoder)?;
-                encoder.string(statement)
-            }
-            Self::MavenMainClass { class, previous } => {
-                class.encode(encoder)?;
-                previous.encode(encoder)
-            }
-            Self::Query => Ok(()),
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::WholeFile,
-            1 => Self::MavenDependency(DependencySpec::decode(decoder)?),
-            2 => Self::BuildPlugin(PluginSpec::decode(decoder)?),
-            3 => Self::ComposeService(ComposeServiceSpec::decode(decoder)?),
-            4 => Self::Property(PropertySetting::decode(decoder)?),
-            5 => Self::MarkedBlock(decoder.string()?),
-            6 => Self::CommandRegistration {
-                command: JavaType::decode(decoder)?,
-            },
-            7 => Self::HumanConfigCapability(CapabilitySpec::decode(decoder)?),
-            8 => Self::SpringTestImport {
-                class: JavaType::decode(decoder)?,
-                statement: decoder.string()?,
-            },
-            9 => Self::MavenMainClass {
-                class: JavaType::decode(decoder)?,
-                previous: JavaType::decode(decoder)?,
-            },
-            10 => Self::Query,
-            other => Err(format!("unknown resource value tag {other}"))?,
-        })
-    }
-}
-
 /// Who claims a resource. A human declares an entity rather than claiming a
 /// resource directly. Schema history is the durable exception: once a
 /// migration is published, its path remains claimed after its contributing
 /// entity or one-shot retires.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub enum ResourceOwner {
+    #[codec(tag = 0)]
     Entity(EntityId),
+    #[codec(tag = 1)]
     OneShot(OneShotId),
+    #[codec(tag = 2)]
     SchemaHistory,
+    #[codec(tag = 3)]
     Query(QueryId),
+    #[codec(tag = 4)]
     /// Shared project-level architecture tests and their reviewed policy.
     ProjectArchitecture,
 }
@@ -562,44 +435,6 @@ impl ResourceOwner {
             }) => matches!(entity, EntityId::Intent(intent) if intent == target),
             _ => false,
         }
-    }
-}
-
-impl Codec for ResourceOwner {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::Entity(id) => {
-                encoder.tag(0);
-                id.encode(encoder)
-            }
-            Self::OneShot(id) => {
-                encoder.tag(1);
-                id.encode(encoder)
-            }
-            Self::SchemaHistory => {
-                encoder.tag(2);
-                Ok(())
-            }
-            Self::Query(id) => {
-                encoder.tag(3);
-                id.encode(encoder)
-            }
-            Self::ProjectArchitecture => {
-                encoder.tag(4);
-                Ok(())
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Entity(EntityId::decode(decoder)?),
-            1 => Self::OneShot(OneShotId::decode(decoder)?),
-            2 => Self::SchemaHistory,
-            3 => Self::Query(QueryId::decode(decoder)?),
-            4 => Self::ProjectArchitecture,
-            other => Err(format!("unknown resource owner tag {other}"))?,
-        })
     }
 }
 
@@ -672,34 +507,13 @@ pub struct ResourceRecord {
 /// A retired one-shot is *kept*: a migration that has been applied to a
 /// database cannot be un-applied by deleting its record, and a receipt that
 /// vanished when its target did would make the same `g field` run twice.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(label = "one-shot state")]
 pub enum OneShotState {
+    #[codec(tag = 0)]
     Active,
+    #[codec(tag = 1)]
     RetiredTargetRemoved,
-}
-
-impl OneShotState {
-    fn tag(self) -> u8 {
-        match self {
-            Self::Active => 0,
-            Self::RetiredTargetRemoved => 1,
-        }
-    }
-}
-
-impl Codec for OneShotState {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        match decoder.tag()? {
-            0 => Ok(Self::Active),
-            1 => Ok(Self::RetiredTargetRemoved),
-            other => Err(format!("unknown one-shot state tag {other}").into()),
-        }
-    }
 }
 
 /// How a one-shot relates to the resources it touched.
@@ -707,51 +521,18 @@ impl Codec for OneShotState {
 /// `Field` splits them because the two behave differently when the target goes
 /// away: a target-coupled resource dies with the record it was added to, while
 /// an append-only one (a migration file, a fixture) stays.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(label = "one-shot lifecycle")]
 pub enum OneShotLifecycle {
+    #[codec(tag = 0)]
     Field {
         target_coupled: BTreeSet<ResourceKey>,
         append_only: BTreeSet<ResourceKey>,
     },
+    #[codec(tag = 1)]
     Migration,
+    #[codec(tag = 2)]
     Cases,
-}
-
-impl OneShotLifecycle {
-    fn tag(&self) -> u8 {
-        match self {
-            Self::Field { .. } => 0,
-            Self::Migration => 1,
-            Self::Cases => 2,
-        }
-    }
-}
-impl Codec for OneShotLifecycle {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::Field {
-                target_coupled,
-                append_only,
-            } => {
-                encoder.set(target_coupled)?;
-                encoder.set(append_only)
-            }
-            Self::Migration | Self::Cases => Ok(()),
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Field {
-                target_coupled: decoder.set()?,
-                append_only: decoder.set()?,
-            },
-            1 => Self::Migration,
-            2 => Self::Cases,
-            other => Err(format!("unknown one-shot lifecycle tag {other}"))?,
-        })
-    }
 }
 
 #[cfg(test)]

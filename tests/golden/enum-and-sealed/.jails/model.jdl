@@ -1,0 +1,18 @@
+jdl 1
+app Demo @id(project_demo) {
+  pkg com.example.demo
+  java 26
+  platform plain
+  build maven
+  storage none
+}
+
+enum Status @id(ent_status) {
+  ACTIVE
+  CLOSED
+}
+
+component sealed Outcome @id(cmp_sealed_outcome) {
+  variant Accepted @id(var_cmp_sealed_outcome_accepted)
+  variant Rejected @id(var_cmp_sealed_outcome_rejected)
+}

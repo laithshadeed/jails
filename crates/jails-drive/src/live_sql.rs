@@ -9,10 +9,10 @@ use jails_protocol::database::{
     ResolvedDatasource, SchemaObject, SchemaObjectId, SchemaObjectKind, SchemaProvenance,
     SchemaSnapshot, SqlDialect, SqlTypeName,
 };
-use jails_protocol::identity::{ObjectId, SqlName};
 use jails_protocol::lifecycle::MigrationVersion;
 use jails_support::Result;
 use jails_support::codec::domain_hash;
+use jails_support::identity::{ObjectId, SqlName};
 use jails_support::process::{CommandSpec, Diagnostics, OutputMode};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -492,9 +492,15 @@ fn unhex(value: &str) -> Result<String> {
                 .into(),
         );
     }
+    // A constant chunk size, so `as_chunks::<2>()`: each pair arrives as a
+    // `&[u8; 2]` whose length is the type's rather than a runtime property.
+    // The even-length and hex-alphabet checks above are what the two
+    // `expect`s below stand on.
     let bytes = value
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let text = std::str::from_utf8(pair).expect("hex is ASCII");
             u8::from_str_radix(text, 16).expect("validated hex")

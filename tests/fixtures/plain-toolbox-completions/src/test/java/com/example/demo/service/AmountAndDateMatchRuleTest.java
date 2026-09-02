@@ -19,7 +19,7 @@ class AmountAndDateMatchRuleTest {
         var left = new Entry("BANK-1", date, money, Optional.of("left"));
         var right = new Entry("BOOK-9", date, money, Optional.of("right"));
 
-        assertThat(new AmountAndDateMatchRule().apply(new MatchCandidate(left, right)))
+        assertThat(new AmountAndDateMatchRule().evaluate(new MatchCandidate(left, right)))
                 .contains(MatchOutcome.MATCHED);
     }
 
@@ -32,7 +32,7 @@ class AmountAndDateMatchRuleTest {
         var differentMoney = new Entry("BOOK-9", date, new Money(1_001L, "GBP"), Optional.empty());
         var rule = new AmountAndDateMatchRule();
 
-        assertThat(rule.apply(new MatchCandidate(left, differentDate))).isEmpty();
-        assertThat(rule.apply(new MatchCandidate(left, differentMoney))).isEmpty();
+        assertThat(rule.evaluate(new MatchCandidate(left, differentDate))).isEmpty();
+        assertThat(rule.evaluate(new MatchCandidate(left, differentMoney))).isEmpty();
     }
 }

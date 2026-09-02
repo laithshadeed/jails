@@ -42,49 +42,56 @@ pub enum RendererId {
 }
 
 /// The formats jails edits in place, each owned by exactly one splicer.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum FormatOwner {
+    #[codec(tag = 0)]
     Pom,
+    #[codec(tag = 1)]
     Compose,
+    #[codec(tag = 2)]
     Properties,
+    #[codec(tag = 3)]
     HumanConfig,
+    #[codec(tag = 4)]
     MarkedSource,
+    #[codec(tag = 5)]
     CommandRegistration,
+    #[codec(tag = 6)]
     WholeFile,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum OneShotKind {
+    #[codec(tag = 0)]
     Field,
+    #[codec(tag = 1)]
     Migration,
+    #[codec(tag = 2)]
     Cases,
 }
 
 /// Where a template's bytes came from, as identity rather than location.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum TemplateOrigin {
-    BuiltIn {
-        name: TemplateId,
-    },
-    ProjectOverride {
-        path: ProjectPath,
-    },
+    #[codec(tag = 0)]
+    BuiltIn { name: TemplateId },
+    #[codec(tag = 1)]
+    ProjectOverride { path: ProjectPath },
     /// A machine-level override. Only its logical name is recorded — an
     /// absolute home path means nothing on another machine, and the bytes are
     /// proved by `source_object` regardless.
-    UserOverride {
-        logical_name: TemplateId,
-    },
+    #[codec(tag = 2)]
+    UserOverride { logical_name: TemplateId },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct TemplateStamp {
     pub origin: TemplateOrigin,
     pub source_object: ObjectId,
 }
 
 /// Everything needed to explain one rendered output.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct RendererStamp {
     pub renderer: RendererId,
     pub renderer_schema: u32,
@@ -101,52 +108,6 @@ pub struct RendererStamp {
     pub tools: Vec<ObjectId>,
 }
 
-impl FormatOwner {
-    fn tag(self) -> u8 {
-        match self {
-            Self::Pom => 0,
-            Self::Compose => 1,
-            Self::Properties => 2,
-            Self::HumanConfig => 3,
-            Self::MarkedSource => 4,
-            Self::CommandRegistration => 5,
-            Self::WholeFile => 6,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Result<Self> {
-        Ok(match tag {
-            0 => Self::Pom,
-            1 => Self::Compose,
-            2 => Self::Properties,
-            3 => Self::HumanConfig,
-            4 => Self::MarkedSource,
-            5 => Self::CommandRegistration,
-            6 => Self::WholeFile,
-            other => return Err(format!("unknown format owner tag {other}").into()),
-        })
-    }
-}
-
-impl OneShotKind {
-    fn tag(self) -> u8 {
-        match self {
-            Self::Field => 0,
-            Self::Migration => 1,
-            Self::Cases => 2,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Result<Self> {
-        Ok(match tag {
-            0 => Self::Field,
-            1 => Self::Migration,
-            2 => Self::Cases,
-            other => return Err(format!("unknown one-shot kind tag {other}").into()),
-        })
-    }
-}
-
 impl Codec for RendererId {
     fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         match self {
@@ -160,11 +121,11 @@ impl Codec for RendererId {
             }
             Self::Format(owner) => {
                 encoder.tag(2);
-                encoder.tag(owner.tag());
+                owner.encode(encoder)?;
             }
             Self::OneShot(kind) => {
                 encoder.tag(3);
-                encoder.tag(kind.tag());
+                kind.encode(encoder)?;
             }
             Self::ToolFeature(ToolFeature::FastTest) => {
                 encoder.tag(4);
@@ -178,62 +139,13 @@ impl Codec for RendererId {
         Ok(match decoder.tag()? {
             0 => Self::Recipe(crate::entity::recipe_from_label(&decoder.string()?)?),
             1 => Self::Capability(crate::entity::capability_from_label(&decoder.string()?)?),
-            2 => Self::Format(FormatOwner::from_tag(decoder.tag()?)?),
-            3 => Self::OneShot(OneShotKind::from_tag(decoder.tag()?)?),
+            2 => Self::Format(FormatOwner::decode(decoder)?),
+            3 => Self::OneShot(OneShotKind::decode(decoder)?),
             4 => match decoder.tag()? {
                 0 => Self::ToolFeature(ToolFeature::FastTest),
                 other => return Err(format!("unknown tool feature tag {other}").into()),
             },
             other => return Err(format!("unknown renderer tag {other}").into()),
-        })
-    }
-}
-
-impl Codec for TemplateOrigin {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::BuiltIn { name } => {
-                encoder.tag(0);
-                name.encode(encoder)
-            }
-            Self::ProjectOverride { path } => {
-                encoder.tag(1);
-                path.encode(encoder)
-            }
-            Self::UserOverride { logical_name } => {
-                encoder.tag(2);
-                logical_name.encode(encoder)
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::BuiltIn {
-                name: TemplateId::decode(decoder)?,
-            },
-            1 => Self::ProjectOverride {
-                path: ProjectPath::decode(decoder)?,
-            },
-            2 => Self::UserOverride {
-                logical_name: TemplateId::decode(decoder)?,
-            },
-            other => return Err(format!("unknown template origin tag {other}").into()),
-        })
-    }
-}
-
-impl Codec for TemplateStamp {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.origin.encode(encoder)?;
-        self.source_object.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            origin: TemplateOrigin::decode(decoder)?,
-            source_object: ObjectId::decode(decoder)?,
         })
     }
 }
@@ -260,48 +172,6 @@ impl RendererStamp {
         )))
     }
 }
-impl Codec for RendererStamp {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.renderer.encode(encoder)?;
-        encoder.u32(self.renderer_schema);
-        encoder.string(&self.jails_version)?;
-        encoder.option(self.template.as_ref(), |e, stamp| stamp.encode(e))?;
-        encoder.u32(self.context_schema);
-        self.context_object.encode(encoder)?;
-        self.relevant_inputs.encode(encoder)?;
-        encoder.count(self.tools.len())?;
-        for tool in &self.tools {
-            tool.encode(encoder)?;
-        }
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        let renderer = RendererId::decode(decoder)?;
-        let renderer_schema = decoder.u32()?;
-        let jails_version = decoder.string()?;
-        let template = decoder.option(TemplateStamp::decode)?;
-        let context_schema = decoder.u32()?;
-        let context_object = ObjectId::decode(decoder)?;
-        let relevant_inputs = ObjectId::decode(decoder)?;
-        let count = decoder.count()?;
-        let mut tools = Vec::new();
-        for _ in 0..count {
-            tools.push(ObjectId::decode(decoder)?);
-        }
-        Ok(Self {
-            renderer,
-            renderer_schema,
-            jails_version,
-            template,
-            context_schema,
-            context_object,
-            relevant_inputs,
-            tools,
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

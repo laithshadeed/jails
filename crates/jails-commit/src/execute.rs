@@ -34,6 +34,7 @@
 //! claims files that do not exist.
 
 use crate::Result;
+use crate::fault::point;
 use crate::journal::ReceiptV1;
 use crate::journal::{
     ActualImage, BlockReason, JournalState, JournalV1, ObservedImage, RootIdentity,
@@ -166,7 +167,7 @@ pub fn commit(
     // written with A's plan.
     require_same_project(locked, &bundle.root)?;
 
-    crate::fault::trip("after-lock")
+    crate::fault::trip(point::AFTER_LOCK)
         .map_err(|failure| CommitError::PreActivationIo(failure.to_string()))?;
 
     // Step 1a. Finish whatever an earlier run started and did not complete,
@@ -201,7 +202,7 @@ pub fn commit(
     // Step 2. Recheck every guard under the lock. A mismatch is stale, and
     // stale is a refusal — commit never substitutes changed operations.
     recheck(locked, change)?;
-    crate::fault::trip("after-recheck")
+    crate::fault::trip(point::AFTER_RECHECK)
         .map_err(|failure| CommitError::PreActivationIo(failure.to_string()))?;
 
     // Step 3. Truthful *because* it comes after the recheck rather than
@@ -230,7 +231,7 @@ pub fn commit(
         store::put_object(&objects, id, body)
             .map_err(|failure| CommitError::PreActivationIo(failure.to_string()))?;
     }
-    crate::fault::trip("after-objects-sync")
+    crate::fault::trip(point::AFTER_OBJECTS_SYNC)
         .map_err(|failure| CommitError::PreActivationIo(failure.to_string()))?;
 
     let journal = JournalV1 {
@@ -245,7 +246,7 @@ pub fn commit(
     journal
         .persist(&directory)
         .map_err(|failure| CommitError::PreActivationIo(failure.to_string()))?;
-    crate::fault::trip("after-journal-prepared")
+    crate::fault::trip(point::AFTER_JOURNAL_PREPARED)
         .map_err(|failure| CommitError::PreActivationIo(failure.to_string()))?;
 
     // Step 6. From here a failure leaves recovery work, never "nothing
@@ -255,7 +256,7 @@ pub fn commit(
         .persist(&directory)
         .map_err(|failure| CommitError::PreActivationIo(failure.to_string()))?;
     // Armed here, the failure is *after* activation: recovery owns it.
-    crate::fault::trip("after-journal-active")
+    crate::fault::trip(point::AFTER_JOURNAL_ACTIVE)
         .map_err(|failure| CommitError::PreActivationIo(failure.to_string()))?;
 
     let identity = change
@@ -362,7 +363,7 @@ pub(crate) fn write_ledger(
 ) -> std::result::Result<(), LedgerFailure> {
     let path = locked.handle.store.root().join("ledger.toml");
     let publish = directory.join("live-temp");
-    crate::fault::trip("before-ledger")
+    crate::fault::trip(point::BEFORE_LEDGER)
         .map_err(|failure| LedgerFailure::BeforeCommit(failure.to_string()))?;
     match change.ledger_after {
         FileImage::Absent => {
@@ -373,6 +374,30 @@ pub(crate) fn write_ledger(
                 })?;
             }
         }
+        // **An unchanged ledger is not rewritten, and cannot be.**
+        //
+        // Preparation carries the previous image forward rather than
+        // re-rendering one, so a run that changed no rows still reports
+        // "already set up" -- `is_no_op` is exactly that plus no operations
+        // and no effect. The object behind a carried-over image was interned
+        // by the commit that wrote it and then promoted to the durable store,
+        // so *this* transaction's object directory has never held its bytes
+        // and staging from there cannot work.
+        //
+        // Re-rendering instead of skipping is not the alternative: the payload
+        // carries a generation and an operation id, so a fresh render of an
+        // unchanged store is different bytes under a different id, and the
+        // image would stop matching what the ledger actually is. Nothing needs
+        // writing anyway -- the file is already these exact bytes.
+        //
+        // bugs.md B57. A *post-commit effect* is what made this reachable: it
+        // leaves the ledger untouched while making the change non-trivial, so
+        // the run walked past `is_no_op` into staging an object that was never
+        // there. That is why it took a compose service to reproduce, and why
+        // `sqlite` -- a database capability with no service -- was the control
+        // that did not. Both failpoints still fire: what is skipped is one
+        // redundant write, not the commit point around it.
+        FileImage::Present { .. } if change.ledger_after == change.ledger_before => {}
         FileImage::Present { object, mode } => {
             let staged = crate::activate::stage(&publish, objects, &object, mode, usize::MAX)
                 .map_err(|failure| LedgerFailure::BeforeCommit(failure.to_string()))?;
@@ -382,11 +407,11 @@ pub(crate) fn write_ledger(
         }
     }
     // The rename is the commit point. Everything after it is durable.
-    crate::fault::trip("after-ledger-rename")
+    crate::fault::trip(point::AFTER_LEDGER_RENAME)
         .map_err(|failure| LedgerFailure::AfterCommit(failure.to_string()))?;
     store::sync_dir(locked.handle.store.root())
         .map_err(|failure| LedgerFailure::AfterCommit(failure.to_string()))?;
-    crate::fault::trip("after-ledger-dirsync")
+    crate::fault::trip(point::AFTER_LEDGER_DIRSYNC)
         .map_err(|failure| LedgerFailure::AfterCommit(failure.to_string()))
 }
 
@@ -417,14 +442,14 @@ fn publish(
     let committed = active.advanced(JournalState::LedgerCommitted);
     if let Err(error) = committed
         .persist(directory)
-        .and_then(|()| crate::fault::trip("after-journal-ledger-committed"))
+        .and_then(|()| crate::fault::trip(point::AFTER_JOURNAL_LEDGER_COMMITTED))
     {
         return required(PostCommitStage::JournalCompletion, error.to_string());
     }
     let complete = active.advanced(JournalState::Complete);
     if let Err(error) = complete
         .persist(directory)
-        .and_then(|()| crate::fault::trip("after-journal-complete"))
+        .and_then(|()| crate::fault::trip(point::AFTER_JOURNAL_COMPLETE))
     {
         return required(PostCommitStage::JournalCompletion, error.to_string());
     }
@@ -450,7 +475,7 @@ fn publish(
     };
     if let Err(error) = receipt
         .persist(directory)
-        .and_then(|()| crate::fault::trip("after-receipt-sync"))
+        .and_then(|()| crate::fault::trip(point::AFTER_RECEIPT_SYNC))
     {
         return required(PostCommitStage::ReceiptPublication, error.to_string());
     }
@@ -463,7 +488,7 @@ fn publish(
         return required(PostCommitStage::ReceiptPublication, error.to_string());
     }
 
-    if let Err(error) = crate::fault::trip("before-receipt-move") {
+    if let Err(error) = crate::fault::trip(point::BEFORE_RECEIPT_MOVE) {
         return required(PostCommitStage::ReceiptPublication, error.to_string());
     }
     let destination = locked.handle.store.receipt(&change.transaction_id);
@@ -479,16 +504,22 @@ fn publish(
             format!("could not publish the receipt: {error}"),
         );
     }
-    if let Err(error) = crate::fault::trip("after-receipt-move") {
+    if let Err(error) = crate::fault::trip(point::AFTER_RECEIPT_MOVE) {
         return required(PostCommitStage::ReceiptPublication, error.to_string());
     }
     for (parent, point) in [
         (
             locked.handle.store.transactions(),
-            "after-transactions-parent-sync",
+            point::AFTER_TRANSACTIONS_PARENT_SYNC,
         ),
-        (locked.handle.store.receipts(), "after-receipts-parent-sync"),
-        (locked.handle.store.root().to_path_buf(), "after-root-sync"),
+        (
+            locked.handle.store.receipts(),
+            point::AFTER_RECEIPTS_PARENT_SYNC,
+        ),
+        (
+            locked.handle.store.root().to_path_buf(),
+            point::AFTER_ROOT_SYNC,
+        ),
     ] {
         if let Err(error) = store::sync_dir(&parent).and_then(|()| crate::fault::trip(point)) {
             return required(PostCommitStage::ReceiptPublication, error.to_string());

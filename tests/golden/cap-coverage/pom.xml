@@ -16,6 +16,7 @@
     </dependencies>
     <build>
         <plugins>
+            <!-- jails:coverage -->
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
@@ -51,6 +52,7 @@
                     </execution>
                 </executions>
             </plugin>
+            <!-- /jails:coverage -->
         </plugins>
     </build>
 </project>

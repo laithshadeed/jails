@@ -25,11 +25,15 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 toml = "1.1.4"
 
+jails-codec-derive = { path = "crates/jails-codec-derive" }
+jails-codemod = { path = "crates/jails-codemod" }
 jails-commit = { path = "crates/jails-commit" }
+jails-compiler = { path = "crates/jails-compiler" }
+jails-contracts = { path = "crates/jails-contracts" }
 jails-drive = { path = "crates/jails-drive" }
-jails-engine = { path = "crates/jails-engine" }
 jails-generate = { path = "crates/jails-generate" }
 jails-java = { path = "crates/jails-java" }
+jails-model = { path = "crates/jails-model" }
 jails-prepare = { path = "crates/jails-prepare" }
 jails-project = { path = "crates/jails-project" }
 jails-protocol = { path = "crates/jails-protocol" }
@@ -38,6 +42,7 @@ jails-spec = { path = "crates/jails-spec" }
 jails-state = { path = "crates/jails-state" }
 jails-support = { path = "crates/jails-support" }
 jails-testkit = { path = "crates/jails-testkit" }
+jails-workspace = { path = "crates/jails-workspace" }
 
 # One place for the lint policy, so a new crate cannot quietly opt out of it.
 [workspace.lints.rust]
@@ -67,16 +72,28 @@ edition.workspace = true
 [dependencies]
 jails-drive.workspace = true
 jails-report.workspace = true
-jails-engine.workspace = true
 jails-commit.workspace = true
 jails-prepare.workspace = true
+jails-codemod.workspace = true
+# The last edge into the legacy generator, and it is `jails new`'s: `new`,
+# `new-cli` and the Gradle project all write through `generate::write_new_file`
+# -- the write path that normalises imports, plans `package-info.java` and
+# supplies Failsafe and AssertJ from the emitted bytes. Making `new` seed a
+# canonical model is what removes it, and that is the cutover's first step
+# rather than a re-pointing: every other consumer in this binary was taking a
+# symbol `jails-spec`, `jails-protocol` or `jails-codemod` already owns.
 jails-generate.workspace = true
 jails-project.workspace = true
 jails-spec.workspace = true
 jails-java.workspace = true
+jails-model.workspace = true
+jails-contracts.workspace = true
+jails-compiler.workspace = true
+jails-workspace.workspace = true
 clap.workspace = true
 clap_complete = "4.6.7"
 jails-protocol.workspace = true
+jails-state.workspace = true
 jails-support.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
@@ -96,6 +113,21 @@ jails-project.workspace = true
 # nanosecond and got the same directory -- and reimplementing OS randomness
 # and Windows deletion semantics is not this project's work.
 tempfile.workspace = true
+# The toolchain permit gate is shared across *processes*, not just threads,
+# because the suite is launched as thirty-three concurrent binaries. `flock`
+# is the only budget the kernel releases when a holder dies however it dies.
+fs2.workspace = true
 
 [lints]
 workspace = true
+
+[profile.dev]
+opt-level = 1
+debug = "line-tables-only"
+
+# Dependencies carry no debug info at all. A panic location inside `clap` or
+# `serde` is not a thing anyone here debugs, and every byte of it is linked
+# into all thirty-two test binaries and then into the CI cache -- which is
+# restored and saved on every run.
+[profile.dev.package."*"]
+debug = 0

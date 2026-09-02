@@ -396,9 +396,62 @@ pub fn docker_program() -> Option<&'static str> {
     on_path("docker").then_some("docker")
 }
 
+/// The JVM that must be able to load this project's compiled classes.
+///
+/// **`JAVA_HOME` decides, not PATH.** Maven compiles under `JAVA_HOME`, so
+/// that is the release the `.class` files carry; the first `java` on PATH is a
+/// different question and can be older. A machine with one JDK cannot tell the
+/// two apart, and a machine with two -- a repository pinning a modern default
+/// while keeping an older JDK for one build -- resolves them differently and
+/// loads nothing:
+///
+/// ```text
+/// UnsupportedClassVersionError: class file version 70.0, this version of the
+/// Java Runtime only recognizes class file versions up to 65.0
+/// ```
+///
+/// Anything that runs *compiled project code* goes through here. Probing which
+/// `java` a reader would get is a different question and belongs on PATH.
+pub fn java_program() -> OsString {
+    java_launcher(std::env::var_os("JAVA_HOME").as_deref())
+}
+
+/// [`java_program`] without the environment, so the rule can be tested without
+/// a process-global mutation.
+fn java_launcher(home: Option<&OsStr>) -> OsString {
+    home.map(|home| Path::new(home).join("bin").join("java"))
+        .filter(|java| java.is_file())
+        .map_or_else(|| OsString::from("java"), PathBuf::into_os_string)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `JAVA_HOME` wins when it holds a real launcher, and PATH answers when it
+    /// does not -- an unset, empty or half-installed `JAVA_HOME` must not
+    /// produce a path that cannot be executed.
+    #[test]
+    fn the_java_launcher_comes_from_java_home_only_when_it_is_really_there() {
+        let scratch =
+            crate::scratch::ScratchDir::reserve(&std::env::temp_dir(), "java-home").unwrap();
+        let home = scratch.path().join("jdk");
+        std::fs::create_dir_all(home.join("bin")).unwrap();
+
+        assert_eq!(
+            java_launcher(Some(home.as_os_str())),
+            OsString::from("java"),
+            "a JAVA_HOME with no bin/java is not a JDK, so PATH answers"
+        );
+
+        std::fs::write(home.join("bin/java"), "#!/bin/sh\n").unwrap();
+        assert_eq!(
+            java_launcher(Some(home.as_os_str())),
+            home.join("bin").join("java").into_os_string()
+        );
+
+        assert_eq!(java_launcher(None), OsString::from("java"));
+    }
 
     /// The failure this module exists to prevent, as a test: the value of a
     /// secret must never reach debug output, while the fact that it was set

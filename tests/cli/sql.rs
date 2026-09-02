@@ -461,7 +461,7 @@ fn unreachable_environment_datasource_reports_only_the_redacted_endpoint() {
 fn resource_status_uses_live_flyway_and_catalog_evidence_without_writing() {
     let root = temp_dir("resource-status-live");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     let generated = jails_cmd(&root, None)
         .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
         .output()

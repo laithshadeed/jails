@@ -38,20 +38,15 @@ use jails_support::codec::{self, Codec, Decoder, Encoder, ordered};
 pub(crate) const CONTEXT_SCHEMA: u32 = 1;
 
 /// What a renderer was rendering.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum RenderedSubjectContext {
+    #[codec(tag = 0)]
     Entity { id: EntityId, spec: EntitySpec },
+    #[codec(tag = 1)]
     OneShot { id: OneShotId, spec: OneShotSpec },
 }
 
 impl RenderedSubjectContext {
-    fn tag(&self) -> u8 {
-        match self {
-            Self::Entity { .. } => 0,
-            Self::OneShot { .. } => 1,
-        }
-    }
-
     /// Identity and spec must describe the same thing.
     pub fn validate(&self) -> Result<()> {
         match self {
@@ -66,58 +61,14 @@ impl RenderedSubjectContext {
         }
     }
 }
-impl Codec for RenderedSubjectContext {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::Entity { id, spec } => {
-                id.encode(encoder)?;
-                spec.encode(encoder)
-            }
-            Self::OneShot { id, spec } => {
-                id.encode(encoder)?;
-                spec.encode(encoder)
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Entity {
-                id: EntityId::decode(decoder)?,
-                spec: EntitySpec::decode(decoder)?,
-            },
-            1 => Self::OneShot {
-                id: OneShotId::decode(decoder)?,
-                spec: OneShotSpec::decode(decoder)?,
-            },
-            other => Err(format!("unknown rendered subject tag {other}"))?,
-        })
-    }
-}
 
 /// Which side of a reference this is.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, jails_codec_derive::Codec)]
 pub enum ReferenceRole {
+    #[codec(tag = 0)]
     On,
+    #[codec(tag = 1)]
     Yields,
-}
-
-impl ReferenceRole {
-    fn tag(self) -> u8 {
-        match self {
-            Self::On => 0,
-            Self::Yields => 1,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Result<Self> {
-        Ok(match tag {
-            0 => Self::On,
-            1 => Self::Yields,
-            other => Err(format!("unknown reference role tag {other}"))?,
-        })
-    }
 }
 
 /// One reference the renderer resolved.
@@ -125,27 +76,11 @@ impl ReferenceRole {
 /// The *resolved* qualified target and an optional managed identity — never a
 /// source path. A path recorded here would make the context depend on where
 /// the reader keeps their project.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, jails_codec_derive::Codec)]
 pub struct ResolvedReferenceContext {
     pub role: ReferenceRole,
     pub target: JavaType,
     pub managed: Option<EntityId>,
-}
-
-impl Codec for ResolvedReferenceContext {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.role.tag());
-        self.target.encode(encoder)?;
-        encoder.option(self.managed.as_ref(), |e, id| id.encode(e))
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            role: ReferenceRole::from_tag(decoder.tag()?)?,
-            target: JavaType::decode(decoder)?,
-            managed: decoder.option(EntityId::decode)?,
-        })
-    }
 }
 
 /// One layer and the package it resolved to.

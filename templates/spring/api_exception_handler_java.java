@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 {{duplicate_key_import}}
+{{precondition_import}}
 
 /**
  * Turns failures into RFC 9457 problem responses, in one place.
@@ -47,6 +48,7 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return ProblemDetail.forStatusAndDetail(status, failure.getMessage());
     }
 {{duplicate_key_handler}}
+{{precondition_handler}}
 
     /**
      * Bean-validation failures on a request body or parameter.

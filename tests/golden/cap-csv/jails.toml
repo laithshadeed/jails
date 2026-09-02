@@ -1,4 +1,0 @@
-# What this project is made of. `jails sync` makes the project
-# match this file; `jails add` and `jails remove` keep it true.
-[project]
-capabilities = ["csv"]

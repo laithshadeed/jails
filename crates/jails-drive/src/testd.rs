@@ -10,7 +10,7 @@ use crate::affected;
 use crate::build;
 use crate::launcher;
 use crate::model::Project;
-use jails_protocol::testing::TestReportV1;
+use crate::testing::TestReportV1;
 use jails_support::Result;
 
 pub enum Action {
@@ -106,7 +106,7 @@ fn affected_report_in(
             Ok(TestReportV1 {
                 epoch,
                 passed: true,
-                scope: jails_protocol::testing::TestScope::Unit,
+                scope: crate::testing::TestScope::Unit,
                 requested: Vec::new(),
                 cases: Vec::new(),
                 fallback_reasons: Vec::new(),

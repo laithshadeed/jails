@@ -1,6 +1,6 @@
 //! `jails resource status`: one read-only view over every recorded authority.
 
-use crate::generate::find_project_root;
+use crate::find_project_root;
 use jails_project::model::Project;
 use jails_protocol::database::{FlywayHistoryV1, SchemaObject, SchemaObjectKind, SchemaSnapshot};
 use jails_protocol::entity::{EntityId, IntentId};
@@ -133,9 +133,9 @@ pub fn inspect(project: &Project, selector: &str, datasource: Option<&str>) -> R
                 ));
             }
             Ok(bytes)
-                if jails_protocol::identity::ObjectId::from_bytes(
-                    jails_support::codec::sha256(&bytes),
-                ) != seal.content_digest =>
+                if jails_support::identity::ObjectId::from_bytes(jails_support::codec::sha256(
+                    &bytes,
+                )) != seal.content_digest =>
             {
                 migration_history = AuthorityStatus::Diverged;
                 consistency = ResourceConsistency::MigrationEditedAfterSeal;

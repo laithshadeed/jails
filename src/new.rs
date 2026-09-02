@@ -1,3 +1,21 @@
+//! `jails new` and `jails new-cli` — an empty directory to a working project.
+//!
+//! `new` wraps start.spring.io and is the one command that uses the network;
+//! `new-cli` writes a pom, an `App` and its test by hand and uses none. Both
+//! also seed `src/test/resources/fixtures/.gitkeep`, and both accept
+//! `--app <manifest>` to create the project and apply a whole manifest in one
+//! command.
+//!
+//! **Nothing on the apply path may call `Project::discover()`**, and this is
+//! where that rule was paid for. `discover` reads the *process* working
+//! directory, which during `new --app` is the parent of the project that was
+//! just created — so every route takes an explicit `Run` carrying an already
+//! resolved `Project` instead.
+//!
+//! Split by what is being written: `spring.rs` and `plain.rs` are the two
+//! project shapes, `gradle_project.rs` the third build system, `seed.rs` the
+//! files both shapes share, and `publish.rs` the write path.
+
 mod gradle_project;
 mod plain;
 mod publish;
@@ -8,7 +26,7 @@ pub use plain::new_cli;
 pub use spring::new;
 
 use seed::{git_init, previewed, reported, seed, write_agents, write_fixtures_dir, write_mise};
-use spring::{write_default_properties, write_devtools_defaults};
+use spring::write_devtools_defaults;
 
 use jails_support::Result;
 use std::fs;
@@ -134,7 +152,7 @@ fn application_class(name: &str) -> String {
     derived
 }
 
-fn camel_case(name: &str) -> String {
+pub(crate) fn camel_case(name: &str) -> String {
     let mut out = String::new();
     let mut uppercase = true;
     for character in name.chars() {
@@ -216,7 +234,7 @@ mod tests {
     use super::plain::pom_xml;
     use super::spring::{effective_deps, initializr_java, set_java_release};
     use super::*;
-    use jails_testkit::CWD_LOCK;
+    use jails_testkit::hold_cwd;
     use std::path::PathBuf;
 
     fn scratch(label: &str) -> PathBuf {
@@ -328,33 +346,6 @@ mod tests {
         assert!(pom.contains("<artifactId>assertj-core</artifactId>"));
     }
 
-    /// The entry point is a dispatcher, not a Hello World stub -- otherwise
-    /// `generate command` has nothing to register into, which is the whole
-    /// point of `new-cli`.
-    #[test]
-    fn app_java_is_a_command_dispatcher() {
-        let src = crate::generate::cli_java("com.example.demo", "App", "demo");
-        assert!(src.contains("package com.example.demo;"));
-        assert!(src.contains("public static void main(String[] args)"));
-        assert!(src.contains("public final class App"), "{src}");
-        assert!(
-            src.contains("usage: demo <command> [args]"),
-            "the program name should be the project's"
-        );
-        assert!(
-            crate::generate::is_dispatcher(&src),
-            "generate command must be able to find this"
-        );
-    }
-
-    #[test]
-    fn app_test_java_drives_the_dispatcher() {
-        let src = crate::generate::cli_test("com.example.demo", "App");
-        assert!(src.contains("import org.junit.jupiter.api.Test;"));
-        assert!(src.contains("class AppTest"));
-        assert!(src.contains("App.run("));
-    }
-
     /// What `jails new-cli` is asked for, with every Spring-shaped field at
     /// the value that means "not asked" -- the same spelling `main.rs` uses.
     fn plain_request<'a>(name: &'a str, git: bool) -> Request<'a> {
@@ -381,7 +372,7 @@ mod tests {
 
     #[test]
     fn new_cli_writes_pom_and_sources_under_the_target_directory() {
-        let _guard = CWD_LOCK.lock().unwrap();
+        let _guard = hold_cwd();
         let workdir = scratch("new-cli");
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
@@ -405,7 +396,7 @@ mod tests {
 
     #[test]
     fn new_cli_refuses_to_overwrite_an_existing_directory() {
-        let _guard = CWD_LOCK.lock().unwrap();
+        let _guard = hold_cwd();
         let workdir = scratch("new-cli-exists");
         fs::create_dir_all(workdir.join("demo-app")).unwrap();
         let original_cwd = std::env::current_dir().unwrap();
@@ -418,7 +409,7 @@ mod tests {
 
     #[test]
     fn new_cli_skips_git_setup_when_disabled() {
-        let _guard = CWD_LOCK.lock().unwrap();
+        let _guard = hold_cwd();
         let workdir = scratch("new-cli-no-git");
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();
@@ -433,7 +424,7 @@ mod tests {
 
     #[test]
     fn new_cli_sets_up_git_by_default() {
-        let _guard = CWD_LOCK.lock().unwrap();
+        let _guard = hold_cwd();
         let workdir = scratch("new-cli-git");
         let original_cwd = std::env::current_dir().unwrap();
         std::env::set_current_dir(&workdir).unwrap();

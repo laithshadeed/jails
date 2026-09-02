@@ -51,7 +51,11 @@ run jails g value Payment id:string! state:PaymentState amountMinor:long \
 # not a LocalDateTime. An audit timestamp is a moment on a global timeline --
 # LocalDateTime has no offset and is the wrong type for it. `datetime` already
 # maps to LocalDateTime, so this needs its own token.
-run jails g value AuditEntry entityId:string! from:string! to:string! at:instant
+# `from`/`to` were the original spelling. jails refuses both -- they are
+# PostgreSQL reserved words and would make the generated SQL invalid -- and
+# names the fix, which is a domain-specific pair. The brief's meaning is
+# unchanged; only the columns are nameable now.
+run jails g value AuditEntry entityId:string! movedFrom:string! movedTo:string! at:instant
 
 run jails g value CashApplyResult 'payments:list<Payment>' \
                                   'audit:list<AuditEntry>' \

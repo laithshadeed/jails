@@ -52,6 +52,7 @@ fn canonical_command_path(arguments: impl IntoIterator<Item = std::ffi::OsString
 fn canonical_child(parent: &str, child: &str) -> Option<&'static str> {
     match (parent, child) {
         ("app", "init" | "plan" | "apply")
+        | ("model", "check" | "plan" | "apply" | "eject" | "explain")
         | ("sql", "check" | "generate" | "explain")
         | ("introspect", "schema" | "query")
         | ("schema", "diff" | "apply")
@@ -62,6 +63,7 @@ fn canonical_child(parent: &str, child: &str) -> Option<&'static str> {
             "init" => "init",
             "plan" => "plan",
             "apply" => "apply",
+            "eject" => "eject",
             "check" => "check",
             "generate" => "generate",
             "explain" => "explain",
@@ -127,6 +129,14 @@ mod tests {
         assert_eq!(
             path(&["--plan-in=plan.json", "rename", "storage"]),
             ["rename", "storage"]
+        );
+        assert_eq!(
+            path(&["--output", "json", "model", "check"]),
+            ["model", "check"]
+        );
+        assert_eq!(
+            path(&["model", "eject", "ent_note", "--pretend"]),
+            ["model", "eject"]
         );
     }
 }

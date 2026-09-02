@@ -182,30 +182,12 @@ fn encode_definition(encoder: &mut Encoder, tag: u8, definition: &str) -> Result
     encoder.string(definition)
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct OpaqueMigrationStatement {
     pub path: ProjectPath,
     pub span: ByteSpan,
     pub digest: ObjectId,
     pub reason: String,
-}
-
-impl Codec for OpaqueMigrationStatement {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.path.encode(encoder)?;
-        self.span.encode(encoder)?;
-        self.digest.encode(encoder)?;
-        encoder.string(&self.reason)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            path: ProjectPath::decode(decoder)?,
-            span: ByteSpan::decode(decoder)?,
-            digest: ObjectId::decode(decoder)?,
-            reason: decoder.string()?,
-        })
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

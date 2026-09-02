@@ -22,7 +22,7 @@ use jails_support::codec::{Codec, Decoder, Encoder};
 /// The `(groupId, artifactId)` pair a managed dependency or plugin is
 /// identified by. The version is deliberately not part of it: two rows for one
 /// coordinate at two versions is the drift jails exists to prevent.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub struct MavenCoordinate {
     pub group_id: MavenId,
     pub artifact_id: MavenId,
@@ -33,19 +33,6 @@ impl MavenCoordinate {
         Ok(Self {
             group_id: MavenId::parse(group_id)?,
             artifact_id: MavenId::parse(artifact_id)?,
-        })
-    }
-}
-impl Codec for MavenCoordinate {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.group_id.encode(encoder)?;
-        self.artifact_id.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            group_id: MavenId::decode(decoder)?,
-            artifact_id: MavenId::decode(decoder)?,
         })
     }
 }
@@ -62,45 +49,27 @@ impl std::fmt::Display for MavenCoordinate {
 /// BOM supplies it, which is *correct* under `spring-boot-starter-parent` and
 /// fatal without one (CLAUDE.md: Maven refuses to read the POM at all). The
 /// two cases are therefore distinct values, never an `Option<String>`.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub enum MavenVersion {
+    #[codec(tag = 0)]
     Managed,
+    #[codec(tag = 1)]
     Pinned(ManagedVersion),
-}
-
-impl MavenVersion {
-    fn tag(&self) -> u8 {
-        match self {
-            Self::Managed => 0,
-            Self::Pinned(_) => 1,
-        }
-    }
-}
-impl Codec for MavenVersion {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::Managed => Ok(()),
-            Self::Pinned(version) => version.encode(encoder),
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        match decoder.tag()? {
-            0 => Ok(Self::Managed),
-            1 => Ok(Self::Pinned(ManagedVersion::decode(decoder)?)),
-            other => Err(format!("unknown Maven version tag {other}").into()),
-        }
-    }
 }
 
 /// The three scopes jails emits. Absent normalises to `Compile` at the
 /// boundary, so the recorded value is always explicit.
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec,
+)]
+#[codec(label = "Maven scope")]
 pub enum MavenScope {
     #[default]
+    #[codec(tag = 0)]
     Compile,
+    #[codec(tag = 1)]
     Runtime,
+    #[codec(tag = 2)]
     Test,
 }
 
@@ -126,29 +95,12 @@ impl MavenScope {
             Self::Test => "test",
         }
     }
-
-    fn tag(self) -> u8 {
-        match self {
-            Self::Compile => 0,
-            Self::Runtime => 1,
-            Self::Test => 2,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Result<Self> {
-        match tag {
-            0 => Ok(Self::Compile),
-            1 => Ok(Self::Runtime),
-            2 => Ok(Self::Test),
-            other => Err(format!("unknown Maven scope tag {other}").into()),
-        }
-    }
 }
 
 /// One managed `<dependency>`. Carries no root path and no rendered POM bytes:
 /// the format owner renders it, so the same record produces the same line in
 /// any project.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub struct DependencySpec {
     pub coordinate: MavenCoordinate,
     pub version: MavenVersion,
@@ -164,24 +116,6 @@ impl DependencySpec {
             scope: MavenScope::Compile,
             optional: false,
         }
-    }
-}
-impl Codec for DependencySpec {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.coordinate.encode(encoder)?;
-        self.version.encode(encoder)?;
-        encoder.tag(self.scope.tag());
-        encoder.bool(self.optional);
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            coordinate: MavenCoordinate::decode(decoder)?,
-            version: MavenVersion::decode(decoder)?,
-            scope: MavenScope::from_tag(decoder.tag()?)?,
-            optional: decoder.bool()?,
-        })
     }
 }
 

@@ -1,7 +1,7 @@
 //! Pure test partitioning and its human explanation.
 
 use super::TestOptions;
-use jails_protocol::testing::{
+use crate::testing::{
     SelectionReason, TestEngine, TestEnginePolicy, TestExecutionPlanV1, TestPartition, TestSelector,
 };
 use jails_support::Result;
@@ -43,7 +43,7 @@ pub(super) fn plan(
     } else {
         vec![SelectionReason::Requested]
     };
-    if options.compile == jails_protocol::testing::TestCompilePolicy::Ide {
+    if options.compile == crate::testing::TestCompilePolicy::Ide {
         return Err(
             "`--compile ide` requires a negotiated editor output epoch\n       fix: connect the editor session, or use `--compile auto`"
                 .into(),
@@ -52,11 +52,11 @@ pub(super) fn plan(
 
     let build_only_reason = if build_engine != TestEngine::Maven {
         Some("the warm engine is unavailable for this build system")
-    } else if options.compile == jails_protocol::testing::TestCompilePolicy::Build {
+    } else if options.compile == crate::testing::TestCompilePolicy::Build {
         Some("the build tool is the explicit compile owner")
     } else if !compiled_outputs_current {
         Some("compiled test outputs are stale")
-    } else if options.scope != jails_protocol::testing::TestScope::Unit || options.database_schema {
+    } else if options.scope != crate::testing::TestScope::Unit || options.database_schema {
         Some("the warm engine only accepts isolated unit tests")
     } else if !options.tags.is_empty() {
         Some("JUnit tag eligibility is not yet attributable per warm test")
@@ -66,7 +66,7 @@ pub(super) fn plan(
 
     if options.engine == TestEnginePolicy::Warm
         && build_engine == TestEngine::Maven
-        && options.scope == jails_protocol::testing::TestScope::Unit
+        && options.scope == crate::testing::TestScope::Unit
         && !options.database_schema
         && options.tags.is_empty()
     {
@@ -177,15 +177,14 @@ pub(super) fn plan(
     };
     if matches!(
         options.compile,
-        jails_protocol::testing::TestCompilePolicy::Ide
-            | jails_protocol::testing::TestCompilePolicy::None
+        crate::testing::TestCompilePolicy::Ide | crate::testing::TestCompilePolicy::None
     ) && plan
         .partitions
         .iter()
         .any(|partition| partition.engine != TestEngine::TestdV2)
     {
         return Err(match options.compile {
-            jails_protocol::testing::TestCompilePolicy::None => {
+            crate::testing::TestCompilePolicy::None => {
                 "automatic warm execution is ineligible and `--compile none` forbids the build partition\n       fix: compile explicitly, or choose `--compile auto` so the build tool may own this partition"
             }
             _ => {
@@ -211,7 +210,7 @@ pub(super) fn validate_runtime_options(options: &TestOptions) -> Result<()> {
                 .into(),
         );
     }
-    if options.database_schema && options.scope == jails_protocol::testing::TestScope::Unit {
+    if options.database_schema && options.scope == crate::testing::TestScope::Unit {
         return Err(
             "`--db schema` has no meaning for the unit-test scope\n       fix: pass \
                     `--scope integration` or `--scope all`"
@@ -219,7 +218,7 @@ pub(super) fn validate_runtime_options(options: &TestOptions) -> Result<()> {
         );
     }
     if options.engine == TestEnginePolicy::Warm
-        && options.compile == jails_protocol::testing::TestCompilePolicy::Build
+        && options.compile == crate::testing::TestCompilePolicy::Build
     {
         return Err(
             "strict warm execution cannot hand compilation to the build engine\n       fix: use \
@@ -230,8 +229,7 @@ pub(super) fn validate_runtime_options(options: &TestOptions) -> Result<()> {
     if options.engine == TestEnginePolicy::Build
         && matches!(
             options.compile,
-            jails_protocol::testing::TestCompilePolicy::Ide
-                | jails_protocol::testing::TestCompilePolicy::None
+            crate::testing::TestCompilePolicy::Ide | crate::testing::TestCompilePolicy::None
         )
     {
         return Err(
@@ -302,7 +300,7 @@ pub(super) fn parse_duration(text: &str) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jails_protocol::testing::{TestCompilePolicy, TestScope};
+    use crate::testing::{TestCompilePolicy, TestScope};
 
     fn options() -> TestOptions {
         TestOptions {

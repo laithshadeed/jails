@@ -1,0 +1,25 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{NAME}}
+spec:
+  groups:
+    - name: {{NAME}}.slo
+      rules:
+        - alert: HttpErrorBudgetFastBurn
+          expr: |
+            sum(rate(http_server_requests_seconds_count{application="{{NAME}}",status=~"5.."}[5m]))
+              / sum(rate(http_server_requests_seconds_count{application="{{NAME}}"}[5m])) > 0.05
+          for: 5m
+          labels:
+            severity: page
+          annotations:
+            summary: HTTP error budget is burning quickly
+        - alert: HttpLatencyBudgetBurn
+          expr: |
+            histogram_quantile(0.99, sum by (le) (rate(http_server_requests_seconds_bucket{application="{{NAME}}"}[10m]))) > 1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: HTTP p99 latency exceeds one second

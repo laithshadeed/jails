@@ -1,0 +1,35 @@
+package {{pkg}};
+
+{{imports}}/**
+ * What every {{record}}Repository must do, whichever one it is.
+ *
+ * <p>Called by the in-memory adapter's unit test and by the JDBC adapter's
+ * integration test, so a difference between the two is a failing test rather
+ * than something found in production. A fake that drifts from what it stands
+ * in for is worse than no fake: every test using it stays green while the
+ * behaviour it imitates moves.
+ *
+ * <p>Public because its callers are not: the adapters live in their own
+ * packages, so a package-private contract compiles here and fails at the
+ * first test that uses it.
+ */
+public final class {{record}}RepositoryContract {
+
+    private {{record}}RepositoryContract() {}
+
+    public static void savesReadsAndDeletes({{record}}Repository repository, {{record}} sample) {
+        // The *stored* row, not the argument: with a database-assigned key the
+        // two differ by exactly the column the insert did not write.
+        {{record}} stored = repository.save(sample);
+
+        assertThat(repository.findById(stored.{{key}}())).contains(stored);
+        assertThat(repository.findAll()).contains(stored);
+        assertThat(repository.deleteById(stored.{{key}}())).isTrue();
+        assertThat(repository.findById(stored.{{key}}())).isEmpty();
+        // A second delete is not a failure: the row is already gone, which is
+        // what the caller asked for, and it is `false` rather than an error.
+        assertThat(repository.deleteById(stored.{{key}}())).isFalse();
+    }
+
+    // Reader-owned shared cases belong below this stable boundary.
+}

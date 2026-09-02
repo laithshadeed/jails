@@ -133,21 +133,19 @@ const ALLOWED_LEFTOVER: &[(&str, &str, &str)] = &[
 
 /// Kinds `destroy` refuses, and the refusal is the point.
 ///
-/// The first two are forward-only: a migration that has run cannot be unrun by
-/// deleting its file, and a field overlay is undone by another overlay.
-/// `cases` is the third **one-shot**, and it joined this list with the
-/// dispatch flip: V1 destroyed it by rebuilding the test path from the
-/// markdown path, while a one-shot is now a receipt over the source's bytes
-/// and the ledger schema has no list for taking one back. Regenerating from
-/// the same brief is already a no-op, so the receipt is never in the way --
-/// the generated test is the reader's to delete.
+/// Both are forward-only: a migration that has run cannot be unrun by deleting
+/// its file, and a field overlay is undone by another overlay.
 ///
-/// `association` was here and is not. Its DDL is append-only too, but
-/// retiring it *appends* `drop constraint` -- the next migration, not the
-/// un-running of one -- exactly as `--storage drop` appends `drop table`.
-/// Refusing the verb left both halves of an association permanently
-/// undestroyable.
-const FORWARD_ONLY: &[&str] = &["migration", "field", "cases"];
+/// **Two kinds were here and are not, for the same reason.** `association`'s
+/// DDL is append-only too, but retiring it *appends* `drop constraint` -- the
+/// next migration, not the un-running of one -- exactly as `--storage drop`
+/// appends `drop table`; refusing the verb left both halves of an association
+/// permanently undestroyable. `cases` was a *ledger* limitation rather than a
+/// semantic one: a one-shot was a receipt over the source's bytes and the
+/// schema had no list for taking one back. On the compiler it is an ordinary
+/// component declaration, so removing it is model subtraction like any other
+/// and the generated test goes with it.
+const FORWARD_ONLY: &[&str] = &["migration", "field"];
 
 fn explanation(kind: &str, rel: &str) -> Option<&'static str> {
     ALLOWED_LEFTOVER
@@ -244,12 +242,17 @@ fn remove_recorded(
 /// That is strictly the better failure, and this test is what says so: not one
 /// kind may quietly succeed at deleting files it cannot know it wrote, and not
 /// one may refuse without saying what would have made it possible.
-#[test]
-fn destroy_refuses_rather_than_guessing_on_a_project_with_no_record() {
+/// One scenario's worth of the check below, so the table can be scheduled.
+///
+/// Every cell is its own temporary directory and its own `jails` processes,
+/// which is what makes the table parallelisable at all -- and what made
+/// running it on one thread inside one `#[test]` cost eighteen seconds of a
+/// four-core machine's time. Findings are returned rather than asserted so
+/// the report the caller builds stays in table order however the cells ran.
+fn refusals_without_a_record(scenario: &scenarios::Scenario) -> (Vec<String>, usize) {
     let mut findings: Vec<String> = Vec::new();
     let mut refusals = 0usize;
-
-    for scenario in SCENARIOS {
+    {
         let root = scenarios::prepare(scenario);
         for step in scenario.steps {
             scenarios::run_step(&root, scenario.name, step);
@@ -286,6 +289,23 @@ fn destroy_refuses_rather_than_guessing_on_a_project_with_no_record() {
         }
     }
 
+    (findings, refusals)
+}
+
+#[test]
+fn destroy_refuses_rather_than_guessing_on_a_project_with_no_record() {
+    let per_scenario = common::parallel::map_recording(
+        "agreement-no-record",
+        SCENARIOS,
+        |scenario| scenario.name.to_string(),
+        refusals_without_a_record,
+    );
+    let findings: Vec<String> = per_scenario
+        .iter()
+        .flat_map(|(findings, _)| findings.clone())
+        .collect();
+    let refusals: usize = per_scenario.iter().map(|(_, refusals)| refusals).sum();
+
     assert!(
         findings.is_empty(),
         "destroy on a project with no record is wrong in {} place(s):\n  {}",
@@ -301,11 +321,11 @@ fn destroy_refuses_rather_than_guessing_on_a_project_with_no_record() {
     );
 }
 
-#[test]
-fn destroy_removes_exactly_what_generate_created() {
+/// One scenario's worth of the agreement check. See
+/// [`refusals_without_a_record`] for why the table is shaped this way.
+fn agreement_for(scenario: &scenarios::Scenario) -> Vec<String> {
     let mut findings: Vec<String> = Vec::new();
-
-    for scenario in SCENARIOS {
+    {
         let root = scenarios::prepare(scenario);
         // What each step added, so a capability's files are never charged to
         // a generator, and a generator's files are attributed to the command
@@ -403,6 +423,21 @@ fn destroy_removes_exactly_what_generate_created() {
 
         std::fs::remove_dir_all(&root).ok();
     }
+
+    findings
+}
+
+#[test]
+fn destroy_removes_exactly_what_generate_created() {
+    let findings: Vec<String> = common::parallel::map_recording(
+        "agreement-paths",
+        SCENARIOS,
+        |scenario| scenario.name.to_string(),
+        agreement_for,
+    )
+    .into_iter()
+    .flatten()
+    .collect();
 
     assert!(
         findings.is_empty(),

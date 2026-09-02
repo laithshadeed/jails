@@ -70,11 +70,19 @@ pub fn new(request: Request<'_>) -> Result<()> {
         set_java_release(&tree, initializr_java(java), java)?;
     }
     write_fixtures_dir(&tree)?;
-    finish_spring_project(&tree, deps)?;
+    finish_spring_project(
+        &tree,
+        deps,
+        Seed {
+            name,
+            package: &resolved_package(name, group, package),
+            java,
+            app,
+        },
+    )?;
     ensure_enforcer(&tree, java)?;
     write_mise(&tree, java)?;
     write_agents(&tree, java)?;
-
     // start.spring.io's zip already ships a .gitignore, so just init.
     if git {
         git_init(&tree, debug);
@@ -252,7 +260,16 @@ fn new_offline(request: &Request<'_>, deps: &str) -> Result<()> {
         ),
     )?;
     write_fixtures_dir(&tree)?;
-    finish_spring_project(&tree, deps)?;
+    finish_spring_project(
+        &tree,
+        deps,
+        Seed {
+            name,
+            package: &package,
+            java,
+            app,
+        },
+    )?;
     ensure_enforcer(&tree, java)?;
     write_mise(&tree, java)?;
     write_agents(&tree, java)?;
@@ -304,18 +321,81 @@ pub(super) fn offline_dependencies(deps: &str) -> Result<String> {
 ///
 /// Run once, after the zip is extracted and before git init, so the initial
 /// commit is of a project that is already in the shape jails maintains.
-fn finish_spring_project(tree: &publish::Tree<'_>, requested_deps: &str) -> Result<()> {
+fn finish_spring_project(
+    tree: &publish::Tree<'_>,
+    requested_deps: &str,
+    seed: Seed<'_>,
+) -> Result<()> {
     verify_requested_deps(tree, requested_deps);
     drop_initializr_help(tree);
     add_jspecify(tree)?;
     // Read rather than assumed: the online path takes whatever Boot line
-    // start.spring.io is currently serving, and the properties written below
-    // are the ones that line actually has.
+    // start.spring.io is currently serving, and which of the six defaults
+    // apply is decided by that line rather than by the one this binary pins.
     let major = crate::pom::read(tree.root())
         .map(|pom| crate::pom::spring_boot_major_of(&pom))
         .unwrap_or(4);
-    write_default_properties(tree, major)?;
+    // **This is what makes `jails new` produce a canonical project**, and the
+    // six defaults move with it. They are `prop` declarations in the model
+    // rather than text this function writes, because a key written as
+    // reader-owned bytes *and* declared in the model is the collision
+    // `reconcile_properties` refuses -- which is exactly how `server.shutdown`,
+    // declared by both `new` and `add db`, made `jails set
+    // server.shutdown=graceful` refuse on a project jails created seconds
+    // earlier. The compiler writes `application.properties` from the model.
+    super::seed::seed_canonical_model(
+        tree,
+        seed.app,
+        seed_model(seed.name, seed.package, seed.java, major, "maven"),
+    )?;
     write_devtools_defaults(tree)
+}
+
+/// What a new Spring project's model needs to know about itself.
+///
+/// A parameter object for the same reason [`Request`] is one: these four are
+/// resolved together at the call site and consumed together here, and
+/// `finish_spring_project` already took two arguments that are not about them.
+pub(super) struct Seed<'a> {
+    pub name: &'a str,
+    pub package: &'a str,
+    pub java: &'a str,
+    pub app: Option<&'a Path>,
+}
+
+/// The `.jails/model.jdl` a new Spring project starts with.
+///
+/// The app node plus the six default settings, which are model nodes here
+/// rather than lines in a properties file. **The explanatory comment above
+/// each one is the cost**, and it is paid deliberately: JDL has nowhere to put
+/// prose, and a default the reader cannot see the reason for is worth less
+/// than a default the compiler owns. `jails model explain` is where the
+/// reasoning has to go if it is wanted back.
+pub(super) fn seed_model(
+    name: &str,
+    package: &str,
+    java: &str,
+    boot_major: u32,
+    build: &str,
+) -> String {
+    let mut source = super::seed::app_node(
+        &crate::new::camel_case(name),
+        package,
+        java,
+        "spring",
+        build,
+    );
+    source.push('\n');
+    for (_, property, applies) in default_properties(boot_major) {
+        if !applies {
+            continue;
+        }
+        let Some((key, value)) = property.split_once('=') else {
+            continue;
+        };
+        source.push_str(&format!("prop {key} = \"{value}\"\n"));
+    }
+    source
 }
 
 /// Remove the `HELP.md` start.spring.io ships.
@@ -328,7 +408,7 @@ fn finish_spring_project(tree: &publish::Tree<'_>, requested_deps: &str) -> Resu
 /// Through `apply::remove` rather than `fs::remove_file`, because the write
 /// layer is the only thing that mutates a project and a deletion is a
 /// mutation. The first version of this reached for `std::fs` and reopened a
-/// gate `tests/architecture.rs` holds closed at zero.
+/// gate `tests/architecture/` holds closed at zero.
 ///
 /// Best-effort: a project without one is the ordinary case for `--offline`,
 /// and failing to delete a file nobody asked for is not a reason to fail
@@ -440,28 +520,17 @@ pub(super) fn add_jspecify(tree: &publish::Tree<'_>) -> Result<()> {
     Ok(())
 }
 
-/// Settings both persona files call the default posture, and which an empty
-/// `application.properties` leaves off.
+/// The six default settings, as one table.
 ///
-/// None is discoverable from a failure: an unbounded execution model can
-/// quietly overload a downstream pool, abrupt shutdown drops in-flight work,
-/// and problem-details absent means clients learn Boot's ad-hoc error map.
-///
-/// **Keyed by the project's Boot major, because a property that does not exist
-/// is silent.** Boot binds what it recognises and ignores the rest, so writing
-/// Boot 3 spellings into a Boot 2.7 project produces a file that reads as
-/// configured and configures nothing -- the confident wrong answer, in the one
-/// place nothing checks. Every entry below is dated from Boot's own
-/// `additional-spring-configuration-metadata.json` under `deps/spring-boot`,
-/// which records `server.max-http-header-size` as replaced by
-/// `server.max-http-request-header-size` at 3.0.0.
-pub(super) fn write_default_properties(tree: &publish::Tree<'_>, boot_major: u32) -> Result<()> {
-    let path = tree
-        .root()
-        .join("src/main/resources/application.properties");
-    let existing = fs::read_to_string(&path).unwrap_or_default();
+/// **One owner, because they are now written two ways.** `new` still writes
+/// them into `application.properties` for a legacy project, and seeds them as
+/// `prop` declarations in `.jails/model.jdl` for a canonical one, where the
+/// compiler owns the key and `add db` can declare `server.shutdown` without
+/// colliding with a line `new` wrote. Two lists would drift on exactly the
+/// entries the Boot-major gate makes conditional.
+pub(super) fn default_properties(boot_major: u32) -> [(&'static str, &'static str, bool); 6] {
     let modern = boot_major >= 3;
-    let defaults = [
+    [
         (
             "# Explicit by design: virtual threads move the concurrency bound to every\n\
              # downstream dependency. Enable them only with measured pool and rate limits.",
@@ -495,45 +564,7 @@ pub(super) fn write_default_properties(tree: &publish::Tree<'_>, boot_major: u32
             "spring.lifecycle.timeout-per-shutdown-phase=30s",
             true,
         ),
-    ];
-    let mut addition = String::new();
-    for (comment, property, applies) in defaults {
-        if !applies {
-            continue;
-        }
-        let key = property.split('=').next().unwrap_or(property);
-        if existing.contains(key) {
-            continue;
-        }
-        addition.push('\n');
-        addition.push_str(comment);
-        addition.push('\n');
-        addition.push_str(property);
-        addition.push('\n');
-    }
-    if addition.is_empty() {
-        return Ok(());
-    }
-    // `trim_start` on the addition when there was nothing before it: the
-    // separator blank line exists to keep jails' block off the end of somebody
-    // else's last property, and a file that did not exist has no last property
-    // to keep off. Without this the Gradle path, which writes this file from
-    // nothing, opened every project with two blank lines.
-    let mut next = existing.trim_end().to_string();
-    if next.is_empty() {
-        return write_properties(tree, &path, addition.trim_start().to_string());
-    }
-    next.push('\n');
-    next.push_str(&addition);
-    write_properties(tree, &path, next)
-}
-
-fn write_properties(tree: &publish::Tree<'_>, path: &Path, body: String) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        tree.ensure_directory_at(parent)
-            .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
-    }
-    tree.put_at(path, body)
+    ]
 }
 
 pub(super) fn initializr_java(requested: &str) -> &str {

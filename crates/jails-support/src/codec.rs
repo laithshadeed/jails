@@ -66,6 +66,18 @@ pub trait Codec: Sized {
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self>;
 }
 
+/// The scalars and collections every record is built from, on the trait.
+///
+/// Split out because this file's secret is the *framing* -- what a length, a
+/// tag and a canonical order are -- while those impls are the separate fact
+/// that Rust's own types sit on that framing. They change for different
+/// reasons: one when the wire format does, the other when a new container
+/// needs to cross it.
+mod wire;
+
+// ---------------------------------------------------------------------------
+// Deriving the two shapes that are not decisions
+// ---------------------------------------------------------------------------
 /// 4,096 bytes per project path.
 pub const MAX_PATH_BYTES: usize = 4 * 1024;
 /// 1 MiB per ordinary string or diagnostic.
@@ -490,6 +502,36 @@ impl<'a> Decoder<'a> {
 /// function of a *value*; if `{a,b}` and `{b,a}` both decoded, one set would
 /// have two encodings and therefore two hashes, and every comparison built on
 /// those hashes would be wrong in a way nothing reports.
+/// Encode a homogeneous sequence: its length, then each element.
+///
+/// Paired with [`decode_all`]. Every closed jails format that carries a list
+/// writes it this way, so the count and the elements cannot disagree about
+/// how many there are.
+pub fn encode_all<T>(
+    encoder: &mut Encoder,
+    values: &[T],
+    mut encode: impl FnMut(&T, &mut Encoder) -> Result<()>,
+) -> Result<()> {
+    encoder.count(values.len())?;
+    for value in values {
+        encode(value, encoder)?;
+    }
+    Ok(())
+}
+
+/// Decode a sequence written by [`encode_all`].
+pub fn decode_all<T>(
+    decoder: &mut Decoder<'_>,
+    mut decode: impl FnMut(&mut Decoder<'_>) -> Result<T>,
+) -> Result<Vec<T>> {
+    let count = decoder.count()?;
+    let mut values = Vec::new();
+    for _ in 0..count {
+        values.push(decode(decoder)?);
+    }
+    Ok(values)
+}
+
 pub fn ordered<K: Ord + std::fmt::Debug>(previous: Option<&K>, next: &K) -> Result<()> {
     match previous {
         None => Ok(()),
@@ -567,7 +609,11 @@ pub fn unhex_bytes(text: &str) -> Result<Vec<u8>> {
     }
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(text.len() / 2);
-    for pair in bytes.chunks_exact(2) {
+    // `as_chunks::<2>()` rather than `chunks_exact(2)`: the size is a
+    // constant, so this hands back `&[u8; 2]` and the length is the type's
+    // rather than a runtime property nobody re-checks. The length guard above
+    // has already refused an odd-length string, so the remainder is empty.
+    for pair in bytes.as_chunks::<2>().0 {
         out.push((nibble(pair[0])? << 4) | nibble(pair[1])?);
     }
     Ok(out)
@@ -617,10 +663,14 @@ pub fn sha256(input: &[u8]) -> [u8; DIGEST_BYTES] {
     }
     message.extend_from_slice(&bit_length.to_be_bytes());
 
-    for chunk in message.chunks_exact(64) {
+    // Both sizes are constants, so both are `as_chunks`. The inner one earns
+    // it twice over: a `&[u8; 4]` is exactly what `from_be_bytes` wants, so
+    // the `try_into().expect("four bytes")` -- a fallible conversion standing
+    // in for a fact the padding loop above already guarantees -- disappears.
+    for chunk in message.as_chunks::<64>().0 {
         let mut w = [0u32; 64];
-        for (index, word) in chunk.chunks_exact(4).enumerate() {
-            w[index] = u32::from_be_bytes(word.try_into().expect("four bytes"));
+        for (index, word) in chunk.as_chunks::<4>().0.iter().enumerate() {
+            w[index] = u32::from_be_bytes(*word);
         }
         for index in 16..64 {
             let s0 = w[index - 15].rotate_right(7)

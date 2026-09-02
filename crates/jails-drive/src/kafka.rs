@@ -29,7 +29,7 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::compose;
-use crate::generate::find_project_root;
+use crate::find_project_root;
 use crate::run;
 
 /// The compose service name, and the directory the tools live in inside the
@@ -314,7 +314,7 @@ fn declared_topics(root: &Path) -> Vec<String> {
                 stack.push(path);
                 continue;
             }
-            if !path.extension().is_some_and(|e| e == "java") {
+            if path.extension().is_none_or(|e| e != "java") {
                 continue;
             }
             let Ok(text) = std::fs::read_to_string(&path) else {

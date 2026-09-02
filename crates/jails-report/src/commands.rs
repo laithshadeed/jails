@@ -173,8 +173,8 @@ fn render_names(label: &str, names: &[Name]) -> String {
 /// here is the very command that parsed the arguments.
 pub fn commands(command: Command, json: bool) -> Result<()> {
     let subs = subcommands(&command);
-    let kinds = names_of::<crate::generate::ArtifactKind>();
-    let capabilities = names_of::<crate::add::Capability>();
+    let kinds = names_of::<crate::ArtifactKind>();
+    let capabilities = names_of::<crate::Capability>();
     let flags = options(&command);
 
     if !json {
@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn every_kind_the_cli_accepts_is_listed() {
-        let listed = names_of::<crate::generate::ArtifactKind>();
+        let listed = names_of::<crate::ArtifactKind>();
         // The list is *derived*, so this cannot drift -- it asserts the
         // derivation is wired to the right enum, not that two lists agree.
         assert!(

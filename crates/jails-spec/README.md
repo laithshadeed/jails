@@ -26,7 +26,7 @@ flowchart TD
     SPEC --> BUILD["build\n(Maven / Gradle root detector)"]
 ```
 
-- [`spec::field`](file:///home/laith/code/jails/crates/jails-spec/src/spec/field.rs):
+- [`spec::field`](../../crates/jails-spec/src/spec/field.rs):
   - Parses field syntax: `name:type[modifiers]`.
   - Recognizes built-in lowercase types: `string`, `int`, `long`, `double`, `boolean`, `uuid`, `instant`, `date`, `datetime`, `bigdecimal`, `duration`, `uri`, `path`, `zoneid`.
   - Recognizes collections: `list<T>`, `map<K,V>`, `set<T>`.
@@ -36,17 +36,17 @@ flowchart TD
     - `@scope` : Multi-tenancy partition key.
     - `@unique` : Unique constraint in SQL migrations.
     - `@index` : Database index flag.
-- [`spec::kind`](file:///home/laith/code/jails/crates/jails-spec/src/spec/kind.rs):
-  - Defines [`ArtifactKind`](file:///home/laith/code/jails/crates/jails-spec/src/spec/kind.rs): `Scaffold`, `Record`, `Controller`, `Service`, `Repo`, `Usecase`, `Query`, `Transition`, `DurableJob`, `HttpSink`, `Webhook`, `Auth`, `Migration`, etc.
-  - Defines [`Capability`](file:///home/laith/code/jails/crates/jails-spec/src/spec/kind.rs): `Db`, `Kafka`, `Redis`, `Api`, `Actuator`, `Cache`, `Observability`, `Security`, `Toxiproxy`, `Mail`, `Sse`, `H2`, `Docker`, `Ci`, `Testkit`, etc.
-- [`build`](file:///home/laith/code/jails/crates/jails-spec/src/build.rs):
+- [`spec::kind`](../../crates/jails-spec/src/spec/kind.rs):
+  - Defines [`ArtifactKind`](../../crates/jails-spec/src/spec/kind.rs): `Scaffold`, `Record`, `Controller`, `Service`, `Repo`, `Usecase`, `Query`, `Transition`, `DurableJob`, `HttpSink`, `Webhook`, `Auth`, `Migration`, etc.
+  - Defines [`Capability`](../../crates/jails-spec/src/spec/kind.rs): `Db`, `Kafka`, `Redis`, `Api`, `Actuator`, `Cache`, `Observability`, `Security`, `Toxiproxy`, `Mail`, `Sse`, `H2`, `Docker`, `Ci`, `Testkit`, etc.
+- [`build`](../../crates/jails-spec/src/build.rs):
   - Discovers Maven reactors and Gradle multi-module root directories without executing JVM processes.
-- [`spec::layout`](file:///home/laith/code/jails/crates/jails-spec/src/spec/layout.rs):
+- [`spec::layout`](../../crates/jails-spec/src/spec/layout.rs):
   - Resolves conventional target directories (`src/main/java`, `src/test/java`, `src/main/resources`).
 
 ---
 
 ## How It Connects to Other Crates
 
-- **Used by [`jails-generate`](file:///home/laith/code/jails/crates/jails-generate/README.md)**: Generators query `spec::field` to construct typed Java record components, SQL columns, and validation annotations.
-- **Used by [`jails-project`](file:///home/laith/code/jails/crates/jails-project/README.md)**: Project model discovery uses `build` to locate the active module and reactor root.
+- **Used by [`jails-generate`](../../crates/jails-generate/README.md)**: Generators query `spec::field` to construct typed Java record components, SQL columns, and validation annotations.
+- **Used by [`jails-project`](../../crates/jails-project/README.md)**: Project model discovery uses `build` to locate the active module and reactor root.

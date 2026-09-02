@@ -48,7 +48,14 @@ pub fn base_package(root: &Path) -> Result<String> {
     let entry = find_application_file(&src_root)
         .or_else(|| shallowest_java_file(&src_root))
         .ok_or_else(|| {
-            "could not find a .java file under src/main/java to infer the base package".to_string()
+            // **Say that this is not a project, not that one file is
+            // missing.** The commonest way to reach here is typing `jails g`
+            // in the wrong directory, and "no .java file under
+            // src/main/java" reads as a project with a gap rather than as no
+            // project at all -- so the reader goes looking for the file
+            // instead of for their project.
+            "this directory is not a Java project: jails reads the base package off the shallowest source under `src/main/java`, and there is none\n       fix: run this inside a project, or create one with `jails new` / `jails new-cli`"
+                .to_string()
         })?;
     let contents = fs::read_to_string(&entry)
         .map_err(|e| format!("failed to read {}: {e}", entry.display()))?;

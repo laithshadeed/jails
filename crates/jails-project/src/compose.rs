@@ -468,6 +468,44 @@ pub fn up(root: &Path, names: &[&str], debug: bool) -> bool {
     }
 }
 
+/// `docker compose up -d` for an *exact* document, rather than for whatever
+/// `compose.yaml` says by the time the effect runs.
+///
+/// **`--file` is the committed object and `--project-directory` is the
+/// project**, and both halves are load-bearing. The effect is attempted after
+/// the transition publishes, so between the two somebody may edit the live
+/// file; running against what they wrote would start services this transition
+/// never described, and a retry would not repeat what the first attempt did.
+/// An explicit file list is also what disables compose's implicit override
+/// discovery, so `compose.override.yaml` is not read. Pointing the project
+/// directory at the object instead would silently relocate every relative bind
+/// mount in it.
+///
+/// Best-effort like [`up`]: the files are the capability, the daemon is a
+/// convenience.
+pub fn up_document(root: &Path, document: &Path, names: &[&str], debug: bool) -> bool {
+    let mut args: Vec<&str> = vec![
+        "--project-directory",
+        match root.to_str() {
+            Some(text) => text,
+            None => return false,
+        },
+        "--file",
+        match document.to_str() {
+            Some(text) => text,
+            None => return false,
+        },
+    ];
+    args.extend(up_args(names));
+    match invoke_compose(root, args, debug) {
+        Ok(()) => true,
+        Err(err) => {
+            eprintln!("jails: {err}");
+            false
+        }
+    }
+}
+
 /// `jails start [db|kafka]...` -- require compose.yaml and Docker. No args
 /// starts every service in the file.
 pub fn start(services: &[Runtime], debug: bool) -> Result<()> {
@@ -639,8 +677,22 @@ pub fn postgres_connect(text: &str) -> Option<PostgresConnect> {
     Some(c)
 }
 
+/// Whether a compose file carries the block jails writes for `marker`.
+///
+/// Public because `doctor` asks the same question about kafka and had been
+/// answering it with `yaml.contains("# jails:kafka")` -- a second place that
+/// knew both the marker format *and* this file's two-space indent. The indent
+/// is this module's fact, so the question belongs here.
+pub fn declares(text: &str, marker: &str) -> bool {
+    block(marker).present_in(text)
+}
+
 fn has_postgres_service(text: &str) -> bool {
-    text.contains("# jails:db")
+    // Through `declares`, not `contains`: a substring match reads `# jails:dbx`
+    // as this block, which is the prefix collision `exact_line` exists for --
+    // `durable-job-email` mistook `durable-job-email-sender` for its own and
+    // cut the longer marker in half during destroy.
+    declares(text, "db")
         || text.lines().any(|l| {
             let t = l.trim_end();
             t == "  postgres:" || t.starts_with("  postgres:")

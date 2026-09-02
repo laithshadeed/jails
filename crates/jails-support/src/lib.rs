@@ -1,31 +1,48 @@
-//! The bottom of the stack: **writing, running, encoding.**
+//! The bottom of the stack: **writing, running, encoding, naming.**
 //!
 //! Nothing here knows what a Java project is, let alone what jails generates
 //! into one. That is the boundary — a module belongs at this layer only when it
 //! would still make sense in a tool that had never heard of Maven.
 //!
-//! Three things left when that rule was applied honestly (`pending.md` §7.5).
-//! `codemod` -- the `# jails:<marker>` block splice -- is in `jails-project`
-//! now: its subject is a marked block in a *project's* `compose.yaml`, keyed to
-//! jails' own comment syntax, which does not clear the bar above. `runner` is
-//! [`hermetic`], because `process` runs a program with the reader's terminal
-//! and this one runs it with a timeout, a byte cap and no inherited
-//! environment: different safety rules, and the two names said nothing about
-//! which was which. And `CWD_LOCK` moved to `jails-testkit`, taken as a
-//! `[dev-dependency]` -- it is test infrastructure, and the reason it could not
-//! be `#[cfg(test)]` (a dependent crate's tests cannot see one) was a reason to
-//! give it a crate, not a reason to ship it.
+//! ## What is here, and what the bar keeps out
 //!
-//! [`Result`] and [`debug_cmd`] stay, because every crate above needs them and
-//! a type alias the whole workspace shares has to sit below all of it.
+//! (`pending.md` §7.5.) [`identity`] and [`identifier`] are the naming half:
+//! `ObjectId`, `Name`, `Package`, `JavaType`, `ProjectPath` and `SqlName` know
+//! nothing about a plan, so they clear the bar easily -- and the crates that
+//! outlive the cutover need them without depending on one that dies with the
+//! legacy engine. `identifier` sits here too because `SqlName` needs its
+//! `snake_case`, and a crate cannot depend upward.
+//!
+//! [`Result`] and [`debug_cmd`] are here because every crate above needs them,
+//! and a type alias the whole workspace shares has to sit below all of it.
+//!
+//! **`runner` is [`hermetic`]**: `process` runs a program with the reader's
+//! terminal and this one runs it with a timeout, a byte cap and no inherited
+//! environment. Different safety rules, and a name has to say which is which.
+//!
+//! Two things deliberately live elsewhere. `codemod` -- the `# jails:<marker>`
+//! block splice -- is its own dependency-free crate, because two ladders that
+//! cannot see each other both need it. `CWD_LOCK` is in `jails-testkit`, taken
+//! as a `[dev-dependency]`: it is test infrastructure, and being unable to be
+//! `#[cfg(test)]` (a dependent crate's tests cannot see one) is a reason to
+//! give it a crate rather than a reason to ship it in production.
+
+// `#[derive(Codec)]` writes `jails_support::codec::...` into every impl it
+// generates, and that path does not resolve inside this crate. Naming ourselves
+// makes the macro's output compile here exactly as it does in a dependent.
+extern crate self as jails_support;
 
 pub mod apply;
 pub mod codec;
+pub mod git;
 pub mod hermetic;
+pub mod identifier;
+pub mod identity;
 pub mod json;
 pub mod lock;
 pub mod process;
 pub mod scratch;
+pub mod unified;
 
 /// Every fallible jails operation returns a message a human can act on, or
 /// says that it has already said everything.

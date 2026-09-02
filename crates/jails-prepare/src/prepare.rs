@@ -42,36 +42,24 @@ pub(crate) const FORMAT: u32 = 1;
 ///
 /// Unlike [`FileImage`] this cannot be absent: a replace or a delete is about
 /// a file that is there, and "guard against absence" is a create.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct GuardedImage {
     pub object: ObjectRef,
     pub mode: FileMode,
 }
 
-impl Codec for GuardedImage {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.object.encode(encoder)?;
-        self.mode.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            object: ObjectRef::decode(decoder)?,
-            mode: FileMode::decode(decoder)?,
-        })
-    }
-}
-
 /// One file's transition, with the guard that makes it safe.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(label = "file operation")]
 pub enum FileOp {
+    #[codec(tag = 0)]
     Create {
         path: ProjectPath,
         after: ObjectRef,
         mode: FileMode,
         contributors: BTreeSet<ResourceOwner>,
     },
+    #[codec(tag = 1)]
     Replace {
         path: ProjectPath,
         before: GuardedImage,
@@ -79,6 +67,7 @@ pub enum FileOp {
         mode: FileMode,
         contributors: BTreeSet<ResourceOwner>,
     },
+    #[codec(tag = 2)]
     Delete {
         path: ProjectPath,
         before: GuardedImage,
@@ -110,87 +99,16 @@ impl FileOp {
             Self::Delete { .. } => None,
         }
     }
-
-    fn tag(&self) -> u8 {
-        match self {
-            Self::Create { .. } => 0,
-            Self::Replace { .. } => 1,
-            Self::Delete { .. } => 2,
-        }
-    }
 }
-impl Codec for FileOp {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(self.tag());
-        match self {
-            Self::Create {
-                path,
-                after,
-                mode,
-                contributors,
-            } => {
-                path.encode(encoder)?;
-                after.encode(encoder)?;
-                mode.encode(encoder)?;
-                encoder.set(contributors)
-            }
-            Self::Replace {
-                path,
-                before,
-                after,
-                mode,
-                contributors,
-            } => {
-                path.encode(encoder)?;
-                before.encode(encoder)?;
-                after.encode(encoder)?;
-                mode.encode(encoder)?;
-                encoder.set(contributors)
-            }
-            Self::Delete {
-                path,
-                before,
-                contributors,
-            } => {
-                path.encode(encoder)?;
-                before.encode(encoder)?;
-                encoder.set(contributors)
-            }
-        }
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(match decoder.tag()? {
-            0 => Self::Create {
-                path: ProjectPath::decode(decoder)?,
-                after: ObjectRef::decode(decoder)?,
-                mode: FileMode::decode(decoder)?,
-                contributors: decoder.set()?,
-            },
-            1 => Self::Replace {
-                path: ProjectPath::decode(decoder)?,
-                before: GuardedImage::decode(decoder)?,
-                after: ObjectRef::decode(decoder)?,
-                mode: FileMode::decode(decoder)?,
-                contributors: decoder.set()?,
-            },
-            2 => Self::Delete {
-                path: ProjectPath::decode(decoder)?,
-                before: GuardedImage::decode(decoder)?,
-                contributors: decoder.set()?,
-            },
-            other => Err(format!("unknown file operation tag {other}"))?,
-        })
-    }
-}
-
 /// A directory this transaction creates.
 ///
 /// There is no removal. An empty directory left behind is untidy; a removed
 /// one the user had put something in is data loss, and the two are told apart
 /// only by a listing that may be stale by the time it is acted on.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, jails_codec_derive::Codec)]
+#[codec(label = "directory operation")]
 pub enum DirectoryOp {
+    #[codec(tag = 0)]
     Create { path: ProjectPath },
 }
 
@@ -201,19 +119,94 @@ impl DirectoryOp {
         }
     }
 }
-impl Codec for DirectoryOp {
+impl Codec for PreparedIdentityV1 {
     fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.tag(0);
-        self.path().encode(encoder)
+        encoder.u32(FORMAT);
+        self.operation_identity.encode(encoder)?;
+        self.operation_id.encode(encoder)?;
+        self.preparation.encode(encoder)?;
+        encoder.count(self.input_preconditions.len())?;
+        for precondition in &self.input_preconditions {
+            precondition.encode(encoder)?;
+        }
+        encoder.count(self.operations.len())?;
+        for operation in &self.operations {
+            operation.encode(encoder)?;
+        }
+        encoder.count(self.directories.len())?;
+        for directory in &self.directories {
+            directory.encode(encoder)?;
+        }
+        self.ledger_before.encode(encoder)?;
+        self.ledger_after.encode(encoder)?;
+        encoder.count(self.object_manifest.len())?;
+        for object in &self.object_manifest {
+            object.encode(encoder)?;
+        }
+        encoder.count(self.post_commit.len())?;
+        for effect in &self.post_commit {
+            effect.encode(encoder)?;
+        }
+        self.kind.encode(encoder)
     }
 
+    /// Decode one prepared identity.
+    ///
+    /// A journal recovered after a crash comes back through here, and it goes
+    /// through the same constructors the live path used — a decoder with its
+    /// own idea of a valid value is a second validator, and two validators
+    /// drift.
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        match decoder.tag()? {
-            0 => Ok(Self::Create {
-                path: ProjectPath::decode(decoder)?,
-            }),
-            other => Err(format!("unknown directory operation tag {other}").into()),
+        let format = decoder.u32()?;
+        if format != FORMAT {
+            return Err(format!("prepared identity format {format} is not {FORMAT}").into());
         }
+        let operation_identity = OperationIdentityV1::decode(decoder)?;
+        let operation_id = OperationId::decode(decoder)?;
+        let preparation = PreparationContextFingerprint::decode(decoder)?;
+        let count = decoder.count()?;
+        let mut input_preconditions = Vec::new();
+        for _ in 0..count {
+            input_preconditions.push(InputPrecondition::decode(decoder)?);
+        }
+        let count = decoder.count()?;
+        let mut operations = Vec::new();
+        for _ in 0..count {
+            operations.push(FileOp::decode(decoder)?);
+        }
+        let count = decoder.count()?;
+        let mut directories = Vec::new();
+        for _ in 0..count {
+            directories.push(DirectoryOp::decode(decoder)?);
+        }
+        let ledger_before = FileImage::decode(decoder)?;
+        let ledger_after = FileImage::decode(decoder)?;
+        let count = decoder.count()?;
+        let mut object_manifest = Vec::new();
+        for _ in 0..count {
+            object_manifest.push(ObjectRef::decode(decoder)?);
+        }
+        let count = decoder.count()?;
+        let mut post_commit = Vec::new();
+        for _ in 0..count {
+            post_commit.push(PostCommitEffect::decode(decoder)?);
+        }
+        let kind = PreparedKind::decode(decoder)?;
+        let identity = Self {
+            operation_identity,
+            operation_id,
+            preparation,
+            input_preconditions,
+            operations,
+            directories,
+            ledger_before,
+            ledger_after,
+            object_manifest,
+            post_commit,
+            kind,
+        };
+        identity.validate()?;
+        Ok(identity)
     }
 }
 
@@ -362,97 +355,6 @@ impl PreparedIdentityV1 {
         Ok(())
     }
 }
-impl Codec for PreparedIdentityV1 {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.u32(FORMAT);
-        self.operation_identity.encode(encoder)?;
-        self.operation_id.encode(encoder)?;
-        self.preparation.encode(encoder)?;
-        encoder.count(self.input_preconditions.len())?;
-        for precondition in &self.input_preconditions {
-            precondition.encode(encoder)?;
-        }
-        encoder.count(self.operations.len())?;
-        for operation in &self.operations {
-            operation.encode(encoder)?;
-        }
-        encoder.count(self.directories.len())?;
-        for directory in &self.directories {
-            directory.encode(encoder)?;
-        }
-        self.ledger_before.encode(encoder)?;
-        self.ledger_after.encode(encoder)?;
-        encoder.count(self.object_manifest.len())?;
-        for object in &self.object_manifest {
-            object.encode(encoder)?;
-        }
-        encoder.count(self.post_commit.len())?;
-        for effect in &self.post_commit {
-            effect.encode(encoder)?;
-        }
-        self.kind.encode(encoder)
-    }
-
-    /// Decode one prepared identity.
-    ///
-    /// A journal recovered after a crash comes back through here, and it goes
-    /// through the same constructors the live path used — a decoder with its
-    /// own idea of a valid value is a second validator, and two validators
-    /// drift.
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        let format = decoder.u32()?;
-        if format != FORMAT {
-            return Err(format!("prepared identity format {format} is not {FORMAT}").into());
-        }
-        let operation_identity = OperationIdentityV1::decode(decoder)?;
-        let operation_id = OperationId::decode(decoder)?;
-        let preparation = PreparationContextFingerprint::decode(decoder)?;
-        let count = decoder.count()?;
-        let mut input_preconditions = Vec::new();
-        for _ in 0..count {
-            input_preconditions.push(InputPrecondition::decode(decoder)?);
-        }
-        let count = decoder.count()?;
-        let mut operations = Vec::new();
-        for _ in 0..count {
-            operations.push(FileOp::decode(decoder)?);
-        }
-        let count = decoder.count()?;
-        let mut directories = Vec::new();
-        for _ in 0..count {
-            directories.push(DirectoryOp::decode(decoder)?);
-        }
-        let ledger_before = FileImage::decode(decoder)?;
-        let ledger_after = FileImage::decode(decoder)?;
-        let count = decoder.count()?;
-        let mut object_manifest = Vec::new();
-        for _ in 0..count {
-            object_manifest.push(ObjectRef::decode(decoder)?);
-        }
-        let count = decoder.count()?;
-        let mut post_commit = Vec::new();
-        for _ in 0..count {
-            post_commit.push(PostCommitEffect::decode(decoder)?);
-        }
-        let kind = PreparedKind::decode(decoder)?;
-        let identity = Self {
-            operation_identity,
-            operation_id,
-            preparation,
-            input_preconditions,
-            operations,
-            directories,
-            ledger_before,
-            ledger_after,
-            object_manifest,
-            post_commit,
-            kind,
-        };
-        identity.validate()?;
-        Ok(identity)
-    }
-}
-
 /// The complete prepared transaction, bodies included.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreparedChange {

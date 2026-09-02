@@ -20,14 +20,42 @@ fn new_cli_creates_expected_project_layout() {
         )),
         "{pom}"
     );
+    // The entry point is a dispatcher, not a Hello World stub -- otherwise
+    // `generate command` has nothing to register into, which is the whole point
+    // of `new-cli`. Asserted against the bytes `new-cli` actually writes: the
+    // same assertions used to live beside a *second* renderer of this template
+    // in the legacy generator, which production stopped calling, so they held
+    // while proving nothing about what ships.
+    let app = fs::read_to_string(common::generated(
+        &root,
+        "src/main/java/com/example/demo/App.java",
+    ))
+    .unwrap();
+    assert!(app.contains("package com.example.demo;"), "{app}");
     assert!(
-        root.join("src/main/java/com/example/demo/App.java")
-            .is_file()
+        app.contains("public static void main(String[] args)"),
+        "{app}"
+    );
+    assert!(app.contains("public final class App"), "{app}");
+    assert!(
+        app.contains("usage: demo <command> [args]"),
+        "the program name should be the project's: {app}"
     );
     assert!(
-        root.join("src/test/java/com/example/demo/AppTest.java")
-            .is_file()
+        jails_codemod::dispatch::is_dispatcher(&app),
+        "`generate command` must be able to find this: {app}"
     );
+    let app_test = fs::read_to_string(common::generated(
+        &root,
+        "src/test/java/com/example/demo/AppTest.java",
+    ))
+    .unwrap();
+    assert!(
+        app_test.contains("import org.junit.jupiter.api.Test;"),
+        "{app_test}"
+    );
+    assert!(app_test.contains("class AppTest"), "{app_test}");
+    assert!(app_test.contains("App.run("), "{app_test}");
     let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
     assert!(agents.contains("jails check"), "{agents}");
     assert!(agents.contains("@MockBean"), "{agents}");
@@ -90,12 +118,18 @@ fn new_offline_creates_a_complete_spring_project_without_network() {
     assert!(pom.contains("<requireJavaVersion>"), "{pom}");
     assert!(pom.contains("<requireMavenVersion>"), "{pom}");
     assert!(
-        root.join("src/main/java/com/example/demoapp/DemoAppApplication.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/main/java/com/example/demoapp/DemoAppApplication.java"
+        )
+        .is_file()
     );
     assert!(
-        root.join("src/test/java/com/example/demoapp/DemoAppApplicationTests.java")
-            .is_file()
+        common::generated(
+            &root,
+            "src/test/java/com/example/demoapp/DemoAppApplicationTests.java"
+        )
+        .is_file()
     );
     assert_eq!(
         fs::read_to_string(root.join("mise.toml")).unwrap(),
@@ -180,16 +214,42 @@ fields = [\"id:uuid\", \"label:string!\"]
     let root = workspace.join("demo");
     // The manifest is seeded where `app apply` will find it next time...
     assert!(root.join(".jails/app.toml").is_file());
-    // ...and its intents are already applied, against the project that was
-    // just created rather than whatever encloses the process CWD.
+    // ...and the project it created is canonical, like every other project
+    // `new-cli` makes.
+    //
+    // **This assertion used to be its own negation**, and the reason it was is
+    // worth keeping: `app apply` refuses beside a model so that no project
+    // holds two editable sources, and `new --app` reached the apply directly
+    // rather than through that guard -- so seeding both produced exactly the
+    // state the refusal exists to prevent, silently. A manifest is not a
+    // second editable source once it replays *into* the model, which is what
+    // it does now, so the state the negative was guarding cannot arise: there
+    // is no ledger and nothing is written outside the managed tree.
     assert!(
-        root.join("src/main/java/com/example/demo/domain/Entry.java")
-            .is_file(),
-        "the manifest's intent should have been applied"
+        root.join(".jails/model.jdl").is_file(),
+        "a manifest-driven project should be canonical like any other"
     );
     assert!(
-        root.join("src/test/java/com/example/demo/domain/EntryTest.java")
+        !root.join(".jails/ledger.toml").exists(),
+        "and must not also carry a legacy ledger"
+    );
+    // ...and its rows are already applied, against the project that was just
+    // created rather than whatever encloses the process CWD -- the edge this
+    // command has always been the one to hit.
+    assert!(
+        root.join(".jails/generated/main/java/com/example/demo/domain/Entry.java")
+            .is_file(),
+        "the manifest's row should have been applied into the managed tree"
+    );
+    assert!(
+        root.join(".jails/generated/test/java/com/example/demo/domain/EntryTest.java")
             .is_file()
+    );
+    assert!(
+        !root
+            .join("src/main/java/com/example/demo/domain/Entry.java")
+            .exists(),
+        "and not into the reader's own sources"
     );
 }
 
@@ -438,7 +498,7 @@ fn new_cli_gives_its_own_base_package_a_package_info() {
 #[test]
 fn new_cli_inside_another_project_uses_the_new_projects_root() {
     let outer = temp_dir("new-cli-nested-root");
-    fs::create_dir_all(outer.join("src/main/java/com/outer")).unwrap();
+    fs::create_dir_all(common::generated(&outer, "src/main/java/com/outer")).unwrap();
     fs::write(
         outer.join("pom.xml"),
         "<project><properties>\
@@ -447,7 +507,7 @@ fn new_cli_inside_another_project_uses_the_new_projects_root() {
     )
     .unwrap();
     fs::write(
-        outer.join("src/main/java/com/outer/Outer.java"),
+        common::generated(&outer, "src/main/java/com/outer/Outer.java"),
         "package com.outer;\nclass Outer {}\n",
     )
     .unwrap();
@@ -582,8 +642,7 @@ fn new_gradle_writes_a_legacy_boot_build_file_the_maven_path_cannot_produce() {
     // `SpringApplication` is org.springframework.boot's, and a class cannot
     // shadow the type its own main() calls.
     assert!(
-        root.join("src/main/java/com/intercom/spring/Application.java")
-            .is_file(),
+        common::generated(&root, "src/main/java/com/intercom/spring/Application.java").is_file(),
         "expected Application.java, not SpringApplication.java"
     );
     assert!(

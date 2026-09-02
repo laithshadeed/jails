@@ -1,3 +1,10 @@
+//! Arguments for `jails test daemon`.
+//!
+//! The daemon itself is `jails-drive`'s `testd`; this is the subcommand shape
+//! that reaches it, kept with the rest of the clap tree so `jails commands`
+//! describes it at the depth a reader types (`test daemon status`, not
+//! `test`).
+
 use clap::Subcommand;
 
 #[derive(Subcommand)]

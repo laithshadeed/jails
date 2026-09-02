@@ -23,15 +23,19 @@ pub(crate) fn run(command: ContractCommand, invocation: crate::Invocation) -> Re
                         "contract output paths must be UTF-8.\n       fix: choose a project-relative UTF-8 path."
                             .to_string()
                     })?;
-                    let target = jails_protocol::identity::ProjectPath::parse(out)?;
-                    crate::dispatch::mutate(invocation, false, |run| {
-                        jails_engine::route::contract_emit(
-                            run,
-                            target.clone(),
-                            document.as_bytes().to_vec(),
-                            format == ContractFormatArg::JsonSchema,
-                        )
-                    })
+                    // **Written directly, like every other one-shot.** A
+                    // contract document is a projection of the source that
+                    // already exists: nothing declares it, nothing reconciles
+                    // it, and re-running is how it is refreshed.
+                    let root = model::Project::discover()?.root().to_path_buf();
+                    let target = root.join(out);
+                    if invocation.pretend {
+                        println!("--pretend: would write {out}");
+                    } else {
+                        jails_support::apply::put_one_shot(&target, document)?;
+                        println!("wrote {out}");
+                    }
+                    Ok(())
                 }
             }
         }

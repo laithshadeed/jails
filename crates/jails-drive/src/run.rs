@@ -1,4 +1,25 @@
-use crate::generate::find_project_root;
+//! `test`, `build`, `clean`, `run`, `watch` — the commands that shell out to
+//! the build tool.
+//!
+//! Every one of these needs Maven, so the root is resolved through
+//! `require_maven` and the refusal happens once here rather than as a
+//! confusing failure inside a subprocess. `mvnd` is preferred for real use and
+//! probed before it is chosen: it writes a registry under the Maven user home
+//! *before* Maven runs, so a read-only home kills it with an exit status
+//! indistinguishable from a failing build.
+//!
+//! **`mvn spring-boot:run` exits 0 over a failed startup**, because devtools
+//! runs `main` on its own thread and catches the exception there. So the Spring
+//! path pipes the child's output, scans it for `why::FATAL_MARKERS` and
+//! explains the failure inline — the one edge from this crate back down into
+//! `jails-report`. Piping costs the child its terminal, which is why the same
+//! path passes `-Dstyle.color=always` and `spring.output.ansi.enabled=always`;
+//! drop those and `jails run` goes monochrome.
+//!
+//! `run` and `watch` start compose services first when a `compose.yaml` is
+//! present, and only then.
+
+use crate::find_project_root;
 use jails_support::Result;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -273,9 +294,9 @@ fn forced_color(cmd: &mut Command) {
 /// What `jails test` was asked for beyond the filter.
 #[derive(Clone, Debug)]
 pub struct TestOptions {
-    pub scope: jails_protocol::testing::TestScope,
-    pub compile: jails_protocol::testing::TestCompilePolicy,
-    pub engine: jails_protocol::testing::TestEnginePolicy,
+    pub scope: crate::testing::TestScope,
+    pub compile: crate::testing::TestCompilePolicy,
+    pub engine: crate::testing::TestEnginePolicy,
     pub watch: bool,
     pub affected: bool,
     pub failed: bool,
@@ -332,7 +353,7 @@ pub(super) fn test_report_once(
     requested: &[String],
     options: TestOptions,
     debug: bool,
-) -> Result<jails_protocol::testing::TestReportV1> {
+) -> Result<crate::testing::TestReportV1> {
     test_report_once_with_fallback(requested, options, debug, None)
 }
 
@@ -341,7 +362,7 @@ fn test_report_once_with_fallback(
     mut options: TestOptions,
     debug: bool,
     fallback_reason: Option<String>,
-) -> Result<jails_protocol::testing::TestReportV1> {
+) -> Result<crate::testing::TestReportV1> {
     let (root, build) = either_root("test")?;
     let mut execution_requested = requested.to_vec();
     if options.failed {
@@ -379,7 +400,7 @@ fn test_report_once_with_fallback(
     if options.explain_selection || options.fast {
         test_plan::explain(&plan);
     }
-    if options.affected && options.engine == jails_protocol::testing::TestEnginePolicy::Build {
+    if options.affected && options.engine == crate::testing::TestEnginePolicy::Build {
         println!(
             "test selection widened to the full {:?} scope: the build engine has no safe affected-test graph",
             options.scope
@@ -397,7 +418,7 @@ fn test_report_once_with_fallback(
             .reasons
             .iter()
             .filter_map(|reason| match reason {
-                jails_protocol::testing::SelectionReason::Widened(reason) => Some(reason.as_str()),
+                crate::testing::SelectionReason::Widened(reason) => Some(reason.as_str()),
                 _ => None,
             })
             .collect::<Vec<_>>()
@@ -408,10 +429,10 @@ fn test_report_once_with_fallback(
             Some(partition_reason)
         };
         let report = match partition.engine {
-            jails_protocol::testing::TestEngine::TestdV2 => {
+            crate::testing::TestEngine::TestdV2 => {
                 test_execution::warm_report(&selectors, &options, debug)?
             }
-            jails_protocol::testing::TestEngine::Maven => {
+            crate::testing::TestEngine::Maven => {
                 let context = test_execution::MavenTestContext {
                     project: &root,
                     options: &options,
@@ -420,7 +441,7 @@ fn test_report_once_with_fallback(
                 };
                 test_execution::maven_report(&context, &selectors)?
             }
-            jails_protocol::testing::TestEngine::Gradle => {
+            crate::testing::TestEngine::Gradle => {
                 gradlew::test_report(&root, &selectors, &options, reason, debug)?
             }
         };
@@ -483,6 +504,61 @@ pub fn check(debug: bool) -> Result<()> {
     run_inherited(cmd, debug)
 }
 
+/// Run the project's own formatter, for a project whose model owns its output.
+///
+/// **The legacy route's ceremony protects something a canonical project does
+/// not have.** §R6.4 forbids letting Spotless near the live tree, and it is
+/// right about the project it was written for: the legacy engine generates
+/// into `src/`, so a formatter that fails halfway leaves jails' own output
+/// half-rewritten with nothing to say which files moved. It therefore formats
+/// a scratch tree synthesised from the projection and commits the diff as file
+/// operations.
+///
+/// A canonical project keeps its reproducible output under `.jails/generated`,
+/// rendered from the model and merge-managed. What is left in `src/` is the
+/// reader's own code, and formatting that is what `jails fmt` is for. There is
+/// no jails-owned byte in the formatter's path to protect, so the transaction
+/// buys nothing and the plain goal is both simpler and more honest.
+///
+/// Gradle is refused by name for the reason canonical `format` is: Spotless
+/// needs its plugin inside `plugins { }`, which is only legal as the script's
+/// first statement, so a project that never installed it has no goal to run
+/// and guessing where the top of somebody's build file is produces a script
+/// that no longer evaluates.
+pub fn format_project(debug: bool) -> Result<()> {
+    let (root, build) = either_root("fmt")?;
+    if build == crate::build::Build::Gradle {
+        return Err(jails_support::Failure::Told(
+            "`jails fmt` needs a Maven project.\n       fix: run the Gradle formatting task \
+             directly -- jails does not model formatter ownership on Gradle."
+                .to_string(),
+        ));
+    }
+    let mut cmd = Command::new(crate::maven::binary(&root));
+    cmd.args(["spotless:apply"]).current_dir(&root);
+    run_inherited(cmd, debug)
+}
+
+/// The same formatter, over a project the caller has already resolved.
+///
+/// **Best effort, and silent about a machine that cannot run it.** This is
+/// called after a generation that wrote Java into a project declaring
+/// `format`, so the alternative to running it is `jails check` failing on
+/// jails' own output. A machine with no Maven is not a failed generation --
+/// the files are written and correct, just unwrapped -- so this reports and
+/// returns rather than turning somebody's `g record` into an error.
+pub fn format_generated(root: &Path, debug: bool) {
+    if crate::build::detect(root) != crate::build::Build::Maven {
+        return;
+    }
+    let mut cmd = Command::new(crate::maven::binary(root));
+    cmd.args(["spotless:apply", "-q"]).current_dir(root);
+    if let Err(error) = run_inherited(cmd, debug) {
+        eprintln!("jails: could not run the formatter over the generated tree: {error}");
+        eprintln!("       fix: run `jails fmt` when Maven is available -- the files are written");
+    }
+}
+
 /// Escape hatch for Maven features jails should not duplicate. Arguments are
 /// forwarded exactly; the project wrapper is still preferred.
 pub fn mvn(args: &[String], debug: bool) -> Result<()> {
@@ -541,11 +617,11 @@ pub(super) fn build_tool_watch(args: &[std::ffi::OsString], debug: bool) -> Resu
         ));
     }
     if !pom.contains("devtools") {
-        // The fix has to work on *this* project. It used to read `jails new
-        // --deps web,devtools`, which tells a reader standing in a project to
-        // create a different one -- the same shape as a `fix:` line naming a
-        // command that does not exist, and invisible to the oracle that
-        // catches those, because `jails new` does exist.
+        // The fix has to work on *this* project. `jails new --deps
+        // web,devtools` tells a reader standing in a project to create a
+        // different one -- the same shape as a `fix:` line naming a command
+        // that does not exist, and invisible to the oracle that catches those,
+        // because `jails new` does exist.
         eprintln!(
             "jails: spring-boot-devtools is not in pom.xml, so recompiling will not restart the \
              running application.\n       --watch keeps target/classes fresh either way; devtools \
@@ -641,7 +717,7 @@ pub(super) fn build_tool_run(
     if pom.contains("org.springframework.boot") {
         if no_build {
             let jar = find_built_jar(&root)?;
-            let mut run = Command::new("java");
+            let mut run = Command::new(crate::process::java_program());
             run.args(["-jar"]).arg(&jar).args(args).current_dir(&root);
             return run_inherited(run, debug);
         }
@@ -692,7 +768,7 @@ pub(super) fn build_tool_run(
         ).into());
     }
 
-    let mut run = Command::new("java");
+    let mut run = Command::new(crate::process::java_program());
     run.args(["-cp", "target/classes", &fqcn])
         .args(args)
         .current_dir(&root);
@@ -788,7 +864,7 @@ fn dispatcher_main_file(dir: &Path) -> Option<PathBuf> {
             }
         } else if path.extension().is_some_and(|ext| ext == "java") {
             let dispatches = fs::read_to_string(&path)
-                .map(|s| s.contains("static void main") && crate::generate::is_dispatcher(&s))
+                .map(|s| s.contains("static void main") && crate::is_dispatcher(&s))
                 .unwrap_or(false);
             if dispatches {
                 found.push(path);

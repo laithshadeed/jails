@@ -1,7 +1,14 @@
 use super::*;
-use std::net::TcpListener;
 
-fn drop_with_migration(command: &mut std::process::Command) -> &mut std::process::Command {
+/// Retire the stored entity and its table, as a canonical project does.
+///
+/// **No `--migrate`, no `--datasource`, and that is the change.** Canonical
+/// retirement is model subtraction plus one appended forward migration: the
+/// plan says what the schema becomes and `jails migrate` is what runs it
+/// against a database. There is no post-commit effect to fail, and so no
+/// effect ledger to retry from -- which is what the two tests below used to
+/// be about, and what the strangler removed rather than reimplemented.
+fn drop_the_table(command: &mut std::process::Command) -> &mut std::process::Command {
     command.args([
         "destroy",
         "scaffold",
@@ -11,17 +18,33 @@ fn drop_with_migration(command: &mut std::process::Command) -> &mut std::process
         "--confirm-table",
         "tasks",
         "--force",
-        "--migrate",
-        "--datasource",
-        "DATABASE_URL",
     ])
 }
 
+fn migrations(root: &Path) -> Vec<String> {
+    let mut found = fs::read_dir(root.join("src/main/resources/db/migration"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".sql"))
+        .collect::<Vec<_>>();
+    found.sort();
+    found
+}
+
+/// Retiring a table twice appends one migration, not two.
+///
+/// **Schema history is append-only, so a second identical retirement has to
+/// be a no-op rather than a second `drop table`.** Flyway would run both, and
+/// the second fails against a table that is already gone -- which turns a
+/// re-run of the same command, the thing convergence is supposed to make
+/// safe, into a broken database.
 #[test]
-fn rerunning_the_same_destroy_retries_only_its_failed_migration_effect() {
-    let root = temp_dir("task-drop-effect-retry");
+fn rerunning_the_same_retirement_appends_one_forward_migration() {
+    let root = temp_dir("task-drop-idempotent");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     assert!(
         jails_cmd(&root, None)
             .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
@@ -29,74 +52,37 @@ fn rerunning_the_same_destroy_retries_only_its_failed_migration_effect() {
             .unwrap()
             .success()
     );
+    let created = migrations(&root);
+    assert_eq!(created.len(), 1, "{created:?}");
 
-    let fake = temp_dir("task-drop-effect-retry-bin");
-    let log = fake.join("flyway.log");
-    write_fake_maven(&fake, &["flyway"], &log);
-    fs::write(fake.join("flyway"), "#!/bin/sh\nexit 9\n").unwrap();
-    let database = "postgresql://app:secret@127.0.0.1:5432/demo";
-    let first = drop_with_migration(jails_cmd(&root, Some(&fake)).env("DATABASE_URL", database))
-        .output()
-        .unwrap();
-    assert!(!first.status.success(), "{first:?}");
-
-    let before = jails_commit::store::Store::at(&root)
-        .read_receipts()
-        .unwrap();
-    let original = before.first().unwrap();
-    assert!(matches!(
-        original.post_commit[0].state,
-        jails_protocol::effect::EffectState::Failed { attempt: 1, .. }
-    ));
-    let transaction = original.transaction;
-    let generation = original.generation;
-
-    write_fake_maven(&fake, &["flyway"], &log);
-    let preview = drop_with_migration(jails_cmd(&root, Some(&fake)).env("DATABASE_URL", database))
-        .args(["--pretend", "--output", "json"])
-        .output()
-        .unwrap();
-    assert!(preview.status.success(), "{preview:?}");
-    assert!(read_log(&log).is_empty(), "preview invoked Flyway");
-    let json: serde_json::Value = serde_json::from_slice(&preview.stdout).unwrap();
-    assert_eq!(json["status"], "preview", "{json}");
-    assert_eq!(json["report"]["kind"], "effect-retry", "{json}");
-    assert_eq!(
-        json["report"]["data"]["transaction"],
-        transaction.to_hex(),
-        "{json}"
-    );
-
-    let retried = drop_with_migration(jails_cmd(&root, Some(&fake)).env("DATABASE_URL", database))
-        .args(["--output", "json"])
+    let first = drop_the_table(&mut jails_cmd(&root, None))
         .output()
         .unwrap();
     assert!(
-        retried.status.success(),
+        first.status.success(),
         "stdout={} stderr={}",
-        String::from_utf8_lossy(&retried.stdout),
-        String::from_utf8_lossy(&retried.stderr)
+        String::from_utf8_lossy(&first.stdout),
+        String::from_utf8_lossy(&first.stderr)
     );
-    let json: serde_json::Value = serde_json::from_slice(&retried.stdout).unwrap();
-    assert_eq!(json["status"], "effect-retried", "{json}");
-    let invoked = read_log(&log);
-    assert!(invoked.contains("flyway migrate"), "{invoked}");
-    assert!(!invoked.contains("secret"), "credential leaked: {invoked}");
+    let after_first = migrations(&root);
+    assert_eq!(after_first.len(), 2, "{after_first:?}");
+    assert!(
+        after_first.iter().any(|name| name.contains("drop_tasks")),
+        "{after_first:?}"
+    );
 
-    let after = jails_commit::store::Store::at(&root)
-        .read_receipts()
+    // The declaration is gone, so the second run has nothing to retire and
+    // says so rather than appending a `drop table` for a table nothing
+    // declares any more.
+    let second = drop_the_table(&mut jails_cmd(&root, None))
+        .output()
         .unwrap();
-    assert_eq!(
-        after.len(),
-        before.len(),
-        "retry created another transaction"
+    let told = format!(
+        "{}{}",
+        String::from_utf8_lossy(&second.stdout),
+        String::from_utf8_lossy(&second.stderr)
     );
-    assert_eq!(after[0].transaction, transaction);
-    assert_eq!(after[0].generation, generation);
-    assert_eq!(
-        after[0].post_commit[0].state,
-        jails_protocol::effect::EffectState::Succeeded
-    );
+    assert_eq!(migrations(&root), after_first, "{told}");
 }
 
 struct PostgresContainer(String);
@@ -121,7 +107,7 @@ fn executable(name: &str) -> Option<PathBuf> {
 
 #[test]
 #[cfg(unix)]
-fn postgres_17_observes_the_explicit_drop_effect_as_applied() {
+fn postgres_17_accepts_the_retirement_jails_wrote() {
     if !real_docker_available() {
         skip("a running Docker-compatible container runtime is required");
         return;
@@ -131,11 +117,10 @@ fn postgres_17_observes_the_explicit_drop_effect_as_applied() {
         return;
     };
 
-    let port = TcpListener::bind(("127.0.0.1", 0))
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
+    // Through the shared reservation helper rather than a third copy of
+    // `bind(0)`, `read`, `close`: the copies are how the two-ports-one-number
+    // bug in `AppSuiteServices` went unnoticed. See its docs.
+    let port = common::reserve_loopback_ports(1)[0];
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -197,7 +182,7 @@ fn postgres_17_observes_the_explicit_drop_effect_as_applied() {
 
     let root = temp_dir("task-drop-postgres-17");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     assert!(
         jails_cmd(&root, None)
             .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
@@ -206,7 +191,6 @@ fn postgres_17_observes_the_explicit_drop_effect_as_applied() {
             .success()
     );
     let v1 = root.join("src/main/resources/db/migration/V001__create_tasks.sql");
-    let database = format!("postgresql://app:app@127.0.0.1:{port}/app");
     let sql = |args: &[&str]| {
         std::process::Command::new(&psql)
             .env("PGPASSWORD", "app")
@@ -235,26 +219,39 @@ fn postgres_17_observes_the_explicit_drop_effect_as_applied() {
 
     let tools = temp_dir("task-drop-postgres-17-bin");
     std::os::unix::fs::symlink(&psql, tools.join("psql")).unwrap();
-    let log = tools.join("flyway.log");
-    write_fake_maven(&tools, &["flyway"], &log);
-    fs::write(
-        tools.join("flyway"),
-        format!(
-            "#!/bin/sh\nset -eu\necho \"$0 $*\" >> \"{}\"\nlocation=${{FLYWAY_LOCATIONS#filesystem:}}\nPGPASSWORD=app psql -h 127.0.0.1 -p {port} -U app -d app -v ON_ERROR_STOP=1 -f \"$location/V002__drop_tasks.sql\"\n",
-            log.display()
-        ),
-    )
-    .unwrap();
 
-    let dropped =
-        drop_with_migration(jails_cmd(&root, Some(&tools)).env("DATABASE_URL", &database))
-            .output()
-            .unwrap();
+    // **The retirement writes SQL; running it is a separate act.** Canonical
+    // removal is model subtraction plus one appended forward migration -- no
+    // datasource, no post-commit effect, nothing that can half-succeed
+    // against a live database while the plan says it committed. What this
+    // test still answers is the only question a real PostgreSQL can: that the
+    // statement jails wrote is one PostgreSQL 17 actually accepts.
+    let dropped = drop_the_table(&mut jails_cmd(&root, Some(&tools)))
+        .output()
+        .unwrap();
     assert!(
         dropped.status.success(),
         "stdout={} stderr={}",
         String::from_utf8_lossy(&dropped.stdout),
         String::from_utf8_lossy(&dropped.stderr)
+    );
+    let present_before = sql(&[
+        "-At",
+        "-c",
+        "SELECT pg_catalog.to_regclass('public.tasks') IS NOT NULL;",
+    ]);
+    assert_eq!(
+        String::from_utf8_lossy(&present_before.stdout).trim(),
+        "t",
+        "the retirement touched the database"
+    );
+
+    let v2 = root.join("src/main/resources/db/migration/V002__drop_tasks.sql");
+    let applied_v2 = sql(&["-v", "ON_ERROR_STOP=1", "-f", v2.to_str().unwrap()]);
+    assert!(
+        applied_v2.status.success(),
+        "PostgreSQL 17 refused the retirement jails wrote: {}",
+        String::from_utf8_lossy(&applied_v2.stderr)
     );
     let absent = sql(&[
         "-At",
@@ -263,7 +260,6 @@ fn postgres_17_observes_the_explicit_drop_effect_as_applied() {
     ]);
     assert_eq!(String::from_utf8_lossy(&absent.stdout).trim(), "t");
 
-    let v2 = root.join("src/main/resources/db/migration/V002__drop_tasks.sql");
     let checksum_v2 = jails_drive::live_sql::flyway_checksum(&fs::read(&v2).unwrap()).unwrap();
     let recorded_v2 = sql(&[
         "-v",
@@ -275,22 +271,18 @@ fn postgres_17_observes_the_explicit_drop_effect_as_applied() {
     ]);
     assert!(recorded_v2.status.success(), "{recorded_v2:?}");
 
+    // The model's own view, with no datasource: the entity is retired and the
+    // migration that retires it is in history. Comparing that against a live
+    // catalog is `resource status --datasource`, which the canonical path
+    // does not answer yet -- `plan.md` tracks it, and until then this asserts
+    // the half jails is the authority on.
     let status = jails_cmd(&root, Some(&tools))
-        .env("DATABASE_URL", &database)
-        .args([
-            "resource",
-            "status",
-            "Task",
-            "--datasource",
-            "DATABASE_URL",
-            "--output",
-            "json",
-        ])
+        .args(["resource", "status", "Task", "--output", "json"])
         .output()
         .unwrap();
     assert!(status.status.success(), "{status:?}");
     let json: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
-    assert_eq!(json["state"], "drop-observed-applied", "{json}");
+    assert_eq!(json["state"], "retired", "{json}");
     let rendered = format!(
         "{}{}",
         String::from_utf8_lossy(&dropped.stdout),

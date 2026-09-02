@@ -1,0 +1,13 @@
+[package]
+name = "jails-compiler"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+jails-codemod.workspace = true
+jails-contracts.workspace = true
+jails-model.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

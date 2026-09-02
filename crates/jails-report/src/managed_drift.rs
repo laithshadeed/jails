@@ -1,3 +1,14 @@
+//! Has anything jails wrote been changed since it wrote it?
+//!
+//! Compared against the ledger's `current` image — the exact file state the
+//! last commit accepted, reader edits included — rather than against a
+//! freshly rendered artifact. The distinction is the whole module: a merge
+//! deliberately preserves hand edits, so re-rendering and diffing would report
+//! every preserved edit as drift, every run, forever.
+//!
+//! Read-only, like everything in this crate. It reports what moved; deciding
+//! what to do about it is `sync`'s.
+
 use crate::diagnostic::{Check, Status};
 use crate::model::Project;
 use jails_protocol::entity::EntityId;
@@ -54,9 +65,9 @@ pub(crate) fn managed_output_checks(project: &Project) -> Vec<Check> {
                 .fix(fix),
             ),
             Ok(bytes)
-                if jails_protocol::identity::ObjectId::from_bytes(
-                    jails_support::codec::sha256(&bytes),
-                ) != output.current.sha256 =>
+                if jails_support::identity::ObjectId::from_bytes(jails_support::codec::sha256(
+                    &bytes,
+                )) != output.current.sha256 =>
             {
                 checks.push(
                     Check::new(
@@ -153,7 +164,7 @@ pub(crate) fn migration_seal_checks(project: &Project) -> Vec<Check> {
                     .fix("make the file readable and run `jails doctor` again"),
                 ),
                 Ok(bytes)
-                    if jails_protocol::identity::ObjectId::from_bytes(
+                    if jails_support::identity::ObjectId::from_bytes(
                         jails_support::codec::sha256(&bytes),
                     ) != seal.content_digest =>
                 {

@@ -15,6 +15,11 @@ pub mod declaration;
 pub mod editor;
 pub mod entity;
 pub mod feature;
-pub mod identity;
+/// The identity vocabulary lives in `jails-support`: `ObjectId`, `Name`,
+/// `Package`, `JavaType` and `ProjectPath` know nothing about a plan, and
+/// `testing` needs them, so they must outlive this crate. Re-exported here
+/// because `jails_protocol::identity::Name` is what four hundred call sites
+/// say.
+pub use jails_support::identity;
 pub mod recipe;
 pub mod resource;

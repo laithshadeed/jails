@@ -15,13 +15,13 @@
 mod generate_args;
 pub(crate) use generate_args::GenerateArgs;
 
-use crate::add::Capability;
+use crate::ArtifactKind;
+use crate::Capability;
 use crate::app;
 use crate::arguments;
 use crate::compose::Runtime;
-use crate::generate::ArtifactKind;
+use crate::kafka;
 use crate::pom;
-use crate::{generate, kafka};
 use clap::{Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use std::path::PathBuf;
@@ -36,14 +36,14 @@ mod sql;
 pub(crate) use sql::*;
 mod rename;
 pub(crate) use rename::*;
-mod history;
-pub(crate) use history::*;
 mod testing;
 pub(crate) use testing::*;
 mod command_path;
 pub(crate) use command_path::command_path_from_env;
 mod output;
 pub(crate) use output::Output;
+mod model;
+pub(crate) use model::ModelCommand;
 mod project_args;
 pub(crate) use project_args::{NewArgs, NewCliArgs};
 
@@ -54,7 +54,7 @@ pub(crate) enum TestScopeArg {
     All,
 }
 
-impl From<TestScopeArg> for jails_protocol::testing::TestScope {
+impl From<TestScopeArg> for jails_drive::testing::TestScope {
     fn from(value: TestScopeArg) -> Self {
         match value {
             TestScopeArg::Unit => Self::Unit,
@@ -72,7 +72,7 @@ pub(crate) enum TestCompileArg {
     None,
 }
 
-impl From<TestCompileArg> for jails_protocol::testing::TestCompilePolicy {
+impl From<TestCompileArg> for jails_drive::testing::TestCompilePolicy {
     fn from(value: TestCompileArg) -> Self {
         match value {
             TestCompileArg::Auto => Self::Auto,
@@ -90,7 +90,7 @@ pub(crate) enum TestEngineArg {
     Warm,
 }
 
-impl From<TestEngineArg> for jails_protocol::testing::TestEnginePolicy {
+impl From<TestEngineArg> for jails_drive::testing::TestEnginePolicy {
     fn from(value: TestEngineArg) -> Self {
         match value {
             TestEngineArg::Auto => Self::Auto,
@@ -143,12 +143,12 @@ pub(crate) struct Cli {
     #[arg(long, global = true)]
     pub(crate) debug: bool,
 
-    // `--dry-run` is an alias, not a second flag. It used to be a per-command
-    // `bool` that dispatch OR'd with this one -- `dry_run || pretend` at five
-    // call sites, two names for one boolean reaching two different
-    // implementations. abstract.md §4.2 calls that connascence of meaning
-    // crossing a module boundary, and it is why `--pretend` and apply were
-    // able to disagree about what would be written. One flag, one value,
+    // `--dry-run` is an alias, not a second flag. A per-command `bool` that
+    // dispatch ORs with this one -- `dry_run || pretend` -- is two names for
+    // one boolean reaching two implementations, which abstract.md §4.2 calls
+    // connascence of meaning crossing a module boundary, and which lets
+    // `--pretend` and apply disagree about what would be written. One flag,
+    // one value,
     // every command -- and `--dry-run` now works on all of them rather than
     // on the three that happened to declare it.
     /// Run, but write nothing -- print what would change and stop.
@@ -204,12 +204,18 @@ pub(crate) enum ResourceCommand {
         table: String,
     },
     /// Restore sealed history and reconcile owned projections
+    ///
+    /// On a canonical project this takes no arguments: managed output under
+    /// `.jails/generated` is rendered from the model, so repair is ordinary
+    /// compilation with the deleted-managed-file guard waived, and there is
+    /// nothing to select or to choose a strategy between. The legacy engine
+    /// repairs one resource out of its ledger and needs both.
     Repair {
         /// Simple entity name or fully qualified generated Java type
-        selector: String,
+        selector: Option<String>,
         /// The only automatic repair policy: preserve history and move forward
         #[arg(long, value_enum)]
-        strategy: RepairStrategy,
+        strategy: Option<RepairStrategy>,
         /// Include evidence from this datasource when available
         #[arg(long)]
         datasource: Option<String>,
@@ -238,6 +244,20 @@ pub(crate) enum ResourceIndexCommand {
     Add {
         entity: String,
         columns: String,
+        /// Subpackage containing the generated entity
+        #[arg(long)]
+        package: Option<String>,
+    },
+    /// Drop one previously declared composite or ordered index
+    ///
+    ///   jails resource index remove Message 'customer_id, created_at desc' \
+    ///     --confirm-index idx_message_index_ab12cd34ef56
+    Remove {
+        entity: String,
+        columns: String,
+        /// Exact physical index name that will be dropped
+        #[arg(long)]
+        confirm_index: String,
         /// Subpackage containing the generated entity
         #[arg(long)]
         package: Option<String>,
@@ -355,17 +375,42 @@ impl From<TypeChangeStrategy> for jails_protocol::request::TypeChangeStrategy {
 ///
 /// A parameter object rather than global presentation and execution flags
 /// threaded through every arm: they arrive together, are consumed together by
-/// [`mutate`], and are easy to swap at a call site.
+/// `dispatch::mutate`, and are easy to swap at a call site.
 #[derive(Clone)]
 pub(crate) struct Invocation {
     pub(crate) pretend: bool,
     pub(crate) debug: bool,
+    /// The reader has authorised discarding edits to files being removed.
+    ///
+    /// `--force` on `remove` and `destroy`. Presentation in the same sense as
+    /// `pretend`: it changes what the plan is allowed to do about one
+    /// divergence, not what the model says.
+    pub(crate) force: bool,
+
+    /// Leave the plan's follow-up effects for the reader to start.
+    ///
+    /// Presentation in the same sense as `pretend`: the files are written
+    /// either way and only what happens *after* them differs, which is why it
+    /// rides here rather than being threaded through the frontends that never
+    /// look at it.
+    pub(crate) no_start: bool,
     pub(crate) output: Output,
     pub(crate) diff: bool,
     pub(crate) ast: bool,
     pub(crate) plan_out: Option<std::path::PathBuf>,
     pub(crate) plan_in: Option<std::path::PathBuf>,
     pub(crate) command_path: Vec<String>,
+    /// The project this command acts on, when the caller knows it and the
+    /// process directory does not.
+    ///
+    /// `model_command::root` walks up from the *process* directory, which is
+    /// right for every command a reader types and wrong for `jails new --app`:
+    /// it stands in the parent of the project it is creating. The alternative
+    /// was an explicit root parameter on every canonical frontend -- nine of
+    /// them, on the one `abstract.md` §7 rung that exists to discourage a fact
+    /// re-derived from a primitive rather than read off a resolved value.
+    /// This *is* that resolved value; it was already threaded everywhere.
+    pub(crate) root: Option<std::path::PathBuf>,
 }
 
 impl Invocation {
@@ -380,10 +425,58 @@ impl Invocation {
         }
     }
 
-    pub(crate) fn review(&self) -> jails_prepare::review::ReviewSelection {
-        jails_prepare::review::ReviewSelection {
-            diff: self.diff,
-            ast: self.ast,
+    /// The same invocation, leaving the plan's effects for the reader.
+    ///
+    /// `--no-start` is declared on the subcommands that can have an effect
+    /// rather than globally, so it arrives after the invocation is built.
+    pub(crate) fn without_starting(self, no_start: bool) -> Self {
+        Self { no_start, ..self }
+    }
+
+    /// The same invocation, allowed to discard edits to what it removes.
+    pub(crate) fn forcing(self, force: bool) -> Self {
+        Self { force, ..self }
+    }
+
+    /// The same invocation, acting on a project the caller has resolved.
+    pub(crate) fn at(self, root: std::path::PathBuf) -> Self {
+        Self {
+            root: Some(root),
+            ..self
+        }
+    }
+
+    /// Where this command acts: the caller's answer, or the walk up from the
+    /// process directory that every typed command wants.
+    pub(crate) fn root(&self) -> jails_support::Result<std::path::PathBuf> {
+        match &self.root {
+            Some(root) => Ok(root.clone()),
+            None => crate::model_command::root(),
+        }
+    }
+
+    /// The invocation for a command that does not take the global flags.
+    ///
+    /// `jails new` builds its own request from `--debug`/`--pretend` rather
+    /// than taking an `Invocation`, and `--app` now replays a manifest through
+    /// the canonical frontends, which do. Everything else is a presentation
+    /// flag with a sensible absence.
+    pub(crate) fn for_new(root: std::path::PathBuf, debug: bool) -> Self {
+        Self {
+            pretend: false,
+            debug,
+            output: Output::Human,
+            diff: false,
+            ast: false,
+            plan_out: None,
+            plan_in: None,
+            command_path: vec!["new".to_string()],
+            root: Some(root),
+            force: false,
+            // `jails new --app` seeds a project rather than standing in one,
+            // and its own `--no-start` is the request's, applied once the
+            // whole manifest is in.
+            no_start: true,
         }
     }
 }
@@ -397,12 +490,6 @@ pub(crate) enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// List committed project transactions from authenticated receipts
-    History(HistoryArgs),
-    /// Inspect one committed transaction and its exact before/after images
-    Show(ShowArgs),
-    /// Restore an eligible receipt's file preimages as a new forward transaction
-    Undo(UndoArgs),
     /// Create a new Spring Boot project via start.spring.io
     New(NewArgs),
     /// Create a new plain Maven CLI project
@@ -411,6 +498,11 @@ pub(crate) enum Command {
     App {
         #[command(subcommand)]
         command: app::AppCommand,
+    },
+    /// Check, plan, apply, or transfer ownership in the canonical application model
+    Model {
+        #[command(subcommand)]
+        command: ModelCommand,
     },
     /// Check and generate typed named-SQL contracts
     Sql {
@@ -471,7 +563,7 @@ pub(crate) enum Command {
     ///
     ///   name:string      required, must not be null
     ///   name:string!     required and must not be blank (text only)
-    ///   name:string?     optional -- becomes an Optional<T> component
+    ///   name:string?     optional -- becomes an `Optional<T>` component
     ///
     /// Case is the rule. A lowercase type is one jails knows and can build a
     /// sample of: string, int, long, double, boolean, uuid, instant, date,
@@ -658,12 +750,12 @@ pub(crate) enum Command {
         #[arg(long, value_name = "FILE")]
         export: Option<String>,
     },
-    /// Write a [layout] table matching where this project already keeps things
+    /// Write a `[layout]` table matching where this project already keeps things
     ///
     /// For a codebase jails did not create. Reads the directories under the
     /// base package, maps the ones it recognises onto jails' layers, and
     /// reports the ones it does not rather than guessing. Never touches
-    /// [project] capabilities -- `jails sync` acts on that list.
+    /// `[project] capabilities` -- `jails sync` acts on that list.
     Adopt,
     /// Upgrade the build to the Spring Boot and JDK jails generates against
     ///
@@ -982,7 +1074,7 @@ pub(crate) enum Command {
     /// The generated Javadoc carries this reasoning for whoever reads the file.
     /// This is for whoever is deciding whether to generate it -- and for an
     /// agent, which otherwise "fixes" the deliberate asymmetries.
-    Explain { kind: generate::ArtifactKind },
+    Explain { kind: ArtifactKind },
     /// Print every subcommand, generator kind, capability and flag jails accepts
     ///
     /// Derived from the same clap definition that parses the arguments, so it
@@ -1047,7 +1139,16 @@ pub(crate) enum Undeclare {
     /// the other half: a dependency nothing can name and nothing can remove is
     /// the failure the ownership model exists to prevent.
     #[command(name = "fast-test")]
-    FastTest,
+    FastTest {
+        /// Skip the confirmation prompt
+        ///
+        /// Its own flag rather than the parent's: clap resolves `--force`
+        /// against the subcommand once one is named, so `jails remove
+        /// fast-test --force` never reaches `Remove::force` and a caller who
+        /// cannot answer the prompt has no way to consent.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[cfg(test)]

@@ -13,7 +13,7 @@
 //! ## Why `Failed` carries an attempt and a code
 //!
 //! Because "the compose reconcile did not work" is not actionable and
-//! "attempt 2 exited non-zero: <summary>" is. The failure codes are closed —
+//! "attempt 2 exited non-zero: `<summary>`" is. The failure codes are closed —
 //! spawn, timeout, non-zero exit, interrupted twice, protocol — so a resume
 //! can decide whether retrying is even sensible rather than looping on a
 //! condition that will never clear.
@@ -49,36 +49,18 @@ pub enum EffectState {
 }
 
 /// Why an effect attempt failed, closed so a resume can reason about it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub enum EffectFailureCode {
+    #[codec(tag = 0)]
     Spawn,
+    #[codec(tag = 1)]
     Timeout,
+    #[codec(tag = 2)]
     ExitNonzero,
+    #[codec(tag = 3)]
     InterruptedTwice,
+    #[codec(tag = 4)]
     Protocol,
-}
-
-impl EffectFailureCode {
-    fn tag(self) -> u8 {
-        match self {
-            Self::Spawn => 0,
-            Self::Timeout => 1,
-            Self::ExitNonzero => 2,
-            Self::InterruptedTwice => 3,
-            Self::Protocol => 4,
-        }
-    }
-
-    fn from_tag(tag: u8) -> Result<Self> {
-        match tag {
-            0 => Ok(Self::Spawn),
-            1 => Ok(Self::Timeout),
-            2 => Ok(Self::ExitNonzero),
-            3 => Ok(Self::InterruptedTwice),
-            4 => Ok(Self::Protocol),
-            other => Err(format!("unknown effect failure code {other}").into()),
-        }
-    }
 }
 
 impl Codec for EffectState {
@@ -104,7 +86,7 @@ impl Codec for EffectState {
                 encoder.tag(4);
                 nonzero(*attempt, "attempt")?;
                 encoder.u32(*attempt);
-                encoder.tag(code.tag());
+                code.encode(encoder)?;
                 encoder.string(summary)?;
             }
             Self::Superseded { by } => {
@@ -137,7 +119,7 @@ impl Codec for EffectState {
                 nonzero(attempt, "attempt")?;
                 Self::Failed {
                     attempt,
-                    code: EffectFailureCode::from_tag(decoder.tag()?)?,
+                    code: EffectFailureCode::decode(decoder)?,
                     summary: decoder.string()?,
                 }
             }
@@ -167,7 +149,7 @@ fn nonzero(value: u32, what: &str) -> Result<()> {
 ///
 /// Distinct from the operation that scheduled it: a retry after a crash must
 /// address *this* effect, and an operation may carry several.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub struct EffectId(ObjectId);
 
 impl EffectId {
@@ -183,17 +165,6 @@ impl EffectId {
         self.0.to_hex()
     }
 }
-impl Codec for EffectId {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.0.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self(ObjectId::decode(decoder)?))
-    }
-}
-
 impl std::fmt::Display for EffectId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
@@ -201,8 +172,10 @@ impl std::fmt::Display for EffectId {
 }
 
 /// The runtime work a committed transaction asks for.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(label = "post-commit effect")]
 pub enum PostCommitEffect {
+    #[codec(tag = 0)]
     ComposeReconcile {
         compose_output: ProjectPath,
         before_document: Option<ObjectId>,
@@ -211,130 +184,26 @@ pub enum PostCommitEffect {
         desired_services: BTreeMap<ServiceName, ObjectId>,
         stop_services: BTreeSet<ServiceName>,
     },
+    #[codec(tag = 1)]
     ApplyMigrations {
         datasource: DatasourceRef,
         migrations: Vec<MigrationInputV1>,
     },
 }
 
-impl Codec for PostCommitEffect {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::ComposeReconcile {
-                compose_output,
-                before_document,
-                after_document,
-                prior_managed_services,
-                desired_services,
-                stop_services,
-            } => {
-                encoder.tag(0);
-                compose_output.encode(encoder)?;
-                encode_optional_object(encoder, before_document.as_ref())?;
-                encode_optional_object(encoder, after_document.as_ref())?;
-                encoder.map(prior_managed_services)?;
-                encoder.map(desired_services)?;
-                encoder.set(stop_services)?;
-            }
-            Self::ApplyMigrations {
-                datasource,
-                migrations,
-            } => {
-                encoder.tag(1);
-                datasource.encode(encoder)?;
-                encoder.count(migrations.len())?;
-                for migration in migrations {
-                    migration.encode(encoder)?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        match decoder.tag()? {
-            0 => Ok(Self::ComposeReconcile {
-                compose_output: ProjectPath::decode(decoder)?,
-                before_document: decoder.option(ObjectId::decode)?,
-                after_document: decoder.option(ObjectId::decode)?,
-                prior_managed_services: decoder.map()?,
-                desired_services: decoder.map()?,
-                stop_services: decoder.set()?,
-            }),
-            1 => Ok(Self::ApplyMigrations {
-                datasource: DatasourceRef::decode(decoder)?,
-                migrations: {
-                    let count = decoder.count()?;
-                    let mut migrations = Vec::with_capacity(count as usize);
-                    for _ in 0..count {
-                        migrations.push(MigrationInputV1::decode(decoder)?);
-                    }
-                    migrations
-                },
-            }),
-            other => Err(format!("unknown post-commit effect tag {other}").into()),
-        }
-    }
-}
-
 /// The same work, before a transaction has been prepared to carry it.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+#[codec(label = "deferred effect")]
 pub enum DeferredEffectIntent {
+    #[codec(tag = 0)]
     ComposeReconcile {
         before_document: Option<ObjectId>,
         compose_output: ProjectPath,
         prior_managed_services: BTreeMap<ServiceName, ObjectId>,
         desired_services: BTreeMap<ServiceName, ObjectId>,
     },
-    ApplyMigrations {
-        datasource: DatasourceRef,
-    },
-}
-
-impl Codec for DeferredEffectIntent {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        match self {
-            Self::ComposeReconcile {
-                before_document,
-                compose_output,
-                prior_managed_services,
-                desired_services,
-            } => {
-                encoder.tag(0);
-                encode_optional_object(encoder, before_document.as_ref())?;
-                compose_output.encode(encoder)?;
-                encoder.map(prior_managed_services)?;
-                encoder.map(desired_services)?;
-            }
-            Self::ApplyMigrations { datasource } => {
-                encoder.tag(1);
-                datasource.encode(encoder)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        match decoder.tag()? {
-            0 => Ok(Self::ComposeReconcile {
-                before_document: decoder.option(ObjectId::decode)?,
-                compose_output: ProjectPath::decode(decoder)?,
-                prior_managed_services: decoder.map()?,
-                desired_services: decoder.map()?,
-            }),
-            1 => Ok(Self::ApplyMigrations {
-                datasource: DatasourceRef::decode(decoder)?,
-            }),
-            other => Err(format!("unknown deferred effect tag {other}").into()),
-        }
-    }
-}
-
-fn encode_optional_object(encoder: &mut Encoder, value: Option<&ObjectId>) -> Result<()> {
-    encoder.option(value, |e, id| {
-        id.encode(e)?;
-        Ok(())
-    })
+    #[codec(tag = 1)]
+    ApplyMigrations { datasource: DatasourceRef },
 }
 
 #[cfg(test)]
@@ -396,19 +265,29 @@ mod tests {
         assert!(EffectState::decode(&mut decoder).is_err());
     }
 
+    /// The numbers, not just the round trip: one codec agrees with itself
+    /// whatever it writes, and what is on disk is the number.
     #[test]
     fn every_failure_code_round_trips_and_an_unknown_one_rejects() {
-        for code in [
-            EffectFailureCode::Spawn,
-            EffectFailureCode::Timeout,
-            EffectFailureCode::ExitNonzero,
-            EffectFailureCode::InterruptedTwice,
-            EffectFailureCode::Protocol,
+        for (code, tag) in [
+            (EffectFailureCode::Spawn, 0),
+            (EffectFailureCode::Timeout, 1),
+            (EffectFailureCode::ExitNonzero, 2),
+            (EffectFailureCode::InterruptedTwice, 3),
+            (EffectFailureCode::Protocol, 4),
         ] {
-            assert_eq!(EffectFailureCode::from_tag(code.tag()).unwrap(), code);
+            let mut encoder = Encoder::new();
+            code.encode(&mut encoder).unwrap();
+            let bytes = encoder.finish().unwrap();
+            assert_eq!(bytes, vec![tag]);
+
+            let mut decoder = Decoder::new(&bytes).unwrap();
+            assert_eq!(EffectFailureCode::decode(&mut decoder).unwrap(), code);
+            decoder.finish().unwrap();
         }
+        let mut decoder = Decoder::new(&[5]).unwrap();
         assert!(
-            EffectFailureCode::from_tag(5)
+            EffectFailureCode::decode(&mut decoder)
                 .unwrap_err()
                 .contains("unknown effect failure code")
         );

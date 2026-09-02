@@ -17,7 +17,7 @@ class ExactReferenceMatchRuleTest {
         var left = new Entry("REF-42", LocalDate.of(2026, 8, 1), new Money(1_000L, "GBP"), Optional.of("invoice"));
         var right = new Entry("REF-42", LocalDate.of(2026, 8, 2), new Money(900L, "EUR"), Optional.of("different"));
 
-        assertThat(new ExactReferenceMatchRule().apply(new MatchCandidate(left, right)))
+        assertThat(new ExactReferenceMatchRule().evaluate(new MatchCandidate(left, right)))
                 .contains(MatchOutcome.MATCHED);
     }
 
@@ -26,7 +26,7 @@ class ExactReferenceMatchRuleTest {
         var left = new Entry("REF-42", LocalDate.of(2026, 8, 1), new Money(1_000L, "GBP"), Optional.empty());
         var right = new Entry("REF-43", LocalDate.of(2026, 8, 1), new Money(1_000L, "GBP"), Optional.empty());
 
-        assertThat(new ExactReferenceMatchRule().apply(new MatchCandidate(left, right)))
+        assertThat(new ExactReferenceMatchRule().evaluate(new MatchCandidate(left, right)))
                 .isEmpty();
     }
 }

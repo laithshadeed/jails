@@ -22,7 +22,7 @@
 //! The rule for content: say what the artifact *is for* and name the trap.
 //! A restatement of the `--help` line earns nothing; `--help` is right there.
 
-use crate::generate::ArtifactKind;
+use crate::ArtifactKind;
 use clap::ValueEnum;
 use jails_support::Result;
 
@@ -151,18 +151,20 @@ const EXPLANATIONS: &[Explanation] = &[
         kind: ArtifactKind::Query,
         summary: "A typed read: query record, port, JDBC adapter, controller, tests.",
         body: "Scalar equality filters only -- one column, one value. A required filter is \
-               `col = :col`; a `?` filter renders `(cast(:col as <type>) is null or col = \
-               :col)`, so omitting it widens rather than matching null. There are no list \
+               always in the `where` clause as `col = :col`; a `?` filter is appended to it \
+               only when the caller sent one, so omitting it widens rather than matching \
+               null and the index on that column is still usable. There are no list \
                semantics and no ranges: `in (...)` and `between` would have to guess what an \
                empty list or a half-open bound means. Use the scaffold\'s own list endpoint \
                for an unfiltered read.\n\n\
                Two things the generated adapter decides for you. The result is capped at 100 \
                rows with no cursor and no total, so a caller that receives 100 cannot tell \
                whether there were more. And the HTTP verb is derived, not chosen, because it \
-               follows from where the values come from: GET when every filter is a `--path` \
-               variable, GET reading the query string with `--consumes form` (which binds \
-               `@ModelAttribute`, and Spring fills that from request parameters), POST with \
-               a JSON body otherwise. `--method` does not apply and is refused here.\n\n\
+               follows from where the values come from: GET, reading the query string and \
+               the path together through one `@ModelAttribute`, which is what Spring fills \
+               from request parameters and URI template variables alike. `--consumes json` \
+               is the one shape with a body, and the one that is a POST. `--method` does not \
+               apply and is refused here.\n\n\
                Example: `jails g query LoansByMember memberId:uuid --on Loan`.",
     },
     Explanation {

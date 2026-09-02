@@ -1,19 +1,21 @@
 #!/bin/sh
-# jails pre-push: the full workflow from CLAUDE.md, minus the install step.
-# This is where the slow check belongs -- a green push, not a green keystroke.
+# jails pre-push: the one gate, and nothing else.
+#
+# simplify-sol.md G0: *pre-push and CI invoke only that command.* This used to
+# run `cargo build && cargo test` of its own -- no `--workspace`, so it tested
+# the root package alone, and no JAILS_REQUIRE_TOOLCHAIN, so a test that could
+# not find its toolchain skipped and counted as a pass. Two traps CLAUDE.md
+# names, both of which this hook had.
 #
 # Bypass with: git push --no-verify
 set -e
 
-echo "pre-push: cargo build && cargo test"
-if ! cargo build -q; then
-    echo "  FAIL: build broken."
-    exit 1
-fi
-if ! cargo test -q; then
-    echo "  FAIL: tests red. Do not push."
-    echo "  fix: cargo test  (run without -q for the failing test names)"
+if ! command -v mise >/dev/null 2>&1; then
+    echo "pre-push: mise is not on PATH, so the verification gate cannot run."
+    echo "  Pushing unverified is worse than not pushing: the gate is what"
+    echo "  turns a self-skipping test into a failure."
+    echo "  fix: install mise (https://mise.jdx.dev), or push with --no-verify"
     exit 1
 fi
 
-echo "pre-push: ok"
+exec mise run verify-rewrite

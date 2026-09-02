@@ -209,7 +209,7 @@ fn deeper(depth: usize) -> Result<usize> {
 /// create uses `0o644`. A recipe that creates an executable must say `0o755`,
 /// because a mode derived from the process umask would make the same plan
 /// produce different files on two machines.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct DesiredFile {
     pub path: ProjectPath,
     pub body: DesiredBody,
@@ -262,54 +262,14 @@ impl Codec for DesiredProvenance {
     }
 }
 
-impl Codec for DesiredFile {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.path.encode(encoder)?;
-        self.body.encode(encoder)?;
-        encoder.option(self.mode.as_ref(), |e, mode| {
-            mode.encode(e)?;
-            Ok(())
-        })?;
-        encoder.option(self.resource.as_ref(), |e, key| key.encode(e))?;
-        encoder.option(self.renderer.as_ref(), |e, provenance| provenance.encode(e))
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            path: ProjectPath::decode(decoder)?,
-            body: DesiredBody::decode(decoder)?,
-            mode: decoder.option(FileMode::decode)?,
-            resource: decoder.option(ResourceKey::decode)?,
-            renderer: decoder.option(DesiredProvenance::decode)?,
-        })
-    }
-}
-
 /// A path that must not exist afterwards.
 ///
 /// `force` is what distinguishes "remove the file jails wrote" from "remove
 /// whatever is there" — the second needs a human to have asked for it, which
 /// is why it is recorded on the absence rather than decided at execution.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct ManagedPath {
     pub path: ProjectPath,
     pub resource: ResourceKey,
     pub force: bool,
-}
-
-impl Codec for ManagedPath {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.path.encode(encoder)?;
-        self.resource.encode(encoder)?;
-        encoder.bool(self.force);
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            path: ProjectPath::decode(decoder)?,
-            resource: ResourceKey::decode(decoder)?,
-            force: decoder.bool()?,
-        })
-    }
 }

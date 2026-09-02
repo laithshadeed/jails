@@ -38,7 +38,7 @@ fn cases() -> Vec<Case<'static>> {
 }
 
 fn write_fixture(root: &Path, build: &str) {
-    let source = root.join("src/main/java/com/example/demo/DemoApplication.java");
+    let source = common::generated(root, "src/main/java/com/example/demo/DemoApplication.java");
     fs::create_dir_all(source.parent().unwrap()).unwrap();
     fs::write(
         source,

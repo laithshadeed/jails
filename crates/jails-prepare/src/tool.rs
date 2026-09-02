@@ -30,7 +30,7 @@ use jails_support::codec::{Codec, Decoder, Encoder, ordered};
 use std::collections::BTreeSet;
 
 /// What makes two invocations of a tool the same invocation.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub struct ToolInvocationKey {
     pub tool: ToolId,
     /// The file this invocation is about, when it is about one. A
@@ -38,40 +38,11 @@ pub struct ToolInvocationKey {
     pub subject: Option<ProjectPath>,
 }
 
-impl Codec for ToolInvocationKey {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.tool.encode(encoder)?;
-        encoder.option(self.subject.as_ref(), |e, path| path.encode(e))
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            tool: ToolId::decode(decoder)?,
-            subject: decoder.option(ProjectPath::decode)?,
-        })
-    }
-}
-
 /// One offline input a tool is permitted to read.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub struct ToolInput {
     pub path: ProjectPath,
     pub sha256: ObjectId,
-}
-
-impl Codec for ToolInput {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.path.encode(encoder)?;
-        self.sha256.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            path: ProjectPath::decode(decoder)?,
-            sha256: ObjectId::decode(decoder)?,
-        })
-    }
 }
 
 /// Everything about a tool that can change its output.
@@ -160,25 +131,10 @@ impl Codec for ToolIdentityFingerprint {
 }
 
 /// A tool as it was actually run: its identity plus the exact arguments.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct ToolFingerprint {
     pub identity: ToolIdentityFingerprint,
     pub canonical_args_sha256: ObjectId,
-}
-
-impl Codec for ToolFingerprint {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.identity.encode(encoder)?;
-        self.canonical_args_sha256.encode(encoder)?;
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            identity: ToolIdentityFingerprint::decode(decoder)?,
-            canonical_args_sha256: ObjectId::decode(decoder)?,
-        })
-    }
 }
 
 /// One tool invocation as preparation will actually make it.
@@ -302,31 +258,10 @@ impl Codec for ToolArgTemplate {
 }
 
 /// A tool as an operation *intends* to run it.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct OperationToolFingerprint {
     pub identity: ToolIdentityFingerprint,
     pub args: Vec<ToolArgTemplate>,
-}
-
-impl Codec for OperationToolFingerprint {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.identity.encode(encoder)?;
-        encoder.count(self.args.len())?;
-        for arg in &self.args {
-            arg.encode(encoder)?;
-        }
-        Ok(())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        let identity = ToolIdentityFingerprint::decode(decoder)?;
-        let count = decoder.count()?;
-        let mut args = Vec::new();
-        for _ in 0..count {
-            args.push(ToolArgTemplate::decode(decoder)?);
-        }
-        Ok(Self { identity, args })
-    }
 }
 
 /// The tools an operation intends to run, sorted and unique by key.

@@ -53,12 +53,23 @@ fn snapshot(dir: &Path) -> BTreeMap<String, String> {
 
 /// The project-owned `.jails/` files a golden snapshot holds.
 ///
-/// `ledger.toml` is jails' registry and `app.toml` is the reader's manifest.
-/// `architecture.toml` is the reviewable project architecture policy.
-/// Everything else under `.jails/` is the executor's, and is listed in
-/// [`EXECUTOR_STATE`] rather than excluded by a wildcard, so a new one is a
-/// deliberate entry rather than a silent omission.
-const SNAPSHOTTED_PROJECT_FILES: [&str; 3] = ["ledger.toml", "app.toml", "architecture.toml"];
+/// **`model.jdl` is the authored source every scenario now starts from**, and
+/// it is the most load-bearing entry here: the snapshot is the only place the
+/// declaration a scenario's `g` commands built up is visible beside the tree
+/// they produced. `ledger.toml` is jails' registry and `app.toml` is the
+/// reader's manifest. `architecture.toml` is the reviewable project
+/// architecture policy. Everything else under `.jails/` is the executor's, and
+/// is listed in [`EXECUTOR_STATE`] rather than excluded by a wildcard, so a new
+/// one is a deliberate entry rather than a silent omission.
+const SNAPSHOTTED_PROJECT_FILES: [&str; 4] =
+    ["model.jdl", "ledger.toml", "app.toml", "architecture.toml"];
+
+/// The compiler's managed tree, snapshotted whole.
+///
+/// A third category beside the registry and the executor's bookkeeping: it is
+/// the canonical counterpart of `src/main/java`, so it is jails' output rather
+/// than its state, and it is what `audit.md` A5.1 exists to pin.
+const MANAGED_TREE: &str = "generated/";
 
 /// The executor's own state, which is never snapshotted.
 ///
@@ -71,12 +82,23 @@ const SNAPSHOTTED_PROJECT_FILES: [&str; 3] = ["ledger.toml", "app.toml", "archit
 /// The locks are excluded for a different reason: they are empty files whose
 /// presence depends on whether a run was interrupted, so they are not output
 /// at all.
-const EXECUTOR_STATE: [&str; 5] = [
+const EXECUTOR_STATE: [&str; 7] = [
     ".jails/objects/",
     ".jails/transactions/",
     ".jails/receipts/",
     ".jails/lock",
     ".jails/effects.lock",
+    // The canonical executor's, and empty for the same reason the two above
+    // are: a lock file's contents are never the point, and snapshotting one
+    // records a byte count as though it were output.
+    ".jails/apply.lock",
+    // The compiler lock is goldened *as a format* in
+    // `tests/protocol-golden/compiler-lock-v2.json`, with the projection's
+    // file contents elided. Holding it here as well would put a second,
+    // verbatim copy of the whole generated tree inside the snapshot of that
+    // same tree -- 380 KB per canonical scenario, changing whenever any
+    // template does, and saying nothing the files beside it do not.
+    ".jails/compiler.lock.json",
 ];
 
 /// Whether this path is the executor's bookkeeping rather than jails' output.
@@ -128,15 +150,28 @@ fn collect(root: &Path, dir: &Path, out: &mut BTreeMap<String, String>) {
 /// snapshot so the goldens hold only what jails itself produced -- otherwise
 /// every scenario carries a copy of the fixture pom and the diff on a
 /// template change is buried.
-fn fixture_files(fixture: Fixture) -> BTreeMap<String, String> {
-    let dir = temp_dir("golden-baseline");
-    match fixture {
-        Fixture::Plain => write_plain_fixture(&dir),
-        Fixture::Spring => write_spring_fixture(&dir),
+///
+/// **Computed once per fixture, not once per scenario.** There are sixty-one
+/// scenarios and exactly two fixtures, so this wrote, snapshotted and deleted
+/// the same two trees sixty-one times -- work whose answer cannot differ,
+/// since the fixture writers take no argument but the directory.
+fn fixture_files(fixture: Fixture) -> &'static BTreeMap<String, String> {
+    fn compute(fixture: Fixture) -> BTreeMap<String, String> {
+        let dir = temp_dir("golden-baseline");
+        match fixture {
+            Fixture::Plain => write_plain_fixture(&dir),
+            Fixture::Spring => write_spring_fixture(&dir),
+        }
+        let files = snapshot(&dir);
+        fs::remove_dir_all(&dir).ok();
+        files
     }
-    let files = snapshot(&dir);
-    fs::remove_dir_all(&dir).ok();
-    files
+    static PLAIN: std::sync::OnceLock<BTreeMap<String, String>> = std::sync::OnceLock::new();
+    static SPRING: std::sync::OnceLock<BTreeMap<String, String>> = std::sync::OnceLock::new();
+    match fixture {
+        Fixture::Plain => PLAIN.get_or_init(|| compute(Fixture::Plain)),
+        Fixture::Spring => SPRING.get_or_init(|| compute(Fixture::Spring)),
+    }
 }
 
 fn run_scenario(scenario: &Scenario) -> BTreeMap<String, String> {
@@ -157,48 +192,64 @@ fn run_scenario(scenario: &Scenario) -> BTreeMap<String, String> {
     files
 }
 
-#[test]
-fn generated_output_matches_the_golden_snapshots() {
-    let root = golden_root();
+/// One scenario, generated and compared against its golden directory.
+///
+/// A cell of the table below, and independent of every other one: its own
+/// temporary tree, its own `jails` processes and its own golden directory
+/// under `tests/golden/`. That is what lets the table be scheduled rather
+/// than walked.
+fn golden_mismatches_for(scenario: &Scenario) -> Vec<String> {
     let mut mismatches: Vec<String> = Vec::new();
+    let root = golden_root();
+    let produced = run_scenario(scenario);
+    let dir = root.join(scenario.name);
 
-    for scenario in SCENARIOS {
-        let produced = run_scenario(scenario);
-        let dir = root.join(scenario.name);
+    if updating() {
+        fs::remove_dir_all(&dir).ok();
+        for (rel, contents) in &produced {
+            let path = dir.join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, contents).unwrap();
+        }
+        return mismatches;
+    }
 
-        if updating() {
-            fs::remove_dir_all(&dir).ok();
-            for (rel, contents) in &produced {
-                let path = dir.join(rel);
-                fs::create_dir_all(path.parent().unwrap()).unwrap();
-                fs::write(&path, contents).unwrap();
+    let expected = snapshot(&dir);
+    if expected.is_empty() {
+        mismatches.push(format!(
+            "scenario `{}` has no golden files -- run `UPDATE_GOLDEN=1 cargo test --test golden`",
+            scenario.name
+        ));
+        return mismatches;
+    }
+    for (rel, want) in &expected {
+        match produced.get(rel) {
+            None => mismatches.push(format!("{}/{rel}: no longer generated", scenario.name)),
+            Some(got) if got != want => {
+                mismatches.push(format!("{}/{rel}: contents changed", scenario.name))
             }
-            continue;
-        }
-
-        let expected = snapshot(&dir);
-        if expected.is_empty() {
-            mismatches.push(format!(
-                "scenario `{}` has no golden files -- run `UPDATE_GOLDEN=1 cargo test --test golden`",
-                scenario.name
-            ));
-            continue;
-        }
-        for (rel, want) in &expected {
-            match produced.get(rel) {
-                None => mismatches.push(format!("{}/{rel}: no longer generated", scenario.name)),
-                Some(got) if got != want => {
-                    mismatches.push(format!("{}/{rel}: contents changed", scenario.name))
-                }
-                Some(_) => {}
-            }
-        }
-        for rel in produced.keys() {
-            if !expected.contains_key(rel) {
-                mismatches.push(format!("{}/{rel}: newly generated", scenario.name));
-            }
+            Some(_) => {}
         }
     }
+    for rel in produced.keys() {
+        if !expected.contains_key(rel) {
+            mismatches.push(format!("{}/{rel}: newly generated", scenario.name));
+        }
+    }
+    mismatches
+}
+
+#[test]
+fn generated_output_matches_the_golden_snapshots() {
+    let mismatches: Vec<String> = common::parallel::map_recording(
+        "golden-snapshots",
+        SCENARIOS,
+        |scenario| scenario.name.to_string(),
+        golden_mismatches_for,
+    )
+    .into_iter()
+    .flatten()
+    .collect();
 
     assert!(
         mismatches.is_empty(),
@@ -256,13 +307,27 @@ fn the_goldens_still_hold_the_properties_that_matter() {
     assert!(!bookkeeping.is_empty(), "no scenario recorded a .jails/");
     for (scenario, entries) in &bookkeeping {
         for entry in entries {
+            // **The managed tree is a third category, and the only one that is
+            // bulk.** `.jails/generated/` is not a registry and not the
+            // executor's bookkeeping: it is the compiler's *output*, the
+            // canonical counterpart of `src/main/java` in every other
+            // scenario, and snapshotting it is the whole point of
+            // `audit.md` A5.1. It is matched as a prefix rather than listed
+            // file by file for the same reason `src/` is -- the files are the
+            // product, and a list of them would have to be regenerated with
+            // them.
+            let managed = entry.starts_with(MANAGED_TREE);
             assert!(
-                SNAPSHOTTED_PROJECT_FILES.contains(&entry.as_str()),
-                "{scenario}: `.jails/{entry}` is neither project-owned source nor \
-                 the executor's bookkeeping. A second registry growing back \
-                 is exactly what rung 8 closed; a new executor path belongs \
-                 in EXECUTOR_STATE with the reason it is not snapshotted."
+                managed || SNAPSHOTTED_PROJECT_FILES.contains(&entry.as_str()),
+                "{scenario}: `.jails/{entry}` is neither project-owned source, \
+                 the compiler's managed tree, nor the executor's bookkeeping. \
+                 A second registry growing back is exactly what rung 8 closed; \
+                 a new executor path belongs in EXECUTOR_STATE with the reason \
+                 it is not snapshotted."
             );
+            if managed {
+                continue;
+            }
         }
     }
 
@@ -286,10 +351,27 @@ fn the_goldens_still_hold_the_properties_that_matter() {
                 "{path}: unsubstituted placeholder `{marker}`"
             );
         }
+        // A canonical file opens with its provenance banner, which is how a
+        // merge-managed artifact says which declaration it came from and that
+        // clean hand edits survive. Legacy files have no banner and open with
+        // the package or a Javadoc. Both are checked rather than the assertion
+        // being loosened to "starts with anything": what this catches is a
+        // file that begins with a stray blank line or leftover template
+        // preamble, and either spelling of a *correct* opening is exact.
+        let banner = text.starts_with("// Generated by jails from ");
         assert!(
-            text.starts_with("package ") || text.starts_with("/**"),
-            "{path}: a generated Java file should start with its package or Javadoc"
+            banner || text.starts_with("package ") || text.starts_with("/**"),
+            "{path}: a generated Java file should start with its package, its \
+             Javadoc, or its provenance banner"
         );
+        if banner {
+            let body = text.split_once('\n').map_or("", |(_, rest)| rest);
+            assert!(
+                body.starts_with("package "),
+                "{path}: the provenance banner is not followed by the package \
+                 declaration"
+            );
+        }
         // palantir-java-format removes both of these, so leaving one in means
         // `add format` -- which jails installs itself -- fails `jails check`
         // on a project whose every line jails wrote. `tidy_blank_lines` is
@@ -332,6 +414,68 @@ const COVERED_ELSEWHERE: &[(&str, &str)] = &[(
     "a_freshly_generated_project_passes_check_with_no_manual_formatting",
 )];
 
+#[test]
+fn no_generated_java_carries_an_unsubstituted_placeholder() {
+    if updating() {
+        return;
+    }
+    let root = golden_root();
+    let mut offenders = Vec::new();
+    let mut examined = 0;
+    for scenario in SCENARIOS {
+        for (relative, text) in snapshot(&root.join(scenario.name)) {
+            if !relative.ends_with(".java") {
+                continue;
+            }
+            examined += 1;
+            if !text.contains("{{") {
+                continue;
+            }
+            let line = text
+                .lines()
+                .position(|line| line.contains("{{"))
+                .map_or(0, |index| index + 1);
+            offenders.push(format!("  {}/{relative}:{line}", scenario.name));
+        }
+    }
+    // A scanner that has lost the corpus reports exactly what a clean one
+    // does, which is the trap `CLAUDE.md` records for every gate here.
+    assert!(
+        examined > 200,
+        "only {examined} generated Java files were examined -- this check has \
+         lost the golden corpus and would pass over anything"
+    );
+    assert!(
+        offenders.is_empty(),
+        "generated Java carries a template placeholder nothing substituted:\n{}\n\n\
+         `{{{{name}}}}` was chosen as the placeholder syntax *because* no `{{{{` \
+         appears in any Java jails writes, so one that survives into output is \
+         always a key the renderer did not supply. It compiles nowhere and the \
+         golden bytes record it as if it were intended.",
+        offenders.join("\n")
+    );
+}
+
+/// **The rule this generalises, and why it is here rather than per test.**
+///
+/// `{{{{name}}}}` is the placeholder syntax precisely because no `{{{{` appears in
+/// any Java jails writes -- `CLAUDE.md` records the check. So a `{{{{` in
+/// generated Java is never content: it is a key the renderer was not given,
+/// and it produces a file that compiles nowhere.
+///
+/// It was caught three times in one afternoon by hand-written
+/// `assert!(!bytes.contains("{{{{"))` lines in individual emitter tests, which
+/// is the shape of a rule nobody wrote down: every new emitter has to remember
+/// it, and the golden suite records the broken bytes as if they were intended.
+/// The golden corpus is the broadest output jails has, so the check belongs
+/// over all of it at once.
+///
+/// **Java only, deliberately.** A generated `.http` file uses `{{{{baseUrl}}}}`
+/// as the HTTP Client format's own variable syntax, a GitHub workflow writes
+/// `${{{{ github.ref }}}}`, and a compose healthcheck reads
+/// `{{{{.Config.User}}}}`. All three are the file format's syntax rather than
+/// jails', which is the same distinction that keeps those files off
+/// `template!` in the first place.
 /// The header of this file claims *"every artifact kind and every capability,
 /// in the smallest invocation that exercises it."* That comment was false by
 /// twelve when `plan.md` §8.5 counted: eight kinds were added and the golden
@@ -407,4 +551,136 @@ fn every_kind_and_capability_has_a_golden_scenario() {
              covers it, but no such test exists any more"
         );
     }
+}
+
+/// Every golden directory belongs to a scenario, and every scenario has one.
+///
+/// `tests/golden/scaffold-plain` held a `.jails/ledger.toml` that no scenario
+/// produced: a snapshot nothing compared against, which is worse than a
+/// missing one. A missing golden fails loudly the first time its scenario
+/// runs; an orphan sits there looking like coverage, and `git diff
+/// tests/golden` -- the review this suite is built on -- shows a clean tree
+/// whether or not anything still generates those bytes.
+///
+/// `simplify-sol.md`'s G0 asks for exactly this: *scenario names and golden
+/// directories match exactly*.
+#[test]
+fn every_golden_directory_is_a_registered_scenario_and_the_reverse() {
+    let registered: std::collections::BTreeSet<&str> =
+        SCENARIOS.iter().map(|scenario| scenario.name).collect();
+    let root = golden_root();
+    let mut on_disk = std::collections::BTreeSet::new();
+    for entry in fs::read_dir(&root).expect("tests/golden is missing") {
+        let entry = entry.expect("failed to read a tests/golden entry");
+        if entry.path().is_dir() {
+            on_disk.insert(
+                entry
+                    .file_name()
+                    .to_str()
+                    .expect("a golden directory with a non-UTF-8 name")
+                    .to_string(),
+            );
+        }
+    }
+    let orphans: Vec<&String> = on_disk
+        .iter()
+        .filter(|name| !registered.contains(name.as_str()))
+        .collect();
+    assert!(
+        orphans.is_empty(),
+        "these golden directories belong to no scenario: {orphans:?}\n       \
+         fix: register the scenario in tests/common/scenarios.rs, or delete the \
+         directory -- a snapshot nothing compares against is not coverage"
+    );
+    let unsnapshotted: Vec<&&str> = registered
+        .iter()
+        .filter(|name| !on_disk.contains(**name))
+        .collect();
+    assert!(
+        unsnapshotted.is_empty(),
+        "these scenarios have no golden directory: {unsnapshotted:?}\n       \
+         fix: UPDATE_GOLDEN=1 cargo test --test golden, then read the diff"
+    );
+}
+
+/// Every protocol fixture is read by something.
+///
+/// `testd-request.hex` and `testd-reply.hex` sat in `tests/protocol-golden/`
+/// with no reference anywhere in the workspace. A fixture nothing decodes
+/// proves nothing about compatibility -- it is a file that looks like a
+/// contract and is not one, and it would have survived the wire format
+/// changing underneath it without a word.
+///
+/// `simplify-sol.md`'s G0: *every protocol fixture has a source reference*.
+#[test]
+fn every_protocol_fixture_is_read_by_something() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/protocol-golden");
+    let mut sources = String::new();
+    for area in ["crates", "src", "tests"] {
+        read_rust_into(
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(area),
+            &mut sources,
+        );
+    }
+    assert!(
+        sources.len() > 100_000,
+        "the source scan found only {} bytes -- it has lost the code, and this \
+         gate would pass over an unreferenced fixture",
+        sources.len()
+    );
+    let mut unreferenced = Vec::new();
+    for entry in fs::read_dir(&root).expect("tests/protocol-golden is missing") {
+        let name = entry
+            .expect("failed to read a protocol-golden entry")
+            .file_name()
+            .to_str()
+            .expect("a fixture with a non-UTF-8 name")
+            .to_string();
+        if !sources.contains(&name) {
+            unreferenced.push(name);
+        }
+    }
+    unreferenced.sort();
+    assert!(
+        unreferenced.is_empty(),
+        "these protocol fixtures are read by nothing: {unreferenced:?}\n       \
+         fix: assert against the fixture from a test, or delete it -- an \
+         unread fixture is a contract nobody checks"
+    );
+}
+
+/// Every `.rs` file under `dir`, concatenated. For the reference scan above.
+fn read_rust_into(dir: &Path, out: &mut String) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries {
+        let path = entry.expect("failed to read a directory entry").path();
+        if path.is_dir() {
+            read_rust_into(&path, out);
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            out.push_str(&without_comments(
+                &fs::read_to_string(&path).unwrap_or_default(),
+            ));
+        }
+    }
+}
+
+/// Drop `//` comments, so prose cannot satisfy a reference check.
+///
+/// The first version of the gate above read whole files and passed -- because
+/// this file's own doc comment names the two fixtures it was written to catch.
+/// A scanner that reads its own explanation is the same failure as one that
+/// has lost the code: both report exactly what a clean tree reports. A real
+/// reference is `include_str!("...")`, which is a string literal; a mention in
+/// prose is not a contract.
+fn without_comments(source: &str) -> String {
+    source
+        .lines()
+        .map(|line| match line.find("//") {
+            Some(at) => &line[..at],
+            None => line,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }

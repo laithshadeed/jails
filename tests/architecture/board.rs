@@ -167,7 +167,110 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // followed the same cure as the thirteen above: they take the
                 // `apply::Tree` they are writing into rather than the root of a
                 // project that does not exist yet. `pending.md` §7.7.
-                ceiling: 72,
+                //
+                // 72 -> 77 for the canonical commands' explicit root:
+                // `sync_at`, `compile_at`, `load_model_at`, `resolve_manifest_at`
+                // and `materialize_seed`. This is the containment boundary the
+                // withdrawal below describes, not the disease. Each one exists
+                // *because* `model_command::root()` walks up from the process
+                // directory, and `jails new` is standing in the parent of the
+                // project it just created -- the same edge `--app` hit, and the
+                // reason every legacy route already takes a resolved `Project`
+                // instead of calling `discover`. Everything below these five
+                // already took an explicit root (`capture_*`, `materialize*`,
+                // `execute`); the five stop the walk rather than threading a
+                // root further down.
+                // 77 -> 78 for `model_init::refuse_if_modelled`, and it is the
+                // canonical shape rather than the one this rung is about: the
+                // question is whether a *directory* already holds an editable
+                // model, which is a fact about the filesystem and not one
+                // re-derived from a resolved `Project`. `jails model init`
+                // exists precisely because there is no model to read it off.
+                // 78 -> 79 for `inspect::roots::source_roots`, which asks
+                // which Java source roots a *directory* has -- the reader's
+                // tree always, and `.jails/generated/{main,test}/java` when the
+                // compiler has written one. It is the same canonical shape as
+                // the row above: a fact about the filesystem, not one
+                // re-derived from a resolved `Project`. Three sibling helpers
+                // took a root in the first draft; folding the label into the
+                // returned value and passing files rather than directories to
+                // `collect_stats` removed all three, so this is the one that is
+                // load-bearing. Reading it off a `Project` is the honest cure
+                // and is a separate change: `collect_routes` and
+                // `collect_beans` are public, and their four callers in
+                // `add/tooling`, `doctor`, `why_subject` and `editor_command`
+                // do not all hold one.
+                // 79 -> 81 for `read_source_at` and `replay_at`, which are the
+                // same containment boundary as the five above and exist for
+                // the same edge: `jails new --app` replays a manifest into the
+                // project it is creating, and `model_command::root` walks up
+                // from the process directory, which is that project's parent.
+                // They stop the walk; the root goes no further down, and it
+                // travels on `Invocation` from there -- a resolved value that
+                // was already threaded everywhere, which is this rung's own
+                // prescribed cure. Threading a parameter instead would have
+                // reached roughly nine frontend entry points.
+                // 81 -> 80: the legacy engine's deletion took one root-taking
+                // function with it.
+                // 80 -> 83 for three canonical filesystem questions, all the
+                // shape the two rows above describe rather than this rung's
+                // disease. `execute::preflight_writable` asks whether each
+                // directory a plan writes into will accept a file *before* any
+                // of it is published -- there is no resolved `Project` below
+                // the executor and there must not be, since the compiler ladder
+                // may not observe one. `model_doctor::published_history` reads
+                // the migrations the lock sealed, which is a question about
+                // paths. `rename_source::display` shortens an absolute path for
+                // the list the reader reviews. None threads a root further
+                // down: each takes one, answers, and stops.
+                // 83 -> 85 for `app::init` and `model_command::owns_at`, which
+                // are the containment boundary again: `app init` seeds a file
+                // in the root it was given, and `owns_at` is `owns` asked
+                // about a root the caller already holds rather than about the
+                // process directory. `jails new --app` stands in the parent of
+                // the project it is creating, which is the edge every `_at`
+                // above exists for.
+                // 85 -> 93 for eight more of the same two shapes, none of them
+                // threading a root further down. Five ask the filesystem one
+                // question and stop: `capture::declared_dependencies` and
+                // `capture::build_file` observe which artifacts a build states,
+                // at the capture boundary where every external fact is read
+                // once; `compose::up_document` runs a committed document
+                // against a project directory; `run_follow_up_effects` and
+                // `drop_compiled_shadows` act on the tree a plan just wrote,
+                // after the executor, where there is no `Project` to hold the
+                // answer. Three are refusals that read the reader's own tree
+                // before a rename touches it -- `refuse_reader_java`,
+                // `refuse_reader_sql`, `refuse_declared` -- and a refusal about
+                // what is on disk is a question about paths, which is the same
+                // exemption `preflight_writable` records above.
+                //
+                // 93 -> 94 for `stranded_reader_references`, which is the same
+                // shape once more and is worth recording for the half that is
+                // *not*. It names the reader's own files that still mention a
+                // type a removal takes away -- jails does not delete a file it
+                // does not own, so the reader is told instead -- and it reads
+                // the tree rather than the capture on purpose: which reader
+                // directories a plan captures follows from what it needs to
+                // write, while this has to look everywhere the reader keeps
+                // Java. Its walker took a second `root` for a value that was
+                // never a project root but `src/main/java`, and renaming that
+                // parameter is what kept the rise at one rather than two.
+                //
+                // Two more of the same shape arrived on the canonical executor
+                // in parallel and are already inside that 94: the
+                // staged-temporary sweep a crash between staging and rename
+                // leaves behind, and the managed-tree verification that reads
+                // it. Both run where no `Project` exists and neither threads a
+                // root further down, which is the exemption this row records
+                // three times over now.
+                // 94 -> 88 when the legacy generator stack went: six of the
+                // remaining root-taking readers were in `add` and `spring`.
+                // 88 -> 87 when the TOML front end stopped accepting edits:
+                // `model_command::owns_jdl_at` was the switch that chose which
+                // editor a mutation used, and with one editor left there is
+                // nothing for it to answer.
+                ceiling: 87,
                 // Withdrawn, not reached. abstract.md §8.0: the count includes
                 // modules whose subject *is* a path, so 40 read as a demand to
                 // stop writing modules. The row below is rung 1's condition;
@@ -178,7 +281,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       the resolved `Project`. This is the count abstract.md §8.1 watched \
                       rise from 161 to 195 with nothing to say so.",
             },
-            root_path_parameters(&src),
+            root_path_parameters(src),
         ),
         (
             Ratchet {
@@ -205,7 +308,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       caller already resolved, which is how two answers to one question \
                       appear in one run.",
             },
-            rederivers(&src)
+            rederivers(src)
                 .into_iter()
                 .filter(|(_, name)| {
                     !A_FRESH_READ_IS_CORRECT
@@ -213,18 +316,6 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                         .any(|(declared, _)| declared == name)
                 })
                 .count(),
-        ),
-        (
-            Ratchet {
-                name: "functions in `spring.rs` taking over 5 parameters",
-                rung: "1 — Introduce Parameter Object (`Layers`)",
-                ceiling: 0,
-                target: 0,
-                why: "The layer packages travel one at a time because `Layers` is not a \
-                      value: a Data Clump producing connascence of position at degree 12, \
-                      which is the highest-cost coupling in Page-Jones's ranking.",
-            },
-            over_five_params(&src, SPRING_RS),
         ),
         (
             Ratchet {
@@ -236,7 +327,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       in the same file. Exactly one struct may carry a body, and it is \
                       `model::Artifact`.",
             },
-            body_carrying_structs(&src),
+            body_carrying_structs(src),
         ),
         (
             Ratchet {
@@ -249,7 +340,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       tuple where `model::Artifact` says the same thing by name. Swap two \
                       fields and it compiles and emits wrong Java.",
             },
-            file_tuple_types(&src),
+            file_tuple_types(src),
         ),
         (
             Ratchet {
@@ -261,7 +352,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       migration working. They are scaffolding, not a destination: two names \
                       for one type is how the four shapes got there in the first place.",
             },
-            type_aliases(&src),
+            type_aliases(src),
         ),
         (
             Ratchet {
@@ -273,7 +364,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       and the per-command flag reach two different implementations. \
                       Connascence of meaning crossing a module boundary.",
             },
-            count_matches(&src, "dry_run || pretend") + count_matches(&src, "pretend || dry_run"),
+            count_matches(src, "dry_run || pretend") + count_matches(src, "pretend || dry_run"),
         ),
         (
             Ratchet {
@@ -285,7 +376,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       already computes. `tests/agreement.rs` polices it; abstract.md §9 says \
                       a test that polices duplication is a receipt for a decision not made.",
             },
-            count_matches(&src, "KIND_FILES") + count_matches(&src, "NO_FILE_TABLE"),
+            count_matches(src, "KIND_FILES") + count_matches(src, "NO_FILE_TABLE"),
         ),
         (
             Ratchet {
@@ -307,12 +398,12 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       when a tenth emitter picks a third name.",
             },
             src.iter()
-                .map(|file| file.production.matches("\\\"version\\\": ").count())
+                .map(|file| file.literals.matches("\\\"version\\\": ").count())
                 .sum(),
         ),
         (
             Ratchet {
-                name: "`# jails:` block literals outside `codemod.rs`",
+                name: "`# jails:` block literals outside `jails-codemod`",
                 rung: "16 — collect the splice primitives (plan.md §11)",
                 // `compose.rs`, `add.rs`, `add/database.rs`,
                 // `add/test_wiring.rs` and `doctor.rs` each built and parsed
@@ -321,7 +412,30 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // extracted, with the same consequence waiting: a change to
                 // the markers, or to the rule about the trailing newline, has
                 // to be made in five places and will be made in four.
-                ceiling: 0,
+                //
+                // **This row read zero for its whole life and could not have
+                // read anything else.** It counted `file.production`, which
+                // has every string literal blanked to spaces before a gate
+                // sees it -- and a `# jails:` marker only ever appears inside
+                // one. Ceiling and target were both zero, so a vacuous gate
+                // and a held line printed the same word. It counts
+                // `file.literals` now, and the true number is 13.
+                //
+                // Three of those thirteen were what the row was written to
+                // prevent, and all three had appeared in the *new* tree. They
+                // were not careless: `codemod` lived in `jails-project`, and
+                // neither canonical crate depends on it, so reuse was not
+                // available and a fourth, fifth and sixth implementation were
+                // structurally forced.
+                //
+                // **That is what closed it.** `codemod` is its own crate with
+                // no dependencies at all, which is a home both trees can
+                // reach, and the row is at zero -- so this is history rather
+                // than a plan. The lesson is the one the vacuous-gate note
+                // above teaches from the other direction: a gate that cannot
+                // fail and a gate whose subject cannot obey it both print the
+                // same word as a gate that is holding.
+                ceiling: MARKED_BLOCK_LITERALS,
                 target: 0,
                 why: "The marked block is how jails edits a file the reader owns, and it is \
                       what makes `remove` the exact inverse of `add`. A second implementation \
@@ -330,10 +444,174 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
             src.iter()
                 .filter(|file| !file.path.ends_with(CODEMOD_RS))
                 .map(|file| {
-                    file.production.matches("# jails:").count()
-                        + file.production.matches("# /jails:").count()
+                    file.literals.matches("# jails:").count()
+                        + file.literals.matches("# /jails:").count()
                 })
                 .sum(),
+        ),
+        (
+            Ratchet {
+                name: "`--diff-algorithm` sites outside `jails-support::git`",
+                rung: "one owner for what this machine's git can do",
+                // Zero from the day the row was added, and it is a fence
+                // rather than a ratchet: the flag was passed unconditionally
+                // from both merge implementations, which live in ladders that
+                // cannot see each other, so neither could learn what the other
+                // had found out. On git <= 2.43 `git merge-file` rejects it
+                // with exit 129 -- a usage error -- and every regeneration
+                // over an edited file failed on three of the most common Linux
+                // distributions.
+                ceiling: 0,
+                target: 0,
+                why: "A capability decision made in two places is one that eventually gets \
+                      made two ways. `jails_support::git` probes once and builds the argv for \
+                      both merges; a third site spelling the flag itself is how the first two \
+                      came to disagree with the machine they ran on.",
+            },
+            src.iter()
+                .filter(|file| !file.path.ends_with(GIT_RS))
+                .map(|file| file.literals.matches("--diff-algorithm").count())
+                .sum(),
+        ),
+        (
+            Ratchet {
+                name: "production files parsing Maven XML with their own scanner",
+                rung: "R3.8 — one document backend",
+                // `simplify-sol.md`'s deletion map: *duplicate Maven XML
+                // scanners -> one document backend*, deleting "second
+                // scanners and field-name lies".
+                //
+                // Five today, and the target of one is the document's ask
+                // rather than a number reachable in one change: four of the
+                // five are the strangler migration -- `pom.rs` being replaced,
+                // `jails-workspace/src/documents.rs` replacing it -- so the
+                // duplication is deliberate until the cutover, and the row is
+                // what makes that cutover measurable rather than asserted.
+                //
+                // Until then what it buys is that a *seventh* answer cannot
+                // appear. `CLAUDE.md` already records what a second scanner
+                // costs: `java::types_annotated_with` was three walks, two
+                // matching a raw substring, which is how `doctor` came to
+                // name the wrong container config and then report every other
+                // test as missing an import of it.
+                ceiling: MAVEN_XML_PARSERS,
+                target: 1,
+                why: "A tool that half-understands a build file and reports a dependency the \
+                      build does not have is the worst outcome available -- and two scanners \
+                      are two half-understandings that disagree without saying so.",
+            },
+            maven_xml_parsers(src),
+        ),
+        (
+            Ratchet {
+                name: "largest table of per-builtin knowledge outside its row",
+                rung: "R3.7 — one semantics row per builtin type",
+                // `simplify-sol.md`'s deletion map: *repeated `Layer`, route
+                // and name tables -> small typed registries with derived
+                // projections*, deleting "synchronized enum/label/package
+                // tables".
+                //
+                // 17 -> 4. Seven matches over `BuiltinType` became field
+                // reads on `BuiltinSemantics`, and `BuiltinType::semantics`
+                // is an exhaustive match -- so a builtin added to the enum
+                // does not compile until somebody writes what it means. The
+                // seven were each exhaustive too, which is exactly why this
+                // was invisible: the compiler forced seven edits and checked
+                // that none of them agreed.
+                //
+                // One of them, `link_default`, was phrased as a negation --
+                // a string default was allowed for anything not in a list of
+                // six numeric types -- so a new builtin silently accepted a
+                // default it cannot parse. `LiteralKind` states it
+                // positively, which turns that into a compile error.
+                ceiling: LARGEST_BUILTIN_TABLE,
+                target: LARGEST_BUILTIN_TABLE,
+                why: "A second table of what a builtin means is a second answer, and the one \
+                      that is wrong is whichever the reader did not edit -- which the compiler \
+                      cannot report, because both are exhaustive over the same enum.",
+            },
+            largest_builtin_table(src),
+        ),
+        (
+            Ratchet {
+                name: "compiler passes reaching outside the captured snapshot",
+                rung: "R3.6 — planning is a function of the capture",
+                // `simplify-sol.md`'s first fitness rule. `jails-compiler`,
+                // `jails-model` and `jails-contracts` depend on nothing that
+                // can read a disk or start a process, and this says so as a
+                // number rather than as a dependency list somebody has to
+                // read -- a `use std::fs` inside a pass compiles fine today
+                // and only shows up later as a plan that depended on a file
+                // nobody recorded reading.
+                //
+                // Gated at zero *while it is zero*. A purity property is
+                // cheap to keep and expensive to recover: once three passes
+                // read files, the fix is no longer a lint, it is a redesign
+                // of what capture returns.
+                ceiling: 0,
+                target: 0,
+                why: "The reason to capture first is that planning becomes a function -- same \
+                      snapshot, same request, same plan -- which is what makes a plan safe to \
+                      show before it is applied. One read inside a pass ends that quietly.",
+            },
+            compiler_reaches_outside_the_snapshot(src),
+        ),
+        (
+            Ratchet {
+                name: "types whose wire format is hand-written (target withdrawn)",
+                rung: "R3.5 — one owner per persisted format",
+                // `simplify-sol.md`'s deletion map, row 8: *hand
+                // codecs/tags/JSON serializers -> generated wire/report
+                // schemas*, and its fitness rule *every persisted union tag
+                // and field number is generated and golden-tested*.
+                //
+                // 210 -> 147 when `#[derive(Codec)]` landed. The derive is
+                // normative about the two things a hand codec kept getting a
+                // choice over: a struct encodes its fields in declaration
+                // order, and an enum's tag is explicit
+                // (`#[codec(tag = N)]`), never a Rust discriminant, so
+                // reordering variants cannot renumber the wire. Both were
+                // already true of every impl it replaced -- that is what let
+                // the 62 golden ledgers stay byte-identical across the
+                // change, and what makes them the test this row leans on.
+                //
+                // **The target is withdrawn, not reached.** What is left is
+                // not more of the same: a codec that enforces key ordering
+                // while it decodes, one that counts a recursion depth, one
+                // that re-parses a value through its constructor so a
+                // recovered journal cannot carry what the CLI would reject.
+                // Those are decisions about *this* format, and a derive that
+                // grew attributes for each would be a worse restatement of
+                // the same code. Demanding zero would read as "express
+                // validation as an attribute", which is the optional-field
+                // soup the same document argues against.
+                //
+                // What the row is for is that the number cannot *rise*: a new
+                // persisted type derives its format, or says in the commit why
+                // it is one of the bespoke ones.
+                //
+                // 144 -> 133 by deleting two *more* mechanisms rather than by
+                // converting more types one at a time. `codec!(struct T { .. })`
+                // and `contract_field_codec!` both expanded to exactly what the
+                // derive emits -- `Codec::encode(&self.field, encoder)?` in
+                // order -- so three spellings of one rule were in the tree at
+                // once, and the two macro ones restated the field list beside
+                // the type, which is the defect the derive exists to remove.
+                // All 23 uses were checked against declaration order before
+                // conversion (all 23 agreed, so no wire moved) and both macros
+                // are gone; the `enum` arm of `codec!` had no users at all.
+                // Ten further hand impls converted where `encode` was a plain
+                // field sequence and `decode` mirrored it. `encoder.maybe` is
+                // `option(v, |e, x| x.encode(e))` and every primitive `Codec`
+                // delegates to the matching `Encoder` method, so each of those
+                // is byte-identical by construction as well as by golden.
+                ceiling: HAND_WRITTEN_CODECS,
+                target: HAND_WRITTEN_CODECS,
+                why: "A hand-written codec states the field list three times -- in the type, \
+                      in `encode`, in `decode` -- so a field added to the type and forgotten \
+                      in the codec is a silent change of format rather than a compile error.",
+            },
+            hand_written_codecs(src),
         ),
         (
             Ratchet {
@@ -364,13 +642,19 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // refusal has to either carry a fix or lower something else.
                 // Separating the two kinds is per-message work, not a sweep,
                 // and it is what brings this down.
+                // 396 -> 395 as a consequence of the codec row above, not as
+                // work of its own: `codec!`'s `enum` arm carried an unknown-tag
+                // refusal with no `fix:`, and deleting the unused macro took
+                // its message with it.
+                // 395 -> 391 the same way: the legacy engine went, and four of
+                // its refusals with it.
                 ceiling: REFUSALS_WITHOUT_A_FIX,
                 target: REFUSALS_WITHOUT_A_FIX,
                 why: "A refusal that names no next step leaves the reader to guess, and jails' \
                       whole argument for refusing rather than guessing is that it can say what \
                       would work instead.",
             },
-            refusals_without_a_fix(&src),
+            refusals_without_a_fix(src),
         ),
         (
             Ratchet {
@@ -395,7 +679,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       hand-written copies of one collection loop came to exist, and how a set \
                       whose author forgot the sortedness check got no check at all.",
             },
-            inherent_codec_halves(&src),
+            inherent_codec_halves(src),
         ),
         (
             Ratchet {
@@ -407,7 +691,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       cannot be trusted and a ledger hung off `write_new_file` has a hole \
                       exactly where a capability updates a file it previously wrote.",
             },
-            write_sites_outside_apply(&src),
+            write_sites_outside_apply(src),
         ),
         (
             Ratchet {
@@ -506,7 +790,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       outside any transaction, so `--pretend` cannot see it and the journal \
                       cannot undo it.",
             },
-            mutation_sites(&src, MUTATION_APIS) + executor_bypasses(&src),
+            mutation_sites(src, MUTATION_APIS) + executor_bypasses(src),
         ),
         (
             Ratchet {
@@ -701,7 +985,54 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // the one shape where length is not complexity -- and the rung
                 // it is held against is about `doctor` re-deriving what `add`
                 // owns, which this does not do.
-                ceiling: 1590,
+                //
+                // 1590 -> 1609: `git merge`, and the same argument. Whether
+                // this machine's `git merge-file` takes `--diff-algorithm`
+                // decides which algorithm a three-way merge uses, and
+                // histogram and myers can resolve an ambiguous one
+                // differently -- so two colleagues on different distributions
+                // can turn one input into two managed trees, with the result
+                // recorded in each accepted projection. Nothing else in the
+                // product would ever say so. It asks the *machine*, which is
+                // what `doctor/environment.rs` is for, rather than re-deriving
+                // a fact `add` owns; the rung this row is held against is
+                // about the second.
+                //
+                // 1609 -> 1611: the same row learned to `Fail` when there is no
+                // `git` at all. The capability probe answers `false` both for
+                // "this git rejects the flag" and for "there is no git", so
+                // reporting the algorithm alone said "all clear" on a machine
+                // where every regeneration over an edited file was about to
+                // refuse. Two lines for doctor's only git row being able to
+                // fail.
+                //
+                // 1611 -> 1615: four lines for the capability row not lying to
+                // a modelled project. It reads `jails.toml`, a modelled project
+                // records its capabilities in the model, and the answer every
+                // canonical project got was "records none -- nothing to
+                // reconcile" about capabilities it had just declared. That is
+                // the rung's own complaint -- doctor deriving a fact from the
+                // wrong owner -- so the guard belongs here rather than being
+                // paid for by a check that stays wrong. The reasoning lives on
+                // `Project::is_modelled`; these four lines are the branch.
+                //
+                // 1615 -> 1634 for two canonical checks a legacy project
+                // already had and a canonical one could not be told at all:
+                // whether a migration jails published has been edited or
+                // deleted, and whether a generated test is present and
+                // `@Disabled`. Both are the rung's own complaint pointed the
+                // other way -- `doctor` was silent about the tree the compiler
+                // writes, and silence about a question nobody can see you
+                // failed to ask is the worst answer available. The four lines
+                // of `test_source_roots` are the third: the container check
+                // read only `src/test/java` and so reported "no container
+                // config" about a project whose config sits in the managed
+                // tree the build file declares as a source root.
+                // 1634 -> 1522: `capability_drift_checks` re-planned every
+                // recorded capability through the legacy `add::plan_for`, and
+                // it was that planner's last caller. A modelled project always
+                // skipped it, and every project jails mutates is modelled.
+                ceiling: 1522,
                 // Withdrawn, not reached. abstract.md §8.0.1 audits all ten
                 // checks: none is a re-encoded dependency fact, so the 700
                 // measured a saving that is not there. Ratchet against growth.
@@ -722,122 +1053,6 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 })
                 .map(production_lines)
                 .sum(),
-        ),
-        (
-            Ratchet {
-                name: "`spring.rs` lines",
-                rung: "10–11 — Extract Class; split by secret",
-                // Re-baselined once, from 3449, when the row below reached 0.
-                // While Java still lived inline, `blank` erased those bodies and
-                // this number could not see them -- so it flattered the file.
-                // With every body in `templates/spring/*.java`, what remains is
-                // genuinely Rust: the `render` call and its key list. The raw
-                // file fell 6,624 -> 5,517 in the same change and 4,596 lines
-                // became real Java an editor can check. This number is now
-                // honest, and only rung 11's split moves it.
-                // Closed by rung 11's split: `workflow`, `durable`, `http` and
-                // `schema` are now their own modules under `src/spring/`, and
-                // what is left here is the shared precondition plus the
-                // capability slices. The row below guards against the obvious
-                // way to cheat this one -- moving a monolith rather than
-                // decomposing it.
-                // 1,268 -> 688 when rung 11 finished: `dto.rs`, `messaging.rs`
-                // and `security.rs` left, and what remains is the shared
-                // preconditions plus the three small capabilities that have no
-                // second reader.
-                // 666 -> 479: `resource.rs` left, holding the Spring artifacts
-                // `g scaffold` emits -- the service, both controller shapes,
-                // their tests and the in-memory adapter. One secret nothing
-                // else here shares; `scope_controller_parts` stayed because
-                // `g query` reads it too.
-                // 479 -> 478: `add actuator` stopped writing
-                // `info.app.description=@project.description@`, a generated
-                // line whose value is always the empty string.
-                //
-                // 478 -> 480 for `add h2`, and the two lines are the `mod h2;`
-                // and `pub use h2::*;` that declare it. The capability itself
-                // is `spring/h2.rs`; this file gains exactly the fixed cost of
-                // a split, which is the shape this ratchet is asking for.
-                // 480 -> 488 for `require_mockmvc_tester`. `spring.rs`'s stated
-                // job after the split is "the shared precondition and the
-                // helpers used by more than one kind", and this is the second
-                // precondition beside `require_spring`: seven generators write
-                // a test against an API that is Spring Framework 6.2, and
-                // `jails new --gradle --boot 2.x` made older projects reachable
-                // for the first time. Putting it anywhere else would give two
-                // owners to "is this project new enough".
-                //
-                // 489 -> 522 for §1.1: `handles_duplicate_keys`, the two
-                // rendered blocks and their reasons. It belongs here for the
-                // same reason `mockmvc_template` does -- it is a question about
-                // *this project* that more than one template asks -- and the
-                // row is at a fifth of its target, so this is growth the gate
-                // is meant to allow rather than absorb.
-                //
-                // 522 -> 531 for §1.2, which *deleted* more of this file than
-                // it added: `require_mockmvc_tester`, the refusal seven
-                // generators made on a Boot 2 project, is gone because all nine
-                // of those tests have a classic `MockMvc` form now.
-                // `mockmvc_template` replaced it at about the same size, and
-                // the rise is the two render call sites it made multi-line.
-                // Most of what left was doc comment, which this row does not
-                // count.
-                //
-                // 531 -> 543 once §1.2's Boot 2 run said what the floor
-                // actually is. `require_mockmvc_tester` came back as
-                // `require_jakarta_spring` -- narrower, three kinds instead of
-                // seven, and named for `ProblemDetail`, `requestMatchers` and
-                // `JdbcClient` rather than for a test entry point -- beside
-                // `mockmvc_template` and `validation_package`, which is a third
-                // version question about *this project* that more than one
-                // template asks. Three such questions in one file is the
-                // logical cohesion this row's `why` describes rather than a
-                // regression; the row is at a fifth of its target.
-                //
-                // 545 -> 547 for `mod socket;`, 547 -> 549 for `mod presence;`,
-                // 549 -> 551 for `mod seed;` and 551 -> 553 for
-                // `mod endpoint;`, each with its re-export -- the same two
-                // lines a new submodule always costs here. 553 -> 554 for
-                // `mod support;`, which needs no re-export: `TestSupport` is
-                // named by three generators in this crate, and asking where a
-                // project's container config lives is a question about test
-                // wiring rather than a thing `require_spring` gates. `Endpoint` went
-                // into a module rather than into this file precisely because
-                // this row asked: as three lines of struct plus an impl it
-                // took the number to 564. The row is a
-                // measure of what `spring.rs` *holds*, and it holds nothing
-                // more than it did.
-                //
-                // 556 -> 558 for `mod join;` and its re-export: which component
-                // of a child references a parent is one question, and it was
-                // answered inside `query` while `usecase --via` needed the
-                // same answer from the other side. Two copies of a derivation
-                // is two derivations, and the one that differs is the one
-                // nobody tested. Two lines for a shared secret, again.
-                //
-                // 554 -> 556 for `mod pin;` and its re-export: resolving a
-                // `--set` literal against the declared type of the component
-                // it pins is a secret of its own -- two recipes ask it, and
-                // the answer needs the enum on disk rather than the request.
-                // The same two lines every submodule costs here, and the same
-                // shape this row wants rather than the one it stops.
-                // 543 -> 545 for `mod identity;` and its re-export. That is
-                // the *cure* this row asks for showing up as two lines: the
-                // time-ordered identifier is a new secret and it went into
-                // its own module rather than into this file. A submodule
-                // declaration costing two lines is not the growth the gate
-                // exists to stop.
-                ceiling: 558,
-                target: 2500,
-                why: "Logical cohesion: one file for everything sharing the `require_spring` \
-                      precondition. abstract.md §6.2 says turning that precondition into data \
-                      dissolves the file along real seams. Counted as lines of *decisions*: \
-                      test modules are blanked, which is the number plan.md §6.2 C sets its \
-                      2,500 target against.",
-            },
-            src.iter()
-                .find(|file| file.path.ends_with(SPRING_RS))
-                .map_or(0, production_lines),
         ),
         (
             Ratchet {
@@ -955,7 +1170,52 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // than at the dispatch site, so `main.rs` names the command
                 // once and a twenty-first flag costs it nothing. The largest
                 // module is `spring/workflow.rs` again, unchanged.
-                ceiling: 687,
+                //
+                // 687 -> 688, and the file is the JDL v1 parser. Two things
+                // arrived together and only one of them is a rise.
+                // `jails-compiler/src/lib.rs` went to 692 when `storage
+                // postgres` learned to version its dependencies against the
+                // Boot the project has -- and the answer was the split this
+                // row asks for rather than the ceiling: `compiler/storage.rs`
+                // holds that one question, 79 lines, and `lib.rs` is out of
+                // the top four entirely. What is left over is
+                // `jdl/v1/parser.rs` at 688, one line above, having grown with
+                // typed field semantics. A one-line rise is not worth
+                // splitting a parser for; the next rise there is.
+                //
+                // 688 -> 671, and it took seven splits rather than one. The
+                // canonical cutover's own growth had put *six* files above the
+                // ceiling at once -- the JDL frontend, the linker, the Java
+                // emitter, the generate frontend, the schema command and the
+                // compiler root -- so the board was measuring the worst of a
+                // crowd rather than one outlier. Each was split by the secret
+                // it had accreted rather than by size: `declaration` (how a
+                // declaration is spelled), `linker/validate` (whether one
+                // string may be a Java or SQL name), `emit_java/input` (what
+                // an `Input` record declares and how a request binds to it --
+                // `bugs.md` B48's own subject), `model_generate/profile`
+                // (which options a kind accepts), `schema_command/render`
+                // (the two shapes a snapshot is printed in), `ejectable`
+                // (which files an ejection would move) and `parser/attribute`
+                // (reading one `@name(...)`). The parser rise this row
+                // predicted is the last of them.
+                //
+                // `linker.rs` looked like the one that had to be a raise
+                // rather than a split -- it already has `linker/{component,
+                // enum_type, field, operation, unit}.rs`, so what is left in
+                // the parent is the part that has to see every declaration
+                // class at once, and cutting *that* badly gives two files
+                // which both need the whole picture. The seam is not there. It
+                // is between the walk and the checks the walk calls: whether
+                // one string may be a Java type, a package, a SQL identifier
+                // or a route is a question with nothing to do with the shape
+                // of the document, and it was 370 lines of the file.
+                //
+                // 671 -> 669, and this one is a deletion rather than a split:
+                // `docs/10-language.md` A4.4 took the second and third model
+                // front ends out of the mutating commands, and the largest
+                // module lost the branches that chose between them.
+                ceiling: 669,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
                       decomposing one, so this asks the question the split is actually for: \
@@ -967,21 +1227,38 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
         ),
         (
             Ratchet {
-                name: "inline Java bodies in `spring.rs` (`r#\"package `)",
-                rung: "10 — templates out of `spring.rs`",
+                name: "modules with no module doc",
+                rung: "audit.md A6.1 — written-down reasoning is the mechanism",
+                // 52 when the audit measured it, and the four canonical crates
+                // carried 32 of them -- including `materialize.rs`, the single
+                // boundary where a semantic patch becomes filesystem bytes.
+                // All 52 are written, so this is closed. It stays on the board
+                // because the gate is what keeps it closed: a new module with
+                // no doc is now a failing build rather than a slow return to
+                // one percent.
                 ceiling: 0,
                 target: 0,
-                why: "Every brace doubled, and no editor or compiler can check it. This is \
-                      the exact tax `src/template.rs` exists to remove.",
+                why: "Written-down reasoning is how this project stops a decision being \
+                      silently reversed: 262 source comments cite `plan.md` by section, and \
+                      a closed item is recoverable only through `git log -p`. A module with \
+                      no doc is a module whose reasons live nowhere, and the audit found the \
+                      canonical crates at one percent comment density -- so a `serde` field \
+                      added to a compatibility projection read as an accepted design.",
             },
-            inline_java_bodies(&src),
+            modules_without_a_module_doc(src),
         ),
         (
             Ratchet {
                 name: "percent of generated Java that is comment",
                 rung: "P6.4 — a template that cannot check its claim says less",
-                // 21 is what the templates measure today, after the four false
-                // claims `modern.md` §11.2 found were repaired at their
+                // 22 is what the templates measure today. Extracting the
+                // pre-existing Toxiproxy Java from Rust raw strings made that
+                // generated prose visible to this scanner; the golden-output
+                // test proves the extraction did not add a line to generated
+                // projects. This is a measurement-boundary correction, not a
+                // reopened allowance for new template prose.
+                //
+                // The four false claims `modern.md` §11.2 found were repaired at their
                 // source: the repository Javadoc names the *component* rather
                 // than the column, the publisher no longer claims per-entity
                 // ordering it does not give, the transition says nothing about
@@ -994,8 +1271,8 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // why an NPE is deliberately not fatal. What the number stops
                 // is the next template quietly adding another paragraph nobody
                 // can check beside them.
-                ceiling: 21,
-                target: 21,
+                ceiling: 22,
+                target: 22,
                 why: "A wrong explanation is believed, and a comment restating a decision is                       the fastest thing in a codebase to go stale. Generated prose is worse                       again: it is asserted by a template that has no way to confirm it, and                       it is copied into every project.",
             },
             template_comment_density(),

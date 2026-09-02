@@ -228,6 +228,15 @@ final class JailsTestDaemon {
             deleteTree(reportDirectory);
         }
         long durationUs = (System.nanoTime() - started) / 1_000L;
+        // A completed report carries the daemon's own output on its first
+        // case, so a run that produced no cases has nowhere to put a
+        // diagnostic and the coordinator exits non-zero having printed
+        // nothing. Refuse instead: the refusal frame has fields of its own,
+        // and no report is a refusal rather than a run of zero tests.
+        if (result.cases.isEmpty()) {
+            return refused(request.id, "no-case-report", summarize(result.output),
+                    "run the same selection with --engine build to see JUnit's own output");
+        }
         byte[] accepted = accepted(request.id, request.epoch);
         byte[] completed = completed(request, result, durationUs);
         return concat(accepted, completed);
@@ -417,6 +426,27 @@ final class JailsTestDaemon {
         else if (kind == 1) body.tag(0);
         else body.string(reason == null ? "" : reason);
         return frame(body.done());
+    }
+
+    // Why JUnit produced nothing, in the two places it says so: the head of
+    // its output, where an unaccepted argument or a thrown exception lands,
+    // and every `Caused by:` line, which is the half of a stack trace worth
+    // reading. The frames between them are noise, and the tail is this
+    // daemon's own note plus a page of usage text. Empty output still says
+    // something rather than nothing.
+    private static String summarize(String output) {
+        List<String> kept = new ArrayList<>();
+        List<String> causes = new ArrayList<>();
+        for (String line : output.strip().split("\\R")) {
+            String trimmed = line.strip();
+            if (trimmed.isEmpty()) continue;
+            if (trimmed.startsWith("Caused by:")) causes.add(trimmed);
+            else if (kept.size() < 6) kept.add(trimmed);
+        }
+        kept.addAll(causes);
+        if (kept.isEmpty()) return "JUnit produced no case report and said nothing";
+        String joined = String.join(" | ", kept);
+        return joined.length() > 1200 ? joined.substring(0, 1200) + "..." : joined;
     }
 
     private static byte[] refused(byte[] id, String code, String message, String fix) throws Exception {

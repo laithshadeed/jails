@@ -36,6 +36,14 @@ use std::collections::BTreeMap;
 /// serves them; `usecase`/`usecases`/`application` is the port layer under
 /// Clean Architecture's own naming. A name nobody uses costs nothing to leave
 /// out and something real to get wrong.
+///
+/// **`core` is the deliberate omission**, and it is the one somebody will
+/// reach for. It is a name real projects use constantly and it means the
+/// domain model in one codebase and shared framework glue in the next -- so it
+/// fails the test above on the second half rather than the first: common is
+/// not the bar, unambiguous is. Reporting it and letting the reader write one
+/// line costs them a line; guessing it wrong points every later command at the
+/// wrong package. `tests/corpus/spring-renamed-layers` pins the refusal.
 const SYNONYMS: &[(&str, &str)] = &[
     (layout::DOMAIN, layout::DOMAIN),
     ("model", layout::DOMAIN),
@@ -111,10 +119,18 @@ pub fn readings(names: &[String]) -> Vec<Reading> {
     names
         .into_iter()
         .map(|name| {
-            match SYNONYMS
-                .iter()
-                .find(|(synonym, _)| *synonym == name.to_ascii_lowercase())
-            {
+            // **Matched on the last segment, recorded whole.** A name may
+            // now be a dotted path -- `infra.jdbc` -- because a layer can be
+            // nested and `Config::layers()` has always honoured one. What
+            // makes it that layer is its own name; what has to be written down
+            // is where it is. For an undotted name the two are the same
+            // string, so this is a strict generalisation.
+            let leaf = name
+                .rsplit('.')
+                .next()
+                .unwrap_or(&name)
+                .to_ascii_lowercase();
+            match SYNONYMS.iter().find(|(synonym, _)| *synonym == leaf) {
                 Some((_, layer)) if *layer == name => Reading::Conventional(layer),
                 Some((_, layer)) => Reading::Renamed { layer, dir: name },
                 None => Reading::Unknown(name),
@@ -176,6 +192,44 @@ fn known_layers() -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A nested directory is classified by its leaf and recorded whole.
+    ///
+    /// `jails adopt` used to record the *first* package segment, so a class in
+    /// `infra/jdbc` was adopted as `adapters = "infra"` -- a package holding no
+    /// Java at all, only the subpackage the class is really in. Every later
+    /// command would then have been pointed at an empty tree, and nothing
+    /// would have reported it, because `Config::layers()` honours a nested
+    /// layout perfectly well and had no way to know this one was invented.
+    ///
+    /// The corpus entry `tests/corpus/spring-nested-adapters` is what found
+    /// it.
+    #[test]
+    fn a_nested_directory_is_read_by_its_leaf_and_recorded_whole() {
+        let readings = readings(&["infra.persistence".to_string()]);
+        assert!(
+            matches!(
+                readings.as_slice(),
+                [Reading::Renamed { layer, dir }]
+                    if *layer == layout::ADAPTERS && dir == "infra.persistence"
+            ),
+            "{readings:?}"
+        );
+    }
+
+    /// ... and a leaf that is not a layer name is reported, never guessed.
+    ///
+    /// `jdbc` is a technology rather than a layer, so `infra.jdbc` is
+    /// unrecognised. Guessing it -- on the grounds that adapters are often
+    /// JDBC -- is what would put the wrong package in somebody's `jails.toml`.
+    #[test]
+    fn an_unrecognised_leaf_is_unknown_rather_than_the_nearest_layer() {
+        let readings = readings(&["infra.jdbc".to_string()]);
+        assert!(
+            matches!(readings.as_slice(), [Reading::Unknown(name)] if name == "infra.jdbc"),
+            "{readings:?}"
+        );
+    }
 
     #[test]
     fn every_synonym_maps_to_a_real_layer() {

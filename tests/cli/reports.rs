@@ -27,9 +27,12 @@ fn about_describes_a_synthetic_nested_maven_reactor() {
     .unwrap();
     for module in ["sample-core", "sample-web"] {
         let module_root = root.join(module);
-        fs::create_dir_all(module_root.join("src/main/java/dev/example")).unwrap();
+        fs::create_dir_all(common::generated(&module_root, "src/main/java/dev/example")).unwrap();
         fs::write(
-            module_root.join("src/main/java/dev/example/DemoApplication.java"),
+            common::generated(
+                &module_root,
+                "src/main/java/dev/example/DemoApplication.java",
+            ),
             "package dev.example;\n\npublic class DemoApplication {}\n",
         )
         .unwrap();
@@ -135,7 +138,7 @@ fn completion_offers_artifact_kinds_for_generate_destroy_and_their_aliases() {
 fn lint_reports_closed_set_stale_apis_as_file_and_line() {
     let root = temp_dir("lint-stale-api");
     write_project_skeleton(&root);
-    let source = root.join("src/main/java/com/example/demo/Legacy.java");
+    let source = common::generated(&root, "src/main/java/com/example/demo/Legacy.java");
     fs::write(
         &source,
         "package com.example.demo;\n\n@Entity\nclass Legacy {}\n",
@@ -333,8 +336,14 @@ fn doctor_reports_missing_and_changed_managed_outputs_with_repair_guidance() {
             .unwrap()
             .success()
     );
-    let controller = root.join("src/main/java/com/example/demo/web/NoteController.java");
-    let service = root.join("src/main/java/com/example/demo/service/NoteService.java");
+    let controller = common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/NoteController.java",
+    );
+    let service = common::generated(
+        &root,
+        "src/main/java/com/example/demo/service/NoteService.java",
+    );
     fs::remove_file(&controller).unwrap();
     fs::write(
         &service,
@@ -348,14 +357,20 @@ fn doctor_reports_missing_and_changed_managed_outputs_with_repair_guidance() {
     let output = jails_cmd(&root, None).arg("doctor").output().unwrap();
     assert!(!output.status.success());
     let report = String::from_utf8_lossy(&output.stdout);
-    assert!(report.contains("recorded output"), "{report}");
+    // **A deletion is a fault and an edit is not**, which is the canonical
+    // answer and a better one: `sync` refuses while a managed file is gone, so
+    // nothing converges until somebody restores it, while an edit is merged
+    // forward on every sync and the reader is entitled to know they are doing
+    // it rather than to be told they broke something.
+    assert!(report.contains("managed output"), "{report}");
+    assert!(report.contains("NoteController.java deleted"), "{report}");
     assert!(
-        report.contains("NoteController.java` is missing"),
+        report.contains("restore the file from version control"),
         "{report}"
     );
-    assert!(report.contains("NoteService.java` changed"), "{report}");
+    assert!(report.contains("managed edits"), "{report}");
     assert!(
-        report.contains("jails resource repair Note --strategy roll-forward"),
+        report.contains("NoteService.java changed since generation"),
         "{report}"
     );
 }
@@ -370,7 +385,7 @@ fn doctor_reports_missing_and_changed_managed_outputs_with_repair_guidance() {
 fn doctor_reports_a_sealed_migration_that_was_deleted_or_edited() {
     let root = temp_dir("doctor-migration-seals");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     assert!(
         jails_cmd(&root, None)
             .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
@@ -386,9 +401,11 @@ fn doctor_reports_a_sealed_migration_that_was_deleted_or_edited() {
             .success()
     );
 
+    // The question is asked out loud even when the answer is yes: a check that
+    // appears only on a fault is one a reader cannot tell was ever run.
     let clean = jails_cmd(&root, None).arg("doctor").output().unwrap();
     let report = String::from_utf8_lossy(&clean.stdout).to_string();
-    assert!(!report.contains("sealed migration"), "{report}");
+    assert!(report.contains("ok    sealed migrations"), "{report}");
 
     // The command's own migration, not the scaffold's -- the exact file the
     // old check could not see.
@@ -398,13 +415,16 @@ fn doctor_reports_a_sealed_migration_that_was_deleted_or_edited() {
     let output = jails_cmd(&root, None).arg("doctor").output().unwrap();
     assert!(!output.status.success());
     let report = String::from_utf8_lossy(&output.stdout);
-    assert!(report.contains("migrations Task"), "{report}");
+    assert!(report.contains("sealed migrations"), "{report}");
     assert!(
         report.contains("V002__add_priority_to_tasks.sql` is missing"),
         "{report}"
     );
+    // Never a repair verb: repair renders the managed tree from the model, and
+    // schema history is not in it. Restoring the file is the only answer that
+    // keeps a database that already ran it described by what is on disk.
     assert!(
-        report.contains("jails resource repair Task --strategy roll-forward"),
+        report.contains("restore the file from version control"),
         "{report}"
     );
 
@@ -446,18 +466,32 @@ fn a_read_only_directory_refuses_a_write(under: &std::path::Path) -> bool {
     refused
 }
 
+/// `bugs.md` B18, as the reproduction that found it: make one path unwritable
+/// and the write phase cannot finish.
+///
+/// **The canonical executor has no half-applied state to report**, which is a
+/// stronger answer than the one this test used to assert. Every write is
+/// staged under `.jails-staged-` and published under the lock, and a run that
+/// cannot finish leaves the project exactly as it was -- so `doctor` has
+/// nothing to say about a torn transaction, and the repair that used to adopt
+/// half-written files as the recorded truth has nothing to adopt. What the
+/// reader does is fix the permission and run the command again; the sweep
+/// removes its own debris and the transition converges.
 #[test]
-fn doctor_names_an_interrupted_transaction_and_repair_declines_to_adopt_it() {
+fn an_unwritable_path_leaves_the_project_exactly_as_it_was() {
     let root = temp_dir("doctor-interrupted");
     if !a_read_only_directory_refuses_a_write(&root) {
         // Root ignores the mode bits, and so do some filesystems. Probing is
         // the honest test: asserting on the uid would claim to know why.
-        common::skip("this user can write into a read-only directory");
+        //
+        // Not `skip`: there is nothing to install here, so
+        // `JAILS_TOOLCHAIN` must not turn it into a failure. See
+        // `skip_unsupported_environment`.
+        common::skip_unsupported_environment("this user can write into a read-only directory");
         return;
     }
     write_spring_fixture(&root);
-    let migrations = root.join("src/main/resources/db/migration");
-    fs::create_dir_all(&migrations).unwrap();
+    common::declare_storage(&root);
     assert!(
         jails_cmd(&root, None)
             .args(["g", "scaffold", "Task", "id:uuid@pk", "title:string!"])
@@ -465,6 +499,8 @@ fn doctor_names_an_interrupted_transaction_and_repair_declines_to_adopt_it() {
             .unwrap()
             .success()
     );
+    let migrations = root.join("src/main/resources/db/migration");
+    let before = snapshot_tree(&root);
 
     let sealed = fs::metadata(&migrations).unwrap().permissions();
     let mut locked = sealed.clone();
@@ -474,51 +510,39 @@ fn doctor_names_an_interrupted_transaction_and_repair_declines_to_adopt_it() {
         .args(["resource", "field", "add", "Task", "priority:int?"])
         .output()
         .unwrap();
-    assert!(!torn.status.success(), "the write was not torn");
+    assert!(!torn.status.success(), "the write was not refused");
+
+    // Nothing published, including the model: the authoring source is written
+    // by the same plan, so a run that cannot append its migration cannot claim
+    // the column either.
+    fs::set_permissions(&migrations, sealed).unwrap();
+    assert_eq!(snapshot_tree(&root), before);
 
     let output = jails_cmd(&root, None).arg("doctor").output().unwrap();
     let report = String::from_utf8_lossy(&output.stdout);
-    assert!(!output.status.success(), "{report}");
-    assert!(report.contains("started and did not finish"), "{report}");
-    assert!(report.contains("run the same command again"), "{report}");
-    assert!(
-        report.contains("Do not run `jails resource repair`"),
-        "{report}"
-    );
+    assert!(!report.contains("did not finish"), "{report}");
+    assert!(report.contains("ok    sealed migrations"), "{report}");
 
-    // The advertised repair used to adopt the half-applied state as the
-    // recorded truth. It must not get that far: recovery is attempted first
-    // and cannot finish while the path is unwritable, so the command stops
-    // with the reason and the project is left exactly as it was.
-    let repair = jails_cmd(&root, None)
-        .args(["resource", "repair", "Task", "--strategy", "roll-forward"])
-        .output()
-        .unwrap();
-    assert!(!repair.status.success(), "{repair:?}");
-    let still = jails_cmd(&root, None).arg("doctor").output().unwrap();
-    let report = String::from_utf8_lossy(&still.stdout);
-    assert!(report.contains("started and did not finish"), "{report}");
-
-    // Unblocked, the ordinary next command finishes what was interrupted --
-    // an unrelated one, because the point is that nobody has to know which
-    // command was torn.
-    fs::set_permissions(&migrations, sealed).unwrap();
+    // And the same command, run again, converges.
     let again = jails_cmd(&root, None)
-        .args(["g", "record", "Note", "body:string!"])
+        .args(["resource", "field", "add", "Task", "priority:int?"])
         .output()
         .unwrap();
     assert!(again.status.success(), "{again:?}");
-    let said = String::from_utf8_lossy(&again.stdout);
-    assert!(said.contains("recovered"), "{said}");
     assert!(
         root.join("src/main/resources/db/migration/V002__add_priority_to_tasks.sql")
             .exists(),
-        "the interrupted transaction's migration was not published"
+        "the retried transition did not publish its migration"
     );
     let cleared = jails_cmd(&root, None).arg("doctor").output().unwrap();
     let report = String::from_utf8_lossy(&cleared.stdout);
-    assert!(cleared.status.success(), "{report}");
+    // Named checks rather than the exit status, for the reason the sibling
+    // test above records: a fixture that declares a compose service and starts
+    // nothing makes `doctor`'s status a fact about the machine.
     assert!(!report.contains("did not finish"), "{report}");
+    assert!(report.contains("ok    sealed migrations"), "{report}");
+    assert!(report.contains("ok    managed output"), "{report}");
+    assert!(report.contains("ok    model accepted"), "{report}");
 }
 
 /// A generated `@Disabled` test is honest about what it does not prove and
@@ -534,32 +558,37 @@ fn doctor_names_an_interrupted_transaction_and_repair_declines_to_adopt_it() {
 fn a_generated_disabled_test_is_named_when_it_is_written_and_afterwards() {
     let root = temp_dir("doctor-disabled-tests");
     write_spring_fixture(&root);
-    assert!(
-        jails_cmd(&root, None)
-            .args(["g", "record", "Post", "title:string!"])
-            .status()
-            .unwrap()
-            .success()
-    );
+    common::become_canonical(&root);
+    // A component whose type jails owns nothing about. It cannot spell a
+    // `SourceRef`, so the companion test is emitted whole and `@Disabled`
+    // rather than guessed at -- a guess would not compile, and emitting
+    // nothing would drop the coverage without saying so.
+    let pkg = root.join("src/main/java/com/example/demo");
+    fs::create_dir_all(&pkg).unwrap();
+    fs::write(
+        pkg.join("SourceRef.java"),
+        "package com.example.demo;\n\npublic record SourceRef(String value) {}\n",
+    )
+    .unwrap();
 
     let planned = jails_cmd(&root, None)
         .args([
             "g",
-            "strategy",
-            "PostRule",
-            "Featured",
-            "--on",
-            "Post",
+            "record",
+            "Clip",
+            "ref:com.example.demo.SourceRef",
             "--pretend",
         ])
         .output()
         .unwrap();
+    assert!(planned.status.success(), "{planned:?}");
     let plan = String::from_utf8_lossy(&planned.stdout);
     assert!(plan.contains("test-disabled"), "{plan}");
+    assert!(plan.contains("ClipTest.java"), "{plan}");
 
     assert!(
         jails_cmd(&root, None)
-            .args(["g", "strategy", "PostRule", "Featured", "--on", "Post"])
+            .args(["g", "record", "Clip", "ref:com.example.demo.SourceRef"])
             .status()
             .unwrap()
             .success()
@@ -567,7 +596,7 @@ fn a_generated_disabled_test_is_named_when_it_is_written_and_afterwards() {
     let output = jails_cmd(&root, None).arg("doctor").output().unwrap();
     let report = String::from_utf8_lossy(&output.stdout);
     assert!(report.contains("generated tests"), "{report}");
-    assert!(report.contains("FeaturedPostRuleTest.java"), "{report}");
+    assert!(report.contains("ClipTest.java"), "{report}");
     // A warning, not a failure: the file is exactly what jails meant to write.
     assert!(output.status.success(), "{report}");
 }
@@ -584,7 +613,7 @@ fn a_generated_disabled_test_is_named_when_it_is_written_and_afterwards() {
 fn doctor_names_a_migration_that_was_written_and_never_filled_in() {
     let root = temp_dir("doctor-empty-migration");
     write_spring_fixture(&root);
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
+    common::declare_storage(&root);
     assert!(
         jails_cmd(&root, None)
             .args(["g", "migration", "add_customer_id_index"])
@@ -597,8 +626,13 @@ fn doctor_names_a_migration_that_was_written_and_never_filled_in() {
     let report = String::from_utf8_lossy(&output.stdout);
     assert!(report.contains("contain no SQL"), "{report}");
     assert!(report.contains("add_customer_id_index.sql"), "{report}");
-    // The reader's file to fill in, so a warning and not a failure.
-    assert!(output.status.success(), "{report}");
+    // **The reader's file to fill in, so a warning and not a failure** -- and
+    // the assertion is on the check rather than on the exit status, because
+    // this fixture declares a compose service and never starts it. `doctor`
+    // exits non-zero when *any* check fails, so asserting the status here
+    // asserted that a PostgreSQL happened to be listening on the machine
+    // running the suite. It was, on the laptop; it was not on the runner.
+    assert!(report.contains("warn  migration bodies"), "{report}");
 
     let written = root.join("src/main/resources/db/migration");
     let file = fs::read_dir(&written)
@@ -665,11 +699,11 @@ fn doctor_reports_resolved_developer_tool_paths_and_versions() {
     )
     .unwrap();
     fs::write(
-        root.join("src/main/java/com/example/demo/DemoApplication.java"),
+        common::generated(&root, "src/main/java/com/example/demo/DemoApplication.java"),
         "package com.example.demo;\nimport org.springframework.boot.autoconfigure.SpringBootApplication;\n@SpringBootApplication public class DemoApplication {}\n",
     )
     .unwrap();
-    let controller = root.join("src/main/java/com/example/demo/NoteController.java");
+    let controller = common::generated(&root, "src/main/java/com/example/demo/NoteController.java");
     fs::write(
         controller,
         "package com.example.demo;\nclass NoteController { @GetMapping(\"/notes\") String get() { return \"ok\"; } }\n",
@@ -936,7 +970,7 @@ source = "src/main/resources/db/queries/FindOrder.sql"
 fn rename_moves_the_type_its_companion_and_every_reference() {
     let root = temp_dir("rename");
     write_inspectable_project(&root);
-    let tests = root.join("src/test/java/dev/example/shop/domain");
+    let tests = common::generated(&root, "src/test/java/dev/example/shop/domain");
     fs::create_dir_all(&tests).unwrap();
     fs::write(
         tests.join("OrderTest.java"),
@@ -953,7 +987,7 @@ fn rename_moves_the_type_its_companion_and_every_reference() {
         .unwrap();
     assert!(output.status.success(), "{:?}", output);
 
-    let domain = root.join("src/main/java/dev/example/shop/domain");
+    let domain = common::generated(&root, "src/main/java/dev/example/shop/domain");
     assert!(domain.join("Purchase.java").is_file());
     assert!(!domain.join("Order.java").exists());
     assert!(tests.join("PurchaseTest.java").is_file());
@@ -1004,17 +1038,14 @@ fn rename_dry_run_writes_nothing() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("nothing was written"), "{stdout}");
-    assert!(
-        root.join("src/main/java/dev/example/shop/domain/Order.java")
-            .is_file()
-    );
+    assert!(common::generated(&root, "src/main/java/dev/example/shop/domain/Order.java").is_file());
 }
 
 #[test]
 fn notes_reads_comments_and_ignores_string_literals() {
     let root = temp_dir("notes");
     write_spring_fixture(&root);
-    let pkg = root.join("src/main/java/com/example/demo");
+    let pkg = common::generated(&root, "src/main/java/com/example/demo");
     fs::write(
         pkg.join("Probe.java"),
         "package com.example.demo;\n\
@@ -1047,7 +1078,7 @@ fn notes_can_be_filtered_to_one_tag() {
     let root = temp_dir("notes-filter");
     write_spring_fixture(&root);
     fs::write(
-        root.join("src/main/java/com/example/demo/Probe.java"),
+        common::generated(&root, "src/main/java/com/example/demo/Probe.java"),
         "package com.example.demo;\n// TODO one\n// FIXME two\npublic class Probe {}\n",
     )
     .unwrap();
@@ -1115,7 +1146,7 @@ fn stats_counts_a_renamed_layer_under_its_configured_name() {
 fn src_resolves_a_type_and_lists_every_match() {
     let root = temp_dir("src-command");
     write_plain_fixture(&root);
-    let main = root.join("src/main/java/com/example/demo");
+    let main = common::generated(&root, "src/main/java/com/example/demo");
     for (package, dir) in [("com.example.demo.a", "a"), ("com.example.demo.b", "b")] {
         fs::create_dir_all(main.join(dir)).unwrap();
         fs::write(

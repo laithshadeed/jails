@@ -30,10 +30,52 @@ fn owns_terminal_output(path: &Path) -> bool {
         || relative == "src/new.rs"
         || relative == "src/sql_command.rs"
         || relative == "src/schema_command.rs"
+        || relative == "src/schema_command/render.rs"
         || relative == "src/editor_command.rs"
         || relative == "src/contract_command.rs"
         || relative == "src/tool_command.rs"
-        || relative == "src/history_command.rs"
+        || relative == "src/model_command.rs"
+        || relative == "src/model_generate.rs"
+        // The two halves `model_generate` was split into, and both are here for
+        // its reason rather than a new one. `report` is the preview, the
+        // disabled-test list and the deletion prompt -- the whole of what a
+        // reader is shown about a plan; `effects` is what is said on the way
+        // past once the transition is durable, where a service that is not up
+        // or a formatter that could not run has to be named or nobody learns
+        // of it.
+        || relative == "src/model_generate/report.rs"
+        || relative == "src/model_generate/effects.rs"
+        // The other half of the same door. `model_import` carries a legacy
+        // ledger across; this one gives a project jails never created its
+        // first model, and saying so is part of the command: a reader who has
+        // just made their repository canonical needs to know that generation
+        // has moved to `.jails/generated` and their own sources have not.
+        || relative == "src/model_init.rs"
+        // Sibling of `model_import.rs` and classified for the same reason: a
+        // CLI command module whose contract includes telling the reader what
+        // the upgrade changes about the model before the plan is shown. §22
+        // requires that review step, and two of the translations mean
+        // something a reviewer should not have to spot in the diff.
+        || relative == "src/model_upgrade.rs"
+        // A read-only report whose entire contract is terminal output:
+        // `jdl-sol.md` §18.4 asks that a derived name be *inspectable*, and a
+        // command that returned the records to a caller with nowhere to print
+        // them would satisfy the type and not the requirement.
+        || relative == "src/model_explain.rs"
+        // The canonical half of `resource status`, and a read-only report
+        // whose whole contract is the four authority lines it prints. The
+        // legacy half is already allowed through `jails-report`.
+        || relative == "src/model_status.rs"
+        || relative == "src/parse_error.rs"
+        // `app init` prints the file it seeded and what to do with it, and
+        // `app plan` prints the manifest's declarations -- a plan that
+        // returned them to a caller with nowhere to print them would satisfy
+        // the type and not the requirement.
+        || relative == "src/app.rs"
+        // The textual rename's whole contract is the list it prints before it
+        // asks for `--force`: every file it will edit and every one it will
+        // move, so `--dry-run` is a review rather than a promise.
+        || relative == "src/rename_source.rs"
         || relative.starts_with("src/new/")
         || relative == "crates/jails-support/src/lib.rs"
         || relative == "crates/jails-support/src/process.rs"
@@ -42,11 +84,16 @@ fn owns_terminal_output(path: &Path) -> bool {
         || relative == "crates/jails-project/src/inspect.rs"
         || relative == "crates/jails-project/src/project.rs"
         || relative == "crates/jails-generate/src/generate.rs"
-        || relative == "crates/jails-generate/src/generate/recipes.rs"
         || relative.starts_with("crates/jails-drive/src/")
         || relative.starts_with("crates/jails-report/src/")
-        || relative == "crates/jails-engine/src/route/capability.rs"
-        || relative.starts_with("crates/jails-engine/src/route/maintenance/")
+        // The two commands that run *before* a project has a model. Both
+        // report what they read and what they would change, and both are
+        // interactive by contract -- `adopt` prints a classification the
+        // reader is meant to check before it writes a `[layout]` table.
+        || relative == "src/adopt.rs"
+        || relative == "src/modernize.rs"
+        || relative == "src/sql_command.rs"
+        || relative == "src/contract_command.rs"
 }
 
 #[test]
@@ -123,7 +170,7 @@ fn the_abstract_md_ladder_gates_are_ratchets_that_only_move_down() {
     for (gate, actual) in &fell {
         report.push_str(&format!(
             "\nIMPROVED, RECORD IT: {} is {actual}, below the recorded ceiling of {}.\n  \
-             rung {}\n  Lower this row's `ceiling` to {actual} in tests/architecture.rs. An \
+             rung {}\n  Lower this row's `ceiling` to {actual} in tests/architecture/board.rs. An \
              improvement that is not recorded here is one the next change may silently \
              undo, which is exactly the failure abstract.md §8.1 documented.\n",
             gate.name, gate.ceiling, gate.rung
@@ -155,6 +202,39 @@ fn the_abstract_md_ladder_gates_are_ratchets_that_only_move_down() {
 /// Same-level edges are allowed, including mutual ones: `generate` and `spring`
 /// call each other and ship in the same crate, which is a design decision
 /// rather than an accident.
+/// Every gate that names a file must name one that is there.
+///
+/// A gate keyed by path has two failure modes, and only one of them is loud.
+/// Pointing at the *wrong* file drags rows red, which `SPRING_RS`'s comment
+/// records. Pointing at a file that no longer exists is silent: the exclusion
+/// excludes nothing, or the measurement measures nothing, and the row keeps
+/// printing a number nobody can tell from a real one.
+///
+/// `CODEMOD_RS` spent a whole change stale -- it still said
+/// `jails-project/src/codemod.rs` after the splice moved to its own crate --
+/// and nothing failed. It was harmless there by luck: the owner's own markers
+/// are all in comments, so excluding nothing excluded nothing that counted.
+#[test]
+fn every_path_a_gate_names_is_a_file_the_scanner_found() {
+    let files = sources();
+    for (constant, path) in [
+        ("BUILTIN_RS", BUILTIN_RS),
+        ("WIRE_RS", WIRE_RS),
+        ("CODEMOD_RS", CODEMOD_RS),
+        ("GIT_RS", GIT_RS),
+        ("DOCTOR_RS", DOCTOR_RS),
+        ("SCRATCH_RS", SCRATCH_RS),
+    ] {
+        assert!(
+            files.iter().any(|file| file.path.ends_with(path)),
+            "`{constant}` names `{path}`, which the workspace scanner did not find. \
+             Either the file moved and the constant did not, or it was deleted -- and \
+             until one of those is fixed, every gate keyed by it is measuring nothing \
+             while reporting a number."
+        );
+    }
+}
+
 #[test]
 fn no_module_depends_on_a_layer_above_its_own() {
     let mut offenders = Vec::new();
@@ -188,6 +268,16 @@ fn no_module_depends_on_a_layer_above_its_own() {
         // the crates above this one can be reached up into.
         for (other_crate, other, other_level) in LAYERS {
             if *other_crate == krate || *other_level <= level {
+                continue;
+            }
+            // `crate::model` names this crate's `model` when it has one. It
+            // cannot simultaneously name another crate's module with the same
+            // basename. Module identity is `(crate, module)`; resolving by the
+            // second half alone recreates the collision this table was changed
+            // to eliminate.
+            if LAYERS.iter().any(|(candidate_crate, candidate, _)| {
+                *candidate_crate == krate && *candidate == *other
+            }) {
                 continue;
             }
             if file.production.contains(&format!("crate::{other}::"))
@@ -256,30 +346,106 @@ fn layers_lists_each_module_once() {
     assert_eq!(before, names.len(), "`LAYERS` lists one module twice");
 }
 
-/// Which crate each module ships in, lowest first. The 7-crate workspace this
-/// documents is `jails-support`, `jails-java`, `jails-spec`, `jails-project`,
-/// `jails-generate`, `jails-tooling` and the `jails-cli` binary.
+/// Which crate each module ships in, lowest first. Legacy and canonical
+/// compiler modules coexist during cutover; every module stays classified so
+/// deleting the legacy half cannot silently loosen a boundary.
 const LAYERS: &[(&str, &str, usize)] = &[
+    ("jails-model", "app", 2),
+    ("jails-model", "builtin", 2),
+    ("jails-model", "capability", 2),
+    ("jails-model", "component", 2),
+    ("jails-model", "constraint", 2),
+    ("jails-model", "layout", 2),
     // jails-support: no jails concepts at all -- writing, running, encoding.
+    // `jails-codemod` depends on nothing at all -- it knows one text format
+    // and no more -- so it sits beside the support primitives rather than in
+    // the project layer it came from. It moved out of `jails-project` because
+    // three more implementations of the marked block had appeared in crates
+    // that could not depend on it.
+    ("jails-codemod", "annotate", 0),
+    ("jails-codemod", "dispatch", 0),
+    ("jails-codemod", "marked", 0),
+    ("jails-codemod", "text", 0),
+    ("jails-codemod", "tidy", 0),
     ("jails-support", "apply", 0),
     ("jails-support", "process", 0),
     ("jails-support", "hermetic", 0),
+    ("jails-support", "unified", 0),
     ("jails-support", "scratch", 0),
     ("jails-support", "codec", 0),
+    ("jails-support", "git", 0),
+    ("jails-support", "identifier", 0),
+    ("jails-support", "identity", 0),
     ("jails-support", "json", 0),
     ("jails-support", "lock", 0),
     // jails-java: reading Java and rendering templates into it.
-    ("jails-java", "annotate", 1),
-    ("jails-java", "tidy", 1),
     ("jails-java", "java", 1),
-    ("jails-java", "dispatch", 1),
     ("jails-java", "classfile", 1),
-    ("jails-java", "identifier", 1),
     ("jails-java", "template", 1),
     // jails-spec: what a jails project is -- where it is, how it is laid out,
     // what a field means, and the closed CLI vocabularies.
     ("jails-spec", "build", 2),
     ("jails-spec", "spec", 2),
+    // Canonical semantic model: closed source schema -> linked stable IDs.
+    ("jails-model", "diagnostic", 2),
+    ("jails-model", "dependency", 2),
+    ("jails-model", "derived", 2),
+    ("jails-model", "ejection", 2),
+    ("jails-model", "enum_constant", 2),
+    ("jails-model", "facet", 2),
+    ("jails-model", "id", 2),
+    ("jails-model", "index", 2),
+    ("jails-model", "jdl", 2),
+    ("jails-model", "patch", 2),
+    ("jails-model", "projection", 2),
+    ("jails-model", "relation", 2),
+    ("jails-model", "linker", 2),
+    ("jails-model", "model", 2),
+    ("jails-model", "model_apply", 2),
+    ("jails-model", "naming", 2),
+    ("jails-model", "operation", 2),
+    ("jails-model", "source", 2),
+    ("jails-model", "setting", 2),
+    ("jails-model", "unit", 2),
+    // Portable values shared by the pure compiler and filesystem boundary.
+    ("jails-contracts", "draft", 3),
+    ("jails-contracts", "path", 3),
+    ("jails-contracts", "plan", 3),
+    ("jails-contracts", "snapshot", 3),
+    ("jails-contracts", "templates", 3),
+    // Pure lowering: semantic world -> desired artifact tree.
+    ("jails-compiler", "emit_dto", 4),
+    ("jails-compiler", "emit_architecture", 4),
+    ("jails-compiler", "emit_capability", 4),
+    ("jails-compiler", "emit_component", 4),
+    ("jails-compiler", "emit_enum", 4),
+    ("jails-compiler", "emit_companion_test", 4),
+    ("jails-compiler", "emit_factory", 4),
+    ("jails-compiler", "emit_http", 4),
+    ("jails-compiler", "emit_java", 4),
+    ("jails-compiler", "emit_messaging", 4),
+    ("jails-compiler", "emit_operation", 4),
+    ("jails-compiler", "emit_relation", 4),
+    ("jails-compiler", "emit_resource_http", 4),
+    ("jails-compiler", "emit", 4),
+    ("jails-compiler", "emit_seed", 4),
+    ("jails-compiler", "ejectable", 4),
+    ("jails-compiler", "template", 4),
+    ("jails-compiler", "emit_sql", 4),
+    ("jails-compiler", "refuse", 4),
+    ("jails-compiler", "plan_effects", 4),
+    ("jails-compiler", "storage", 4),
+    ("jails-compiler", "emit_unit", 4),
+    // The only canonical filesystem capture/materialization/execution owner.
+    ("jails-workspace", "capture", 5),
+    ("jails-workspace", "documents", 5),
+    ("jails-workspace", "execute", 5),
+    ("jails-workspace", "fault", 5),
+    ("jails-workspace", "materialize", 5),
+    ("jails-workspace", "merge", 5),
+    ("jails-workspace", "reader_facet", 5),
+    ("jails-workspace", "reconcile", 5),
+    ("jails-workspace", "verify", 5),
     // jails-protocol: the validated values every closed format is built from.
     ("jails-protocol", "compatibility", 3),
     ("jails-protocol", "durable", 3),
@@ -298,11 +464,10 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-project", "maven", 5),
     ("jails-project", "capability", 5),
     ("jails-project", "config", 5),
-    ("jails-project", "junit", 5),
     ("jails-project", "synonyms", 5),
     ("jails-project", "capture", 5),
-    ("jails-project", "codemod", 5),
     ("jails-project", "compose", 5),
+    ("jails-project", "named_query", 5),
     ("jails-project", "model", 5),
     ("jails-project", "modernize", 5),
     ("jails-project", "project", 5),
@@ -313,12 +478,8 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-project", "generated_files", 5),
     ("jails-project", "inspect", 5),
     // jails-generate: everything that decides what Java to write.
-    ("jails-generate", "architecture", 6),
     ("jails-generate", "sql", 6),
     ("jails-generate", "generate", 6),
-    ("jails-generate", "named_query", 6),
-    ("jails-generate", "spring", 6),
-    ("jails-generate", "add", 6),
     // jails-prepare: turning desire into an exact executable transition.
     ("jails-prepare", "command", 6),
     ("jails-prepare", "desire", 6),
@@ -346,9 +507,6 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-commit", "outcome", 7),
     ("jails-commit", "recover", 7),
     ("jails-commit", "store", 7),
-    // jails-engine: one request, as one transition. Above the executor because
-    // it drives it, and below the CLI because it is not about arguments.
-    ("jails-engine", "route", 8),
     // jails-report: commands that answer a question. Read-only by contract,
     // and below `jails-drive` so the contract is structural.
     ("jails-report", "doctor", 7),
@@ -376,22 +534,95 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-drive", "lint", 8),
     ("jails-drive", "datasource", 8),
     ("jails-drive", "live_sql", 8),
+    ("jails-drive", "testing", 8),
     // jails-cli: the binary and the whole-project lifecycle commands.
     ("jails", "new", 9),
+    ("jails", "adopt", 9),
+    ("jails", "modernize", 9),
     ("jails", "app", 9),
     ("jails", "sql_command", 9),
     ("jails", "schema_command", 9),
     ("jails", "editor_command", 9),
     ("jails", "contract_command", 9),
     ("jails", "tool_command", 9),
-    ("jails", "history_command", 9),
+    ("jails", "model_command", 9),
+    ("jails", "model_capability", 9),
+    ("jails", "model_destroy", 9),
+    ("jails", "model_eject", 9),
+    ("jails", "model_doctor", 9),
+    ("jails", "model_explain", 9),
+    ("jails", "model_field_evolution", 9),
+    ("jails", "model_field_parse", 9),
+    ("jails", "model_generate", 9),
+    ("jails", "model_generate_jdl", 9),
+    ("jails", "model_init", 9),
+    ("jails", "model_index", 9),
+    ("jails", "model_jdl_edit", 9),
+    ("jails", "model_rename", 9),
+    ("jails", "model_resource", 9),
+    ("jails", "model_setting", 9),
+    ("jails", "model_status", 9),
+    ("jails", "model_migration", 9),
+    ("jails", "model_upgrade", 9),
+    ("jails", "canonical_support", 9),
+    ("jails", "parse_error", 9),
     ("jails", "facade", 9),
     ("jails", "template_macro", 9),
     ("jails", "cli", 9),
     ("jails", "dispatch", 9),
     ("jails", "plan_command", 9),
+    ("jails", "rename_source", 9),
     ("jails", "arguments", 9),
 ];
+
+#[test]
+fn canonical_compiler_is_pure_after_capture() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/jails-compiler/src");
+    let banned = [
+        "std::fs",
+        "std::env",
+        "std::process",
+        "std::path",
+        "PathBuf",
+        "Command::new",
+    ];
+    let mut offenders = Vec::new();
+    for file in sources().iter().filter(|file| file.path.starts_with(&root)) {
+        for name in banned {
+            if file.production.contains(name) {
+                offenders.push(format!("  {}: {name}", file.path.display()));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "the canonical compiler reached through its WorkspaceSnapshot boundary:\n{}",
+        offenders.join("\n")
+    );
+}
+
+#[test]
+fn canonical_workspace_has_one_mutation_owner() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/jails-workspace/src");
+    let mut offenders = Vec::new();
+    for file in sources().iter().filter(|file| {
+        file.path.starts_with(&root)
+            && file
+                .path
+                .file_name()
+                .is_none_or(|name| name != "execute.rs")
+    }) {
+        let count = mutation_sites(std::slice::from_ref(file), MUTATION_APIS);
+        if count != 0 {
+            offenders.push(format!("  {}: {count} mutation calls", file.path.display()));
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "canonical workspace mutation escaped execute.rs:\n{}",
+        offenders.join("\n")
+    );
+}
 
 /// Every module that starts a process, and which R6.6 row it is.
 ///
@@ -431,6 +662,11 @@ const SUBPROCESS_CLASSIFICATION: &[(&str, &str)] = &[
     ("tool_command", "read-only client"),
     ("live_sql", "read-only probe"),
     ("doctor", "read-only probe"),
+    // Asks `git merge-file` what it can do, on three throwaway files in a
+    // scratch directory, and reads the exit status. It writes nothing the
+    // project can see and holds no lock -- the merge it informs is the
+    // `transaction input` row below.
+    ("git", "read-only probe"),
     // Bootstrap, outside any project transaction: these run before a project
     // exists (§R6.5), inside a scratch tree that is published atomically.
     ("new", "new-project bootstrap"),
@@ -494,7 +730,7 @@ fn module_of(path: &Path) -> Option<(String, String)> {
 fn every_module_that_starts_a_process_is_classified() {
     let src = sources();
     let mut starts: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    for file in &src {
+    for file in src {
         // Both spellings: a direct `Command::new`, and the shared
         // `CommandSpec` executor that most callers rightly use instead.
         // Counting only one would classify half the surface.
@@ -537,7 +773,7 @@ fn every_module_that_starts_a_process_is_classified() {
 fn every_fresh_read_of_the_pom_is_a_decision_somebody_wrote_down() {
     let src = sources();
     let found: std::collections::BTreeSet<String> =
-        rederivers(&src).into_iter().map(|(_, name)| name).collect();
+        rederivers(src).into_iter().map(|(_, name)| name).collect();
     let declared: std::collections::BTreeSet<String> = A_FRESH_READ_IS_CORRECT
         .iter()
         .map(|(name, _)| (*name).to_string())
@@ -625,27 +861,62 @@ fn a_gate_that_reached_its_target_is_never_reopened() {
 /// decay into a comment.
 const DEFAULT_BRANCH_IS_EXECUTED: &[(&str, &str)] = &[
     (
-        "crates/jails-generate/src/generate/recipes.rs",
+        // `javax` below Boot 3 and `jakarta` at or above it. The default is
+        // the Jakarta branch, and this compiles a generated request DTO with
+        // its validation annotations against the real toolchain.
+        "crates/jails-compiler/src/emit_dto.rs",
         "generate_scaffold_produces_a_project_that_compiles_and_passes_tests",
     ),
     (
-        "crates/jails-generate/src/generate/web.rs",
-        "generate_scaffold_produces_a_project_that_compiles_and_passes_tests",
+        "crates/jails-compiler/src/emit_capability.rs",
+        "canonical_observability_pack_merges_ejects_and_serves_prometheus",
     ),
     (
-        "crates/jails-generate/src/spring.rs",
-        "standalone_generators_companion_tests_compile_and_pass",
+        "crates/jails-compiler/src/refuse.rs",
+        "canonical_security_pack_merges_ejects_and_keeps_cors_buildable",
     ),
-    // Both capabilities are installed into the same Boot 4 toolbox that test
-    // asserts against, and `add h2`'s default branch is a console module that
-    // exists only on Boot 4.
+    // The controller's companion test picks `MockMvcTester` on Boot 4 and
+    // `perform(...)` below it, and `@AutoConfigureMockMvc`'s package moved in
+    // the same release. The named test drives a canonical controller through
+    // real `mvn test` on the 4.1.0 fixture, so the default branch is the one
+    // that compiles and runs.
     (
-        "crates/jails-generate/src/spring/h2.rs",
-        "add_cors_on_the_default_boot_version_compiles_and_runs_its_own_test",
+        "crates/jails-compiler/src/emit_unit.rs",
+        "canonical_controller_merges_both_files_and_refuses_overlapping_route_edits",
+    ),
+    // Same test, for the other half of that rendering: Boot 4 split the
+    // servlet test slice out of `spring-boot-starter-test`, so the controller
+    // test needs `spring-boot-starter-webmvc-test` declared. The fixture
+    // deliberately does not declare it -- see `SPRING_FIXTURE_POM` -- so a
+    // missing dependency fails there rather than being supplied by the
+    // fixture, which is the exact hole that note records.
+    (
+        "crates/jails-compiler/src/lib.rs",
+        "canonical_controller_merges_both_files_and_refuses_overlapping_route_edits",
+    ),
+    // The operation controller's companion test, which renders `MockMvcTester`
+    // on Boot 4 and standalone `MockMvcBuilders` below it. The named test
+    // drives a canonical `api` project -- a command, a query and a transition,
+    // one of them scoped -- through real `mvn test` on the 4.1.0 fixture, so
+    // the default branch is the one that compiles and answers a request.
+    (
+        "crates/jails-compiler/src/emit_http/proof.rs",
+        "scoped_execution_context_survives_evolution_and_binds_tenant_at_runtime",
+    ),
+    // The scaffold's controller test picks `MockMvcTester` on Boot 4 and
+    // standalone `perform(...)` below it. The named test drives the generated
+    // collection through real `mvn test` on the 4.1.0 fixture.
+    // The DTO's request record picks `jakarta.validation` on Boot 3+ and
+    // `javax.validation` below it, through `validation_package(boot_major(..))`.
+    // The named test builds a canonical DTO on the Boot 4 fixture with real
+    // Maven, so the default branch is the one that has to resolve.
+    (
+        "crates/jails-compiler/src/emit_dto.rs",
+        "canonical_dto_evolves_three_merge_managed_abi_files_without_losing_reader_edits",
     ),
     (
-        "crates/jails-generate/src/spring/security.rs",
-        "add_cors_on_the_default_boot_version_compiles_and_runs_its_own_test",
+        "crates/jails-compiler/src/emit_resource_http.rs",
+        "canonical_scaffold_http_compiles_and_passes_on_real_maven",
     ),
     (
         "crates/jails-project/src/gradle.rs",
@@ -743,4 +1014,843 @@ fn harness_text() -> String {
         out.len()
     );
     out
+}
+
+/// The two layer lists are one list, in two crates that cannot see each other.
+///
+/// `jails-model`'s `Layer::ALL` is what the compiler will rename;
+/// `jails-spec`'s `Layer::ALL` is what the legacy engine renames and what
+/// `jails.toml`'s parser accepts. A layer in one and not the other is a rename
+/// that half of jails honours -- which is `bugs.md` B59 in the other
+/// direction, and the reason that entry exists at all.
+///
+/// They are written out separately because `jails-model` sits below
+/// `jails-spec` and may not depend on it. This test is where they meet.
+#[test]
+fn the_compilers_renameable_layers_are_the_engines_layers() {
+    let engine: Vec<&str> = jails_spec::spec::layout::Layer::ALL
+        .iter()
+        .map(|layer| layer.package())
+        .collect();
+    let compiler: Vec<&str> = jails_model::Layer::ALL
+        .iter()
+        .map(|layer| layer.package())
+        .collect();
+    assert_eq!(
+        compiler, engine,
+        "the compiler and the engine disagree about which layers a project may rename"
+    );
+}
+
+/// **G2's other half: every command path reaches at least one journey.**
+///
+/// `simplify-sol.md`'s G2 asks that "all 100 live command paths map to at
+/// least one checked-in journey". Half of that was already held --
+/// `cli::feature_inventory_covers_the_live_clap_tree_exactly_once` pins the
+/// inventory against the live `clap::Command`, so the *list* cannot drift.
+/// Nothing checked the other half, so a command could be inventoried,
+/// advertised in `jails commands`, and invoked by no test at all.
+///
+/// **A floor rather than a hard requirement**, because ten command paths
+/// genuinely have no test here and pretending otherwise would mean either a
+/// permanently red build or a fake test. They are named below with the reason,
+/// so the gate fails in both directions that matter: coverage may not fall,
+/// and a *new* uncovered command is a failure rather than a silent addition
+/// to the list.
+#[test]
+fn every_inventoried_command_path_is_invoked_by_a_test() {
+    /// Command paths with no journey, and why. Each is an operational command
+    /// that drives something this suite has no way to stand up: `kafka *`
+    /// runs the broker image's own CLI *inside* a compose container, and
+    /// `test daemon *` talks to a resident JVM over a unix socket. Testing
+    /// them means starting the real thing, which is a tier-3 fixture nobody
+    /// has written rather than an oversight.
+    const UNJOURNEYED: &[&str] = &[
+        "kafka topics",
+        "kafka describe",
+        "kafka send",
+        "kafka poison",
+        "kafka tail",
+        "kafka dlt",
+        "kafka lag",
+        "kafka reset",
+        "test daemon restart",
+        "test daemon status",
+    ];
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let inventory = std::fs::read_to_string(root.join("docs/feature-inventory.tsv"))
+        .expect("the feature inventory is checked in");
+    let commands: Vec<&str> = inventory
+        .lines()
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(|line| line.split('\t').next())
+        .collect();
+    assert!(
+        commands.len() > 100,
+        "the inventory reader found only {} command paths -- it has lost the \
+         file and this gate would pass over anything",
+        commands.len()
+    );
+
+    let mut corpus = String::new();
+    collect_rust_sources(&root.join("tests"), &mut corpus);
+    assert!(
+        corpus.len() > 500_000,
+        "the test-source scan read only {} bytes -- it has lost the suite",
+        corpus.len()
+    );
+
+    let mut uncovered = Vec::new();
+    for command in &commands {
+        if !is_invoked(&corpus, command) {
+            uncovered.push(*command);
+        }
+    }
+
+    let unexpected: Vec<&&str> = uncovered
+        .iter()
+        .filter(|command| !UNJOURNEYED.contains(command))
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "these command paths are advertised and invoked by no test:\n{}\n\n\
+         Add a journey, or -- if it genuinely cannot be driven here -- name it \
+         in `UNJOURNEYED` with the reason. G2 wants every live command path \
+         mapped to at least one checked-in journey.",
+        unexpected
+            .iter()
+            .map(|command| format!("  {command}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    let recovered: Vec<&&str> = UNJOURNEYED
+        .iter()
+        .filter(|command| !uncovered.contains(command))
+        .collect();
+    assert!(
+        recovered.is_empty(),
+        "these command paths now have a journey and should come out of \
+         `UNJOURNEYED`:\n{}\n\n\
+         An exemption that is no longer needed is permission for nothing, and \
+         leaving it means the next command that loses its journey is hidden \
+         behind it.",
+        recovered
+            .iter()
+            .map(|command| format!("  {command}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+/// Whether the test corpus invokes one command path.
+///
+/// A multi-word path is matched as the argument *sequence* it is typed as,
+/// which is exact. A single word is matched only in an argument position --
+/// `.arg("sync")`, `["sync"`, `"sync",` -- because a bare `"sync"` anywhere
+/// in half a megabyte of test source would match prose in an assertion
+/// message and count a command nothing runs.
+fn is_invoked(corpus: &str, command: &str) -> bool {
+    let parts: Vec<&str> = command.split_whitespace().collect();
+    if parts.len() > 1 {
+        return corpus
+            .match_indices(&format!("\"{}\"", parts[0]))
+            .any(|(at, _)| {
+                let mut rest = &corpus[at + parts[0].len() + 2..];
+                parts[1..].iter().all(|part| {
+                    let trimmed = rest.trim_start();
+                    let Some(trimmed) = trimmed.strip_prefix(',') else {
+                        return false;
+                    };
+                    let trimmed = trimmed.trim_start();
+                    match trimmed.strip_prefix(&format!("\"{part}\"")) {
+                        Some(remainder) => {
+                            rest = remainder;
+                            true
+                        }
+                        None => false,
+                    }
+                })
+            });
+    }
+    let quoted = format!("\"{command}\"");
+    corpus.match_indices(&quoted).any(|(at, _)| {
+        let before = corpus[..at].trim_end();
+        let after = corpus[at + quoted.len()..].trim_start();
+        before.ends_with(".arg(")
+            || before.ends_with('[')
+            || before.ends_with(',')
+            || after.starts_with(',')
+            || after.starts_with(']')
+    })
+}
+
+/// Every `.rs` file under `dir`, concatenated. Raw text, not blanked: the
+/// callers look for names that live inside `#[cfg(test)]` bodies, which
+/// [`measure::sources`] erases.
+fn collect_rust_sources(dir: &Path, out: &mut String) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rust_sources(&path, out);
+        } else if path.extension().is_some_and(|extension| extension == "rs")
+            && let Ok(text) = std::fs::read_to_string(&path)
+        {
+            out.push_str(&text);
+            out.push('\n');
+        }
+    }
+}
+
+/// The two pluralizers agree, word for word.
+///
+/// **There are two, and there has to be until the cutover.** `jdl-sol.md`
+/// §9.7 specifies one table-naming rule; the legacy ladder implements it in
+/// `jails-protocol::SqlName::conventional_table` and the canonical one in
+/// `jails_model::plural_snake_case`, and the two ladders cannot depend on each
+/// other. `CLAUDE.md`'s rule about a second pluraliser is exactly right about
+/// what happens when they drift -- a route served `/categorys` over a table
+/// called `categories`, from two functions forty lines apart -- so what
+/// replaces "one owner" here is this: one *rule*, two implementations, and a
+/// gate that fails the moment they answer differently.
+///
+/// It matters more than a style disagreement would. `jails model import`
+/// carries a legacy project onto the canonical path, and a canonical
+/// pluralizer that said `task` where the legacy one said `tasks` pointed every
+/// generated statement at a table the database does not have (`audit.md`
+/// A2.6).
+///
+/// Delete this test when `jails-protocol`'s copy goes, not before.
+#[test]
+fn both_pluralizers_answer_the_same_for_every_specified_rule() {
+    // Every branch of §9.7, plus the compounds that make the "final word"
+    // rule observable, plus the words a guesser would get wrong.
+    const WORDS: &[&str] = &[
+        "reward",
+        "work_item",
+        "address",
+        "box",
+        "quiz",
+        "batch",
+        "dish",
+        "category",
+        "toy",
+        "knife",
+        "shelf",
+        "cliff",
+        "status",
+        "person",
+        "child",
+        "man",
+        "woman",
+        "foot",
+        "tooth",
+        "goose",
+        "mouse",
+        "support_person",
+        "pocket_knife",
+        "equipment",
+        "information",
+        "money",
+        "news",
+        "series",
+        "species",
+        "staff",
+        "audio",
+        "metadata",
+        "data",
+        "ox",
+        "note",
+        "task",
+        "invoice",
+        "company",
+        "party",
+        "day",
+    ];
+    let mut disagreements = Vec::new();
+    for word in WORDS {
+        let canonical = jails_model::plural_snake_case(word);
+        let name = jails_protocol::identity::Name::parse(word)
+            .unwrap_or_else(|error| panic!("`{word}` is not a valid name: {error}"));
+        let legacy = jails_protocol::identity::SqlName::conventional_table(&name)
+            .as_str()
+            .to_string();
+        if canonical != legacy {
+            disagreements.push(format!(
+                "  {word}: canonical `{canonical}`, legacy `{legacy}`"
+            ));
+        }
+    }
+    assert!(
+        disagreements.is_empty(),
+        "the canonical and legacy pluralizers disagree:\n{}\n\n\
+         Both implement `jdl-sol.md` §9.7 and both are used on projects that \
+         cross between them, so a disagreement renames a table under a running \
+         application. Fix whichever one departs from the spec.",
+        disagreements.join("\n")
+    );
+}
+
+/// Every file that runs this project's automation: scripts, hooks, workflows.
+///
+/// One scan, because the three rot the same way. Each names Rust targets,
+/// other scripts and `mise` tasks in plain text, and a rename carries to none
+/// of them.
+fn automation_files() -> Vec<(std::path::PathBuf, String)> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut found = Vec::new();
+    for directory in ["scripts", ".githooks", ".github/workflows"] {
+        let Ok(entries) = std::fs::read_dir(root.join(directory)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            found.push((path, text));
+        }
+    }
+    // A scanner that has lost the tree reports exactly what a clean one does.
+    assert!(
+        found.len() > 4,
+        "the automation scan found only {} files -- it has stopped reading them",
+        found.len()
+    );
+    found
+}
+
+/// Every `cargo test --test <target>` this project's automation runs is a real
+/// target.
+///
+/// `scripts/verify-rewrite-g1-canary.sh` ran `--test differential` for as long
+/// as that harness was called `differential`. It was renamed to `product_loop`
+/// and the script was not, so the one thing that compares this implementation
+/// against a frozen legacy binary -- the differential half of G1 and G5 -- could
+/// not start. Nothing said so: the canary is a separate `mise` task, CI runs
+/// `verify-rewrite` and nothing else, and a script that exits non-zero on a
+/// command nobody runs is indistinguishable from one that passes.
+///
+/// A shell script naming a Rust target is exactly the kind of edge `cargo`
+/// cannot check and a rename does not carry, which is why it is checked here
+/// rather than left to be noticed the next time somebody runs the canary. The
+/// workflows are read for the same reason and it is a sharper one: a scheduled
+/// job is read by nobody until it has already not run.
+#[test]
+fn every_test_target_a_script_names_exists() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let targets: std::collections::BTreeSet<String> = std::fs::read_dir(root.join("tests"))
+        .expect("tests/ exists")
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let name = path.file_name()?.to_str()?.to_string();
+            // `tests/<name>.rs` and `tests/<name>/main.rs` are both one target.
+            if path.is_dir() && path.join("main.rs").is_file() {
+                Some(name)
+            } else {
+                name.strip_suffix(".rs").map(str::to_string)
+            }
+        })
+        .collect();
+    assert!(
+        targets.len() > 5,
+        "the target scan found only {targets:?} -- it has stopped reading tests/"
+    );
+
+    let mut missing = Vec::new();
+    for (path, text) in automation_files() {
+        for (at, _) in text.match_indices("--test ") {
+            let named: String = text[at + "--test ".len()..]
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
+                .collect();
+            if !named.is_empty() && !targets.contains(&named) {
+                missing.push(format!("{}: --test {named}", path.display()));
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "these run a cargo test target that does not exist:\n  {}\n\n\
+         Rename the reference with the harness, or the script silently stops \
+         testing anything.",
+        missing.join("\n  ")
+    );
+}
+
+/// Every script and `mise` task this project's automation names exists.
+///
+/// The same defect as the one above, one level out: `.githooks/pre-push` and
+/// both workflows are three files that reach the suite by *name* rather than
+/// by a path `cargo` resolves. A renamed script or a renamed task fails them
+/// at the moment they run, which for a weekly scheduled job is a week later
+/// and for a hook is on somebody else's push.
+///
+/// Only references this repository owns are checked. A `mise` task is matched
+/// against `mise.toml`'s own `[tasks.<name>]` headers, so the two cannot
+/// disagree about which tasks exist.
+#[test]
+fn every_script_and_task_the_automation_names_exists() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest = std::fs::read_to_string(root.join("mise.toml")).expect("mise.toml exists");
+    let tasks: std::collections::BTreeSet<&str> = manifest
+        .lines()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix("[tasks.")
+                .and_then(|rest| rest.strip_suffix(']'))
+        })
+        .collect();
+    assert!(
+        tasks.contains("verify-rewrite"),
+        "the task scan found {tasks:?} -- it has stopped reading mise.toml"
+    );
+
+    let mut missing = Vec::new();
+    for (path, text) in automation_files() {
+        for (at, _) in text.match_indices("mise run ") {
+            let named: String = text[at + "mise run ".len()..]
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
+                .collect();
+            if !named.is_empty() && !tasks.contains(named.as_str()) {
+                missing.push(format!("{}: mise run {named}", path.display()));
+            }
+        }
+        for (at, _) in text.match_indices("scripts/") {
+            let named: String = text[at + "scripts/".len()..]
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.'))
+                .collect();
+            // A bare `scripts/` in prose names no file; only a reference that
+            // looks like one is a reference.
+            if named.contains('.') && !root.join("scripts").join(&named).is_file() {
+                missing.push(format!("{}: scripts/{named}", path.display()));
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "these name a script or a mise task that does not exist:\n  {}\n\n\
+         A hook or a scheduled workflow reaches the suite by name, so a rename \
+         that misses one is only reported the next time it runs.",
+        missing.join("\n  ")
+    );
+}
+
+/// Every markdown file under `docs/`, with fenced code blocks removed.
+///
+/// The fences are dropped because every rule below reads a backticked token as
+/// a name somebody is citing, and a fenced block is a command line rather than
+/// a citation -- `git show <commit>^:jdl-sol.md` names a file that is supposed
+/// to be gone.
+fn document_prose() -> Vec<(std::path::PathBuf, String)> {
+    fn walk(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|e| e == "md") {
+                out.push(path);
+            }
+        }
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut paths = Vec::new();
+    walk(&root.join("docs"), &mut paths);
+    paths.sort();
+    // A scanner that has lost the tree reports exactly what a clean one does.
+    assert!(
+        paths.len() >= 6,
+        "the document scan found only {} files -- it has stopped reading them",
+        paths.len()
+    );
+    paths
+        .into_iter()
+        .map(|path| {
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            let mut kept = String::with_capacity(text.len());
+            let mut fenced = false;
+            for line in text.lines() {
+                if line.trim_start().starts_with("```") {
+                    fenced = !fenced;
+                    kept.push('\n');
+                    continue;
+                }
+                // Blank the fenced line rather than dropping it, so a reported
+                // line number still indexes the file on disk.
+                if !fenced {
+                    kept.push_str(line);
+                }
+                kept.push('\n');
+            }
+            (path, kept)
+        })
+        .collect()
+}
+
+/// Whether each 1-indexed line sits in a paragraph that cites a commit.
+///
+/// A document has to be able to *name* something that is gone -- the deletion
+/// map is most of `docs/00-contracts.md`, and workstream C cannot record that
+/// a crate was deleted without writing its name. The convention these
+/// documents already use for that is the one `git log --diff-filter=D` needs:
+/// give the commit. So a paragraph carrying a commit hash is read as history,
+/// and the two name rules below do not fire inside it. A paragraph, not a
+/// line, because this prose wraps at 78 columns and the name and the hash
+/// routinely land on different ones.
+fn lines_in_a_paragraph_citing_a_commit(text: &str) -> Vec<bool> {
+    fn is_commit(word: &str) -> bool {
+        let trimmed = word.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+        (7..=40).contains(&trimmed.len())
+            && trimmed.chars().all(|c| c.is_ascii_hexdigit())
+            && trimmed.chars().any(|c| c.is_ascii_digit())
+            && trimmed.chars().any(|c| c.is_ascii_alphabetic())
+    }
+    let lines: Vec<&str> = text.lines().collect();
+    let mut flags = vec![false; lines.len() + 2];
+    let mut start = 0;
+    while start < lines.len() {
+        if lines[start].trim().is_empty() {
+            start += 1;
+            continue;
+        }
+        let mut end = start;
+        while end < lines.len() && !lines[end].trim().is_empty() {
+            end += 1;
+        }
+        let historical = lines[start..end]
+            .iter()
+            .any(|line| line.split_whitespace().any(is_commit));
+        if historical {
+            for flag in flags.iter_mut().take(end + 1).skip(start + 1) {
+                *flag = true;
+            }
+        }
+        start = end;
+    }
+    flags
+}
+
+/// The backticked tokens of one document, with the line each was found on.
+fn backticked(text: &str) -> Vec<(usize, String)> {
+    let mut found = Vec::new();
+    let bytes = text.as_bytes();
+    let mut line = 1;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\n' {
+            line += 1;
+            i += 1;
+            continue;
+        }
+        if bytes[i] != b'`' {
+            i += 1;
+            continue;
+        }
+        let start = i + 1;
+        let Some(end) = text[start..].find('`').map(|o| start + o) else {
+            break;
+        };
+        let token = &text[start..end];
+        if !token.contains('\n') {
+            found.push((line, token.to_string()));
+        }
+        line += token.matches('\n').count();
+        i = end + 1;
+    }
+    found
+}
+
+/// Every file, part, crate and test name the documents cite is one that exists.
+///
+/// `docs/00-contracts.md` is the file all four workstreams read first, so a
+/// reference in it that names nothing sends whoever followed it looking for a
+/// section that is not there. Three such references were live when this gate
+/// was written, and the oldest had been wrong since the six documents were
+/// split out of `new.md`: *"what stops the deletion is named in Part 5"*, in a
+/// document whose parts are 1 and 6. `docs/01-jdl-v1.md` cited a `Part 3`
+/// twice for the same reason -- the audit findings that were Part 3 moved into
+/// the three workstream documents, and the citations stayed where they were.
+///
+/// This is the failure `CLAUDE.md` already records against the twelve
+/// documents these six replaced: two of them named a differential harness
+/// under a filename it had not had for days. A reference nothing checks is a
+/// reference that rots, and checking it costs one scan of nine files.
+///
+/// Four rules, each over `docs/**/*.md` with fenced blocks removed:
+///
+/// - a `docs/<name>.md` path is a file that exists;
+/// - a cited `Part <n>` has a `# Part <n>` heading somewhere in the set;
+/// - a backticked `jails-<crate>` or `jails_<crate>` names a crate that
+///   exists. `jails-engine` was deleted whole in `2e52c964`, and this is the
+///   rule that would say so the moment a document still named it;
+/// - a backticked snake_case identifier carrying three or more underscores is
+///   a `fn` in the tree. That is how these documents write a test they claim
+///   holds a rule -- `rules::canonical_compiler_is_pure_after_capture` and
+///   fifteen others -- and all sixteen resolve today.
+///
+/// The last two rules skip any paragraph that cites a commit hash, because a
+/// document must be able to name what was deleted -- see
+/// [`lines_in_a_paragraph_citing_a_commit`]. Give the commit and the name
+/// stands; give neither and the reference has to resolve.
+///
+/// The last rule reads any token of that shape as a Rust name, so a document
+/// wanting to backtick a Java or SQL identifier carrying three underscores
+/// should spell it without the backticks. Nothing under `docs/` does.
+///
+/// **`CLAUDE.md`, `ARCHITECTURE.md` and `README.md` are deliberately not
+/// scanned yet**, and the reason is recorded in `docs/40-gates-and-ci.md`
+/// rather than here: the first two carry eight references to `jails-engine`,
+/// which is prose the cutover made wrong and belongs to whoever owns that
+/// path, not to this gate.
+#[test]
+fn every_cross_reference_in_the_documents_resolves() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let documents = document_prose();
+
+    let crates: std::collections::BTreeSet<String> = std::fs::read_dir(root.join("crates"))
+        .expect("failed to read crates/")
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(crates.len() > 10, "the crate scan found {}", crates.len());
+
+    let mut rust = String::new();
+    for directory in ["crates", "src", "tests"] {
+        collect_rust_sources(&root.join(directory), &mut rust);
+    }
+    assert!(
+        rust.len() > 1_000_000,
+        "the Rust scan read only {} bytes -- it has lost the tree",
+        rust.len()
+    );
+
+    let parts: std::collections::BTreeSet<String> = documents
+        .iter()
+        .flat_map(|(_, text)| text.lines())
+        .filter_map(|line| {
+            let heading = line.trim_start().strip_prefix('#')?;
+            let title = heading.trim_start_matches('#').trim();
+            let number = title.strip_prefix("Part ")?;
+            Some(
+                number
+                    .split_whitespace()
+                    .next()?
+                    .trim_end_matches(|c: char| !c.is_ascii_digit())
+                    .to_string(),
+            )
+        })
+        .filter(|number| !number.is_empty())
+        .collect();
+    assert!(
+        !parts.is_empty(),
+        "no `# Part <n>` heading was found at all"
+    );
+
+    let mut dangling = Vec::new();
+    for (path, text) in &documents {
+        let name = path
+            .strip_prefix(root)
+            .unwrap_or(path)
+            .display()
+            .to_string();
+
+        for (offset, _) in text.match_indices("docs/") {
+            let rest = &text[offset + "docs/".len()..];
+            let end = rest
+                .find(|c: char| !(c.is_ascii_alphanumeric() || "._/-".contains(c)))
+                .unwrap_or(rest.len());
+            // Trailing full stops belong to the sentence, not the path: a
+            // reference ending one read as `…/name.md.` and was skipped by the
+            // `.md` check below, so rule A missed exactly the citations that
+            // end a sentence. Found by injecting one.
+            let cited = rest[..end].trim_end_matches('.');
+            if cited.ends_with(".md") && !root.join("docs").join(cited).is_file() {
+                dangling.push(format!(
+                    "{name}:{} names docs/{cited}, which is not a file",
+                    text[..offset].matches('\n').count() + 1
+                ));
+            }
+        }
+
+        for (offset, _) in text.match_indices("Part ") {
+            let rest = &text[offset + "Part ".len()..];
+            let end = rest
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(rest.len());
+            if end == 0 {
+                continue;
+            }
+            let cited = &rest[..end];
+            if !parts.contains(cited) {
+                dangling.push(format!(
+                    "{name}:{} cites Part {cited}, which has no heading in docs/",
+                    text[..offset].matches('\n').count() + 1
+                ));
+            }
+        }
+
+        let historical = lines_in_a_paragraph_citing_a_commit(text);
+        for (line, token) in backticked(text) {
+            if historical.get(line).copied().unwrap_or(false) {
+                continue;
+            }
+            let head: String = token
+                .split([':', '/'])
+                .next()
+                .unwrap_or_default()
+                .replace('_', "-");
+            if head.starts_with("jails-")
+                && head.len() > "jails-".len()
+                && head.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+                && !crates.contains(&head)
+            {
+                dangling.push(format!(
+                    "{name}:{line} names the crate `{head}`, which does not exist"
+                ));
+            }
+
+            let last = token.rsplit("::").next().unwrap_or_default();
+            let looks_like_a_test = last.starts_with(|c: char| c.is_ascii_lowercase())
+                && last
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                && last.matches('_').count() >= 3;
+            if looks_like_a_test && !rust.contains(&format!("fn {last}")) {
+                dangling.push(format!(
+                    "{name}:{line} names `{last}`, and no `fn {last}` exists"
+                ));
+            }
+        }
+    }
+
+    assert!(
+        dangling.is_empty(),
+        "{} document reference(s) name something that does not exist. A reference \
+         nothing checks is one that rots, which is why this is a gate rather than a \
+         proofread:\n  {}",
+        dangling.len(),
+        dangling.join("\n  ")
+    );
+}
+
+/// Every diagnostic code belongs to the crate that owns its phase.
+///
+/// **§18.3 asks for one diagnostic contract, and the way it is lost is a
+/// third vocabulary.** `jails-compiler` and `jails-workspace` return
+/// `Result<_, String>` today -- no code, no path -- so a refusal from the
+/// compiler and a refusal from the parser are different kinds of object. When
+/// those are converted, the failure mode is not that they stay strings: it is
+/// that a `model-*` code appears in an emitter, because that prefix is the
+/// one already in the tree to copy. Then two crates own one namespace and
+/// nothing says which pass a code came from.
+///
+/// A code says which pass refused, so the prefix is owned by the crate that
+/// owns the pass: `JDL####` and `model-*` are `jails-model`'s, `compile-*` is
+/// `jails-compiler`'s, `plan-*` is `jails-workspace`'s. The rule is checked
+/// over *string literals* -- a code only ever appears inside one, and blanked
+/// source would report zero however wrong the tree was, which is the mistake
+/// `CODEMOD_RS` records having made.
+#[test]
+fn every_diagnostic_code_belongs_to_the_crate_that_owns_its_phase() {
+    const OWNERS: &[(&str, &str)] = &[
+        ("JDL", "jails-model"),
+        ("model-", "jails-model"),
+        ("compile-", "jails-compiler"),
+        ("workspace-", "jails-workspace"),
+    ];
+    // The root binary reports on the model in the linker's own vocabulary --
+    // `model-io` when it cannot read the file, `model-generated-drift` when
+    // the committed tree disagrees with this compilation -- and both are in
+    // the JSON a reader parses. What this gate defends against is an
+    // *emitter* copying `model-` because it is the prefix already there.
+    const ALSO_OWNS_MODEL: &str = "/src/model_command.rs";
+    let code = regex_lite_codes;
+    let mut offenders = Vec::new();
+    let mut seen = 0_usize;
+    for file in sources() {
+        let path = file.path.to_string_lossy().into_owned();
+        // The gate itself names every prefix, and `diagnostic.rs` documents
+        // the table; neither is a code site.
+        if path.ends_with("tests/architecture/rules.rs")
+            || path.ends_with("jails-model/src/diagnostic.rs")
+        {
+            continue;
+        }
+        for literal in code(&file.literals) {
+            let Some((prefix, owner)) = OWNERS
+                .iter()
+                .find(|(prefix, _)| literal.starts_with(prefix))
+                .copied()
+            else {
+                continue;
+            };
+            seen += 1;
+            if prefix == "model-" && path.ends_with(ALSO_OWNS_MODEL) {
+                continue;
+            }
+            if !path.contains(&format!("crates/{owner}/")) {
+                offenders.push(format!(
+                    "  {path}: `{literal}` is {owner}'s `{prefix}` namespace"
+                ));
+            }
+        }
+    }
+    assert!(
+        seen > 100,
+        "the scanner found only {seen} diagnostic codes -- it has stopped reading them, and \
+         would report the same clean result over a tree that had gone wrong"
+    );
+    assert!(
+        offenders.is_empty(),
+        "a diagnostic code escaped the crate that owns its phase:\n{}",
+        offenders.join("\n")
+    );
+}
+
+/// Every string literal shaped like a diagnostic code.
+///
+/// Deliberately shape-based rather than call-site based: a code reaches
+/// `Diagnostic::new` through `linker.problem`, `problem`, `here` and a handful
+/// of wrappers, and a gate that enumerated those would go quietly blind the
+/// first time somebody added a sixth.
+fn regex_lite_codes(literals: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let bytes = literals.as_bytes();
+    let mut at = 0;
+    while let Some(open) = literals[at..].find('"') {
+        let start = at + open + 1;
+        let Some(len) = literals[start..].find('"') else {
+            break;
+        };
+        let value = &literals[start..start + len];
+        at = start + len + 1;
+        let _ = bytes;
+        let looks_like_a_code = (value.starts_with("JDL")
+            && value.len() == 7
+            && value[3..].bytes().all(|byte| byte.is_ascii_digit()))
+            || (value.len() > 6
+                && value.contains('-')
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte == b'-')
+                && ["model-", "compile-", "workspace-"]
+                    .iter()
+                    .any(|prefix| value.starts_with(prefix)));
+        if looks_like_a_code {
+            found.push(value.to_string());
+        }
+    }
+    found
 }

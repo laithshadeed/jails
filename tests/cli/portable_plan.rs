@@ -1,4 +1,33 @@
+//! `--plan-out` / `--plan-in`: the exact reviewed transition, moved as a file.
+//!
+//! Every assertion here is about `PlanBundle`'s contract rather than about any
+//! one command: the bundle *is* the review, so applying it never replans, and
+//! the executor refuses anything the reviewer did not see — a tree that has
+//! moved on, a different project, a tampered file.
+
 use super::*;
+
+/// Read the exported bundle, asserting the envelope every other test leans on.
+fn exported_bundle(plan: &Path) -> serde_json::Value {
+    let wire: serde_json::Value = serde_json::from_slice(&fs::read(plan).unwrap()).unwrap();
+    assert_eq!(wire["schema"], "jails.plan-bundle.v1");
+    assert_eq!(wire["plan"]["schema"], "jails.plan.v1");
+    let digest = wire["plan"]["digest"].as_str().unwrap();
+    assert!(digest.starts_with("sha256:"), "{digest}");
+    assert_eq!(digest.len(), "sha256:".len() + 64);
+    // The plan's id *is* its digest, which is what makes preview, export,
+    // confirmation and apply able to name one transition.
+    assert_eq!(wire["plan"]["id"].as_str().unwrap(), digest);
+    assert!(!wire["plan"]["compiler"].as_str().unwrap().is_empty());
+    assert!(
+        !wire["plan"]["base"]["files"]
+            .as_object()
+            .unwrap()
+            .is_empty(),
+        "an exported plan carries the preimages it was reviewed against"
+    );
+    wire
+}
 
 #[test]
 fn exported_plan_applies_the_exact_prepared_transaction_without_replanning() {
@@ -6,6 +35,7 @@ fn exported_plan_applies_the_exact_prepared_transaction_without_replanning() {
     let plan_dir = temp_dir("portable-plan-file");
     let plan = plan_dir.join("record.json");
     write_spring_fixture(&root);
+    common::become_canonical(&root);
 
     let preview = jails_cmd(&root, None)
         .args([
@@ -22,17 +52,10 @@ fn exported_plan_applies_the_exact_prepared_transaction_without_replanning() {
     assert!(preview.status.success(), "{preview:?}");
     assert!(plan.is_file());
     assert!(
-        !root
-            .join("src/main/java/com/example/demo/domain/Note.java")
-            .exists(),
+        !common::generated(&root, "src/main/java/com/example/demo/domain/Note.java").exists(),
         "plan-out mutated the project"
     );
-    let wire: serde_json::Value = serde_json::from_slice(&fs::read(&plan).unwrap()).unwrap();
-    assert_eq!(wire["schema"], "jails.prepared-plan.v1");
-    assert_eq!(wire["protocol_version"], 1);
-    assert_eq!(wire["project_root_digest"].as_str().unwrap().len(), 64);
-    assert_eq!(wire["prepared_after"].as_str().unwrap().len(), 64);
-    assert_eq!(wire["plan_digest"].as_str().unwrap().len(), 64);
+    exported_bundle(&plan);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -49,10 +72,7 @@ fn exported_plan_applies_the_exact_prepared_transaction_without_replanning() {
         .output()
         .unwrap();
     assert!(applied.status.success(), "{applied:?}");
-    assert!(
-        root.join("src/main/java/com/example/demo/domain/Note.java")
-            .is_file()
-    );
+    assert!(common::generated(&root, "src/main/java/com/example/demo/domain/Note.java").is_file());
 }
 
 #[test]
@@ -63,6 +83,7 @@ fn imported_plan_refuses_another_root_without_writing() {
     let plan = plan_dir.join("record.json");
     write_spring_fixture(&first);
     write_spring_fixture(&second);
+    common::become_canonical(&first);
     let exported = jails_cmd(&first, None)
         .args([
             "g",
@@ -76,6 +97,9 @@ fn imported_plan_refuses_another_root_without_writing() {
         .unwrap();
     assert!(exported.status.success(), "{exported:?}");
 
+    // A plan is portable by *content*, not by path: the second project never
+    // had the model the first one was reviewed against, so every captured
+    // precondition is about a file that is not there.
     let before = snapshot_tree(&second);
     let refused = jails_cmd(&second, None)
         .args(["g", "record", "--plan-in", plan.to_str().unwrap()])
@@ -83,7 +107,7 @@ fn imported_plan_refuses_another_root_without_writing() {
         .unwrap();
     assert!(!refused.status.success(), "{refused:?}");
     assert!(
-        String::from_utf8_lossy(&refused.stderr).contains("different canonical project root"),
+        String::from_utf8_lossy(&refused.stderr).contains("captured precondition"),
         "{refused:?}"
     );
     assert_eq!(snapshot_tree(&second), before);
@@ -95,6 +119,7 @@ fn imported_plan_refuses_a_changed_preimage_without_writing() {
     let plan_dir = temp_dir("portable-plan-stale-file");
     let plan = plan_dir.join("add-csv.json");
     write_spring_fixture(&root);
+    common::become_canonical(&root);
     let exported = jails_cmd(&root, None)
         .args([
             "add",
@@ -118,20 +143,16 @@ fn imported_plan_refuses_a_changed_preimage_without_writing() {
         .unwrap();
     assert!(!refused.status.success(), "{refused:?}");
     assert_eq!(fs::read(&pom).unwrap(), before_pom);
-    assert!(
-        !root
-            .join("src/main/java/com/example/demo/Csv.java")
-            .exists()
-    );
-    assert!(!root.join(".jails/state").exists());
+    assert!(!common::generated(&root, "src/main/java/com/example/demo/Csv.java").exists());
 }
 
 #[test]
-fn imported_plan_refuses_protocol_and_toolchain_mismatches() {
-    let root = temp_dir("portable-plan-version-mismatch");
-    let plan_dir = temp_dir("portable-plan-version-file");
+fn imported_plan_refuses_a_tampered_bundle_without_writing() {
+    let root = temp_dir("portable-plan-tampered");
+    let plan_dir = temp_dir("portable-plan-tampered-file");
     let plan = plan_dir.join("record.json");
     write_spring_fixture(&root);
+    common::become_canonical(&root);
     let exported = jails_cmd(&root, None)
         .args([
             "g",
@@ -145,24 +166,29 @@ fn imported_plan_refuses_protocol_and_toolchain_mismatches() {
         .unwrap();
     assert!(exported.status.success(), "{exported:?}");
     let original = fs::read(&plan).unwrap();
+    exported_bundle(&plan);
     let before = snapshot_tree(&root);
 
-    let mut protocol: serde_json::Value = serde_json::from_slice(&original).unwrap();
-    protocol["protocol_version"] = serde_json::json!(2);
-    fs::write(&plan, serde_json::to_vec_pretty(&protocol).unwrap()).unwrap();
+    // The protocol half: a bundle written by a jails that speaks a different
+    // exact-plan schema is refused rather than read optimistically.
+    let mut schema: serde_json::Value = serde_json::from_slice(&original).unwrap();
+    schema["schema"] = serde_json::json!("jails.plan-bundle.v2");
+    fs::write(&plan, serde_json::to_vec_pretty(&schema).unwrap()).unwrap();
     let refused = jails_cmd(&root, None)
         .args(["g", "record", "--plan-in", plan.to_str().unwrap()])
         .output()
         .unwrap();
     assert!(!refused.status.success(), "{refused:?}");
     assert!(
-        String::from_utf8_lossy(&refused.stderr).contains("protocol 2"),
+        String::from_utf8_lossy(&refused.stderr).contains("schema"),
         "{refused:?}"
     );
     assert_eq!(snapshot_tree(&root), before);
 
+    // The toolchain half: the compiler that produced the plan is inside the
+    // digest, so restamping it is tampering and the executor says so.
     let mut toolchain: serde_json::Value = serde_json::from_slice(&original).unwrap();
-    toolchain["tool_version"] = serde_json::json!("999.0.0");
+    toolchain["plan"]["compiler"] = serde_json::json!("999.0.0");
     fs::write(&plan, serde_json::to_vec_pretty(&toolchain).unwrap()).unwrap();
     let refused = jails_cmd(&root, None)
         .args(["g", "record", "--plan-in", plan.to_str().unwrap()])
@@ -170,8 +196,26 @@ fn imported_plan_refuses_protocol_and_toolchain_mismatches() {
         .unwrap();
     assert!(!refused.status.success(), "{refused:?}");
     assert!(
-        String::from_utf8_lossy(&refused.stderr).contains("999.0.0"),
+        String::from_utf8_lossy(&refused.stderr).contains("digest"),
         "{refused:?}"
     );
+    assert_eq!(snapshot_tree(&root), before);
+
+    // And an operation whose content-addressed blob was swapped underneath it.
+    let mut blobs: serde_json::Value = serde_json::from_slice(&original).unwrap();
+    let id = blobs["blobs"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .next()
+        .unwrap()
+        .clone();
+    blobs["blobs"][&id] = serde_json::json!([0, 1, 2]);
+    fs::write(&plan, serde_json::to_vec_pretty(&blobs).unwrap()).unwrap();
+    let refused = jails_cmd(&root, None)
+        .args(["g", "record", "--plan-in", plan.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success(), "{refused:?}");
     assert_eq!(snapshot_tree(&root), before);
 }

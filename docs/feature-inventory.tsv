@@ -6,6 +6,15 @@ app	jails	dispatch-only	app::run
 app init	jails-engine	project-mutation	route::app_init
 app plan	jails-engine	read-only	route::app_apply (pretend)
 app apply	jails-engine	project-mutation	route::app_apply
+model	jails	dispatch-only	model_command::run
+model check	jails-model	read-only	jails_model::parse_jdl / jails_model::parse_toml
+model fmt	jails-model/jails-workspace	project-mutation-or-read-only	model_command::format
+model plan	jails-compiler/jails-workspace	read-only+optional-report-output	Compiler::compile / materialize
+model apply	jails-workspace	project-mutation	execute
+model eject	jails-compiler/jails-workspace	project-mutation	model_eject::run
+model explain	jails-model/jails-workspace	read-only	model_explain::run
+model init	jails-workspace	project-mutation	model_init::run
+model upgrade	jails-model/jails-workspace	project-mutation	model_upgrade::run
 generate	jails-engine	project-mutation	route::recipe
 add	jails-engine	project-mutation	route::install
 add dependency	jails-engine	project-mutation	route::add_dependency
@@ -42,10 +51,9 @@ db	jails-drive	external-process+service-lifecycle	console::db
 console	jails-drive	external-process	console::console
 rename	jails-engine	project-mutation	route::rename
 rename resource	jails-engine	project-mutation	route::rename_resource
-rename storage	jails-engine	project-mutation	route::rename_storage
 destroy	jails-engine	project-mutation	route::destroy
 resource	jails	dispatch-only	main command dispatch
-resource status	jails-report	read-only	lifecycle_status::status
+resource status	jails-report	read-only	model_status::run or lifecycle_status::status
 resource revive	jails-engine	project-mutation	route::revive
 resource repair	jails-engine	project-mutation	route::repair
 resource field	jails	dispatch-only	main command dispatch
@@ -56,6 +64,7 @@ resource field nullability	jails-engine	project-mutation	route::set_field_nullab
 resource field drop	jails-engine	project-mutation	route::drop_field
 resource index	jails	dispatch-only	main command dispatch
 resource index add	jails-engine	project-mutation	route::add_index
+resource index remove	jails-model/jails-compiler/jails-workspace	project-mutation	model_index::remove
 test	jails-drive	external-process+conditional-project-mutation	run::test
 test daemon	jails-drive	dispatch-only	main command dispatch
 test daemon restart	jails-drive	machine-daemon+external-process	testd::testd
@@ -73,9 +82,6 @@ run	jails-drive	external-process+service-lifecycle	run::run/run::watch
 setup	jails-report	machine-mutation	doctor::setup
 explain	jails-report	read-only	explain::explain
 commands	jails-report	read-only	commands::commands
-history	jails/jails-commit	read-only	history_command::history / Store::read_receipts
-show	jails/jails-commit	read-only	history_command::show / Store::read_receipt
-undo	jails-engine	project-mutation	route::undo_files
 completion	jails	read-only	clap_complete::generate
 sql	jails	dispatch-only	main command dispatch
 sql check	jails-project/jails-drive	read-only	query_workspace::check_offline / live_sql::check

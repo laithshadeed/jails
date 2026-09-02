@@ -2,12 +2,29 @@
 
 use super::*;
 
+/// A project with one route, canonical.
+///
+/// **The model is what makes it a project rather than a directory.** `contract
+/// emit` reads the routes off the tree either way; the assertion that it
+/// leaves a lock and no receipts is about a canonical project, and a skeleton
+/// with no `.jails/model.jdl` is neither.
 fn web_fixture(label: &str) -> PathBuf {
     let root = temp_dir(label);
     write_project_skeleton(&root);
-    fs::create_dir_all(root.join("src/main/java/com/example/demo/web")).unwrap();
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "record", "Note", "id:uuid@pk", "title:string!"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    fs::create_dir_all(common::generated(
+        &root,
+        "src/main/java/com/example/demo/web",
+    ))
+    .unwrap();
     fs::write(
-        root.join("src/main/java/com/example/demo/web/NoteController.java"),
+        common::generated(&root, "src/main/java/com/example/demo/web/NoteController.java"),
         "package com.example.demo.web;\n@RestController\n@RequestMapping(\"/notes\")\nfinal class NoteController { @GetMapping(\"/{id}\") String get() { return \"ok\"; } }\n",
     )
     .unwrap();
@@ -32,7 +49,11 @@ fn contract_emit_and_check_catch_a_removed_operation() {
     let baseline = root.join("baseline.json");
     fs::write(&baseline, &emitted.stdout).unwrap();
 
-    fs::remove_file(root.join("src/main/java/com/example/demo/web/NoteController.java")).unwrap();
+    fs::remove_file(common::generated(
+        &root,
+        "src/main/java/com/example/demo/web/NoteController.java",
+    ))
+    .unwrap();
     let checked = jails_cmd(&root, None)
         .args(["contract", "check", "--against", baseline.to_str().unwrap()])
         .output()
@@ -76,7 +97,12 @@ fn contract_out_uses_preview_and_transaction_commit() {
     );
     let document = fs::read_to_string(target).unwrap();
     assert!(document.contains("\"openapi\": \"3.1.0\""));
-    assert!(root.join(".jails/receipts").is_dir());
+    // **No receipts, and that is the assertion.** A canonical project's
+    // durable record is `.jails/compiler.lock.json`; the journal a legacy
+    // commit wrote is what the cutover removes, and a command that quietly
+    // created one would put the project back on a ledger nothing reads.
+    assert!(root.join(".jails/compiler.lock.json").is_file());
+    assert!(!root.join(".jails/receipts").exists());
 }
 
 #[test]
@@ -183,7 +209,7 @@ fn logs_are_bounded_and_accept_only_declared_services() {
 fn runner_boots_one_spring_main_with_private_startup_and_project_script() {
     let root = web_fixture("spring-runner");
     fs::write(
-        root.join("src/main/java/com/example/demo/DemoApplication.java"),
+        common::generated(&root, "src/main/java/com/example/demo/DemoApplication.java"),
         "package com.example.demo;\nimport org.springframework.boot.autoconfigure.SpringBootApplication;\n@SpringBootApplication public class DemoApplication {}\n",
     )
     .unwrap();
@@ -232,7 +258,7 @@ fn runner_boots_one_spring_main_with_private_startup_and_project_script() {
 fn runner_treats_a_jshell_snippet_failure_as_a_failed_command() {
     let root = web_fixture("spring-runner-failure");
     fs::write(
-        root.join("src/main/java/com/example/demo/DemoApplication.java"),
+        common::generated(&root, "src/main/java/com/example/demo/DemoApplication.java"),
         "package com.example.demo;\nimport org.springframework.boot.autoconfigure.SpringBootApplication;\n@SpringBootApplication public class DemoApplication {}\n",
     )
     .unwrap();
@@ -306,7 +332,7 @@ fn real_console_and_runner_observe_predestroy_and_reject_session_failures() {
         ),
     )
     .unwrap();
-    let source = root.join("src/main/java/com/example/demo");
+    let source = common::generated(&root, "src/main/java/com/example/demo");
     fs::create_dir_all(&source).unwrap();
     fs::write(
         source.join("DemoApplication.java"),
@@ -404,7 +430,7 @@ fn unsafe_spring_boots_print_preflight_and_require_yes_without_a_terminal() {
     )
     .unwrap();
     fs::write(
-        root.join("src/main/java/com/example/demo/DemoApplication.java"),
+        common::generated(&root, "src/main/java/com/example/demo/DemoApplication.java"),
         "package com.example.demo;\nimport org.springframework.boot.autoconfigure.SpringBootApplication;\n@SpringBootApplication public class DemoApplication {}\n",
     )
     .unwrap();
@@ -705,9 +731,19 @@ fn a_capability_jails_does_not_have_names_the_one_it_does() {
     // A word clap already accepts must not be in the table: `postgres` is a
     // visible_alias for `db`, and an entry for it would claim a capability
     // that works does not exist.
+    //
+    // **`--no-start`, because `postgres` really is `db`.** Being a working
+    // alias is the whole point being asserted, so this call *succeeds* -- and
+    // without this flag it succeeded all the way to `docker compose up`,
+    // starting a real PostgreSQL that the test never connects to and nothing
+    // ever takes down. Each full run leaked a container and, worse, the
+    // compose network beside it; after three runs Docker had no address pool
+    // left and unrelated container tests began failing with `all predefined
+    // address pools have been fully subnetted`. A suite that poisons the
+    // machine for its own next run is a flake with a delay on it.
     for alias in ["postgres", "dbconsole"] {
         let refused = jails_cmd(&root, None)
-            .args(["add", alias])
+            .args(["add", alias, "--no-start"])
             .output()
             .unwrap();
         let stderr = String::from_utf8_lossy(&refused.stderr);
@@ -730,4 +766,462 @@ fn a_capability_jails_does_not_have_names_the_one_it_does() {
     let helped = jails_cmd(&root, None).args(["--help"]).output().unwrap();
     assert!(helped.status.success());
     assert!(!String::from_utf8_lossy(&helped.stdout).is_empty());
+}
+
+/// Every command path the binary advertises is exercised by some test.
+///
+/// `simplify-sol.md`'s G2: *all live command paths map to at least one
+/// checked-in journey.* The catalog is the oracle -- `jails commands --json`
+/// walks the same `clap::Command` that parses arguments -- so a command added
+/// without a journey fails here rather than shipping untested.
+///
+/// **A journey is an invocation, not a mention.** Comments are stripped before
+/// the scan: prose naming a command is not coverage, and a gate that counted
+/// it would pass on the strength of its own documentation. That is not
+/// hypothetical -- the protocol-fixture gate in `tests/golden.rs` did exactly
+/// that on its first run.
+///
+/// A command that cannot be exercised without infrastructure still needs a
+/// journey: its refusal is behaviour too, and G2 asks for success *and*
+/// refusal. `EXERCISED_ELSEWHERE` is for paths whose journey cannot live in
+/// this workspace at all, and it is empty on purpose.
+#[test]
+fn every_advertised_command_path_has_a_journey() {
+    /// Paths with no journey, each with the reason it cannot have one.
+    /// Empty: every advertised command is reachable from a test, including the
+    /// ones whose only reachable behaviour is a refusal.
+    const EXERCISED_ELSEWHERE: [(&str, &str); 0] = [];
+
+    let surface = jails_cmd(&temp_dir("journey-coverage"), None)
+        .args(["commands", "--json"])
+        .output()
+        .unwrap();
+    assert!(surface.status.success());
+    let surface = String::from_utf8_lossy(&surface.stdout);
+
+    let mut paths = Vec::new();
+    for line in surface.lines() {
+        let Some(at) = line.find("\"name\": \"") else {
+            continue;
+        };
+        let rest = &line[at + "\"name\": \"".len()..];
+        if let Some(end) = rest.find('"') {
+            paths.push(rest[..end].to_string());
+        }
+    }
+    assert!(
+        paths.len() > 90,
+        "the catalog reported only {} command paths -- it has stopped \
+         describing the surface, and this gate would pass over anything",
+        paths.len()
+    );
+
+    let sources = test_sources_without_comments();
+    assert!(
+        sources.len() > 200_000,
+        "the test scan found only {} bytes -- it has lost the suite",
+        sources.len()
+    );
+
+    let mut unexercised = Vec::new();
+    for path in &paths {
+        if EXERCISED_ELSEWHERE.iter().any(|(name, _)| name == path) {
+            continue;
+        }
+        let words: Vec<&str> = path.split(' ').collect();
+        let found = match words.as_slice() {
+            [one] => sources.contains(&format!("\"{one}\"")),
+            [first, second, ..] => {
+                sources.contains(&format!("\"{first}\", \"{second}\""))
+                    || sources.contains(&format!("\"{path}\""))
+            }
+            [] => true,
+        };
+        if !found {
+            unexercised.push(path.clone());
+        }
+    }
+    assert!(
+        unexercised.is_empty(),
+        "these command paths are advertised and no test runs them: \
+         {unexercised:?}\n       fix: add a journey -- a refusal counts, and \
+         for a command that needs infrastructure the refusal is usually the \
+         only behaviour a test can reach"
+    );
+}
+
+/// Every `tests/**/*.rs`, with `//` comments removed.
+fn test_sources_without_comments() -> String {
+    fn walk(dir: &std::path::Path, out: &mut String) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries {
+            let path = entry.expect("failed to read a directory entry").path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                for line in text.lines() {
+                    // Whitespace is collapsed as well as comments dropped:
+                    // `rustfmt` breaks a long `args([...])` across lines, so
+                    // `"editor", "complete"` and `"editor",\n  "complete"`
+                    // are the same invocation and only one of them would match
+                    // a literal search.
+                    out.push_str(line.split("//").next().unwrap_or("").trim());
+                    out.push(' ');
+                }
+            }
+        }
+    }
+    let mut out = String::new();
+    walk(
+        &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests"),
+        &mut out,
+    );
+    out
+}
+
+/// The `kafka` family refuses outside a project, by name.
+///
+/// Eight subcommands that shell into the broker's own CLI tools inside the
+/// compose container. None can do its work without a project and a running
+/// broker, so the behaviour a test can reach is the refusal -- and
+/// `simplify-sol.md`'s G2 asks for refusal journeys as well as success ones.
+/// Before this they had no journey at all: eight advertised commands that no
+/// test had ever run, which is how a panic on an empty directory ships.
+#[test]
+fn every_kafka_subcommand_refuses_outside_a_project_rather_than_panicking() {
+    let root = temp_dir("kafka-outside-a-project");
+    // Each path is written out in full rather than assembled from a prefix
+    // and a loop variable. `every_advertised_command_path_has_a_journey` looks
+    // for the path as a literal, and cannot see one a loop builds -- so a
+    // journey that exists but is invisible to the gate reads exactly like a
+    // missing one.
+    //
+    // `send` takes a required payload; the rest take an optional topic. The
+    // argument is supplied so clap's own "missing argument" refusal does not
+    // stand in for the one being tested -- it would satisfy the assertion
+    // below for the wrong reason.
+    for (path, argument) in [
+        ("kafka topics", None),
+        ("kafka describe", None),
+        ("kafka send", Some("{}")),
+        ("kafka poison", None),
+        ("kafka tail", None),
+        ("kafka dlt", None),
+        ("kafka lag", None),
+        ("kafka reset", None),
+    ] {
+        let subcommand = path.split(' ').nth(1).expect("a two-word path");
+        let mut command = jails_cmd(&root, None);
+        command.args(["kafka", subcommand]);
+        if let Some(argument) = argument {
+            command.arg(argument);
+        }
+        let output = command.output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success(),
+            "`kafka {subcommand}` succeeded in a directory with no project"
+        );
+        assert!(
+            stderr.contains("no pom.xml"),
+            "`kafka {subcommand}` refused without naming the missing build \
+             file: {stderr}"
+        );
+    }
+}
+
+/// `architecture baseline` refuses outside a project too.
+#[test]
+fn architecture_baseline_refuses_outside_a_project() {
+    let root = temp_dir("architecture-baseline-outside");
+    let output = jails_cmd(&root, None)
+        .args(["architecture", "baseline"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("no pom.xml"),
+        "the refusal should name the missing build file"
+    );
+}
+
+/// `jails setup` writes to the machine, so its journey gives it a fake one.
+///
+/// It is the one command that edits a file outside any project --
+/// `~/.testcontainers.properties`, through `apply::put_outside_project`, which
+/// is deliberately named so nothing else reaches it by accident. The journey
+/// therefore points `HOME` at a scratch directory: a test that ran this
+/// against the real one would rewrite the developer's own file, which is
+/// exactly the accident the verb's name is about.
+#[test]
+fn setup_writes_the_reuse_key_into_the_home_it_is_given() {
+    let home = temp_dir("setup-fake-home");
+    let output = jails_cmd(&home, None)
+        .arg("setup")
+        .env("HOME", &home)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "setup failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let written = home.join(".testcontainers.properties");
+    assert!(
+        written.is_file(),
+        "setup reported success and wrote no ~/.testcontainers.properties"
+    );
+    let text = std::fs::read_to_string(&written).unwrap();
+    assert!(
+        text.contains("testcontainers.reuse.enable=true"),
+        "setup wrote a file without the key it exists to set: {text}"
+    );
+}
+
+/// Which generator kinds a real compiler never sees.
+///
+/// `simplify-sol.md`'s G3: *maintain a machine-readable map from every
+/// generator kind and capability to a build fixture. Build the exact generated
+/// tree under test -- not a neighbouring toolbox.* This is the first half: the
+/// map, **derived rather than declared**, because `CLAUDE.md`'s rule for the
+/// scenario table applies here too -- which kinds a test covers is a fact
+/// about its steps, not a fourth list to keep in step by hand.
+///
+/// A kind counts as compiled when some test both generates it and gates on a
+/// real toolchain. The number matters because the golden suite checks *bytes*,
+/// not compilability: jails can emit Java that does not compile for any of the
+/// kinds below and every existing test stays green. That is the hole G3 is
+/// about, and it is `NOT_COMPILED.len()` wide.
+///
+/// **Ratchet, not a threshold.** The list may shrink and may not grow. Closing
+/// it means adding real builds to a suite that is already 108s of `tests/cli`,
+/// so each one is a deliberate trade rather than a sweep -- see `plan.md`
+/// P13.7 for where that time goes.
+#[test]
+fn no_new_generator_kind_escapes_the_real_toolchain() {
+    /// Kinds no real compiler builds. Shrink only.
+    ///
+    /// **Empty**, and it began at 13. `every_remaining_generator_kind_compiles_
+    /// in_one_spring_project` closed the rest in one project and one `mvn
+    /// test` -- twelve fixtures would have been twelve Maven invocations
+    /// against a suite already at 108s, and what needs proving is that each
+    /// kind's output compiles, not that it does so alone.
+    ///
+    /// Closing them found a real defect on the first run: `g event` emits
+    /// `org.springframework.kafka.*` and neither supplies the dependency nor
+    /// refuses without it (`bugs.md` B58), which is why that test asks for the
+    /// capability explicitly.
+    const NOT_COMPILED: [&str; 0] = [];
+
+    let surface = jails_cmd(&temp_dir("kind-build-coverage"), None)
+        .args(["commands", "--json"])
+        .output()
+        .unwrap();
+    assert!(surface.status.success());
+    let surface = String::from_utf8_lossy(&surface.stdout);
+    let kinds = catalog_section(&surface, "kinds");
+    assert!(
+        kinds.len() > 30,
+        "the catalog reported only {} kinds -- it has stopped describing the \
+         surface",
+        kinds.len()
+    );
+
+    let compiled = kinds_reaching_a_real_toolchain(&kinds);
+    let escaping: Vec<&String> = kinds.iter().filter(|k| !compiled.contains(*k)).collect();
+    let recorded: std::collections::BTreeSet<&str> = NOT_COMPILED.into_iter().collect();
+
+    let unrecorded: Vec<&&String> = escaping
+        .iter()
+        .filter(|k| !recorded.contains(k.as_str()))
+        .collect();
+    assert!(
+        unrecorded.is_empty(),
+        "these kinds generate Java that no real compiler ever sees, and are \
+         not in `NOT_COMPILED`: {unrecorded:?}\n       fix: generate the kind \
+         inside a toolbox a real-toolchain test builds, so a change that stops \
+         it compiling fails here rather than shipping"
+    );
+    let fixed: Vec<&&str> = recorded
+        .iter()
+        .filter(|k| compiled.iter().any(|done| done == *k))
+        .collect();
+    assert!(
+        fixed.is_empty(),
+        "these kinds are compiled now and still listed in `NOT_COMPILED`: \
+         {fixed:?}\n       fix: take them out -- an improvement nobody records \
+         is one the next change silently undoes"
+    );
+}
+
+/// Names in one `jails commands --json` section.
+fn catalog_section(surface: &str, section: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let Some(start) = surface.find(&format!("\"{section}\": [")) else {
+        return names;
+    };
+    let body = &surface[start..];
+    let end = body.find("\n  ]").unwrap_or(body.len());
+    for line in body[..end].lines() {
+        let Some(at) = line.find("\"name\": \"") else {
+            continue;
+        };
+        let rest = &line[at + "\"name\": \"".len()..];
+        if let Some(stop) = rest.find('"') {
+            names.push(rest[..stop].to_string());
+        }
+    }
+    names
+}
+
+/// Kinds generated inside a function that gates on a real toolchain.
+///
+/// Per file and per function, with **string literals blanked before the braces
+/// are counted**. That is `java::blanked()`'s trick, and it is not optional
+/// here: these files are full of Java fixtures, so a `{` inside a string
+/// literal is not a block. Counting them raw made one function's body span the
+/// rest of the file, which reported every kind as compiled -- the same shape
+/// of wrong answer as reporting none.
+///
+/// The blanked copy is the same length as the original, so offsets found in
+/// one index the other: braces are matched in the blank, content is read from
+/// the source.
+fn kinds_reaching_a_real_toolchain(kinds: &[String]) -> std::collections::BTreeSet<String> {
+    // `real_maven_cmd` is the one that actually runs Maven, and leaving it out
+    // made the toolbox *builders* invisible -- they generate a dozen kinds and
+    // then run `mvn test` over the result, so every kind in them was being
+    // reported as never compiled. A coverage gate that under-reports sends
+    // people to write tests that already exist.
+    const REAL: [&str; 8] = [
+        "real_mvn_available",
+        "real_maven_cmd",
+        "real_gradle_cmd",
+        "real_java_supports_target_release",
+        "verified_spring_toolbox",
+        "verified_spring_services_toolbox",
+        "verified_plain_toolbox",
+        "maven_report_summary",
+    ];
+    let mut compiled = std::collections::BTreeSet::new();
+    for source in test_source_files() {
+        let blanked = blank_literals(&source);
+        let bytes = blanked.as_bytes();
+        for (at, _) in blanked.match_indices("fn ") {
+            let Some(open) = blanked[at..].find('{').map(|i| at + i) else {
+                continue;
+            };
+            let mut depth = 0usize;
+            let mut close = open;
+            for (index, byte) in bytes.iter().enumerate().skip(open) {
+                match byte {
+                    b'{' => depth += 1,
+                    b'}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close = index;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if close <= open {
+                continue;
+            }
+            let body = &source[open..close];
+            if !REAL.iter().any(|marker| body.contains(marker)) {
+                continue;
+            }
+            let flat = body.split_whitespace().collect::<Vec<_>>().join(" ");
+            for kind in kinds {
+                if flat.contains(&format!("\"generate\", \"{kind}\""))
+                    || flat.contains(&format!("\"g\", \"{kind}\""))
+                {
+                    compiled.insert(kind.clone());
+                }
+            }
+        }
+    }
+    compiled
+}
+
+/// Each `tests/**/*.rs` separately, with `//` comments blanked in place.
+///
+/// Separately, because concatenating them lets one file's unbalanced-looking
+/// braces run into the next.
+fn test_source_files() -> Vec<String> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries {
+            let path = entry.expect("failed to read a directory entry").path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                let mut kept = String::with_capacity(text.len());
+                for line in text.lines() {
+                    let code = line.split("//").next().unwrap_or("");
+                    kept.push_str(code);
+                    kept.push_str(&" ".repeat(line.len() - code.len()));
+                    kept.push('\n');
+                }
+                out.push(kept);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(
+        &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests"),
+        &mut out,
+    );
+    out
+}
+
+/// String and char literals replaced by spaces of the same length.
+fn blank_literals(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut out = String::with_capacity(source.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if source[i..].starts_with('r') && source[i + 1..].starts_with(['#', '"']) {
+            let hashes = source[i + 1..].bytes().take_while(|b| *b == b'#').count();
+            if source[i + 1 + hashes..].starts_with('"') {
+                let close = format!("\"{}", "#".repeat(hashes));
+                let mut end = i + 1 + hashes + 1;
+                while end < bytes.len() && !bytes[end..].starts_with(close.as_bytes()) {
+                    end += 1;
+                }
+                let end = (end + close.len()).min(bytes.len());
+                blank_span(&source[i..end], &mut out);
+                i = end;
+                continue;
+            }
+        }
+        if bytes[i] == b'"' {
+            let mut end = i + 1;
+            while end < bytes.len() && bytes[end] != b'"' {
+                end += if bytes[end] == b'\\' { 2 } else { 1 };
+            }
+            let end = (end + 1).min(bytes.len());
+            blank_span(&source[i..end], &mut out);
+            i = end;
+            continue;
+        }
+        let ch = source[i..].chars().next().expect("in bounds");
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+/// One space per byte, newlines kept, so offsets and line numbers survive.
+fn blank_span(span: &str, out: &mut String) {
+    for byte in span.bytes() {
+        out.push(if byte == b'\n' { '\n' } else { ' ' });
+    }
 }

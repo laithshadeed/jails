@@ -1,0 +1,22 @@
+@baseUrl = http://localhost:8080
+
+### Create Message
+POST {{baseUrl}}/messages
+Content-Type: application/json
+
+{
+  "body": "sample-bodie"
+}
+
+### List Message
+GET {{baseUrl}}/messages
+Accept: application/json
+
+@id = 00000000-0000-0000-0000-000000000001
+
+### Get Message
+GET {{baseUrl}}/messages/{{id}}
+Accept: application/json
+
+### Delete Message
+DELETE {{baseUrl}}/messages/{{id}}

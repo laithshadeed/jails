@@ -46,7 +46,7 @@ use crate::recipe::ArgumentShape;
 use jails_support::codec::{Codec, Decoder, Encoder, ordered};
 
 /// One `childField=parentField` pair, which only `association` declares.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
 pub struct FieldMapping {
     pub child: Name,
     pub parent: Name,
@@ -72,20 +72,6 @@ impl FieldMapping {
         format!("{}={}", self.child, self.parent)
     }
 }
-impl Codec for FieldMapping {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.child.encode(encoder)?;
-        self.parent.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            child: Name::decode(decoder)?,
-            parent: Name::decode(decoder)?,
-        })
-    }
-}
-
 /// One component pinned to a constant instead of taken from the request.
 ///
 /// `--set senderType=ADMIN`. Both halves are validated values: a `Name` for
@@ -95,7 +81,7 @@ impl Codec for FieldMapping {
 /// constant that is not one of that enum's constants is refused there, where
 /// the type is known, rather than written into a constructor argument and
 /// discovered by the compiler.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub struct PinSpec {
     pub component: Name,
     pub value: crate::identity::LiteralValue,
@@ -120,20 +106,6 @@ impl PinSpec {
         format!("{}={}", self.component, self.value)
     }
 }
-impl Codec for PinSpec {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.component.encode(encoder)?;
-        self.value.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            component: Name::decode(decoder)?,
-            value: crate::identity::LiteralValue::decode(decoder)?,
-        })
-    }
-}
-
 /// One component bound from a request parameter of a different name.
 ///
 /// `--bind id=message_id`. Spring's data binder has no naming strategy, and
@@ -141,7 +113,7 @@ impl Codec for PinSpec {
 /// that is `id` in the response and `message_id` in the request. Both halves
 /// are validated values: a `Name` for the component and a `WireName` for what
 /// arrives, so a binding cannot smuggle anything into an annotation.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
 pub struct BindSpec {
     pub component: Name,
     pub wire: crate::identity::WireName,
@@ -166,20 +138,6 @@ impl BindSpec {
         format!("{}={}", self.component, self.wire)
     }
 }
-impl Codec for BindSpec {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.component.encode(encoder)?;
-        self.wire.encode(encoder)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Ok(Self {
-            component: Name::decode(decoder)?,
-            wire: crate::identity::WireName::decode(decoder)?,
-        })
-    }
-}
-
 /// A recipe's positional arguments, in the shape that recipe takes.
 ///
 /// plan.md §R1.1's amendment. Which variant a spec holds is a total function

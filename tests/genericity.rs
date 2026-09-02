@@ -1,6 +1,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// The suite-wide scheduler. See its own docs: the sweep below is the second
+/// place in this repository that reads and strips the whole workspace, and it
+/// draws its workers from the same process-wide budget the architecture gates
+/// do rather than opening a second, unaware one.
+#[path = "common/parallel.rs"]
+mod parallel;
+
 const FORBIDDEN: &[&str] = &[
     "crawl",
     "spider",
@@ -19,6 +26,19 @@ const FORBIDDEN: &[&str] = &[
     "posting",
 ];
 
+/// One forbidden word found in one file: what the report would say, and
+/// which `(allowance, file)` entry permits it if any.
+///
+/// A named type rather than the tuple this started as, because the sweep is
+/// parallel now and the verdict has to survive the trip back from a worker:
+/// the allowance bookkeeping is shared mutable state and stays on the folding
+/// thread, so what crosses the boundary is a decision about one occurrence
+/// rather than a write to two vectors.
+struct Occurrence {
+    found: String,
+    allowance: Option<(usize, usize)>,
+}
+
 struct AllowedConcept {
     word: &'static str,
     files: &'static [&'static str],
@@ -29,9 +49,10 @@ const ALLOWED: &[AllowedConcept] = &[
     AllowedConcept {
         word: "robots",
         files: &[
-            // Followed the http-workflow generator out of `spring.rs` when rung 11
-            // split it; the concept is unchanged, only its address.
-            "crates/jails-generate/src/spring/http.rs",
+            // The Rust side dropped off when the http-workflow bodies were
+            // extracted to template files: the word is in the Java now and in
+            // no `.rs` at all. Pruned because the gate found it, which is the
+            // whole point of it failing in this direction too.
             "templates/spring/http_workflow_java.java",
             "templates/spring/http_workflow_it_java.java",
         ],
@@ -53,7 +74,7 @@ const ALLOWED: &[AllowedConcept] = &[
             "crates/jails-state/src/compat.rs",
             // `ProjectPath` must refuse `.jails/ledger.toml` by name, and the
             // test that proves it has to spell the path it is refusing.
-            "crates/jails-protocol/src/vocabulary/identity.rs",
+            "crates/jails-support/src/identity.rs",
             // The schema-2 envelope is the ledger file format; its constants
             // and messages name the thing they describe.
             "crates/jails-protocol/src/durable/envelope.rs",
@@ -73,6 +94,11 @@ const ALLOWED: &[AllowedConcept] = &[
             // and its semantics carry the intent for it.
             "crates/jails-prepare/src/prepare.rs",
             "crates/jails-prepare/src/operation.rs",
+            // `model init` refuses a project that already has one, and sends
+            // it to `model import` instead: a project jails has generated
+            // into keeps its declarations rather than discarding them. Saying
+            // which file it found is what makes that refusal actionable.
+            "src/model_init.rs",
             // Preparation guards the ledger generation the plan was computed
             // against, renders the image the commit will write, and atomically
             // records lifecycle transitions in that same durable image.
@@ -90,31 +116,17 @@ const ALLOWED: &[AllowedConcept] = &[
             "crates/jails-prepare/src/serialize.rs",
             // A whole route ends in the ledger write, and its declared
             // intent is literally a `LedgerIntent`.
-            "crates/jails-engine/src/route.rs",
-            "crates/jails-engine/src/route/commit.rs",
-            "crates/jails-engine/src/route/request.rs",
-            "crates/jails-engine/src/route/app.rs",
-            "crates/jails-engine/src/route/artifact.rs",
-            "crates/jails-engine/src/route/capability.rs",
-            "crates/jails-engine/src/route/field.rs",
             // Resolving which recorded entity a field command targets is a
             // search of the ledger's applied rows.
-            "crates/jails-engine/src/route/field/target.rs",
-            "crates/jails-engine/src/route/maintenance/adopt.rs",
-            "crates/jails-engine/src/route/maintenance/app_init.rs",
-            "crates/jails-engine/src/route/maintenance/format.rs",
-            "crates/jails-engine/src/route/maintenance/modernize.rs",
-            "crates/jails-engine/src/route/maintenance/rename.rs",
             // A rename's identity transition is read out of the ledger's
             // applied rows, which is what names the entities being renamed.
-            "crates/jails-engine/src/route/maintenance/rename/source.rs",
             // The coordinated verbs resolve their subject against the ledger
             // and guard the generation the campaign was planned from.
-            "crates/jails-engine/src/route/maintenance/rename/resource.rs",
-            "crates/jails-engine/src/route/oneshot.rs",
             // Reading the store *is* reading `ledger.toml`, and the reader
             // cannot name the file it opens without naming it.
             "crates/jails-commit/src/store.rs",
+            // The one-way compiler importer decodes the same legacy envelope
+            // solely to leave that store behind; its input type is LedgerV2.
             // A journal names the ledger-committed phase, which is the point
             // after which recovery must roll forward rather than back.
             "crates/jails-commit/src/journal.rs",
@@ -171,13 +183,26 @@ fn core_generation_stays_free_of_showcase_vocabulary() {
         members.sort();
         scopes.extend(members.into_iter().map(|member| member.join("src")));
     }
-    let mut scanned = 0;
-    for scope in scopes {
-        for path in source_files(&scope) {
-            scanned += 1;
+    let paths: Vec<PathBuf> = scopes
+        .iter()
+        .flat_map(|scope| source_files(scope))
+        .collect();
+    let scanned = paths.len();
+    // Read and stripped in parallel, largest file first. Comment stripping is
+    // a byte-at-a-time state machine and this sweep covers the same 5.9 MB
+    // the architecture gates do; the sizes across it differ by two orders of
+    // magnitude, so the biggest file has to start first or every worker waits
+    // on it at the end. What each file *says* is independent of every other,
+    // so only the verdict below is folded together, and it is folded in path
+    // order -- the report stays the same whatever order the reads finished in.
+    let per_file: Vec<Vec<Occurrence>> = parallel::map_by_cost(
+        &paths,
+        |path| fs::metadata(path).map_or(0, |data| data.len()),
+        |path| {
             let relative = path.strip_prefix(root).unwrap();
-            let source = fs::read_to_string(&path).unwrap();
+            let source = fs::read_to_string(path).unwrap();
             let visible = without_comments(&source);
+            let mut hits = Vec::new();
             for word in FORBIDDEN {
                 for offset in word_offsets(&visible, word) {
                     let allowance = ALLOWED.iter().enumerate().find_map(|(index, allowed)| {
@@ -190,18 +215,28 @@ fn core_generation_stays_free_of_showcase_vocabulary() {
                             .position(|file| relative == Path::new(file))
                             .map(|file| (index, file))
                     });
-                    if let Some((index, file)) = allowance {
-                        used_allowances[index] = true;
-                        used_files[index][file] = true;
-                    } else {
-                        let line = visible[..offset]
-                            .bytes()
-                            .filter(|byte| *byte == b'\n')
-                            .count()
-                            + 1;
-                        failures.push(format!("{}:{line}: {word}", relative.display()));
-                    }
+                    let line = visible[..offset]
+                        .bytes()
+                        .filter(|byte| *byte == b'\n')
+                        .count()
+                        + 1;
+                    hits.push(Occurrence {
+                        found: format!("{}:{line}: {word}", relative.display()),
+                        allowance,
+                    });
                 }
+            }
+            hits
+        },
+    );
+    for hits in per_file {
+        for Occurrence { found, allowance } in hits {
+            match allowance {
+                Some((index, file)) => {
+                    used_allowances[index] = true;
+                    used_files[index][file] = true;
+                }
+                None => failures.push(found),
             }
         }
     }
