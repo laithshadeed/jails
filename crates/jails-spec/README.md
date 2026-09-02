@@ -1,17 +1,21 @@
 # `jails-spec`
 
-The closed CLI vocabularies and where a project is.
+Where a jails project is, and what builds it. No closed vocabulary and no
+clap: `Layer`, `CapabilityKind`, `ArtifactKind`, `EndpointMethod`,
+`RequestFormat`, `Precondition`, `BuildSystem` and the compact field syntax
+all live in `jails-model`, which owns every closed set.
 
-- `spec::kind` -- `ArtifactKind`, `Capability` and the other `clap::ValueEnum`s,
-  so `clap_complete` can emit static completion lists and the CLI spelling is
-  the recorded spelling.
-- `spec::field` -- the compact `name:type[!?]` field syntax and its markers
-  (`@pk`, `@unique`, `@index`, `@positive`, `@nonnegative`, `@scope`). An
-  unknown marker is an error, never a no-op.
-- `spec::paths` and `spec::layout` -- `find_project_root` and the eleven
-  package layers.
+- `spec::paths` -- `find_project_root`, and where inside a project a class
+  goes.
 - `build` -- which build tool a directory uses, and nothing more. The door is
-  any recognised marker, nearest wins; jails never parses a foreign build file.
+  any recognised marker, nearest wins; jails never parses a foreign build
+  file. Deliberately not `jails_model::BuildSystem`: this answers what a
+  directory looks like from outside, `Foreign(name)` included.
+- `release` -- the three version pins a generated project carries.
+- `spec::{coordinate, constant, suffix, policy}` -- the small tables the
+  generators are given: a Maven coordinate, a generated constant, the suffix a
+  kind's principal type carries, and the typed evolution policy a rename asks
+  for.
 
-This is where a symbol shared by several crates lives when it belongs to none
-of them.
+`docs/53-tool-crates.md` S53.8 asks whether what is left still needs to be a
+crate.
