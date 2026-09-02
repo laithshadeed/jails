@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 @Component
 public final class InMemoryOperatorRepository implements OperatorRepository {
 
-    private final Map<long, Operator> rows = new LinkedHashMap<>();
+    private final Map<Long, Operator> rows = new LinkedHashMap<>();
 
     @Override
     public Optional<Operator> findById(long id) {

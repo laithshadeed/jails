@@ -581,6 +581,22 @@ pub(crate) fn java_type(field: &Field, imports: &mut BTreeSet<String>) -> String
     java_type_ref(&field.ty, field.required, imports)
 }
 
+/// The same type where Java will not take a primitive: a generic argument.
+///
+/// **`Map<long, Note>` is not a type.** A required `int` or `long` component
+/// is spelled with the primitive everywhere it is a parameter, a field or a
+/// return -- that is what `java_type` answers, and it is right there -- but a
+/// type argument has to be the boxed name, and a generator that reaches for
+/// the same string in both places emits a file that does not compile. Only
+/// the two integral builtins have a primitive at all, so the failure is
+/// invisible on the `uuid` and `string` keys everything else is written
+/// against. `BuiltinSemantics` carries both names; asking for the
+/// not-required spelling is how the boxed one is reached, and it wraps
+/// nothing.
+pub(crate) fn boxed_java_type(field: &Field, imports: &mut BTreeSet<String>) -> String {
+    java_type_ref(&field.ty, false, imports)
+}
+
 pub(crate) fn java_type_ref(
     ty: &TypeRef,
     required: bool,

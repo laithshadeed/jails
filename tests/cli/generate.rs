@@ -7563,6 +7563,14 @@ fn every_remaining_generator_kind_compiles_in_one_spring_project() {
         // what nothing else here compiles.
         &["g", "record", "Ledger", "id:uuid@pk", "note:string!"][..],
         &["g", "repo", "Ledger"][..],
+        // **And once on an integral key**, which is the shape `@pk` takes
+        // whenever the database assigns it. It is the only key whose Java
+        // spelling differs by position -- `long` as a parameter, `Long` as a
+        // type argument -- so the in-memory adapter's `Map` is a file that
+        // compiles for every other key and not for this one. Nothing but real
+        // `javac` catches it: the goldens compare bytes.
+        &["g", "record", "Tally", "id:long@pk", "note:string!"][..],
+        &["g", "repo", "Tally"][..],
         &[
             "g",
             "association",

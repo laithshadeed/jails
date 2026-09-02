@@ -47,6 +47,10 @@ pub(super) fn lower_fake_repository(
         "java.util.Optional".to_string(),
     ]);
     let key_type = java_type(primary_key, &mut imports);
+    // The `Map`'s key, which is a *type argument* and so cannot be `long`.
+    // See `emit_java::boxed_java_type`; the parameters below stay primitive,
+    // because the port they override declares them that way.
+    let boxed_key_type = crate::emit_java::boxed_java_type(primary_key, &mut imports);
     let record = &entity.names.java_type;
     let key = &primary_key.names.java_member;
     // **`@Component`, not `@Repository`.** The extra meaning `@Repository`
@@ -63,7 +67,7 @@ pub(super) fn lower_fake_repository(
         ""
     };
     let body = format!(
-        "{annotation}public final class {type_name} implements {record}Repository {{\n\n    private final Map<{key_type}, {record}> rows = new LinkedHashMap<>();\n\n    @Override\n    public Optional<{record}> findById({key_type} id) {{\n        return Optional.ofNullable(rows.get(id));\n    }}\n\n    @Override\n    public List<{record}> findAll() {{\n        return List.copyOf(rows.values());\n    }}\n\n    @Override\n    public {record} save({record} value) {{\n        rows.put(value.{key}(), value);\n        return value;\n    }}\n\n    @Override\n    public boolean deleteById({key_type} id) {{\n        return rows.remove(id) != null;\n    }}\n}}"
+        "{annotation}public final class {type_name} implements {record}Repository {{\n\n    private final Map<{boxed_key_type}, {record}> rows = new LinkedHashMap<>();\n\n    @Override\n    public Optional<{record}> findById({key_type} id) {{\n        return Optional.ofNullable(rows.get(id));\n    }}\n\n    @Override\n    public List<{record}> findAll() {{\n        return List.copyOf(rows.values());\n    }}\n\n    @Override\n    public {record} save({record} value) {{\n        rows.put(value.{key}(), value);\n        return value;\n    }}\n\n    @Override\n    public boolean deleteById({key_type} id) {{\n        return rows.remove(id) != null;\n    }}\n}}"
     );
     // **Keyed on the entity, not on whichever capability asked for it.** This
     // adapter is emitted whenever the port has no other implementation and
@@ -667,5 +671,33 @@ mod tests {
         assert!(!slice.contains_key("art_ent_task_repository_contract"));
         assert!(!slice.contains_key("art_ent_task_repository_memory_test"));
         assert!(!slice.contains_key("art_cap_db_ent_task_repository_it"));
+    }
+
+    /// **`Map<long, Task>` is not a type.** An integral key is the one case
+    /// where the Java spelling of a component differs by *position*: `long` as
+    /// a parameter, `Long` as a type argument. Every scenario the goldens
+    /// carried keyed on `uuid` or `string`, which box to themselves, so the
+    /// in-memory adapter shipped a file that does not compile for the whole
+    /// time `id:long@pk` has been the default shape for an assigned key.
+    #[test]
+    fn an_integral_key_boxes_where_it_is_a_type_argument() {
+        for (token, primitive, boxed) in [("long", "long", "Long"), ("int", "int", "Integer")] {
+            let slice = slice(&format!(
+                "jdl 1\n\napp Notes @id(project_notes) {{\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage postgres\n}}\n\ncap fake\n\nentity Task @id(ent_task2) {{\n  use repo\n  id: {token} @id(fld_task2_id) @pk\n  note: string @id(fld_task2_note)\n}}\n"
+            ));
+            let (_, memory) = slice
+                .get("art_ent_task2_repository_memory")
+                .expect("a repo facet emits the in-memory adapter");
+            assert!(
+                memory.contains(&format!("Map<{boxed}, Task> rows")),
+                "the map's key argument must be boxed:\n{memory}"
+            );
+            // And the method the port declares stays primitive, or the
+            // override does not match the interface it claims to implement.
+            assert!(
+                memory.contains(&format!("findById({primitive} id)")),
+                "the parameter must stay primitive:\n{memory}"
+            );
+        }
     }
 }
