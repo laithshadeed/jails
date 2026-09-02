@@ -107,36 +107,10 @@ impl Parser<'_> {
     }
 
     pub(super) fn parse_cap(&mut self) -> Result<(), Diagnostics> {
-        const CAPS: &[&str] = &[
-            "csv",
-            "sqlite",
-            "json",
-            "http",
-            "api",
-            "actuator",
-            "cache",
-            "security",
-            "cors",
-            "sse",
-            "mail",
-            "redis",
-            "observability",
-            "kafka",
-            "testkit",
-            "fake",
-            "format",
-            "coverage",
-            "loadtest",
-            "ci",
-            "docker",
-            "k8s",
-            "toxiproxy",
-            "fast-test",
-        ];
         let start = self.span().start;
         self.expect("cap", "JDL0300", "expected a cap declaration")?;
         let kind = self.take_word("capability kind")?;
-        if !CAPS.contains(&kind.as_str()) {
+        if crate::CapabilityKind::declared_in_source(&kind).is_none() {
             return Err(self.here(
                 "JDL0301",
                 format!("unknown capability kind `{kind}`"),

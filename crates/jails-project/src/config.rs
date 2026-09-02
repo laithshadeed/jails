@@ -24,7 +24,7 @@
 //! Still deliberately not a general config file -- no template overrides, no
 //! plugin hooks, no per-kind paths. All three tables are **closed sets**: the
 //! layout keys are exactly the eleven [`crate::layout::Layer`] packages, the
-//! capability names are derived from the `Capability` enum rather than
+//! capability names are derived from the `CapabilityKind` enum rather than
 //! restated, and a `[[capability]]` table's keys are exactly `kind`, `name`
 //! and `package`. A name that is not one of them is a typo and is reported as
 //! such rather than ignored -- silently accepting `adapter = "persistence"`
@@ -56,7 +56,7 @@ use std::path::Path;
 
 use crate::capability::Declaration;
 use crate::layout::Layer;
-use crate::spec::kind::Capability;
+use jails_model::CapabilityKind;
 
 /// The file, at the project root next to `pom.xml`.
 pub const FILE: &str = "jails.toml";
@@ -136,8 +136,8 @@ const CAPABILITY_KEYS: [&str; 3] = ["kind", "name", "package"];
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Config {
     layout: HashMap<String, String>,
-    /// Capability labels, in the order the file lists them. Validated against
-    /// the real `Capability` set at parse time, so a typo is an error naming
+    /// CapabilityKind labels, in the order the file lists them. Validated against
+    /// the real `CapabilityKind` set at parse time, so a typo is an error naming
     /// the real ones rather than a capability that silently never syncs.
     ///
     /// Derived from `declarations` at parse time rather than collected beside
@@ -422,18 +422,16 @@ fn finish_capability(
 }
 
 /// Resolve a label to the capability it names, or say which ones exist.
-fn capability_named(label: &str, lineno: usize) -> Result<Capability> {
-    use clap::ValueEnum;
-    Ok(Capability::value_variants()
-        .iter()
-        .copied()
-        .find(|candidate| candidate.label() == label)
+fn capability_named(label: &str, lineno: usize) -> Result<CapabilityKind> {
+    CapabilityKind::from_label(label)
+        .filter(|kind| kind.addable())
         .ok_or_else(|| {
             format!(
                 "line {lineno}: unknown capability `{label}`. Known: {}",
                 known_capabilities().join(", ")
             )
-        })?)
+            .into()
+        })
 }
 
 /// The same layout edit as text. See `edited_capabilities` for why the
@@ -516,15 +514,15 @@ fn insert_into_layout_table(text: &str, rendered: &str) -> String {
     out
 }
 
-/// Every capability label jails knows, derived from the `Capability` enum
+/// Every capability label jails knows, derived from the `CapabilityKind` enum
 /// rather than restated here -- a capability added there without a thought
 /// for the manifest is then automatically valid in it, instead of being a
 /// name this file rejects for no reason a reader could find.
 fn known_capabilities() -> Vec<&'static str> {
-    use clap::ValueEnum;
-    crate::spec::kind::Capability::value_variants()
+    jails_model::CapabilityKind::ALL
         .iter()
-        .map(|c| c.label())
+        .filter(|kind| kind.addable())
+        .map(|kind| kind.label())
         .collect()
 }
 
@@ -594,9 +592,9 @@ mod capability_table_tests {
         assert_eq!(
             declarations(text),
             vec![
-                Declaration::plain(Capability::Db),
+                Declaration::plain(CapabilityKind::Db),
                 Declaration {
-                    kind: Capability::Csv,
+                    kind: CapabilityKind::Csv,
                     name: Some("Dataset".to_string()),
                     package: Some("imports".to_string()),
                 },

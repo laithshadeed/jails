@@ -13,7 +13,7 @@ mod manifest;
 use manifest::*;
 
 use crate::ArtifactKind;
-use crate::Capability;
+use crate::CapabilityKind;
 use crate::cli::GenerateArgs;
 use clap::{Subcommand, ValueEnum};
 use jails_support::Result;
@@ -50,7 +50,7 @@ pub(crate) enum AppCommand {
 #[derive(Debug, Default)]
 struct Manifest {
     schema: u32,
-    capabilities: Vec<Capability>,
+    capabilities: Vec<CapabilityKind>,
 }
 
 #[derive(Debug, Default)]

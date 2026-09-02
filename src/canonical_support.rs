@@ -16,7 +16,7 @@
 
 #[cfg(test)]
 use crate::ArtifactKind;
-use crate::Capability;
+use crate::CapabilityKind;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Support {
@@ -91,33 +91,34 @@ fn generator(kind: ArtifactKind) -> Support {
     }
 }
 
-pub(crate) fn capability(kind: Capability) -> Support {
+pub(crate) fn capability(kind: CapabilityKind) -> Support {
     match kind {
-        Capability::Db
-        | Capability::Fake
-        | Capability::Api
-        | Capability::Csv
-        | Capability::Json
-        | Capability::Http
-        | Capability::Sqlite
-        | Capability::H2
-        | Capability::Actuator
-        | Capability::Cache
-        | Capability::Coverage
-        | Capability::Cors
-        | Capability::Observability
-        | Capability::Security
-        | Capability::Sse
-        | Capability::Redis
-        | Capability::Kafka
-        | Capability::Mail
-        | Capability::Toxiproxy
-        | Capability::Loadtest
-        | Capability::Ci
-        | Capability::Docker
-        | Capability::K8s
-        | Capability::Format
-        | Capability::Testkit => Support::Native,
+        CapabilityKind::Db
+        | CapabilityKind::Fake
+        | CapabilityKind::Api
+        | CapabilityKind::Csv
+        | CapabilityKind::Json
+        | CapabilityKind::Http
+        | CapabilityKind::Sqlite
+        | CapabilityKind::H2
+        | CapabilityKind::Actuator
+        | CapabilityKind::Cache
+        | CapabilityKind::Coverage
+        | CapabilityKind::Cors
+        | CapabilityKind::Observability
+        | CapabilityKind::Security
+        | CapabilityKind::Sse
+        | CapabilityKind::Redis
+        | CapabilityKind::Kafka
+        | CapabilityKind::Mail
+        | CapabilityKind::Toxiproxy
+        | CapabilityKind::Loadtest
+        | CapabilityKind::Ci
+        | CapabilityKind::Docker
+        | CapabilityKind::K8s
+        | CapabilityKind::Format
+        | CapabilityKind::Testkit
+        | CapabilityKind::FastTest => Support::Native,
     }
 }
 
@@ -129,7 +130,7 @@ mod tests {
     #[test]
     fn registry_classifies_every_advertised_word() {
         let generator_count = ArtifactKind::value_variants().len();
-        let capability_count = Capability::value_variants().len();
+        let capability_count = CapabilityKind::value_variants().len();
         assert_eq!(generator_count, 39);
         assert_eq!(capability_count, 25);
         assert_eq!(
@@ -142,7 +143,7 @@ mod tests {
         // All 25, so a capability added without a canonical backend fails
         // here rather than at the cutover.
         assert_eq!(
-            Capability::value_variants()
+            CapabilityKind::value_variants()
                 .iter()
                 .filter(|kind| capability(**kind).is_native())
                 .count(),

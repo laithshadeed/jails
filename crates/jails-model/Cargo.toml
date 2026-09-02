@@ -4,8 +4,18 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+# Only for the `cli` feature: the closed vocabularies below are the CLI's
+# `clap::ValueEnum`s as well as the model's, and one list is the point. The
+# crate builds and links with no clap at all when the feature is off.
+clap = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
+
+[features]
+# Derive `clap::ValueEnum` on the closed vocabularies. Enabled by the binary
+# and by every crate that parses or completes one of them; the compiler
+# ladder leaves it off.
+cli = ["dep:clap"]
 
 [lints]
 workspace = true

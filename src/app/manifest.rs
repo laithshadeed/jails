@@ -208,10 +208,10 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<GenerateArgs>)
             }
             "capabilities" => {
                 for label in string_array(value, line_number, key)? {
-                    let capability = Capability::from_str(&label, false).map_err(|_| {
+                    let capability = CapabilityKind::from_str(&label, false).map_err(|_| {
                         format!(
                             "line {line_number}: unknown capability `{label}`; known: {}",
-                            Capability::value_variants()
+                            CapabilityKind::value_variants()
                                 .iter()
                                 .map(|capability| capability.label())
                                 .collect::<Vec<_>>()

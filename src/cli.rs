@@ -14,7 +14,7 @@ mod generate_args;
 pub(crate) use generate_args::GenerateArgs;
 
 use crate::ArtifactKind;
-use crate::Capability;
+use crate::CapabilityKind;
 use crate::app;
 use crate::arguments;
 use crate::compose::Runtime;
@@ -581,7 +581,7 @@ pub(crate) enum Command {
     )]
     Add {
         #[arg(required = true, num_args = 1..)]
-        capabilities: Vec<Capability>,
+        capabilities: Vec<CapabilityKind>,
         /// Base name for the generated class (default: the capability's own)
         #[arg(long)]
         name: Option<String>,
@@ -628,7 +628,7 @@ pub(crate) enum Command {
     #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Remove {
         #[arg(required = true, num_args = 1..)]
-        capabilities: Vec<Capability>,
+        capabilities: Vec<CapabilityKind>,
         /// Base name for the generated class (default: the capability's own)
         #[arg(long)]
         name: Option<String>,
@@ -1052,7 +1052,7 @@ pub(crate) enum Command {
 
 /// The one resource `add` takes that is not a capability.
 ///
-/// A separate subcommand rather than another `Capability` value, because a
+/// A separate subcommand rather than another `CapabilityKind` value, because a
 /// capability is a closed vocabulary jails knows the meaning of and this is
 /// the opposite: an artifact jails has never heard of, named by the reader.
 /// Nesting it under `add` keeps one verb for "put this in the project" --

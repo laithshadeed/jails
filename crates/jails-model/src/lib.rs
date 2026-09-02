@@ -7,7 +7,7 @@
 
 mod app;
 mod builtin;
-mod capability;
+pub mod capability;
 mod component;
 mod constraint;
 mod dependency;
@@ -38,6 +38,7 @@ mod unit;
 
 pub use app::ProjectIntent;
 pub use builtin::{BuiltinSemantics, LiteralKind};
+pub use capability::CapabilityKind;
 pub use component::{
     Component, ComponentKind, ComponentParameter, ComponentReference, ComponentVariant,
 };

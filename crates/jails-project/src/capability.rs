@@ -1,19 +1,19 @@
 //! A capability row of `jails.toml`: the kind, and the name and package it
 //! was given, if any.
 
-use crate::spec::kind::Capability;
+use jails_model::CapabilityKind;
 use jails_support::Result;
 use jails_support::identity::{Name, Package};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Declaration {
-    pub kind: Capability,
+    pub kind: CapabilityKind,
     pub name: Option<String>,
     pub package: Option<String>,
 }
 
 impl Declaration {
-    pub fn plain(kind: Capability) -> Self {
+    pub fn plain(kind: CapabilityKind) -> Self {
         Self {
             kind,
             name: None,
@@ -21,7 +21,7 @@ impl Declaration {
         }
     }
 
-    pub fn asked(kind: Capability, name: Option<&str>, package: Option<&str>) -> Self {
+    pub fn asked(kind: CapabilityKind, name: Option<&str>, package: Option<&str>) -> Self {
         Self {
             kind,
             name: name.map(str::to_string),
@@ -35,7 +35,7 @@ impl Declaration {
     /// project but placed; the rest write conventional or project-global
     /// output and take neither.
     pub fn validate(&self) -> Result<()> {
-        use Capability::*;
+        use CapabilityKind::*;
         self.name.as_deref().map(Name::parse).transpose()?;
         self.package.as_deref().map(Package::parse).transpose()?;
         match self.kind {
@@ -52,7 +52,7 @@ impl Declaration {
                 Ok(())
             }
             Db | Kafka | Testkit | Fake | Format | Coverage | Loadtest | Ci | Docker | K8s
-            | Toxiproxy | H2 => {
+            | Toxiproxy | H2 | FastTest => {
                 if let Some(rejected) = self
                     .name
                     .as_ref()

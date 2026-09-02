@@ -165,7 +165,7 @@ fn render_names(label: &str, names: &[Name]) -> String {
 pub fn commands(command: Command, json: bool) -> Result<()> {
     let subs = subcommands(&command);
     let kinds = names_of::<crate::ArtifactKind>();
-    let capabilities = names_of::<crate::Capability>();
+    let capabilities = names_of::<crate::CapabilityKind>();
     let flags = options(&command);
 
     if !json {

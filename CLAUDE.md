@@ -364,7 +364,7 @@ Five things to know before touching the workspace:
   path segments in sequence, so `webshop` is not `web` and a nested
   `adapters = "infra.jdbc"` still matches. `[project] capabilities` is what
   `jails sync` applies; it is maintained by `add` and `remove`, never by hand,
-  and the names stored are `Capability::label()`, never clap aliases. Writing
+  and the names stored are `CapabilityKind::label()`, never clap aliases. Writing
   back is a one-line splice that leaves comments byte for byte alone.
 - **`jails adopt`** (`src/adopt.rs`) -- a closed synonym table mapping
   directory names onto the layers, written as `[layout]` rows. An

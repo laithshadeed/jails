@@ -8,6 +8,7 @@ edition.workspace = true
 # there is no second list of what jails can do.
 clap.workspace = true
 jails-java.workspace = true
+jails-model = { workspace = true, features = ["cli"] }
 jails-project.workspace = true
 jails-spec.workspace = true
 jails-support.workspace = true

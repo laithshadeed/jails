@@ -57,7 +57,7 @@ jails-codemod.workspace = true
 jails-project.workspace = true
 jails-spec.workspace = true
 jails-java.workspace = true
-jails-model.workspace = true
+jails-model = { workspace = true, features = ["cli"] }
 jails-contracts.workspace = true
 jails-compiler.workspace = true
 jails-workspace.workspace = true

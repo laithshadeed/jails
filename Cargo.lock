@@ -276,6 +276,7 @@ dependencies = [
 name = "jails-model"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "serde",
  "serde_json",
 ]
@@ -305,6 +306,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "jails-java",
+ "jails-model",
  "jails-project",
  "jails-spec",
  "jails-support",

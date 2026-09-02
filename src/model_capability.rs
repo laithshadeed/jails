@@ -1,6 +1,6 @@
 //! Canonical capability frontends and compiler-owned capability profiles.
 
-use crate::Capability as CliCapability;
+use crate::CapabilityKind;
 use crate::Invocation;
 use crate::model_generate::{PreparedMutation, finish_generation};
 use jails_model::{CapabilityId, DependencyId, DependencyScope, Evolution, StableId};
@@ -25,7 +25,7 @@ fn storage_axis(label: &str) -> Option<&'static str> {
 }
 
 pub(crate) fn add(
-    capabilities: Vec<CliCapability>,
+    capabilities: Vec<CapabilityKind>,
     name: Option<String>,
     package: Option<String>,
     invocation: Invocation,
@@ -112,7 +112,7 @@ pub(crate) fn add(
 }
 
 pub(crate) fn remove(
-    capabilities: Vec<CliCapability>,
+    capabilities: Vec<CapabilityKind>,
     name: Option<String>,
     package: Option<String>,
     invocation: Invocation,
@@ -336,7 +336,7 @@ fn scope_name(scope: DependencyScope) -> &'static str {
 }
 
 fn validate_request(
-    capabilities: &[CliCapability],
+    capabilities: &[CapabilityKind],
     name: Option<&str>,
     package: Option<&str>,
 ) -> Result<()> {
@@ -346,10 +346,10 @@ fn validate_request(
             || !matches!(
                 capabilities.first(),
                 Some(
-                    CliCapability::Csv
-                        | CliCapability::Json
-                        | CliCapability::Http
-                        | CliCapability::Sqlite
+                    CapabilityKind::Csv
+                        | CapabilityKind::Json
+                        | CapabilityKind::Http
+                        | CapabilityKind::Sqlite
                 )
             ))
     {
@@ -361,7 +361,7 @@ fn validate_request(
     Ok(())
 }
 
-fn validate_supported(capabilities: &[CliCapability]) -> Result<()> {
+fn validate_supported(capabilities: &[CapabilityKind]) -> Result<()> {
     if capabilities.is_empty()
         || capabilities
             .iter()

@@ -1,116 +1,10 @@
 //! The closed vocabularies the CLI is built from.
 //!
-//! [`Capability`] lives here rather than beside the capability planners
-//! because `config.rs` validates a manifest's `capabilities` list against it,
-//! and `config` is below the capability layer. Deriving the valid names from
-//! the enum instead of restating them is the point -- a capability added
-//! without a thought for the manifest is then automatically valid in it --
-//! and doing that across a layer boundary is a cycle.
-//!
-//! Only the *names* are here. What a capability installs is the compiler's,
-//! and stays there.
+//! Only the *names* are here. What each one means is the compiler's, and
+//! stays there.
 
 use clap::ValueEnum;
 use jails_support::Result;
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, ValueEnum)]
-pub enum Capability {
-    /// PostgreSQL + Flyway + Testcontainers + a compose service; raw SQL only, never an ORM
-    #[value(alias = "postgres")]
-    Db,
-    /// Apache Kafka client + a compose broker (KRaft, no ZooKeeper)
-    Kafka,
-    /// Read CSV files into records (Apache Commons CSV)
-    Csv,
-    /// SQLite persistence: JDBC connections and a migration runner (sqlite-jdbc)
-    Sqlite,
-    /// H2 in-process database, file-backed, with the browser console wired up
-    H2,
-    /// Read and write JSON (Jackson databind)
-    Json,
-    /// Deterministic test helpers: clocks, ids, fixtures, in-process CLI runs
-    Testkit,
-    /// A scripted test double for any interface, driven by a lambda
-    Fake,
-    /// An HTTP server on the JDK's own httpserver -- no framework
-    Http,
-    /// Automatic formatting on `mvn verify` (Spotless + palantir-java-format)
-    Format,
-    /// JaCoCo line coverage with an explicit minimum enforced during `mvn verify`
-    Coverage,
-    /// Route-derived k6 load tests, payload helpers, and repeatable commands
-    Loadtest,
-    /// Least-privilege GitHub Actions verification with immutable action pins
-    Ci,
-    /// Multi-stage, non-root OCI image using the project's configured Java release
-    #[value(alias = "image")]
-    Docker,
-    /// Helm deployment with isolated management probes and SLO burn-rate alerts
-    #[value(name = "k8s", alias = "kubernetes")]
-    K8s,
-    /// RFC 9457 problem responses and bean validation, handled in one place
-    #[value(alias = "errors")]
-    Api,
-    /// Actuator health, info and metrics, exposed narrowly rather than with `*`
-    Actuator,
-    /// Caching that is switched on, bounded, and proven by a test
-    Cache,
-    /// An explicit Spring Security filter chain, shaped for an API
-    Security,
-    /// Credentialed browser access with explicit origins and all API methods
-    Cors,
-    /// Server-Sent Events: a concurrent emitter registry, a stream endpoint,
-    /// and a heartbeat that cannot stall the rest of the scheduler
-    #[value(alias = "events")]
-    Sse,
-    /// Sending mail, a Mailpit compose service, and an integration test that
-    /// reads the message back over POP3 rather than trusting `send()`
-    #[value(alias = "smtp")]
-    Mail,
-    /// Redis: a TTL-enforcing key/value wrapper, a compose service, and a
-    /// real-container integration test
-    Redis,
-    /// Metrics: a Prometheus scrape endpoint, application-tagged meters, and
-    /// meter names declared once rather than per call site
-    #[value(alias = "metrics")]
-    Observability,
-    /// Network failure you can switch on: a Toxiproxy container in front of a
-    /// dependency, so a test can cut the connection or add latency
-    #[value(alias = "faults")]
-    Toxiproxy,
-}
-
-impl Capability {
-    pub fn label(self) -> &'static str {
-        match self {
-            Capability::Db => "db",
-            Capability::Kafka => "kafka",
-            Capability::Csv => "csv",
-            Capability::Sqlite => "sqlite",
-            Capability::H2 => "h2",
-            Capability::Json => "json",
-            Capability::Testkit => "testkit",
-            Capability::Fake => "fake",
-            Capability::Http => "http",
-            Capability::Format => "format",
-            Capability::Coverage => "coverage",
-            Capability::Loadtest => "loadtest",
-            Capability::Ci => "ci",
-            Capability::Docker => "docker",
-            Capability::K8s => "k8s",
-            Capability::Api => "api",
-            Capability::Actuator => "actuator",
-            Capability::Cache => "cache",
-            Capability::Security => "security",
-            Capability::Cors => "cors",
-            Capability::Sse => "sse",
-            Capability::Mail => "mail",
-            Capability::Redis => "redis",
-            Capability::Observability => "observability",
-            Capability::Toxiproxy => "toxiproxy",
-        }
-    }
-}
 
 /// Whether a transition insists on the caller's version, or only checks one
 /// when the caller sends it.
@@ -253,9 +147,9 @@ impl HttpMethod {
 ///
 /// A `clap::ValueEnum`, and that must stay true: it is the only way
 /// `clap_complete` can emit a static completion list for `jails g <TAB>`. It
-/// lives here beside [`Capability`] rather than with the generators for the
-/// same reason that one does -- these are the closed vocabularies the CLI is
-/// built from, and the layers below the generators validate against them.
+/// lives here rather than with the generators because these are the closed
+/// vocabularies the CLI is built from, and the layers below the generators
+/// validate against them.
 ///
 /// What each kind *writes* is the compiler's, and stays there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, ValueEnum)]
@@ -400,34 +294,6 @@ pub enum ArtifactKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A hand-written label is a second copy of clap's canonical name, and a
-    /// second copy drifts.
-    ///
-    /// The label is what `jails.toml` stores and what a refusal prints, so a
-    /// capability spelled one way by clap and another by `label()` would be
-    /// recorded under a name `jails sync` cannot resolve back. Routing the
-    /// function through `ValueEnum` at run time is what `recipe_label` does,
-    /// but that one leaks a `String` per call; keeping the match and pinning it
-    /// costs nothing and fails the build the moment they separate.
-    #[test]
-    fn every_capability_label_is_the_word_clap_parses() {
-        for capability in Capability::value_variants() {
-            let clap = capability
-                .to_possible_value()
-                .expect("every Capability has a clap value");
-            assert_eq!(
-                capability.label(),
-                clap.get_name(),
-                "{capability:?}: `label()` and clap disagree"
-            );
-            assert_eq!(
-                Capability::from_str(capability.label(), false).as_ref(),
-                Ok(capability),
-                "{capability:?}: its own label does not parse back"
-            );
-        }
-    }
 
     /// The same pin for the verb, which reaches a generated annotation.
     #[test]
