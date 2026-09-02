@@ -401,6 +401,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-compiler", "plan_effects", 4),
     ("jails-compiler", "storage", 4),
     ("jails-compiler", "emit_unit", 4),
+    ("jails-compiler", "recipe", 4),
     // The only canonical materialization/execution owner. It sits above
     // `jails-project`, which captures what it materializes.
     ("jails-workspace", "execute", 6),
@@ -774,6 +775,14 @@ const DEFAULT_BRANCH_IS_EXECUTED: &[(&str, &str)] = &[
     ),
     (
         "crates/jails-compiler/src/emit_capability.rs",
+        "canonical_observability_pack_merges_ejects_and_serves_prometheus",
+    ),
+    // The recipe loop resolves a `MovedImport` and a `before_boot` template
+    // against the captured Boot major, for every recipe. The same test drives
+    // the observability pack's `MeterRegistryCustomizer` -- the moved import
+    // -- through real `mvn test` on the 4.1.0 fixture.
+    (
+        "crates/jails-compiler/src/recipe.rs",
         "canonical_observability_pack_merges_ejects_and_serves_prometheus",
     ),
     (

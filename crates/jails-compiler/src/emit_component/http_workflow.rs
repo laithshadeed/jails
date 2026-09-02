@@ -20,81 +20,12 @@
 //! three tables. The scheduling config is shared, so it comes from
 //! [`super::job::scheduling`] like every other scheduled bean's.
 
-use super::{Emitted, Package, java, package};
 use crate::CompileError;
 use jails_contracts::RenderedMigration;
 use jails_model::{AppModel, Component, ComponentKind, ComponentReference, StableId};
 use std::collections::BTreeSet;
 
-/// Micrometer for the traversal counters. The JDBC half comes from `storage`.
-pub(super) const DEPENDENCIES: &[(&str, &str)] =
-    &[("org.springframework.boot", "spring-boot-starter-actuator")];
-
-const WORKFLOW: crate::Template = crate::template!("spring/http_workflow_java.java");
-const CONTROLLER: crate::Template = crate::template!("spring/http_workflow_controller_java.java");
-const TEST: crate::Template = crate::template!("spring/http_workflow_it_java.java");
 const MIGRATION: crate::Template = crate::template!("sql/http_workflow.sql");
-
-pub(super) fn files(
-    model: &AppModel,
-    component: &Component,
-    templates: &jails_contracts::TemplateOverrides,
-) -> Result<Vec<Emitted>, CompileError> {
-    let fetcher = fetcher(model, component)?;
-    if !super::has_database(model) {
-        return Err(CompileError::new(format!(
-            "http workflow `{}` keeps its whole frontier in PostgreSQL\n       fix: declare `storage postgres` in the model",
-            component.label
-        )));
-    }
-
-    let name = &component.name;
-    let jobs = package(model, Package::Jobs);
-    let web = package(model, Package::Web);
-    let clients = package(model, Package::Clients);
-    let table = table(component);
-    let property = component.label.replace('_', "-");
-    let substitute = |template: crate::Template| -> Result<String, CompileError> {
-        let template = template.resolve(templates)?;
-        Ok(template
-            .replace("{{pkg}}", &jobs)
-            .replace("{{web}}", &web)
-            .replace("{{clients}}", &clients)
-            .replace("{{name}}", name)
-            .replace("{{fetcher}}", &fetcher.name)
-            .replace("{{table}}", &table)
-            .replace("{{property}}", &property))
-    };
-    Ok(vec![
-        java(
-            component,
-            "workflow",
-            &jobs,
-            &format!("{name}Workflow"),
-            false,
-            true,
-            substitute(WORKFLOW)?,
-        )?,
-        java(
-            component,
-            "controller",
-            &web,
-            &format!("{name}WorkflowController"),
-            false,
-            true,
-            substitute(CONTROLLER)?,
-        )?,
-        java(
-            component,
-            "test",
-            &jobs,
-            &format!("{name}WorkflowIT"),
-            true,
-            true,
-            substitute(TEST)?,
-        )?,
-    ])
-}
 
 /// The three tables a workflow this model does not already have.
 pub(super) fn migrations(accepted: Option<&AppModel>, next: &AppModel) -> Vec<RenderedMigration> {
@@ -127,7 +58,10 @@ fn table(component: &Component) -> String {
 /// URL after the seed came off a page somebody else wrote, and `fetcher` is
 /// the component whose whole contract is refusing to follow one to a private
 /// address.
-fn fetcher<'a>(model: &'a AppModel, component: &Component) -> Result<&'a Component, CompileError> {
+pub(super) fn fetcher<'a>(
+    model: &'a AppModel,
+    component: &Component,
+) -> Result<&'a Component, CompileError> {
     let Some(ComponentReference::Component(id)) = component.on.as_ref() else {
         return Err(CompileError::new(format!(
             "http workflow `{}` has nothing to fetch through\n       fix: point `on` at a `fetcher` component",

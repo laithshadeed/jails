@@ -11,65 +11,15 @@
 //! two units writing one path, so a per-handler emitter would compile and then
 //! fail on the second declaration.
 
-use super::{Emitted, Package, java, package};
+use super::{Emitted, Package, package};
 use crate::CompileError;
 use crate::emit_java::JavaUnit;
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
-use jails_model::{AppModel, Component, ComponentKind, StableId};
+use jails_model::{AppModel, ComponentKind, StableId};
 use std::collections::BTreeSet;
 
-const HANDLER: crate::Template = crate::template!("spring/handler_java.java");
-const TEST: crate::Template = crate::template!("spring/handler_test_java.java");
 const API_ERROR: crate::Template = crate::template!("spring/api_error_java.java");
 const API_ERROR_TEST: crate::Template = crate::template!("spring/api_error_test_java.java");
-
-pub(super) fn files(
-    model: &AppModel,
-    component: &Component,
-    templates: &jails_contracts::TemplateOverrides,
-) -> Result<Vec<Emitted>, CompileError> {
-    let name = &component.name;
-    let api = package(model, Package::Api);
-    let domain = package(model, Package::Domain);
-    let path = component
-        .route
-        .as_ref()
-        .map(|route| route.path.clone())
-        .unwrap_or_else(|| format!("/{}", component.label.replace('_', "-")));
-    let substitute = |template: crate::Template| -> Result<JavaUnit, CompileError> {
-        let template = template.resolve(templates)?;
-        Ok(JavaUnit::from_source(
-            &template
-                .replace("{{pkg}}", &api)
-                .replace("{{name}}", name)
-                .replace("{{path}}", &path),
-        ))
-    };
-    let mut handler = substitute(HANDLER)?;
-    // Skipped when the two packages coincide: importing a sibling is a compile
-    // error, which is what `--package ''` produces.
-    handler.import_from(&domain, "ApiError");
-    Ok(vec![
-        java(
-            component,
-            "handler",
-            &api,
-            &format!("{name}Handler"),
-            false,
-            true,
-            handler,
-        )?,
-        java(
-            component,
-            "test",
-            &api,
-            &format!("{name}HandlerTest"),
-            true,
-            true,
-            substitute(TEST)?,
-        )?,
-    ])
-}
 
 /// The one error envelope every handler in this model renders failures
 /// through, and its test.

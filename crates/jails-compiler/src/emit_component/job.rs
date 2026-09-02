@@ -12,52 +12,13 @@
 //! other one in the application. Nothing reports that: the jobs simply do not
 //! run. So the fix is generated and the test holds it in place.
 
-use super::{Emitted, Package, java, package};
+use super::{Emitted, Package, package};
 use crate::CompileError;
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
-use jails_model::{AppModel, Component, StableId};
+use jails_model::{AppModel, StableId};
 use std::collections::BTreeSet;
 
-const JOB: crate::Template = crate::template!("spring/job_java.java");
-const TEST: crate::Template = crate::template!("spring/job_test_java.java");
 const SCHEDULING: crate::Template = crate::template!("spring/scheduling_config_java.java");
-
-pub(super) fn files(
-    model: &AppModel,
-    component: &Component,
-    templates: &jails_contracts::TemplateOverrides,
-) -> Result<Vec<Emitted>, CompileError> {
-    let name = &component.name;
-    let pkg = package(model, Package::Jobs);
-    let property = component.label.replace('_', "-");
-    let substitute = |template: crate::Template| -> Result<String, CompileError> {
-        let template = template.resolve(templates)?;
-        Ok(template
-            .replace("{{pkg}}", &pkg)
-            .replace("{{name}}", name)
-            .replace("{{property}}", &property))
-    };
-    Ok(vec![
-        java(
-            component,
-            "job",
-            &pkg,
-            &format!("{name}Job"),
-            false,
-            true,
-            substitute(JOB)?,
-        )?,
-        java(
-            component,
-            "test",
-            &pkg,
-            &format!("{name}JobTest"),
-            true,
-            true,
-            substitute(TEST)?,
-        )?,
-    ])
-}
 
 /// The one `SchedulingConfig` every job in this model shares, or `None` when
 /// there are no jobs.

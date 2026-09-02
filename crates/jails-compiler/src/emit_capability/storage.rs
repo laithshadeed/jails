@@ -10,18 +10,16 @@ use super::spring::spring_property;
 use super::*;
 use jails_model::Package;
 
-fn h2_test_class(_: &Capability) -> String {
-    "H2DatabaseTest".to_string()
-}
-
-const H2_FILES: &[JavaFile] = &[JavaFile {
-    suffix: "test",
+const H2_FILES: &[JavaFile<Capability>] = &[JavaFile {
+    role: "test",
     template: crate::template!("spring/h2_database_test_java.java"),
     before_boot: None,
     imports: &[],
     source_set: SourceSet::Test,
-    class_name: h2_test_class,
-    template_class: h2_test_class,
+    placement: Placement::Default,
+    ejectable: true,
+    class: Naming::Fixed("H2DatabaseTest"),
+    template_class: Naming::Fixed("H2DatabaseTest"),
 }];
 
 const H2_DEPENDENCIES: &[DependencySpec] = &[
@@ -106,19 +104,17 @@ const H2_PROPERTIES: &[PropertySpec] = &[
 /// project that declares `storage postgres` and touches nothing else fails
 /// `mvn verify` on a test nobody wrote, with "Failed to determine a suitable
 /// driver class".
-const DB_FILES: &[JavaFile] = &[JavaFile {
-    suffix: "testcontainers_config",
+const DB_FILES: &[JavaFile<Capability>] = &[JavaFile {
+    role: "testcontainers_config",
     template: crate::template!("add/testcontainers_config_java.java"),
     before_boot: None,
     imports: &[],
     source_set: SourceSet::Test,
-    class_name: db_testcontainers_config_class,
-    template_class: db_testcontainers_config_class,
+    placement: Placement::Layer(Package::Base),
+    ejectable: true,
+    class: Naming::Fixed("TestcontainersConfig"),
+    template_class: Naming::Fixed("TestcontainersConfig"),
 }];
-
-fn db_testcontainers_config_class(_: &Capability) -> String {
-    "TestcontainersConfig".to_string()
-}
 
 const DB_DEPENDENCIES: &[DependencySpec] = &[
     // **The module that reads `compose.yaml` at startup.** `storage postgres`
@@ -224,19 +220,16 @@ const DB_COMPOSE: &[ComposeService] = &[ComposeService {
     body: "image: postgres:17-alpine\nenvironment:\n  POSTGRES_DB: app\n  POSTGRES_USER: app\n  POSTGRES_PASSWORD: app\nports:\n  - \"5432:5432\"\nhealthcheck:\n  test: [\"CMD-SHELL\", \"pg_isready -U app -d app\"]\n  interval: 2s\n  timeout: 5s\n  retries: 10",
 }];
 
-const DB_PACKAGE_OVERRIDES: &[PackageOverride] = &[PackageOverride {
-    suffix: "testcontainers_config",
-    project_subpackage: Package::Base,
-}];
-
 /// The test half of `storage postgres`.
 ///
 /// `files_when: Spring` because every file and dependency in it is Spring's:
 /// a plain Maven project with `storage postgres` gets the driver and Flyway
 /// from `storage::storage_dependencies` and nothing here.
-pub(super) const DB_PACK: Pack = Pack {
+pub(super) const DB_PACK: Recipe<Capability> = Recipe {
     substitutions: &[("POSTGRES_IMAGE", "postgres:17-alpine")],
     fragments: NO_FRAGMENTS,
+    keys: &[],
+    requires: &[],
     files: DB_FILES,
     files_when: BootCondition::Spring,
     resources: NO_RESOURCES,
@@ -245,13 +238,14 @@ pub(super) const DB_PACK: Pack = Pack {
     compose_services: DB_COMPOSE,
     build_features: NO_BUILD_FEATURES,
     default_package: adapters_package,
-    package_overrides: DB_PACKAGE_OVERRIDES,
     minimum_boot: None,
 };
 
-pub(super) const H2_PACK: Pack = Pack {
+pub(super) const H2_PACK: Recipe<Capability> = Recipe {
     substitutions: &[("test_url", "jdbc:h2:mem:test")],
     fragments: NO_FRAGMENTS,
+    keys: &[],
+    requires: &[],
     files: H2_FILES,
     files_when: BootCondition::Any,
     resources: NO_RESOURCES,
@@ -260,6 +254,5 @@ pub(super) const H2_PACK: Pack = Pack {
     compose_services: NO_COMPOSE_SERVICES,
     build_features: NO_BUILD_FEATURES,
     default_package: adapters_package,
-    package_overrides: NO_PACKAGE_OVERRIDES,
     minimum_boot: None,
 };

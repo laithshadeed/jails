@@ -1,4 +1,4 @@
-package {{adapters}};
+package {{pkg}};
 
 import java.time.Duration;
 import org.junit.jupiter.api.Test;

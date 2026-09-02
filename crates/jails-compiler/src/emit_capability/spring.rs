@@ -8,10 +8,10 @@ use super::*;
 use jails_model::Package;
 
 mod api;
-mod names;
+mod security;
 
 pub(super) use api::{API_FILES, API_FRAGMENTS};
-use names::*;
+pub(super) use security::SECURITY_PACK;
 
 /// The `api` capability's own files, as opposed to the per-operation adapters
 /// `emit_http` writes.
@@ -20,49 +20,57 @@ use names::*;
 /// failure: `ApiException` is the sealed set the advice switches over, and the
 /// switch has no `default` -- so a new variant stops the build rather than
 /// quietly becoming a 500.
-const ACTUATOR_FILES: &[JavaFile] = &[JavaFile {
-    suffix: "endpoints_test",
+const ACTUATOR_FILES: &[JavaFile<Capability>] = &[JavaFile {
+    role: "endpoints_test",
     template: crate::template!("spring/actuator_test_java.java"),
     before_boot: None,
     imports: &[],
     source_set: SourceSet::Test,
-    class_name: actuator_test_class,
-    template_class: actuator_test_class,
+    placement: Placement::Default,
+    ejectable: true,
+    class: Naming::Fixed("ActuatorEndpointsTest"),
+    template_class: Naming::Fixed("ActuatorEndpointsTest"),
 }];
 
-const CACHE_FILES: &[JavaFile] = &[
+const CACHE_FILES: &[JavaFile<Capability>] = &[
     JavaFile {
-        suffix: "config",
+        role: "config",
         template: crate::template!("spring/cache_config_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Main,
-        class_name: cache_config_class,
-        template_class: cache_config_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("CacheConfig"),
+        template_class: Naming::Fixed("CacheConfig"),
     },
     JavaFile {
-        suffix: "test",
+        role: "test",
         template: crate::template!("spring/cache_test_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Test,
-        class_name: cache_test_class,
-        template_class: cache_test_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("CacheConfigTest"),
+        template_class: Naming::Fixed("CacheConfigTest"),
     },
 ];
 
-const CORS_FILES: &[JavaFile] = &[
+const CORS_FILES: &[JavaFile<Capability>] = &[
     JavaFile {
-        suffix: "config",
+        role: "config",
         template: crate::template!("spring/cors_config_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Main,
-        class_name: cors_config_class,
-        template_class: cors_config_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("CorsConfig"),
+        template_class: Naming::Fixed("CorsConfig"),
     },
     JavaFile {
-        suffix: "test",
+        role: "test",
         template: crate::template!("spring/cors_config_test_java.java"),
         before_boot: Some((
             4,
@@ -70,157 +78,131 @@ const CORS_FILES: &[JavaFile] = &[
         )),
         imports: &[Import::Moved(AUTOCONFIGURE_MOCKMVC)],
         source_set: SourceSet::Test,
-        class_name: cors_test_class,
-        template_class: cors_test_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("CorsConfigTest"),
+        template_class: Naming::Fixed("CorsConfigTest"),
     },
 ];
 
-const OBSERVABILITY_FILES: &[JavaFile] = &[
+const OBSERVABILITY_FILES: &[JavaFile<Capability>] = &[
     JavaFile {
-        suffix: "metrics_config",
+        role: "metrics_config",
         template: crate::template!("spring/metrics_config_java.java"),
         before_boot: None,
         imports: &[Import::Moved(METER_REGISTRY_CUSTOMIZER)],
         source_set: SourceSet::Main,
-        class_name: metrics_config_class,
-        template_class: metrics_config_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("MetricsConfig"),
+        template_class: Naming::Fixed("MetricsConfig"),
     },
     JavaFile {
-        suffix: "app_metrics",
+        role: "app_metrics",
         template: crate::template!("spring/app_metrics_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Main,
-        class_name: app_metrics_class,
-        template_class: app_metrics_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("AppMetrics"),
+        template_class: Naming::Fixed("AppMetrics"),
     },
     JavaFile {
-        suffix: "app_metrics_test",
+        role: "app_metrics_test",
         template: crate::template!("spring/app_metrics_test_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Test,
-        class_name: app_metrics_test_class,
-        template_class: app_metrics_test_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("AppMetricsTest"),
+        template_class: Naming::Fixed("AppMetricsTest"),
     },
     JavaFile {
-        suffix: "prometheus_scrape_test",
+        role: "prometheus_scrape_test",
         template: crate::template!("spring/prometheus_scrape_test_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Test,
-        class_name: prometheus_scrape_test_class,
-        template_class: prometheus_scrape_test_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("PrometheusScrapeTest"),
+        template_class: Naming::Fixed("PrometheusScrapeTest"),
     },
 ];
 
-const SECURITY_FILES: &[JavaFile] = &[
+const SSE_FILES: &[JavaFile<Capability>] = &[
     JavaFile {
-        suffix: "config",
-        template: crate::template!("spring/security_config_java.java"),
-        before_boot: None,
-        imports: &[],
-        source_set: SourceSet::Main,
-        class_name: security_config_class,
-        template_class: security_config_class,
-    },
-    JavaFile {
-        suffix: "production_config",
-        template: crate::template!("spring/production_security_config_java.java"),
-        before_boot: None,
-        imports: &[],
-        source_set: SourceSet::Main,
-        class_name: production_security_config_class,
-        template_class: production_security_config_class,
-    },
-    JavaFile {
-        suffix: "scope_authorizer",
-        template: crate::template!("spring/scope_authorizer_java.java"),
-        before_boot: None,
-        imports: &[],
-        source_set: SourceSet::Main,
-        class_name: scope_authorizer_class,
-        template_class: scope_authorizer_class,
-    },
-    JavaFile {
-        suffix: "config_test",
-        template: crate::template!("spring/security_test_java.java"),
-        before_boot: None,
-        imports: &[Import::Moved(WEBMVC_TEST)],
-        source_set: SourceSet::Test,
-        class_name: security_config_test_class,
-        template_class: security_config_test_class,
-    },
-    JavaFile {
-        suffix: "scope_authorizer_test",
-        template: crate::template!("spring/scope_authorizer_test_java.java"),
-        before_boot: None,
-        imports: &[],
-        source_set: SourceSet::Test,
-        class_name: scope_authorizer_test_class,
-        template_class: scope_authorizer_test_class,
-    },
-];
-
-const SSE_FILES: &[JavaFile] = &[
-    JavaFile {
-        suffix: "hub",
+        role: "hub",
         template: crate::template!("spring/sse_hub_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Main,
-        class_name: event_hub_class,
-        template_class: event_name,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("EventHub"),
+        template_class: Naming::Fixed("Event"),
     },
     JavaFile {
-        suffix: "scheduling",
+        role: "scheduling",
         template: crate::template!("spring/scheduling_config_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Main,
-        class_name: scheduling_config_class,
-        template_class: scheduling_config_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("SchedulingConfig"),
+        template_class: Naming::Fixed("SchedulingConfig"),
     },
     JavaFile {
-        suffix: "controller",
+        role: "controller",
         template: crate::template!("spring/sse_controller_java.java"),
         before_boot: None,
         // The controller holds the hub, and `package_overrides` files it under
         // `web` while the hub stays in the base package.
         imports: &[Import::Own("EventHub")],
         source_set: SourceSet::Main,
-        class_name: event_stream_controller_class,
-        template_class: event_name,
+        placement: Placement::Layer(Package::Web),
+        ejectable: true,
+        class: Naming::Fixed("EventStreamController"),
+        template_class: Naming::Fixed("Event"),
     },
     JavaFile {
-        suffix: "hub_test",
+        role: "hub_test",
         template: crate::template!("spring/sse_hub_test_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Test,
-        class_name: event_hub_test_class,
-        template_class: event_name,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("EventHubTest"),
+        template_class: Naming::Fixed("Event"),
     },
 ];
 
-const REDIS_FILES: &[JavaFile] = &[
+const REDIS_FILES: &[JavaFile<Capability>] = &[
     JavaFile {
-        suffix: "store",
+        role: "store",
         template: crate::template!("spring/key_value_store_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Main,
-        class_name: key_value_store_class,
-        template_class: key_value_store_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("KeyValueStore"),
+        template_class: Naming::Fixed("KeyValueStore"),
     },
     JavaFile {
-        suffix: "store_it",
+        role: "store_it",
         template: crate::template!("spring/key_value_store_it_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::IntegrationTest,
-        class_name: key_value_store_it_class,
-        template_class: key_value_store_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("KeyValueStoreIT"),
+        template_class: Naming::Fixed("KeyValueStore"),
     },
 ];
 
@@ -289,49 +271,6 @@ const OBSERVABILITY_DEPENDENCIES: &[DependencySpec] = &[
         only_when_build_exists: false,
         optional: false,
         boot: BootCondition::Any,
-    },
-];
-
-const SECURITY_DEPENDENCIES: &[DependencySpec] = &[
-    DependencySpec {
-        group: "org.springframework.boot",
-        artifact: "spring-boot-starter-security",
-        version: None,
-        scope: DependencyScope::Compile,
-        spring_managed_version: true,
-        only_when_build_exists: false,
-        optional: false,
-        boot: BootCondition::Any,
-    },
-    DependencySpec {
-        group: "org.springframework.boot",
-        artifact: "spring-boot-starter-oauth2-resource-server",
-        version: None,
-        scope: DependencyScope::Compile,
-        spring_managed_version: true,
-        only_when_build_exists: false,
-        optional: false,
-        boot: BootCondition::Any,
-    },
-    DependencySpec {
-        group: "org.springframework.security",
-        artifact: "spring-security-test",
-        version: None,
-        scope: DependencyScope::Test,
-        spring_managed_version: true,
-        only_when_build_exists: false,
-        optional: false,
-        boot: BootCondition::Any,
-    },
-    DependencySpec {
-        group: "org.springframework.boot",
-        artifact: "spring-boot-starter-webmvc-test",
-        version: None,
-        scope: DependencyScope::Test,
-        spring_managed_version: true,
-        only_when_build_exists: false,
-        optional: false,
-        boot: BootCondition::AtLeast(4),
     },
 ];
 
@@ -525,11 +464,6 @@ const REDIS_COMPOSE: &[ComposeService] = &[ComposeService {
     body: "image: redis:7-alpine\nports:\n  - \"6379:6379\"\nhealthcheck:\n  test: [\"CMD\", \"redis-cli\", \"ping\"]\n  interval: 2s\n  timeout: 5s\n  retries: 10",
 }];
 
-const SSE_PACKAGE_OVERRIDES: &[PackageOverride] = &[PackageOverride {
-    suffix: "controller",
-    project_subpackage: Package::Web,
-}];
-
 /// A setting that only means something under Spring Boot.
 ///
 /// Every `spring.*` key is one: `storage postgres` works on a plain Maven
@@ -554,9 +488,11 @@ pub(super) const fn property(key: &'static str, value: &'static str) -> Property
     }
 }
 
-pub(super) const ACTUATOR_PACK: Pack = Pack {
+pub(super) const ACTUATOR_PACK: Recipe<Capability> = Recipe {
     substitutions: NO_SUBSTITUTIONS,
     fragments: NO_FRAGMENTS,
+    keys: &[],
+    requires: &[],
     files: ACTUATOR_FILES,
     files_when: BootCondition::Any,
     resources: NO_RESOURCES,
@@ -565,13 +501,14 @@ pub(super) const ACTUATOR_PACK: Pack = Pack {
     compose_services: NO_COMPOSE_SERVICES,
     build_features: NO_BUILD_FEATURES,
     default_package: root_package,
-    package_overrides: NO_PACKAGE_OVERRIDES,
     minimum_boot: None,
 };
 
-pub(super) const CACHE_PACK: Pack = Pack {
+pub(super) const CACHE_PACK: Recipe<Capability> = Recipe {
     substitutions: NO_SUBSTITUTIONS,
     fragments: NO_FRAGMENTS,
+    keys: &[],
+    requires: &[],
     files: CACHE_FILES,
     files_when: BootCondition::Any,
     resources: NO_RESOURCES,
@@ -580,7 +517,6 @@ pub(super) const CACHE_PACK: Pack = Pack {
     compose_services: NO_COMPOSE_SERVICES,
     build_features: NO_BUILD_FEATURES,
     default_package: root_package,
-    package_overrides: NO_PACKAGE_OVERRIDES,
     minimum_boot: None,
 };
 
@@ -591,9 +527,11 @@ pub(super) const CACHE_PACK: Pack = Pack {
 /// chart is what puts it in the environment -- so this tags every replica
 /// separately. Without it a burn-rate alert cannot tell which pod is failing,
 /// which is the question an alert exists to answer.
-pub(super) const K8S_PACK: Pack = Pack {
+pub(super) const K8S_PACK: Recipe<Capability> = Recipe {
     substitutions: NO_SUBSTITUTIONS,
     fragments: NO_FRAGMENTS,
+    keys: &[],
+    requires: &[],
     files: &[],
     files_when: BootCondition::Any,
     resources: NO_RESOURCES,
@@ -602,7 +540,6 @@ pub(super) const K8S_PACK: Pack = Pack {
     compose_services: NO_COMPOSE_SERVICES,
     build_features: NO_BUILD_FEATURES,
     default_package: root_package,
-    package_overrides: NO_PACKAGE_OVERRIDES,
     minimum_boot: None,
 };
 
@@ -613,9 +550,11 @@ const K8S_PROPERTIES: &[PropertySpec] = &[PropertySpec {
     boot: BootCondition::Spring,
 }];
 
-pub(super) const API_PACK: Pack = Pack {
+pub(super) const API_PACK: Recipe<Capability> = Recipe {
     substitutions: NO_SUBSTITUTIONS,
     fragments: API_FRAGMENTS,
+    keys: &[],
+    requires: &[],
     files: API_FILES,
     files_when: BootCondition::Any,
     resources: NO_RESOURCES,
@@ -624,7 +563,6 @@ pub(super) const API_PACK: Pack = Pack {
     compose_services: NO_COMPOSE_SERVICES,
     build_features: NO_BUILD_FEATURES,
     default_package: api_package,
-    package_overrides: NO_PACKAGE_OVERRIDES,
     // `ProblemDetail` is Framework 6, which is Boot 3.
     minimum_boot: Some((3, "ProblemDetail")),
 };
@@ -640,9 +578,11 @@ const API_DEPENDENCIES: &[DependencySpec] = &[DependencySpec {
     boot: BootCondition::Spring,
 }];
 
-pub(super) const CORS_PACK: Pack = Pack {
+pub(super) const CORS_PACK: Recipe<Capability> = Recipe {
     substitutions: NO_SUBSTITUTIONS,
     fragments: NO_FRAGMENTS,
+    keys: &[],
+    requires: &[],
     files: CORS_FILES,
     files_when: BootCondition::Any,
     resources: NO_RESOURCES,
@@ -651,13 +591,14 @@ pub(super) const CORS_PACK: Pack = Pack {
     compose_services: NO_COMPOSE_SERVICES,
     build_features: NO_BUILD_FEATURES,
     default_package: root_package,
-    package_overrides: NO_PACKAGE_OVERRIDES,
     minimum_boot: None,
 };
 
-pub(super) const OBSERVABILITY_PACK: Pack = Pack {
+pub(super) const OBSERVABILITY_PACK: Recipe<Capability> = Recipe {
     substitutions: NO_SUBSTITUTIONS,
     fragments: NO_FRAGMENTS,
+    keys: &[],
+    requires: &[],
     files: OBSERVABILITY_FILES,
     files_when: BootCondition::Any,
     resources: NO_RESOURCES,
@@ -666,28 +607,14 @@ pub(super) const OBSERVABILITY_PACK: Pack = Pack {
     compose_services: NO_COMPOSE_SERVICES,
     build_features: NO_BUILD_FEATURES,
     default_package: root_package,
-    package_overrides: NO_PACKAGE_OVERRIDES,
     minimum_boot: None,
 };
 
-pub(super) const SECURITY_PACK: Pack = Pack {
-    substitutions: NO_SUBSTITUTIONS,
-    fragments: NO_FRAGMENTS,
-    files: SECURITY_FILES,
-    files_when: BootCondition::Any,
-    resources: NO_RESOURCES,
-    dependencies: SECURITY_DEPENDENCIES,
-    properties: NO_PROPERTIES,
-    compose_services: NO_COMPOSE_SERVICES,
-    build_features: NO_BUILD_FEATURES,
-    default_package: root_package,
-    package_overrides: NO_PACKAGE_OVERRIDES,
-    minimum_boot: Some((3, "requestMatchers")),
-};
-
-pub(super) const SSE_PACK: Pack = Pack {
+pub(super) const SSE_PACK: Recipe<Capability> = Recipe {
     substitutions: &[("path", "events")],
     fragments: NO_FRAGMENTS,
+    keys: &[],
+    requires: &[],
     files: SSE_FILES,
     files_when: BootCondition::Any,
     resources: NO_RESOURCES,
@@ -696,13 +623,14 @@ pub(super) const SSE_PACK: Pack = Pack {
     compose_services: NO_COMPOSE_SERVICES,
     build_features: NO_BUILD_FEATURES,
     default_package: root_package,
-    package_overrides: SSE_PACKAGE_OVERRIDES,
     minimum_boot: None,
 };
 
-pub(super) const REDIS_PACK: Pack = Pack {
+pub(super) const REDIS_PACK: Recipe<Capability> = Recipe {
     substitutions: &[("REDIS_IMAGE", "redis:7-alpine")],
     fragments: NO_FRAGMENTS,
+    keys: &[],
+    requires: &[],
     files: REDIS_FILES,
     files_when: BootCondition::Any,
     resources: NO_RESOURCES,
@@ -711,6 +639,5 @@ pub(super) const REDIS_PACK: Pack = Pack {
     compose_services: REDIS_COMPOSE,
     build_features: NO_BUILD_FEATURES,
     default_package: adapters_package,
-    package_overrides: NO_PACKAGE_OVERRIDES,
     minimum_boot: None,
 };

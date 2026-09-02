@@ -10,79 +10,84 @@
 //! module.
 
 use super::*;
-use names::*;
 
-pub(in crate::emit_capability) const API_FILES: &[JavaFile] = &[
+pub(in crate::emit_capability) const API_FILES: &[JavaFile<Capability>] = &[
     JavaFile {
-        suffix: "exception",
+        role: "exception",
         template: crate::template!("spring/api_exception_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Main,
-        class_name: api_exception_class,
-        template_class: api_exception_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("ApiException"),
+        template_class: Naming::Fixed("ApiException"),
     },
     JavaFile {
-        suffix: "exception_handler",
+        role: "exception_handler",
         template: crate::template!("spring/api_exception_handler_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Main,
-        class_name: api_exception_handler_class,
-        template_class: api_exception_handler_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("ApiExceptionHandler"),
+        template_class: Naming::Fixed("ApiExceptionHandler"),
     },
     JavaFile {
-        suffix: "exception_handler_test",
+        role: "exception_handler_test",
         // No classic form: `api` refuses below Boot 3, its advice being built
         // on Framework 6's `ProblemDetail`.
         template: crate::template!("spring/api_exception_handler_test_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Test,
-        class_name: api_exception_handler_test_class,
-        template_class: api_exception_handler_test_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("ApiExceptionHandlerTest"),
+        template_class: Naming::Fixed("ApiExceptionHandlerTest"),
     },
 ];
 
-pub(in crate::emit_capability) const API_FRAGMENTS: &[Fragment] = &[
-    Fragment {
+pub(in crate::emit_capability) const API_FRAGMENTS: &[Fragment<Capability>] = &[
+    Fragment::WhenCapability {
         key: "duplicate_key_import",
-        when_capability: "db",
+        capability: "db",
         body: "import org.springframework.dao.DuplicateKeyException;",
     },
-    Fragment {
+    Fragment::WhenCapability {
         key: "duplicate_key_handler",
-        when_capability: "db",
+        capability: "db",
         body: DUPLICATE_KEY_HANDLER,
     },
-    Fragment {
+    Fragment::WhenCapability {
         key: "duplicate_key_test",
-        when_capability: "db",
+        capability: "db",
         body: DUPLICATE_KEY_TEST,
     },
-    Fragment {
+    Fragment::WhenCapability {
         key: "duplicate_key_route",
-        when_capability: "db",
+        capability: "db",
         body: DUPLICATE_KEY_ROUTE,
     },
-    Fragment {
+    Fragment::WhenCapability {
         key: "precondition_import",
-        when_capability: "db",
+        capability: "db",
         body: "import org.springframework.dao.EmptyResultDataAccessException;\nimport org.springframework.dao.OptimisticLockingFailureException;",
     },
-    Fragment {
+    Fragment::WhenCapability {
         key: "precondition_handler",
-        when_capability: "db",
+        capability: "db",
         body: PRECONDITION_HANDLER,
     },
-    Fragment {
+    Fragment::WhenCapability {
         key: "precondition_test",
-        when_capability: "db",
+        capability: "db",
         body: PRECONDITION_TEST,
     },
-    Fragment {
+    Fragment::WhenCapability {
         key: "precondition_route",
-        when_capability: "db",
+        capability: "db",
         body: PRECONDITION_ROUTE,
     },
 ];

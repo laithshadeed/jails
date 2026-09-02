@@ -1,6 +1,6 @@
-package {{web}};
+package {{pkg}};
 
-import {{pkg}}.{{name}}Workflow;
+import {{jobs}}.{{name}}Workflow;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;

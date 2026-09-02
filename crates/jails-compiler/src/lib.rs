@@ -30,6 +30,7 @@ mod emit_sql;
 pub use emit_sql::closed_set::narrowing_refusal as enum_narrowing_refusal;
 pub use emit_sql::storage_columns;
 mod emit_unit;
+mod recipe;
 mod refuse;
 
 use jails_contracts::{

@@ -10,89 +10,9 @@
 //! than a join against a history. The sweep that removes rows for a crashed
 //! node is scheduled, which is why this shares `SchedulingConfig` with `job`.
 
-use super::{Emitted, Package, java, package};
-use crate::CompileError;
-use crate::emit_java::JavaUnit;
 use jails_contracts::RenderedMigration;
 use jails_model::{AppModel, Component, ComponentKind, StableId};
 use std::collections::BTreeSet;
-
-const PORT: crate::Template = crate::template!("spring/presence_port_java.java");
-const STORE: crate::Template = crate::template!("spring/presence_store_java.java");
-const IT: crate::Template = crate::template!("spring/presence_it_java.java");
-
-pub(super) fn files(
-    model: &AppModel,
-    component: &Component,
-    templates: &jails_contracts::TemplateOverrides,
-) -> Result<Vec<Emitted>, CompileError> {
-    if !super::has_database(model) {
-        return Err(CompileError::new(format!(
-            "component presence `{}` needs PostgreSQL/JDBC: presence held in one process's memory is correct on one node and wrong on two, with nothing to say which\n       fix: declare `storage postgres` in the model, or run `jails add db`",
-            component.name
-        )));
-    }
-    let name = &component.name;
-    let app = package(model, Package::Application);
-    let adapters = package(model, Package::AdaptersJdbc);
-    let table = table(component);
-    let port = format!("{name}Presence");
-    // The container config is a fact about the *model* here, not a file on
-    // disk. It is a different question from whether SQL is reachable: the guard above
-    // passes for a project carrying its own JDBC starter, and that project
-    // has no `TestcontainersConfig` for this test to import.
-    let support = super::container_support(model);
-    let mut store = JavaUnit::from_source(
-        &STORE
-            .resolve(templates)?
-            .replace("{{adapters}}", &adapters)
-            .replace("{{name}}", name)
-            .replace("{{table}}", &table)
-            .replace("{{property}}", &component.label.replace('_', "-")),
-    );
-    store.import_from(&app, &port);
-    let mut it = JavaUnit::from_source(
-        &IT.resolve(templates)?
-            .replace("{{adapters}}", &adapters)
-            .replace("{{name}}", name)
-            .replace("{{table}}", &table)
-            .replace("{{container_annotation}}", support.annotation)
-            .replace("{{annotation}}", support.disabled),
-    );
-    support.declare(&mut it);
-    Ok(vec![
-        java(
-            component,
-            "port",
-            &app,
-            &port,
-            false,
-            // The port is managed ABI: the store and every caller name it.
-            false,
-            PORT.resolve(templates)?
-                .replace("{{app}}", &app)
-                .replace("{{name}}", name),
-        )?,
-        java(
-            component,
-            "store",
-            &adapters,
-            &format!("Jdbc{port}"),
-            false,
-            true,
-            store,
-        )?,
-        java(
-            component,
-            "it",
-            &adapters,
-            &format!("Jdbc{port}IT"),
-            true,
-            true,
-            it,
-        )?,
-    ])
-}
 
 fn table(component: &Component) -> String {
     format!("{}_presence", component.label)

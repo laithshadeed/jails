@@ -3,63 +3,75 @@
 use super::*;
 use jails_model::Package;
 
-const KAFKA_FILES: &[JavaFile] = &[
+const KAFKA_FILES: &[JavaFile<Capability>] = &[
     JavaFile {
-        suffix: "config",
+        role: "config",
         template: crate::template!("spring/kafka_config_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Main,
-        class_name: kafka_config_class,
-        template_class: kafka_config_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("KafkaConfig"),
+        template_class: Naming::Fixed("KafkaConfig"),
     },
     JavaFile {
-        suffix: "non_retryable",
+        role: "non_retryable",
         template: crate::template!("spring/non_retryable_exception_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Main,
-        class_name: non_retryable_exception_class,
-        template_class: non_retryable_exception_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("NonRetryableException"),
+        template_class: Naming::Fixed("NonRetryableException"),
     },
     JavaFile {
-        suffix: "config_test",
+        role: "config_test",
         template: crate::template!("spring/kafka_config_test_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Test,
-        class_name: kafka_config_test_class,
-        template_class: kafka_config_test_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("KafkaConfigTest"),
+        template_class: Naming::Fixed("KafkaConfigTest"),
     },
     JavaFile {
-        suffix: "testcontainers_config",
+        role: "testcontainers_config",
         template: crate::template!("spring/kafka_testcontainers_config_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Test,
-        class_name: kafka_testcontainers_config_class,
-        template_class: kafka_testcontainers_config_class,
+        placement: Placement::Layer(Package::Base),
+        ejectable: true,
+        class: Naming::Fixed("KafkaTestcontainersConfig"),
+        template_class: Naming::Fixed("KafkaTestcontainersConfig"),
     },
 ];
 
-const MAIL_FILES: &[JavaFile] = &[
+const MAIL_FILES: &[JavaFile<Capability>] = &[
     JavaFile {
-        suffix: "mailer",
+        role: "mailer",
         template: crate::template!("spring/mailer_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Main,
-        class_name: mailer_class,
-        template_class: mailer_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("Mailer"),
+        template_class: Naming::Fixed("Mailer"),
     },
     JavaFile {
-        suffix: "mailer_it",
+        role: "mailer_it",
         template: crate::template!("spring/mailer_it_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::IntegrationTest,
-        class_name: mailer_it_class,
-        template_class: mailer_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("MailerIT"),
+        template_class: Naming::Fixed("Mailer"),
     },
 ];
 
@@ -253,14 +265,11 @@ const MAIL_COMPOSE: &[ComposeService] = &[ComposeService {
     body: "image: axllent/mailpit:v1.21\nenvironment:\n  MP_SMTP_AUTH_ACCEPT_ANY: \"true\"\n  MP_SMTP_AUTH_ALLOW_INSECURE: \"true\"\n  MP_POP3_AUTH: user:pass\nports:\n  - \"1025:1025\"\n  - \"1110:1110\"\n  - \"8025:8025\"",
 }];
 
-const KAFKA_PACKAGE_OVERRIDES: &[PackageOverride] = &[PackageOverride {
-    suffix: "testcontainers_config",
-    project_subpackage: Package::Base,
-}];
-
-pub(super) const KAFKA_PACK: Pack = Pack {
+pub(super) const KAFKA_PACK: Recipe<Capability> = Recipe {
     substitutions: NO_SUBSTITUTIONS,
     fragments: NO_FRAGMENTS,
+    keys: &[],
+    requires: &[],
     files: KAFKA_FILES,
     files_when: BootCondition::Spring,
     resources: NO_RESOURCES,
@@ -269,13 +278,14 @@ pub(super) const KAFKA_PACK: Pack = Pack {
     compose_services: KAFKA_COMPOSE,
     build_features: NO_BUILD_FEATURES,
     default_package: messaging_package,
-    package_overrides: KAFKA_PACKAGE_OVERRIDES,
     minimum_boot: None,
 };
 
-pub(super) const MAIL_PACK: Pack = Pack {
+pub(super) const MAIL_PACK: Recipe<Capability> = Recipe {
     substitutions: &[("image", "axllent/mailpit:v1.21")],
     fragments: NO_FRAGMENTS,
+    keys: &[],
+    requires: &[],
     files: MAIL_FILES,
     files_when: BootCondition::Spring,
     resources: NO_RESOURCES,
@@ -283,8 +293,7 @@ pub(super) const MAIL_PACK: Pack = Pack {
     properties: MAIL_PROPERTIES,
     compose_services: MAIL_COMPOSE,
     build_features: NO_BUILD_FEATURES,
-    default_package: application_package,
-    package_overrides: NO_PACKAGE_OVERRIDES,
+    default_package: root_package,
     minimum_boot: None,
 };
 
@@ -315,36 +324,4 @@ const fn property(key: &'static str, value: &'static str) -> PropertySpec {
         target: SettingTarget::Main,
         boot: BootCondition::Spring,
     }
-}
-
-fn messaging_package(model: &AppModel) -> String {
-    model.project.package_for(Package::Messaging)
-}
-
-fn application_package(model: &AppModel) -> String {
-    model.project.base_package.clone()
-}
-
-fn kafka_config_class(_: &Capability) -> String {
-    "KafkaConfig".to_string()
-}
-
-fn non_retryable_exception_class(_: &Capability) -> String {
-    "NonRetryableException".to_string()
-}
-
-fn kafka_config_test_class(_: &Capability) -> String {
-    "KafkaConfigTest".to_string()
-}
-
-fn kafka_testcontainers_config_class(_: &Capability) -> String {
-    "KafkaTestcontainersConfig".to_string()
-}
-
-fn mailer_class(_: &Capability) -> String {
-    "Mailer".to_string()
-}
-
-fn mailer_it_class(_: &Capability) -> String {
-    "MailerIT".to_string()
 }

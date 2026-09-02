@@ -1,4 +1,4 @@
-package {{app}};
+package {{pkg}};
 
 import java.util.Optional;
 

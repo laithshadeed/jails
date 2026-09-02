@@ -1,4 +1,4 @@
-package {{domain}};
+package {{pkg}};
 
 import java.time.Instant;
 import java.util.Optional;

@@ -1,17 +1,12 @@
 //! Compiler projection for capability slices embedded in reader documents.
 
 use crate::CompileError;
+use crate::recipe::ComposeService;
 use jails_contracts::{
     FileMode, ProjectPath, Provenance, ReaderFacetKind, RenderedReaderFacet, RenderedTree,
 };
 use jails_model::{Capability, StableId};
 use std::collections::BTreeSet;
-
-pub(super) struct ComposeService {
-    pub(super) name: &'static str,
-    pub(super) marker: &'static str,
-    pub(super) body: &'static str,
-}
 
 pub(super) fn emit_managed_file(
     output: &mut RenderedTree,

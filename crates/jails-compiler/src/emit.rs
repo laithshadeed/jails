@@ -60,7 +60,7 @@ pub(crate) fn emit(
     crate::emit_relation::lower_and_emit(model, output)?;
     crate::emit_messaging::lower_and_emit(model, output, templates)?;
     emit_operation::outbox::lower_and_emit(model, output, templates)?;
-    emit_component::lower_and_emit(model, output, templates)?;
+    emit_component::lower_and_emit(model, output, snapshot)?;
     emit_http::lower_and_emit(model, output, snapshot.project.spring_boot.as_deref())?;
     crate::emit_architecture::lower(model, output, templates)?;
     package_infos(output, jspecify_on_classpath(&snapshot.project))?;

@@ -1,4 +1,4 @@
-package {{adapters}};
+package {{pkg}};
 
 import java.util.Optional;
 import org.springframework.jdbc.core.simple.JdbcClient;

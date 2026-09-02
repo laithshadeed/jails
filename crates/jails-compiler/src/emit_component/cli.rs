@@ -19,48 +19,8 @@
 //! bytes — a model field saying "App registers no command" would be stale the
 //! moment the reader registered one by hand.
 
-use super::{Emitted, Package, java, package};
-use crate::CompileError;
+use super::Package;
 use jails_model::{AppModel, Component, ComponentKind, ComponentReference};
-
-const CLI: crate::Template = crate::template!("spring/cli_java.java");
-const TEST: crate::Template = crate::template!("spring/cli_test_java.java");
-
-pub(super) fn files(
-    model: &AppModel,
-    component: &Component,
-    templates: &jails_contracts::TemplateOverrides,
-) -> Result<Vec<Emitted>, CompileError> {
-    let name = &component.name;
-    let pkg = package(model, Package::Cli);
-    let class = format!("{name}Cli");
-    Ok(vec![
-        java(
-            component,
-            "cli",
-            &pkg,
-            &class,
-            false,
-            true,
-            CLI.resolve(templates)?
-                .replace("{{pkg}}", &pkg)
-                .replace("{{class}}", &class)
-                .replace("{{program}}", &name.to_lowercase())
-                .replace("{{registrations}}", &registrations(model, component)),
-        )?,
-        java(
-            component,
-            "test",
-            &pkg,
-            &format!("{class}Test"),
-            true,
-            true,
-            TEST.resolve(templates)?
-                .replace("{{pkg}}", &pkg)
-                .replace("{{class}}", &class),
-        )?,
-    ])
-}
 
 /// One `commands.put(...)` per command that named this dispatcher.
 ///
@@ -76,7 +36,7 @@ pub(super) fn files(
 ///
 /// `components` is a `BTreeMap`, so the order is the stable-ID order and the
 /// same model renders the same file.
-fn registrations(model: &AppModel, cli: &Component) -> String {
+pub(super) fn registrations(model: &AppModel, cli: &Component) -> String {
     model
         .components
         .values()

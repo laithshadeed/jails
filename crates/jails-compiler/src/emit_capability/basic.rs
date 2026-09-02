@@ -2,156 +2,186 @@
 
 use super::*;
 
-const CSV_FILES: &[JavaFile] = &[
+const CSV_FILES: &[JavaFile<Capability>] = &[
     JavaFile {
-        suffix: "main",
+        role: "main",
         template: crate::template!("add/csv_reader_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Main,
-        class_name: csv_class,
-        template_class: csv_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::By(csv_class),
+        template_class: Naming::By(csv_class),
     },
     JavaFile {
-        suffix: "test",
+        role: "test",
         template: crate::template!("add/csv_reader_test_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Test,
-        class_name: csv_test_class,
-        template_class: csv_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::By(csv_test_class),
+        template_class: Naming::By(csv_class),
     },
 ];
 
-const JSON_FILES: &[JavaFile] = &[
+const JSON_FILES: &[JavaFile<Capability>] = &[
     JavaFile {
-        suffix: "main",
+        role: "main",
         template: crate::template!("add/json_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Main,
-        class_name: json_class,
-        template_class: json_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::By(json_class),
+        template_class: Naming::By(json_class),
     },
     JavaFile {
-        suffix: "test",
+        role: "test",
         template: crate::template!("add/json_test_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Test,
-        class_name: json_test_class,
-        template_class: json_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::By(json_test_class),
+        template_class: Naming::By(json_class),
     },
 ];
 
-const HTTP_FILES: &[JavaFile] = &[
+const HTTP_FILES: &[JavaFile<Capability>] = &[
     JavaFile {
-        suffix: "main",
+        role: "main",
         template: crate::template!("add/http_server_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Main,
-        class_name: http_class,
-        template_class: http_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::By(http_class),
+        template_class: Naming::By(http_class),
     },
     JavaFile {
-        suffix: "test",
+        role: "test",
         template: crate::template!("add/http_server_test_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Test,
-        class_name: http_test_class,
-        template_class: http_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::By(http_test_class),
+        template_class: Naming::By(http_class),
     },
 ];
 
-const FAKE_FILES: &[JavaFile] = &[
+const FAKE_FILES: &[JavaFile<Capability>] = &[
     JavaFile {
-        suffix: "script",
+        role: "script",
         template: crate::template!("add/scripted_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Test,
-        class_name: fake_class,
-        template_class: fake_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("Fake"),
+        template_class: Naming::Fixed("Fake"),
     },
     JavaFile {
-        suffix: "script_test",
+        role: "script_test",
         template: crate::template!("add/scripted_test_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Test,
-        class_name: fake_test_class,
-        template_class: fake_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("FakeTest"),
+        template_class: Naming::Fixed("Fake"),
     },
 ];
 
-const TOXIPROXY_FILES: &[JavaFile] = &[
+const TOXIPROXY_FILES: &[JavaFile<Capability>] = &[
     JavaFile {
-        suffix: "faults",
+        role: "faults",
         template: crate::template!("add/faults_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Test,
-        class_name: faults_class,
-        template_class: faults_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("Faults"),
+        template_class: Naming::Fixed("Faults"),
     },
     JavaFile {
-        suffix: "faults_test",
+        role: "faults_test",
         template: crate::template!("add/faults_test_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Test,
-        class_name: faults_test_class,
-        template_class: faults_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("FaultsTest"),
+        template_class: Naming::Fixed("Faults"),
     },
 ];
 
-const TESTKIT_FILES: &[JavaFile] = &[
+const TESTKIT_FILES: &[JavaFile<Capability>] = &[
     JavaFile {
-        suffix: "clocks",
+        role: "clocks",
         template: crate::template!("add/clocks_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Test,
-        class_name: clocks_class,
-        template_class: clocks_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("Clocks"),
+        template_class: Naming::Fixed("Clocks"),
     },
     JavaFile {
-        suffix: "ids",
+        role: "ids",
         template: crate::template!("add/ids_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Test,
-        class_name: ids_class,
-        template_class: ids_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("Ids"),
+        template_class: Naming::Fixed("Ids"),
     },
     JavaFile {
-        suffix: "fixtures",
+        role: "fixtures",
         template: crate::template!("add/fixtures_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Test,
-        class_name: fixtures_class,
-        template_class: fixtures_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("Fixtures"),
+        template_class: Naming::Fixed("Fixtures"),
     },
     JavaFile {
-        suffix: "cli",
+        role: "cli",
         template: crate::template!("add/testkit_cli_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Test,
-        class_name: cli_class,
-        template_class: cli_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("Cli"),
+        template_class: Naming::Fixed("Cli"),
     },
     JavaFile {
-        suffix: "test",
+        role: "test",
         template: crate::template!("add/testkit_test_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Test,
-        class_name: testkit_test_class,
-        template_class: testkit_test_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::Fixed("TestkitTest"),
+        template_class: Naming::Fixed("TestkitTest"),
     },
 ];
 
@@ -162,33 +192,39 @@ const TESTKIT_RESOURCES: &[ResourceFile] = &[ResourceFile {
     source_set: SourceSet::Test,
 }];
 
-const SQLITE_FILES: &[JavaFile] = &[
+const SQLITE_FILES: &[JavaFile<Capability>] = &[
     JavaFile {
-        suffix: "database",
+        role: "database",
         template: crate::template!("add/database_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Main,
-        class_name: sqlite_database_class,
-        template_class: sqlite_database_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::By(sqlite_database_class),
+        template_class: Naming::By(sqlite_database_class),
     },
     JavaFile {
-        suffix: "migrations",
+        role: "migrations",
         template: crate::template!("add/migrations_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Main,
-        class_name: sqlite_migrations_class,
-        template_class: sqlite_migrations_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::By(sqlite_migrations_class),
+        template_class: Naming::By(sqlite_migrations_class),
     },
     JavaFile {
-        suffix: "test",
+        role: "test",
         template: crate::template!("add/database_test_java.java"),
         before_boot: None,
         imports: &[],
         source_set: SourceSet::Test,
-        class_name: sqlite_test_class,
-        template_class: sqlite_database_class,
+        placement: Placement::Default,
+        ejectable: true,
+        class: Naming::By(sqlite_test_class),
+        template_class: Naming::By(sqlite_database_class),
     },
 ];
 
@@ -241,16 +277,22 @@ const ASSERTJ_DEPENDENCIES: &[DependencySpec] = &[DependencySpec {
     )
 }];
 
-pub(super) const CSV_PACK: Pack = pack(CSV_FILES, CSV_DEPENDENCIES, adapters_package);
-pub(super) const JSON_PACK: Pack = pack(JSON_FILES, JSON_DEPENDENCIES, adapters_package);
-pub(super) const HTTP_PACK: Pack = pack(HTTP_FILES, ASSERTJ_DEPENDENCIES, api_package);
-pub(super) const FAKE_PACK: Pack = pack(FAKE_FILES, ASSERTJ_DEPENDENCIES, testkit_package);
-pub(super) const TOXIPROXY_PACK: Pack =
+pub(super) const CSV_PACK: Recipe<Capability> = pack(CSV_FILES, CSV_DEPENDENCIES, adapters_package);
+pub(super) const JSON_PACK: Recipe<Capability> =
+    pack(JSON_FILES, JSON_DEPENDENCIES, adapters_package);
+pub(super) const HTTP_PACK: Recipe<Capability> =
+    pack(HTTP_FILES, ASSERTJ_DEPENDENCIES, api_package);
+pub(super) const FAKE_PACK: Recipe<Capability> =
+    pack(FAKE_FILES, ASSERTJ_DEPENDENCIES, testkit_package);
+pub(super) const TOXIPROXY_PACK: Recipe<Capability> =
     pack(TOXIPROXY_FILES, TOXIPROXY_DEPENDENCIES, testkit_package);
-pub(super) const SQLITE_PACK: Pack = pack(SQLITE_FILES, SQLITE_DEPENDENCIES, adapters_package);
-pub(super) const TESTKIT_PACK: Pack = Pack {
+pub(super) const SQLITE_PACK: Recipe<Capability> =
+    pack(SQLITE_FILES, SQLITE_DEPENDENCIES, adapters_package);
+pub(super) const TESTKIT_PACK: Recipe<Capability> = Recipe {
     substitutions: NO_SUBSTITUTIONS,
     fragments: NO_FRAGMENTS,
+    keys: &[],
+    requires: &[],
     resources: TESTKIT_RESOURCES,
     ..pack(TESTKIT_FILES, ASSERTJ_DEPENDENCIES, testkit_package)
 };
@@ -262,9 +304,11 @@ const COVERAGE_FEATURES: &[BuildFeature] = &[BuildFeature::Coverage];
 /// The `.editorconfig` comes through `project_file.rs`; this is the plugin.
 /// Keyed by [`BuildFeature::Formatting`] rather than by a plugin coordinate,
 /// because `spotless-maven-plugin` is not a name Gradle resolves.
-pub(super) const FORMAT_PACK: Pack = Pack {
+pub(super) const FORMAT_PACK: Recipe<Capability> = Recipe {
     substitutions: NO_SUBSTITUTIONS,
     fragments: NO_FRAGMENTS,
+    keys: &[],
+    requires: &[],
     files: &[],
     files_when: BootCondition::Any,
     resources: NO_RESOURCES,
@@ -273,15 +317,16 @@ pub(super) const FORMAT_PACK: Pack = Pack {
     compose_services: NO_COMPOSE_SERVICES,
     build_features: FORMAT_FEATURES,
     default_package: testkit_package,
-    package_overrides: NO_PACKAGE_OVERRIDES,
     minimum_boot: None,
 };
 
 const FORMAT_FEATURES: &[BuildFeature] = &[BuildFeature::Formatting];
 
-pub(super) const COVERAGE_PACK: Pack = Pack {
+pub(super) const COVERAGE_PACK: Recipe<Capability> = Recipe {
     substitutions: NO_SUBSTITUTIONS,
     fragments: NO_FRAGMENTS,
+    keys: &[],
+    requires: &[],
     files: &[],
     files_when: BootCondition::Any,
     resources: NO_RESOURCES,
@@ -290,7 +335,6 @@ pub(super) const COVERAGE_PACK: Pack = Pack {
     compose_services: NO_COMPOSE_SERVICES,
     build_features: COVERAGE_FEATURES,
     default_package: testkit_package,
-    package_overrides: NO_PACKAGE_OVERRIDES,
     minimum_boot: None,
 };
 
@@ -314,13 +358,15 @@ const fn dependency(
 }
 
 const fn pack(
-    files: &'static [JavaFile],
+    files: &'static [JavaFile<Capability>],
     dependencies: &'static [DependencySpec],
-    default_package: fn(&AppModel) -> String,
-) -> Pack {
-    Pack {
+    default_package: fn(&AppModel, &Capability) -> String,
+) -> Recipe<Capability> {
+    Recipe {
         substitutions: NO_SUBSTITUTIONS,
         fragments: NO_FRAGMENTS,
+        keys: &[],
+        requires: &[],
         files,
         files_when: BootCondition::Any,
         resources: NO_RESOURCES,
@@ -329,7 +375,6 @@ const fn pack(
         compose_services: NO_COMPOSE_SERVICES,
         build_features: NO_BUILD_FEATURES,
         default_package,
-        package_overrides: NO_PACKAGE_OVERRIDES,
         minimum_boot: None,
     }
 }
@@ -373,42 +418,6 @@ fn http_class(capability: &Capability) -> String {
 
 fn http_test_class(capability: &Capability) -> String {
     format!("{}Test", http_class(capability))
-}
-
-fn fake_class(_: &Capability) -> String {
-    "Fake".to_string()
-}
-
-fn fake_test_class(_: &Capability) -> String {
-    "FakeTest".to_string()
-}
-
-fn faults_class(_: &Capability) -> String {
-    "Faults".to_string()
-}
-
-fn faults_test_class(_: &Capability) -> String {
-    "FaultsTest".to_string()
-}
-
-fn clocks_class(_: &Capability) -> String {
-    "Clocks".to_string()
-}
-
-fn ids_class(_: &Capability) -> String {
-    "Ids".to_string()
-}
-
-fn fixtures_class(_: &Capability) -> String {
-    "Fixtures".to_string()
-}
-
-fn cli_class(_: &Capability) -> String {
-    "Cli".to_string()
-}
-
-fn testkit_test_class(_: &Capability) -> String {
-    "TestkitTest".to_string()
 }
 
 pub(super) fn sqlite_database_class(capability: &Capability) -> String {
