@@ -348,7 +348,7 @@ pub(super) fn test_report_once(
     requested: &[String],
     options: TestOptions,
     debug: bool,
-) -> Result<crate::testing::TestReportV1> {
+) -> Result<crate::testing::TestReport> {
     test_report_once_with_fallback(requested, options, debug, None)
 }
 
@@ -357,7 +357,7 @@ fn test_report_once_with_fallback(
     mut options: TestOptions,
     debug: bool,
     fallback_reason: Option<String>,
-) -> Result<crate::testing::TestReportV1> {
+) -> Result<crate::testing::TestReport> {
     let (root, build) = either_root("test")?;
     let mut execution_requested = requested.to_vec();
     if options.failed {

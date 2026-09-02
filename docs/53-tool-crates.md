@@ -52,15 +52,6 @@ parser of `name:type[!?]` and `BuiltinType::from_alias` the one alias table.
 Keep it that way: a second parser is the repository's most reliable drift
 generator.
 
-**S53.5 -- `jails-drive`: two test stacks.** `run/test_plan.rs`,
-`run/test_execution.rs`, `testing.rs`, `testing/testd.rs`, `testd.rs`,
-`testd/v2.rs` and `launcher.rs` are 2,500 lines describing how `jails test`
-selects, partitions and runs tests through three engines. Read them as one
-and name what is said twice: the selector vocabulary, the JUnit report
-reader, the engine choice. Do not touch the
-resident-JVM classpath split or the `--affected` index; both are measured
-and load-bearing. Agent 1's S51.4 waits on this.
-
 **S53.8 -- Fold the leaves.** `jails-spec` holds the closed CLI vocabularies
 and where a project is; `jails-java` is the Java reader and the template
 renderer, used by `jails-project` and the binary. When S53.4-S53.7 are done,

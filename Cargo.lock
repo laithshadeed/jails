@@ -269,6 +269,8 @@ dependencies = [
  "jails-report",
  "jails-spec",
  "jails-support",
+ "serde",
+ "serde_json",
  "tempfile",
 ]
 

@@ -77,9 +77,9 @@ plan carries the command that re-checks it.
    snapshot (the second Maven parser is gone: one element walk in
    `jails-workspace/src/documents/pom.rs`). Plan `53`.
 
-4. **`jails-drive` describes test execution twice**, as `testing::*V1` and
-   `testd::v2`, and the `#[derive(Codec)]` machinery exists for the first.
-   Plans `53` and `51`.
+4. **`#[derive(Codec)]` has one user left.** The test-execution wire became
+   one vocabulary over a `serde` daemon protocol, so the codec and its derive
+   crate are the deletion that remains. Plan `51`.
 
 Reproduce the table with this, from the repository root. It is the
 approximation the baseline was taken with; `tests/architecture/measure.rs` is

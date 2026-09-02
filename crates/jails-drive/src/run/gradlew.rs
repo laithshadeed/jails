@@ -55,7 +55,7 @@ pub(super) fn test_report(
     options: &TestOptions,
     fallback_reason: Option<String>,
     debug: bool,
-) -> Result<crate::testing::TestReportV1> {
+) -> Result<crate::testing::TestReport> {
     let build_script = std::fs::read_to_string(root.join("build.gradle")).unwrap_or_default();
     if (!options.tags.is_empty() || options.fail_fast) && !build_script.contains("jails.test.tags")
     {

@@ -401,8 +401,24 @@ Five things to know before touching the workspace:
   artifact to one number from JUnit 6). `staleness()` must never read "no
   class files" as "nothing is stale". `--fast` is the no-mvnd path and the
   substrate for `testd`; do not describe it as faster than the default.
+- **`crates/jails-drive/src/testing.rs` is the one test-execution
+  vocabulary**: one `TestPlan`, one `TestReport`, and the selector, scope,
+  engine, partition, case and outcome they are made of. It carries no
+  encoding, because none of it leaves the process; the machine-readable
+  spellings (`--output json`, the daemon's frames) come from its `name`
+  methods, and `compile_owner` is derived from the engine rather than stored
+  beside it. `run/filter.rs`, `launcher.rs` and `reports.rs` all split
+  `Class#method` through `testing::split_selector`.
 - **`crates/jails-drive/src/testd.rs` + `templates/testd/JailsTestDaemon.java`**
-  -- a resident JVM over a unix socket. **The classpath is split in two and
+  -- a resident JVM over a unix socket. `testd/protocol.rs` is the frames --
+  a four-byte big-endian length then `serde_json` -- and `testd/client.rs` the
+  process lifecycle and the one place a daemon observation becomes a
+  `TestReport`. **The daemon reports only what it observed** (which cases ran,
+  their outcomes and durations, JUnit's output); which engine ran them, the
+  scope and the selection are the coordinator's, so the Java side never
+  restates a Rust field list. Both halves change together, and the protocol
+  number in `protocol.rs` is what makes a client from another release restart
+  a daemon rather than talk past it. **The classpath is split in two and
   must stay that way**: the daemon holds the dependencies and hands only
   `target/classes` and `target/test-classes` to JUnit as `--class-path`, so
   JUnit builds a child loader per run; put the outputs on the daemon's classpath

@@ -2,9 +2,9 @@
 
 use super::{
     TestOptions, either_root, expand_filter, fingerprint, forced_color, is_maven_program,
-    resolve_filter, run_inherited, split_method, test_plan,
+    resolve_filter, run_inherited, test_plan,
 };
-use crate::testing::TestReportV1;
+use crate::testing::TestReport;
 use jails_support::Result;
 use std::path::Path;
 use std::process::Command;
@@ -74,7 +74,7 @@ pub(super) fn warm_report(
     requested: &[String],
     options: &TestOptions,
     debug: bool,
-) -> Result<TestReportV1> {
+) -> Result<TestReport> {
     let timeout = options
         .timeout
         .as_deref()
@@ -158,7 +158,7 @@ pub(super) fn test_watch(requested: &[String], options: TestOptions, debug: bool
 }
 
 fn render_watch_report(
-    report: &TestReportV1,
+    report: &TestReport,
     options: &TestOptions,
     events: Option<&mut WatchEvents>,
     epoch: u64,
@@ -226,7 +226,7 @@ fn event_line(session: &str, sequence: u64, epoch: u64, kind: &str, data: &str) 
 pub(super) fn maven_report(
     context: &MavenTestContext<'_>,
     requested: &[String],
-) -> Result<TestReportV1> {
+) -> Result<TestReport> {
     let mut passed = true;
     if requested.is_empty() {
         let mut command = Command::new(crate::maven::binary(context.project));
@@ -248,7 +248,7 @@ pub(super) fn maven_report(
         for filter in requested {
             let resolved = resolve_filter(context.project, filter)?;
             let expanded = expand_filter(&resolved);
-            let (class, _) = split_method(&expanded);
+            let (class, _) = crate::testing::split_selector(&expanded);
             if class.ends_with("IT") {
                 integration.push(expanded);
             } else {
@@ -369,7 +369,7 @@ fn finish_test_report(
     context: &MavenTestContext<'_>,
     requested: &[String],
     passed: bool,
-) -> Result<TestReportV1> {
+) -> Result<TestReport> {
     if !passed && !context.options.json {
         crate::reports::rerun_line(context.project, None);
     }

@@ -2,7 +2,7 @@
 
 use super::TestOptions;
 use crate::testing::{
-    SelectionReason, TestEngine, TestEnginePolicy, TestExecutionPlanV1, TestPartition, TestSelector,
+    SelectionReason, TestEngine, TestEnginePolicy, TestPartition, TestPlan, TestSelector,
 };
 use jails_support::Result;
 use std::path::Path;
@@ -13,7 +13,7 @@ pub(super) fn plan(
     requested: &[String],
     options: &TestOptions,
     compiled_outputs_current: bool,
-) -> Result<TestExecutionPlanV1> {
+) -> Result<TestPlan> {
     let mut selectors: Vec<TestSelector> = requested
         .iter()
         .map(|selector| TestSelector::parse(selector))
@@ -167,12 +167,11 @@ pub(super) fn plan(
         }
     }
 
-    let plan = TestExecutionPlanV1 {
+    let plan = TestPlan {
         scope: options.scope,
         requested: selectors.clone(),
         compile: options.compile,
         engine: options.engine,
-        epoch: 0,
         partitions,
     };
     if matches!(
@@ -244,8 +243,8 @@ pub(super) fn validate_runtime_options(options: &TestOptions) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn explain(plan: &TestExecutionPlanV1) {
-    println!("test selection: epoch {} {:?}", plan.epoch, plan.scope);
+pub(super) fn explain(plan: &TestPlan) {
+    println!("test selection: {:?}", plan.scope);
     println!("  compile: {:?}", plan.compile);
     println!("  engine policy: {:?}", plan.engine);
     for partition in &plan.partitions {

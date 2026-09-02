@@ -26,6 +26,8 @@ final class JailsTestDaemon {
     private static final int MAX_PAYLOAD = 8 * 1024 * 1024;
     private static final int MAX_GENERATIONS = 50;
     private static final long MAX_METASPACE_GROWTH = 128L * 1024L * 1024L;
+    // The coordinator's outcome vocabulary, in the order readCases numbers them.
+    private static final String[] OUTCOMES = {"passed", "failed", "skipped", "error"};
 
     private final Path root;
     private final byte[] project;
@@ -127,8 +129,8 @@ final class JailsTestDaemon {
             completed.put(id, new Cached(payload, response));
         }
         writeAll(client, response);
-        if (request.tag == 4) return true;
-        if (request.tag == 1) {
+        if (request.kind.equals("stop")) return true;
+        if (request.kind.equals("run")) {
             generations++;
             return generations >= MAX_GENERATIONS
                     || metaspace() - baselineMetaspace >= MAX_METASPACE_GROWTH
@@ -144,14 +146,14 @@ final class JailsTestDaemon {
                     "project digest or daemon cookie does not match",
                     "remove .jails/run/testd-v2.* and retry from this project");
         }
-        return switch (request.tag) {
-            case 0 -> hello(request);
-            case 1 -> run(request);
-            case 2 -> event(request.id, 0, request.epoch, true, null);
-            case 3 -> cancel(request);
-            case 4 -> event(request.id, 3, 0, false, "stop requested");
-            default -> refused(request.id, "unknown-request", "unknown request tag " + request.tag,
-                    "upgrade both testd protocol peers");
+        return switch (request.kind) {
+            case "hello" -> hello(request);
+            case "run" -> run(request);
+            case "status" -> event(request.id, "ready", request.epoch, true, null);
+            case "cancel" -> cancel(request);
+            case "stop" -> event(request.id, "recycling", 0, false, "stop requested");
+            default -> refused(request.id, "unknown-request",
+                    "unknown request `" + request.kind + "`", "upgrade both testd protocol peers");
         };
     }
 
@@ -161,11 +163,8 @@ final class JailsTestDaemon {
                     "no mutually supported testd protocol version",
                     "restart the daemon with a compatible jails version");
         }
-        var body = new Wire();
-        body.tag(0);
-        body.bytes(request.id);
-        body.u32(PROTOCOL_MAX);
-        return frame(body.done());
+        return frame("{\"response\":\"hello\",\"request_id\":" + quote(toHex(request.id))
+                + ",\"protocol\":" + PROTOCOL_MAX + "}");
     }
 
     private byte[] run(Request request) throws Exception {
@@ -188,11 +187,12 @@ final class JailsTestDaemon {
                     "the daemon has no active request", "retry the test command if work is still needed");
         }
         thread.interrupt();
-        return event(request.id, 3, 0, false, "active request cancelled; daemon recycle required");
+        return event(request.id, "recycling", 0, false,
+                "active request cancelled; daemon recycle required");
     }
 
     private byte[] runActive(Request request) throws Exception {
-        if (request.isolation != 0) {
+        if (!request.isolation.equals("isolated")) {
             return refused(request.id, "isolation-ineligible",
                     "fork-sensitive tests cannot run in the warm daemon",
                     "choose --engine auto so the build tool owns this partition");
@@ -202,7 +202,6 @@ final class JailsTestDaemon {
             return refused(request.id, "classes-stale", stale,
                     "compile through the selected owner, then retry the current epoch");
         }
-        long started = System.nanoTime();
         List<String> arguments = new ArrayList<>();
         arguments.add("--class-path");
         arguments.add(outputs);
@@ -227,7 +226,6 @@ final class JailsTestDaemon {
         } finally {
             deleteTree(reportDirectory);
         }
-        long durationUs = (System.nanoTime() - started) / 1_000L;
         // A completed report carries the daemon's own output on its first
         // case, so a run that produced no cases has nowhere to put a
         // diagnostic and the coordinator exits non-zero having printed
@@ -237,9 +235,7 @@ final class JailsTestDaemon {
             return refused(request.id, "no-case-report", summarize(result.output),
                     "run the same selection with --engine build to see JUnit's own output");
         }
-        byte[] accepted = accepted(request.id, request.epoch);
-        byte[] completed = completed(request, result, durationUs);
-        return concat(accepted, completed);
+        return concat(accepted(request.id, request.epoch), completed(request, result));
     }
 
     private String verifyOutputs(List<Output> expected) throws Exception {
@@ -376,56 +372,41 @@ final class JailsTestDaemon {
     }
 
     private static byte[] accepted(byte[] id, long epoch) throws Exception {
-        var body = new Wire();
-        body.tag(1);
-        body.bytes(id);
-        body.u64(epoch);
-        return frame(body.done());
+        return frame("{\"response\":\"accepted\",\"request_id\":" + quote(toHex(id))
+                + ",\"epoch\":" + epoch + "}");
     }
 
-    private static byte[] completed(Request request, Result result, long durationUs) throws Exception {
-        var body = new Wire();
-        body.tag(3);
-        body.bytes(request.id);
-        body.u64(request.epoch);
-        body.bool(result.exitCode == 0);
-        body.tag(0); // unit scope
-        body.strings(request.selectors);
-        body.u32(result.cases.size());
+    // What the daemon *observed*, and nothing else. Which engine ran these,
+    // which scope the reader asked for and why each selector was chosen are
+    // the coordinator's facts, and a daemon that restated them would be a
+    // second copy of a Rust type -- wrong the first time a field moved.
+    private static byte[] completed(Request request, Result result) throws Exception {
+        var cases = new StringBuilder();
         for (int index = 0; index < result.cases.size(); index++) {
             Case testCase = result.cases.get(index);
-            body.tag(2); // TestdV2
-            body.tag(3); // compile owner: none (the coordinator compiled)
-            body.string(testCase.selector);
-            body.tag(0); // source absent
-            body.tag(testCase.outcome);
-            body.u64(testCase.durationUs);
-            body.string(index == 0 ? result.output : "");
-            body.string("");
-            body.u32(1);
-            if (request.selectors.isEmpty()) {
-                body.tag(1); // scope
-                body.tag(0); // unit
-            } else {
-                body.tag(0); // requested
-            }
-            body.tag(0); // fallback absent
+            if (index > 0) cases.append(',');
+            cases.append("{\"selector\":").append(quote(testCase.selector()))
+                    .append(",\"outcome\":").append(quote(OUTCOMES[testCase.outcome()]))
+                    .append(",\"duration_us\":").append(testCase.durationUs()).append('}');
         }
-        body.u32(0); // fallback reasons
-        return frame(body.done());
+        return frame("{\"response\":\"completed\",\"request_id\":" + quote(toHex(request.id))
+                + ",\"result\":{\"epoch\":" + request.epoch
+                + ",\"passed\":" + (result.exitCode == 0)
+                // JUnit's own output belongs to the run, not to a case: where
+                // it is printed is the coordinator's decision.
+                + ",\"output\":" + quote(result.output)
+                + ",\"cases\":[" + cases + "]}}");
     }
 
-    private static byte[] event(byte[] id, int kind, long epoch, boolean current, String reason)
+    private static byte[] event(byte[] id, String kind, long epoch, boolean current, String reason)
             throws Exception {
-        var body = new Wire();
-        body.tag(2);
-        body.bytes(id);
-        body.tag(kind);
-        body.u64(epoch);
-        if (kind == 0) body.bool(current);
-        else if (kind == 1) body.tag(0);
-        else body.string(reason == null ? "" : reason);
-        return frame(body.done());
+        String detail = switch (kind) {
+            case "ready" -> ",\"output_current\":" + current;
+            case "classes_stale" -> ",\"path\":null";
+            default -> ",\"reason\":" + quote(reason == null ? "" : reason);
+        };
+        return frame("{\"response\":\"event\",\"request_id\":" + quote(toHex(id))
+                + ",\"event\":{\"kind\":" + quote(kind) + ",\"epoch\":" + epoch + detail + "}}");
     }
 
     // Why JUnit produced nothing, in the two places it says so: the head of
@@ -450,17 +431,10 @@ final class JailsTestDaemon {
     }
 
     private static byte[] refused(byte[] id, String code, String message, String fix) throws Exception {
-        var body = new Wire();
-        body.tag(4);
-        body.bytes(id);
-        body.string(code);
-        body.string(message);
-        if (fix == null) body.tag(0);
-        else {
-            body.tag(1);
-            body.string(fix);
-        }
-        return frame(body.done());
+        return frame("{\"response\":\"refused\",\"request_id\":" + quote(toHex(id))
+                + ",\"diagnostic\":{\"code\":" + quote(code)
+                + ",\"message\":" + quote(message)
+                + ",\"fix\":" + (fix == null ? "null" : quote(fix)) + "}}");
     }
 
     private static SocketChannel acceptWithin(ServerSocketChannel server, long idleMillis) throws Exception {
@@ -491,7 +465,8 @@ final class JailsTestDaemon {
         }
     }
 
-    private static byte[] frame(byte[] payload) throws Exception {
+    private static byte[] frame(String json) throws Exception {
+        byte[] payload = json.getBytes(StandardCharsets.UTF_8);
         if (payload.length > MAX_PAYLOAD) throw new IllegalArgumentException("response is too large");
         var framed = new ByteArrayOutputStream(payload.length + 4);
         framed.write(ByteBuffer.allocate(4).putInt(payload.length).array());
@@ -548,130 +523,245 @@ final class JailsTestDaemon {
 
     private record Result(String output, int exitCode, List<Case> cases) {}
     private record Case(String selector, int outcome, long durationUs) {}
-    private record Output(String path, long size, long modifiedNs, byte[] digest) {}
+    private record Output(String path, long modifiedNs, byte[] digest) {}
     private record Cached(byte[] request, byte[] response) {}
 
-    private record Request(int tag, byte[] id, int protocolMin, int protocolMax, byte[] project,
+    private record Request(String kind, byte[] id, int protocolMin, int protocolMax, byte[] project,
             byte[] cookie, long epoch, List<String> selectors, byte[] classpath,
-            List<Output> outputs, int isolation) {
+            List<Output> outputs, String isolation) {
         static Request decode(byte[] payload) {
-            Cursor cursor = new Cursor(payload);
-            int tag = cursor.tag();
-            byte[] id = cursor.bytes(32);
-            int min = 0, max = 0;
-            byte[] project;
-            byte[] cookie;
+            Map<String, Object> frame = Json.object(
+                    Json.parse(new String(payload, StandardCharsets.UTF_8)), "request frame");
+            String kind = Json.string(frame, "request");
+            byte[] id = fromHex(Json.string(frame, "request_id"));
+            int min = 0;
+            int max = 0;
             long epoch = 0;
             List<String> selectors = List.of();
             byte[] classpath = new byte[32];
             List<Output> outputs = List.of();
-            int isolation = 0;
-            if (tag == 0) {
-                min = cursor.u32();
-                max = cursor.u32();
-                project = cursor.bytes(32);
-                cookie = cursor.bytes(32);
-            } else {
-                project = cursor.bytes(32);
-                cookie = cursor.bytes(32);
-                if (tag == 1) {
-                    epoch = cursor.u64();
-                    selectors = cursor.strings();
-                    classpath = cursor.bytes(32);
-                    int count = cursor.u32();
-                    var entries = new ArrayList<Output>(count);
-                    String previous = null;
-                    for (int index = 0; index < count; index++) {
-                        String path = cursor.string();
-                        if (previous != null && previous.compareTo(path) >= 0) {
-                            throw new IllegalArgumentException("output paths are not canonical");
-                        }
-                        previous = path;
-                        entries.add(new Output(path, cursor.u64(), cursor.u64(), cursor.bytes(32)));
+            String isolation = "isolated";
+            if (kind.equals("hello")) {
+                min = (int) Json.number(frame, "protocol_min");
+                max = (int) Json.number(frame, "protocol_max");
+            } else if (kind.equals("run")) {
+                epoch = Json.number(frame, "epoch");
+                var names = new ArrayList<String>();
+                for (Object selector : Json.array(frame, "selectors")) {
+                    names.add(Json.text(selector, "selector"));
+                }
+                selectors = List.copyOf(names);
+                classpath = fromHex(Json.string(frame, "classpath"));
+                outputs = outputs(Json.object(frame.get("outputs"), "outputs"));
+                isolation = Json.string(frame, "isolation");
+            }
+            return new Request(kind, id, min, max, fromHex(Json.string(frame, "project")),
+                    fromHex(Json.string(frame, "cookie")), epoch, selectors, classpath,
+                    outputs, isolation);
+        }
+
+        // Sorted and distinct is checked here, not assumed: this list is
+        // compared against the tree on disk, and two spellings of one set
+        // would make that comparison depend on iteration order.
+        private static List<Output> outputs(Map<String, Object> snapshot) {
+            var entries = new ArrayList<Output>();
+            String previous = null;
+            for (Object element : Json.array(snapshot, "entries")) {
+                Map<String, Object> entry = Json.object(element, "output entry");
+                String path = Json.string(entry, "path");
+                if (previous != null && previous.compareTo(path) >= 0) {
+                    throw new IllegalArgumentException("output paths are not canonical");
+                }
+                previous = path;
+                entries.add(new Output(path, Json.number(entry, "modified_ns"),
+                        fromHex(Json.string(entry, "digest"))));
+            }
+            return List.copyOf(entries);
+        }
+    }
+
+    // The smallest JSON reader that reads these frames, and no more: objects,
+    // arrays, strings, integers, booleans and null. Not a JSON library, for
+    // the same reason the daemon is a single source file -- it runs with
+    // JUnit on its classpath and nothing else.
+    private static final class Json {
+        private final String text;
+        private int at;
+
+        private Json(String text) {
+            this.text = text;
+        }
+
+        static Object parse(String text) {
+            Json reader = new Json(text);
+            Object value = reader.value();
+            reader.skip();
+            if (reader.at != text.length()) throw new IllegalArgumentException("trailing JSON");
+            return value;
+        }
+
+        @SuppressWarnings("unchecked")
+        static Map<String, Object> object(Object value, String what) {
+            if (value instanceof Map) return (Map<String, Object>) value;
+            throw new IllegalArgumentException(what + " is not a JSON object");
+        }
+
+        @SuppressWarnings("unchecked")
+        static List<Object> array(Map<String, Object> owner, String key) {
+            Object value = owner.get(key);
+            if (value instanceof List) return (List<Object>) value;
+            throw new IllegalArgumentException("`" + key + "` is not a JSON array");
+        }
+
+        static String string(Map<String, Object> owner, String key) {
+            return text(owner.get(key), key);
+        }
+
+        static String text(Object value, String what) {
+            if (value instanceof String string) return string;
+            throw new IllegalArgumentException("`" + what + "` is not a JSON string");
+        }
+
+        static long number(Map<String, Object> owner, String key) {
+            if (owner.get(key) instanceof Long value && value >= 0) return value;
+            throw new IllegalArgumentException("`" + key + "` is not a non-negative integer");
+        }
+
+        private Object value() {
+            skip();
+            if (at >= text.length()) throw new IllegalArgumentException("truncated JSON");
+            return switch (text.charAt(at)) {
+                case '{' -> readObject();
+                case '[' -> readArray();
+                case '"' -> readString();
+                case 't' -> literal("true", Boolean.TRUE);
+                case 'f' -> literal("false", Boolean.FALSE);
+                case 'n' -> literal("null", null);
+                default -> readNumber();
+            };
+        }
+
+        private Map<String, Object> readObject() {
+            var members = new LinkedHashMap<String, Object>();
+            at++;
+            skip();
+            if (peek() == '}') {
+                at++;
+                return members;
+            }
+            while (true) {
+                skip();
+                String key = readString();
+                skip();
+                expect(':');
+                members.put(key, value());
+                skip();
+                char next = peek();
+                at++;
+                if (next == '}') return members;
+                if (next != ',') throw new IllegalArgumentException("expected `,` or `}`");
+            }
+        }
+
+        private List<Object> readArray() {
+            var elements = new ArrayList<Object>();
+            at++;
+            skip();
+            if (peek() == ']') {
+                at++;
+                return elements;
+            }
+            while (true) {
+                elements.add(value());
+                skip();
+                char next = peek();
+                at++;
+                if (next == ']') return elements;
+                if (next != ',') throw new IllegalArgumentException("expected `,` or `]`");
+            }
+        }
+
+        private String readString() {
+            expect('"');
+            var out = new StringBuilder();
+            while (true) {
+                if (at >= text.length()) throw new IllegalArgumentException("unterminated string");
+                char c = text.charAt(at++);
+                if (c == '"') return out.toString();
+                if (c != '\\') {
+                    if (c < 0x20) throw new IllegalArgumentException("raw control character");
+                    out.append(c);
+                    continue;
+                }
+                if (at >= text.length()) throw new IllegalArgumentException("truncated escape");
+                char escape = text.charAt(at++);
+                switch (escape) {
+                    case '"', '\\', '/' -> out.append(escape);
+                    case 'b' -> out.append('\b');
+                    case 'f' -> out.append('\f');
+                    case 'n' -> out.append('\n');
+                    case 'r' -> out.append('\r');
+                    case 't' -> out.append('\t');
+                    case 'u' -> {
+                        if (at + 4 > text.length()) throw new IllegalArgumentException("truncated \\u escape");
+                        out.append((char) Integer.parseInt(text.substring(at, at + 4), 16));
+                        at += 4;
                     }
-                    outputs = List.copyOf(entries);
-                    isolation = cursor.tag();
-                } else if (tag < 2 || tag > 4) {
-                    throw new IllegalArgumentException("unknown request tag " + tag);
+                    default -> throw new IllegalArgumentException("unknown escape `" + escape + "`");
                 }
             }
-            cursor.finish();
-            return new Request(tag, id, min, max, project, cookie, epoch, selectors,
-                    classpath, outputs, isolation);
+        }
+
+        private Long readNumber() {
+            int start = at;
+            if (peek() == '-') at++;
+            while (at < text.length() && Character.isDigit(text.charAt(at))) at++;
+            if (at == start) throw new IllegalArgumentException("expected a JSON value");
+            return Long.parseLong(text.substring(start, at));
+        }
+
+        private Object literal(String word, Object value) {
+            if (!text.startsWith(word, at)) throw new IllegalArgumentException("expected " + word);
+            at += word.length();
+            return value;
+        }
+
+        private char peek() {
+            if (at >= text.length()) throw new IllegalArgumentException("truncated JSON");
+            return text.charAt(at);
+        }
+
+        private void expect(char expected) {
+            if (peek() != expected) throw new IllegalArgumentException("expected `" + expected + "`");
+            at++;
+        }
+
+        private void skip() {
+            while (at < text.length() && Character.isWhitespace(text.charAt(at))) at++;
         }
     }
 
-    private static final class Cursor {
-        private final ByteBuffer bytes;
-
-        Cursor(byte[] payload) {
-            this.bytes = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN);
+    // One JSON string, escaped. JUnit's output goes through here, so control
+    // characters are escaped rather than passed through: a raw newline in a
+    // string is what turns a report into a decode error on the far side.
+    private static String quote(String value) {
+        var out = new StringBuilder(value.length() + 2).append('"');
+        for (int index = 0; index < value.length(); index++) {
+            char c = value.charAt(index);
+            switch (c) {
+                case '"' -> out.append("\\\"");
+                case '\\' -> out.append("\\\\");
+                case '\b' -> out.append("\\b");
+                case '\f' -> out.append("\\f");
+                case '\n' -> out.append("\\n");
+                case '\r' -> out.append("\\r");
+                case '\t' -> out.append("\\t");
+                default -> {
+                    if (c < 0x20) out.append(String.format("\\u%04x", (int) c));
+                    else out.append(c);
+                }
+            }
         }
-
-        int tag() {
-            require(1);
-            return bytes.get() & 0xff;
-        }
-
-        int u32() {
-            require(4);
-            int value = bytes.getInt();
-            if (value < 0) throw new IllegalArgumentException("u32 exceeds Java protocol limit");
-            return value;
-        }
-
-        long u64() {
-            require(8);
-            long value = bytes.getLong();
-            if (value < 0) throw new IllegalArgumentException("u64 exceeds Java protocol limit");
-            return value;
-        }
-
-        byte[] bytes(int count) {
-            require(count);
-            byte[] value = new byte[count];
-            bytes.get(value);
-            return value;
-        }
-
-        String string() {
-            int count = u32();
-            return new String(bytes(count), StandardCharsets.UTF_8);
-        }
-
-        List<String> strings() {
-            int count = u32();
-            var values = new ArrayList<String>(count);
-            for (int index = 0; index < count; index++) values.add(string());
-            return List.copyOf(values);
-        }
-
-        void finish() {
-            if (bytes.hasRemaining()) throw new IllegalArgumentException("trailing request bytes");
-        }
-
-        private void require(int count) {
-            if (count < 0 || bytes.remaining() < count) throw new IllegalArgumentException("truncated request");
-        }
-    }
-
-    private static final class Wire {
-        private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-
-        void tag(int value) { bytes.write(value); }
-        void bool(boolean value) { tag(value ? 1 : 0); }
-        void bytes(byte[] value) { bytes.writeBytes(value); }
-        void u32(long value) { bytes.writeBytes(ByteBuffer.allocate(4).putInt((int) value).array()); }
-        void u64(long value) { bytes.writeBytes(ByteBuffer.allocate(8).putLong(value).array()); }
-        void string(String value) {
-            byte[] encoded = value.getBytes(StandardCharsets.UTF_8);
-            u32(encoded.length);
-            bytes(encoded);
-        }
-        void strings(List<String> values) {
-            u32(values.size());
-            for (String value : values) string(value);
-        }
-        byte[] done() { return bytes.toByteArray(); }
+        return out.append('"').toString();
     }
 }

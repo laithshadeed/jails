@@ -16,22 +16,13 @@
 
 use super::*;
 
-/// Split `Class#method` into its two halves. Anything with no `#` is all
-/// class.
-pub(super) fn split_method(filter: &str) -> (&str, Option<&str>) {
-    match filter.split_once('#') {
-        Some((class, method)) => (class, Some(method)),
-        None => (filter, None),
-    }
-}
-
 /// `Payout` -> `PayoutTest`, `Payout#settles` -> `PayoutTest#settles`.
 ///
 /// The suffix belongs to the class alone. Appending it to the whole filter
 /// would produce `Payout#settlesTest`, a method nothing declares, and Surefire
 /// would fail the build for a filter jails itself had corrupted.
 pub(super) fn expand_filter(filter: &str) -> String {
-    let (class, method) = split_method(filter);
+    let (class, method) = crate::testing::split_selector(filter);
     let expanded = if class.ends_with("Test")
         || class.ends_with("Tests")
         || class.ends_with("IT")

@@ -1,14 +1,13 @@
-//! Rust client and process lifecycle for testd v2.
+//! Rust client and process lifecycle for the resident test daemon.
+//!
+//! The daemon reports what it observed; this file turns that into the one
+//! [`TestReport`] every engine answers with. Nothing below the socket knows
+//! that vocabulary, and nothing above it knows the frames.
 
 use crate::launcher;
 use crate::model::Project;
 use crate::process::CommandSpec;
-use crate::testing::TestReportV1;
-use crate::testing::testd::{
-    OutputEntryV1, OutputPath, OutputSnapshotV1, RequestId, SecretBytes, TESTD_V2_MAX_PAYLOAD,
-    TESTD_V2_PROTOCOL_MAX, TESTD_V2_PROTOCOL_MIN, TestIsolation, TestdRequestV2, TestdResponseV2,
-    decode_frame, encode_frame,
-};
+use crate::testing::{TestCaseResult, TestEngine, TestReport, TestScope};
 use jails_support::Result;
 use jails_support::codec::{DIGEST_BYTES, domain_hash, hex, sha256, unhex};
 use jails_support::identity::ObjectId;
@@ -16,6 +15,12 @@ use std::io::{ErrorKind, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use super::protocol::{
+    DaemonRun, OutputEntry, OutputPath, OutputSnapshot, Request, RequestId, Response, SecretBytes,
+    TESTD_MAX_PAYLOAD, TESTD_PROTOCOL_MAX, TESTD_PROTOCOL_MIN, TestIsolation, declared_length,
+    decode_frame, encode_frame,
+};
 
 const IDLE_SECONDS: u64 = 600;
 const START_TIMEOUT: Duration = Duration::from_secs(90);
@@ -44,9 +49,9 @@ impl Client {
         Ok(Self {
             root,
             project: project_id,
-            socket: run.join("testd-v2.sock"),
-            meta: run.join("testd-v2.meta"),
-            source: run.join("testd-v2.java"),
+            socket: run.join("testd.sock"),
+            meta: run.join("testd.meta"),
+            source: run.join("testd.java"),
         })
     }
 
@@ -56,14 +61,11 @@ impl Client {
 
     pub(super) fn status(&self) -> Result<()> {
         match self.metadata().and_then(|meta| {
-            self.exchange(
-                &meta,
-                TestdRequestV2::Status {
-                    request_id: request_id()?,
-                    project: self.project,
-                    cookie: meta.cookie,
-                },
-            )
+            self.exchange(Request::Status {
+                request_id: request_id()?,
+                project: self.project,
+                cookie: meta.cookie,
+            })
         }) {
             Ok(_) => println!("testd: running ({})", self.socket.display()),
             Err(_) => println!("testd: not running"),
@@ -75,14 +77,11 @@ impl Client {
         let stopped = self
             .metadata()
             .and_then(|meta| {
-                self.exchange(
-                    &meta,
-                    TestdRequestV2::Stop {
-                        request_id: request_id()?,
-                        project: self.project,
-                        cookie: meta.cookie,
-                    },
-                )
+                self.exchange(Request::Stop {
+                    request_id: request_id()?,
+                    project: self.project,
+                    cookie: meta.cookie,
+                })
             })
             .is_ok();
         self.remove_runtime_files();
@@ -94,14 +93,11 @@ impl Client {
         if let Ok(meta) = self.metadata()
             && let Ok(id) = request_id()
         {
-            let _ = self.exchange(
-                &meta,
-                TestdRequestV2::Stop {
-                    request_id: id,
-                    project: self.project,
-                    cookie: meta.cookie,
-                },
-            );
+            let _ = self.exchange(Request::Stop {
+                request_id: id,
+                project: self.project,
+                cookie: meta.cookie,
+            });
         }
         self.remove_runtime_files();
     }
@@ -130,40 +126,40 @@ impl Client {
         selectors: &[String],
         epoch: u64,
         timeout: Option<Duration>,
-    ) -> Result<TestReportV1> {
+    ) -> Result<TestReport> {
         let meta = self.metadata()?;
         let requested = selectors
             .iter()
             .map(|selector| crate::testing::TestSelector::parse(selector))
             .collect::<Result<Vec<_>>>()?;
         let run_id = request_id()?;
-        let request = TestdRequestV2::Run {
+        let request = Request::Run {
             request_id: run_id,
             project: self.project,
             cookie: meta.cookie,
             epoch,
-            selectors: requested,
+            selectors: requested.clone(),
             classpath: classpath_id(classpath),
             outputs: output_snapshot(&self.root, classpath)?,
             isolation: TestIsolation::Isolated,
         };
         let responses = match timeout {
             Some(timeout) => self.exchange_timed_run(&meta, request, run_id, timeout)?,
-            None => self.exchange(&meta, request)?,
+            None => self.exchange(request)?,
         };
         for response in responses {
             match response {
-                TestdResponseV2::Completed { result, .. } if result.epoch == epoch => {
-                    return Ok(result);
+                Response::Completed { result, .. } if result.epoch == epoch => {
+                    return Ok(report_from(result, requested));
                 }
-                TestdResponseV2::Completed { result, .. } => {
+                Response::Completed { result, .. } => {
                     return Err(format!(
                         "testd returned stale epoch {} while {epoch} is active\n       fix: retry the run against the current daemon",
                         result.epoch
                     )
                     .into());
                 }
-                TestdResponseV2::Refused { diagnostic, .. } => {
+                Response::Refused { diagnostic, .. } => {
                     return Err(format!(
                         "testd refused [{}]: {}\n       fix: {}",
                         diagnostic.code,
@@ -183,21 +179,18 @@ impl Client {
 
     fn hello(&self, meta: &Metadata) -> Result<()> {
         let request_id = request_id()?;
-        let responses = self.exchange(
-            meta,
-            TestdRequestV2::Hello {
-                request_id,
-                protocol_min: TESTD_V2_PROTOCOL_MIN,
-                protocol_max: TESTD_V2_PROTOCOL_MAX,
-                project: self.project,
-                cookie: meta.cookie,
-            },
-        )?;
+        let responses = self.exchange(Request::Hello {
+            request_id,
+            protocol_min: TESTD_PROTOCOL_MIN,
+            protocol_max: TESTD_PROTOCOL_MAX,
+            project: self.project,
+            cookie: meta.cookie,
+        })?;
         match responses.as_slice() {
-            [TestdResponseV2::Hello {
+            [Response::Hello {
                 request_id: returned,
                 protocol,
-            }] if *returned == request_id && *protocol == TESTD_V2_PROTOCOL_MAX => Ok(()),
+            }] if *returned == request_id && *protocol == TESTD_PROTOCOL_MAX => Ok(()),
             _ => Err("testd handshake returned an incompatible response\n       fix: restart the daemon with this jails version".into()),
         }
     }
@@ -253,7 +246,7 @@ impl Client {
                 }
                 self.remove_runtime_files();
                 return Err(format!(
-                    "testd exited with {status} before its v2 handshake\n{}       fix: choose `--engine build`, or inspect the daemon diagnostic above",
+                    "testd exited with {status} before its handshake\n{}       fix: choose `--engine build`, or inspect the daemon diagnostic above",
                     indent(&stderr)
                 )
                 .into());
@@ -262,44 +255,29 @@ impl Client {
         }
         let _ = child.kill();
         self.remove_runtime_files();
-        Err("testd did not complete its v2 handshake in time\n       fix: choose `--engine build` and inspect daemon startup".into())
+        Err("testd did not complete its handshake in time\n       fix: choose `--engine build` and inspect daemon startup".into())
     }
 
-    fn exchange(&self, _meta: &Metadata, request: TestdRequestV2) -> Result<Vec<TestdResponseV2>> {
-        let expected_id = match &request {
-            TestdRequestV2::Hello { request_id, .. }
-            | TestdRequestV2::Run { request_id, .. }
-            | TestdRequestV2::Status { request_id, .. }
-            | TestdRequestV2::Cancel { request_id, .. }
-            | TestdRequestV2::Stop { request_id, .. } => *request_id,
-        };
-        let run_request = matches!(&request, TestdRequestV2::Run { .. });
+    fn exchange(&self, request: Request) -> Result<Vec<Response>> {
+        let expected_id = request.request_id();
+        let run_request = matches!(&request, Request::Run { .. });
         let mut stream = UnixStream::connect(&self.socket)
             .map_err(|error| format!("testd: not running ({error})"))?;
         stream.set_read_timeout(Some(START_TIMEOUT)).ok();
         stream
             .write_all(&encode_frame(&request)?)
-            .map_err(|error| format!("testd could not send a v2 frame: {error}"))?;
+            .map_err(|error| format!("testd could not send a frame: {error}"))?;
         let mut responses = Vec::new();
         loop {
-            let response: TestdResponseV2 = read_frame(&mut stream)?;
-            let returned_id = match &response {
-                TestdResponseV2::Hello { request_id, .. }
-                | TestdResponseV2::Accepted { request_id, .. }
-                | TestdResponseV2::Event { request_id, .. }
-                | TestdResponseV2::Completed { request_id, .. }
-                | TestdResponseV2::Refused { request_id, .. } => *request_id,
-            };
-            if returned_id != expected_id {
+            let response: Response = read_frame(&mut stream)?;
+            if response.request_id() != expected_id {
                 return Err("testd returned a response for a different request\n       fix: restart the daemon before retrying"
                     .into());
             }
             let terminal = matches!(
                 response,
-                TestdResponseV2::Hello { .. }
-                    | TestdResponseV2::Completed { .. }
-                    | TestdResponseV2::Refused { .. }
-            ) || (!run_request && matches!(response, TestdResponseV2::Event { .. }));
+                Response::Hello { .. } | Response::Completed { .. } | Response::Refused { .. }
+            ) || (!run_request && matches!(response, Response::Event { .. }));
             responses.push(response);
             if terminal {
                 return Ok(responses);
@@ -310,15 +288,15 @@ impl Client {
     fn exchange_timed_run(
         &self,
         meta: &Metadata,
-        request: TestdRequestV2,
+        request: Request,
         expected_id: RequestId,
         timeout: Duration,
-    ) -> Result<Vec<TestdResponseV2>> {
+    ) -> Result<Vec<Response>> {
         let mut stream = UnixStream::connect(&self.socket)
             .map_err(|error| format!("testd: not running ({error})"))?;
         stream
             .write_all(&encode_frame(&request)?)
-            .map_err(|error| format!("testd could not send a v2 frame: {error}"))?;
+            .map_err(|error| format!("testd could not send a frame: {error}"))?;
         let deadline = Instant::now() + timeout;
         let mut responses = Vec::new();
         loop {
@@ -327,19 +305,12 @@ impl Client {
                 self.cancel_and_recycle(meta, timeout)?;
             }
             stream.set_read_timeout(Some(remaining)).ok();
-            let response: TestdResponseV2 = match read_frame_timed(&mut stream) {
+            let response: Response = match read_frame_timed(&mut stream) {
                 Ok(response) => response,
                 Err(TimedFrameError::Timeout) => self.cancel_and_recycle(meta, timeout)?,
                 Err(TimedFrameError::Failed(error)) => return Err(error.into()),
             };
-            let returned_id = match &response {
-                TestdResponseV2::Hello { request_id, .. }
-                | TestdResponseV2::Accepted { request_id, .. }
-                | TestdResponseV2::Event { request_id, .. }
-                | TestdResponseV2::Completed { request_id, .. }
-                | TestdResponseV2::Refused { request_id, .. } => *request_id,
-            };
-            if returned_id != expected_id {
+            if response.request_id() != expected_id {
                 return Err(
                     "testd returned a response for a different request\n       fix: restart the daemon before retrying"
                         .into(),
@@ -347,7 +318,7 @@ impl Client {
             }
             let terminal = matches!(
                 response,
-                TestdResponseV2::Completed { .. } | TestdResponseV2::Refused { .. }
+                Response::Completed { .. } | Response::Refused { .. }
             );
             responses.push(response);
             if terminal {
@@ -357,12 +328,11 @@ impl Client {
     }
 
     fn cancel_and_recycle<T>(&self, meta: &Metadata, timeout: Duration) -> Result<T> {
-        let cancel = TestdRequestV2::Cancel {
+        let _ = self.exchange(Request::Cancel {
             request_id: request_id()?,
             project: self.project,
             cookie: meta.cookie,
-        };
-        let _ = self.exchange(meta, cancel);
+        });
         self.stop_quietly();
         Err(format!(
             "warm test run exceeded {} second(s); the active request was cancelled and testd was recycled\n       fix: raise `--timeout`, narrow the selection, or remove the limit",
@@ -403,6 +373,41 @@ impl Client {
     }
 }
 
+/// The daemon's observation, decorated with what only the coordinator knows.
+///
+/// Which engine ran the cases, what was asked for and which scope this was --
+/// three facts the daemon has no way to establish and therefore never states.
+/// JUnit's own output rides on the first case, because that is where
+/// [`crate::reports::render`] prints it from.
+fn report_from(run: DaemonRun, requested: Vec<crate::testing::TestSelector>) -> TestReport {
+    let cases = run
+        .cases
+        .into_iter()
+        .enumerate()
+        .map(|(index, case)| TestCaseResult {
+            engine: TestEngine::TestdV2,
+            selector: case.selector,
+            outcome: case.outcome,
+            duration_us: case.duration_us,
+            stdout_summary: if index == 0 {
+                run.output.clone()
+            } else {
+                String::new()
+            },
+            stderr_summary: String::new(),
+            fallback_reason: None,
+        })
+        .collect();
+    TestReport {
+        epoch: run.epoch,
+        passed: run.passed,
+        scope: TestScope::Unit,
+        requested,
+        cases,
+        fallback_reasons: Vec::new(),
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Metadata {
     project: ObjectId,
@@ -415,9 +420,9 @@ struct Metadata {
 impl Metadata {
     fn render(&self) -> String {
         format!(
-            "schema=jails.testd-v2.meta.v1\nprotocol_min={}\nprotocol_max={}\nproject={}\nclasspath={}\npid={}\nstarted_ms={}\ncookie={}\n",
-            TESTD_V2_PROTOCOL_MIN,
-            TESTD_V2_PROTOCOL_MAX,
+            "schema=jails.testd.meta.v1\nprotocol_min={}\nprotocol_max={}\nproject={}\nclasspath={}\npid={}\nstarted_ms={}\ncookie={}\n",
+            TESTD_PROTOCOL_MIN,
+            TESTD_PROTOCOL_MAX,
             self.project,
             self.classpath,
             self.pid,
@@ -435,9 +440,9 @@ impl Metadata {
                         .into()
                 })
         };
-        if field("schema")? != "jails.testd-v2.meta.v1"
-            || field("protocol_min")? != TESTD_V2_PROTOCOL_MIN.to_string()
-            || field("protocol_max")? != TESTD_V2_PROTOCOL_MAX.to_string()
+        if field("schema")? != "jails.testd.meta.v1"
+            || field("protocol_min")? != TESTD_PROTOCOL_MIN.to_string()
+            || field("protocol_max")? != TESTD_PROTOCOL_MAX.to_string()
         {
             return Err("testd metadata uses an incompatible protocol\n       fix: restart the daemon with this jails version".into());
         }
@@ -455,21 +460,12 @@ impl Metadata {
     }
 }
 
-fn read_frame<T: jails_support::codec::Codec>(stream: &mut UnixStream) -> Result<T> {
+fn read_frame<T: serde::de::DeserializeOwned>(stream: &mut UnixStream) -> Result<T> {
     let mut header = [0u8; 4];
     stream
         .read_exact(&mut header)
         .map_err(|error| format!("testd reply header is truncated: {error}"))?;
-    let length = u32::from_be_bytes(header) as usize;
-    if length > TESTD_V2_MAX_PAYLOAD {
-        return Err(format!(
-            "testd reply exceeds the {TESTD_V2_MAX_PAYLOAD}-byte limit\n       fix: restart the daemon with a matching jails version"
-        )
-        .into());
-    }
-    let mut frame = Vec::with_capacity(4 + length);
-    frame.extend_from_slice(&header);
-    frame.resize(4 + length, 0);
+    let mut frame = frame_buffer(&header)?;
     stream
         .read_exact(&mut frame[4..])
         .map_err(|error| format!("testd reply payload is truncated: {error}"))?;
@@ -481,22 +477,25 @@ enum TimedFrameError {
     Failed(String),
 }
 
-fn read_frame_timed<T: jails_support::codec::Codec>(
+fn read_frame_timed<T: serde::de::DeserializeOwned>(
     stream: &mut UnixStream,
 ) -> std::result::Result<T, TimedFrameError> {
     let mut header = [0u8; 4];
     stream.read_exact(&mut header).map_err(timed_io_error)?;
-    let length = u32::from_be_bytes(header) as usize;
-    if length > TESTD_V2_MAX_PAYLOAD {
-        return Err(TimedFrameError::Failed(format!(
-            "testd reply exceeds the {TESTD_V2_MAX_PAYLOAD}-byte limit\n       fix: restart the daemon with a matching jails version"
-        )));
-    }
-    let mut frame = Vec::with_capacity(4 + length);
-    frame.extend_from_slice(&header);
-    frame.resize(4 + length, 0);
+    let mut frame =
+        frame_buffer(&header).map_err(|error| TimedFrameError::Failed(error.to_string()))?;
     stream.read_exact(&mut frame[4..]).map_err(timed_io_error)?;
     decode_frame(&frame).map_err(|error| TimedFrameError::Failed(error.to_string()))
+}
+
+/// A buffer sized by a length this process did not write, checked against the
+/// cap first so four bytes off the socket cannot ask for an 8 GiB allocation.
+fn frame_buffer(header: &[u8; 4]) -> Result<Vec<u8>> {
+    let length = declared_length(header)?;
+    let mut frame = Vec::with_capacity(4 + length.min(TESTD_MAX_PAYLOAD));
+    frame.extend_from_slice(header);
+    frame.resize(4 + length, 0);
+    Ok(frame)
 }
 
 fn timed_io_error(error: std::io::Error) -> TimedFrameError {
@@ -517,7 +516,7 @@ fn classpath_id(classpath: &launcher::TestClasspath) -> ObjectId {
     ObjectId::from_bytes(domain_hash("JAILS-TESTD-CLASSPATH-2", &bytes))
 }
 
-fn output_snapshot(root: &Path, classpath: &launcher::TestClasspath) -> Result<OutputSnapshotV1> {
+fn output_snapshot(root: &Path, classpath: &launcher::TestClasspath) -> Result<OutputSnapshot> {
     let mut entries = Vec::new();
     for output in &classpath.outputs {
         let mut stack = vec![output.clone()];
@@ -542,22 +541,21 @@ fn output_snapshot(root: &Path, classpath: &launcher::TestClasspath) -> Result<O
                 let metadata = child
                     .metadata()
                     .map_err(|error| format!("failed to inspect {}: {error}", path.display()))?;
-                entries.push(OutputEntryV1 {
+                entries.push(OutputEntry {
                     path: OutputPath::parse(&relative.to_string_lossy().replace('\\', "/"))?,
-                    size: metadata.len(),
                     modified_ns: metadata
                         .modified()
                         .ok()
                         .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
                         .map(|duration| u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX))
                         .unwrap_or(0),
-                    digest: ObjectId::from_bytes(sha256(&bytes)),
+                    digest: sha256(&bytes),
                 });
             }
         }
     }
     entries.sort_by(|left, right| left.path.cmp(&right.path));
-    let snapshot = OutputSnapshotV1 { entries };
+    let snapshot = OutputSnapshot { entries };
     snapshot.validate()?;
     Ok(snapshot)
 }
@@ -592,11 +590,11 @@ pub(super) fn rendered_daemon_source() -> String {
     ))
     .replace(
         "@JAILS_TESTD_PROTOCOL_MIN@",
-        &TESTD_V2_PROTOCOL_MIN.to_string(),
+        &TESTD_PROTOCOL_MIN.to_string(),
     )
     .replace(
         "@JAILS_TESTD_PROTOCOL_MAX@",
-        &TESTD_V2_PROTOCOL_MAX.to_string(),
+        &TESTD_PROTOCOL_MAX.to_string(),
     )
 }
 
@@ -609,7 +607,9 @@ fn indent(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::protocol::DaemonCase;
     use super::*;
+    use crate::testing::{TestOutcome, TestSelector};
 
     #[test]
     fn metadata_round_trips_without_exposing_cookie_in_debug() {
@@ -626,18 +626,45 @@ mod tests {
 
     #[test]
     fn socket_and_metadata_live_under_the_project_run_directory() {
-        let root = jails_support::scratch::ScratchDir::in_temp("testd-v2-path").unwrap();
+        let root = jails_support::scratch::ScratchDir::in_temp("testd-path").unwrap();
         std::fs::create_dir_all(root.path().join("project")).unwrap();
         let project = Project::inspect(&root.path().join("project")).unwrap();
         let client = Client::for_project(&project).unwrap();
-        assert_eq!(
-            client.socket,
-            project.root().join(".jails/run/testd-v2.sock")
+        assert_eq!(client.socket, project.root().join(".jails/run/testd.sock"));
+        assert_eq!(client.meta, project.root().join(".jails/run/testd.meta"));
+        assert_eq!(client.source, project.root().join(".jails/run/testd.java"));
+    }
+
+    /// The daemon states three facts per case; the engine, the scope and the
+    /// requested selection are the coordinator's, and JUnit's output goes
+    /// where the renderer prints it from.
+    #[test]
+    fn a_daemon_run_becomes_the_one_report_shape() {
+        let selector = TestSelector::parse("a.BTest#works").unwrap();
+        let report = report_from(
+            DaemonRun {
+                epoch: 7,
+                passed: false,
+                output: "junit said this".into(),
+                cases: vec![
+                    DaemonCase {
+                        selector: selector.clone(),
+                        outcome: TestOutcome::Failed,
+                        duration_us: 5,
+                    },
+                    DaemonCase {
+                        selector: TestSelector::parse("a.BTest#other").unwrap(),
+                        outcome: TestOutcome::Passed,
+                        duration_us: 6,
+                    },
+                ],
+            },
+            vec![selector],
         );
-        assert_eq!(client.meta, project.root().join(".jails/run/testd-v2.meta"));
-        assert_eq!(
-            client.source,
-            project.root().join(".jails/run/testd-v2.java")
-        );
+        assert!(!report.succeeded());
+        assert_eq!(report.epoch, 7);
+        assert_eq!(report.cases[0].engine, TestEngine::TestdV2);
+        assert_eq!(report.cases[0].stdout_summary, "junit said this");
+        assert!(report.cases[1].stdout_summary.is_empty());
     }
 }

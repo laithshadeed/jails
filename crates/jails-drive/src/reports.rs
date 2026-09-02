@@ -27,8 +27,7 @@
 //! tool untrustworthy.
 
 use crate::testing::{
-    SelectionReason, TestCaseResultV1, TestCompileOwner, TestEngine, TestOutcome, TestReportV1,
-    TestScope, TestSelector,
+    TestCaseResult, TestEngine, TestOutcome, TestReport, TestScope, TestSelector,
 };
 use jails_support::Result;
 use std::path::{Path, PathBuf};
@@ -185,21 +184,11 @@ pub(crate) fn normalized(
     requested: &[String],
     passed: bool,
     fallback_reason: Option<String>,
-) -> Result<TestReportV1> {
+) -> Result<TestReport> {
     let requested = requested
         .iter()
         .map(|selector| TestSelector::parse(selector))
         .collect::<Result<Vec<_>>>()?;
-    let compile_owner = match engine {
-        TestEngine::Maven => TestCompileOwner::Maven,
-        TestEngine::Gradle => TestCompileOwner::Gradle,
-        TestEngine::TestdV2 => TestCompileOwner::None,
-    };
-    let selection_reasons = if requested.is_empty() {
-        vec![SelectionReason::Scope(scope)]
-    } else {
-        vec![SelectionReason::Requested]
-    };
     let results = cases(root)
         .into_iter()
         .filter(|case| {
@@ -215,21 +204,18 @@ pub(crate) fn normalized(
             } else {
                 TestOutcome::Passed
             };
-            Ok(TestCaseResultV1 {
+            Ok(TestCaseResult {
                 engine,
-                compile_owner,
                 selector: case.canonical_selector()?,
-                source: None,
                 outcome,
                 duration_us: (case.seconds.max(0.0) * 1_000_000.0) as u64,
                 stdout_summary: String::new(),
                 stderr_summary: String::new(),
-                selection_reasons: selection_reasons.clone(),
                 fallback_reason: fallback_reason.clone(),
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    Ok(TestReportV1 {
+    Ok(TestReport {
         epoch: 0,
         passed,
         scope,
@@ -240,12 +226,7 @@ pub(crate) fn normalized(
 }
 
 fn matches(case: &Case, selector: &TestSelector) -> bool {
-    let (class, method) = selector
-        .as_str()
-        .split_once('#')
-        .map_or((selector.as_str(), None), |(class, method)| {
-            (class, Some(method))
-        });
+    let (class, method) = selector.split();
     (class == case.class || class == short_class(&case.class))
         && method.is_none_or(|method| method == case.method)
 }
@@ -253,14 +234,14 @@ fn matches(case: &Case, selector: &TestSelector) -> bool {
 pub(crate) fn merge(
     scope: TestScope,
     requested: &[String],
-    reports: Vec<TestReportV1>,
-) -> Result<TestReportV1> {
+    reports: Vec<TestReport>,
+) -> Result<TestReport> {
     let requested = requested
         .iter()
         .map(|selector| TestSelector::parse(selector))
         .collect::<Result<Vec<_>>>()?;
     let epoch = reports.iter().map(|report| report.epoch).max().unwrap_or(0);
-    let passed = reports.iter().all(TestReportV1::succeeded);
+    let passed = reports.iter().all(TestReport::succeeded);
     let mut cases = reports
         .iter()
         .flat_map(|report| report.cases.iter().cloned())
@@ -268,7 +249,7 @@ pub(crate) fn merge(
     cases.sort_by(|left, right| {
         left.selector
             .cmp(&right.selector)
-            .then_with(|| engine_name(left.engine).cmp(engine_name(right.engine)))
+            .then_with(|| left.engine.name().cmp(right.engine.name()))
     });
     let mut fallback_reasons = reports
         .into_iter()
@@ -276,7 +257,7 @@ pub(crate) fn merge(
         .collect::<Vec<_>>();
     fallback_reasons.sort();
     fallback_reasons.dedup();
-    Ok(TestReportV1 {
+    Ok(TestReport {
         epoch,
         passed,
         scope,
@@ -286,11 +267,7 @@ pub(crate) fn merge(
     })
 }
 
-pub(crate) fn render(
-    report: &TestReportV1,
-    json: bool,
-    slowest_count: Option<usize>,
-) -> Result<()> {
+pub(crate) fn render(report: &TestReport, json: bool, slowest_count: Option<usize>) -> Result<()> {
     if json {
         println!("{}", json_line(report));
     } else {
@@ -313,14 +290,14 @@ pub(crate) fn render(
     }
 }
 
-pub(crate) fn json_line(report: &TestReportV1) -> String {
+pub(crate) fn json_line(report: &TestReport) -> String {
     let cases = report.cases.iter().map(|case| {
         format!(
             "{{\"engine\":{},\"compile_owner\":{},\"selector\":{},\"outcome\":{},\"duration_us\":{},\"stdout_summary\":{},\"stderr_summary\":{},\"fallback_reason\":{}}}",
-            crate::json::string(engine_name(case.engine)),
-            crate::json::string(compile_owner_name(case.compile_owner)),
+            crate::json::string(case.engine.name()),
+            crate::json::string(case.engine.compile_owner_name()),
             crate::json::string(case.selector.as_str()),
-            crate::json::string(outcome_name(case.outcome)),
+            crate::json::string(case.outcome.name()),
             case.duration_us,
             crate::json::string(&case.stdout_summary),
             crate::json::string(&case.stderr_summary),
@@ -342,7 +319,7 @@ pub(crate) fn json_line(report: &TestReportV1) -> String {
     format!(
         "{{\"schema_version\":1,\"epoch\":{},\"scope\":{},\"passed\":{},\"requested\":[{}],\"fallback_reasons\":[{}],\"cases\":[{}]}}",
         report.epoch,
-        crate::json::string(scope_name(report.scope)),
+        crate::json::string(report.scope.name()),
         report.succeeded(),
         requested,
         fallbacks,
@@ -350,7 +327,7 @@ pub(crate) fn json_line(report: &TestReportV1) -> String {
     )
 }
 
-fn report_slowest_normalized(report: &TestReportV1, count: usize) {
+fn report_slowest_normalized(report: &TestReport, count: usize) {
     let mut cases = report.cases.iter().collect::<Vec<_>>();
     cases.sort_by_key(|case| std::cmp::Reverse(case.duration_us));
     cases.truncate(count);
@@ -362,40 +339,6 @@ fn report_slowest_normalized(report: &TestReportV1, count: usize) {
             case.duration_us as f64 / 1_000_000.0,
             case.selector
         );
-    }
-}
-
-fn engine_name(engine: TestEngine) -> &'static str {
-    match engine {
-        TestEngine::Maven => "maven",
-        TestEngine::Gradle => "gradle",
-        TestEngine::TestdV2 => "testd-v2",
-    }
-}
-
-fn compile_owner_name(owner: TestCompileOwner) -> &'static str {
-    match owner {
-        TestCompileOwner::Ide => "ide",
-        TestCompileOwner::Maven => "maven",
-        TestCompileOwner::Gradle => "gradle",
-        TestCompileOwner::None => "none",
-    }
-}
-
-fn outcome_name(outcome: TestOutcome) -> &'static str {
-    match outcome {
-        TestOutcome::Passed => "passed",
-        TestOutcome::Failed => "failed",
-        TestOutcome::Skipped => "skipped",
-        TestOutcome::Error => "error",
-    }
-}
-
-fn scope_name(scope: TestScope) -> &'static str {
-    match scope {
-        TestScope::Unit => "unit",
-        TestScope::Integration => "integration",
-        TestScope::All => "all",
     }
 }
 

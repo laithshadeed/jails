@@ -1,20 +1,41 @@
-//! Canonical test selection, execution, and result values.
+//! The one test-execution vocabulary: what was selected, how it ran, what
+//! came back.
 //!
-//! The coordinator, build-tool adapters, and resident test engine all exchange
-//! these values. Keeping selection and results here means an engine may change
-//! without changing which tests were requested or how their outcomes are
-//! reported.
+//! Three engines execute tests -- the build tool, JUnit's console launcher and
+//! the resident `testd` JVM -- and every one of them is asked for the same
+//! thing and answers in the same words. `TestPlan` is the decision made
+//! before anything runs; `TestReport` is what came back, whichever engine
+//! produced it.
+//!
+//! **Nothing here is a wire format.** These values are passed between modules
+//! in one process, so they carry no encoding at all. The daemon's socket is
+//! the one place a value leaves this process, and `testd::protocol` encodes
+//! what crosses it -- an encoding *of* this vocabulary, never a second copy of
+//! it. The words a machine reads (`--output json`, the daemon's frames) come
+//! from the `name` methods below, so a spelling has one owner.
 
 use jails_support::Result;
-use jails_support::codec::{Codec, Decoder, Encoder};
-use jails_support::codec::{decode_all, encode_all};
-use jails_support::identity::ProjectPath;
 use std::collections::BTreeSet;
 
-pub mod testd;
+/// Split `Class#method` into its two halves. Anything with no `#` is all
+/// class.
+///
+/// One owner, because three readers ask this question -- the filter a person
+/// typed, the qualifier that resolves a bare class name, and the matcher that
+/// pairs a report case with a requested selector -- and a fourth spelling of
+/// `split_once('#')` is how they drift apart.
+pub(crate) fn split_selector(text: &str) -> (&str, Option<&str>) {
+    match text.split_once('#') {
+        Some((class, method)) => (class, Some(method)),
+        None => (text, None),
+    }
+}
 
 /// A class or class-and-method selector accepted by every test engine.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(
+    Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
+#[serde(try_from = "String", into = "String")]
 pub(crate) struct TestSelector(String);
 
 impl TestSelector {
@@ -52,6 +73,11 @@ impl TestSelector {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// The class half, and the method half when one was named.
+    pub fn split(&self) -> (&str, Option<&str>) {
+        split_selector(&self.0)
+    }
 }
 
 impl std::fmt::Display for TestSelector {
@@ -60,45 +86,39 @@ impl std::fmt::Display for TestSelector {
     }
 }
 
-impl Codec for TestSelector {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.string(&self.0)
-    }
+impl TryFrom<String> for TestSelector {
+    type Error = jails_support::Failure;
 
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Self::parse(&decoder.string()?)
+    fn try_from(text: String) -> Result<Self> {
+        Self::parse(&text)
     }
 }
 
-macro_rules! closed_enum {
-    ($name:ident { $($variant:ident = $tag:literal),+ $(,)? }) => {
-        impl Codec for $name {
-            fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-                encoder.tag(match self { $(Self::$variant => $tag),+ });
-                Ok(())
-            }
-
-            fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-                match decoder.tag()? {
-                    $($tag => Ok(Self::$variant),)+
-                    other => Err(format!(
-                        "unknown {} tag {other}\n       fix: upgrade jails so both protocol peers use \
-                         a compatible version", stringify!($name)
-                    ).into()),
-                }
-            }
-        }
-    };
+impl From<TestSelector> for String {
+    fn from(selector: TestSelector) -> Self {
+        selector.0
+    }
 }
 
+/// Which tests a run is about, before any selector narrows it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TestScope {
     Unit,
     Integration,
     All,
 }
-closed_enum!(TestScope { Unit = 0, Integration = 1, All = 2 });
 
+impl TestScope {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Unit => "unit",
+            Self::Integration => "integration",
+            Self::All => "all",
+        }
+    }
+}
+
+/// Who is allowed to compile before the tests run.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TestCompilePolicy {
     Auto,
@@ -106,44 +126,59 @@ pub enum TestCompilePolicy {
     Build,
     None,
 }
-closed_enum!(TestCompilePolicy { Auto = 0, Ide = 1, Build = 2, None = 3 });
 
+/// Which engine the reader will accept.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TestEnginePolicy {
     Auto,
     Build,
     Warm,
 }
-closed_enum!(TestEnginePolicy { Auto = 0, Build = 1, Warm = 2 });
 
+/// The engine that actually executed a partition.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TestEngine {
     Maven,
     Gradle,
     TestdV2,
 }
-closed_enum!(TestEngine { Maven = 0, Gradle = 1, TestdV2 = 2 });
 
-/// Why a selector is present in a partition or result.
-#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
-#[codec(unknown_fix = "upgrade jails so both protocol \
-                 peers use a compatible version")]
+impl TestEngine {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Maven => "maven",
+            Self::Gradle => "gradle",
+            Self::TestdV2 => "testd-v2",
+        }
+    }
+
+    /// Who compiled the classes this engine ran.
+    ///
+    /// Derived rather than carried: the warm daemon never compiles, and each
+    /// build tool always compiles its own partition, so a stored field could
+    /// only ever disagree with the engine beside it.
+    pub(crate) fn compile_owner_name(self) -> &'static str {
+        match self {
+            Self::Maven => "maven",
+            Self::Gradle => "gradle",
+            Self::TestdV2 => "none",
+        }
+    }
+}
+
+/// Why a selector is present in a partition.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SelectionReason {
-    #[codec(tag = 0)]
+    /// The reader named it.
     Requested,
-    #[codec(tag = 1)]
+    /// It is in the requested scope.
     Scope(TestScope),
-    #[codec(tag = 2)]
-    Tag(String),
-    #[codec(tag = 3)]
-    Affected(ProjectPath),
-    #[codec(tag = 4)]
-    PreviousFailure,
-    #[codec(tag = 5)]
+    /// The plan widened past what was asked for, and this says why.
     Widened(String),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
+/// One engine and the selectors it owns.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TestPartition {
     pub engine: TestEngine,
     pub selectors: Vec<TestSelector>,
@@ -152,16 +187,15 @@ pub(crate) struct TestPartition {
 
 /// The complete, engine-independent decision made before any test runs.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct TestExecutionPlanV1 {
+pub(crate) struct TestPlan {
     pub scope: TestScope,
     pub requested: Vec<TestSelector>,
     pub compile: TestCompilePolicy,
     pub engine: TestEnginePolicy,
-    pub epoch: u64,
     pub partitions: Vec<TestPartition>,
 }
 
-impl TestExecutionPlanV1 {
+impl TestPlan {
     pub fn validate(&self) -> Result<()> {
         unique_selectors("requested test", &self.requested)?;
         let mut partitioned = BTreeSet::new();
@@ -217,106 +251,55 @@ impl TestExecutionPlanV1 {
     }
 }
 
-impl Codec for TestExecutionPlanV1 {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        self.validate()?;
-        self.scope.encode(encoder)?;
-        encoder.seq(self.requested.len(), &self.requested)?;
-        self.compile.encode(encoder)?;
-        self.engine.encode(encoder)?;
-        encoder.u64(self.epoch);
-        encoder.seq(self.partitions.len(), &self.partitions)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        let plan = Self {
-            scope: TestScope::decode(decoder)?,
-            requested: decoder.seq()?,
-            compile: TestCompilePolicy::decode(decoder)?,
-            engine: TestEnginePolicy::decode(decoder)?,
-            epoch: decoder.u64()?,
-            partitions: decoder.seq()?,
-        };
-        plan.validate()?;
-        Ok(plan)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum TestCompileOwner {
-    Ide,
-    Maven,
-    Gradle,
-    None,
-}
-closed_enum!(TestCompileOwner { Ide = 0, Maven = 1, Gradle = 2, None = 3 });
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// What happened to one test.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum TestOutcome {
     Passed,
     Failed,
     Skipped,
     Error,
 }
-closed_enum!(TestOutcome { Passed = 0, Failed = 1, Skipped = 2, Error = 3 });
 
-#[derive(Clone, Debug, Eq, PartialEq, jails_codec_derive::Codec)]
-pub(crate) struct TestCaseResultV1 {
+impl TestOutcome {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Passed => "passed",
+            Self::Failed => "failed",
+            Self::Skipped => "skipped",
+            Self::Error => "error",
+        }
+    }
+}
+
+/// One executed test, with the engine that ran it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TestCaseResult {
     pub engine: TestEngine,
-    pub compile_owner: TestCompileOwner,
     pub selector: TestSelector,
-    pub source: Option<ProjectPath>,
     pub outcome: TestOutcome,
     pub duration_us: u64,
     pub stdout_summary: String,
     pub stderr_summary: String,
-    pub selection_reasons: Vec<SelectionReason>,
     pub fallback_reason: Option<String>,
 }
 
 /// One ordered report regardless of how many engines executed its cases.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct TestReportV1 {
+pub(crate) struct TestReport {
     pub epoch: u64,
     /// The execution owner's verdict. A build can fail before producing a
     /// case, so this cannot be reconstructed from `cases`.
     pub passed: bool,
     pub scope: TestScope,
     pub requested: Vec<TestSelector>,
-    pub cases: Vec<TestCaseResultV1>,
+    pub cases: Vec<TestCaseResult>,
     pub fallback_reasons: Vec<String>,
 }
 
-impl TestReportV1 {
+impl TestReport {
     pub fn succeeded(&self) -> bool {
         self.passed
-    }
-}
-
-impl Codec for TestReportV1 {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        unique_selectors("requested test", &self.requested)?;
-        encoder.u64(self.epoch);
-        encoder.bool(self.passed);
-        self.scope.encode(encoder)?;
-        encoder.seq(self.requested.len(), &self.requested)?;
-        encoder.seq(self.cases.len(), &self.cases)?;
-        encode_all(encoder, &self.fallback_reasons, |reason, encoder| {
-            encoder.string(reason)
-        })
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        let report = Self {
-            epoch: decoder.u64()?,
-            passed: decoder.bool()?,
-            scope: TestScope::decode(decoder)?,
-            requested: decoder.seq()?,
-            cases: decoder.seq()?,
-            fallback_reasons: decode_all(decoder, |decoder| decoder.string())?,
-        };
-        unique_selectors("requested test", &report.requested)?;
-        Ok(report)
     }
 }
 
@@ -338,87 +321,52 @@ fn unique_selectors(what: &str, selectors: &[TestSelector]) -> Result<()> {
 mod tests {
     use super::*;
 
-    fn round_trip<T: Codec + Eq + std::fmt::Debug>(value: &T) {
-        let mut encoder = Encoder::new();
-        value.encode(&mut encoder).unwrap();
-        let bytes = encoder.finish().unwrap();
-        let mut decoder = Decoder::new(&bytes).unwrap();
-        let decoded = T::decode(&mut decoder).unwrap();
-        decoder.finish().unwrap();
-        assert_eq!(&decoded, value);
-    }
-
     fn selector(text: &str) -> TestSelector {
         TestSelector::parse(text).unwrap()
     }
 
     #[test]
-    fn selectors_are_validated_at_both_boundaries() {
+    fn selectors_are_validated_and_split_once() {
         for invalid in ["", "   ", "Type#", "#method", "Type#one#two", "Type\n"] {
             assert!(
                 TestSelector::parse(invalid).is_err(),
                 "accepted {invalid:?}"
             );
         }
-        assert_eq!(selector("ExampleTest#works").as_str(), "ExampleTest#works");
+        let parsed = selector("ExampleTest#works");
+        assert_eq!(parsed.as_str(), "ExampleTest#works");
+        assert_eq!(parsed.split(), ("ExampleTest", Some("works")));
+        assert_eq!(selector("ExampleTest").split(), ("ExampleTest", None));
     }
 
+    /// A selector arriving from the daemon is parsed, not trusted: the same
+    /// constructor the CLI uses is the only way to make one.
     #[test]
-    fn execution_plan_round_trips() {
-        let selected = selector("ExampleTest#works");
-        round_trip(&TestExecutionPlanV1 {
-            scope: TestScope::Unit,
-            requested: vec![selected.clone()],
-            compile: TestCompilePolicy::Auto,
-            engine: TestEnginePolicy::Auto,
-            epoch: 42,
-            partitions: vec![TestPartition {
-                engine: TestEngine::TestdV2,
-                selectors: vec![selected],
-                reasons: vec![SelectionReason::Requested],
-            }],
-        });
-    }
-
-    #[test]
-    fn report_round_trips_and_derives_success() {
-        let report = TestReportV1 {
-            epoch: 42,
-            passed: true,
-            scope: TestScope::Unit,
-            requested: vec![selector("ExampleTest#works")],
-            cases: vec![TestCaseResultV1 {
-                engine: TestEngine::TestdV2,
-                compile_owner: TestCompileOwner::Ide,
-                selector: selector("ExampleTest#works"),
-                source: Some(ProjectPath::parse("src/test/java/ExampleTest.java").unwrap()),
-                outcome: TestOutcome::Passed,
-                duration_us: 8_000,
-                stdout_summary: String::new(),
-                stderr_summary: String::new(),
-                selection_reasons: vec![SelectionReason::Requested],
-                fallback_reason: None,
-            }],
-            fallback_reasons: Vec::new(),
-        };
-        assert!(report.succeeded());
-        round_trip(&report);
+    fn a_selector_on_the_wire_goes_through_its_constructor() {
+        assert_eq!(
+            serde_json::from_str::<TestSelector>("\"a.B#c\"").unwrap(),
+            selector("a.B#c")
+        );
+        assert!(serde_json::from_str::<TestSelector>("\"a#b#c\"").is_err());
+        assert_eq!(
+            serde_json::to_string(&selector("a.B#c")).unwrap(),
+            "\"a.B#c\""
+        );
     }
 
     #[test]
     fn plan_refuses_dropped_and_duplicated_selectors() {
         let selected = selector("ExampleTest#works");
-        let omitted = TestExecutionPlanV1 {
+        let omitted = TestPlan {
             scope: TestScope::Unit,
             requested: vec![selected.clone()],
             compile: TestCompilePolicy::None,
             engine: TestEnginePolicy::Warm,
-            epoch: 1,
             partitions: Vec::new(),
         };
         assert!(omitted.validate().is_err());
 
-        let duplicated = TestExecutionPlanV1 {
+        let duplicated = TestPlan {
             partitions: vec![
                 TestPartition {
                     engine: TestEngine::Maven,
@@ -438,11 +386,14 @@ mod tests {
         assert!(duplicated.validate().is_err());
     }
 
+    /// The machine-readable spellings have one owner, and the warm engine
+    /// never owns compilation.
     #[test]
-    fn closed_enums_refuse_unknown_tags() {
-        let bytes = [255];
-        let mut decoder = Decoder::new(&bytes).unwrap();
-        let error = TestEngine::decode(&mut decoder).unwrap_err();
-        assert!(error.to_string().contains("unknown TestEngine tag 255"));
+    fn every_engine_names_itself_and_its_compile_owner() {
+        assert_eq!(TestEngine::TestdV2.name(), "testd-v2");
+        assert_eq!(TestEngine::TestdV2.compile_owner_name(), "none");
+        assert_eq!(TestEngine::Maven.compile_owner_name(), "maven");
+        assert_eq!(TestOutcome::Error.name(), "error");
+        assert_eq!(TestScope::All.name(), "all");
     }
 }

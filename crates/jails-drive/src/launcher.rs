@@ -188,10 +188,7 @@ pub(crate) fn is_fresh(cache: &Path, source: &Path) -> bool {
 /// package is read off the file rather than guessed, for the same reason
 /// `base_package` reads it rather than being configured.
 pub(crate) fn fully_qualified(root: &Path, filter: &str) -> Option<String> {
-    let (class, method) = match filter.split_once('#') {
-        Some((class, method)) => (class, Some(method)),
-        None => (filter, None),
-    };
+    let (class, method) = crate::testing::split_selector(filter);
     if class.contains('.') {
         return Some(filter.to_string());
     }

@@ -984,7 +984,14 @@ pub(crate) const WIRE_RS: &str = "jails-support/src/codec/wire.rs";
 /// The next move on this row is either a `#[codec(validate)]` that calls the
 /// constructor after decoding, or accepting the number, which is what "target
 /// withdrawn" already says.
-pub(crate) const HAND_WRITTEN_CODECS: usize = 17;
+///
+/// 17 -> 7: `docs/60-abstraction.md` S60.6 made the test-execution wire one
+/// vocabulary, so the ten hand-written codecs it carried -- the selector, the
+/// six closed enums behind `closed_enum!`, the execution plan, the report and
+/// the daemon's two frame enums -- are gone rather than derived. The values
+/// that cross the daemon socket are `serde`'s now; the values that never leave
+/// the process carry no encoding at all.
+pub(crate) const HAND_WRITTEN_CODECS: usize = 7;
 
 /// The other three files a gate here names. Paths for the same reason: a
 /// second `doctor.rs` or `codemod.rs` anywhere in the workspace would silently
