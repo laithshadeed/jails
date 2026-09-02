@@ -4,9 +4,9 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-# `Capability` is a `clap::ValueEnum` so `clap_complete` can emit a static
-# completion list for it; the derive lives with the enum.
-clap.workspace = true
+# The closed vocabularies live in `jails-model`; `suffix` matches on the
+# generator kind, which is one of them.
+jails-model.workspace = true
 jails-support.workspace = true
 
 [lints]

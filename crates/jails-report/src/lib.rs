@@ -23,10 +23,9 @@ pub mod why_subject;
 // `crate::…` wherever it ships. Each symbol is taken from the crate that owns
 // it.
 pub(crate) use jails_java::{java, template};
-pub(crate) use jails_model::CapabilityKind;
+pub(crate) use jails_model::{ArtifactKind, CapabilityKind};
 pub(crate) use jails_project::layout;
 pub(crate) use jails_project::{compose, inspect, maven, model, pom};
-pub(crate) use jails_spec::spec::kind::ArtifactKind;
 pub(crate) use jails_spec::spec::paths::find_project_root;
 pub(crate) use jails_spec::{build, release};
 pub(crate) use jails_support::{apply, json, process};

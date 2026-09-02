@@ -1,6 +1,6 @@
 //! A name that already carries its kind's suffix must not get it twice.
 
-use super::kind::ArtifactKind;
+use jails_model::ArtifactKind;
 
 /// The suffix a kind's principal Java type carries, if it has one.
 pub(crate) fn kind_suffix(kind: ArtifactKind) -> Option<&'static str> {

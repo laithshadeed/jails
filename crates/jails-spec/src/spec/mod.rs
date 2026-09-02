@@ -12,7 +12,6 @@
 
 pub mod constant;
 pub mod coordinate;
-pub mod kind;
 pub mod manifest;
 pub mod paths;
 pub mod policy;

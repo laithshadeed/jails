@@ -6,6 +6,7 @@
 //! migration version or know how a plan is persisted.
 
 mod app;
+pub mod artifact;
 mod builtin;
 pub mod capability;
 mod component;
@@ -37,6 +38,7 @@ mod source;
 mod unit;
 
 pub use app::ProjectIntent;
+pub use artifact::ArtifactKind;
 pub use builtin::{BuiltinSemantics, LiteralKind};
 pub use capability::CapabilityKind;
 pub use component::{
