@@ -4500,9 +4500,14 @@ fn a_scaffold_emits_a_migration_whose_columns_match_the_adapter() {
     }
 }
 
+/// **One precondition, both absences.** Neither the migration nor the fixture
+/// is withheld because its directory is missing -- nothing here creates or
+/// removes a directory. Both are withheld because the model declares no
+/// storage, which is the same condition reached by the same command, so
+/// asking it twice under two names was one test written out twice.
 #[test]
-fn a_project_without_a_migration_directory_gets_no_migration() {
-    let root = temp_dir("scaffold-no-migration");
+fn a_project_with_no_declared_storage_gets_neither_migration_nor_fixture() {
+    let root = temp_dir("scaffold-no-storage");
     write_spring_fixture(&root);
 
     let output = jails_cmd(&root, None)
@@ -4513,6 +4518,7 @@ fn a_project_without_a_migration_directory_gets_no_migration() {
     assert!(!root.join("src/main/resources/db/migration").exists());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(!stdout.contains("created migration"), "{stdout}");
+    assert!(!stdout.contains("created fixture"), "{stdout}");
 }
 
 #[test]
@@ -4620,20 +4626,6 @@ fn a_scaffold_writes_a_two_row_fixture_keyed_by_column_name() {
     // Two rows, and the nullable one is null in the second.
     assert!(fixture.contains("\"note\": \"sample\""), "{fixture}");
     assert!(fixture.contains("\"note\": null"), "{fixture}");
-}
-
-#[test]
-fn a_project_without_a_fixtures_directory_gets_no_fixture() {
-    let root = temp_dir("scaffold-no-fixture");
-    write_spring_fixture(&root);
-
-    let output = jails_cmd(&root, None)
-        .args(["generate", "scaffold", "Payout", "id:uuid@pk"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(!stdout.contains("created fixture"), "{stdout}");
 }
 
 #[test]
@@ -5918,6 +5910,11 @@ fn what_jails_generates_for_boot_2_compiles_and_what_cannot_refuses_by_name() {
 /// against a table that does not exist. `storage postgres` is the declaration
 /// that makes jails responsible for a schema, and it keeps that history in
 /// forward migrations where a re-applied script cannot exist.
+///
+/// **A project with no destination at all takes the same branch**, so this is
+/// the whole of it. The diagnostic keys on the model's dialect and never
+/// looks at `schema.sql`, which is why running the identical command against
+/// a project without one asserted nothing this does not.
 #[test]
 fn a_scaffold_leaves_an_unmanaged_schema_sql_alone_and_says_where_its_rows_live() {
     let root = temp_dir("schema-sql-ddl");
@@ -5932,9 +5929,14 @@ fn a_scaffold_leaves_an_unmanaged_schema_sql_alone_and_says_where_its_rows_live(
         .args(["g", "scaffold", "Ticket", "id:long@pk", "subject:string!"])
         .output()
         .unwrap();
+    // Not a refusal: an in-memory resource is a legitimate shape to want, and
+    // it is also what a reader who has not run `jails add db` yet gets, with
+    // nothing else to tell the two apart. The diagnostic names the table the
+    // reader does not have, which is the part that makes it actionable.
     let told = String::from_utf8_lossy(&output.stderr).to_string();
     assert!(output.status.success(), "{told}");
     assert!(told.contains("stored in memory only"), "{told}");
+    assert!(told.contains("create table tickets"), "{told}");
     assert!(told.contains("jails add db"), "{told}");
 
     // Byte for byte, marker-free: a file jails does not manage is one it does
@@ -5942,27 +5944,6 @@ fn a_scaffold_leaves_an_unmanaged_schema_sql_alone_and_says_where_its_rows_live(
     // on bytes nothing would ever take back.
     assert_eq!(fs::read_to_string(&schema_path).unwrap(), reader_schema);
     assert!(!root.join("src/main/resources/db/migration").exists());
-}
-
-/// A project with neither destination is told, rather than handed a resource
-/// whose table nobody creates.
-#[test]
-fn a_scaffold_with_nowhere_to_put_ddl_says_so() {
-    let root = temp_dir("schema-no-home");
-    write_spring_fixture(&root);
-
-    let output = jails_cmd(&root, None)
-        .args(["g", "scaffold", "Ticket", "id:long@pk", "subject:string!"])
-        .output()
-        .unwrap();
-    // Not a refusal: an in-memory resource is a legitimate shape to want, and
-    // it is also what a reader who has not run `jails add db` yet gets, with
-    // nothing else to tell the two apart.
-    let report = String::from_utf8_lossy(&output.stderr).to_string();
-    assert!(output.status.success(), "{report}");
-    assert!(report.contains("stored in memory only"), "{report}");
-    assert!(report.contains("create table tickets"), "{report}");
-    assert!(report.contains("jails add db"), "{report}");
 }
 
 /// The wire contract, both directions, on the project that needs it.

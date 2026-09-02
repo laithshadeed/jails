@@ -10,8 +10,8 @@ Item numbers `S55.n` are stable and never reused.
 # 55 — Compiler and templates: render the shell once
 
 **Read `docs/50-simplify.md` first.** You are agent 5. Your subject is the
-pure compiler -- 14,376 production lines that assemble Java and SQL in 834
-`format!(` sites -- and the templates it renders.
+pure compiler -- the ~14,400 production lines that assemble Java and SQL --
+and the templates it renders.
 
 ## What you own
 
@@ -29,14 +29,27 @@ capture change they make. `templates/new/**` is rendered by the binary (agent
 
 ## Baseline
 
-| | |
-|---|---:|
-| `jails-compiler` production / raw | 14,376 / 21,526 |
-| `format!(` sites | 834 |
-| of which `emit_unit.rs` / `emit_sql.rs` / `emit_operation/proof.rs` | 67 / 46 / 40 |
-| `Compiler::compile` | 508 lines, one function |
-| `templates/` | 142 files, held live by `every_template_is_named_by_a_rust_source` |
-| `tests/cli/generate.rs` | 7,715 lines |
+Re-measured after the last item closed; the method is the one in
+`docs/50-simplify.md`, and the board is the authority where the two disagree.
+
+| | at the start | now |
+|---|---:|---:|
+| `jails-compiler` production / raw | 14,376 / 21,526 | 14,428 / 21,772 |
+| `format!(` sites | 834 | 809 |
+| `Compiler::compile` | 508 lines, one function | 467 lines, plus three named helpers |
+| `templates/` | 142 files | 142 files, still held live by `every_template_is_named_by_a_rust_source` |
+| `tests/cli/generate.rs` | 7,715 lines | 7,654 lines, 107 tests |
+
+**Production lines went up, not down, and that is the honest result.** The
+compiler ends the pass with one MockMvc dialect where three emitters each had
+one, one sampler over `BuiltinSemantics` where four did, one entity sampler
+where two did, one dependency guard where eight copies stood, one source-root
+walk where two did, and a `Pack` row that carries its own image tags and moved
+imports instead of a shared substitution bag. Every one of those is a concept
+removed; several cost lines to remove, because the reasoning the copies could
+not carry between them now has one place to live. `docs/50-simplify.md` R9
+says LOC is not the limiting variable, and this is what that looks like when
+it is true.
 
 The orphan count is zero, re-measured from the repository root -- templates
 are named through `template!("spring/x.java")` and the like, never by
@@ -50,11 +63,14 @@ for f in $(find templates -type f); do rel=${f#templates/}; b=$(basename $f)
 
 ## Steps
 
-**S55.7 -- `tests/cli/generate.rs`.** 7,948 lines and 110 tests, most of
-them "generate X, then read a file". After S55.2 the assertions about the
-package line and the import block are one property, not a hundred; name the
-duplicates and delete them (R6). The real-toolchain tier is the oracle here
-and none of it goes.
+**None left.** Every `S55.n` item is closed and deleted, per R1; `git log -p --
+docs/55-compiler.md` is the record of what each one was and which commit
+closed it. What remains below is the standing context for whoever touches the
+compiler next, not work.
+
+The plan itself is now retirable, along with its row in `docs/50-simplify.md`'s
+five-plan table -- left for whoever owns that file, since it is not this
+agent's to edit.
 
 ## Traps
 
