@@ -1127,14 +1127,7 @@ fn test_source_files() -> Vec<String> {
                 walk(&path, out);
             } else if path.extension().is_some_and(|ext| ext == "rs") {
                 let text = std::fs::read_to_string(&path).unwrap_or_default();
-                let mut kept = String::with_capacity(text.len());
-                for line in text.lines() {
-                    let code = line.split("//").next().unwrap_or("");
-                    kept.push_str(code);
-                    kept.push_str(&" ".repeat(line.len() - code.len()));
-                    kept.push('\n');
-                }
-                out.push(kept);
+                out.push(blank_comments(&text));
             }
         }
     }
@@ -1146,32 +1139,65 @@ fn test_source_files() -> Vec<String> {
     out
 }
 
-/// String and char literals replaced by spaces of the same length.
-fn blank_literals(source: &str) -> String {
+/// The byte after the string literal starting at `at`, when one starts there.
+///
+/// Both scanners below need this and neither may guess it: a `//` inside a
+/// literal is fixture text, not a comment (`"entity Note { // wording"` is
+/// one), and blanking the rest of that line leaves an unterminated literal
+/// that swallows every brace after it. A function whose opening brace is
+/// inside that swallowed span is not a function any scan can see.
+fn literal_end(source: &str, at: usize) -> Option<usize> {
     let bytes = source.as_bytes();
+    if source[at..].starts_with('r') && source[at + 1..].starts_with(['#', '"']) {
+        let hashes = source[at + 1..].bytes().take_while(|b| *b == b'#').count();
+        if source[at + 1 + hashes..].starts_with('"') {
+            let close = format!("\"{}", "#".repeat(hashes));
+            let mut end = at + 1 + hashes + 1;
+            while end < bytes.len() && !bytes[end..].starts_with(close.as_bytes()) {
+                end += 1;
+            }
+            return Some((end + close.len()).min(bytes.len()));
+        }
+    }
+    if bytes[at] == b'"' {
+        let mut end = at + 1;
+        while end < bytes.len() && bytes[end] != b'"' {
+            end += if bytes[end] == b'\\' { 2 } else { 1 };
+        }
+        return Some((end + 1).min(bytes.len()));
+    }
+    None
+}
+
+/// `//` comments replaced by spaces of the same length; literals left alone.
+fn blank_comments(source: &str) -> String {
     let mut out = String::with_capacity(source.len());
     let mut i = 0;
-    while i < bytes.len() {
-        if source[i..].starts_with('r') && source[i + 1..].starts_with(['#', '"']) {
-            let hashes = source[i + 1..].bytes().take_while(|b| *b == b'#').count();
-            if source[i + 1 + hashes..].starts_with('"') {
-                let close = format!("\"{}", "#".repeat(hashes));
-                let mut end = i + 1 + hashes + 1;
-                while end < bytes.len() && !bytes[end..].starts_with(close.as_bytes()) {
-                    end += 1;
-                }
-                let end = (end + close.len()).min(bytes.len());
-                blank_span(&source[i..end], &mut out);
-                i = end;
-                continue;
-            }
+    while i < source.len() {
+        if let Some(end) = literal_end(source, i) {
+            out.push_str(&source[i..end]);
+            i = end;
+            continue;
         }
-        if bytes[i] == b'"' {
-            let mut end = i + 1;
-            while end < bytes.len() && bytes[end] != b'"' {
-                end += if bytes[end] == b'\\' { 2 } else { 1 };
-            }
-            let end = (end + 1).min(bytes.len());
+        if source[i..].starts_with("//") {
+            let end = source[i..].find('\n').map_or(source.len(), |at| i + at);
+            blank_span(&source[i..end], &mut out);
+            i = end;
+            continue;
+        }
+        let ch = source[i..].chars().next().expect("in bounds");
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+/// String and char literals replaced by spaces of the same length.
+fn blank_literals(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut i = 0;
+    while i < source.len() {
+        if let Some(end) = literal_end(source, i) {
             blank_span(&source[i..end], &mut out);
             i = end;
             continue;

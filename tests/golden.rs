@@ -504,13 +504,24 @@ fn every_kind_and_capability_has_a_golden_scenario() {
         );
     }
 
-    // Every file under `tests/cli/`, not one: a reader of one file reports
-    // the exemption broken the moment its test moves next door.
+    // Every file under `tests/cli/`, not one, and to any depth -- `model` is a
+    // directory of subject files: a reader of one file reports the exemption
+    // broken the moment its test moves next door.
+    fn read_all(dir: &Path, out: &mut String) {
+        for entry in fs::read_dir(dir)
+            .unwrap_or_else(|error| panic!("{} is unreadable: {error}", dir.display()))
+        {
+            let path = entry.expect("failed to read a directory entry").path();
+            if path.is_dir() {
+                read_all(&path, out);
+            } else {
+                out.push_str(&fs::read_to_string(&path).unwrap());
+            }
+        }
+    }
     let cli = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cli");
-    let cli_tests: String = fs::read_dir(&cli)
-        .unwrap_or_else(|error| panic!("{} is unreadable: {error}", cli.display()))
-        .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
-        .collect();
+    let mut cli_tests = String::new();
+    read_all(&cli, &mut cli_tests);
     for (name, test) in COVERED_ELSEWHERE {
         assert!(
             cli_tests.contains(test),

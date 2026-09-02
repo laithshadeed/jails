@@ -7558,6 +7558,11 @@ fn every_remaining_generator_kind_compiles_in_one_spring_project() {
             "body:string!",
             "createdAt:instant@default(now())",
         ][..],
+        // `repo` on a record of its own: the scaffolds above emit a repository
+        // too, but through `g scaffold`, so the standalone kind's output is
+        // what nothing else here compiles.
+        &["g", "record", "Ledger", "id:uuid@pk", "note:string!"][..],
+        &["g", "repo", "Ledger"][..],
         &[
             "g",
             "association",
