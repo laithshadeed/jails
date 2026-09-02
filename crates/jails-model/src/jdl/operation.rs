@@ -5,10 +5,9 @@
 //! and a parser that resolved as it read could only report the first bad
 //! reference.
 //!
-//! This is the *pre-v1* dialect, kept for `jails model upgrade --to 1` and the
-//! projects written before v1 existed. New syntax belongs in `jdl/v1/`; adding
-//! it here as well would leave two parsers to keep in step, which is the
-//! failure this repository has paid for more than once.
+//! This is the *pre-v1* dialect, kept for `jails model upgrade --to 1`. New
+//! syntax belongs in `jdl/v1/`; adding it here as well would leave two
+//! parsers to keep in step.
 
 use crate::Diagnostics;
 

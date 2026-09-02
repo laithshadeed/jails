@@ -1,21 +1,12 @@
 //! One place that builds and runs a child process.
 //!
-//! Process construction was spread across `run`, `compose`, `new`, `doctor`,
-//! `why`, `kafka`, `migrate` and `console`, and each site decided for itself
-//! how to find the tool, whether `--debug` prints, and what a non-zero exit
-//! means. That is how the two bugs this module was extracted to fix happened:
-//!
-//! - `run.rs` and `project.rs` disagreed about whether mvnd is `mvnd` or
-//!   `mvnd.cmd`, so `jails about` named a Maven command `jails test` would
-//!   not run.
-//! - `compose.rs` falls back to the standalone `docker-compose` binary when
-//!   `docker` is absent, while `doctor.rs` hardcoded `docker` in all three of
-//!   its probes -- so on such a machine `jails start` worked and `doctor`
-//!   reported Docker missing.
-//!
-//! Both are the same shape: two copies of "which tool is this" that drifted.
-//! Tool resolution lives here now, so a probe reports the tool that will
-//! actually be used.
+//! Every site that starts a tool goes through here, so there is one answer to
+//! how a tool is found on PATH, whether `--debug` prints, and what a non-zero
+//! exit means. Two copies of "which tool is this" drift -- whether mvnd is
+//! `mvnd` or `mvnd.cmd`, whether Docker Compose is `docker compose` or the
+//! standalone `docker-compose` -- and a probe then reports a tool other than
+//! the one that will run. Tool resolution lives here so a probe reports the
+//! tool that will actually be used.
 //!
 //! ## What this is not
 //!
@@ -32,8 +23,8 @@ use crate::Result;
 /// Whether jails prints the command it is about to run.
 ///
 /// **Observability only.** `Debug` prints *and then runs*: a diagnostic flag
-/// that also decided whether the work happened is how `jails --debug migrate`
-/// came to report "applied cleanly" over SQL that never reached a database.
+/// that also decided whether the work happened would let `jails --debug
+/// migrate` report "applied cleanly" over SQL that never reached a database.
 /// Preview is a separate concept and lives in the planning layer, which
 /// decides not to call this at all.
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -344,8 +335,7 @@ pub fn run_checked(spec: &CommandSpec, diagnostics: Diagnostics) -> Result<Done>
 
 /// Whether an executable of this name is on PATH.
 ///
-/// The one implementation. `run.rs`, `compose.rs` and `project.rs` each had
-/// their own, which is how the mvnd naming drifted between them.
+/// The one implementation: a second copy is how the mvnd naming drifts.
 pub fn on_path(bin: &str) -> bool {
     let Some(paths) = std::env::var_os("PATH") else {
         return false;
@@ -362,10 +352,10 @@ pub(crate) fn on_path_in(bin: &str, dirs: impl Iterator<Item = PathBuf>) -> bool
 /// How to invoke Docker Compose here: `docker compose` (v2, a CLI plugin) or
 /// the standalone `docker-compose` binary.
 ///
-/// **One resolver, so a probe tests the tool that will actually run.**
-/// `compose.rs` fell back to the standalone binary while `doctor.rs`
-/// hardcoded `docker`, so on a machine with only `docker-compose` installed
-/// `jails start` worked and `doctor` reported Docker missing.
+/// One resolver, so a probe tests the tool that will actually run. A starter
+/// that falls back to the standalone binary beside a probe that hardcodes
+/// `docker` disagree on a machine with only `docker-compose` installed:
+/// `jails start` works and `doctor` reports Docker missing.
 pub fn compose_program() -> Option<(&'static str, &'static [&'static str])> {
     if on_path("docker") {
         Some(("docker", &["compose"]))
@@ -467,8 +457,6 @@ mod tests {
         assert!(line.contains("psql -h localhost"), "{line}");
     }
 
-    /// A non-secret env value is shown -- redaction is opt-in per variable,
-    /// so nothing quietly hides information the reader needs.
     /// The backstop, for a call site that did not say the variable was
     /// secret -- which is how a password reaches debug output in practice.
     #[test]
@@ -494,6 +482,8 @@ mod tests {
         assert!(!spec.render().contains("hunter2"), "{}", spec.render());
     }
 
+    /// A non-secret env value is shown -- redaction is opt-in per variable,
+    /// so nothing quietly hides information the reader needs.
     #[test]
     fn a_plain_env_value_is_shown() {
         let spec = CommandSpec::new("mvn").env("MAVEN_OPTS", "-Xmx1g");
@@ -520,7 +510,7 @@ mod tests {
     }
 
     /// Debug prints *and then runs*. A diagnostic flag that also decided
-    /// whether the work happened is how `--debug migrate` reported success
+    /// whether the work happened would let `--debug migrate` report success
     /// over SQL that never ran.
     #[test]
     fn debug_still_executes_the_command() {

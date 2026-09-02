@@ -1,5 +1,5 @@
-//! The two POM edits `jails modernize` makes, kept out of `pom.rs` because
-//! that file is already at the size the ladder's largest-module gate allows.
+//! The two POM edits `jails modernize` makes, kept out of `pom.rs` so that
+//! file stays under the largest-module ceiling.
 //!
 //! They belong to the same subject as the rest of `pom.rs` -- surgical edits
 //! to a file the reader owns -- and are here rather than in `modernize.rs`

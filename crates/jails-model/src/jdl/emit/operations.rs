@@ -325,11 +325,9 @@ fn explicit<'a>(
 
 /// The attributes a parameter carries, wherever it appears.
 ///
-/// **Shared between operations and components on purpose.** They were two
-/// copies, and the component one had only `@default` -- so `name: string
-/// @notBlank` on a `durable-job` lost its check, silently, in the one
-/// direction where losing it rewrites somebody's model. Found by the round
-/// trip over the golden corpus rather than by reading either copy.
+/// **Shared between operations and components on purpose.** A second copy
+/// carrying only `@default` loses `name: string @notBlank` on a `durable-job`
+/// silently, in the one direction where losing it rewrites somebody's model.
 pub(super) fn constraint_attributes(
     constraints: &crate::operation::ParameterConstraints,
 ) -> String {

@@ -10,8 +10,8 @@
 //! one method, with the suffix applied to the **class half only**; and a name
 //! ending in `IT` is Failsafe's rather than Surefire's. That last decision is
 //! made on the class, not on the finished string -- `PayoutIT#settles` ends in
-//! `settles`, so routing on the whole filter sent an integration test to
-//! Surefire, which does not run `*IT`, and Maven reported success having
+//! `settles`, so routing on the whole filter would send an integration test to
+//! Surefire, which does not run `*IT`, and Maven would report success having
 //! executed nothing.
 
 use super::*;
@@ -28,8 +28,8 @@ pub(super) fn split_method(filter: &str) -> (&str, Option<&str>) {
 /// `Payout` -> `PayoutTest`, `Payout#settles` -> `PayoutTest#settles`.
 ///
 /// The suffix belongs to the class alone. Appending it to the whole filter
-/// produced `Payout#settlesTest`, a method nothing declares, and Surefire
-/// then failed the build for a filter jails itself had corrupted.
+/// would produce `Payout#settlesTest`, a method nothing declares, and Surefire
+/// would fail the build for a filter jails itself had corrupted.
 pub(super) fn expand_filter(filter: &str) -> String {
     let (class, method) = split_method(filter);
     let expanded = if class.ends_with("Test")
@@ -37,9 +37,9 @@ pub(super) fn expand_filter(filter: &str) -> String {
         || class.ends_with("IT")
         || class.contains('*')
         // `Outer$Nested` and `com.example.PayoutTest` are already fully
-        // specified. Applying the bare-name convention to them produced
-        // `PayoutTest$WhenDeclinedTest`, a class nothing declares -- which
-        // is exactly the shape `jails test <file>:<line>` resolves to.
+        // specified. Applying the bare-name convention to them would produce
+        // `PayoutTest$WhenDeclinedTest`, a class nothing declares -- and the
+        // nested shape is exactly what `jails test <file>:<line>` resolves to.
         || class.contains('$')
         || class.contains('.')
     {
@@ -189,8 +189,8 @@ pub(super) fn enclosing_test_method(source: &str, line: usize) -> Option<String>
 /// form is real: jails' own generated integration tests carry
 /// `@org.springframework.transaction.annotation.Transactional`, and a reader
 /// who writes `@org.junit.jupiter.api.Test` is not doing anything strange.
-/// Matching `@Test` as a prefix missed every one of them, and the symptom was
-/// `jails test <file>:<line>` quietly widening to the whole class.
+/// Matching `@Test` as a prefix would miss every one of them, and the symptom
+/// would be `jails test <file>:<line>` quietly widening to the whole class.
 pub(super) fn is_test_annotation(line: &str) -> bool {
     let trimmed = line.trim();
     let Some(rest) = trimmed.strip_prefix('@') else {

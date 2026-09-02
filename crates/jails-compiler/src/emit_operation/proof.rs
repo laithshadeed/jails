@@ -1,12 +1,11 @@
 //! What jails writes to *prove* a linked operation's JDBC adapter.
 //!
-//! **The adapter is SQL, and SQL is not proved by compiling.** A canonical
-//! project's generated `select` reached no test at all: the unit tests build
-//! records and drive controllers with a faked port, so every column name,
-//! every bind parameter and every join in `emit_operation` was asserted by
-//! nothing. That is how a `--via` query came to emit no join and silently drop
-//! its filter -- the code compiled, the controller test passed, and the query
-//! answered over every row.
+//! **The adapter is SQL, and SQL is not proved by compiling.** The unit tests
+//! build records and drive controllers with a faked port, so without this
+//! every column name, every bind parameter and every join in `emit_operation`
+//! is asserted by nothing: a `--via` query that emits no join and silently
+//! drops its filter compiles, passes the controller test, and answers over
+//! every row.
 //!
 //! So each adapter gets one `@SpringBootTest` integration test that stores a
 //! row through the entity's own repository and reads it back through the
@@ -14,11 +13,10 @@
 //! only place `cast(:x as text) is null`, a foreign key, and a quoted join
 //! alias mean anything.
 //!
-//! Split from `query.rs` and its siblings by secret, the same cut
-//! `spring/query/proof.rs` records for the engine this replaces: those modules
-//! decide the SQL, and this one decides what a test of it looks like. The fact
-//! a proof turns on -- which values the filter must match -- is one the adapter
-//! already resolved, and resolving it twice is how the two drifted.
+//! `query.rs` and its siblings decide the SQL; this module decides what a
+//! test of it looks like. The fact a proof turns on -- which values the filter
+//! must match -- is one the adapter has already resolved, and resolving it
+//! twice is how the two drift.
 
 use super::{QueryFilter, scopes};
 use crate::CompileError;
@@ -79,9 +77,9 @@ pub(super) fn query(
     // claims are strings the caller proves -- and the test is the caller. It
     // has just stored the row, so it knows exactly which tenant that row
     // belongs to: the claim is the scoped component of the value it saved,
-    // as a string. This was `@Disabled` on the grounds that jails cannot spell
-    // the value for every scopeable type, which is true of the *type* and not
-    // of this test, where the row is in hand.
+    // as a string. That jails cannot spell the value for every scopeable type
+    // is true of the *type* and not of this test, where the row is in hand,
+    // so it is not `@Disabled` on those grounds.
     let scoped = scopes(target);
     let (context_argument, disabled) = if scoped.is_empty() {
         (String::new(), "")
@@ -202,12 +200,12 @@ pub(crate) fn ancestor_fixtures(
     let mut setup = String::new();
     let mut autowired = String::new();
     // **Every ancestor is stored once, deepest first, and shared.** Two things
-    // needed that. A parent has parents of its own -- storing a `Contact`
+    // need that. A parent has parents of its own -- storing a `Contact`
     // without its `Workspace` fails on the constraint before the child is
     // reached. And `Conversation` references `Contact` by
     // `(workspace_id, contact_id)` and `Inbox` by `(workspace_id, inbox_id)`,
-    // so a workspace sampled separately per branch left the child carrying one
-    // parent's workspace and the other parent's id. Keyed by entity, the
+    // so a workspace sampled separately per branch leaves the child carrying
+    // one parent's workspace and the other parent's id. Keyed by entity, the
     // second reference to a workspace is the row the first one stored.
     let mut stored: BTreeMap<jails_model::EntityId, String> = BTreeMap::new();
     let direct = ancestry(model, target, joins);
@@ -361,12 +359,12 @@ fn ancestry(model: &AppModel, child: &Entity, joins: &[Join]) -> Vec<ParentRow> 
 
 /// The integration test beside a command's or transition's JDBC adapter.
 ///
-/// **The write half of an operation reached no test at all.** A query's proof
-/// stores a row and reads it back; a command's `insert ... returning` and a
-/// transition's `update ... returning` were asserted by nothing, so a column
-/// list that drifted from the row mapper, a bind the driver will not take, and
-/// an `on conflict` naming a column with no unique index all compiled and
-/// shipped.
+/// **The write half of an operation needs a proof of its own.** A query's
+/// proof stores a row and reads it back; without this a command's `insert ...
+/// returning` and a transition's `update ... returning` are asserted by
+/// nothing, so a column list that drifts from the row mapper, a bind the
+/// driver will not take, and an `on conflict` naming a column with no unique
+/// index all compile and ship.
 ///
 /// What it asserts is that the statement runs and answers. It deliberately
 /// does not assert *which* row: a command's returned key is the database's,
@@ -418,10 +416,10 @@ pub(super) fn write(
     // **The claims this operation proves against, spelled by the test.** The
     // context is a map of claim to string, and the caller is what proves it --
     // here that caller is the test, which either stored the row (so it knows
-    // the tenant) or is about to create one (so it chooses the tenant). This
-    // was skipped entirely on the grounds that jails cannot spell the value
-    // for every scopeable type, which is true of the *type* and not of a test
-    // that has the value in hand.
+    // the tenant) or is about to create one (so it chooses the tenant). That
+    // jails cannot spell the value for every scopeable type is true of the
+    // *type* and not of a test that has the value in hand, so the proof is
+    // not skipped on those grounds.
     let scoped = scopes(target);
     let context_argument;
     if !scoped.is_empty() {
@@ -629,9 +627,9 @@ pub(super) fn input_fields<'a>(
     }
     // **A parameter may name a component of another entity**, and that is what
     // `--via` is: the caller states the parent's email and the insert resolves
-    // the foreign key from it. Reading only the target's own components
-    // answered `None` for every resolving command, so none of them had a write
-    // proof at all -- the one shape whose failure mode is a race.
+    // the foreign key from it. Reading only the target's own components would
+    // answer `None` for every resolving command, so none of them would have a
+    // write proof at all -- the one shape whose failure mode is a race.
     parameters
         .iter()
         .map(|parameter| match &parameter.source {
@@ -648,7 +646,6 @@ pub(super) fn input_fields<'a>(
 pub(super) struct WriteShape<'a> {
     pub(super) port_suffix: &'a str,
     pub(super) port_package: Package,
-    /// Whether `execute` takes the row's key before its input.
     /// The component the operation addresses its row by, when it changes an
     /// existing one. `None` for a command, which writes its own.
     pub(super) keyed: Option<&'a jails_model::Field>,

@@ -10,10 +10,9 @@
 //! **It executes an existing command rather than a body of its own.** The
 //! payload is that command's own `Input` record, so a queued item cannot
 //! describe work the command could not do, and adding a field to the command
-//! changes the queue's payload with it. The legacy generator instead wrote a
-//! `<Name>Work` record whose fields had to *exactly* match the command's, in
-//! declaration order, and refused when they drifted -- a check that exists
-//! only because there were two declarations of one thing.
+//! changes the queue's payload with it. A separate `<Name>Work` record would
+//! be a second declaration of one thing, needing a drift check that exists
+//! only because there are two.
 //!
 //! **The recovery check is the subtle part.** A process can die after the
 //! command's transaction commits and before the queue row is acknowledged, and
@@ -116,7 +115,7 @@ pub(super) fn files(
     // of band has nobody to prove anything, but the values it needs were
     // proven when the work was enqueued and are in the row. Rebuilding the
     // context from them is what replaying the command means -- calling it
-    // without one did not compile at all.
+    // without one does not compile.
     let (context, context_import) = worker_context(model, command, target)?;
     let worker = WORKER
         .resolve(templates)?
@@ -302,8 +301,8 @@ fn sample(
     let mut alternates = Vec::new();
     // **What the sample expressions name.** `URI.create(...)` and
     // `Instant.parse(...)` are Java types, and this template's import list is
-    // otherwise fixed -- so a payload carrying a `uri` compiled everywhere
-    // except here, where the symbol was simply undefined.
+    // otherwise fixed -- so without these a payload carrying a `uri` compiles
+    // everywhere except here, where the symbol is undefined.
     let mut imports = BTreeSet::new();
     for parameter in &spec.semantics.parameters {
         if !parameter.required || parameter.optional_filter {
@@ -335,7 +334,7 @@ fn sample(
             }
             // **A declared enum is one jails can spell**, and it is the case
             // this exists for: `PaymentMethod` is a component of the very
-            // command the job replays, so refusing it refused the job
+            // command the job replays, so refusing it would refuse the job
             // outright. Fully qualified rather than imported -- the sample
             // lands inside a template whose import list is fixed, and a
             // constant reference needs no import to compile.

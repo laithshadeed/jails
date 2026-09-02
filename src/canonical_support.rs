@@ -5,15 +5,14 @@
 //! is decided. Frontends use the same answer they report to readers.
 //!
 //! **`Native` means the compiler has a backend.** Every project authors in
-//! `.jails/model.jdl` now, so the generator half of this table routes nothing
-//! -- it is the coverage number, and the compiler refuses an unserved kind at
+//! `.jails/model.jdl`, so the generator half of this table routes nothing --
+//! it is the coverage number, and the compiler refuses an unserved kind at
 //! *compile* time through `component_kind_is_emitted`. A kind marked
 //! `Compatibility` that the compiler actually emits under-reports coverage,
 //! so a kind whose backend has landed must be moved to `Native` here.
 //!
-//! **Every arm below is `Native`**, and the table's job is the one it was
-//! built for: making the next clap variant a compile error until its
-//! ownership is decided.
+//! **Every arm below is `Native`**, and the table's job is making the next
+//! clap variant a compile error until its ownership is decided.
 
 #[cfg(test)]
 use crate::ArtifactKind;
@@ -22,11 +21,11 @@ use crate::Capability;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Support {
     Native,
-    /// **Nothing is classified this way any more**, and the variant stays
-    /// because the registry's whole purpose is that a new clap variant cannot
-    /// compile until somebody decides its ownership -- with the answer
-    /// deleted, "it has no backend yet" would have no spelling and the easy
-    /// thing would be to claim `Native`.
+    /// **Nothing is classified this way**, and the variant stays because the
+    /// registry's whole purpose is that a new clap variant cannot compile
+    /// until somebody decides its ownership -- with the answer deleted, "it
+    /// has no backend yet" would have no spelling and the easy thing would be
+    /// to claim `Native`.
     ///
     /// `expect` rather than `allow` so the attribute is itself a ratchet: the
     /// moment a kind is classified here the expectation is unfulfilled, the
@@ -41,12 +40,12 @@ impl Support {
     }
 }
 
-/// **Nothing in production consults this any more, and the gate is why it
-/// stays.** `.jails/model.toml` no longer accepts edits, so every generation
-/// goes to the JDL frontend and an unserved kind refuses at compile time
-/// through `component_kind_is_emitted`. What the exhaustive match is still
-/// for is the next clap variant, which cannot be added without a decision
-/// recorded here, and the 39/39 coverage number the test below asserts.
+/// **Nothing in production consults this; the gate is why it exists.**
+/// `.jails/model.toml` does not accept edits, so every generation goes to the
+/// JDL frontend and an unserved kind refuses at compile time through
+/// `component_kind_is_emitted`. What the exhaustive match is for is the next
+/// clap variant, which cannot be added without a decision recorded here, and
+/// the 39/39 coverage number the test below asserts.
 #[cfg(test)]
 fn generator(kind: ArtifactKind) -> Support {
     match kind {
@@ -140,10 +139,8 @@ mod tests {
                 .count(),
             39
         );
-        // All 25. `format`, `ci`, `docker` and `k8s` were the last four --
-        // `plan.md` P13.8 measured them and this is where that number lives,
-        // so a capability added without a canonical backend fails here rather
-        // than discovering it at the cutover.
+        // All 25, so a capability added without a canonical backend fails
+        // here rather than at the cutover.
         assert_eq!(
             Capability::value_variants()
                 .iter()

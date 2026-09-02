@@ -1,26 +1,21 @@
 //! Where this project keeps each layer.
 //!
 //! `jails adopt` exists so a project jails did not write keeps its own
-//! directory names, and records the renames in `jails.toml`. `CLAUDE.md` states
-//! the rule that follows: *anything reporting or writing per layer must go
-//! through the project's renames.* The legacy engine reads them through
-//! `Config::layers()`; the compiler reads them through this.
+//! directory names, and records the renames in `jails.toml`. Anything
+//! reporting or writing per layer goes through the project's renames, and
+//! the compiler reads them through this.
 //!
 //! It is a captured fact, not a declaration. The reader owns `jails.toml`, so
-//! the layout arrives through [`crate::ProjectFacts`] like every other external
+//! the layout arrives on the workspace snapshot like every other external
 //! fact and the compiler stays pure: equal snapshot in, equal packages out.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// The eleven layers `jdl-sol.md` §9.7 closes, as a value.
+/// The eleven layers JDL v1 §9.7 closes, as a value.
 ///
 /// A closed set, because a `jails.toml` saying `adapter = "persistence"` that
-/// silently kept writing to `adapters` would be worse than no file at all --
-/// which is the rule `jails-project`'s own parser already applies to this same
-/// table. `the_compilers_renameable_layers_are_the_engines_layers` in the root
-/// test suite holds it against `jails-spec`'s `Layer::ALL`, since the two
-/// crates cannot see each other.
+/// silently kept writing to `adapters` would be worse than no file at all.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
 pub enum Layer {
     Domain,
@@ -37,7 +32,7 @@ pub enum Layer {
 }
 
 impl Layer {
-    /// Declaration order is §9.7's order.
+    /// Declaration order is JDL v1 §9.7's order.
     pub const ALL: [Layer; 11] = [
         Self::Domain,
         Self::App,
@@ -69,8 +64,8 @@ impl Layer {
         }
     }
 
-    /// The layer a default package segment denotes, `None` for anything §9.7
-    /// does not close. Not a rename lookup: a project that renamed `adapters`
+    /// The layer a default package segment denotes, `None` for anything
+    /// JDL v1 §9.7 does not close. Not a rename lookup: a project that renamed `adapters`
     /// to `persistence` is still asking about the adapters *layer*.
     pub fn by_package(segment: &str) -> Option<Self> {
         Self::ALL
@@ -85,28 +80,27 @@ impl Layer {
 /// lookup miss. Looking every head up in the rename map and letting one with no
 /// entry pass through makes `repository` and `application` reading their own
 /// names back indistinguishable from a layer whose rename happens to be absent.
-/// Saying it in the type is what makes `audit.md` A3.11 a list somebody can
-/// read.
+/// Saying it in the type is what makes the §9.7 divergence a list somebody
+/// can read.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Head {
-    /// A §9.7 layer. The project's `jails.toml` renames it.
+    /// A JDL v1 §9.7 layer. The project's `jails.toml` renames it.
     Layer(Layer),
     /// A package the compiler owns and §9.7 does not close, so nothing renames
-    /// it. Every one of these is a recorded divergence from §9.7 -- see
-    /// `audit.md` A3.11 -- and reconciling them moves files in every project
-    /// generated so far, which is why they are named here rather than fixed
-    /// silently.
+    /// it. Every one of these is a recorded divergence from §9.7, and
+    /// reconciling them moves files in every project generated so far, which
+    /// is why they are named here rather than fixed silently.
     Facet(&'static str),
 }
 
 /// Every package the compiler emits Java into, as one table.
 ///
-/// §20.2's registry: an emitter asks for a `Package` and never concatenates a
-/// package name itself. Closed on purpose -- it was 22 string literals spread
-/// over fourteen emitters, where `applications` for `application` compiles,
-/// writes a package no other emitter imports, and fails at `javac`. It is also
-/// the only place the §9.7 divergence can be *seen*: `Head::Facet` marks each
-/// row that is not a layer.
+/// JDL v1 §20.2's registry: an emitter asks for a `Package` and never
+/// concatenates a package name itself. Closed on purpose -- a string literal
+/// spelling `applications` for `application` compiles, writes a package no
+/// other emitter imports, and fails at `javac`. It is also the only place the
+/// §9.7 divergence can be *seen*: `Head::Facet` marks each row that is not a
+/// layer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Package {
@@ -168,9 +162,7 @@ impl Package {
     ///
     /// **One match, one row.** Two exhaustive matches over this enum -- a
     /// `head()` and a `tail()` -- would be two answers the compiler forces
-    /// somebody to edit and then does not check against each other, which is
-    /// the failure `largest table of per-builtin knowledge outside its row`
-    /// exists to keep out of this workspace.
+    /// somebody to edit and then does not check against each other.
     pub const fn placement(self) -> (Option<Head>, &'static str) {
         match self {
             Self::Base => (None, ""),
@@ -255,9 +247,7 @@ impl Layout {
     /// Only the head, so a nested package -- `adapters.jdbc`, `ports.http` --
     /// renames its head and keeps its tail: a reader who called their adapters
     /// `persistence` means `persistence.jdbc`, not that the JDBC adapter has
-    /// moved. A [`Head::Facet`] is the compiler's own and renames to nothing,
-    /// which is the same bytes this produced when every head was a string and
-    /// the map simply had no entry -- stated now rather than inferred.
+    /// moved. A [`Head::Facet`] is the compiler's own and renames to nothing.
     pub fn head(&self, head: Head) -> &str {
         match head {
             Head::Layer(layer) => self
@@ -299,9 +289,8 @@ mod tests {
         assert!(!layout.is_default());
     }
 
-    /// The rule `jails-project`'s parser already applies to this table: an
-    /// unknown key is an error, because silently meaning "no rename" produces
-    /// a tree nobody asked for.
+    /// An unknown key is an error, because silently meaning "no rename"
+    /// produces a tree nobody asked for.
     #[test]
     fn an_unknown_layer_is_refused_by_name() {
         let error = Layout::parse("[layout]\nadapter = \"persistence\"\n").unwrap_err();

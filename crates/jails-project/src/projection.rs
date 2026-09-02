@@ -6,9 +6,8 @@
 //! `app apply` runs several intents in one invocation, and a later one has to
 //! see what an earlier one did: a repository that needs the record the
 //! previous intent generated, a capability that needs the dependency the
-//! previous change spliced. Reading the filesystem between them is how that
-//! works today, and it is exactly what R2 removes — planning reads the
-//! snapshot, and the snapshot is captured once.
+//! previous change spliced. Reading the filesystem between them is forbidden:
+//! planning reads the snapshot, and the snapshot is captured once.
 //!
 //! So the snapshot gets an *overlay*. A read goes through the overlay first
 //! and falls back to the captured base, and the answer is the project as the
@@ -16,11 +15,11 @@
 //!
 //! ## Why a render stays deferred
 //!
-//! plan.md §R2.4: *"Never eagerly render a template here and render it again
-//! in preparation."* Rendering twice means two chances to differ, and the
-//! second one is the one that reaches disk. So a `DesiredBody::Render` enters
-//! the overlay as [`ProjectedEntry::Deferred`] and R3 renders it exactly once.
-//! A planner that tries to read those bytes gets an error naming the reason,
+//! A template is never rendered here and rendered again in preparation:
+//! rendering twice means two chances to differ, and the second one is the one
+//! that reaches disk. So a `DesiredBody::Render` enters the overlay as
+//! [`ProjectedEntry::Deferred`] and preparation renders it exactly once. A
+//! planner that tries to read those bytes gets an error naming the reason,
 //! not a silent empty file.
 //!
 //! ## Why facts are invalidated by path
@@ -55,16 +54,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 // The per-key arm lists: how an edit reaches a file, and how a claim is taken
-// back out. `pending.md` §8.1 -- this file was the workspace's largest module,
-// and those two matches were half of it.
+// back out.
 mod edit;
 
 /// One path's projected state.
 #[derive(Clone, Debug)]
 pub enum ProjectedEntry {
     File(SnapshotFile),
-    /// A render R3 performs exactly once. Its facts are declared now because a
-    /// later planner may need them; its bytes are not knowable yet.
+    /// A render preparation performs exactly once. Its facts are declared now
+    /// because a later planner may need them; its bytes are not knowable yet.
     Deferred {
         body: DesiredBody,
         facts: jails_protocol::edit::FactDelta,
@@ -177,8 +175,6 @@ impl ProjectedProject {
             .unwrap_or_default()
     }
 
-    /// Record that a fact kind was parsed from a path, so a later change to
-    /// that path invalidates it.
     /// Write what is left, or take the file with the last claim.
     ///
     /// A file holding nothing is not the same as one the reader keeps: it is
@@ -196,6 +192,8 @@ impl ProjectedProject {
         }
     }
 
+    /// Record that a fact kind was parsed from a path, so a later change to
+    /// that path invalidates it.
     pub fn depends_on(&mut self, kind: FactKind, path: ProjectPath) {
         self.fact_dependencies.entry(kind).or_default().insert(path);
     }
@@ -232,8 +230,8 @@ impl ProjectedProject {
         }
     }
 
-    /// Advance the projection by one change. plan.md §R2.4's six steps, in
-    /// order, because each one reads what the previous produced.
+    /// Advance the projection by one change: six steps, in order, because
+    /// each one reads what the previous produced.
     pub fn advance(&mut self, change: &DesiredChange) -> Result<()> {
         change.validate()?;
         let mut touched: BTreeSet<ProjectPath> = BTreeSet::new();
@@ -442,8 +440,7 @@ impl ProjectedProject {
             }
             // A POM's dependency facts, a compose file's services and a Java
             // source's types are parsed by the recipes that declare them; the
-            // presence and the scalars are what projection owns. R6 moves the
-            // remaining parsers behind this call.
+            // presence and the scalars are what projection owns.
             FactKind::HumanConfig | FactKind::Compose | FactKind::JavaSource(_) => {}
         }
         Ok(())
@@ -451,9 +448,9 @@ impl ProjectedProject {
 
     /// Apply the change's declared delta, and check it against the bytes.
     ///
-    /// §R2.4: *"assert it equals the reparsed facts for known bytes. A
-    /// disagreement is an internal planner error."* Not a difference to
-    /// reconcile — one of the two is describing a project that does not exist,
+    /// The delta must equal the reparsed facts for known bytes, and a
+    /// disagreement is an internal planner error -- not a difference to
+    /// reconcile. One of the two is describing a project that does not exist,
     /// and picking either silently would carry that forward.
     fn apply_delta(&mut self, delta: &jails_protocol::edit::FactDelta) -> Result<()> {
         delta.validate()?;
@@ -674,8 +671,8 @@ mod tests {
         assert!(error.contains("different values"), "{error}");
     }
 
-    /// §R2.4: never render here and render again in preparation. Two renders
-    /// are two chances to differ, and the second is the one that reaches disk.
+    /// Never render here and render again in preparation. Two renders are two
+    /// chances to differ, and the second is the one that reaches disk.
     #[test]
     fn a_render_stays_deferred_and_says_so_when_read() {
         let mut projected = project(&[], &["src/main/java/com/example/demo/App.java"]);

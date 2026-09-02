@@ -11,8 +11,7 @@
 //! can be silent.
 //!
 //! Ordering is emitted from the model's `SortDirection` rather than spliced
-//! from text, so a column name can never reach SQL as an ordering clause — the
-//! `created_at desc` trap the legacy index validator had to split on.
+//! from text, so a column name can never reach SQL as an ordering clause.
 
 use super::{QueryFilter, context_parameter, context_value, java_string, operation_file, scopes};
 use crate::CompileError;
@@ -177,8 +176,8 @@ pub(super) fn lower(
         })
         .collect::<String>();
     // `asc` is the SQL default and the canonical formatter omits it, so only
-    // `desc` is rendered. Dropping it entirely is what made a newest-first
-    // query return oldest-first.
+    // `desc` is rendered. Dropping it entirely makes a newest-first query
+    // return oldest-first.
     let ordering = if ordering.is_empty() {
         String::new()
     } else {

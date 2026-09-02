@@ -16,9 +16,8 @@
 //! to it. `jails routes` says so in its own output rather than pretending
 //! to completeness it cannot have.
 
-// **Re-exported, not owned.** The scanner moved to `jails-codemod` so
-// `jails-workspace` could reach it -- see that crate's docs. Every caller of
-// `java::blanked` here is unchanged.
+// Re-exported, not owned: the scanner lives in `jails-codemod`, which has no
+// dependencies, so the canonical crates reach it without depending on this one.
 pub use jails_codemod::text::{blanked, without_literals};
 
 use std::fs;
@@ -352,11 +351,11 @@ fn widest_constructor(text: &str, class_name: &str) -> Vec<Param> {
 
 /// Remove each annotation *and its argument list* from a parameter list.
 ///
-/// `bugs.md` B53: dropping annotations by discarding whitespace-separated
-/// words that start with `@` works only while the argument has no spaces in
-/// it. `@Value("${k:#{env.K ?: \'\'}}")` is three such words, two of which do
-/// not start with `@`, so `?:` and `\'\'}}")` survived into the type and
-/// `jails beans` reported a dependency called `)` that no bean could supply.
+/// Dropping annotations by discarding whitespace-separated words that start
+/// with `@` works only while the argument has no spaces in it.
+/// `@Value("${k:#{env.K ?: \'\'}}")` is three such words, two of which do
+/// not start with `@`, so `?:` and `\'\'}}")` survive into the type and
+/// `jails beans` reports a dependency called `)` that no bean can supply.
 ///
 /// Structure is read off `blanked()` -- a `(` inside a string literal is not a
 /// bracket -- and the spans are cut from the original, which is
@@ -564,12 +563,11 @@ pub fn package_of(source: &str) -> Option<String> {
 /// Every `.java` file under `dir` whose *top-level type* carries `annotation`,
 /// with its source, in path order.
 ///
-/// Three callers wanted this and each had written its own walk: `add`'s test
-/// wiring, the V2 translation, and `doctor`. Two of the three matched a raw
-/// substring, which reads `@SpringBootTest` inside a Javadoc example as a
-/// declaration -- and `TestcontainersConfig`'s Javadoc contains exactly that,
-/// so `add db` counted its own container config as a test needing the config
-/// imported into it.
+/// The one walk of `src/test/java`, so every caller answers the same way. A
+/// raw substring match reads `@SpringBootTest` inside a Javadoc example as a
+/// declaration -- `TestcontainersConfig`'s Javadoc contains exactly that --
+/// and counts the container config as a test needing the config imported into
+/// it.
 ///
 /// The order is the path order, because it decides the order of whatever the
 /// caller does next, and a run whose result depended on how the filesystem
@@ -772,12 +770,10 @@ public final class InMemoryRewardRepository implements RewardRepository {
         assert_eq!(info.constructor_params[1].raw_type, "List<Money>");
     }
 
-    /// An annotation argument with spaces in it is not part of the type.
-    ///
-    /// `bugs.md` B53: `jails beans` reported `needs )` for a constructor whose
-    /// only parameter was a `String` behind a `@Value` with a SpEL default.
-    /// Annotations were dropped by discarding words beginning with `@`, and
-    /// `@Value("${k:#{env.K ?: ''}}")` is three words, two of which do not.
+    /// An annotation argument with spaces in it is not part of the type:
+    /// `@Value("${k:#{env.K ?: ''}}")` is three whitespace-separated words,
+    /// two of which do not begin with `@`, and a reader that drops words by
+    /// that rule reports `needs )` for a `String` parameter.
     #[test]
     fn an_annotation_argument_with_spaces_is_not_read_as_a_type() {
         let source = r#"

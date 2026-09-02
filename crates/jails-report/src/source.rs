@@ -1,6 +1,6 @@
 //! `jails src <Type>`: where is this type's source?
 //!
-//! `plan.md` §14. An editor asking "take me to `JdbcClient`" has two bad
+//! An editor asking "take me to `JdbcClient`" has two bad
 //! answers available to it. jdt.ls knows, but only once it has indexed a
 //! project that compiles — which is the state you are least often in when you
 //! need this. A `find` over the filesystem is instant and gets the wrong file
@@ -35,7 +35,7 @@ pub(crate) struct Found {
 pub fn src(type_name: &str, json: bool) -> Result<()> {
     // The project root when there is one, else here. This is the one command
     // that has no business requiring a build file: "where is this type" is a
-    // question about a directory of sources, and the case §14 describes --
+    // question about a directory of sources, and the case it exists for --
     // jumping into a library checkout -- is often asked from a repository that
     // is not a Maven project at all.
     let root = crate::find_project_root()
@@ -93,8 +93,8 @@ pub(crate) fn search(root: &Path, type_name: &str) -> Vec<Found> {
 use crate::inspect::roots::SourceSet;
 
 fn roots(root: &Path) -> Vec<PathBuf> {
-    // Including the tree the compiler writes. `jails src Order` answered "no
-    // source for `Order` under this project" about a record jails had just
+    // Including the tree the compiler writes: without it `jails src Order`
+    // would answer "no source for `Order`" about a record jails itself
     // generated -- and this is the one command that deliberately works outside
     // a build file, so it is the last place a reader would expect to be told
     // their own type does not exist. Shared with `routes`/`beans`/`stats`

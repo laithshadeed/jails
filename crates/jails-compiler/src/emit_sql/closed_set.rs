@@ -1,8 +1,8 @@
 //! The check constraint a closed set puts on every column that stores it.
 //!
 //! **An enum column is `text` until something constrains it.** The Java type
-//! is a closed set and the column was not, so any string a hand-written
-//! statement or a psql session wrote was accepted, and the row came back out
+//! is a closed set and the bare column is not, so any string a hand-written
+//! statement or a psql session writes is accepted, and the row comes back out
 //! as a `valueOf` that throws. The constraint is what makes the two agree.
 //!
 //! Widening is a forward migration per storing table; narrowing is refused,
@@ -134,8 +134,8 @@ pub(super) fn derive_into(
 ///
 /// **One owner, because the frontend refuses first.** `g enum Status OPEN`
 /// over `OPEN CLOSED` never reaches the compiler -- the JDL editor sees the
-/// request is not an extension and stops -- so the sentence would have been
-/// written twice and drifted once.
+/// request is not an extension and stops -- so the sentence is written once
+/// rather than twice, where it would drift.
 pub fn narrowing_refusal(
     java_type: &str,
     accepted: &[jails_model::EnumConstant],

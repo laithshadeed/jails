@@ -1,12 +1,10 @@
 //! **What the CLI accepts**, and nothing about what happens next.
 //!
 //! The clap definition: one type per vocabulary the command line has, one arm
-//! per subcommand. `pending.md` §8.1 names the seam -- `main.rs` was 1,071
-//! lines of which 690 were this, and the two halves answer different questions.
-//! This one is read when somebody asks *what can I type*; `main`'s match is
-//! read when somebody asks *what does it do*.
+//! per subcommand. This file is read when somebody asks *what can I type*;
+//! `main`'s match is read when somebody asks *what does it do*.
 //!
-//! Two rules the whole file is subject to, both from `CLAUDE.md`:
+//! Two rules the whole file is subject to:
 //! an argument with a closed value set is a `clap::ValueEnum` rather than a
 //! `String` matched by hand, because that is the only way `clap_complete` can
 //! emit a static completion list; and an alias meant to be typed is a
@@ -145,12 +143,9 @@ pub(crate) struct Cli {
 
     // `--dry-run` is an alias, not a second flag. A per-command `bool` that
     // dispatch ORs with this one -- `dry_run || pretend` -- is two names for
-    // one boolean reaching two implementations, which abstract.md §4.2 calls
-    // connascence of meaning crossing a module boundary, and which lets
-    // `--pretend` and apply disagree about what would be written. One flag,
-    // one value,
-    // every command -- and `--dry-run` now works on all of them rather than
-    // on the three that happened to declare it.
+    // one boolean reaching two implementations, which lets `--pretend` and
+    // apply disagree about what would be written. One flag, one value, every
+    // command.
     /// Run, but write nothing -- print what would change and stop.
     ///
     /// Global on purpose: Rails puts `--pretend` on every generator rather
@@ -161,10 +156,10 @@ pub(crate) struct Cli {
 
     /// How a command reports: readable, current JSON, or frozen v1 JSON
     ///
-    /// One projection, two encodings. §R3.4 makes a command's result a
-    /// *value* -- the same status, operation list, ledger line and effects
-    /// whether the run previewed or committed -- so `--output json` is an
-    /// encoding of that value rather than a second description of the work.
+    /// One projection, two encodings. A command's result is a *value* -- the
+    /// same status, operation list and effects whether the run previewed or
+    /// committed -- so `--output json` is an encoding of that value rather
+    /// than a second description of the work.
     #[arg(long, global = true, value_enum, default_value_t = Output::Human)]
     pub(crate) output: Output,
 
@@ -208,8 +203,7 @@ pub(crate) enum ResourceCommand {
     /// On a canonical project this takes no arguments: managed output under
     /// `.jails/generated` is rendered from the model, so repair is ordinary
     /// compilation with the deleted-managed-file guard waived, and there is
-    /// nothing to select or to choose a strategy between. The legacy engine
-    /// repairs one resource out of its ledger and needs both.
+    /// nothing to select or to choose a strategy between.
     Repair {
         /// Simple entity name or fully qualified generated Java type
         selector: Option<String>,
@@ -405,11 +399,10 @@ pub(crate) struct Invocation {
     ///
     /// `model_command::root` walks up from the *process* directory, which is
     /// right for every command a reader types and wrong for `jails new --app`:
-    /// it stands in the parent of the project it is creating. The alternative
-    /// was an explicit root parameter on every canonical frontend -- nine of
-    /// them, on the one `abstract.md` §7 rung that exists to discourage a fact
-    /// re-derived from a primitive rather than read off a resolved value.
-    /// This *is* that resolved value; it was already threaded everywhere.
+    /// it stands in the parent of the project it is creating. An explicit
+    /// root parameter on every canonical frontend would re-derive from a
+    /// primitive a fact this resolved value already holds, and this value is
+    /// already threaded everywhere.
     pub(crate) root: Option<std::path::PathBuf>,
 }
 
@@ -458,7 +451,7 @@ impl Invocation {
     /// The invocation for a command that does not take the global flags.
     ///
     /// `jails new` builds its own request from `--debug`/`--pretend` rather
-    /// than taking an `Invocation`, and `--app` now replays a manifest through
+    /// than taking an `Invocation`, and `--app` replays a manifest through
     /// the canonical frontends, which do. Everything else is a presentation
     /// flag with a sensible absence.
     pub(crate) fn for_new(root: std::path::PathBuf, debug: bool) -> Self {
@@ -990,13 +983,13 @@ pub(crate) enum Command {
     },
     /// Run the tests against a resident JVM, started on demand
     ///
-    /// The measurement this exists for is in `plan.md` §19.2: the *first*
-    /// JUnit session in a JVM costs 464 ms where the warm ones cost 20 ms, and
-    /// a cold `java` pays it every run. The daemon pays it once.
+    /// The *first* JUnit session in a JVM costs 464 ms where the warm ones
+    /// cost 20 ms, measured, and a cold `java` pays it every run. The daemon
+    /// pays it once.
     ///
     /// It runs what is compiled and refuses when a source is newer -- the same
     /// gate as `test --fast`. It does not compile, because the editor's
-    /// language server already writes `target/classes` on save (§19.5).
+    /// language server already writes `target/classes` on save.
     Testd {
         filter: Option<String>,
         /// Run only the tests reachable from what has changed in the working

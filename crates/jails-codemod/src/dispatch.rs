@@ -1,15 +1,12 @@
 //! Registering a generated command in the dispatcher that runs it.
 //!
-//! Here for the reason the `@Import` splice is: two engines perform this edit
-//! -- the direct write path and the projection a route plans through -- and a
-//! second copy of a surgical edit to a Java file is a copy that drifts. Text
-//! in, text out; nothing here opens a file.
+//! Text in, text out; nothing here opens a file.
 //!
 //! Every match is scoped to the registry body rather than the whole file. A
 //! dispatcher's own Javadoc carries an example `commands.put(...)` line, and a
-//! whole-file match reads that as a registration -- which is how generating a
-//! command named like the example came to be silently skipped, and how
-//! removing one came to delete the documentation instead.
+//! whole-file match reads that as a registration -- skipping a command named
+//! like the example, and deleting the documentation instead of the
+//! registration on removal.
 
 /// The statements inside `commands()`, between the map's creation and the
 /// `return` -- the only region where a registration counts.
@@ -61,9 +58,8 @@ pub fn splice_registration(source: &str, command_class: &str, import: &str) -> O
 ///
 /// Returns `None` when there is no such line, so the caller can stay quiet
 /// rather than rewriting a file it did not change. Scoped to the registry
-/// body for the same reason `register_command` is -- the dispatcher's own
-/// Javadoc carries an example `commands.put(...)` line, and a whole-file
-/// match would delete the documentation instead of the registration.
+/// body, like the splice, so a Javadoc example is never mistaken for a
+/// registration.
 pub fn unsplice_registration(source: &str, command_class: &str) -> Option<String> {
     let call = format!("commands.put({command_class}.NAME, {command_class}::run);");
     let body = registry_body(source)?;

@@ -45,9 +45,8 @@ pub enum Client {
 /// The `=` is matched explicitly rather than by prefix, so
 /// `spring.datasource.url-shadow` is not `spring.datasource.url` -- and
 /// whitespace is allowed *around* it, because `key = value` is a properties
-/// file and a reader writes one. The first spelling of this matched
-/// `key` then `=` with nothing between, so a hand-spaced line read as absent
-/// and `jails db` fell through to PostgreSQL on an H2 project.
+/// file and a reader writes one; a hand-spaced line read as absent would send
+/// `jails db` to PostgreSQL on an H2 project.
 fn property<'a>(properties: &'a str, key: &str) -> Option<&'a str> {
     properties
         .lines()

@@ -1,9 +1,7 @@
 //! Reading Java text without being fooled by what is inside it.
 //!
-//! One scanner, two public modes. It moved here from `jails-java` for the
-//! reason [`crate::annotate`] did: `jails-workspace` has to decide which
-//! captured tests carry `@SpringBootTest`, no canonical crate may depend on
-//! `jails-java`, and a second blanker would be a second answer. It reads text
+//! One scanner, two public modes, and the only blanker in the workspace: a
+//! second one would be a second answer to where a literal ends. It reads text
 //! and returns text, and knows nothing about jails.
 
 /// The source with every comment and string/char literal replaced by spaces,

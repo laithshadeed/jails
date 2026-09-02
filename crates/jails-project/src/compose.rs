@@ -204,7 +204,7 @@ pub(crate) fn has_services(text: &str) -> bool {
 
 /// Every top-level service name a compose document declares.
 ///
-/// The one reader of a compose document's service list, so §R3.3's
+/// The one reader of a compose document's service list, so
 /// `all_service_names` and `has_services` cannot disagree about what is in a
 /// file. Markers do not participate: a `# jails:` line is a comment, and the
 /// document a runtime reconciliation stops services from is the document as
@@ -293,8 +293,7 @@ pub(crate) fn has_service_ref(text: &str, svc: ServiceRef<'_>) -> bool {
 /// module's job and not the caller's: [`add_service_ref`] takes a body that
 /// already carries the nesting a literal in this file is written with, and
 /// handing it the canonical value instead un-nests every key -- `image:` lands
-/// at the service's own indent and the document stops being YAML. That is
-/// exactly what the V2 route wrote until something compared the bytes.
+/// at the service's own indent and the document stops being YAML.
 pub(crate) fn add_canonical_service(text: &str, svc: ServiceRef<'_>) -> Option<String> {
     let body = nested(svc.body);
     add_service_ref(text, ServiceRef { body: &body, ..svc })
@@ -601,10 +600,9 @@ fn invoke_compose(root: &Path, args: Vec<&str>, debug: bool) -> Result<()> {
 
 /// `docker compose` (v2, a CLI plugin) or the standalone `docker-compose`.
 ///
-/// Resolved in `process`, which is also what `doctor` probes with -- the two
-/// had separate copies, and `doctor` hardcoded `docker`, so on a machine with
-/// only the standalone binary `jails start` worked while `doctor` reported
-/// Docker missing.
+/// Resolved in `process`, which is also what `doctor` probes with: a second
+/// copy that hardcodes `docker` reports Docker missing on a machine with only
+/// the standalone binary, where `jails start` works.
 fn compose_command() -> Option<Command> {
     let (program, prefix) = crate::process::compose_program()?;
     let mut cmd = Command::new(program);
@@ -679,9 +677,9 @@ pub fn postgres_connect(text: &str) -> Option<PostgresConnect> {
 
 /// Whether a compose file carries the block jails writes for `marker`.
 ///
-/// Public because `doctor` asks the same question about kafka and had been
-/// answering it with `yaml.contains("# jails:kafka")` -- a second place that
-/// knew both the marker format *and* this file's two-space indent. The indent
+/// Public because `doctor` asks the same question about kafka, and answering
+/// it there with `yaml.contains("# jails:kafka")` is a second place that
+/// knows both the marker format *and* this file's two-space indent. The indent
 /// is this module's fact, so the question belongs here.
 pub fn declares(text: &str, marker: &str) -> bool {
     block(marker).present_in(text)
@@ -689,9 +687,8 @@ pub fn declares(text: &str, marker: &str) -> bool {
 
 fn has_postgres_service(text: &str) -> bool {
     // Through `declares`, not `contains`: a substring match reads `# jails:dbx`
-    // as this block, which is the prefix collision `exact_line` exists for --
-    // `durable-job-email` mistook `durable-job-email-sender` for its own and
-    // cut the longer marker in half during destroy.
+    // as this block, which is the prefix collision the marked block's exact
+    // line match exists for.
     declares(text, "db")
         || text.lines().any(|l| {
             let t = l.trim_end();
@@ -723,14 +720,7 @@ fn host_port_for_container(trimmed: &str, container_port: u16) -> Option<u16> {
 mod tests {
     use super::*;
 
-    /// The splice, reached the way the V2 projection reaches it.
-    ///
-    /// These tests were written against `add_service(text, &Service)`, a V1
-    /// entry point that had no callers left once `projection.rs` started
-    /// splicing from a recorded `ComposeServiceSpec`. Deleting the entry point
-    /// would have deleted the only unit tests the splice has, so they were
-    /// re-pointed at the surviving `*_ref` pair instead -- which is the
-    /// function the shipped path actually calls.
+    /// The splice, reached through the `*_ref` pair the shipped path calls.
     fn add_service(text: &str, svc: &Service) -> Option<String> {
         add_service_ref(text, svc.borrowed())
     }

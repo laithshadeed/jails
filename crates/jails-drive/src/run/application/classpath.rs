@@ -124,12 +124,10 @@ fn resolve_dependencies(project: &Project, debug: bool) -> Result<Vec<PathBuf>> 
             }
             let target = project.root().join("target/jails-runtime-classpath");
             // **Reused while `pom.xml` has not moved, for the reason
-            // `launcher.rs` already gives about the test classpath:
+            // `launcher.rs` gives about the test classpath:
             // `dependency:build-classpath` is itself a Maven run.** Resolving
-            // it unconditionally made every `jails runner` and `jails console`
-            // pay a full Maven round trip before doing any work -- measured in
-            // this suite at 51.1s across five invocations in one directory,
-            // and the same tax on a reader running the command twice.
+            // it unconditionally would make every `jails runner` and `jails
+            // console` pay a full Maven round trip before doing any work.
             //
             // The pom is the only thing that can change the answer, so
             // comparing its mtime against the cache's is the cheapest question

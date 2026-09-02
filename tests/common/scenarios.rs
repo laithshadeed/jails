@@ -1,13 +1,11 @@
 //! The one table of "how do I invoke kind X", shared by every test that
 //! needs to run a generator.
 //!
-//! `plan.md` §6.1 counts five separate answers to *"what files does kind X
-//! produce?"* and nothing that checks they agree. This module exists so that
-//! adding a thirteenth one is not the price of a new test: the golden
-//! snapshots (`tests/golden.rs`) and the generate/destroy agreement check
-//! (`tests/agreement.rs`) both read these scenarios, and the coverage test
-//! derives *which* kinds and capabilities are exercised from the steps
-//! themselves rather than from a list somebody maintains by hand.
+//! The golden snapshots (`tests/golden.rs`) and the generate/destroy
+//! agreement check (`tests/agreement.rs`) both read these scenarios, and the
+//! coverage test derives *which* kinds and capabilities are exercised from the
+//! steps themselves rather than from a list somebody maintains by hand, so a
+//! new test never costs a second answer to "what does kind X produce".
 
 use super::{TARGET_RELEASE, temp_dir, write_plain_fixture, write_spring_fixture};
 use std::collections::BTreeSet;
@@ -37,18 +35,16 @@ pub struct Scenario {
 /// Every artifact kind and every capability, in the smallest invocation that
 /// exercises it.
 ///
-/// That sentence used to be a wish. `every_kind_and_capability_has_a_golden_scenario`
-/// in `tests/golden.rs` is what makes it a fact: it reads the kinds and
-/// capabilities out of the binary's own help and fails when one has no
-/// scenario here, so a kind can no longer be added without its snapshot.
+/// `every_kind_and_capability_has_a_golden_scenario` in `tests/golden.rs`
+/// holds it: it reads the kinds and capabilities out of the binary's own help
+/// and fails when one has no scenario here, so a kind cannot be added without
+/// its snapshot.
 pub const SCENARIOS: &[Scenario] = &[
     // ---- the canonical compiler ----
     //
-    // **The one scenario whose output is `.jails/generated`.** Every other
-    // entry here drives the legacy generator, so before this existed
-    // `grep -rl "jails/generated" tests/golden` returned nothing: the product
-    // of the new architecture had no byte snapshot anywhere and nothing failed
-    // when a canonical emitter changed what it wrote (`audit.md` A5.1).
+    // **The scenario seeded with a whole model rather than built by `g`
+    // commands**, so a canonical emitter that changes what it writes fails a
+    // byte snapshot here.
     //
     // Seeded with a model rather than driven by `g` commands, because the
     // model *is* the input on this path -- and one model reaching many
@@ -91,7 +87,7 @@ pub const SCENARIOS: &[Scenario] = &[
     // `g field` has two halves and they are not the same command. On a
     // source-only kind it adds a Java component and nothing else; on a
     // scaffold it also appends one forward migration for the column. One
-    // scenario covers both, because a snapshot of only the second is what let
+    // scenario covers both, because a snapshot of only the second lets
     // `alter table notes` be written for a `record` that owns no table.
     Scenario {
         name: "field",
@@ -269,9 +265,9 @@ pub const SCENARIOS: &[Scenario] = &[
             &["g", "job", "Reconcile"],
         ],
     },
-    // The call this project actually makes, rather than a REST collection to
-    // delete -- `missing.md` M7. The plain `g client` scenario above keeps the
-    // collection shape, which is what a caller who names nothing still gets.
+    // The call a real project makes, rather than a REST collection to delete.
+    // The plain `g client` scenario above keeps the collection shape, which
+    // is what a caller who names nothing still gets.
     Scenario {
         name: "client-call",
         fixture: Fixture::Spring,
@@ -309,8 +305,7 @@ pub const SCENARIOS: &[Scenario] = &[
     Scenario {
         // `add kafka` first, because `g event` requires it: all four files it
         // writes import `org.springframework.kafka`, and without the starter
-        // the generate used to report success over a project that could not
-        // compile -- bugs.md B58.
+        // the project cannot compile.
         name: "event",
         fixture: Fixture::Spring,
         seed: &[],
@@ -605,7 +600,7 @@ pub const SCENARIOS: &[Scenario] = &[
             &["add", "json", "--no-start"],
             // `g event` requires Kafka: every file it writes imports
             // `org.springframework.kafka`, and this scenario's whole point is
-            // an outbox that publishes. bugs.md B58.
+            // an outbox that publishes.
             &["add", "kafka", "--no-start"],
             &[
                 "g",
@@ -650,8 +645,7 @@ pub const SCENARIOS: &[Scenario] = &[
         ],
     },
     // `--via` reads a second table so a filter can name a column the target
-    // does not own -- `missing.md` M5, the shape every real read in those apps
-    // needed and none of them could express.
+    // does not own, which is the shape most real reads need.
     Scenario {
         name: "query-via",
         fixture: Fixture::Spring,
@@ -684,7 +678,8 @@ pub const SCENARIOS: &[Scenario] = &[
                 "Item",
                 "--via",
                 "Owner",
-                // The order and the ceiling the adapter used to pick silently.
+                // The order and the ceiling, stated rather than left to the
+                // adapter's default.
                 "--order-by",
                 "createdAt desc, name",
                 "--limit",
@@ -692,8 +687,7 @@ pub const SCENARIOS: &[Scenario] = &[
             ],
         ],
     },
-    // Get-or-create: the first line of three of the six ported projects, and
-    // the one shape `g usecase` could not write -- `missing.md` M6.
+    // Get-or-create: the first line of most real use cases.
     Scenario {
         name: "usecase-on-conflict",
         fixture: Fixture::Spring,
@@ -731,9 +725,8 @@ pub const SCENARIOS: &[Scenario] = &[
             &["g", "seed", "Widget"],
         ],
     },
-    // `missing.md` M16: three independent filters, any subset. The generated
-    // `IT` is what proves the cast is right, because it runs against a real
-    // PostgreSQL.
+    // Three independent filters, any subset. The generated `IT` is what
+    // proves the cast is right, because it runs against a real PostgreSQL.
     Scenario {
         name: "query-optional-filters",
         fixture: Fixture::Spring,
@@ -759,9 +752,8 @@ pub const SCENARIOS: &[Scenario] = &[
             ],
         ],
     },
-    // `missing.md` M14: the three closed sets one real project needed and
-    // `g enum` could not spell -- lowercase, TitleCase, and two that are not
-    // identifiers in any casing.
+    // The three closed-set spellings a real project needs: lowercase,
+    // TitleCase, and two that are not identifiers in any casing.
     Scenario {
         name: "enum-wire-values",
         fixture: Fixture::Spring,
@@ -775,9 +767,9 @@ pub const SCENARIOS: &[Scenario] = &[
             "URGENT=!!",
         ]],
     },
-    // `--consumes form`: the wire format `missing.md` M15 counted, on the
-    // recipe that needs it most. A form post is what every jQuery page sends
-    // and what a `@RequestBody` endpoint answers 415 to.
+    // `--consumes form`, on the recipe that needs it most. A form post is what
+    // every jQuery page sends and what a `@RequestBody` endpoint answers 415
+    // to.
     Scenario {
         name: "usecase-form",
         fixture: Fixture::Spring,
@@ -930,8 +922,7 @@ pub const SCENARIOS: &[Scenario] = &[
     // The component the *endpoint* decides rather than the caller. Two
     // endpoints write the same table and each must stamp its own sender; with
     // the component in the request either can forge the other's rows, and a
-    // well-formed request is exactly what the forgery looks like. `missing.md`
-    // M-pin, and P10.7's first bullet.
+    // well-formed request is exactly what the forgery looks like.
     Scenario {
         name: "usecase-pinned",
         fixture: Fixture::Spring,
@@ -965,12 +956,10 @@ pub const SCENARIOS: &[Scenario] = &[
             ],
         ],
     },
-    // A resource whose collection URL is a fixed external contract.
+    // A resource whose collection URL is a fixed external contract:
     // `g scaffold User` serves `/users` and the admin frontend calls
-    // `/admin_api/users`; refusing `--path` here was the honest answer while
-    // nothing carried it and the useless one once the URLs were given, because
-    // the only remaining repair was hand-editing the controller jails had just
-    // written. `missing.md` M8's last shape.
+    // `/admin_api/users`. Without `--path` the only repair is hand-editing
+    // the controller jails just wrote.
     Scenario {
         name: "scaffold-path",
         fixture: Fixture::Spring,
@@ -987,8 +976,8 @@ pub const SCENARIOS: &[Scenario] = &[
     },
     // The other half of `--consumes form`: on a `query` it also decides the
     // verb, because `@ModelAttribute` binds from request *parameters* and on a
-    // GET those are the query string. `missing.md`'s "a GET with query-string
-    // filters" -- `GET /admin_api/tickets?status=open` is what a browser sends.
+    // GET those are the query string. `GET /admin_api/tickets?status=open` is
+    // what a browser sends.
     Scenario {
         name: "query-form",
         fixture: Fixture::Spring,
@@ -1018,7 +1007,7 @@ pub const SCENARIOS: &[Scenario] = &[
         ],
     },
     // The key in the URL: `PATCH /admin_api/topics/{userId}/status`, which is
-    // the shape every admin frontend sends and the one `missing.md` counted.
+    // the shape every admin frontend sends.
     // The command record loses the selector, the port takes it beside the
     // command, and the generated proof expands the variable -- three things
     // that have to move together or the route mounts a variable and drops it.
@@ -1111,12 +1100,9 @@ const CASES_MARKDOWN: &str = "\
 /// The model a scenario starts from, when it does not seed one of its own.
 ///
 /// **Every scenario is canonical.** The fixtures are hand-written poms with no
-/// `.jails/` in them, which is the shape a *reader's* project has -- and until
-/// this existed that shape was the legacy engine's, so the whole table
-/// exercised the implementation being deleted and the compiler had one golden
-/// tree to its name. Seeding the app block here is exactly what `jails model
-/// init` writes for a foreign project, so the table now measures the path a
-/// reader is on after the on-ramp.
+/// `.jails/` in them, which is the shape a *reader's* project has. Seeding the
+/// app block here is exactly what `jails model init` writes for a foreign
+/// project, so the table measures the path a reader is on after the on-ramp.
 ///
 /// `storage none`: storage is a capability in JDL v1, and every scenario that
 /// wants a database says so with `add db`, `add h2` or `add sqlite`. Declaring
@@ -1221,8 +1207,8 @@ fn walk(root: &Path, dir: &Path, out: &mut BTreeSet<String>) {
 
 /// The `generate` steps of a scenario, as (kind, name).
 ///
-/// Derived from the steps rather than declared beside them: a third list of
-/// "which kinds does this scenario cover" is exactly the drift §6.1 counts.
+/// Derived from the steps rather than declared beside them: a second list of
+/// "which kinds does this scenario cover" drifts.
 pub fn generate_steps(scenario: &Scenario) -> Vec<(&'static str, &'static str)> {
     scenario
         .steps
@@ -1268,9 +1254,8 @@ pub fn covered_capabilities() -> BTreeSet<&'static str> {
 /// The canonical value names clap accepts, read out of the binary's own
 /// long help.
 ///
-/// The alternative is a hand-copied list of the enum variants, which is the
-/// fifth copy §6.1 is about. Parsing help means the oracle is the CLI a user
-/// actually types at.
+/// A hand-copied list of the enum variants drifts. Parsing help means the
+/// oracle is the CLI a user actually types at.
 fn possible_values(subcommand: &str) -> BTreeSet<String> {
     let output = Command::new(super::bin())
         .args([subcommand, "--help"])
@@ -1343,10 +1328,10 @@ pub struct Invocation {
 
 /// Read a scenario step rather than restating it.
 ///
-/// CLAUDE.md's rule for this table is that a new kind adds a `Scenario` and
-/// not a fourth list, so this parity check reads the same steps the golden
-/// snapshots and the destroy-agreement check read. A flag it does not know is
-/// a reason to skip the step, never to guess at it.
+/// A new kind adds a `Scenario` and not a second list, so this parity check
+/// reads the same steps the golden snapshots and the destroy-agreement check
+/// read. A flag it does not know is a reason to skip the step, never to guess
+/// at it.
 pub fn invocation(step: &[&str]) -> Option<Invocation> {
     let mut parsed = Invocation::default();
     let mut rest = step[3..].iter();

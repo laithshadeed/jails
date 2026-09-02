@@ -113,14 +113,13 @@ pub fn migration_schema(project: &Project, manifest_path: Option<&Path>) -> Resu
 
 /// Whether any migration statement is destructive or deployment-sensitive.
 ///
-/// The manifest is consulted for one thing -- the dialect -- and demanding it
-/// made this command unusable on the shape `jails new` produces, which has no
-/// manifest at all and is the shape every reproduction in `bugs.md` uses. The
-/// question *is* answerable without one: the migrations are on disk and the
-/// dialect is a fact about the driver the project declares, which is the same
-/// authority `Project::sql_dialect` uses everywhere else. A manifest, when
-/// there is one, still wins -- it is the declaration, and the driver is the
-/// inference.
+/// The manifest is consulted for one thing -- the dialect -- and is not
+/// demanded, because the shape `jails new` produces has no manifest at all.
+/// The question *is* answerable without one: the migrations are on disk and
+/// the dialect is a fact about the driver the project declares, which is the
+/// same authority `Project::sql_dialect` uses everywhere else. A manifest,
+/// when there is one, still wins -- it is the declaration, and the driver is
+/// the inference.
 pub fn migration_lint(
     project: &Project,
     manifest_path: Option<&Path>,
@@ -395,11 +394,10 @@ pub fn read_manifest(
         })
         .unwrap_or_else(|| project.root().join(".jails/app.toml"));
     // An absent manifest is a refusal with a reason, not an OS error naming a
-    // path the reader never wrote. A modelled project has never had one:
-    // `.jails/app.toml` is the legacy manifest, and it declares its queries in
-    // the model instead -- so `No such file or directory (os error 2)` was the
-    // answer every canonical project got, about an internal path, with no fix
-    // line and no hint that the command does not apply to it.
+    // path the reader never wrote. A modelled project has no `.jails/app.toml`
+    // -- it declares its queries in the model -- and `No such file or
+    // directory (os error 2)` about an internal path, with no fix line, does
+    // not say that the command does not apply to it.
     let contents = fs::read_to_string(&path).map_err(|error| match (
         error.kind() == std::io::ErrorKind::NotFound,
         requested.is_none() && project.is_modelled(),

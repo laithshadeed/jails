@@ -1,14 +1,11 @@
 //! How a Java value reaches a JDBC parameter, and which columns may not be
 //! written at all.
 //!
-//! Split from [`super`] by secret: that module decides the schema -- the DDL, a
-//! migration, a column's type -- and this one decides what happens at the bind
-//! site. They move for different reasons, and the two questions met only
-//! because both mention a column.
-//!
-//! Both answers here are ones no generated code could state for itself, and
-//! both were wrong until a generated integration test was finally run against
-//! a real PostgreSQL.
+//! [`super`] decides the schema -- the DDL, a migration, a column's type --
+//! and this module decides what happens at the bind site. They move for
+//! different reasons, and the two questions meet only because both mention a
+//! column. Both answers here are ones no generated code could state for
+//! itself, and only an integration test against a real PostgreSQL proves them.
 
 use super::{SqlDefault, declares_enum, sql_default};
 use crate::CompileError;
@@ -24,28 +21,14 @@ pub(crate) fn database_assigned(field: &Field) -> Result<bool, CompileError> {
     Ok(matches!(sql_default(field)?, Some(SqlDefault::Identity)))
 }
 
-/// How a Java value of this field's type is bound as a JDBC parameter.
-///
-/// **The receiver is baked in rather than prefixed by the caller.**
-/// `Timestamp.from(x.at())` puts it in the middle, so gluing a wrapper on the
-/// front yields `x.Timestamp.from(at())` -- which reads fine and does not
-/// compile. Same rule the legacy `sql.rs` records, and the reason this is one
-/// function rather than a wrapper each call site remembers.
-///
-/// It exists because the PostgreSQL driver refuses to infer a type for
-/// `java.time.Instant` -- *"Can't infer the SQL type to use for an instance of
-/// java.time.Instant"* -- so every generated repository over an entity with a
-/// timestamp could not insert a row. `timestamps = true` gives one to every
-/// scaffold, so that was very nearly every canonical project, and nothing
-/// caught it because no generated integration test had ever run.
-/// The same conversion for a component that may be absent.
+/// The same conversion as [`bound_value`], for a component that may be absent.
 ///
 /// **Unwrapped before converting and null after.** A conversion applied to the
 /// `Optional` would not compile, and one applied *after* `orElse(null)` calls
-/// a method on null -- which is how a scaffold with an optional `instant`
-/// bound `Timestamp.from(value.startedAt().orElse(null))` and threw a
-/// `NullPointerException` on every insert that left the column empty. Three
-/// emitters need this answer and each had its own; this is the one.
+/// a method on null -- a scaffold with an optional `instant` binding
+/// `Timestamp.from(value.startedAt().orElse(null))` throws a
+/// `NullPointerException` on every insert that leaves the column empty. Three
+/// emitters need this answer; this is the one.
 pub(crate) fn optional_bound_value(
     model: &AppModel,
     field: &jails_model::Field,
@@ -62,6 +45,19 @@ pub(crate) fn optional_bound_value(
     }
 }
 
+/// How a Java value of this field's type is bound as a JDBC parameter.
+///
+/// **The receiver is baked in rather than prefixed by the caller.**
+/// `Timestamp.from(x.at())` puts it in the middle, so gluing a wrapper on the
+/// front yields `x.Timestamp.from(at())` -- which reads fine and does not
+/// compile. That is the reason this is one function rather than a wrapper
+/// each call site remembers.
+///
+/// It exists because the PostgreSQL driver refuses to infer a type for
+/// `java.time.Instant` -- *"Can't infer the SQL type to use for an instance of
+/// java.time.Instant"* -- so without it a repository over an entity with a
+/// timestamp cannot insert a row, and `timestamps = true` gives one to every
+/// scaffold.
 pub(crate) fn bound_value(
     model: &AppModel,
     field: &Field,

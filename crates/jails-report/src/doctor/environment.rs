@@ -3,12 +3,10 @@
 //! Is there a Maven? Which JDK will actually run? Is the container engine up,
 //! and is it the one Testcontainers will find? Is the port free?
 //!
-//! `abstract.md` §6.2 predicted this seam: as `doctor` derives more from
-//! `add::plan_for`, what survives as hand-written is "the checks that probe the
-//! environment" -- because no plan can carry the fact that `docker` here is
-//! podman's shim, or that Testcontainers reads a different socket from the one
-//! `jails start` succeeded against. Those live here, and they are the ones that
-//! stay.
+//! These are hand-written rather than derived from anything, because no plan
+//! can carry the fact that `docker` here is podman's shim, or that
+//! Testcontainers reads a different socket from the one `jails start`
+//! succeeded against.
 //!
 //! Read-only, like the rest of `doctor`: nothing here starts, stops or writes
 //! anything, so it is safe to run mid-debug.
@@ -32,8 +30,8 @@ pub(super) fn maven_check(project: &Project) -> Check {
     if matches!(project.build(), crate::build::Build::Gradle) {
         // The wrapper pins a distribution, and a distribution cannot launch on
         // an arbitrarily new JDK -- it dies compiling its own build script,
-        // before reading the project. `doctor` reported `ok` over exactly that
-        // project, which is the one situation this command exists to prevent.
+        // before reading the project. Reporting `ok` over such a project is
+        // the one situation this command exists to prevent.
         //
         // Only a *measured* pairing fails the check. `Launches::Unknown` stays
         // ok, because a claim jails has not run is not a claim it makes.
@@ -127,8 +125,7 @@ pub(super) fn maven_check(project: &Project) -> Check {
 /// The way to remove that is named in the *detail*, not in a `fix:` line. A
 /// fix line under an `ok` row reads as a repair for something broken, and
 /// nothing here is broken: both algorithms merge correctly, and pinning is a
-/// choice a team makes rather than a defect. This is the only `Ok` check in
-/// `doctor` that ever carried one.
+/// choice a team makes rather than a defect.
 pub(super) fn git_merge_check() -> Check {
     const KEY: &str = jails_support::git::DIFF_ALGORITHM_OVERRIDE;
     if !jails_support::git::available() {
@@ -232,8 +229,8 @@ pub(super) fn parse_java_major(text: &str) -> Option<u32> {
 /// Whether the compose provider is one `spring-boot-docker-compose` can drive.
 ///
 /// This is a static fact about the machine that decides whether the
-/// application can start at all, and until now it was only discoverable by
-/// running it and reading `jails why` afterwards.
+/// application can start at all, and it is cheaper to check than to discover
+/// by running the application and reading `jails why` afterwards.
 ///
 /// `spring-boot-docker-compose` shells out with Docker Compose v2 syntax
 /// (`--ansi never`, `config --format=json`). podman-compose spells the first
@@ -245,11 +242,10 @@ pub(super) fn parse_java_major(text: &str) -> Option<u32> {
 /// including when it is a CLI plugin driving podman over `DOCKER_HOST` --
 /// which is the configuration that works and the one this recommends.
 ///
-/// Note the fix jails' `why` rule used to suggest,
-/// `spring.docker.compose.enabled=false`, trades one failure for another: it
-/// also removes the datasource URL the module was contributing, so the app
-/// then dies on "no database URL" instead. Installing real Compose v2 is the
-/// fix that leaves nothing broken.
+/// Note that `spring.docker.compose.enabled=false` trades one failure for
+/// another: it also removes the datasource URL the module was contributing,
+/// so the app then dies on "no database URL" instead. Installing real Compose
+/// v2 is the fix that leaves nothing broken.
 pub(super) fn compose_provider_check(pom_text: &str) -> Option<Check> {
     if !pom::has_dependency(
         pom_text,
@@ -259,9 +255,9 @@ pub(super) fn compose_provider_check(pom_text: &str) -> Option<Check> {
         return None;
     }
     // Through the same resolver `compose.rs` runs with, so this reports the
-    // provider jails would actually drive. Hardcoding `docker` here meant a
-    // machine with only the standalone `docker-compose` had `jails start`
-    // working while this said Docker was missing.
+    // provider jails would actually drive. Hardcoding `docker` here would
+    // leave a machine with only the standalone `docker-compose` with `jails
+    // start` working while this says Docker is missing.
     let spec =
         crate::process::compose_spec(["version"])?.output(crate::process::OutputMode::Capture);
     let done = crate::process::run(&spec, crate::process::Diagnostics::Normal).ok()?;
@@ -504,6 +500,13 @@ pub(super) fn declared_services(yaml: &str) -> Vec<String> {
     found
 }
 
+/// Testcontainers finds its engine through DOCKER_HOST or the well-known
+/// `/var/run/docker.sock`, and does *not* read the podman socket that
+/// podman's `docker` CLI shim talks to. On a rootless-podman machine the
+/// CLI therefore works perfectly while every @SpringBootTest dies with
+/// "Could not find a valid Docker environment" -- the two look at different
+/// sockets, which is why `jails start` succeeding proves nothing about
+/// whether the test suite can start a container.
 pub(super) fn testcontainers_check(pom_text: &str) -> Check {
     // Matched on the groupId alone, not on artifact ids: Testcontainers 2.0
     // renamed every module (`postgresql` -> `testcontainers-postgresql`),

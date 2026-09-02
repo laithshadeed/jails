@@ -195,10 +195,9 @@ pub(super) fn lower(
     };
     let port_type = with_suffix(&operation.names.java_type, "Command");
     let type_name = format!("Jdbc{port_type}");
-    // A command publishes what it declares, the same way a transition does.
-    // `CommandSemantics::emits` was linked and read by nobody, so `command
-    // Create(...) { emit TaskCreated }` generated the payload record and an
-    // adapter that never mentioned it.
+    // A command publishes what it declares, the same way a transition does:
+    // `command Create(...) { emit TaskCreated }` gets the payload record and
+    // an adapter that publishes it.
     let publications = super::publications(
         model,
         operation,

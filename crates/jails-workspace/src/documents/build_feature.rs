@@ -74,7 +74,7 @@ fn reconcile_maven_coverage(text: &str, enabled: bool) -> Result<String, String>
     insert_maven_feature_plugin(text, COVERAGE_MARKER, maven_coverage_plugin())
 }
 
-/// Spotless, keyed on the same `BuildFeature` the legacy engine uses.
+/// Spotless, keyed on `BuildFeature::Formatting`.
 ///
 /// The plugin is pinned and so is the formatter under it: a formatter that
 /// drifts version rewrites files nobody touched, and the diff blames whoever
@@ -147,8 +147,9 @@ fn insert_maven_feature_plugin(text: &str, marker: &str, plugin: &str) -> Result
     // jails owns is one `<plugin>`; wrapping `<build>` or `<plugins>` in the
     // marker as well claims a container the reader shares -- and the next
     // command to add a plugin legitimately writes inside it, which reads back
-    // as "the owned block was edited" and refuses every later plan. That is
-    // what `add coverage` then `add fake` did on a pom with no `<build>`.
+    // as "the owned block was edited" and refuses every later plan -- which
+    // is what `add coverage` then `add fake` would do on a pom with no
+    // `<build>`.
     if let Some(at) = direct_child_close(text, &["project", "build"]) {
         let block = format!(
             "<plugins>\n{}</plugins>\n",

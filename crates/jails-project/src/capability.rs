@@ -3,7 +3,7 @@
 //! `jails add csv --name Order` and `jails add csv --name Invoice` are two
 //! capabilities, not one installed twice; `jails add actuator --package ops`
 //! is the same capability placed somewhere else; and `jails add ci --name X`
-//! is a mistake. plan.md §R1.1 fixes those three classes and
+//! is a mistake. Those are the three classes, and
 //! [`jails_protocol::entity::CapabilityId::resolve`] enforces them -- this
 //! module is the half that needs a project to answer: which package a named
 //! instance actually resolves to, and how the resulting identity is written

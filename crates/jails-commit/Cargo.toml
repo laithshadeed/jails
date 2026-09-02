@@ -18,9 +18,8 @@ jails-support.workspace = true
 jails-commit = { workspace = true, features = ["fault-injection"] }
 
 [features]
-# plan.md §R4.5: failpoints exist for the crash suite and are compiled out
-# of a release build. An environment-triggered abort in a shipped binary is a
-# way to corrupt somebody's project.
+# Failpoints exist for the crash suite and are compiled out of a release
+# build: an environment-triggered abort in a shipped binary corrupts projects.
 fault-injection = []
 
 [lints]

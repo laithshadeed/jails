@@ -1,19 +1,15 @@
 //! A Java type's name, textually: which bytes change when it changes, and
 //! which deliberately do not.
 //!
-//! This is the mechanical half of `jails rename`, at the layer that reads
-//! Java rather than at the one that drives a command, because two callers
-//! need it: the CLI, and the transaction route that plans a rename as one
-//! atomic change. Keeping it beside `rename.rs` would have meant the route
-//! reimplementing identifier boundaries and literal skipping, which is how
-//! two answers to one question come to disagree.
+//! This is the mechanical half of `jails rename`, kept at the bottom layer
+//! because more than one caller needs it, and two implementations of
+//! identifier boundaries and literal skipping is how two answers to one
+//! question come to disagree.
 //!
-//! It is textual by design -- see `jails_engine::route::maintenance::rename`'s
-//! doc comment for
-//! when to prefer a language server instead. What that costs is stated rather
-//! than hidden: [`literal_mentions`] counts the occurrences inside string
-//! literals that [`replace_identifier`] leaves alone, so the caller can name
-//! them.
+//! It is textual by design: whole identifiers only, string literals left
+//! alone. What that costs is stated rather than hidden: [`literal_mentions`]
+//! counts the occurrences inside string literals that [`replace_identifier`]
+//! leaves alone, so the caller can name them.
 
 use std::path::{Path, PathBuf};
 
@@ -21,14 +17,11 @@ use std::path::{Path, PathBuf};
 /// (`customerURL` -> `customer_url`) so an acronym does not explode into one
 /// underscore per letter.
 ///
-/// **Here rather than beside the SQL names it produces**, because two layers
-/// need it and only one of them may depend on the other: `jails_spec` reads a
-/// record off disk and has to say which column each component is,
-/// `jails_protocol::identity::SqlName` validates the result, and `SqlName`
-/// sits above `jails_spec`. A second copy at the lower layer is the shape of
-/// every drift bug in this repository -- and this function is the one step
-/// that decides whether two spellings of a field are one field, so a copy
-/// that disagreed by a character would split them.
+/// Here rather than beside the SQL names it produces, because every layer
+/// that names a column needs it: a record read off disk has to say which
+/// column each component is, and `SqlName` validates the result. This
+/// function is the one step that decides whether two spellings of a field are
+/// one field, so a second copy that disagreed by a character would split them.
 pub fn snake_case(value: &str) -> String {
     let chars: Vec<char> = value.chars().collect();
     let mut out = String::with_capacity(value.len() + 4);
@@ -63,9 +56,7 @@ pub fn snake_case(value: &str) -> String {
 /// an empty result is an error naming what to type instead.
 ///
 /// It is here rather than beside the migrations it names because it is a
-/// naming rule and this is where naming lives -- and because its one caller is
-/// the canonical `jails g migration`, which must not reach into a crate the
-/// cutover deletes.
+/// naming rule and this is where naming lives.
 pub fn sql_name(value: &str) -> crate::Result<String> {
     let mut out = String::new();
     let mut previous_was_lower_or_digit = false;

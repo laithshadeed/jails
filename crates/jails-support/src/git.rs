@@ -1,10 +1,9 @@
 //! What this machine's `git` can do, asked once.
 //!
-//! Only one question so far, and it is the one that cost the most: whether
-//! `git merge-file` accepts `--diff-algorithm`. It reached that command after
-//! 2.43, so on Ubuntu 24.04 LTS, Debian 12 and RHEL 9 passing it exits **129**
-//! -- a usage error, not a merge outcome -- and every regeneration over a file
-//! the reader had edited failed. jails passed it unconditionally for months.
+//! One question: whether `git merge-file` accepts `--diff-algorithm`. Git
+//! grew that flag on that command after 2.43, so on a distribution shipping an
+//! older git passing it exits **129** -- a usage error, not a merge outcome --
+//! and every regeneration over a file the reader had edited fails.
 //!
 //! ## Asked, not guessed from a version
 //!
@@ -12,21 +11,18 @@
 //! `2.43.0.windows.1`), and the number that matters is which release added one
 //! flag to one command. So this runs `git merge-file` on three identical
 //! throwaway files and reads the exit status. A capability probe cannot be
-//! wrong about the thing it just did; a version comparison can.
-//!
-//! It is the same reason `maven::mvnd_can_start` exists: answer it up front,
-//! where the answer is cheap and unambiguous, rather than at a call site where
-//! a failure is indistinguishable from the work failing.
+//! wrong about the thing it just did; a version comparison can. It is asked
+//! up front, where the answer is cheap and unambiguous, rather than at a call
+//! site where a failure is indistinguishable from the work failing.
 //!
 //! ## The cost of having a fallback at all, and how it is bounded
 //!
 //! histogram and myers can resolve an ambiguous merge differently: usually the
 //! same bytes, occasionally a different clean result, occasionally a conflict
 //! where the other had none. So **two machines can turn one input into two
-//! managed trees**, and the accepted projection in `.jails/compiler.lock.json`
-//! records whichever they got. That is a real departure from "equal snapshot,
-//! patch and compiler version give equal output", and it is why the choice is
-//! not only automatic.
+//! managed trees**, and the accepted projection records whichever they got.
+//! That is a real departure from "equal snapshot, patch and compiler version
+//! give equal output", and it is why the choice is not only automatic.
 //!
 //! [`DIFF_ALGORITHM_OVERRIDE`] pins it. A team whose members are on different
 //! distributions, or a CI job that must agree with a developer's laptop, sets
@@ -67,12 +63,11 @@ pub fn merge_diff_algorithm() -> Option<&'static str> {
 
 /// The choice itself, with the environment and the probe passed in.
 ///
-/// **Separated so the tests exercise this rather than a copy of it.** They
-/// cannot go through [`merge_diff_algorithm`]: it memoises for the life of the
+/// Separated so the tests exercise this rather than a copy of it. They cannot
+/// go through [`merge_diff_algorithm`]: it memoises for the life of the
 /// process, so the first test to call it would decide the answer for every
-/// other test in the binary. An earlier version answered that by restating the
-/// match in the test module, which is the shape where dropping the `.trim()`
-/// in production leaves every test green.
+/// other test in the binary, and a restated match in the test module is the
+/// shape where dropping the `.trim()` in production leaves every test green.
 ///
 /// `probe` is a closure so no test has to spawn git to check the override
 /// arms, and so the probe stays unrun when an override already settles it.
@@ -120,11 +115,8 @@ pub fn available() -> bool {
 
 /// The complete argument list for a `git merge-file` run.
 ///
-/// **One builder for both merge implementations**, because they live in
-/// ladders that cannot see each other -- `jails-workspace` is canonical,
-/// `jails-prepare` is legacy -- and a capability decision made twice is one
-/// that eventually gets made two ways. That is exactly how the flag came to be
-/// passed unconditionally from both.
+/// One builder for every `git merge-file` caller, because a capability
+/// decision made twice is one that eventually gets made two ways.
 ///
 /// `flags` is what the caller needs beyond `-p` (conflict-marker style, marker
 /// size); `operands` is the labels and the three paths.

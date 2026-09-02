@@ -148,10 +148,8 @@ dispatch). Rewrite to what is there after S52.1.
 
 ## Items you close elsewhere
 
-`docs/30-cutover.md`: the *Ordinary `jails new` is still legacy* paragraph
-(delete; it is false). `docs/00-contracts.md` §1.7's rows *`main.rs` dispatch
-+ command-path + pre-clap parsing* and *`new` generation paths*, once S52.3
-and S52.4 land.
+`docs/00-contracts.md` §1.7's *sixteen copies of one frontend pipeline* row,
+once S52.1 and S52.2 land.
 
 ## Green
 

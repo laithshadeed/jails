@@ -20,9 +20,8 @@ The goal is **one system, described once, in fewer lines**. The canonical
 compiler is finished -- 39 of 39 generators, 25 of 25 capabilities, ordinary
 `jails new` seeds a model -- and what remains beside it is a legacy engine
 nothing can reach, a binary that repeats one pipeline sixteen times, two
-compatibility parsers for inputs this binary no longer writes, fifty-five
-template files nothing renders, and prose describing all of the above as if
-it were live.
+compatibility parsers for inputs this binary no longer writes, and fifty-five
+template files nothing renders.
 
 `docs/00-contracts.md` still carries the five contracts, the deletion map and
 the non-goals, and nothing here overrides them. What this file adds is the
@@ -77,12 +76,9 @@ tree, and each plan carries the command that re-checks it.
    `jails-protocol` + the codec: about **18,600 production lines, 35,000 raw,
    and 415 unit tests that test only it.** Plan `51`.
 
-2. **Ordinary `jails new` is canonical and every document says it is not.**
-   `new/spring.rs` seeds a model through `seed_canonical_model` on both the
-   online and offline paths, and the comment beside it says so. `CLAUDE.md`,
-   `README.md`, `ARCHITECTURE.md` and `docs/30-cutover.md` all still describe
-   it as the cutover's first blocked step. The legacy-side pin this was waiting
-   on (`reports: 21, tests: 57`) no longer exists in that form. Plans `51`
+2. **Ordinary `jails new` is canonical.** `new/spring.rs` seeds a model
+   through `seed_canonical_model` on both the online and offline paths, so
+   there is no project shape left that reaches the legacy crates. Plans `51`
    and `52`.
 
 3. **The binary repeats one pipeline sixteen times.** Sixteen `src/model_*.rs`
@@ -186,8 +182,7 @@ agent's path while there. Whoever lands second resolves the trivial conflict.
 `LAYERS` keeps both sides and dedupes; `tests/common/scenarios.rs` is append
 only. Two are added: the workspace `Cargo.toml` `members` list is edited only
 by the agent deleting or adding a crate; and `CLAUDE.md` is edited *by
-section* -- each agent owns the sections about its subject, and plan `51` owns
-the "Legacy workspace during cutover" section whole.
+section* -- each agent owns the sections about its subject.
 
 **R5 -- green is `mise run verify-rewrite`**, before every push, as before.
 A step is one commit and, where the repository uses pull requests, one pull
@@ -236,4 +231,4 @@ derived), `jails-project` (reader-owned files, with the Java reader folded in),
 document backend. One SQL projection. One field syntax parser, in the crate
 that owns builtins. One mutation pipeline in the binary. No `owns()`. No
 ledger, no store, no journal, no codec for them, and no prose that says
-otherwise. A `CLAUDE.md` under 1,500 lines that describes what the code *is*.
+otherwise. A `CLAUDE.md` that describes what the code *is*.

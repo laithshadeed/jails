@@ -1,26 +1,16 @@
 //! Emitting JSON, and nothing else.
 //!
-//! This lived in `project.rs`, which is `abstract.md` §3.2's clean specimen of
-//! **coincidental cohesion** — the worst rung of the Yourdon–Constantine scale.
-//! That module held two entirely unrelated secrets: how a Maven reactor is
-//! discovered, and how a string is escaped for JSON. Nothing about the second
-//! has anything to do with the first; they shared a file because the first
-//! command to need JSON happened to be `about`.
+//! Every command that prints `--json` reaches this escaper. It is its own
+//! module because escaping a string for JSON shares no secret with any other
+//! subject in the workspace, and a module named after something else would
+//! look like a dependency of commands that do not depend on it.
 //!
-//! It stopped being a curiosity once nine commands emitted JSON. `why.rs`,
-//! `inspect.rs`, `add/tooling.rs`, `commands.rs`, `doctor.rs` and `run.rs` were
-//! all reaching into a module named after a Maven concept to borrow an escaper,
-//! which is the shape that makes `project.rs` look like a dependency of things
-//! that do not depend on projects.
-//!
-//! ## Why there is no JSON *parser* here
-//!
-//! jails has two dependencies and intends to keep it that way. Every payload it
-//! emits is built from values it already holds, so escaping is the whole job —
-//! and the one file jails *reads* in a structured format, `jails.toml`, is
-//! hand-parsed against a closed key set precisely so an unknown key is an error
-//! rather than silence. Adding a parser here would invite reading JSON the same
-//! way, and there is nothing that needs it.
+//! There is no JSON *parser* here. jails has two dependencies and intends to
+//! keep it that way. Every payload it emits is built from values it already
+//! holds, so escaping is the whole job -- and the one file jails *reads* in a
+//! structured format, `jails.toml`, is hand-parsed against a closed key set so
+//! an unknown key is an error rather than silence. A parser here would invite
+//! reading JSON the same way, and nothing needs it.
 
 /// One string, escaped and quoted, ready to place in a JSON document.
 ///

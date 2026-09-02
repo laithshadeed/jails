@@ -1,15 +1,10 @@
 //! What a reviewed plan says is left to do, and what it noticed on the way.
 //!
-//! **Split out by the secret both halves share: neither describes a file.**
-//! Everything else the compiler produces is a desired artifact -- bytes at a
-//! path, an edit to a reader document. These two are the plan's remarks about
-//! itself: the services it declared and did not start, the formatter it wants
-//! run over what it wrote, the shape it emitted that is probably not what the
-//! reader meant.
-//!
-//! They ride on the *plan* rather than on a frontend so `--pretend` shows
-//! them, the exported bundle carries them, and apply cannot start something
-//! the reviewed plan did not name.
+//! **Neither half describes a file.** Everything else the compiler produces
+//! is a desired artifact -- bytes at a path, an edit to a reader document.
+//! These two are the plan's remarks about itself: the services it declared
+//! and did not start, the formatter it wants run over what it wrote, the
+//! shape it emitted that is probably not what the reader meant.
 
 use jails_contracts::RenderedTree;
 use jails_model::AppModel;
@@ -191,8 +186,8 @@ use repo for Task\n";
             .collect()
     }
 
-    /// The shape `modern.md` §4.3 recorded: a query reads a table whose only
-    /// index is its primary key, and nothing said so.
+    /// A query reads a table whose only index is its primary key, and
+    /// nothing says so.
     #[test]
     fn a_query_no_index_can_serve_is_reported_with_the_command_that_fixes_it() {
         let model = jails_model::parse_jdl(MODEL).expect("the fixture parses");

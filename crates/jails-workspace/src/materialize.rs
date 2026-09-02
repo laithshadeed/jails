@@ -1,7 +1,7 @@
 //! Where semantic desire becomes an exact, reviewable transition.
 //!
-//! **The single boundary between the compiler and the filesystem**, and the
-//! seam `simplify-sol.md`'s fifth contract is drawn along: a `PlanDraft` says
+//! **The single boundary between the compiler and the filesystem**: a
+//! `PlanDraft` says
 //! what should be true, a `WorkspaceSnapshot` says what is, and the `PlanBundle`
 //! that comes out of here is the exact difference — preconditions, typed
 //! operations, content-addressed trees and blobs, and one digest that preview,
@@ -81,9 +81,9 @@ pub(crate) const BUNDLE_SCHEMA: &str = "jails.plan-bundle.v1";
 /// The guard is [`Restore::Refuse`] everywhere but `jails resource repair`,
 /// because a managed file that vanished is usually the reader saying something
 /// -- a half-finished `git checkout`, a deletion meant as "stop generating
-/// this" -- and silently writing it back answers a question nobody asked. What
-/// was missing is any command that *could* answer it: the refusal's fix line
-/// said to restore the file by hand, which is advice a reader who deleted it
+/// this" -- and silently writing it back answers a question nobody asked.
+/// `jails resource repair` is the one command that *can* answer it: a fix
+/// line saying to restore the file by hand is advice a reader who deleted it
 /// cannot take.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Restore {
@@ -95,11 +95,11 @@ pub enum Restore {
     ///
     /// **The other half of the same guard.** A file the compiler no longer
     /// renders and the reader has edited is a refusal for the same reason a
-    /// deleted one is: jails does not throw away bytes it did not write. What
-    /// was missing is any command that could answer it -- `remove --force`
-    /// and `destroy --force` are the reader saying the edits can go, and
-    /// without this the refusal's fix line ("move the custom code to reader
-    /// source") was the only route out of a capability they had touched.
+    /// deleted one is: jails does not throw away bytes it did not write.
+    /// `remove --force` and `destroy --force` are the reader saying the edits
+    /// can go; without this the refusal's fix line ("move the custom code to
+    /// reader source") would be the only route out of a capability they had
+    /// touched.
     ///
     /// It never widens beyond deletion: a *conflicting* merge still refuses,
     /// because that is two sets of edits to reconcile rather than one set to
@@ -637,8 +637,7 @@ fn gradle_build_file(snapshot: &WorkspaceSnapshot) -> Result<(ProjectPath, bool)
 /// jails' own content was ever there.
 ///
 /// Shared by the document adapters and the reader facets because it is one
-/// rule: two copies of it went out of step the first time, and the half that
-/// forgot was the half nobody was looking at.
+/// rule, and two copies of a rule go out of step.
 pub(crate) fn plan_reader_document(
     snapshot: &WorkspaceSnapshot,
     operations: &mut Vec<PlannedOperation>,
@@ -863,9 +862,9 @@ primary_key = true
 
     /// **The property `apply never replans` rests on.**
     ///
-    /// `simplify-sol.md`'s fitness rules: "identical `WorkspaceSnapshot +
-    /// CanonicalModelPatch + CompilerVersion` yields an identical plan
-    /// digest". Every other guarantee in the protocol is downstream of it --
+    /// Identical `WorkspaceSnapshot + CanonicalModelPatch + CompilerVersion`
+    /// yields an identical plan digest. Every other guarantee in the protocol
+    /// is downstream of it --
     /// preview shows a digest, the reader confirms that digest, and the
     /// executor applies a bundle rather than recomputing one. If the same
     /// three inputs could produce two digests, the thing reviewed and the
@@ -901,8 +900,8 @@ primary_key = true
     /// The other half of the same rule, and the one that makes the first
     /// half safe to rely on: a digest that ignored the compiler version would
     /// let a bundle reviewed under one renderer be applied by another, which
-    /// is exactly the "did preview and apply run the same computation?"
-    /// question `simplify-sol.md` exists to delete.
+    /// reopens the question "did preview and apply run the same
+    /// computation?".
     #[test]
     fn a_different_compiler_version_is_a_different_plan() {
         let model = jails_model::parse_toml(MODEL).unwrap();
@@ -926,29 +925,24 @@ primary_key = true
         );
     }
 
-    /// **The canonical persisted formats, as bytes.**
+    /// A model that reaches **every persisted struct**, so the goldens below
+    /// cover the format rather than the part of it a fixture happens to use.
     ///
-    /// `audit.md` A5.2: `jails.compiler-lock.v2` is `#[derive(Serialize)]`
-    /// over `AppModel`, so *adding a field to any model struct silently
-    /// changes the persisted format*. It had happened three times before this
-    /// existed. Each time the lock failed closed on the next run, which is
-    /// right and is also the whole problem: a project's accepted state stops
-    /// decoding and nothing said the shape moved.
-    ///
-    /// Byte-compared rather than round-tripped, because a round-trip passes
+    /// The compiler lock is `#[derive(Serialize)]` over `AppModel`, so adding
+    /// a field to any model struct silently changes the persisted format; the
+    /// lock then fails closed on the next run, which is right and is also the
+    /// whole problem, because nothing says the shape moved. The goldens are
+    /// byte-compared rather than round-tripped, because a round-trip passes
     /// through whatever the current serializer does and can never notice that
-    /// it changed. `UPDATE_GOLDEN=1` refreshes it -- and the diff is then the
-    /// notice, which is what the audit asked for.
-    /// A model that reaches **every persisted struct**, so the golden below
-    /// covers the format rather than the part of it this fixture happens to
-    /// use.
+    /// it changed. `UPDATE_GOLDEN=1` refreshes them, and the diff is the
+    /// notice.
     ///
     /// Written in JDL v1 rather than TOML because that is the authoring
     /// boundary, and because the TOML fixture above cannot express half of
     /// these. A struct missing from here is a struct whose shape can change
-    /// without the golden noticing -- which is what a first draft of this test
-    /// did: `MODEL` has no source units, so adding a field to `SourceUnit`
-    /// changed nothing and the golden reported green.
+    /// without the golden noticing: `MODEL` has no source units, so adding a
+    /// field to `SourceUnit` changes nothing there and the golden reports
+    /// green.
     const EVERY_SHAPE: &str = "jdl 1\napp Notes @id(project_notes) {\n           pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n           storage postgres\n}\n\ncap json\n\ndep org.jsoup:jsoup @version(\"1.18.3\")\n\n         prop server.port = \"8080\"\n\nentity Note @id(ent_note) {\n  use repo\n           use factory\n  id: uuid @id(fld_note_id) @pk\n           title: string @id(fld_note_title) @notBlank\n           status: string @id(fld_note_status)\n\n  index [status] @id(idx_note_status)\n\n           command Create(title, status) @id(op_note_create) {\n    emit Created\n  }\n\n           query Open(status) @id(op_note_open) {\n    limit 20\n  }\n\n           transition Rename(title) @id(op_note_rename) {\n    update [title]\n  }\n\n           event Created(id, title) @id(op_note_created)\n}\n\n         component sealed Outcome @id(cmp_outcome) {\n  variant Accepted\n  variant Rejected\n}\n\n         component service Notifier @id(cmp_notifier) {\n}\n";
 
     /// The smallest build file the golden's plan can edit.
@@ -971,9 +965,8 @@ primary_key = true
 
     /// **The exact plan's own encoding, which is what a reviewer confirms.**
     ///
-    /// `audit.md` A5.1 left this open: the compiler lock had a golden and the
-    /// two schemas `--plan-out` actually writes -- `jails.plan.v1` inside
-    /// `jails.plan-bundle.v1` -- had none. They are the format with the widest
+    /// `jails.plan.v1` inside `jails.plan-bundle.v1` -- the two schemas
+    /// `--plan-out` writes -- is the format with the widest
     /// contract in the system. `preview`, `--plan-out`, the confirmation
     /// prompt and `execute` all refer to one bundle, and "apply never replans"
     /// means the bytes reviewed are the bytes applied. A field appearing or
@@ -1107,8 +1100,7 @@ primary_key = true
         // prevent rather than cause. Every struct shape survives the
         // elision: `RenderedFile`, `Provenance`, `FileKind` and `FileMode`
         // are all still here with their fields. What the bytes themselves say
-        // is `audit.md` A5.1's job, and belongs in a tree golden rather than
-        // in the middle of a format one.
+        // belongs in a tree golden rather than in the middle of a format one.
         let mut parsed: serde_json::Value = serde_json::from_slice(lock).unwrap();
         if let Some(files) = parsed
             .get_mut("projection")
@@ -1152,8 +1144,8 @@ primary_key = true
 
     /// A lock written by an older jails still decodes.
     ///
-    /// G0 asks that "old fixtures decode", and the v1 envelope is the one
-    /// there is: no `compiler`, no `projection`. `capture` still has the arm,
+    /// Old fixtures must decode, and the v1 envelope is the oldest there is:
+    /// no `compiler`, no `projection`. `capture` still has the arm,
     /// and this is what proves the arm works rather than merely existing --
     /// a schema branch nothing exercises is a branch that has already rotted.
     #[test]

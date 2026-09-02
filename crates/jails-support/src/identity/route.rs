@@ -2,13 +2,12 @@
 //!
 //! Derived paths are a virtue greenfield -- one shape, and every generated
 //! surface agrees about it. They are unusable when the URLs are a fixed
-//! external contract, which is what `missing.md` M8 measured: the ported
-//! originals answer `/customer_api/ping`, `/admin_api/issues`,
-//! `/api/conversations/`, and none of those is derivable from any name jails
-//! would accept for the class.
+//! external contract: a ported application answers `/customer_api/ping`,
+//! `/admin_api/issues`, `/api/conversations/`, and none of those is derivable
+//! from any name jails would accept for the class.
 //!
 //! The derivability argument does not block it. `destroy` finds files by what
-//! the ledger recorded rather than by recomputing paths, so a recorded path is
+//! the model records rather than by recomputing paths, so a recorded path is
 //! no harder to undo than a recorded `--package`.
 //!
 //! **Validated, not passed through.** A route is text jails writes into an

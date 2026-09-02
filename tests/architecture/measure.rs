@@ -4,7 +4,6 @@
 //! `#[cfg(test)]` bodies blanked to spaces of the same length -- so byte
 //! offsets and line numbers still index the original, which is what lets a gate
 //! locate something in the blanked text and then read it from the raw file.
-//! That is `java.rs`'s own trick, applied to Rust for the same reason.
 //!
 //! Everything else here is one counting function per row of [`crate::board`],
 //! plus the small Rust parser they share. Its unit tests are at the bottom,
@@ -24,11 +23,11 @@ pub(crate) struct Source {
     /// so byte offsets and line counts still index the original -- with every
     /// `#[cfg(test)] mod … { … }` body also blanked.
     ///
-    /// abstract.md §3 states its line counts exclude `mod tests`, and every
-    /// gate here means the same thing: a fixture that writes a scratch `pom.xml`
-    /// is not a production `fs::write`, and a test helper taking `root: &Path`
-    /// is not the primitive being propagated. Counting them makes the ladder
-    /// punish the tests that prove a rung did not change behaviour.
+    /// Every gate excludes `mod tests`: a fixture that writes a scratch
+    /// `pom.xml` is not a production `fs::write`, and a test helper taking
+    /// `root: &Path` is not the primitive being propagated. Counting them
+    /// makes the ladder punish the tests that prove a rung did not change
+    /// behaviour.
     pub(crate) production: String,
     /// The same file with comments and `#[cfg(test)]` bodies removed, but
     /// **string literals intact** -- for the gates whose subject only ever
@@ -38,29 +37,20 @@ pub(crate) struct Source {
 
 /// Every production Rust file in the workspace, not only the binary's own.
 ///
-/// The binary is one crate of seven. A scanner that walked `src/` alone would
-/// keep reporting green while the code it gates moved into `crates/*/src` --
-/// the same failure as a skipped tier-3 test, which the suite also reports as
-/// passing unless something insists otherwise.
-/// Read and blanked **once per process**, and blanked in parallel.
+/// A scanner that walks `src/` alone keeps reporting green while the code it
+/// gates lives in `crates/*/src`.
 ///
-/// Nineteen gates share this scan and each used to run it again: the walk,
-/// the read and two blanking passes over 414 files and 5.9 MB, eleven times
-/// over. That is what made this binary the third most expensive target in the
-/// suite at 9.4 seconds while doing no I/O worth the name and starting no
-/// process at all.
-///
-/// The memo is the whole fix and it is sound for one reason worth stating: a
-/// [`Source`] is immutable, the files are not written while the binary runs,
-/// and every gate already treats the scan as a snapshot -- two gates
-/// disagreeing about the contents of the tree would be a bug whichever way
-/// the scan was cached.
+/// Read and blanked **once per process**, and blanked in parallel. Every gate
+/// shares this scan, and the memo is sound because a [`Source`] is immutable,
+/// the files are not written while the binary runs, and every gate treats the
+/// scan as a snapshot -- two gates disagreeing about the contents of the tree
+/// would be a bug whichever way the scan was cached.
 ///
 /// The blanking itself is a byte-at-a-time state machine per file with no
 /// shared state, so it is spread across the same scheduler the table-driven
-/// binaries use. The `assert` stays exactly where it was: a scanner that has
-/// lost the code reports precisely what a clean one does, and caching a wrong
-/// answer once is worse than recomputing it.
+/// binaries use. The `assert` stays: a scanner that has lost the code reports
+/// precisely what a clean one does, and caching a wrong answer once is worse
+/// than recomputing it.
 pub(crate) fn sources() -> &'static [Source] {
     static SOURCES: std::sync::OnceLock<Vec<Source>> = std::sync::OnceLock::new();
     SOURCES.get_or_init(|| {
@@ -136,32 +126,26 @@ pub(crate) fn collect_paths(dir: &Path, out: &mut Vec<PathBuf>) {
 
 /// Replace comments and string literals with spaces of the same length.
 ///
-/// The same trick as `src/java.rs::blanked`, and for the same reason: a scan
-/// must not be fooled by `// root: &Path` or by the word `fn` inside one of
-/// `spring.rs`'s inline Java bodies, while offsets and line numbers still line
-/// up with the file on disk.
+/// The same trick as `java::blanked`, and for the same reason: a scan must
+/// not be fooled by `// root: &Path` or by the word `fn` inside an inline Java
+/// body, while offsets and line numbers still line up with the file on disk.
+///
 /// **Delimiters are matched on bytes, not on `&source[i..]`.** Inside a
 /// comment or a string this walks one byte at a time, so `i` can sit in the
-/// middle of a multi-byte character — and `&source[i..]` panics there rather
-/// than returning false. It did: a `§` inside an `r#"..."#` template body
-/// took eight of these gates down at once, having been latent for as long as
-/// no raw string held a character outside ASCII. Every delimiter here is
-/// ASCII, so a byte comparison is exactly equivalent and cannot panic.
+/// middle of a multi-byte character -- and `&source[i..]` panics there rather
+/// than returning false. Every delimiter here is ASCII, so a byte comparison
+/// is exactly equivalent and cannot panic.
 pub(crate) fn blank(source: &str) -> String {
     blank_with(source, false)
 }
 
 /// The same walk, keeping string and character literals as they are.
 ///
-/// Three gates count text that only ever appears *inside* a literal -- the
-/// `# jails:` markers, the `"version"` JSON key, `spring.rs`'s inline
-/// `r#"package ` bodies -- and [`blank`] replaces every literal with spaces
-/// before they run. All three therefore counted zero whatever the code said,
-/// and all three record a ceiling of zero, so nothing distinguished a gate
-/// holding the line from one that had lost the text it was about. That is the
-/// failure `sources()` already guards against at the file level and the same
-/// one `CLAUDE.md` records for skipped tier-3 tests: a scanner that read
-/// nothing reports exactly what a clean one does.
+/// Some gates count text that only ever appears *inside* a literal -- the
+/// `# jails:` markers, the `"version"` JSON key, inline `r#"package ` bodies
+/// -- and [`blank`] replaces every literal with spaces before they run, so a
+/// gate reading blanked source reports zero whatever the code says: a scanner
+/// that read nothing reports exactly what a clean one does.
 ///
 /// Comments and `#[cfg(test)]` bodies are still removed, because a marker in
 /// a doc comment is prose and one in a test is a fixture.
@@ -344,15 +328,15 @@ pub(crate) fn char_literal_len(rest: &str) -> Option<usize> {
 ///
 /// Deliberately not a plain substring count: a recipe mid-migration binds
 /// `let root: &Path = slice.project().root();` inside its body, which is the
-/// primitive being *contained* rather than propagated. Counting those made the
-/// gate read flat while the parameter it exists to remove was disappearing --
-/// a measurement that cannot see the improvement it is asking for.
+/// primitive being *contained* rather than propagated. Counting those makes
+/// the gate read flat while the parameter it exists to remove disappears -- a
+/// measurement that cannot see the improvement it is asking for.
 pub(crate) fn root_path_parameters(src: &[Source]) -> usize {
     src.iter()
         // The canonical workspace crate is the capture/apply boundary. Its
         // subject is deliberately a filesystem root; the pure compiler above
-        // it receives a WorkspaceSnapshot and cannot name one. The legacy
-        // ratchet remains useful for code that should take Project instead.
+        // it receives a WorkspaceSnapshot and cannot name one. The ratchet
+        // remains useful for code that should take `Project` instead.
         .filter(|file| !is_canonical_workspace(&file.path))
         .map(|file| {
             ["root: &Path", "root: &std::path::Path"]
@@ -360,9 +344,9 @@ pub(crate) fn root_path_parameters(src: &[Source]) -> usize {
                 .flat_map(|spelling| file.production.match_indices(spelling))
                 .filter(|(at, _)| !file.production[..*at].trim_end().ends_with("let"))
                 // `module_root: &Path` and `workspace_root: &Path` are not
-                // this parameter. Counting them inflated the number by six and
-                // made `project.rs` -- which walks a reactor and *must* read
-                // each pom along the way -- look like the disease.
+                // this parameter. Counting them makes `project.rs` -- which
+                // walks a reactor and *must* read each pom along the way --
+                // look like the disease.
                 .filter(|(at, _)| {
                     file.production[..*at]
                         .chars()
@@ -377,18 +361,11 @@ pub(crate) fn root_path_parameters(src: &[Source]) -> usize {
 /// Root-taking pom readers where reading again is the *correct* behaviour, and
 /// passing the caller's `Project` would be the bug.
 ///
-/// The distinction rung 1 is actually about: envy is asking the disk for a fact
-/// somebody already resolved. These two ask the disk because the resolved
-/// answer is **absent** -- there is no project yet.
-///
-/// It was four. `ensure_console_launcher` went with `pending.md` §7.7's move
-/// of the `--fast` splice into a transition, and `ensure_package_info` stopped
-/// taking a `root` at all when `write_new_file` started taking an
-/// `apply::Tree` -- it reads the pom out of the staging tree it was handed,
-/// which is not a second read of anything. Declared rather than counted, because a
-/// number nobody can reach is a gate nobody reads; the pattern is
-/// `SILENT_WITHOUT_A_RECORD`'s, and a stale entry here fails the test below the
-/// same way.
+/// The distinction the rung is about: envy is asking the disk for a fact
+/// somebody already resolved. These ask the disk because the resolved answer
+/// is **absent** -- there is no project yet. Declared rather than counted,
+/// because a number nobody can reach is a gate nobody reads, and a stale
+/// entry here fails the test below.
 pub(crate) const A_FRESH_READ_IS_CORRECT: &[(&str, &str)] = &[
     (
         "read_build_file",
@@ -441,10 +418,10 @@ pub(crate) const DERIVATION_IS_THE_JOB: &[&str] = &[
 /// `(file, function)` for every `root: &Path` function that goes back to disk
 /// for something a resolved `Project` already holds.
 pub(crate) fn rederivers(src: &[Source]) -> Vec<(String, String)> {
-    // Applied to `root` specifically. Without the argument this counted
-    // `reconcile_intent`, which loads a `Project` for each of two *scratch*
-    // copies of the tree -- the opposite of envy, since there is no resolved
-    // project for those roots to have been passed.
+    // Applied to `root` specifically. Without the argument it would count a
+    // function that loads a `Project` for each of two *scratch* copies of the
+    // tree -- the opposite of envy, since there is no resolved project for
+    // those roots to have been passed.
     const FACTS: &[&str] = &[
         "pom::read(root)",
         "base_package(root)",
@@ -617,10 +594,9 @@ pub(crate) fn top_level_commas(inner: &str) -> usize {
 
 /// A declaration of `keyword`, at any visibility.
 ///
-/// Spelling the visibilities out cost a gate its sight: the workspace split
-/// turned `pub(crate) struct` into `pub struct` inside a moved crate, and a
-/// scanner matching only the first two spellings reported zero — an improvement
-/// that had not happened, over code it could no longer see.
+/// A scanner matching only some visibilities reports zero over code it cannot
+/// see -- an improvement that has not happened -- the moment a
+/// `pub(crate) struct` becomes a `pub struct`.
 pub(crate) fn is_item(line: &str, keyword: &str) -> bool {
     let rest = line
         .strip_prefix("pub(crate) ")
@@ -744,15 +720,11 @@ pub(crate) fn inherent_codec_halves(src: &[Source]) -> usize {
 
 /// Production files that parse Maven's XML with a scanner of their own.
 ///
-/// `simplify-sol.md`'s deletion map: *duplicate Maven XML scanners -> one
-/// document backend*, deleting "second scanners and field-name lies".
-///
-/// **Parsers, not emitters.** Five more files mention `<dependency>` while
-/// only ever *building* one, and rendering a block jails owns is not a claim
-/// to understand a build file -- `CLAUDE.md`'s bar is "answer exactly or
-/// refuse, never guess", and that is a bar on reading. Counting the emitters
-/// would put five files in a row about parsing and make the number stop
-/// meaning what its name says.
+/// **Parsers, not emitters.** A file that mentions `<dependency>` while only
+/// ever *building* one is not claiming to understand a build file -- the bar
+/// is "answer exactly or refuse, never guess", and that is a bar on reading.
+/// Counting the emitters would put files in a row about parsing and make the
+/// number stop meaning what its name says.
 ///
 /// The count is deliberately **not** at one yet. Two of these are the
 /// strangler migration itself -- `jails-project/src/pom.rs` is the path being
@@ -794,8 +766,8 @@ pub(crate) fn maven_xml_parsers(src: &[Source]) -> usize {
                         // The argument is a string literal naming an element.
                         // `<` need not be its first byte: the scanners match
                         // on indented fragments (`"    <dependency>"`) and on
-                        // closing tags, and requiring it at position zero
-                        // found none of them.
+                        // closing tags, so requiring it at position zero would
+                        // find none of them.
                         let rest = &text[at + read.len()..];
                         let argument = rest.trim_start();
                         argument.starts_with('"')
@@ -811,13 +783,12 @@ pub(crate) fn maven_xml_parsers(src: &[Source]) -> usize {
 
 /// The biggest table of per-builtin knowledge written anywhere but the row.
 ///
-/// `simplify-sol.md`'s fitness rule: *every builtin type has one semantics
-/// row*. Sixteen builtins were described by seven separate matches -- the
-/// token, its aliases, the Java type, the import, the sample, the Postgres
-/// column, which literals may default it -- and `primitive` was written out
-/// twice, identically, in two emitters. Each match was exhaustive over the
-/// enum and silent about the others, so adding a builtin compiled in every
-/// one of them and was wrong in most.
+/// Every builtin type has one semantics row. A builtin described by several
+/// separate matches -- the token, its aliases, the Java type, the import, the
+/// sample, the Postgres column, which literals may default it -- is described
+/// by matches that are each exhaustive over the enum and silent about the
+/// others, so adding a builtin compiles in every one of them and is wrong in
+/// most.
 ///
 /// Counted as the largest number of *distinct* variants named inside one
 /// function, because that is what a table is. A handful of scattered
@@ -873,62 +844,46 @@ pub(crate) fn largest_builtin_table(src: &[Source]) -> usize {
 /// is not a violation of having one owner.
 pub(crate) const BUILTIN_RS: &str = "jails-model/src/builtin.rs";
 
-/// Where the count stands today: `jails-project/src/pom.rs`,
-/// `jails-protocol/src/vocabulary/coordinate.rs`, and the three of the new
-/// tree -- `jails-workspace/src/{capture,documents}.rs` and
+/// Where the count stands: `jails-project/src/pom.rs`,
+/// `jails-protocol/src/vocabulary/coordinate.rs`,
+/// `jails-workspace/src/{capture,documents}.rs` and
 /// `documents/build_feature.rs`.
 ///
 /// `jails-workspace/src/capture/observe.rs`'s `junit_version` is deliberately
 /// *below* the bar: it matches on one element to read one artifact's version,
 /// which is a lookup rather than a scanner. Two distinct elements is what
 /// separates "asks the pom a question" from "has an opinion about its
-/// structure", and it is the second that duplicates.
-///
-/// It used to be `jails-project/src/junit.rs`, which was a second copy of that
-/// rule with no callers left and is deleted. The exemption belongs to the
-/// question, not to the file that happened to ask it.
+/// structure", and it is the second that duplicates. The exemption belongs to
+/// the question, not to the file that happens to ask it.
 pub(crate) const MAVEN_XML_PARSERS: usize = 5;
 
 /// `# jails:` marker literals outside the crate that owns the format.
 ///
-/// Recorded for the first time on 2026-08-29, and closed the same day. The row
-/// had claimed zero since it was written -- not because it held, but because it
-/// counted `Source::production`, where every string literal is blanked to
-/// spaces before a gate sees it. Ceiling and target were both `0`, so a vacuous
-/// gate and a held line printed the same word. It reads `Source::literals` now.
-///
-/// The true count was **13**, and the three that mattered were second
-/// implementations of the block itself -- all in the new tree, none careless:
-/// `codemod` lived in `jails-project`, which neither `jails-compiler` nor
-/// `jails-workspace` depends on, so there was nothing to reuse. It is
-/// `crates/jails-codemod` now, with no dependencies at all, so there is
-/// nowhere left that cannot reach it.
-///
-/// 13 -> 8 -> 0. The remaining ten were knowledge of the format rather than
-/// copies of it, and each went a different way: two substring probes became
-/// `Marked::present_in`, which also fixed the prefix collision `exact_line`
-/// exists for -- `contains("# jails:db")` reads `# jails:dbx` as this block.
-/// `doctor` asked `compose::declares` instead of spelling this file's
-/// two-space indent itself. Three refusal messages quote
-/// `Marked::OPEN_PREFIX` rather than retyping it, so a message about the
-/// format cannot outlive the format. And `jails setup`'s note in
+/// Counted over `Source::literals`: in `Source::production` every string
+/// literal is blanked to spaces before a gate sees it, and a marker only ever
+/// appears inside one, so a gate reading blanked source claims zero whether
+/// or not the line holds. Knowledge of the format outside `jails-codemod`
+/// goes through it rather than being spelled: `Marked::present_in` instead of
+/// a substring probe (`contains("# jails:db")` reads `# jails:dbx` as this
+/// block), `compose::declares` instead of a copy of the two-space indent,
+/// `Marked::OPEN_PREFIX` quoted in a refusal rather than retyped, so a message
+/// about the format cannot outlive the format. `jails setup`'s note in
 /// `~/.testcontainers.properties` says `# jails --`, because `# jails:` is how
 /// a block opens and that file has none.
 ///
-/// **The gate can fail now**, which is the part worth keeping: adding a
-/// `# jails:` literal to any production file outside `jails-codemod` moves it
-/// off zero. That was verified by doing it.
+/// The gate can fail: adding a `# jails:` literal to any production file
+/// outside `jails-codemod` moves it off zero.
 pub(crate) const MARKED_BLOCK_LITERALS: usize = 0;
 
-/// Where the count stands today. The remaining four are `context_value`'s
-/// four-arm lowering, which is a rendering rather than a registry.
+/// Where the count stands: `context_value`'s four-arm lowering, which is a
+/// rendering rather than a registry.
 pub(crate) const LARGEST_BUILTIN_TABLE: usize = 4;
 
 /// The crates that must stay pure once the workspace has been captured.
 ///
-/// `simplify-sol.md`'s first fitness rule: *after capture, no compiler module
-/// can access `std::fs`, a project root or a process runner*. The whole
-/// argument for a capture pass is that planning becomes a function -- the same
+/// After capture, no compiler module may access `std::fs`, a project root or
+/// a process runner. The whole argument for a capture pass is that planning
+/// becomes a function -- the same
 /// snapshot and the same request yield the same plan, which is what makes a
 /// plan diffable, cacheable and safe to show before it is applied. One
 /// `fs::read` inside a pass is enough to break that, and nothing about the
@@ -939,14 +894,13 @@ pub(crate) const PURE_COMPILER_CRATES: [&str; 3] =
 
 /// A pure crate reaching for the world outside the snapshot it was handed.
 ///
-/// Counted at **zero**, and it is zero today -- which is the point. This is a
-/// property that is cheap to keep and expensive to recover, so it is gated
-/// while it still holds rather than after the first pass reads a file.
+/// Gated at zero because a purity property is cheap to keep and expensive to
+/// recover.
 ///
 /// The `root: &Path` half is counted here too, through the same function the
 /// workspace-wide row uses: a path a pass could resolve against is a project
-/// root whether or not it reads one yet, and the workspace row's ceiling of
-/// 145 would absorb a rise inside these three crates without noticing.
+/// root whether or not it reads one yet, and the workspace row's ceiling
+/// would absorb a rise inside these three crates without noticing.
 pub(crate) fn compiler_reaches_outside_the_snapshot(src: &[Source]) -> usize {
     let pure: Vec<Source> = src
         .iter()
@@ -988,9 +942,8 @@ pub(crate) fn compiler_reaches_outside_the_snapshot(src: &[Source]) -> usize {
 /// list in the struct, again in `encode`, again in `decode` -- so a field
 /// added to the type and forgotten in the codec is a silent change of format
 /// rather than a compile error. `#[derive(Codec)]` makes the declaration the
-/// only owner of the encoding, which is what `simplify-sol.md`'s fitness rule
-/// asks for: *every persisted union tag and field number is generated and
-/// golden-tested*.
+/// only owner of the encoding, and every persisted union tag and field number
+/// is generated and golden-tested.
 ///
 /// `trim_start` for the same reason [`inherent_codec_halves`] needs it:
 /// `digest_newtype!` and `logical_id!` expand to `impl Codec for $name`
@@ -1022,72 +975,29 @@ pub(crate) fn hand_written_codecs(src: &[Source]) -> usize {
 /// `# jails:` row -- the one legitimate owner is not a violation.
 pub(crate) const WIRE_RS: &str = "jails-support/src/codec/wire.rs";
 
-/// Where the count stands today. See the row in [`crate::board`] for why the
+/// Where the count stands. See the row in [`crate::board`] for why the
 /// target is withdrawn rather than zero.
 ///
-/// 210 -> 147: `#[derive(Codec)]`, `codec/wire.rs` and `jails-codec-derive`.
+/// The mechanical seam is exhausted for a reason. Most of what remains
+/// validates: `decode` calls a validating constructor, or `encode` enforces an
+/// invariant before writing a byte -- `ByteSpan` refusing a span that starts
+/// after it ends, `PropertySetting` refusing a comment carrying its own `#`,
+/// `EffectState` refusing a zero attempt. The constructor is the only place a
+/// value is validated, so a derive that skipped it would let a value rejected
+/// at the CLI arrive through a decoded document instead. The rest are as
+/// deliberate: codecs that encode a label string rather than a discriminant,
+/// so reordering an enum cannot change a recorded value; the primitive impls
+/// the derive is built on; length-capped blobs framed through
+/// `encoder.object`; raw digest arrays; and a depth counter for a recursive
+/// type. An enum with a hand-written `tag()`/`from_tag()` pair beside a
+/// derived codec is a second encoding of that type, and a codec that frames
+/// its own collection is byte-identical to `Vec<T>`, `BTreeSet<T>` or
+/// `BTreeMap<K, V>` doing it, ordering guarantee included, so neither shape
+/// stays hand-written.
 ///
-/// 147 -> 146 for `RendererStamp`, and the one matters more than the number:
-/// it disproves "the mechanical seam is exhausted", which is what the first
-/// sweep concluded because it treated `encoder.count(..)` as a hard blocker.
-/// It is not one. `Encoder::seq` *is* a count followed by a loop of `encode`,
-/// `set` is that plus the `ordered` check, and `map` the same for pairs -- so
-/// a codec framing its own collection is byte-identical to `Vec<T>`,
-/// `BTreeSet<T>` or `BTreeMap<K, V>` doing it, ordering guarantee included.
-/// 29 codecs frame a collection by hand; the ones whose field is already one
-/// of those three convert with no wire change. `plan.md` P13.4.
-///
-/// 146 -> 144 for `DesiredAppliedEntity` and `OutputRecord`, both framing a
-/// `BTreeSet<OwnerId>` -- which needed `OwnerId` to have a codec at all. It
-/// had a public `tag()`/`from_tag()` pair and no impl, because its containers
-/// wrote the tag inline; the derive reproduces that byte and `label = "owner"`
-/// keeps the refusal the test pins.
-///
-/// 133 -> 105, and the largest class in it is the one `OwnerId` was the first
-/// of: **an enum with a hand-written `tag()`/`from_tag()` pair is a second
-/// encoding of that type**, and its containers called the pair rather than the
-/// trait. Seven such pairs are gone -- `ReferenceRole`, `ResumeState`,
-/// `FormatOwner`, `OneShotKind`, `MaintenanceAttribution`, `EffectFailureCode`
-/// and `OwnerId`'s leftover -- and `ReferenceRole` is the one to read: it
-/// already derived `Codec` *and* still carried the pair, so one enum had two
-/// encodings and only one of them was the wire's.
-///
-/// Four more enums had the pair and no codec at all (`MavenScope`,
-/// `Optionality`, `JavaTypeKind`, `ToolFeature`); deriving each one is what
-/// made its containers derivable in turn, which is where the rest of the fall
-/// comes from. Every conversion was read against the declaration and its
-/// existing tags before it was made, and the two byte oracles -- the protocol
-/// goldens and `-p jails-prepare -p jails-commit -p jails-protocol` -- ran
-/// after each batch, because `PreparedIdentityV1` is the standing proof that
-/// the golden trees alone do not see a moved wire.
-///
-/// `AppliedEntity` is the shape that stays hand-written and shows where the
-/// line is: it refuses an empty owner set inside `encode`, so its codec
-/// enforces an invariant rather than describing a layout. Only its `tag()`
-/// calls moved onto `OwnerId`'s codec.
-///
-/// 105 -> 90, and this is where the mechanical seam ends for a reason rather
-/// than for lack of looking. **49 of the 90 validate**: `decode` calls a
-/// validating constructor, or `encode` enforces an invariant before writing a
-/// byte -- `ByteSpan` refusing a span that starts after it ends,
-/// `PropertySetting` refusing a comment carrying its own `#`,
-/// `CanonicalRequestSyntaxV1` rejecting dashes, `EffectState` refusing a zero
-/// attempt. That is R1.1 working, not a sweep left unfinished: the constructor
-/// is the only place a value is validated, so a derive that skipped it would
-/// let a value rejected at the CLI arrive through a recovered journal instead.
-///
-/// The rest of the 90 are as deliberate and smaller in number: six encode a
-/// label string rather than a discriminant (`RendererId`, `IntentId`,
-/// `SqlDialect` and their kin -- §R1.4 records the *name* so reordering an
-/// enum cannot change a recorded value), four are the primitive impls the
-/// derive is built on, three frame a length-capped blob through
-/// `encoder.object`, two write a raw digest array, and one carries a depth
-/// counter for a recursive type.
-///
-/// So the next move on this row is not more reading. It is either a
-/// `#[codec(validate)]` that calls the constructor after decoding -- which
-/// would reach most of the 49 -- or accepting the number, which is what
-/// "target withdrawn" already says.
+/// The next move on this row is either a `#[codec(validate)]` that calls the
+/// constructor after decoding, or accepting the number, which is what "target
+/// withdrawn" already says.
 pub(crate) const HAND_WRITTEN_CODECS: usize = 90;
 
 /// The other three files a gate here names. Paths for the same reason: a
@@ -1102,63 +1012,14 @@ pub(crate) const GIT_RS: &str = "jails-support/src/git.rs";
 pub(crate) const DOCTOR_RS: &str = "jails-report/src/doctor.rs";
 pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 
-/// Where the count stands today. Lowered per message, never by a sweep.
-///
-/// 443 → 439 on 2026-08-25, and not by writing four `fix:` lines: `pending.md`
-/// §6.3 deleted the second field-spec parser, and four of its refusals went
-/// with it. A duplicate parser is four duplicate refusals.
-///
-/// 439 → 437 the same day. §3's build-feature key added four internal-invariant
-/// refusals and deleted one user-facing one, and the four were given the fix
-/// line the two `publish::Tree` refusals already use — "this is a bug in jails,
-/// not something a project can cause". That is a real next step rather than a
-/// filler: it tells the reader the one thing they can do.
-///
-/// 437 → 436 when truthful parent-directory capture made a file/directory
-/// collision actionable: move or rename the colliding file, then retry.
-/// 436 → 432 when every compatibility-version refusal gained an explicit
-/// upgrade path instead of only describing the unsupported bytes.
-/// 432 → 430 when planned-subject decoding gained the same recovery advice.
-/// 430 → 426 when the extracted rename-source boundary made each invalid-name
-/// refusal carry the exact valid spelling to retry.
-/// 426 → 425 when the durable-job identity refusal named the satisfiable
-/// use-case change instead of asking for a payload the command rejects.
-/// 425 → 424 when colliding generated field names gained an actionable rename
-/// instruction.
-/// 424 → 423 when `FieldName` collapsed the two spellings of one field into
-/// one value (plan.md P3.1): the column-collision refusal and the
-/// duplicate-name refusal were two branches of one condition, and the branch
-/// that survives is the one that already carried a `fix:` line.
-// 423 -> 421: the two "takes only a name" refusals `fetcher` and
-// `idempotency` wrote inline are the one helper in `recipes/flags.rs` now,
-// and it carries a `fix:` line. plan.md P8.8.
-// 421 -> 419: `auth` and `webhook` wrote their "takes only a name" refusal
-// inline with no next step, and both are `recipes/flags.rs`'s helper now --
-// the same move `fetcher` and `idempotency` made, and the same `fix:` line.
-// 419 -> 418: `g query`'s "optional or a collection" refusal was two
-// refusals in one sentence and named no next step. Optional filters are
-// generated now (plan.md P10.5), and what is left refuses a collection with
-// the two things a reader can do about it.
-// 418 -> 396: 22 hand-written codecs became `#[derive(Codec)]`, and each had
-// carried its own `Err(format!("unknown <thing> tag {other}"))`. They were the
-// same refusal 22 times, so collapsing them is not 22 messages improved -- it
-// is 21 copies deleted. What the derive added is that the wording can no
-// longer drift per type, and that a refusal needing a next step says so on the
-// type (`#[codec(unknown_fix = "...")]`) rather than in the one place the
-// message is built. `PlannedSubject` is the first to use it; the other ten
-// `fix:`-carrying decoders are still hand-written.
-// 391 -> 375 as a consequence of the codec row above, not as work of its own:
-// sixteen more unknown-tag refusals that named no next step were deleted with
-// the codecs that built them. The five carrying one -- the rename, column,
-// type-change and repair policies -- kept it on the type through
-// `#[codec(unknown_fix = ...)]`, which is what stops the wording drifting per
-// type the way it had.
-// 375 -> 369, the same consequence: six more unknown-tag refusals that named
-// no next step went with the codecs that built them.
-// 369 -> 325: the legacy generator stack went, and forty-four of its refusals
-// with it -- a `g scaffold` that cannot map a field type, an `add` that cannot
-// plan a capability, a recipe refusing a flag combination. None of them can be
-// reached now that every kind and capability compiles.
+/// Where the count stands. Lowered per message, never by a sweep: a refusal
+/// gains a `fix:` line when it has a real next step -- the exact valid
+/// spelling to retry, the upgrade path, "this is a bug in jails, not something
+/// a project can cause" -- and a duplicate refusal is deleted with the
+/// duplicate code that builds it. A derived codec's unknown-tag refusal
+/// carries its next step on the type (`#[codec(unknown_fix = "...")]`) rather
+/// than in the one place the message is built, so the wording cannot drift
+/// per type.
 pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 325;
 
 /// A refusal that builds a message and does not say what to do next.
@@ -1174,11 +1035,11 @@ pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 325;
 pub(crate) fn refusals_without_a_fix(src: &[Source]) -> usize {
     let mut count = 0;
     for file in src {
-        // This legacy free-text heuristic cannot see structured diagnostics:
-        // every semantic diagnostic in jails-model has a mandatory fix, while
+        // This free-text heuristic cannot see structured diagnostics: every
+        // semantic diagnostic in jails-model has a mandatory fix, while
         // internal compiler/executor errors are intentionally not decorated as
-        // user advice. Keep the old ratchet on the old error vocabulary and
-        // enforce the new contract structurally in rules.rs.
+        // user advice. The ratchet holds the free-text vocabulary; `rules.rs`
+        // enforces the structured contract.
         if is_canonical_new_world(&file.path) {
             continue;
         }
@@ -1223,11 +1084,9 @@ fn is_canonical_new_world(path: &Path) -> bool {
         || path.contains("/crates/jails-workspace/src/")
         || path.ends_with("/src/model_command.rs")
         || path.ends_with("/src/model_eject.rs")
-        // The module *and its children*. This gate names files by path and
-        // `model_generate` grew a `render.rs`, which is the same module in the
-        // same world -- matching only the basename dragged its refusals into a
-        // legacy count. `CLAUDE.md` records the same trap costing two rows
-        // when `src/new/spring.rs` appeared beside `spring.rs`.
+        // The module *and its children*: `model_generate/render.rs` is the
+        // same module, and matching only the basename would count its
+        // refusals under a different row.
         || path.ends_with("/src/model_generate.rs")
         || path.contains("/src/model_generate/")
         || path.ends_with("/src/model_import.rs")
@@ -1238,35 +1097,22 @@ pub(crate) fn write_sites_outside_apply(src: &[Source]) -> usize {
     mutation_sites(src, &["fs::write"])
 }
 
-/// Every API that changes the filesystem, wherever it is spelled.
-///
-/// plan.md §R6.4: the gate "currently bans only literal `fs::write`; it must
-/// expand to `write`, `OpenOptions` write modes, `remove_file/remove_dir`,
-/// `copy`, `rename`, hard links, directory creation, permissions and mutating
-/// subprocesses." The reason the narrow version was not enough is visible in
-/// the count: `fs::write` was at zero while a dozen other calls mutated the
-/// project through other names, so the gate read green over exactly the
-/// surface R6 has to migrate.
-/// Where the count stands today. Lowered by each migrated surface.
-///
-/// **Zero, 2026-08-25 — the rung is reached.** 56 → 46 → 11 → 6 → 0, and the
-/// last six were the ones `pending.md` §7.7 called "a real decision rather
-/// than a migration nobody got to". Each was decided rather than moved:
-///
-/// - `generate/write.rs`'s two took an `apply::Tree` instead of a `&Path`.
-///   Every caller of `write_new_file` is on the `jails new` path, so the
-///   signature now says what a comment used to, and a write outside the
-///   staging tree is refused.
-/// - `run.rs`'s `pom.xml` splice for `test --fast` became the transition that
-///   was already written and unwired: `route::install_fast_test`, with
-///   `jails remove fast-test` as the other half.
-/// - `add/database.rs`, `console.rs` and `testd.rs` write build output and
-///   machine state, not a project. They go through `remove_derived`,
-///   `ensure_derived_directory` and `ensure_directory_outside_project`, and
-///   the first two **refuse** a path outside `target/` or `build/` — so the
-///   exemption below is checked rather than promised.
+/// Where the count stands: zero. Each write is decided rather than moved:
+/// `jails new`'s writers take an `apply::Tree` instead of a `&Path`, so a
+/// write outside the staging tree is refused; the `pom.xml` splice for
+/// `test --fast` is a transition; and build output and machine state go
+/// through `remove_derived`, `ensure_derived_directory` and
+/// `ensure_directory_outside_project`, the first two of which **refuse** a
+/// path outside `target/` or `build/` -- so the exemption below is checked
+/// rather than promised.
 pub(crate) const MUTATION_CEILING: usize = 0;
 
+/// Every API that changes the filesystem, wherever it is spelled.
+///
+/// A gate that bans only literal `fs::write` reads green while `write`,
+/// `OpenOptions` write modes, `remove_file`/`remove_dir`, `copy`, `rename`,
+/// hard links, directory creation and permissions mutate the project under
+/// other names.
 pub(crate) const MUTATION_APIS: &[&str] = &[
     "fs::write",
     "fs::remove_file",
@@ -1288,9 +1134,9 @@ pub(crate) const MUTATION_APIS: &[&str] = &[
 /// bytes -- which is what the `fs::write` gate above buys -- but a call to it
 /// from a generator happens immediately: nothing journals it, `--pretend`
 /// cannot report it, and a failure half way through a capability leaves the
-/// project in a state no `continue` or `abort` can reach. The executor
-/// (`execute.rs` + `activate.rs`, driven from `jails-commit`) is what supplies
-/// those three, and R6.4's rung is that every mutation goes through it.
+/// project in a state no `continue` or `abort` can reach. The executor is
+/// what supplies those three, and the rule is that every mutation goes
+/// through it.
 ///
 /// So this counts the calls that do not. `apply::` is spelled in full at every
 /// call site -- there is no `use apply::put` anywhere in the workspace, which
@@ -1302,9 +1148,9 @@ pub(crate) fn executor_bypasses(src: &[Source]) -> usize {
             let all = file.production.matches("apply::").count();
             // Five verbs say in their own names that they are not writing
             // into a project, which is what this row is about. Counting them
-            // made the gate ask for something that would be wrong to do:
-            // there is no transaction to put a write outside every project
-            // into, and none that owns `target/`.
+            // would make the gate ask for something wrong to do: there is no
+            // transaction to put a write outside every project into, and none
+            // that owns `target/`.
             //
             // - `put_outside_project` / `ensure_directory_outside_project`:
             //   `jails setup`'s `~/.testcontainers.properties`, `testd`'s
@@ -1313,10 +1159,9 @@ pub(crate) fn executor_bypasses(src: &[Source]) -> usize {
             // - `put_in_scratch`: a tree jails created empty moments earlier
             //   and removes when the run ends.
             // - `remove_derived` / `ensure_derived_directory`: build output.
-            //   `target/` is Maven's and `build/` is Gradle's; nothing in the
-            //   ledger claims a byte of either, and both verbs *refuse* a path
-            //   outside one -- so the exemption is checked rather than
-            //   promised. `pending.md` §7.7.
+            //   `target/` is Maven's and `build/` is Gradle's; no plan claims
+            //   a byte of either, and both verbs *refuse* a path outside one
+            //   -- so the exemption is checked rather than promised.
             //
             // Order matters in one place: `apply::remove_derived` contains
             // `apply::remove` as a prefix, so it would be counted by a shorter
@@ -1389,18 +1234,18 @@ pub(crate) fn whole_calls(source: &str, name: &str) -> usize {
 /// The modules whose *subject* is changing the filesystem.
 ///
 /// `apply` is the project's write layer. `store`, `journal` and `execute` are
-/// the executor's: R4's whole point is that a commit publishes bytes through
-/// a protocol, and that protocol is made of exactly these calls. `scratch`
-/// and `sandbox` own trees jails creates and destroys within one run.
+/// the executor's: a commit publishes bytes through a protocol, and that
+/// protocol is made of exactly these calls. `scratch` and `sandbox` own trees
+/// jails creates and destroys within one run.
 pub(crate) fn owns_writing(path: &Path) -> bool {
     let owns = [
         "apply",
         "store.rs",
         "journal.rs",
         "execute.rs",
-        // The half of the executor that actually moves bytes. It was inside
-        // `execute.rs` until that module outgrew the size ceiling; splitting a
-        // file must not change what the project's write layer *is*.
+        // The half of the executor that actually moves bytes, split from
+        // `execute.rs` by size; splitting a file does not change what the
+        // project's write layer *is*.
         "activate.rs",
         "scratch.rs",
         "sandbox.rs",
@@ -1413,7 +1258,6 @@ pub(crate) fn owns_writing(path: &Path) -> bool {
         // discarded entire. This module owns that, and `Tree` is what makes
         // it checkable -- a `Tree` comes from a `Publication` and nowhere
         // else, and its absolute-path verbs refuse a write outside the tree.
-        // `pending.md` §5.
         "publish.rs",
     ];
     path.components().any(|part| part.as_os_str() == "apply")
@@ -1425,9 +1269,8 @@ pub(crate) fn owns_writing(path: &Path) -> bool {
 /// Modules whose file does not open with a `//!` doc comment.
 ///
 /// **Read off the raw file, because `blank` erases the very thing being
-/// counted.** Same trap `inline_java_bodies` documents one row down: a gate
-/// measured on blanked source cannot see comments at all, and would report a
-/// clean zero whatever the tree said.
+/// counted.** A gate measured on blanked source cannot see comments at all,
+/// and would report a clean zero whatever the tree said.
 ///
 /// The first line rather than anywhere in the file: a module doc has to be the
 /// first item, so a `//!` further down is either inside a nested `mod` block
@@ -1446,11 +1289,8 @@ pub(crate) fn modules_without_a_module_doc(src: &[Source]) -> usize {
 ///
 /// Measured over the templates rather than over `crates/*/src` because this is
 /// the prose a reader of a *generated project* meets, and it is the prose
-/// nothing checks. `modern.md` §11.2 is the finding: "keyed on the `email`
-/// component" (it was not), "ordering per entity" (it was not), "scoped
-/// matches cannot mutate another tenant's row" (there was no scope in the
-/// SQL), "this type has no `id` component" (it had one). Each was asserted by
-/// a template that had no way to confirm it, and each was believed.
+/// nothing checks: a claim like "keyed on the `email` component" is asserted
+/// by a template that has no way to confirm it, and it is believed.
 ///
 /// The load-bearing comments stay -- the `@ServiceConnection` explanation, the
 /// Failsafe note, why `NullPointerException` is deliberately not classified

@@ -8,8 +8,7 @@
 //! produces credentials that never expire and nothing anywhere reports it —
 //! the application works. The generated issuer sets it and the generated test
 //! is what keeps the fix in place, because removing it changes no behaviour
-//! any other test can observe. `CLAUDE.md` records the same shape for the
-//! scheduler pool size.
+//! any other test can observe.
 
 use super::{Emitted, Package, java, package};
 use crate::CompileError;

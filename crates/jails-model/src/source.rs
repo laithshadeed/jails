@@ -12,11 +12,10 @@
 //! `Document` into an `AppModel`, running every stable-ID constructor and every
 //! reference check, and reporting all of them at once as `Diagnostics`.
 //!
-//! `.jails/model.toml` is a *temporary compatibility input* — `.jails/model.jdl`
-//! is the authoring boundary, and never both — so this module is on the
-//! cutover's deletion list rather than a shape to extend. A new declaration
-//! belongs in the JDL v1 parser; adding it here as well would give a project
-//! two editable sources for one fact.
+//! `.jails/model.toml` is a *compatibility input* — `.jails/model.jdl` is the
+//! authoring boundary, and never both — so this module is not a shape to
+//! extend. A new declaration belongs in the JDL v1 parser; adding it here as
+//! well would give a project two editable sources for one fact.
 
 use crate::model::{DependencyScope, Facet, SettingTarget};
 use crate::{ComponentKind, EndpointMethod, RequestFormat, UnitKind};
@@ -193,7 +192,7 @@ pub(crate) struct Entity {
     pub(crate) fields: BTreeMap<String, Field>,
     /// Declaration order, when the frontend has one to give.
     ///
-    /// A Java record's component order is ABI, so `jdl-sol.md` §7.3 makes this
+    /// A Java record's component order is ABI, so JDL v1 §7.3 makes this
     /// semantic -- but a TOML table is unordered by spec and `toml` 1.1 has no
     /// `preserve_order`, so a `BTreeMap` is the only shape the compatibility
     /// input can deserialize into. JDL walks a CST and does know, so it fills

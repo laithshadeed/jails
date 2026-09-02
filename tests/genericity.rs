@@ -1,10 +1,17 @@
+//! Generic code and templates stay free of showcase-domain vocabulary.
+//!
+//! Every `.rs` and `.java` under `src/`, `templates/` and `crates/*/src` is
+//! read with comments stripped and scanned for the forbidden words. An
+//! occurrence is permitted only by an `ALLOWED` entry naming the exact file
+//! and the external standard that justifies it, and an allowance no file uses
+//! any more fails too, so the allow-list cannot permit more than it says.
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// The suite-wide scheduler. See its own docs: the sweep below is the second
-/// place in this repository that reads and strips the whole workspace, and it
-/// draws its workers from the same process-wide budget the architecture gates
-/// do rather than opening a second, unaware one.
+/// The suite-wide scheduler: the sweep reads and strips the whole workspace
+/// and draws its workers from the same process-wide budget the architecture
+/// gates do rather than opening a second, unaware one.
 #[path = "common/parallel.rs"]
 mod parallel;
 
@@ -17,11 +24,10 @@ const FORBIDDEN: &[&str] = &[
     "settlement",
     "ledger",
     "robots",
-    // App D's vocabulary, and the half that carries no `ledger`-style
-    // collision with jails' own machinery -- so these stay unallowed
-    // everywhere and are what make the `ledger` allowance below narrow rather
-    // than a hole. `transaction` is deliberately absent: `@Transactional` is
-    // Spring's, and banning it would forbid generated code jails must emit.
+    // Accounting vocabulary with no collision with jails' own machinery, so
+    // these stay unallowed everywhere and keep the `ledger` allowance below
+    // one word wide. `transaction` is deliberately absent: `@Transactional`
+    // is Spring's, and banning it would forbid generated code jails must emit.
     "debit",
     "posting",
 ];
@@ -29,11 +35,10 @@ const FORBIDDEN: &[&str] = &[
 /// One forbidden word found in one file: what the report would say, and
 /// which `(allowance, file)` entry permits it if any.
 ///
-/// A named type rather than the tuple this started as, because the sweep is
-/// parallel now and the verdict has to survive the trip back from a worker:
-/// the allowance bookkeeping is shared mutable state and stays on the folding
-/// thread, so what crosses the boundary is a decision about one occurrence
-/// rather than a write to two vectors.
+/// The verdict crosses back from a worker thread: the allowance bookkeeping
+/// is shared mutable state and stays on the folding thread, so what crosses
+/// the boundary is a decision about one occurrence rather than a write to
+/// two vectors.
 struct Occurrence {
     found: String,
     allowance: Option<(usize, usize)>,
@@ -49,10 +54,6 @@ const ALLOWED: &[AllowedConcept] = &[
     AllowedConcept {
         word: "robots",
         files: &[
-            // The Rust side dropped off when the http-workflow bodies were
-            // extracted to template files: the word is in the Java now and in
-            // no `.rs` at all. Pruned because the gate found it, which is the
-            // whole point of it failing in this direction too.
             "templates/spring/http_workflow_java.java",
             "templates/spring/http_workflow_it_java.java",
         ],
@@ -94,10 +95,10 @@ const ALLOWED: &[AllowedConcept] = &[
             // and its semantics carry the intent for it.
             "crates/jails-prepare/src/prepare.rs",
             "crates/jails-prepare/src/operation.rs",
-            // `model init` refuses a project that already has one, and sends
-            // it to `model import` instead: a project jails has generated
-            // into keeps its declarations rather than discarding them. Saying
-            // which file it found is what makes that refusal actionable.
+            // `model init` refuses a project that already has one: a project
+            // jails has generated into keeps its declarations rather than
+            // discarding them. Saying which file it found is what makes that
+            // refusal actionable.
             "src/model_init.rs",
             // Preparation guards the ledger generation the plan was computed
             // against, renders the image the commit will write, and atomically
@@ -114,19 +115,9 @@ const ALLOWED: &[AllowedConcept] = &[
             "crates/jails-prepare/src/receipt.rs",
             "crates/jails-prepare/src/command.rs",
             "crates/jails-prepare/src/serialize.rs",
-            // A whole route ends in the ledger write, and its declared
-            // intent is literally a `LedgerIntent`.
-            // Resolving which recorded entity a field command targets is a
-            // search of the ledger's applied rows.
-            // A rename's identity transition is read out of the ledger's
-            // applied rows, which is what names the entities being renamed.
-            // The coordinated verbs resolve their subject against the ledger
-            // and guard the generation the campaign was planned from.
             // Reading the store *is* reading `ledger.toml`, and the reader
             // cannot name the file it opens without naming it.
             "crates/jails-commit/src/store.rs",
-            // The one-way compiler importer decodes the same legacy envelope
-            // solely to leave that store behind; its input type is LedgerV2.
             // A journal names the ledger-committed phase, which is the point
             // after which recovery must roll forward rather than back.
             "crates/jails-commit/src/journal.rs",
@@ -140,7 +131,7 @@ const ALLOWED: &[AllowedConcept] = &[
             // three of them are the ledger transition.
             "crates/jails-commit/src/fault.rs",
         ],
-        reason: "jails' own bookkeeping file (`abstract.md` §6.3 names it), which collides \
+        reason: "jails' own bookkeeping file, which collides \
                  with App D's domain by accident -- the word is the storage's, not the \
                  accounting concept's. `debit` and `posting` stay forbidden in these same \
                  files, so the allowance is one word wide rather than a way in for the domain",
@@ -153,9 +144,8 @@ fn core_generation_stays_free_of_showcase_vocabulary() {
     let mut failures = Vec::new();
     let mut used_allowances = vec![false; ALLOWED.len()];
     // Per *file*, not just per concept: an allowance whose word still appears
-    // somewhere keeps the whole entry alive, so a path that has gone stale --
-    // the code moved to a sibling module -- would sit there unnoticed,
-    // permitting a word in a file that no longer says it.
+    // somewhere keeps the whole entry alive, so a stale path would sit there
+    // unnoticed, permitting a word in a file that no longer says it.
     let mut used_files: Vec<Vec<bool>> = ALLOWED
         .iter()
         .map(|allowed| vec![false; allowed.files.len()])
@@ -170,9 +160,9 @@ fn core_generation_stays_free_of_showcase_vocabulary() {
             "an allowed concept must name its exact implementation files"
         );
     }
-    // Every crate, not only the binary's own `src/`. A scanner that walked one
-    // package would have reported a clean sweep over five crates it never read,
-    // which is the same failure as a skipped tier-3 test: green, and meaningless.
+    // Every crate, not only the binary's own `src/`: a scanner that walks one
+    // package reports a clean sweep over crates it never read, which is green
+    // and meaningless.
     let mut scopes = vec![root.join("src"), root.join("templates")];
     let crates = root.join("crates");
     if crates.is_dir() {
@@ -188,13 +178,12 @@ fn core_generation_stays_free_of_showcase_vocabulary() {
         .flat_map(|scope| source_files(scope))
         .collect();
     let scanned = paths.len();
-    // Read and stripped in parallel, largest file first. Comment stripping is
-    // a byte-at-a-time state machine and this sweep covers the same 5.9 MB
-    // the architecture gates do; the sizes across it differ by two orders of
+    // Read and stripped in parallel, largest file first: comment stripping is
+    // a byte-at-a-time state machine and file sizes differ by two orders of
     // magnitude, so the biggest file has to start first or every worker waits
     // on it at the end. What each file *says* is independent of every other,
-    // so only the verdict below is folded together, and it is folded in path
-    // order -- the report stays the same whatever order the reads finished in.
+    // so only the verdict below is folded together, in path order, and the
+    // report is the same whatever order the reads finished in.
     let per_file: Vec<Vec<Occurrence>> = parallel::map_by_cost(
         &paths,
         |path| fs::metadata(path).map_or(0, |data| data.len()),

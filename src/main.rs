@@ -284,11 +284,11 @@ fn main() -> std::process::ExitCode {
             migrate,
             datasource,
         } => {
-            // The migration flags are the legacy engine's vocabulary:
-            // canonical removal is model subtraction plus an explicit storage
-            // policy, and `--storage drop` is the confirmation they stood in
-            // for. `--force` survives with a narrower meaning -- the reader
-            // saying that edits to the files being removed may go with them.
+            // Canonical removal is model subtraction plus an explicit storage
+            // policy, so the migration flags are refused and `--storage drop`
+            // is the confirmation. `--force` has a narrower meaning -- the
+            // reader saying that edits to the files being removed may go with
+            // them.
             let invocation = invocation.forcing(force);
             let result = model_command::ensure_owned(invocation.clone()).and_then(|()| {
                 model_destroy::run(
@@ -455,9 +455,8 @@ fn main() -> std::process::ExitCode {
             // `--fast` can run anything, and that is a dependency in the
             // reader's POM -- so it is an owned entity installed by an
             // ordinary transition, not a side effect of how the tests were
-            // run. V1 spliced it from inside `run::test`, recorded nothing,
-            // and left no way to take it back out; `jails remove fast-test`
-            // is that way. Idempotent, so every later `--fast` writes nothing.
+            // run, and `jails remove fast-test` takes it back out. Idempotent,
+            // so every later `--fast` writes nothing.
             let options = run::TestOptions {
                 scope: scope.into(),
                 compile: compile.into(),

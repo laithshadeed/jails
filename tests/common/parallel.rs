@@ -1,45 +1,29 @@
-//! **Where the suite's parallelism actually comes from**, and the one place
-//! that decides how wide it may get.
+//! Where the suite's parallelism comes from, and the one place that decides
+//! how wide it may get.
 //!
-//! Libtest parallelises at the granularity of a `#[test]` function, which is
-//! the wrong granularity for the tests that matter most here. `agreement.rs`
-//! is two test functions driving sixty-one scenarios; `golden.rs` is one over
-//! the same table. Each scenario is an independent temporary directory and a
-//! handful of independent `jails` processes -- embarrassingly parallel work --
-//! and all of it ran on one thread because it sat inside one `#[test]`. The
-//! measured consequence was a full workspace run at 53% of four cores with
-//! `agreement` alone taking 18 seconds of that.
-//!
-//! So the table loop gets its own scheduler. Three properties are the whole
-//! design, and each is load-bearing:
+//! Libtest parallelises per `#[test]` function, which is the wrong grain for a
+//! table-driven test: each cell of `agreement.rs` or `golden.rs` is an
+//! independent temporary directory and its own `jails` processes, so the table
+//! loop gets its own scheduler. Three properties are the design:
 //!
 //! - **Work stealing, not chunking.** Workers pull the next index off one
-//!   atomic cursor. Scenario costs here differ by more than an order of
-//!   magnitude -- a `g record` against the plain fixture against a full
-//!   `scaffold` on Spring -- and a static `chunks(n)` split hands one worker
-//!   every expensive cell it happened to be given and leaves the rest idle
-//!   for the whole tail.
-//! - **One process-wide budget.** Libtest is already running several test
-//!   functions at once, and each may open a scheduler of its own. Without a
-//!   shared gate, two tables at eight workers each is sixteen concurrent
-//!   process trees on a four-core machine, which is the oversubscription
-//!   [`crate::common::ToolchainCommand`] exists to prevent for Maven. Every
-//!   unit of work takes a permit from [`GATE`] instead, so the *sum* across
-//!   every concurrent table is bounded no matter how many tables there are.
-//! - **Longest-processing-time first.** With work stealing, makespan is
-//!   dominated by whichever item is started last: begin the cheapest cell at
-//!   the end and everyone waits for the most expensive one to follow it. LPT
-//!   is the standard remedy and it needs a cost estimate, which
-//!   [`CostLedger`] measures rather than guesses -- see its own docs.
+//!   atomic cursor. Cell costs differ by more than an order of magnitude, and
+//!   a static `chunks(n)` split hands one worker every expensive cell it
+//!   happened to be given and leaves the rest idle for the whole tail.
+//! - **One process-wide budget.** Libtest runs several test functions at once
+//!   and each may open a scheduler of its own; every unit of work takes a
+//!   permit from [`GATE`], so the *sum* across every concurrent table is
+//!   bounded however many tables there are.
+//! - **Longest-processing-time first.** With work stealing, makespan is set by
+//!   whichever item starts last, so the expensive cells go first. That needs
+//!   a cost estimate, which [`CostLedger`] measures rather than guesses.
 //!
 //! **The budget deliberately exceeds the core count.** These units spend a
-//! large share of their time in `fork`/`exec`, in the child's dynamic linking
-//! and in page faults rather than on a core, so one worker per core leaves
-//! the machine idle waiting on the kernel. Measured on the four-core machine
-//! this was written on: the `cli` binary took 89.6s at four libtest threads
-//! and 55.8s at sixteen, with total CPU unchanged. The multiplier below is
-//! that measurement, not a guess, and
-//! `JAILS_TEST_PARALLELISM` overrides it for a machine where it is wrong.
+//! large share of their time in `fork`/`exec`, the child's dynamic linking and
+//! page faults rather than on a core, so one worker per core leaves the
+//! machine idle waiting on the kernel. The multiplier is measured, not
+//! guessed, and `JAILS_TEST_PARALLELISM` overrides it for a machine where it
+//! is wrong.
 
 #![allow(dead_code)]
 
@@ -277,12 +261,11 @@ where
 /// **What each cell of a table cost last time**, so this run can start the
 /// expensive ones first.
 ///
-/// LPT scheduling needs a cost per item and there is nothing in a scenario
-/// row to derive one from: step count is a poor proxy -- one `add db` step
-/// outweighs four `g record`s -- and hand-written weights are a second table
-/// that goes stale exactly like the ones `CLAUDE.md` warns about. So nothing
-/// is declared. Each run writes down what it observed under `target/`, and
-/// the next run schedules by it.
+/// LPT scheduling needs a cost per item and nothing in a scenario row derives
+/// one: step count is a poor proxy -- one `add db` step outweighs four
+/// `g record`s -- and hand-written weights are a second table that goes stale.
+/// So nothing is declared. Each run writes down what it observed under
+/// `target/`, and the next run schedules by it.
 ///
 /// Three properties keep it honest:
 ///

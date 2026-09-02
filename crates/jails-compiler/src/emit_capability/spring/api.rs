@@ -1,7 +1,7 @@
 //! The error model, and the arms it maps.
 //!
-//! **Split from `spring.rs` because it is a different secret.** Every other
-//! pack there declares files and dependencies; this one additionally decides
+//! Every other pack in `spring.rs` declares files and dependencies; this one
+//! additionally decides
 //! *which failures become which status*, and each arm is conditional on a
 //! capability whose types it names -- `DuplicateKeyException` and the
 //! `spring-dao` precondition pair only exist once the JDBC starter is in the

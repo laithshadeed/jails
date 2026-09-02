@@ -7,8 +7,8 @@
 //! a signature to look for, a plain-language explanation, and the command
 //! that fixes it.
 //!
-//! Every rule here was written against a failure that actually happened
-//! while building a project with jails, not against the documentation --
+//! Every rule here is written against a failure that actually happened
+//! while building a project with jails, never against the documentation --
 //! which is why, for instance, the Testcontainers rule talks about podman
 //! sockets rather than about Docker Desktop.
 //!
@@ -80,11 +80,9 @@ pub fn command(
 
 const RULES: &[Rule] = &[
     Rule {
-        // Observed twice on this machine: `jails new --gradle --boot 2.7.18`
-        // wrote a project it could not build, and the two real take-home
-        // checkouts under `minicom/` are Gradle 8.5 while the JDK on PATH is
-        // 26. `new` refuses that pairing now, but an *adopted* project brings
-        // its own wrapper and jails cannot refuse what it did not write.
+        // `new` refuses a Gradle distribution that cannot launch on the JDK
+        // in use, but an *adopted* project brings its own wrapper and jails
+        // cannot refuse what it did not write.
         //
         // The message is uniquely unhelpful: it names neither Gradle nor Java,
         // says `BUG!` about the reader's project, and the number is a class
@@ -137,12 +135,10 @@ const RULES: &[Rule] = &[
         },
     },
     Rule {
-        // Observed on the pristine `mc-01-06-2026` take-home the first time
-        // it was started after a *different* minicom checkout had run: every
-        // one of them ships `jdbc:h2:file:~/minicom`, so they share one file
-        // outside every project, and whichever H2 is newest wins it
-        // permanently. The message names a format number and a file, and
-        // nothing in it says the file belongs to another project.
+        // Take-home checkouts commonly ship `jdbc:h2:file:~/<name>`, so two
+        // of them share one file outside every project, and whichever H2 is
+        // newest wins it permanently. The message names a format number and
+        // a file, and nothing in it says the file belongs to another project.
         signatures: &["Unsupported database file version or invalid file header"],
         group: "h2-file-version",
         explain: |log| Diagnosis {
@@ -174,8 +170,7 @@ const RULES: &[Rule] = &[
     Rule {
         // Testcontainers caches a failed environment probe for the life of
         // the JVM, so this is what every *subsequent* test in the same run
-        // reports. Observed 7 times against 4 of the original message, which
-        // means the retry text is the one more often pasted into a search.
+        // reports -- and therefore the text more often pasted into a search.
         signatures: &["Previous attempts to find a Docker environment failed"],
         group: "docker-env",
         explain: |_| {
@@ -946,9 +941,8 @@ mod tests {
         ));
     }
 
-    /// Every distinct root cause found in a month of this machine's real
-    /// session logs, with the occurrence count that justified the rule.
-    /// Measured before writing them: 2 of 6 were recognised.
+    /// Every distinct root cause seen in real session logs, with the
+    /// occurrence count that justified its rule.
     #[test]
     fn every_root_cause_seen_in_real_logs_is_recognised() {
         let observed: [(&str, &str); 6] = [

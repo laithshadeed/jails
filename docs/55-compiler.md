@@ -141,10 +141,9 @@ described as both.
 
 ## Items you close elsewhere
 
-`docs/20-generated-java.md` A4.2 (rewrite around S55.2's measurement rather
-than the legacy ratio, which compares against a column that no longer
-exists); `docs/00-contracts.md` §1.7 rows *per-byte dependency inference*
-and *hand codecs/tags/JSON serializers* if S55.8 lands the model fact.
+`docs/00-contracts.md` §1.7's *orphaned templates* and *per-emitter copies of
+the Java shell* rows, and its §1.8 recorded exception if S55.8 lands the
+model fact.
 
 ## Green
 

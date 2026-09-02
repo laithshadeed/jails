@@ -1,10 +1,9 @@
 //! The declaration families: the app header, the project-level declarations,
 //! enums, and an entity with everything nested inside it.
 //!
-//! Split from [`super`] because it reopened a closed ratchet at 878 lines --
-//! and the seam the board asks for is by *subject*, so this file is what a
-//! reader looks at to answer "how is an entity written back", without the
-//! operation and component renderers in the way.
+//! Split by *subject*, so this file is what a reader looks at to answer "how
+//! is an entity written back", without the operation and component renderers
+//! in the way.
 
 use super::operations::{owner, write_operation};
 use super::{field_label, json, refuse, type_token, value};
@@ -188,7 +187,7 @@ pub(super) fn write_enums(model: &AppModel, out: &mut String) {
 /// model that links back with projections the input did not have, which is a
 /// semantic change smuggled into a renderer.
 ///
-/// Refusing instead puts it where §22 says it belongs: the upgrade
+/// Refusing instead puts it where JDL v1 §22 says it belongs: the upgrade
 /// materialises the projections, says so in its notes, and hands this
 /// function a model that already agrees with itself.
 fn refuse_facets_without_projections(

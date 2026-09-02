@@ -1,20 +1,14 @@
 //! How to invoke *this project's* Maven — and only that.
 //!
-//! Split from `run.rs` for a layering reason rather than a size one.
-//! `project.rs` reports which Maven command a project would use and `add`
-//! formats a tree it has just written; both are below the command layer, and
-//! both were reaching up into `run.rs` to ask. That back-edge is what made
-//! `project`, `run`, `launcher`, `why` and `add` one twelve-module cycle, and a
-//! cycle is a boundary that cannot be enforced.
+//! Below the command layer, because `project.rs` reports which Maven command
+//! a project would use and a reaching up from there into the commands is a
+//! cycle. It is deliberately *not* part of [`crate::build`], whose whole
+//! contract is that it recognises a build file and never invokes one.
+//! Choosing a binary and running a goal are the opposite of that promise.
 //!
-//! It is deliberately *not* part of [`crate::build`], whose whole contract is
-//! that it recognises a build file and never invokes one. Choosing a binary and
-//! running a goal are the opposite of that promise.
-//!
-//! The single-resolver rule this preserves is the reason it exists at all:
-//! `project.rs` once had its own copy of the mvnd name that was right on
-//! Windows while `run.rs`'s was wrong, so `jails about` reported a Maven
-//! command `jails test` would not have used.
+//! There is one resolver. Two copies of the mvnd name disagree about
+//! `mvnd.cmd` on Windows, and then `jails about` reports a Maven command
+//! `jails test` does not use.
 
 use std::path::{Path, PathBuf};
 
@@ -34,7 +28,7 @@ fn mvnd_binary() -> &'static str {
 pub fn binary(root: &Path) -> PathBuf {
     // An explicit choice wins over every rule below it. Without one, which
     // Maven runs depends on what happens to be first on `PATH`, and a machine
-    // where the daemon cannot start had no way to say so except by editing
+    // where the daemon cannot start has no way to say so except by editing
     // `PATH` for every command.
     if let Some(chosen) = std::env::var_os(MAVEN_OVERRIDE)
         && !chosen.is_empty()
@@ -108,10 +102,8 @@ fn mvnd_can_start() -> bool {
 mod tests {
     use super::*;
 
-    /// mvnd ships as `mvnd.cmd` on Windows. `run.rs` probed for a bare
-    /// `mvnd` while `project.rs` probed for `mvnd.cmd`, so on Windows the
-    /// command `jails about` reported was not the one `jails test` would run
-    /// -- and this side would have tried to execute a name not on disk.
+    /// mvnd ships as `mvnd.cmd` on Windows; a probe for a bare `mvnd` there
+    /// finds nothing and silently falls back to `mvn`.
     #[test]
     fn the_mvnd_binary_carries_its_platform_extension() {
         if cfg!(windows) {
@@ -124,7 +116,7 @@ mod tests {
     /// An explicit choice wins over the wrapper and over `PATH`.
     ///
     /// Without one, which Maven runs is decided by whatever happens to be
-    /// installed, and a machine whose mvnd cannot start had no way to say so
+    /// installed, and a machine whose mvnd cannot start has no way to say so
     /// except by editing `PATH` for every command.
     #[test]
     fn an_explicit_maven_command_wins() {

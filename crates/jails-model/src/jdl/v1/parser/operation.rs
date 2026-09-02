@@ -151,11 +151,10 @@ impl Parser<'_> {
             }
             Kind::Transition => {
                 let fields = compatibility_fields(&transition.parameters);
-                // No compatibility projection. This synthesised `sets` as
-                // *every* parameter whenever `update` was omitted -- without
-                // subtracting the row selector or the version -- and kept only
-                // the first `emit`, and the emitters read exactly those two
-                // values. `.jails/model.toml` still spells the flat pair and
+                // No compatibility projection: a synthesised `sets` of
+                // *every* parameter subtracts neither the row selector nor
+                // the version, and a single `yields` keeps only the first
+                // `emit`. `.jails/model.toml` still spells the flat pair and
                 // the linker folds it in; a JDL v1 source carries the rich
                 // form, so it leaves the compatibility fields empty and the
                 // one representation is the linked semantics.

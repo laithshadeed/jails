@@ -1,18 +1,12 @@
 //! `jails commands --json`: the CLI's own vocabulary, as data.
 //!
 //! Every name jails accepts is declared once, in clap, and then needed again
-//! somewhere that cannot read a Rust enum. `jails.nvim` keeps hand-maintained
-//! `SUBCOMMANDS`, `KINDS`, `CAPABILITIES` and `OPTIONS` tables for exactly that
-//! reason, and they drifted precisely as `plan.md` §6.1 predicts a copy will:
-//! eight kinds and three capabilities reached the CLI without the Lua moving,
-//! so `:Jails g <Tab>` offered a stale menu -- the worst kind of stale, because
-//! it looks like the whole set.
-//!
-//! `tests/editor.rs` made that copy *checked*, which was the right holding
-//! action and is explicitly not the fix: `abstract.md` §9 says a test that
-//! polices duplication is a receipt for a decision not yet made. This is the
-//! decision. The plugin reads this output instead of carrying its own tables,
-//! and the copy stops existing rather than being watched.
+//! somewhere that cannot read a Rust enum -- `jails.nvim`'s completer above
+//! all. A hand-maintained copy of the subcommand, kind and capability lists
+//! drifts behind the CLI with nothing to stop it, and a stale completion menu
+//! is the worst kind of stale, because it looks like the whole set. So the
+//! plugin reads this output instead of carrying its own tables, and
+//! `tests/editor.rs` asserts no such tables exist.
 //!
 //! Everything here is derived from the same `clap::Command` that parses the
 //! arguments, and from the same `ValueEnum`s that validate them. There is no
@@ -76,13 +70,11 @@ fn global_flags(root: &Command) -> Vec<String> {
 
 /// Every subcommand, at every depth, named by the whole path you type.
 ///
-/// It stopped at depth one, which made this output claim a surface it did not
+/// Stopping at depth one would make this output claim a surface it does not
 /// describe: `resource field add`, `remove fast-test`, `app apply` and
-/// `db console` are all real commands and none of them was listed. That is
-/// the same defect the tables in `jails.nvim` had before they were deleted in
-/// favour of reading this -- a completer offering half the verbs -- and it
-/// also means a message telling a reader to run `jails remove fast-test`
-/// cannot be checked against the parser that would accept it.
+/// `db console` are all real commands. A completer would offer half the verbs,
+/// and a message telling a reader to run `jails remove fast-test` could not be
+/// checked against the parser that would accept it.
 ///
 /// A nested entry's name is the path (`remove fast-test`); its aliases are the
 /// path with the leaf's alias substituted, so an alias is still a thing you
@@ -166,9 +158,8 @@ fn render_names(label: &str, names: &[Name]) -> String {
 
 /// The CLI is handed in rather than reached for.
 ///
-/// This module used to name the binary's own `Cli` type, which is one layer
-/// above it -- fine while everything was one crate, and a cycle the moment the
-/// tooling became one. Taking the `clap::Command` as an argument keeps the
+/// The binary's own `Cli` type is one layer above this crate, so naming it
+/// here would be a cycle. Taking the `clap::Command` as an argument keeps the
 /// property that matters: there is still no second list, because what arrives
 /// here is the very command that parsed the arguments.
 pub fn commands(command: Command, json: bool) -> Result<()> {

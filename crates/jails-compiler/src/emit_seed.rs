@@ -153,8 +153,8 @@ fn row(model: &AppModel, entity: &Entity, first: bool) -> Option<String> {
                 .to_string(),
                 // **An enum is the one project type jails can sample**, and by
                 // its wire value: the record's converter reads that, and the
-                // Java constant is what it refuses. Leaving it out made every
-                // seeded entity with an enum column ship `[]` and a
+                // Java constant is what it refuses. Leaving it out would make
+                // every seeded entity with an enum column ship `[]` and a
                 // `@Disabled` test.
                 TypeRef::External(name) => enum_sample(model, name)?,
             };

@@ -2,11 +2,10 @@
 //!
 //! **The door recognises any build marker, and only the commands that
 //! genuinely need Maven refuse — themselves, through [`require_maven`].**
-//! Gating the door on `pom.xml` alone refuses about thirty commands on a
-//! foreign project, and most of them never touch Maven: `inspect.rs` and
-//! `rename.rs` contain zero occurrences of `pom`, and `routes`, `beans`,
-//! `stats`, `notes`, `rename`, `destroy --pretend`, `doctor` and most of
-//! `generate` read source and write source. `plan.md` §12.
+//! Gating the door on `pom.xml` alone refuses most of jails on a foreign
+//! project when most of it never touches Maven: `routes`, `beans`, `stats`,
+//! `notes`, `rename`, `destroy --pretend`, `doctor` and most of `generate`
+//! read source and write source.
 //!
 //! ## Reading a Gradle build, and the bar for doing so
 //!

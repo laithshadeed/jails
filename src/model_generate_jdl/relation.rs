@@ -1,11 +1,8 @@
 //! `g association <Name> <child>=<parent> --on <Child> --yields <Parent>`.
 //!
-//! **The emitter was never the missing half.** `emit_sql::relation` derives
-//! the foreign key, its referential actions and the index from a declared
-//! `AppModel.relations` entry, and has all along; what a canonical project
-//! refused was the *frontend*, so the `fix:` line told the reader to hand-edit
-//! `.jails/model.jdl`. That is true and useless, which is the shape
-//! `audit.md` A1.1 is about.
+//! The syntax editor in front of `emit_sql::relation`, which derives the
+//! foreign key, its referential actions and the index from a declared
+//! `AppModel.relations` entry.
 //!
 //! **The declaration lives in the child**, because the foreign key does. A
 //! relation named on the parent would read as ownership and compile to a
@@ -72,16 +69,13 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     );
     // **Declaring the same association twice is a no-op, not a duplicate.**
     // Every other canonical frontend is idempotent -- a second `g record` with
-    // the same shape writes nothing -- and this appended, so replaying a
-    // manifest a second time produced "a relation name is declared more than
-    // once in this entity". Identity is the child and the member name; a
+    // the same shape writes nothing -- and a manifest replayed a second time
+    // must not produce "a relation name is declared more than once in this
+    // entity". Returned early rather than prepared as a no-op patch, because
+    // re-issuing `AddRelation` fails on the id: a relation is added rather
+    // than reconciled. Identity is the child and the member name; a
     // *different* mapping under the same name is still the collision the
     // parser refuses, which is what it is for.
-    // Returned early rather than prepared as a no-op patch: re-issuing
-    // `AddRelation` fails on the id -- "relation id `rel_...` already exists"
-    // -- because a relation is added rather than reconciled. Identity is the
-    // child and the member name; a *different* mapping under the same name is
-    // still the collision the parser refuses, which is what it is for.
     if current_model
         .relations
         .values()

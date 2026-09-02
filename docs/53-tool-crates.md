@@ -178,8 +178,8 @@ is dependency-free so both ladders can reach it. Fewer crates is not the goal
 ## Items you close elsewhere
 
 `docs/30-cutover.md` P13.2; `docs/00-contracts.md` §1.7 rows *`jails-spec::Field`
-plus protocol `FieldSpec`*, *duplicate Maven XML scanners*, *project
-`Project`/`ProjectContext`/snapshot overlap*, *drive/report/tool suites*.
+plus protocol `FieldSpec`*, *duplicate Maven XML scanners*, *`jails-generate`'s
+SQL projection*, *`Project`/`ProjectContext`/snapshot overlap*.
 
 ## Green
 

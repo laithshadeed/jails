@@ -6,15 +6,10 @@
 //! - **What is the conventional package for each layer** ([`layout`]).
 //! - **What does a field spec mean** ([`field`]).
 //!
-//! All three used to live in `generate.rs`, and every layer below the
-//! generators reached up into it for them: `model`, `config`, `compose`,
-//! `project` and `inspect` all did. That made twelve modules one cycle, and a
-//! cycle is a boundary nothing can enforce -- the drift `CLAUDE.md` records in
-//! `inspect.rs`'s private copy of the layer list is exactly what an
-//! unenforceable boundary produces.
-//!
-//! The generator layer re-exports all of it, so `crate::generate::Field` still
-//! resolves; what changed is the direction of the arrow.
+//! They sit below the generators because every layer beneath them asks at
+//! least one of the three -- `model`, `config`, `compose`, `project` and
+//! `inspect` all do. Answered from the generator layer, those modules reach
+//! upward, and a cycle is a boundary nothing can enforce.
 
 pub mod field;
 pub mod kind;

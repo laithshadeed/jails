@@ -1,18 +1,17 @@
 //! A new project is absent or complete, never half-written.
 //!
-//! plan.md §R6.5. `jails new` is the one mutation with no project to lock and
-//! no ledger to journal: there is nothing there yet. So the guarantee the rest
-//! of the tool gets from the transaction protocol has to be bought a different
-//! way, and the cheapest sound way is publication by rename.
+//! `jails new` is the one mutation with no project to lock: there is nothing
+//! there yet. So the guarantee the rest of the tool gets from the executor
+//! has to be bought a different way, and the cheapest sound way is
+//! publication by rename.
 //!
 //! Everything the command writes — the downloaded starter zip, the pom, the
 //! sources, `mise.toml`, `AGENTS.md`, the seeded manifest and whatever
 //! `app apply` generates from it — lands in a scratch directory *beside* the
 //! destination. The destination itself is created by one `rename`. A curl that
 //! 404s, a template that refuses, a `^C` in the middle of an `app apply`: each
-//! leaves the destination absent, which is a state the user can act on. The
-//! failure this replaces left a directory containing a pom and no sources,
-//! which reads exactly like a project.
+//! leaves the destination absent, which is a state the user can act on, where
+//! a directory containing a pom and no sources reads exactly like a project.
 //!
 //! Two details are load-bearing:
 //!

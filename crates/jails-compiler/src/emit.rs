@@ -1,33 +1,29 @@
 //! What the emitters need from the workspace, and the order they run in.
 //!
-//! Split out of `lib.rs` by secret the second time that file crossed the
-//! largest-module ceiling. `Compiler::compile` decides *what* the desired
-//! state is; this decides who renders it and what each renderer is told about
-//! a workspace it may not look at itself.
-//!
-//! Keeping them apart is what makes the next observed fact cheap: it is a
-//! field on [`Observed`] and a line in [`Observed::of`], rather than another
-//! parameter threaded through four signatures.
+//! `Compiler::compile` decides *what* the desired state is; this decides who
+//! renders it and what each renderer is told about a workspace it may not
+//! look at itself. Keeping them apart is what makes the next observed fact
+//! cheap: it is a field on [`Observed`] rather than another parameter
+//! threaded through four signatures.
 
 use crate::{CompileError, emit_capability, emit_component, emit_http, emit_java, emit_operation};
 use jails_contracts::{FileKind, ProjectPath, RenderedTree, WorkspaceSnapshot};
 
 /// The workspace facts emission needs and a pure compiler may not observe.
 ///
-/// A value rather than three more parameters, for the reason `spring::Slice`
-/// is one on the legacy side: every one of these is captured once and consumed
-/// together, and threading them individually is how a signature reaches eight
-/// arguments one honest addition at a time.
+/// A value rather than three more parameters: every one of these is captured
+/// once and consumed together, and threading them individually is how a
+/// signature reaches eight arguments one honest addition at a time.
 pub(crate) struct Observed<'a> {
     /// The Boot version the project declares, if it is a Spring project.
     pub spring_boot: Option<&'a str>,
     /// Reader-authored replacements for jails' own Java templates.
     ///
-    /// Captured rather than read here: `plan.md` §6.6's want is "this class
-    /// shaped differently", and the file that says so lives in the project --
-    /// which the compiler may not look at. Every emitter resolves its template
-    /// through this, so a kind that forgot would silently ignore an override
-    /// the reader can see `doctor` reporting.
+    /// Captured rather than read here: the file that says "this class shaped
+    /// differently" lives in the project, which the compiler may not look at.
+    /// Every emitter resolves its template through this, so a kind that does
+    /// not would silently ignore an override the reader can see `doctor`
+    /// reporting.
     pub templates: &'a jails_contracts::TemplateOverrides,
     /// Where this project keeps its compose file.
     pub compose_path: &'a ProjectPath,
@@ -50,7 +46,7 @@ pub(crate) struct Observed<'a> {
     /// The repository port always gets exactly one bean, and which adapter it
     /// is depends on whether `JdbcClient` -- from `spring-jdbc`, which the JDBC
     /// and data-JDBC starters both bring -- can be resolved at all. Reading it
-    /// off the declared `db` capability alone gave a Gradle project carrying
+    /// off the declared `db` capability alone gives a Gradle project carrying
     /// `spring-boot-starter-data-jdbc` an in-memory bean beside a query adapter
     /// talking to its real database.
     pub jdbc: bool,
@@ -93,27 +89,13 @@ pub(crate) fn emit(
     Ok(())
 }
 
-/// Collapse runs of blank lines in every emitted Java file.
-///
-/// **One rule in one place, for the reason the legacy write path had the same
-/// one.** palantir-java-format removes a doubled blank line, so leaving one in
-/// means `add format` -- which jails installs itself -- fails `jails check` on
-/// a project whose every line jails wrote. Templates produce them without
-/// meaning to: `api_exception_handler_java.java` has a `{{duplicate_key_import}}`
-/// line that substitutes to nothing on a project without the JDBC starter, and
-/// the empty line it leaves behind is invisible in the template and obvious in
-/// the output.
-///
-/// A blank line inside a text block is data and is left alone, which is why
-/// this counts `"""` fences rather than trimming unconditionally.
 /// One `package-info.java` for every package this compile writes main Java
 /// into.
 ///
-/// **Emitted here rather than per generator**, for the reason the legacy write
-/// path had the same rule: it is a fact about a *package*, and a rule twenty
-/// renderers have to remember is a rule that decays the first time somebody
-/// adds one. Running over the finished tree also makes "one per package"
-/// structural rather than something to check.
+/// **Emitted here rather than per generator**: it is a fact about a
+/// *package*, and a rule twenty renderers have to remember is a rule that
+/// decays the first time somebody adds one. Running over the finished tree
+/// also makes "one per package" structural rather than something to check.
 ///
 /// Main sources only. A test package is not part of anyone's API and a
 /// nullness checker configured over `src/test` is a choice the reader makes.
@@ -174,6 +156,17 @@ fn package_infos(output: &mut RenderedTree, jspecify: bool) -> Result<(), Compil
     Ok(())
 }
 
+/// Collapse runs of blank lines in every emitted Java file.
+///
+/// **One rule in one place.** palantir-java-format removes a doubled blank
+/// line, so leaving one in means `add format` -- which jails installs itself
+/// -- fails `jails check` on a project whose every line jails wrote.
+/// Templates produce them without meaning to: a placeholder line that
+/// substitutes to nothing leaves an empty line that is invisible in the
+/// template and obvious in the output.
+///
+/// A blank line inside a text block is data and is left alone, which is why
+/// this counts `"""` fences rather than trimming unconditionally.
 fn tidy_java(output: &mut RenderedTree) {
     for file in output.files.values_mut() {
         if !matches!(file.kind, FileKind::JavaMain | FileKind::JavaTest) {

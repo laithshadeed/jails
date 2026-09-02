@@ -286,11 +286,11 @@ fn entity_header(line_number: usize, line: &str) -> Result<EntityDraft, Diagnost
     let dto = rest.split_whitespace().any(|word| word == "@dto");
     let repository = rest.split_whitespace().any(|word| word == "@repository");
     let mut facets = if rest.split_whitespace().any(|word| word == "@scaffold") {
-        // **The same four v1's `use scaffold` expands to**, `dto` included.
-        // Leaving it out made `model upgrade` a semantic change: the pre-v1
-        // scaffold bound the domain row at its HTTP boundary and the upgraded
-        // one bound a request record, so a projection the upgrade promises to
-        // leave byte-identical moved.
+        // **The same set v1's `use scaffold` expands to**, `dto` included:
+        // leaving it out makes `model upgrade` a semantic change -- a pre-v1
+        // scaffold binding the domain row at its HTTP boundary against an
+        // upgraded one binding a request record -- and the upgrade promises
+        // to leave projections byte-identical.
         vec!["record", "repository", "service", "dto", "http"]
     } else if let Some(values) = annotation(rest, "facets") {
         values
@@ -656,16 +656,10 @@ fn first_word(input: &str) -> &str {
 /// The stable label a pre-v1 name gets.
 ///
 /// **It is `naming::stable_fragment`, and must not be copied.** A copy that
-/// differs by leaving every character which is neither a letter nor `-` alone
-/// -- which looks cosmetic -- lets a dot survive into the label. A label is the key of the intermediate TOML table *and* a model
-/// label, so `dependency org.apache.commons:commons-csv` -- any real Maven
-/// group -- and `setting server.port` -- the most ordinary setting there is --
-/// each produced a label the linker then refused. Neither parsed at all.
-///
-/// `stable_fragment` agrees with the old function on every name that was
-/// already accepted: both lowercase, both split camelCase on an underscore,
-/// both map `-` to `_`. It differs only where the old one produced something
-/// invalid.
+/// leaves every character which is neither a letter nor `-` alone lets a dot
+/// survive into the label, which is the key of the intermediate TOML table
+/// *and* a model label -- so `dependency org.apache.commons:commons-csv` and
+/// `setting server.port` each produce a label the linker refuses.
 fn label(value: &str) -> String {
     crate::naming::stable_fragment(value)
 }
@@ -761,15 +755,16 @@ enum Status {
 
     /// **A record's component order is ABI, in this dialect too.**
     ///
-    /// `audit.md` A2.2b. The v1 frontend walks a CST and keeps the order; this
-    /// one renders intermediate TOML, and `parse_toml` reads fields back into
-    /// a `BTreeMap` -- so the order was sorted away between a draft that had
-    /// it and a model that did not. Declared `zulu, id, alpha`, linked
-    /// `alpha, id, zulu`, and a caller compiled against the positional
-    /// constructor kept compiling while passing the wrong arguments.
+    /// The v1 frontend walks a CST and keeps the order; this one renders
+    /// intermediate TOML, and `parse_toml` reads fields back into a
+    /// `BTreeMap` -- so without `field_order` the order is sorted away
+    /// between a draft that has it and a model that does not. Declared
+    /// `zulu, id, alpha` and linked `alpha, id, zulu`, a caller compiled
+    /// against the positional constructor keeps compiling while passing the
+    /// wrong arguments.
     ///
     /// Deliberately alphabetically hostile: with sorted labels the bug is
-    /// invisible, which is why it survived the dialect's other tests.
+    /// invisible.
     #[test]
     fn pre_v1_keeps_the_order_the_author_declared() {
         let model = parse(

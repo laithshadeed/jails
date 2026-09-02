@@ -5,15 +5,9 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2024"
 
-# One version per external crate, and one path per internal one. Ten manifests
-# repeated `clap = { version = "4.6.4", features = ["derive"] }` verbatim, which
-# is ten places a version bump has to reach and nine places it can be forgotten
-# -- and a workspace that resolves two clap majors compiles, links both, and
-# fails only where a derive from one meets a trait from the other.
-#
-# The per-crate comments justifying *why* a crate takes clap stay in that
-# crate's manifest, beside `clap.workspace = true`. They are about that crate's
-# reason (a `ValueEnum` for completion), not about the version.
+# One version per external crate and one path per internal one. A workspace
+# that resolves two clap majors compiles, links both, and fails only where a
+# derive from one meets a trait from the other.
 [workspace.dependencies]
 clap = { version = "4.6.4", features = ["derive"] }
 clap_complete = "4.6.7"
@@ -46,22 +40,15 @@ jails-workspace = { path = "crates/jails-workspace" }
 
 # One place for the lint policy, so a new crate cannot quietly opt out of it.
 [workspace.lints.rust]
-# A function nobody calls inside a `mod tests` is almost always a test that
-# stopped being one: a `#[test]` lost while moving code between modules leaves
-# a plausible-looking function that never runs, and the suite goes green over
-# it. That happened while splitting `resource.rs`, and only a warning nobody
-# had to read caught it. It is a denial now, so the build stops instead.
+# A function nobody calls inside a `mod tests` is a test that lost its
+# `#[test]`, and the suite goes green over it. Denied so the build stops.
 dead_code = "deny"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
 
-# Was "allow", with a comment saying 21 generator functions were waiting on
-# plan.md §6's parameter-struct refactor. Re-measured 2026-08-25: nine, four of
-# them warning and five carrying a local `#[allow]` -- one of which no longer
-# had eight arguments at all. All nine took a parameter object (`Produced`,
-# `Subject`, `Request`, `Declared`), so the escape hatch is closed rather than
-# left open against a number that had already fallen.
+# Every generator takes a parameter object (`Produced`, `Subject`, `Request`,
+# `Declared`) rather than eight positional arguments.
 too_many_arguments = "deny"
 
 [package]
@@ -75,13 +62,8 @@ jails-report.workspace = true
 jails-commit.workspace = true
 jails-prepare.workspace = true
 jails-codemod.workspace = true
-# The last edge into the legacy generator, and it is `jails new`'s: `new`,
-# `new-cli` and the Gradle project all write through `generate::write_new_file`
-# -- the write path that normalises imports, plans `package-info.java` and
-# supplies Failsafe and AssertJ from the emitted bytes. Making `new` seed a
-# canonical model is what removes it, and that is the cutover's first step
-# rather than a re-pointing: every other consumer in this binary was taking a
-# symbol `jails-spec`, `jails-protocol` or `jails-codemod` already owns.
+# `new` writes its three seed files through `generate::write_new_file`; the
+# edge goes when `docs/52-binary.md` S52.3 lands.
 jails-generate.workspace = true
 jails-project.workspace = true
 jails-spec.workspace = true
@@ -101,21 +83,14 @@ tempfile.workspace = true
 [dev-dependencies]
 # `CWD_LOCK`: `src/new.rs`'s tests change the process-global working directory.
 jails-testkit.workspace = true
-# Failpoints, for the crash sweep over a *real* route in `tests/engine.rs`.
-# §R4.5's property is about whatever instant a run stops at, and the only way
-# to ask it of a whole command is to arm the executor the command uses.
-jails-commit = { workspace = true, features = ["fault-injection"] }
 # The integration tests assert against jails' own constants -- `TARGET_RELEASE`
 # among them -- rather than keeping copies of them in the fixtures.
 jails-project.workspace = true
-# plan.md §3.2: atomic, random, exclusive scratch creation. A pid plus a
-# timestamp is not exclusive -- two threads in one test binary read the same
-# nanosecond and got the same directory -- and reimplementing OS randomness
-# and Windows deletion semantics is not this project's work.
+# Atomic, random, exclusive scratch creation: a pid plus a timestamp is not
+# exclusive.
 tempfile.workspace = true
-# The toolchain permit gate is shared across *processes*, not just threads,
-# because the suite is launched as thirty-three concurrent binaries. `flock`
-# is the only budget the kernel releases when a holder dies however it dies.
+# The toolchain permit gate is a `flock`: shared across processes, and released
+# by the kernel however a holder dies.
 fs2.workspace = true
 
 [lints]
@@ -125,9 +100,8 @@ workspace = true
 opt-level = 1
 debug = "line-tables-only"
 
-# Dependencies carry no debug info at all. A panic location inside `clap` or
-# `serde` is not a thing anyone here debugs, and every byte of it is linked
-# into all thirty-two test binaries and then into the CI cache -- which is
-# restored and saved on every run.
+# Dependencies carry no debug info: a panic location inside `clap` or `serde`
+# is not debugged here, and every byte is linked into every test binary and
+# carried in the CI cache.
 [profile.dev.package."*"]
 debug = 0

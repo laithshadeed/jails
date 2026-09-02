@@ -1,11 +1,8 @@
-# Sanitized real-project corpus. Enforced by tests/differential.rs.
+# Sanitized real-project corpus. Enforced by tests/product_loop.rs.
 #
-# `simplify-sol.md` G5 asks for "sanitized adopted and reader-edited
-# Spring/plain projects", each run through legacy and new plan/apply plus
-# semantic comparison and rerun. The synthetic fixture in tests/common/mod.rs
-# covers one adopted shape; this covers the ones that are easier to *check in*
-# than to escape into a Rust string literal, and it grows without touching
-# Rust.
+# The synthetic fixture in tests/common/mod.rs covers one adopted shape; this
+# covers the ones that are easier to check in than to escape into a Rust
+# string literal, and it grows without touching Rust.
 #
 # Every directory here needs a row and every row needs a directory.
 #
@@ -24,7 +21,7 @@
 #                          Stands alone
 #
 # name	flavour	adopt	what it exercises
-spring-nested-adapters	spring	reports:infra.jdbc	a layer nested two deep. `Config::layers()` honours `adapters = "infra.jdbc"` written by hand, but `adopt` cannot discover one: `jdbc` is a technology rather than a layer name, so it is reported and left alone. Before this entry existed, adopt recorded `adapters = "infra"` -- the grandparent, which holds no Java at all
+spring-nested-adapters	spring	reports:infra.jdbc	a layer nested two deep. `Config::layers()` honours `adapters = "infra.jdbc"` written by hand, but `adopt` cannot discover one: `jdbc` is a technology rather than a layer name, so it is reported and left alone.
 plain-flat-package	plain	nothing	a project with no layer directories at all, plus a hand-written record sitting where jails generates -- adoption has nothing to learn and must say so instead of inventing a layout
 spring-renamed-layers	spring	records:adapters=persistence;records:web=rest;reports:core	the ordinary foreign shape: two layers under names the synonym table knows, and a third the reader has to decide about. `core` is deliberately not a synonym for `domain` -- it means the domain model in one codebase and shared framework glue in the next, and the table's rule is that an entry earns its place by being unambiguous, not by being plausible. So this pins the refusal rather than the guess
 spring-two-web-directories	spring	records:adapters=persistence;reports:controllers;reports:rest	two directories that both mean `web`. A `[layout]` table can only name one, so neither is written and both are named -- and the unambiguous `persistence` is still recorded, because one undecidable layer must not make the others undecidable. This is the only entry that exercises that third adopt rule

@@ -50,8 +50,8 @@ pub(crate) fn lower_and_emit(
             }
             // **The scaffold's HTTP surface, which is three files.** The
             // single-file arm below emits only the port -- an interface with
-            // no implementation, no route and no caller -- so a canonical
-            // scaffold serves nothing.
+            // no implementation, no route and no caller -- so a scaffold
+            // would serve nothing.
             if *facet == Facet::Http {
                 for unit in crate::emit_resource_http::lower(model, entity, spring_boot)? {
                     output
@@ -102,9 +102,9 @@ pub(crate) fn lower_and_emit(
     }
     // **A repository port always has an implementation**, and that is the
     // scaffold's whole promise: it produces a resource that *runs*. Gating the
-    // in-memory adapter on the `fake` capability alone left a scaffolded
+    // in-memory adapter on the `fake` capability alone leaves a scaffolded
     // project with a `@Component` service constructor-injecting a port no bean
-    // satisfies, so the application refused to start with "No qualifying bean
+    // satisfies, so the application refuses to start with "No qualifying bean
     // of type ...Repository" -- a project that compiles and cannot boot, which
     // is exactly the failure `jails beans` exists to report.
     //
@@ -119,7 +119,7 @@ pub(crate) fn lower_and_emit(
     // `spring-boot-starter-data-jdbc` in its own build has JDBC whether or not
     // the model declares `db`, and the bean has to be the adapter that talks
     // to it -- see `Observed::jdbc`. Emitting the in-memory one as the bean
-    // there gave a project with a real database a `LinkedHashMap` beside a
+    // there gives a project with a real database a `LinkedHashMap` beside a
     // query adapter reading from PostgreSQL: two answers to one question, and
     // the wrong one wired in.
     let declared = model
@@ -131,7 +131,7 @@ pub(crate) fn lower_and_emit(
     // repository entity always gets at least one -- the in-memory adapter
     // stands in until `db` is declared -- so the contract always has a caller,
     // and it refuses on the same unsampleable entity they do rather than
-    // shipping a test class nothing calls. `docs/20-generated-java.md` P9.1.
+    // shipping a test class nothing calls.
     for entity in model
         .entities
         .values()
@@ -161,8 +161,8 @@ pub(crate) fn lower_and_emit(
             output
                 .insert(unit.path, unit.file)
                 .map_err(CompileError::new)?;
-            // The fake shipped with no test at all, so it could drift from the
-            // adapter it stands in for and every test using it stayed green.
+            // A fake with no test of its own can drift from the adapter it
+            // stands in for while every test using it stays green.
             if let Some(unit) =
                 repository::lower_fake_repository_test(model, owner, entity, observed.templates)?
             {
@@ -307,11 +307,11 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
             // **The linked parameters, not the flat `fields`.** The flat list
             // can only name fields of the target entity, so an event
             // declaring a component the row does not carry -- its own minted
-            // `id`, the moment it happened -- rendered a record without it,
-            // and the emitter that stages the payload then named an accessor
-            // no record had. The linker folds `fields` into the parameters,
-            // so this is the whole payload either way; the command's `Input`
-            // has read it this way all along.
+            // `id`, the moment it happened -- would render a record without
+            // it, and the emitter that stages the payload would then name an
+            // accessor no record has. The linker folds `fields` into the
+            // parameters, so this is the whole payload either way; the
+            // command's `Input` reads it the same way.
             let body = if event.semantics.parameters.is_empty() {
                 let fields = event.on.as_ref().map_or_else(
                     || Ok(Vec::new()),
@@ -424,8 +424,8 @@ fn fields<'a>(entity: &'a Entity, ids: &[FieldId]) -> Result<Vec<&'a Field>, Com
 /// together.** `--package com.example.demo.billing` collapses the record, the
 /// repository, the service, the DTOs and the controller into one package; a
 /// call site that reached for `project.package_for` directly would leave its
-/// artifact behind in `domain` or `web`, and the import that used to be
-/// implicit would then be missing rather than wrong -- a file that does not
+/// artifact behind in `domain` or `web`, and the import a shared package
+/// makes implicit would then be missing rather than wrong -- a file that does not
 /// compile, in a slice that looked like it worked.
 pub(crate) fn entity_package(model: &AppModel, entity: &Entity, slot: Package) -> String {
     entity
@@ -492,25 +492,13 @@ fn indent(value: &str, spaces: usize) -> String {
         .join("\n")
 }
 
-/// The component a transition addresses its row by.
-///
-/// **The primary key unless the author named another one.** `--select userId`
-/// addresses the row by a different unique component, and four renderers have
-/// to agree about which one it is: the port's `execute` parameter, the JDBC
-/// adapter's `where`, the HTTP controller's path variable, and the proof that
-/// expands it. Reading `select` separately in each of them is `bugs.md` B48's
-/// shape, so it is read here.
-///
-/// A multi-column selector is refused where the update statement is rendered,
-/// which is the renderer that cannot express one; this returns the first so
-/// the port and the route still say something true about the rest.
 /// The row version this transition's caller states, and how it states it.
 ///
-/// **The version travels as `If-Match` and comes back as an `ETag`.** It used
-/// to be a component of the request body, which is a bespoke spelling of a
-/// thing HTTP already has -- and one no cache, proxy or client library
-/// understands. So the port takes it as its own argument, the body does not
-/// carry it, and the controller reads the header.
+/// **The version travels as `If-Match` and comes back as an `ETag`.** A
+/// component of the request body would be a bespoke spelling of a thing HTTP
+/// already has -- and one no cache, proxy or client library understands. So
+/// the port takes it as its own argument, the body does not carry it, and the
+/// controller reads the header.
 ///
 /// `None` when the declaration asked for no precondition, in which case the
 /// linker has already refused a version parameter and there is nothing to

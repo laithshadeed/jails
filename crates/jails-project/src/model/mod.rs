@@ -1,8 +1,8 @@
 //! Pure project and intent values shared by planning, rendering, and apply.
 //!
-//! The command modules used to pass a bare `root: &Path` and rediscover the
-//! POM, flavor, base package, configured layers, and installed capabilities at
-//! every layer of the call graph. `Project` is the single resolved snapshot
+//! A bare `root: &Path` threaded through a call graph lets every level
+//! rediscover the POM, flavor, base package, configured layers and installed
+//! capabilities, differently. `Project` is the single resolved snapshot
 //! handed to planners instead. It is deliberately loaded at the CLI boundary;
 //! planning code must not reach back into the filesystem for facts already
 //! represented here.
@@ -31,11 +31,7 @@ pub enum WireNaming {
     SnakeCase,
 }
 
-/// One file a recipe intends to create.
-///
-/// The rendered string is deliberately still eager at rung 2. Rung 4 changes
-/// it to `Body` after every producer uses this one shape; doing both migrations
-/// at once would make a behavioral regression harder to localise.
+/// One file a recipe intends to create, with its bytes already rendered.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Artifact {
     pub kind: &'static str,
@@ -77,10 +73,9 @@ pub struct Change {
     /// The build features this change needs, each with its Maven rendering.
     ///
     /// Keyed by what the build has to *do* rather than by the Maven plugin
-    /// that does it — `pending.md` §3. It was `(&'static str, String)`, an
-    /// artifact id and an XML block, which meant a Gradle project's claim was
-    /// filed under a plugin it does not have, and two places had to map the
-    /// coordinate back onto its purpose before they could act.
+    /// that does it: keyed by artifact id, a Gradle project's claim is filed
+    /// under a plugin it does not have, and every consumer has to map the
+    /// coordinate back onto its purpose before it can act.
     pub plugins: Vec<(jails_protocol::feature::BuildFeature, String)>,
     pub files: Vec<Artifact>,
     pub compose: Vec<ComposeService>,
@@ -101,27 +96,24 @@ pub struct Change {
     /// The dispatcher lines this change registers.
     ///
     /// Same shape as the marked block below and the same reason: `g command`
-    /// splices `commands.put(...)` into a dispatcher it does not own, and V1
-    /// did it with a `std::fs` call after the plan -- so the routes wrote the
-    /// command class and left it unreachable.
+    /// splices `commands.put(...)` into a dispatcher it does not own, and a
+    /// splice performed outside the plan leaves the command class written and
+    /// unreachable.
     pub registrations: Vec<CommandRegistration>,
     /// Marked blocks in files this change does not own whole.
     ///
     /// `src/test/resources/config/application.properties` is the case: one
     /// durable job's scheduler limits, in a file every other durable job also
-    /// writes into and the reader may add to. It was a side effect of the V1
-    /// write path -- a `std::fs` call after the plan, outside the `Change` --
-    /// so a route planning from the same recipe simply did not know about it,
-    /// and the file stopped being generated.
+    /// writes into and the reader may add to. Stated in the change so a
+    /// planner reading the same recipe knows about it.
     pub marked: Vec<MarkedBlock>,
     /// The class this change wants the packaged jar to start.
     ///
     /// `generate cli` writes a second dispatcher, and Maven still starts
     /// whichever class the POM names -- so without this a manifest that
-    /// generated a CLI and registered its commands into it produced a jar
-    /// answering only `help`. Stated as an intent rather than performed,
-    /// because V1 performed it with a `std::fs` write after the plan and the
-    /// routes therefore never knew the entry point had moved.
+    /// generated a CLI and registered its commands into it produces a jar
+    /// answering only `help`. Stated as an intent rather than performed, so
+    /// the plan knows the entry point moved.
     ///
     /// Fully qualified, and `None` whenever the recipe decided not to claim
     /// it: a POM naming no entry point at all is a Spring Boot project, and a
@@ -156,12 +148,12 @@ impl CommandRegistration {
 /// removal exact: two durable jobs write two blocks into one file, and taking
 /// one out must leave the other and anything the reader put between them.
 ///
-/// `settings` is a list of lines and deliberately not a body. abstract.md §4.1
-/// allows exactly one struct to carry the bytes of a file, and that is
-/// [`Artifact`]; this is a fragment *inside* somebody else's file, and holding
-/// its content as lines is what keeps it structurally incapable of being
-/// mistaken for the other thing. Every marked block jails writes is a list of
-/// settings, so nothing is lost by saying so.
+/// `settings` is a list of lines and deliberately not a body. Exactly one
+/// struct carries the bytes of a file, and that is [`Artifact`]; this is a
+/// fragment *inside* somebody else's file, and holding its content as lines
+/// is what keeps it structurally incapable of being mistaken for the other
+/// thing. Every marked block jails writes is a list of settings, so nothing
+/// is lost by saying so.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MarkedBlock {
     pub path: String,
@@ -379,9 +371,9 @@ impl Layers {
         self.named(layer.key())
     }
 
-    /// Transitional adapter for recipe code still expressed with the public
-    /// layer key strings. Keeping it here makes the configuration decision a
-    /// secret of `Layers` while those call sites move to [`Layer`].
+    /// The string-key form, for recipe code expressed with the public layer
+    /// key strings. Keeping it here makes the configuration decision a secret
+    /// of `Layers`.
     pub fn named<'a>(&'a self, default: &'a str) -> &'a str {
         self.packages
             .get(default)
@@ -389,8 +381,7 @@ impl Layers {
             .unwrap_or(default)
     }
 
-    /// Compatibility spelling while renderer call sites move from `Config`
-    /// to this resolved value.
+    /// The same lookup under the name `Config` spells it.
     pub fn layer<'a>(&'a self, default: &'a str) -> &'a str {
         self.named(default)
     }
@@ -513,14 +504,11 @@ impl Project {
         // overlay and every other fact is the resolved value `live` already
         // holds -- which is what a projection *is*, and is why this takes a
         // project rather than a root.
-        // The build file this project actually has, not `pom.xml` unconditionally.
-        // `load` and `inspect` both go through `read_build_file` for exactly
-        // this reason and `projected` did not, so a projected Gradle project
-        // read its Groovy through the POM parser: `flavor` came back
-        // `PlainMaven` and `release_level` came back `None`, on a project whose
-        // live value had both right. That is why `jails app apply` refused
-        // every Spring capability on a Gradle build with "this is a plain Maven
-        // project" while `jails about` on the same directory said Spring Boot.
+        // The build file this project actually has, not `pom.xml`
+        // unconditionally: a projected Gradle project read through the POM
+        // parser comes back `PlainMaven` with no release, and `jails app apply`
+        // then refuses every Spring capability on a build `jails about` calls
+        // Spring Boot.
         let pom = text(build_file_name(live.build)).unwrap_or_else(|| live.pom.clone());
         let (layers, installed, declared) = match text("jails.toml") {
             Some(projected) => {
@@ -573,9 +561,9 @@ impl Project {
         // Unreadable is tolerated here and fatal in `load`, which is the one
         // deliberate difference between the two: doctor's whole value is that
         // it works on a project that does not build. *Which* file to read is
-        // not a difference, and is asked once so the two cannot drift --
-        // `inspect` reading `pom.xml` unconditionally is what made `doctor`
-        // report "build.gradle is missing" about a file that was right there.
+        // not a difference, and is asked once so the two cannot drift -- an
+        // `inspect` reading `pom.xml` unconditionally has `doctor` report
+        // "build.gradle is missing" about a file that is right there.
         let pom = read_build_file(build, root).unwrap_or_default();
         let config = Config::load(root)?;
         Ok(Self {
@@ -603,25 +591,24 @@ impl Project {
 
     /// Does this project hold an editable application model?
     ///
-    /// The canonical switch, as a fact about the project rather than a path a
-    /// caller re-derives. `doctor`'s capability check needs it: it reads
-    /// `jails.toml`, and a modelled project records its capabilities in the
-    /// model instead -- so it reported "records none -- nothing to reconcile"
-    /// about a project whose model declares them.
+    /// A fact about the project rather than a path a caller re-derives.
+    /// `doctor`'s capability check needs it: it reads `jails.toml`, and a
+    /// modelled project records its capabilities in the model instead, so
+    /// without this it reports "records none -- nothing to reconcile" about a
+    /// project whose model declares them.
     ///
-    /// Both spellings, because `.jails/model.toml` is still a compatibility
-    /// input for projects that were canonical before JDL, and recognising only
-    /// the current one would give those the wrong answer rather than none.
-    /// Recognised by the file rather than by an import: this crate does not
-    /// depend on the canonical ladder, and which file holds a project's
-    /// declarations is the one fact about it that a reader-facing report
-    /// needs.
+    /// Both spellings, because `.jails/model.toml` is a compatibility input
+    /// and recognising only the current one would give those projects the
+    /// wrong answer rather than none. Recognised by the file rather than by
+    /// an import: this crate does not depend on the canonical ladder, and
+    /// which file holds a project's declarations is the one fact about it
+    /// that a reader-facing report needs.
     pub fn is_modelled(&self) -> bool {
         self.root.join(".jails/model.jdl").is_file()
             || self.root.join(".jails/model.toml").is_file()
     }
 
-    /// What builds this project. `plan.md` §12.
+    /// What builds this project.
     pub fn build(&self) -> crate::build::Build {
         self.build
     }
@@ -652,10 +639,9 @@ impl Project {
     /// Dispatched on the build tool, because [`Self::pom`] returns whichever
     /// build file the project has. `pom::main_class` handed `build.gradle`
     /// finds no `<mainClass>` element and answers `None` -- confidently and
-    /// wrongly, which is the failure shape `read_build_file`'s doc comment
-    /// already records twice and `pending.md` §1.2 predicted a fourth of. It
-    /// was this: `g cli` on a Gradle project silently declined to retarget the
-    /// entry point, because declining is what "no entry point declared" means.
+    /// wrongly -- and `g cli` on a Gradle project then silently declines to
+    /// retarget the entry point, because declining is what "no entry point
+    /// declared" means.
     pub fn main_class(&self) -> Option<String> {
         match self.build {
             crate::build::Build::Gradle => crate::gradle::main_class(&self.pom),
@@ -685,24 +671,23 @@ impl Project {
         )
     }
 
-    /// Transitional string-key form for recipes not yet moved to [`Layer`].
+    /// The string-key form of [`Self::package`].
     pub fn package_named(&self, default: &str, package: Option<&str>) -> String {
         resolve_package(&self.base, package.unwrap_or(self.layers.named(default)))
     }
 
     /// Whether this project is known to declare a dependency.
     ///
-    /// **`Some(true)` and nothing else.** This read `self.pom` as XML whatever
-    /// the build tool was, so on a Gradle project it answered a confident
-    /// *no* to every question -- and the consequences were not small: the
-    /// scaffold's repository bean became the in-memory one while a query's
-    /// adapter read the real table, so a generated project wrote to a HashMap
-    /// and read from an empty database. Both halves ran, neither complained,
-    /// and the list simply came back empty.
+    /// **`Some(true)` and nothing else.** Reading `self.pom` as XML whatever
+    /// the build tool is answers a confident *no* to every question on a
+    /// Gradle project, and the consequences are not small: the scaffold's
+    /// repository bean becomes the in-memory one while a query's adapter reads
+    /// the real table, so a generated project writes to a HashMap and reads
+    /// from an empty database. Both halves run, neither complains, and the
+    /// list simply comes back empty.
     ///
-    /// "Cannot tell" stays *no* here, which is where it was already: a Gradle
-    /// file this module cannot read is one jails must not claim things about.
-    /// What changes is that a file it *can* read is now believed.
+    /// "Cannot tell" is *no* here: a Gradle file this module cannot read is
+    /// one jails must not claim things about.
     pub fn has_dependency(&self, group_id: &str, artifact_id: &str) -> bool {
         self.declares_dependency(group_id, artifact_id) == Some(true)
     }
@@ -717,9 +702,9 @@ impl Project {
     /// database `add db` migrates with Flyway and H2 is then the test double
     /// somebody added beside it.
     ///
-    /// Postgres is the answer when neither is there. It is what `README.md`
-    /// documents, and a DDL guessed toward the smaller dialect would be
-    /// silently narrower than the project the reader is building.
+    /// Postgres is the answer when neither is there: it is the documented
+    /// default, and a DDL guessed toward the smaller dialect would be silently
+    /// narrower than the project the reader is building.
     pub fn sql_dialect(&self) -> jails_spec::spec::kind::Dialect {
         use jails_spec::spec::kind::Dialect;
         match self.has_dependency("com.h2database", "h2")
@@ -735,7 +720,7 @@ impl Project {
         // `api(spring-boot-starter-jdbc)` -- verified in `deps/spring-boot` --
         // so a project with it has `JdbcClient`, the auto-configured
         // `DataSource` and everything else this answer decides. Matching only
-        // the narrower name reported "no JDBC" on a project built entirely on
+        // the narrower name reports "no JDBC" on a project built entirely on
         // Spring Data JDBC.
         self.has_dependency("org.springframework.boot", "spring-boot-starter-jdbc")
             || self.has_dependency("org.springframework.boot", "spring-boot-starter-data-jdbc")
@@ -751,9 +736,7 @@ impl Project {
     /// `build.gradle`, and handing Groovy to a reader looking for
     /// `<artifactId>spring-boot-starter-parent</artifactId>` finds nothing and
     /// returns the default. That is not "unknown", it is **3, confidently** --
-    /// so every Boot-4-only artifact and property name jails picks off this
-    /// answer was picked correctly by accident, and a Boot 2.7 Gradle build got
-    /// the same answer as a Boot 4 one.
+    /// and a Boot 2.7 Gradle build then gets the same answer as a Boot 4 one.
     pub fn boot_major(&self) -> u32 {
         match self.build {
             crate::build::Build::Gradle => {
@@ -792,19 +775,18 @@ impl Project {
 
     /// The components of a record that already exists in this project.
     ///
-    /// Was `fields_from_record(root, pkg, name)` at thirteen call sites that
-    /// disagreed about failure. `Project` owns the one window onto disk, so
-    /// the recipes above it stay pure. Recipes reach it through
-    /// `spring::Slice::record`, which knows which layer owns the resource.
+    /// `Project` owns the one window onto disk, so the recipes above it stay
+    /// pure. Recipes reach it through [`Slice::record`], which knows which
+    /// layer owns the resource.
     pub fn record_in(&self, package: &str, ty: &str) -> Option<Vec<crate::spec::Field>> {
         crate::spec::fields_of_record(&self.source_of(package, ty)?)
     }
 
     /// The source of a type this project owns, through the projection first.
     ///
-    /// The one window, widened from "the components of a record" to "the
-    /// text", because an aggregate transition has more than one question to
-    /// ask about a type that exists only in the plan -- an enum's first
+    /// The one window, and it hands back the text rather than the components
+    /// of a record, because an aggregate transition has more than one question
+    /// to ask about a type that exists only in the plan -- an enum's first
     /// constant is the other one.
     pub fn source_of(&self, package: &str, ty: &str) -> Option<String> {
         let relative = format!("src/main/java/{}/{ty}.java", package.replace('.', "/"));
@@ -887,9 +869,9 @@ impl Project {
     /// the `g cli` row that creates the dispatcher and the `g command` row
     /// that registers into it are one transition, and the file the second
     /// needs has not been written when the second plans.
+    ///
     /// A map rather than a list of pairs: the two halves are a path and its
-    /// text, and abstract.md §4.1's fourth shape is exactly a positional pair
-    /// of those two that compiles when you swap them.
+    /// text, and a positional pair of those two compiles when you swap them.
     pub fn projected_main_sources(&self) -> BTreeMap<PathBuf, String> {
         self.projected_sources("src/main/java")
     }
@@ -900,7 +882,7 @@ impl Project {
     /// the type sees it -- the same rule every other planning read follows.
     /// Used to ask whether a capability's own class is present: `add api`
     /// installs a sealed `ApiException` and an exhaustive handler, and until
-    /// something threw one the whole RFC 9457 surface was unreachable code.
+    /// something throws one the whole RFC 9457 surface is unreachable code.
     pub fn declares_type(&self, name: &str) -> bool {
         self.projected_main_sources()
             .values()
@@ -936,10 +918,10 @@ impl Project {
     /// Every file name directly under a project-relative directory, as the
     /// plan will leave it.
     ///
-    /// Disk plus this transition's own writes. A recipe that listed only disk
-    /// could not see a file an earlier row of the same `app apply` is about to
-    /// write -- which is how two migrations in one transition both came out
-    /// numbered `V001`, and one of them then vanished.
+    /// Disk plus this transition's own writes. A recipe that lists only disk
+    /// cannot see a file an earlier row of the same `app apply` is about to
+    /// write, so two migrations in one transition both come out numbered
+    /// `V001` and one of them vanishes.
     pub fn projected_names_in(&self, relative: &str) -> std::collections::BTreeSet<String> {
         let mut found = std::collections::BTreeSet::new();
         if let Ok(entries) = std::fs::read_dir(self.root.join(relative)) {
@@ -977,7 +959,6 @@ impl Project {
     }
 
     /// Main/test source roots for a package already resolved by the caller.
-    /// Transitional, for recipes mid-move off the layer strings.
     pub fn main_in(&self, package: &str) -> PathBuf {
         crate::spec::main_dir(&self.root, package)
     }
@@ -1001,13 +982,9 @@ fn resolve_package(base: &str, requested: &str) -> String {
 /// `--package` places the **operation** being generated. The resource that
 /// operation targets already exists in the project's configured scaffold
 /// layers, so moving the operation must not make jails look for a second copy
-/// of the resource in the override package. That rule used to be re-stated at
-/// every call site as the difference between `place(layout::WEB)` and
-/// `subpackage(&base, config.layer(layout::DOMAIN))`, and the layer names then
-/// travelled into each renderer one string at a time -- the Data Clump that
-/// gave `spring.rs` sixteen functions of eight to twelve parameters.
-///
-/// One value carries the project, the override, and the rule.
+/// of the resource in the override package. Stated at every call site, that
+/// rule is a string per layer per renderer; one value carries the project,
+/// the override, and the rule.
 #[derive(Clone, Copy)]
 pub struct Slice<'a> {
     project: &'a Project,
@@ -1084,17 +1061,10 @@ impl<'a> Slice<'a> {
     }
 }
 
-/// The build file's text, or an empty string when this build has none jails
-/// reads.
-///
-/// The single owner of "which file is the build file". Both constructors go
-/// through it, because they had drifted: `load` learned to read `build.gradle`
-/// and `inspect` did not, so `doctor` -- which uses `inspect` -- reported a
-/// Gradle project as having no build file at all.
 /// Which file a build's dependencies are declared in.
 ///
-/// Split out of `read_build_file` so the projection can name the same path
-/// without touching disk -- a projected project reads its build file out of the
+/// Its own function so the projection can name the same path without
+/// touching disk -- a projected project reads its build file out of the
 /// overlay, and asking for the wrong name there is indistinguishable from the
 /// plan not having touched it.
 fn build_file_name(build: Build) -> &'static str {
@@ -1104,6 +1074,12 @@ fn build_file_name(build: Build) -> &'static str {
     }
 }
 
+/// The build file's text, or an empty string when this build has none jails
+/// reads.
+///
+/// The single owner of "which file is the build file". Both constructors go
+/// through it, so `load` and `inspect` cannot disagree about whether a Gradle
+/// project has a build file at all.
 fn read_build_file(build: Build, root: &Path) -> Result<String> {
     match build {
         Build::Maven => pom::read(root),

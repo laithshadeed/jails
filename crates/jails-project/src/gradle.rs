@@ -3,16 +3,14 @@
 //!
 //! ## The bar this has to clear
 //!
-//! `build.rs`'s header used to say jails never reads, writes, parses or
-//! invokes a Gradle build file, and the *reason* it gave outlives the rule:
-//! the worst outcome available is a confident wrong answer -- a tool that
+//! The worst outcome available is a confident wrong answer -- a tool that
 //! half-understands a build and reports a dependency the build does not have.
 //!
 //! So every reader here has three answers, not two. `Some(true)`,
 //! `Some(false)`, and `None` meaning **"this file says something I do not
 //! understand, so I am not going to guess."** A caller that turns `None` into
-//! `false` has reintroduced exactly the failure the old rule prevented, which
-//! is why the readers that matter return `Option` rather than `bool`.
+//! `false` has reintroduced exactly that failure, which is why the readers
+//! that matter return `Option` rather than `bool`.
 //!
 //! ## What it understands, exactly
 //!
@@ -34,9 +32,8 @@
 //!   important line in this module.
 //! - **The Spring Boot plugin**, from either spelling: the modern
 //!   `plugins { id 'org.springframework.boot' version '3.2.0' }` and the
-//!   legacy `buildscript { dependencies { classpath '...:VERSION' } }` that
-//!   projects generated before Gradle 2.1 still carry. `minicom-public/spring`
-//!   is the legacy one, which is why both are here from the start.
+//!   older `buildscript { dependencies { classpath '...:VERSION' } }` that
+//!   projects generated before Gradle 2.1 still carry.
 //! - **The Java release**, from `sourceCompatibility`/`targetCompatibility` or
 //!   from a `java { toolchain { languageVersion = JavaLanguageVersion.of(N) } }`
 //!   block. The toolchain wins when both are present, because Gradle resolves
@@ -193,9 +190,8 @@ pub(crate) fn flavor(text: &str) -> Flavor {
 /// The Spring Boot major version, from either spelling of the plugin.
 ///
 /// `None` means no Spring Boot plugin *this module can see*. Both spellings
-/// are here from the start because the legacy `buildscript` one is what
-/// `minicom-public/spring` uses, and a reader that only knew the modern
-/// `plugins {}` block would report a Spring project as plain -- which changes
+/// are read because a reader that knows only the modern `plugins {}` block
+/// reports an older `buildscript` Spring project as plain -- which changes
 /// every template jails renders into it.
 pub(crate) fn spring_boot_major(text: &str) -> Option<u32> {
     boot_version(text)?.split('.').next()?.parse().ok()
@@ -211,15 +207,14 @@ pub(crate) fn boot_version(text: &str) -> Option<String> {
 /// disagree about which bytes are the version.
 ///
 /// Two functions locating the same thing by two routes is how a splice comes
-/// to rewrite something the reader never reported -- `pom.rs` learned that
-/// once and this module is not going to learn it again.
+/// to rewrite something the reader never reported.
 fn boot_version_span(text: &str) -> Option<std::ops::Range<usize>> {
     // Blanking finds *structure* -- which braces open which block. It is the
     // wrong tool for reading a *value*, because every value here lives inside
     // a string literal and blanking is precisely what erases those. So the
     // block is located in the blanked copy and then read out of the original,
-    // which the shared offsets make safe. Getting this backwards is what made
-    // the first version of this function report every Gradle project as plain.
+    // which the shared offsets make safe. Backwards, every Gradle project
+    // reads as plain.
     if let Some(body) = top_level_body(text, "plugins") {
         let region = &text[body.clone()];
         if let Some(at) = region.find("org.springframework.boot")
@@ -342,13 +337,9 @@ pub enum Launches {
     Unknown,
 }
 
-/// Each pairing below was run on this machine, and the evidence is the run.
-///
-/// - `9.7.0` on 26 -- `./gradlew --version` reports `Launcher JVM: 26.0.2`.
-/// - `8.5` on 26 -- `Unsupported class file major version 70`, which is Java
-///   26's own class-file major, before any task is selected.
-/// - `8.5` on 21 -- `minicom/old/mc-01-06-2026/spring` builds green under
-///   `JAVA_HOME` pointed at `openjdk-21.0.2`.
+/// Each pairing is measured, not recalled: `9.7.0` launches on 26; `8.5` on 26
+/// dies with `Unsupported class file major version 70`, Java 26's own
+/// class-file major, before any task is selected; `8.5` on 21 builds green.
 ///
 /// The releases between 22 and 25 are **not** measured against 8.5, so they
 /// are `Unknown` rather than assumed bad. Adding a row means running it.
@@ -844,8 +835,8 @@ pub(crate) fn with_main_class(text: &str, fqcn: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// `minicom-public/spring`, which is the project this module was written
-    /// against. Every field it exercises is one a template reads.
+    /// A Boot 2 build in the older `buildscript` spelling. Every field it
+    /// exercises is one a template reads.
     const MINICOM: &str = r#"buildscript {
     repositories {
         mavenCentral()
@@ -878,14 +869,11 @@ dependencies {
 }
 "#;
 
-    /// The four edits, against the file they were discovered on.
-    ///
-    /// Every one of them is here because a real `./gradlew build` on JDK 26
-    /// failed without it, in this order: unknown property
-    /// `sourceCompatibility`, then no tests discovered. The versions are
-    /// checked rather than assumed -- reading the result back through this
-    /// module's own readers is what stops a splice that lands somewhere the
-    /// reader never looks.
+    /// The four edits, in the order `./gradlew build` on JDK 26 fails without
+    /// them: unknown property `sourceCompatibility`, then no tests
+    /// discovered. The versions are checked rather than assumed -- reading the
+    /// result back through this module's own readers is what stops a splice
+    /// that lands somewhere the reader never looks.
     #[test]
     fn the_four_edits_that_take_a_boot_2_gradle_build_to_jdk_26() {
         let out = with_boot_version(MINICOM, "4.1.0").expect("the legacy spelling is rewritable");
@@ -994,9 +982,9 @@ dependencies {
         );
     }
 
-    /// The legacy `buildscript` spelling is what minicom uses. A reader that
-    /// only knew `plugins {}` would report a Spring project as plain, which
-    /// changes every template jails renders into it.
+    /// A reader that only knew `plugins {}` would report an older
+    /// `buildscript` Spring project as plain, which changes every template
+    /// jails renders into it.
     #[test]
     fn the_boot_version_is_read_from_the_legacy_buildscript_spelling() {
         assert_eq!(boot_version(MINICOM).as_deref(), Some("2.7.18"));
@@ -1213,17 +1201,14 @@ dependencies {
 
 /// The Gradle half of a [`BuildFeature`].
 ///
-/// The vocabulary lives in `jails-protocol` -- a claim is keyed by the feature
-/// (`pending.md` §3), so the enum has to be below both build tools rather than
-/// beside one of them. What stays here is what only Gradle knows: the marker,
-/// the `plugins {}` entry, and the block.
+/// The vocabulary lives in `jails-protocol` -- a claim is keyed by the
+/// feature, so the enum has to be below both build tools rather than beside
+/// one of them. What stays here is what only Gradle knows: the marker, the
+/// `plugins {}` entry, and the block.
 ///
 /// The four matches below are exhaustive over `BuildFeature` on purpose.
 /// Adding a variant is a compile error here until somebody writes the Gradle
-/// side, which is a better guarantee than the run-time refusal it replaced:
-/// `require_renderable_plugins` existed to catch a Maven plugin with no known
-/// Gradle equivalent, and there is no longer a coordinate to fail to
-/// recognise.
+/// side, rather than a run-time refusal of a coordinate nothing recognises.
 use jails_protocol::feature::BuildFeature as Feature;
 
 /// The marker comment that owns a block jails wrote into a file it does not
@@ -1246,8 +1231,7 @@ fn marker(feature: Feature) -> &'static str {
 fn plugin_line(feature: Feature) -> Option<&'static str> {
     match feature {
         // Kept in step with the Maven plugin `add format` splices, but *not*
-        // the same number: the two plugins are versioned separately (Maven
-        // 3.10.0 against Gradle 8.10.0 on the same 2026-08-17 release). The
+        // the same number: the two plugins are versioned separately. The
         // formatter underneath them is what has to agree, and that is pinned
         // identically in both -- a formatter that drifts version rewrites
         // files nobody touched.

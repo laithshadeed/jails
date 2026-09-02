@@ -1,36 +1,22 @@
 //! `jails generate`'s own argument surface.
 //!
-//! Its own module because of what it costs elsewhere. `main.rs` is dispatch
-//! only, so while these were fields on the `Command::Generate` variant every
-//! new flag had to be named twice there -- once to destructure it out and once
-//! to put it into the `Intent` -- and adding one grew a file that decides
-//! nothing by two lines. Twenty arguments on one variant is `abstract.md` §2's
-//! Long Parameter List wearing a `match` arm.
-//!
-//! clap renders it identically: a single-field subcommand variant whose type
-//! derives `Args` contributes exactly the arguments the fields declare, so
-//! `jails generate --help` is unchanged and so is the `jails commands` walk
-//! over the same `clap::Command`.
+//! Its own module because `main.rs` is dispatch only: fields on the
+//! `Command::Generate` variant would have to be named twice there, once to
+//! destructure and once to rebuild, and twenty arguments on one variant is a
+//! long parameter list wearing a `match` arm.
 
 use super::*;
 
 /// Everything `jails generate` takes, as one `clap::Args` struct.
 ///
-/// A struct rather than fields on the variant because of what the variant
-/// cost: `main.rs` is dispatch only, so every flag had to be named twice
-/// there -- once to destructure it out and once to put it into the
-/// `Intent` -- and adding one grew the file by two lines that decide
-/// nothing. `abstract.md` §2's Long Parameter List, wearing a `match` arm.
-///
-/// clap renders it identically: a single-field subcommand variant whose
-/// type derives `Args` contributes exactly the arguments the fields
-/// declare, so `jails generate --help` is unchanged and so is the
-/// `commands` walk over the same `clap::Command`.
-// `Debug` because `.jails/app.toml`'s parser now produces this type rather
-// than a manifest-shaped copy of it, and its tests assert on the errors a
-// malformed row produces -- `unwrap_err` needs to be able to render the Ok
-// side. `Clone` for the same reason `Invocation` has it: a replay hands the
-// same row to a frontend that takes it by value.
+/// clap renders a single-field subcommand variant whose type derives `Args`
+/// as exactly the arguments the fields declare, so `jails generate --help`
+/// and the `commands` walk over the same `clap::Command` see no difference.
+// `Debug` because `.jails/app.toml`'s parser produces this type rather than a
+// manifest-shaped copy of it, and its tests assert on the errors a malformed
+// row produces -- `unwrap_err` needs to be able to render the Ok side.
+// `Clone` for the same reason `Invocation` has it: a replay hands the same
+// row to a frontend that takes it by value.
 #[derive(Clone, Debug, clap::Args)]
 pub(crate) struct GenerateArgs {
     pub(crate) kind: ArtifactKind,

@@ -1,28 +1,26 @@
 //! Where a project's Java lives.
 //!
-//! Its own module because it is its own secret, and because `inspect.rs`
-//! became the largest module in the workspace the moment this arrived in it.
-//! Nothing here reads Java; it answers which directories hold it, and what to
-//! call them in a report that found nothing.
+//! Its own module because it is its own secret. Nothing here reads Java; it
+//! answers which directories hold it, and what to call them in a report that
+//! found nothing.
 
 use std::path::{Path, PathBuf};
 
 /// The Java source roots this project actually has, each with the relative
 /// name to print for it.
 ///
-/// `bugs.md` B56's finding generalises: *a route jails emitted and cannot see
-/// is worse than a gap, because the reader cannot tell an unlisted route from
-/// an absent one.* Reproducible output moved to `.jails/generated` for the
-/// canonical path, so `jails routes` and `jails beans` answered "No routes
-/// found under src/main/java" about a project whose every controller jails had
-/// just written, and `jails stats` reported a domain of zero files.
+/// Both trees, because reproducible output lives under `.jails/generated`
+/// and a route jails emitted and cannot see is worse than a gap: the reader
+/// cannot tell an unlisted route from an absent one, and `jails routes` would
+/// answer "No routes found under src/main/java" about a project whose every
+/// controller jails had just written.
 ///
 /// Present-only, reader's tree first. A project with no generated tree gets
-/// exactly the old scan and exactly the old message.
+/// exactly the plain scan and its message.
 ///
 /// The label travels with the path so nothing downstream needs the root again:
 /// this is the one function here that re-derives a fact from a primitive, and
-/// the `abstract.md` §7 ladder counts it.
+/// the architecture gate counts it.
 pub fn source_roots(root: &Path, set: SourceSet) -> Vec<(PathBuf, &'static str)> {
     let (reader, generated) = match set {
         SourceSet::Main => ("src/main/java", GENERATED_MAIN_JAVA),

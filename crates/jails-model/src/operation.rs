@@ -36,12 +36,11 @@ impl Operation {
     /// The route this operation answers on, declared or derived.
     ///
     /// **Read this rather than the flat `route: Option<String>` beside it.**
-    /// The flat field is the `.jails/model.toml` spelling, kept so that format
-    /// still parses; it is a rendering of this one and carries no method or
-    /// request format of its own. `emit_http` read the flat field and so saw
-    /// nothing for an operation whose route the convention derived -- two of
-    /// six controllers on the minicom manifest, with no diagnostic, because a
-    /// missing route is how an operation says it has no HTTP surface.
+    /// The flat field is the `.jails/model.toml` spelling; it is a rendering
+    /// of this one and carries no method or request format of its own. An
+    /// emitter reading the flat field sees nothing for an operation whose
+    /// route the convention derived, and a missing route is how an operation
+    /// says it has no HTTP surface, so the mistake is silent.
     pub fn route(&self) -> Option<&OperationRoute> {
         routes(&self.kind).1
     }
@@ -85,10 +84,9 @@ pub struct Command {
 /// A linked query. Its ordering and row ceiling live in [`QuerySemantics`]
 /// and nowhere else.
 ///
-/// This carried `order_by: Vec<FieldId>` beside `semantics.order:
-/// Vec<Ordering>`. A `FieldId` cannot hold a direction, the emitters read the
-/// flat list, and so `order by [createdAt desc, id]` was parsed, linked, and
-/// rendered as `order by created_at, id` -- a query declared newest-first
+/// A flat `order_by: Vec<FieldId>` beside `semantics.order` cannot hold a
+/// direction, so an emitter reading it renders `order by [createdAt desc,
+/// id]` as `order by created_at, id` -- a query declared newest-first
 /// returning oldest-first, with nothing to say so.
 ///
 /// `filters` stays: it is the entity fields a predicate is built from, which
@@ -106,19 +104,16 @@ pub struct Query {
 /// A linked transition. Its changed fields and emitted events live in
 /// [`TransitionSemantics`] and nowhere else.
 ///
-/// This carried `sets: Vec<FieldId>` and `yields: Option<OperationId>` beside
-/// `semantics.update` and `semantics.emits`, and the two disagreed. The flat
-/// pair was a compatibility projection the JDL v1 frontend synthesised --
-/// `sets` was *every* parameter whenever `update` was omitted, without
-/// subtracting the row selector or the version -- while the rich pair was
-/// linked correctly and read by nobody. Emitters read the flat pair, so
-/// `select [id]` was applied as an update and `jdl-sol.md` §4 could not link;
-/// `yields` held one event, so the second `emit` on a transition vanished.
+/// A flat `sets`/`yields` pair beside `semantics.update` and
+/// `semantics.emits` is a second answer that drifts: a `sets` synthesised as
+/// *every* parameter subtracts neither the row selector nor the version, so
+/// `select [id]` is applied as an update, and a single `yields` drops the
+/// second `emit` on a transition.
 ///
 /// The source shape still accepts both because `.jails/model.toml` spells
-/// only the flat one. Folding that in belongs at the linker boundary, which
-/// is where every other wire-to-semantic conversion happens, so the linked
-/// model has one home per fact.
+/// only the flat one. Folding that in happens at the linker boundary, where
+/// every other wire-to-semantic conversion happens, so the linked model has
+/// one home per fact.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Transition {
     pub on: EntityId,

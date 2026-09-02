@@ -131,7 +131,7 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
             resolved
         });
         let java_type = entity.java_name.unwrap_or_else(|| upper_camel_case(&label));
-        // Pluralized, per §9.7. `@table` still wins: a contract pin is the
+        // Pluralized, per JDL v1 §9.7. `@table` still wins: a contract pin is the
         // reader saying what the database already calls it.
         let sql_table = entity
             .table
@@ -343,8 +343,8 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
                     // lists facets directly and reaches no such check, so a
                     // `.jails/model.toml` could declare `http` without
                     // `service` -- and the controller that serves the resource
-                    // delegates to the service, so the project compiled
-                    // against a package that did not exist. Two dialects for
+                    // delegates to the service, so the project would compile
+                    // against a package that does not exist. Two dialects for
                     // one model must mean the same application.
                     facets: {
                         let mut facets = entity.facets;
@@ -518,8 +518,7 @@ route = "PATCH /notes/{id}"
         let model = crate::parse_toml(VALID).unwrap();
         let entity = model.entity(&EntityId::parse("ent_note").unwrap()).unwrap();
         assert_eq!(entity.names.java_type, "Note");
-        // Pluralized per §9.7: the table is `notes`, and importing a legacy
-        // project must not rename it.
+        // Pluralized per JDL v1 §9.7: the table is `notes`.
         assert_eq!(entity.names.sql_table, "notes");
         assert_eq!(model.node_count(), 9);
         assert_eq!(
@@ -588,8 +587,7 @@ route = "PATCH /notes/{id}"
             .unwrap_err();
         // `refuse_dependents` names each dependent the way a reader wrote it in
         // the model -- `operation CreateNote` -- rather than by its stable-id
-        // label. Asserting the label spelling pinned a rendering the refusal no
-        // longer uses.
+        // label.
         assert!(error.contains("operation CreateNote"), "{error}");
         assert!(error.contains("operation OpenNotes"), "{error}");
     }
@@ -597,12 +595,12 @@ route = "PATCH /notes/{id}"
     /// **A projection is the entity's child, not a dependent of it.**
     ///
     /// `dependents` deliberately does not count one -- `use repo` says
-    /// something about `note` and has no meaning without it -- so removal
-    /// used to leave the patched model carrying projections pointing at an
-    /// entity that was gone. Nothing read them, so the emitted tree was right
-    /// and the *accepted* model was not, and `model check --frozen` then
-    /// reported the project as diverged from its own source, permanently:
-    /// re-linking the source yields no projections and the lock had three.
+    /// something about `note` and has no meaning without it -- so a removal
+    /// that forgets them leaves the patched model carrying projections
+    /// pointing at nothing. Nothing reads them, so the emitted tree is right
+    /// and the *accepted* model is not, and `model check --frozen` reports
+    /// the project as diverged from its own source, permanently: re-linking
+    /// the source yields no projections and the lock still has them.
     #[test]
     fn removing_an_entity_removes_the_projections_that_are_its_children() {
         const SOURCE: &str = r#"jdl 1
@@ -625,8 +623,8 @@ entity Note @id(ent_note) {
 "#;
         for patch in [
             crate::ModelPatch::RemoveEntity(EntityId::parse("ent_note").unwrap()),
-            // The other removal, and the one that had the bug for longer: a
-            // confirmed storage drop takes the entity out too.
+            // The other removal: a confirmed storage drop takes the entity out
+            // too.
             crate::ModelPatch::RetireEntity {
                 entity: EntityId::parse("ent_note").unwrap(),
                 policy: crate::StorageRetirementPolicy::Drop {

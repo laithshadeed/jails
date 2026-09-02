@@ -5,7 +5,7 @@ edition.workspace = true
 
 [dependencies]
 # `ArtifactKind` is a `ValueEnum` so `clap_complete` can emit a static
-# completion list for `generate <TAB>` -- CLAUDE.md's rule.
+# completion list for `generate <TAB>`.
 clap.workspace = true
 jails-support.workspace = true
 jails-java.workspace = true

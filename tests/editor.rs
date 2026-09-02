@@ -1,16 +1,11 @@
-//! The editor plugin's completion tables, pinned to the CLI they complete.
+//! The editor plugin's vocabulary, pinned to the CLI it completes.
 //!
-//! `jails.nvim` keeps its own hand-maintained `SUBCOMMANDS`, `KINDS` and
-//! `CAPABILITIES` lists, because a Lua plugin cannot read a Rust enum. That
-//! makes them copy four of the five `plan.md` §6.1 counts, and they drifted
-//! exactly as predicted: **eight kinds and three capabilities** were added to
-//! the CLI without the Lua moving, so `:Jails g <Tab>` silently offered a
-//! stale menu -- the worst kind of stale, because it looks like the whole set.
-//!
-//! This test does not remove the copy. It makes the copy *checked*: every
-//! value the binary accepts must appear in the table that completes it.
-//! Aliases and extras are allowed through -- `rule`, `g`, `c` are real things
-//! a reader types, and the CLI's long help does not list them.
+//! `jails.nvim` keeps no completion tables of its own: it reads
+//! `jails commands --json`, derived from the clap definition that parses the
+//! arguments, so every value the binary accepts reaches the menu. A stale menu
+//! is the worst kind of stale, because it looks like the whole set. Aliases
+//! and extras are allowed through -- `rule`, `g`, `c` are real things a reader
+//! types, and the CLI's long help does not list them.
 
 mod common;
 
@@ -67,13 +62,10 @@ fn cli_subcommands() -> Vec<String> {
 fn the_editor_plugin_derives_its_vocabulary_instead_of_copying_it() {
     let source = plugin_source();
 
-    // The four hand-maintained tables are gone. They were the fourth of
-    // plan.md §6.1's five copies of "what does the CLI accept", and this test
-    // used to *pin* them -- which caught drift after the fact and left the copy
-    // in place to drift again. abstract.md §9: a test that polices duplication
-    // is a receipt for a decision not yet made. The decision is
-    // `jails commands --json`, derived from the same clap definition that
-    // parses the arguments.
+    // No hand-maintained table of the CLI's vocabulary: a copy drifts, and a
+    // test that pins the copy catches drift after the fact while leaving it in
+    // place. The vocabulary is `jails commands --json`, derived from the same
+    // clap definition that parses the arguments.
     for gone in [
         "local KINDS = {",
         "local CAPABILITIES = {",

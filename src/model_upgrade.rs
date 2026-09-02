@@ -1,14 +1,14 @@
 //! `jails model upgrade --to 1`: the pre-v1 draft, moved onto JDL v1.
 //!
-//! `jdl-sol.md` §22 mandates this command and the shape it takes: it "produces
+//! JDL v1 §22 mandates this command and the shape it takes: it "produces
 //! a diff and requires normal review/apply before replacing the source". That
 //! is the ordinary canonical mutation flow, so the whole command is a source
 //! rewrite handed to [`crate::model_generate::finish_generation`] -- the same
 //! capture, compile, materialize and preview-or-apply every other canonical
 //! mutation goes through. Nothing here writes.
 //!
-//! **The two axes are read here, not in the translator.** §22 requires the
-//! upgrade to "inspect the selected module once and materialize `platform
+//! **The two axes are read here, not in the translator.** JDL v1 §22 requires
+//! the upgrade to "inspect the selected module once and materialize `platform
 //! spring|plain` and `build maven|gradle`", and a module with an unsupported
 //! build language "aborts upgrade with a diagnostic; it is never guessed".
 //! `BuildSystem::Unknown` is that abort. The translator takes the answer as a
@@ -43,7 +43,7 @@ pub(crate) fn run(to: u16, invocation: Invocation) -> Result<()> {
     // it is anchored to `root`. See `model_command::project_root`.
     let model_path = PathBuf::from(JDL_PATH);
     if !root.join(&model_path).is_file() {
-        // §22: "Legacy TOML model state is imported into the same v1 AST
+        // JDL v1 §22: "Legacy TOML model state is imported into the same v1 AST
         // through a separate one-shot command." This is that command, and the
         // TOML case is a different translation from the pre-v1 JDL one: there
         // is no source to rewrite, only a model to render.
@@ -55,7 +55,7 @@ pub(crate) fn run(to: u16, invocation: Invocation) -> Result<()> {
         )));
     }
     // **Read directly, because this is the one command whose input is the
-    // source `read_source_at` refuses.** A pre-v1 draft no longer accepts
+    // source `read_source_at` refuses.** A pre-v1 draft does not accept
     // edits; the way off it is here, and the file exists -- the `is_file`
     // check above is what got us this far -- so there is no seed to derive.
     let current_source = read_file(&root.join(&model_path))?;
@@ -116,28 +116,28 @@ fn carry_toml_across(invocation: Invocation) -> Result<()> {
     let current_model = jails_model::parse_toml(&current_source)
         .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
 
-    // **The axes are observed, never defaulted.** §22 requires the upgrade to
-    // "inspect the selected module once and materialize `platform
+    // **The axes are observed, never defaulted.** JDL v1 §22 requires the
+    // upgrade to "inspect the selected module once and materialize `platform
     // spring|plain` and `build maven|gradle`", and a module whose build cannot
     // be observed "aborts upgrade with a diagnostic; it is never guessed".
     // `.jails/model.toml` carries neither axis, and `ProjectIntent` defaults
     // them to `spring`/`maven` -- so taking the model's word marks every plain
-    // project Spring. Caught by upgrading a `new-cli` project and reading the
-    // header it wrote.
+    // project Spring.
     // Off the `Invocation` rather than as a `root: &Path` parameter: the
     // resolved root is already threaded everywhere, and re-deriving it from a
-    // primitive is the rung `root: &Path` counts.
+    // primitive is what that parameter shape invites.
     let root = invocation.root()?;
     let build = jails_workspace::observe_build_system(&root);
     let spring_boot = jails_workspace::observe_spring_boot(&root, build);
     let observed = axes(build, spring_boot.as_deref())?;
 
-    // **The one translation that means something, made explicit.** §22: the
-    // upgrade "produces a diff and requires normal review" because `dialect
-    // postgresql` becomes `storage postgres`, and v1 reads a SQL storage axis
-    // as a capability -- so a TOML model that declared a dialect without one
-    // gains a JDBC adapter. The renderer refuses to add it silently, so the
-    // capability is materialised here, where it can be said out loud.
+    // **The one translation that means something, made explicit.** JDL v1
+    // §22: the upgrade "produces a diff and requires normal review" because
+    // `dialect postgresql` becomes `storage postgres`, and v1 reads a SQL
+    // storage axis as a capability -- so a TOML model that declared a dialect
+    // without one gains a JDBC adapter. The renderer refuses to add it
+    // silently, so the capability is materialised here, where it can be said
+    // out loud.
     let mut rendered_from = current_model.clone();
     rendered_from.project.platform = match observed.platform {
         JdlPlatform::Spring => "spring",
@@ -286,10 +286,10 @@ fn carry_toml_across(invocation: Invocation) -> Result<()> {
 ///
 /// Spring is evidence, not a default: a module with no Boot parent is `plain`,
 /// which is a fact about it rather than an absence of one. Only the build
-/// language can be genuinely unobservable, and §22 makes that an abort --
-/// "a module with conflicting build evidence, an unsupported build language, or
-/// ambiguous platform evidence aborts upgrade with a diagnostic; it is never
-/// guessed."
+/// language can be genuinely unobservable, and JDL v1 §22 makes that an abort
+/// -- "a module with conflicting build evidence, an unsupported build
+/// language, or ambiguous platform evidence aborts upgrade with a diagnostic;
+/// it is never guessed."
 pub(crate) fn axes(build: BuildSystem, spring_boot: Option<&str>) -> Result<JdlAxes> {
     let build = match build {
         BuildSystem::Maven => JdlBuild::Maven,

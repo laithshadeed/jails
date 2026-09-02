@@ -6,12 +6,11 @@ edition.workspace = true
 [dependencies]
 jails-codec-derive.workspace = true
 jails-codemod.workspace = true
-# Recipe and Capability are `ValueEnum`s, and their CLI spelling *is* their
-# recorded spelling -- routed through clap's own table rather than a second
-# match, so the two cannot disagree about what a ledger row names.
+# Recipe and Capability are `ValueEnum`s: their CLI spelling is their recorded
+# spelling, through clap's own table rather than a second match.
 clap.workspace = true
-# `SqlName`'s two conventional spellings go through the one `snake_case`, which
-# lives at the layer that owns identifier spelling. plan.md P3.2.
+# `SqlName`'s two conventional spellings go through the one `snake_case`, at
+# the layer that owns identifier spelling.
 jails-java.workspace = true
 jails-spec.workspace = true
 jails-support.workspace = true

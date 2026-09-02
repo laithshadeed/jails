@@ -1,6 +1,6 @@
 //! Which tests can the last edit possibly have broken?
 //!
-//! `plan.md` §10.2 step 3. The index is a reverse-dependency map built from
+//! The index is a reverse-dependency map built from
 //! the constant pools already sitting in `target/` -- see [`classfile`]
 //! for the one question asked of each file -- so nothing has to be compiled,
 //! configured or kept in step by hand.

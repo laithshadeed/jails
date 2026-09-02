@@ -6,14 +6,9 @@
 //! `doctor` is read-only by contract: it must never start, stop or write
 //! anything, so it stays safe to run mid-debug. Applying migrations writes by
 //! definition. `doctor` can only ever answer "are there .sql files and will
-//! something run them" -- which it now does -- and that is a different
-//! question from "do they work".
-//!
-//! It was the gap between those two questions that hurt: a project shipped a
-//! migration with `timestampz` for `timestamptz` and a column name misspelled
-//! against the index below it, and nothing said a word, because nothing ever
-//! parsed the file. Two bugs hid each other -- Flyway was not wired in either,
-//! so the broken SQL never ran to fail.
+//! something run them", which is a different question from "do they work": a
+//! misspelled type or column name in a file nothing has parsed says nothing
+//! until the migration runs for real.
 //!
 //! ## Why a scratch database rather than a throwaway container
 //!
@@ -38,9 +33,9 @@ use jails_protocol::database::MigrationInputV1;
 use jails_support::codec::sha256;
 use jails_support::identity::ObjectId;
 
-/// Apply one receipt's frozen migration set to an already available
-/// datasource. No service is started, and every live migration path is checked
-/// against the committed descriptor before Flyway sees any bytes.
+/// Apply one committed migration set to an already available datasource. No
+/// service is started, and every live migration path is checked against the
+/// committed descriptor before Flyway sees any bytes.
 pub fn apply_effect(
     project: &Project,
     datasource: &str,
@@ -282,8 +277,8 @@ fn psql(conn: &compose::PostgresConnect, database: &str, sql: &str, debug: bool)
         .output(OutputMode::Capture);
 
     // The executor prints and then runs. `--debug` is observability, never a
-    // mode that skips the work: a `--debug migrate` that returned early here
-    // reported "applied cleanly" over SQL that had not been near a database.
+    // mode that skips the work: returning early here would report "applied
+    // cleanly" over SQL that had not been near a database.
     let done = crate::process::run(&spec, Diagnostics::from_flag(debug))?;
     if done.status.success() {
         return Ok(());
@@ -298,9 +293,9 @@ fn psql(conn: &compose::PostgresConnect, database: &str, sql: &str, debug: bool)
 ///
 /// `compose up` returns once the container is running, which is a few seconds
 /// before postgres accepts a connection -- and the very next thing this
-/// command does is connect. The failure that produced was "server closed the
+/// command does is connect. Connecting too early fails with "server closed the
 /// connection unexpectedly", which reads like a broken database rather than
-/// one still starting up, so it sends the reader to the migrations, which are
+/// one still starting up, and sends the reader to the migrations, which are
 /// fine.
 ///
 /// Only when jails started the service itself. Under `--no-start` the caller

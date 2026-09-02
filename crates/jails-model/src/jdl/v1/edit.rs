@@ -26,9 +26,8 @@ pub fn append_declaration(source: &str, declaration: &str) -> Result<String, Dia
 /// **This is how `add db` reaches a JDL v1 project.** v1 has no `cap db`: the
 /// closed capability registry deliberately excludes the storage kinds, because
 /// `storage postgres` is the axis and the `db` capability is what the linker
-/// materializes *from* it. Appending `cap db` therefore wrote a model that no
-/// longer parsed -- which is what `jails add db` did on every v1 project, and
-/// it failed closed, so the command simply did not work.
+/// materializes *from* it. Appending `cap db` therefore writes a model that
+/// no longer parses.
 ///
 /// The edit is scoped to the `app` declaration's own span and rewrites one
 /// line, so every other byte -- comments, ordering, unrelated properties --
@@ -247,7 +246,6 @@ pub fn set_entity_attribute(
     }
 }
 
-/// Insert one direct entity child beside children of the same semantic class.
 /// Pin the route a projection serves, so a rename does not move it.
 ///
 /// **A derived name that moves is the point of `jails model explain`, and an
@@ -301,6 +299,7 @@ pub fn set_projection_path(
     Ok(source.to_string())
 }
 
+/// Insert one direct entity child beside children of the same semantic class.
 pub fn insert_entity_member(
     source: &str,
     entity: &str,

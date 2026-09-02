@@ -7,7 +7,7 @@
 //! command.
 //!
 //! **Nothing on the apply path may call `Project::discover()`**, and this is
-//! where that rule was paid for. `discover` reads the *process* working
+//! the command the rule exists for. `discover` reads the *process* working
 //! directory, which during `new --app` is the parent of the project that was
 //! just created — so every route takes an explicit `Run` carrying an already
 //! resolved `Project` instead.
@@ -35,10 +35,9 @@ use std::process::Command;
 
 /// What `jails new` was asked for.
 ///
-/// A parameter object rather than a fifteenth positional argument, and the
-/// same move `abstract.md` §7 rung 1 records for `Project`: the four Gradle
-/// flags are computed together, consumed together, and meaningless apart --
-/// `--boot` without `--gradle` names a version nothing reads.
+/// A parameter object rather than a fifteenth positional argument: the four
+/// Gradle flags are computed together, consumed together, and meaningless
+/// apart -- `--boot` without `--gradle` names a version nothing reads.
 pub struct Request<'a> {
     pub name: &'a str,
     pub group: Option<&'a str>,
@@ -133,8 +132,7 @@ pub fn cli_request<'a>(
 /// binds to the generated class, which has no `run`. The project does not
 /// compile, and the error names a method rather than the collision.
 ///
-/// The fallback is `Application`, which is what the Boot 2.7 project this was
-/// built against is actually called. It is printed rather than done quietly:
+/// The fallback is `Application`. It is printed rather than done quietly:
 /// the reader asked for a name and got a different one.
 fn application_class(name: &str) -> String {
     // The *stem*: the templates and the paths both append `Application`, so

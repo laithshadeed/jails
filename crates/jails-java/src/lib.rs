@@ -9,13 +9,11 @@
 //! only. [`template`] is substitution, not a template engine: anything
 //! structural stays in the generator layer and arrives already rendered.
 //! [`annotate`] is the one *writer*: a surgical edit to one annotation on a
-//! class the reader owns, here rather than in a recipe because two engines
-//! now perform it and a second copy of a surgical edit drifts.
+//! class the reader owns.
 
-// **Re-exported, not owned.** Both moved to `jails-codemod`, which has no
-// dependencies at all, because `jails-workspace` needs the `@Import` splice
-// and no canonical crate may depend on this one. Every caller here is
-// unchanged.
+// Re-exported, not owned: these live in `jails-codemod`, which has no
+// dependencies at all, so the canonical crates reach the `@Import` splice
+// without depending on this one.
 pub use jails_codemod::{annotate, dispatch, tidy};
 
 pub mod classfile;

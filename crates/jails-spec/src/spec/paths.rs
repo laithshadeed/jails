@@ -1,12 +1,9 @@
 //! Where a project is, and where inside it a class goes.
 //!
-//! Split out of `generate.rs` because everything below the generator layer was
-//! reaching up for it. `model::Project` needed `base_package` and `main_dir`,
-//! `config` needed the layer names, `compose` and `inspect` needed
-//! `find_project_root` -- and those back-edges are what made twelve modules one
-//! strongly connected component. None of this is generation; it is the answer
-//! to "which directory am I in and what is it called", which the generators
-//! then use.
+//! None of this is generation; it is the answer to "which directory am I in
+//! and what is it called", which the generators then use. It sits below them
+//! because `model::Project`, `config`, `compose` and `inspect` all ask, and a
+//! back-edge from any of them into the generators is a cycle.
 
 use jails_support::Result;
 use std::fs;
@@ -14,14 +11,13 @@ use std::path::{Path, PathBuf};
 
 /// Walk up from the current directory looking for a project root.
 ///
-/// **Any** build marker, not only `pom.xml` -- `plan.md` §12. Most of jails
-/// never touches Maven (`inspect.rs` and `rename.rs` contain zero occurrences
-/// of `pom`), so refusing at the door was refusing commands that would have
-/// worked. The commands that do need Maven refuse themselves, through
+/// **Any** build marker, not only `pom.xml`: most of jails never touches
+/// Maven, so refusing at the door refuses commands that would work. The
+/// commands that do need Maven refuse themselves, through
 /// `build::require_maven`, which is a refusal that can say what still works.
 ///
 /// Nearest wins, so a Gradle sub-module inside a Maven reactor resolves to the
-/// sub-module -- the same rule as before, applied to more markers.
+/// sub-module.
 pub fn find_project_root() -> Result<PathBuf> {
     let mut dir = std::env::current_dir().map_err(|e| format!("failed to get cwd: {e}"))?;
     loop {
@@ -38,8 +34,8 @@ pub fn find_project_root() -> Result<PathBuf> {
     }
 }
 
-/// Same logic as springgen.nvim's base_package(): read the package line off
-/// the project's *Application.java entry point rather than configuring it.
+/// Read the package line off the project's `*Application.java` entry point
+/// rather than configuring it.
 pub fn base_package(root: &Path) -> Result<String> {
     let src_root = root.join("src/main/java");
     // Spring projects have a *Application.java entry point; `new-cli` ones

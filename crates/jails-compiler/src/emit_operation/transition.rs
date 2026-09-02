@@ -87,10 +87,10 @@ pub(super) fn lower(
             operation.label, primary_key.label
         )));
     }
-    // `jdl-sol.md` §12.4: parameters in `select` identify the row, parameters
-    // in `update` provide new values, and every remaining entity parameter is
-    // an equality guard. The selector was missing from this subtraction, so a
-    // declared `select [id]` was rendered as a guard *and* as an update.
+    // JDL v1 §12.4: parameters in `select` identify the row, parameters in
+    // `update` provide new values, and every remaining entity parameter is an
+    // equality guard. The selector is part of this subtraction, or a declared
+    // `select [id]` renders as a guard *and* as an update.
     // **The precondition is not a guard, because it does not come from the
     // body.** It arrives as `If-Match`, so `execute` takes it as its own
     // argument and the SQL binds `:expected_version` -- an optional one
@@ -219,7 +219,7 @@ pub(super) fn lower(
     });
     // **The parameter is named after the column it constrains.** `:id` is the
     // right name only when the selector *is* the primary key: a transition
-    // selecting on `user_id` rendered `user_id = :id`, which is correct SQL
+    // selecting on `user_id` would render `user_id = :id`, which is correct SQL
     // and reads as a mistake -- and a reader adding a predicate of their own
     // below has no way to tell which binding `:id` refers to.
     let selector_param = selector[0].names.sql_column.as_str();
@@ -354,15 +354,15 @@ pub(super) fn lower(
 
 /// The fields that identify the row, defaulting to the primary key.
 ///
-/// `jdl-sol.md` §12.4 allows any field list here, and the update statement
-/// below binds exactly one -- so a single selector renders whichever field it
+/// JDL v1 §12.4 allows any field list here, and the update statement below
+/// binds exactly one -- so a single selector renders whichever field it
 /// names, and more than one refuses rather than silently widening the `where`
 /// clause to every matching row. Answer exactly or refuse.
 ///
-/// **It used to insist on the primary key**, which made
-/// `--select userId --path /topics/{userId}/subject` -- a transition keyed on
-/// the column its own route carries -- unreachable, though the statement
-/// binds one column either way and nothing about `id` was load-bearing.
+/// **Any single field, not only the primary key.** `--select userId --path
+/// /topics/{userId}/subject` -- a transition keyed on the column its own
+/// route carries -- binds one column either way, and nothing about `id` is
+/// load-bearing.
 fn selector<'a>(
     operation: &Operation,
     target: &'a jails_model::Entity,
@@ -385,12 +385,12 @@ fn selector<'a>(
 
 /// The fields this transition writes from its own input.
 ///
-/// An explicit `update` list wins. When it is omitted, `jdl-sol.md` §12.4
-/// keeps the familiar CLI shape: every remaining entity parameter is updated,
+/// An explicit `update` list wins. When it is omitted, JDL v1 §12.4 keeps
+/// the familiar CLI shape: every remaining entity parameter is updated,
 /// *minus the row selector and minus the compiler-managed fields*. Those two
-/// subtractions are the whole of this function, and leaving them out is what
-/// made `transition Close(id) { select [id] }` report that it rewrites the
-/// primary key.
+/// subtractions are the whole of this function, and leaving them out makes
+/// `transition Close(id) { select [id] }` report that it rewrites the primary
+/// key.
 fn updates<'a>(
     operation: &Operation,
     target: &'a jails_model::Entity,

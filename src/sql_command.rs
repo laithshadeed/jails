@@ -203,10 +203,9 @@ fn generate(
             jails_project::named_query::project(&query.source, &query.contract, &packages)?
         {
             // **Every path, because a count is not an answer.** The preview
-            // named each file and the commit reported "wrote 5 file(s)", so a
-            // reader who wanted to know whether their contract test moved had
-            // nothing to read but `git status` -- and the two halves of one
-            // command described it differently.
+            // and the commit name the same files, so a reader who wants to
+            // know whether their contract test moved has something to read
+            // other than `git status`.
             let verb = match artifact.path.exists() {
                 true => "write",
                 false => "create",

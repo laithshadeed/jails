@@ -44,9 +44,7 @@ pub(super) fn files(
         }
     };
     // The container config is a fact about the *model* here, not a file on
-    // disk -- the legacy generator reads the test tree for it, which is the
-    // "source as a database" pattern this path exists to remove. It is a
-    // different question from whether SQL is reachable: the guard above
+    // disk. It is a different question from whether SQL is reachable: the guard above
     // passes for a project carrying its own JDBC starter, and that project
     // has no `TestcontainersConfig` for this test to import.
     let support = super::container_support(model, &adapters);

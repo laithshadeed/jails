@@ -1,11 +1,7 @@
 #!/bin/sh
-# jails pre-push: the one gate, and nothing else.
-#
-# simplify-sol.md G0: *pre-push and CI invoke only that command.* This used to
-# run `cargo build && cargo test` of its own -- no `--workspace`, so it tested
-# the root package alone, and no JAILS_REQUIRE_TOOLCHAIN, so a test that could
-# not find its toolchain skipped and counted as a pass. Two traps CLAUDE.md
-# names, both of which this hook had.
+# jails pre-push: the one gate, and nothing else. A hook spelling out its own
+# `cargo test` line is a second answer to "is this green", and the second
+# answer is the one that drifts.
 #
 # Bypass with: git push --no-verify
 set -e

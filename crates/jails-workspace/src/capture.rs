@@ -1,7 +1,7 @@
 //! The one place jails looks at a project, and the only place it may.
 //!
-//! `WorkspaceSnapshot` is `simplify-sol.md`'s second contract and this module
-//! is where it is filled in: the build system, the release, the Boot version,
+//! `WorkspaceSnapshot` captures every external fact once, and this module is
+//! where it is filled in: the build system, the release, the Boot version,
 //! the declared dependencies, the layer renames, the bytes of every file the
 //! plan could touch, the migration history, and the *accepted* state from
 //! `.jails/compiler.lock.json`. Everything above this line is a pure function
@@ -15,11 +15,11 @@
 //! That is why the reader roots are walked whole and why callers hand in extra
 //! `reader_paths` for files a particular mutation might reach.
 //!
-//! **The lock is read, never repaired.** Two schema versions decode — v1 has a
-//! model, v2 adds the compiler version and the accepted projection — and an
-//! envelope this binary cannot read is an error rather than an absence, for
-//! `crates/jails-state/src/compat.rs`'s reason: treating unreadable state as
-//! empty would offer to regenerate a project's whole contents. The accepted
+//! **The lock is read, never repaired.** Three schema versions decode -- v1
+//! has a model, v2 adds the compiler version and the accepted projection, v3
+//! seals the published migrations -- and an envelope this binary cannot read
+//! is an error rather than an absence: treating unreadable state as empty
+//! would offer to regenerate a project's whole contents. The accepted
 //! projection is BASE for every later three-way merge, so losing it does not
 //! lose a file, it loses every hand edit in one.
 
@@ -135,11 +135,12 @@ pub fn capture_with_reader_paths(
 /// the reader's `@SpringBootTest` classes, and the very command that
 /// introduces `db` is the one whose pre-patch model does not have it.
 ///
-/// Asking the wrong model made the first such command do half its work in
-/// silence: `add db` on a Spring project generated the config and added the
-/// starter, spliced nothing, and left `mvn verify` red on the `contextLoads`
-/// test the project shipped with. A later `jails sync` -- whose model *is* the
-/// intended one, which is why it looked fine -- quietly repaired it.
+/// Asking the pre-patch model does half the work in silence: `add db` on a
+/// Spring project generates the config and adds the starter, splices nothing,
+/// and leaves `mvn verify` red on the `contextLoads` test the project ships
+/// with. A later `jails sync` -- whose model *is* the intended one -- quietly
+/// repairs it, which is why a test has to assert after each command rather
+/// than after two.
 pub fn capture_planned(
     root: &Path,
     model_path: &Path,
@@ -210,8 +211,8 @@ impl ReaderTrees {
     ///
     /// Installing a capability and retiring one edit the same reader files, so
     /// the read set is the union of what the accepted model wanted and what
-    /// the intended one wants -- narrowing to the intended model alone is what
-    /// left `remove db`'s splice behind.
+    /// the intended one wants -- narrowing to the intended model alone leaves
+    /// `remove db`'s splice behind.
     fn union(self, other: Self) -> Self {
         Self {
             main: self.main || other.main,
@@ -265,12 +266,11 @@ fn capture_model_state(
     let mut files = BTreeMap::new();
     // **Observed, not asserted.** The caller passes the model *source*, which
     // is not the same question as whether the file is on disk: a project with
-    // no model reads as the seed `model init` would write, so every frontend
-    // now hands over bytes for a file that may not exist yet. Taking the
-    // caller's word for it recorded a `Present` precondition over nothing, and
-    // the executor then refused its own plan with "it is gone" -- a project
-    // that could not be created reporting a stale plan against a file jails
-    // was about to write.
+    // no model reads as the seed `model init` would write, so a frontend hands
+    // over bytes for a file that may not exist yet. Taking the caller's word
+    // for it would record a `Present` precondition over nothing, and the
+    // executor would then refuse its own plan with "it is gone" -- a stale
+    // plan against a file jails is about to write.
     let model_present = model_present && root.join(model_path.as_str()).is_file();
     let model_precondition = if model_present {
         files.insert(
@@ -396,17 +396,16 @@ fn capture_model_state(
 
 /// Every Java type the reader's own sources declare, by simple name.
 ///
-/// **A capitalised field type is a type this project owns, and until now
-/// nothing checked that it does.** `g scaffold Book author:Author` emitted a
-/// record naming `Author`, and the project stopped compiling on a file the
+/// A capitalised field type is a type this project owns, and this is what
+/// checks that it does: otherwise `g scaffold Book author:Author` emits a
+/// record naming `Author`, and the project stops compiling on a file the
 /// reader never wrote -- the exact failure the tool exists to remove. The
 /// compiler cannot look at the filesystem, so the answer is observed once
 /// here, like every other external fact.
 ///
 /// Read off the declaration line rather than the path, because a checkout's
-/// directories do not always match its packages, and through
-/// [`jails_java::java::blanked`] so a type named inside a comment or a string
-/// is not mistaken for one that exists.
+/// directories do not always match its packages, with line comments stripped
+/// so a type named inside one is not mistaken for one that exists.
 fn index_reader_types(
     files: &BTreeMap<ProjectPath, CapturedFile>,
 ) -> jails_contracts::ExternalTypeIndex {
@@ -417,8 +416,8 @@ fn index_reader_types(
         }
         // **The reader's sources only.** The managed tree is what the plan is
         // about to change, so a type that is in it now may not be in it after
-        // -- and counting one made `destroy enum Status` succeed while an
-        // entity still declared a `Status` field, leaving a record that no
+        // -- counting one would let `destroy enum Status` succeed while an
+        // entity still declares a `Status` field, leaving a record that no
         // longer compiles. What the model declares is asked of the model.
         if path.as_str().starts_with(".jails/") {
             continue;
@@ -464,9 +463,9 @@ fn declared_package(source: &str) -> String {
 /// **Deliberately over-collecting, and that is the safe direction.** The one
 /// consumer refuses a field whose type nothing declares, so a name picked up
 /// from a string literal costs a refusal that does not happen; a name *missed*
-/// would refuse a project that compiles. Line and block comments are stripped
-/// because they only ever add, and nothing else is worth a parser here --
-/// this answers "does this name exist", not "what is its shape".
+/// would refuse a project that compiles. Line comments are stripped because
+/// they only ever add, and nothing else is worth a parser here -- this
+/// answers "does this name exist", not "what is its shape".
 fn declared_types(source: &str) -> Vec<String> {
     const KEYWORDS: [&str; 4] = ["class ", "record ", "interface ", "enum "];
     let mut found = Vec::new();
@@ -552,9 +551,9 @@ fn accepted_compiler_state(
 
 /// The decoder, reachable from a test in a sibling module.
 ///
-/// `audit.md` A5.2 asks that an *older* lock still decode, and the v1 arm
-/// below is the only place that can be asserted -- a schema branch nothing
-/// exercises is one that has already rotted without saying so.
+/// An *older* lock must still decode, and the v1 arm is where that is
+/// asserted -- a schema branch nothing exercises is one that has already
+/// rotted without saying so.
 #[cfg(test)]
 pub(crate) fn decode_compiler_lock_for_test(bytes: &[u8]) -> Result<(), String> {
     decode_compiler_lock(bytes).map(|_| ())

@@ -16,18 +16,17 @@ impl AppModel {
         self.apply_one(patch)?;
         // Every patch that lands is a patch that could have moved a
         // projection, and `derived` is in the plan digest -- so it is
-        // recomputed here rather than at the handful of call sites that
-        // currently remember to.
+        // recomputed here rather than at each call site.
         self.refresh_derived();
         Ok(())
     }
 
     /// One patch, dispatched to the rule that owns its subject.
     ///
-    /// **The arms are one line each on purpose.** This was a 458-line `match`
-    /// -- every rule for every variant inlined, so "what does retiring an
-    /// entity check" could only be answered by reading past everything it is
-    /// not. The rules live below, grouped by what they are about, and the
+    /// **The arms are one line each on purpose**: with every rule for every
+    /// variant inlined, "what does retiring an entity check" can only be
+    /// answered by reading past everything it is not. The rules live below,
+    /// grouped by what they are about, and the
     /// arms that are still inline are the ones with no rule to name: a field
     /// assignment, or a delegation that already has a home in
     /// [`crate::facet`], [`crate::index`] or [`crate::unit`].
@@ -250,16 +249,16 @@ fn remove_entity(model: &mut AppModel, id: EntityId) -> Result<(), String> {
 ///
 /// **A projection is the entity's child, not a dependent of it.** `use repo`
 /// says something about `note` and has no meaning without it, so `dependents`
-/// deliberately does not count one -- which left the patched model carrying
-/// projections pointing at an entity that was gone. Nothing read them, so the
-/// emitted tree was right and the *accepted* model was not: `model check
-/// --frozen` then reported the project as diverged from its own source,
-/// permanently, because re-linking the source yields no projections and the
-/// lock had three.
+/// deliberately does not count one -- and removing the entity alone leaves
+/// the patched model carrying projections pointing at nothing. Nothing reads
+/// them, so the emitted tree is right and the *accepted* model is not:
+/// `model check --frozen` reports the project as diverged from its own
+/// source, permanently, because re-linking the source yields no projections
+/// and the lock still has them.
 ///
 /// One function rather than two lines at each site, because there are two
 /// removals -- `RemoveEntity` and `RetireEntity` with a confirmed drop -- and
-/// only one of them had the second line.
+/// both need the second line.
 fn forget_entity(model: &mut AppModel, id: &EntityId) -> bool {
     let removed = model.entities.remove(id).is_some();
     model
@@ -548,7 +547,7 @@ fn add_projection(model: &mut AppModel, projection: crate::Projection) -> Result
 
 // Units and components. `add`/`replace` for units already live in
 // [`crate::unit`]; what is here is removal, which has to check the ejection
-// ledger and the component derivation first.
+// declarations and the component derivation first.
 
 fn remove_unit(model: &mut AppModel, id: UnitId) -> Result<(), String> {
     refuse_ejected_target(model, id.as_str())?;
@@ -659,10 +658,10 @@ fn is_ejectable_target(model: &AppModel, target: &str) -> bool {
 ///
 /// **Each one is named by what it is**, because the fix differs: an operation
 /// is removed, a component is removed, and an association is retired forward
-/// with its own command. The message this feeds used to call all three
-/// "operations" and print the model label -- so a reader who typed
-/// `jails g association ChildParent` was told to remove an operation called
-/// `child_parent`, which is neither the thing nor the word they typed.
+/// with its own command. The message this feeds names the kind and the Java
+/// spelling: a reader who typed `jails g association ChildParent` and is told
+/// to remove an operation called `child_parent` is told neither the thing nor
+/// the word they typed.
 fn dependents(model: &AppModel, entity: &crate::EntityId) -> Vec<String> {
     model
         .operations

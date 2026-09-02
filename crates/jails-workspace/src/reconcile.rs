@@ -150,7 +150,7 @@ fn artifact_index(tree: &RenderedTree) -> Result<BTreeMap<String, ArtifactFile<'
 ///
 /// The three travel together because each is a claim about *this path's*
 /// ownership rather than about its content: whether the reader has taken the
-/// implementation (`ejected`), whether a legacy file is being imported into it
+/// implementation (`ejected`), whether a reader file is being imported into it
 /// (`adoption`), and what a deletion of it means (`restore`).
 struct Ownership<'a> {
     ejected: bool,
@@ -251,8 +251,8 @@ fn reconcile_artifact(
             // `resource repair` is the one plan that writes it back. A
             // managed file is reproducible by definition -- the model renders
             // it -- so there is nothing of the reader's left to lose once the
-            // bytes are gone, and refusing forever is what left a canonical
-            // project with no way out of a deletion.
+            // bytes are gone, and refusing forever would leave a project with
+            // no way out of a deletion.
             (Some(_), None, Some(theirs)) if restore == crate::materialize::Restore::Deleted => {
                 Some((theirs.bytes.clone(), theirs.kind, theirs.mode))
             }

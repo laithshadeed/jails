@@ -21,10 +21,8 @@ pub(crate) fn resource_status(
     datasource: Option<&str>,
     invocation: crate::Invocation,
 ) -> Result<()> {
-    // A canonical project has no ledger, and the legacy report reads one: it
-    // answered `state: ambiguous` about an entity the model describes
-    // completely. `model_status` reads the same four authorities where they
-    // actually live.
+    // `model_status` reads the four authorities where a canonical project
+    // keeps them.
     if crate::model_command::owns() {
         // **The database is a fifth authority, observed the way every other
         // external fact is: once, read-only, and named in the report.** The

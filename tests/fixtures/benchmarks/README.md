@@ -5,7 +5,7 @@ These fixtures measure jails' own project discovery and preparation overhead; th
 - `small`: one Maven module and 5 Java sources.
 - `medium`: one Maven module and 60 Java sources.
 - `multi-module`: a three-module Maven reactor with 20 Java sources per module. Measurements run from `web`, so reactor discovery and active-module selection are both exercised.
-- `phase1-loop`: one plain Java main plus three eligible JUnit cases. The opt-in Phase 1 benchmark uses it for resident warm-test and direct-JVM lifecycle measurements; it never starts a container or network service.
+- `phase1-loop`: one plain Java main plus three eligible JUnit cases. The opt-in test/run loop benchmark uses it for resident warm-test and direct-JVM lifecycle measurements; it never starts a container or network service.
 
 Run the repeatable baseline with:
 
@@ -13,13 +13,13 @@ Run the repeatable baseline with:
 cargo test --test baseline record_cli_baseline -- --ignored --nocapture
 ```
 
-Run the Phase 1 test/run loop baseline with:
+Run the test/run loop baseline with:
 
 ```sh
 JAILS_BENCH_SAMPLES=20 cargo test --test baseline record_phase1_loop_baseline -- --ignored --nocapture
 ```
 
-The Phase 1 output uses the `jails.phase1-loop-baseline.v1` schema. Its warm-test
+The loop baseline uses the `jails.phase1-loop-baseline.v1` schema. Its warm-test
 samples reuse one resident daemon after an unmeasured Maven build and daemon
 prime. Its application samples start a new jails process and direct JVM each
 time while reusing a current runtime-classpath cache. Selection and first-result

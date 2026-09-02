@@ -89,8 +89,8 @@ pub(crate) fn remove_spring_test_import(text: &str, class: &str, package: &str) 
 /// and a class that merely happens to be called `App` does not.
 ///
 /// `None` for "several" is deliberate. A project with two dispatchers has two
-/// answers, and picking one silently is how a jar and `jails run` came to
-/// start different classes.
+/// answers, and picking one silently is how a jar and `jails run` start
+/// different classes.
 pub(crate) fn command_dispatcher(snapshot: &WorkspaceSnapshot) -> Option<ProjectPath> {
     let mut found = snapshot
         .files
@@ -113,9 +113,10 @@ pub(crate) fn command_dispatcher(snapshot: &WorkspaceSnapshot) -> Option<Project
 /// Javadoc example, `commands.put(ImportCommand.NAME, ImportCommand::run);`,
 /// and a raw `contains` reads that comment as a registration. So
 /// `jails g command Import` -- the one name the example happens to use --
-/// silently registered nothing, and `g cli` then moved the entry point out
-/// from under a dispatcher it believed was in use. Blanking replaces comments
-/// with spaces of the same length, so the example cannot be mistaken for code.
+/// would silently register nothing, and `g cli` would then move the entry
+/// point out from under a dispatcher it believed was in use. Blanking
+/// replaces comments with spaces of the same length, so the example cannot be
+/// mistaken for code.
 pub(crate) fn ensure_command_registration(text: &str, class: &str, package: &str) -> String {
     if jails_codemod::text::blanked(text).contains(&format!("commands.put({class}.NAME")) {
         return text.to_string();
@@ -178,10 +179,10 @@ mod tests {
     /// **The example in the dispatcher's own Javadoc is not a registration.**
     ///
     /// `new-cli` ships a dispatcher whose comment demonstrates the call with
-    /// `ImportCommand`, so a raw `contains` reported that exact class as
-    /// already registered. `jails g command Import` then wrote the command and
-    /// spliced nothing, and because the dispatcher still registered nothing, a
-    /// later `g cli` moved `<mainClass>` out from under it -- the one thing
+    /// `ImportCommand`, so a raw `contains` reports that exact class as
+    /// already registered: `jails g command Import` writes the command and
+    /// splices nothing, and because the dispatcher still registers nothing, a
+    /// later `g cli` moves `<mainClass>` out from under it -- the one thing
     /// `entry_point` exists to prevent.
     #[test]
     fn a_javadoc_example_is_not_read_as_an_existing_registration() {

@@ -131,11 +131,10 @@ fn file_routes(source: &str, label: &str) -> Vec<Route> {
     }
 
     // A WebSocket endpoint is registered programmatically, so it carries no
-    // mapping annotation and every scanner that looks for one misses it --
-    // including this one, over a registration `jails g socket` had just
-    // written (`bugs.md` B56). Two things jails emits and cannot see is worse
-    // than a gap: the reader has no way to tell an unlisted route from an
-    // absent one.
+    // mapping annotation and a scanner that looks only for one misses the
+    // registration `jails g socket` writes. A route jails emits and cannot
+    // see is worse than a gap: the reader has no way to tell an unlisted
+    // route from an absent one.
     //
     // Read the same way the `HttpHandler` arm above reads its constant: off
     // the *blanked* copy, so an `addHandler(` inside the Javadoc example this
@@ -586,10 +585,9 @@ public final class RewardController {
 
     #[test]
     fn a_websocket_registration_is_a_route() {
-        // `bugs.md` B56: `jails g socket Chat` writes this file and `jails
-        // routes` then reported "No routes found under src/main/java". A
-        // route jails emitted and cannot see is worse than a gap -- the
-        // reader cannot tell an unlisted route from an absent one.
+        // `jails g socket Chat` writes this file, and a route jails emitted
+        // and cannot see is worse than a gap -- the reader cannot tell an
+        // unlisted route from an absent one.
         let source = r#"
 package com.example.web;
 
@@ -769,11 +767,10 @@ struct LayerStats {
 }
 
 // The layer list and its headings live in `config`, which is also what
-// applies a project's renames. This module used to keep its own copy, so
-// `stats` reported against jails' *default* package names: a project with
-// `adapters = "persistence"` had its adapters counted as "Other", and `cli`
-// and `messaging` were never counted at all because the copy was missing
-// them. One list, read through the project's config.
+// applies a project's renames. A private copy here reports against jails'
+// *default* package names, so a project with `adapters = "persistence"` has
+// its adapters counted as "Other". One list, read through the project's
+// config.
 
 pub fn stats(json: bool) -> Result<()> {
     let root = find_project_root()?;
@@ -874,10 +871,10 @@ fn stats_json(main: &[LayerStats], test: &[LayerStats]) -> Result<()> {
 
 /// Tally the given files per layer.
 ///
-/// Takes the files rather than a directory because a canonical project's Java
-/// is split across the reader's tree and the one the compiler writes, and a
-/// count that saw only the first half reported a domain of zero files for a
-/// project full of records.
+/// Takes the files rather than a directory because a project's Java is split
+/// across the reader's tree and the one the compiler writes, and a count that
+/// sees only the first half reports a domain of zero files for a project full
+/// of records.
 fn collect_stats(files: &[PathBuf], layers: &[(String, &'static str)]) -> Vec<LayerStats> {
     let mut rows: Vec<LayerStats> = layers
         .iter()
@@ -1093,9 +1090,8 @@ mod layer_tests {
         assert!(!contains_package(&segs("com/example/demo/App.java"), ""));
     }
 
-    /// The bug this fix exists for: `stats` kept its own layer list, so a
-    /// project that renamed a layer in `jails.toml` had those files counted
-    /// as "Other".
+    /// A project that renames a layer in `jails.toml` has those files counted
+    /// under the new name, not as "Other".
     #[test]
     fn a_renamed_layer_is_counted_under_its_configured_name() {
         let layers = vec![
@@ -1110,8 +1106,8 @@ mod layer_tests {
         assert_eq!(layer_index(loose, &layers), layers.len());
     }
 
-    /// Two layers the old copy of the list did not have at all, so their
-    /// files were never counted anywhere but "Other".
+    /// Two layers a partial list is most likely to omit, whose files would
+    /// then be counted nowhere but "Other".
     #[test]
     fn cli_and_messaging_are_layers_stats_knows_about() {
         let labels: Vec<&str> = crate::config::LAYERS_IN_ORDER

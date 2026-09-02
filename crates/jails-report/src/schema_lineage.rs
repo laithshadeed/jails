@@ -1,11 +1,10 @@
 //! Which columns a resource's own migrations actually created.
 //!
-//! `doctor` answers "are these the bytes jails wrote". It did not answer "is
-//! this project coherent", and that gap is what let a torn transaction and a
-//! half-carried rename both end green: the Java carried a component, the
-//! schema history did not, and every file on disk was byte-identical to what
-//! jails wrote, so nothing had a reason to complain. Only a query at runtime
-//! found it.
+//! `doctor`'s other checks answer "are these the bytes jails wrote"; this one
+//! answers "is this project coherent". The two differ when the Java carries a
+//! component the schema history does not: every file on disk is byte-identical
+//! to what jails wrote, so nothing else has a reason to complain, and only a
+//! query at runtime would find it.
 //!
 //! **This reads only bytes jails published, verified by digest.** Every
 //! migration in the lineage is a lifecycle *seal*, and the seal carries the
@@ -162,18 +161,12 @@ fn lineage_columns(
     created.then_some(columns)
 }
 
-/// Fold one migration's statements into the column set.
-///
-/// Returns `None` for anything this reader does not recognise *about this
-/// table*, which is what keeps a hand-written or hand-edited lineage from
-/// producing a confident wrong answer.
 /// Fold migration texts, in order, into the column set for one table.
 ///
-/// The canonical half of this check needs the same reader, and two readers of
-/// the statements jails emits would drift the way every duplicated reader in
-/// this repository has. `None` means the lineage is not readable -- a
-/// statement outside the handful the compiler writes, or no `create table` at
-/// all -- and unknown widens rather than accusing.
+/// The model-level half of this check needs the same reader, and two readers
+/// of the statements jails emits would drift. `None` means the lineage is not
+/// readable -- a statement outside the handful the compiler writes, or no
+/// `create table` at all -- and unknown widens rather than accusing.
 pub fn columns_from(migrations: &[&str], table: &str) -> Option<BTreeSet<String>> {
     let mut columns = BTreeSet::new();
     let mut created = false;
@@ -183,6 +176,11 @@ pub fn columns_from(migrations: &[&str], table: &str) -> Option<BTreeSet<String>
     created.then_some(columns)
 }
 
+/// Fold one migration's statements into the column set.
+///
+/// Returns `None` for anything this reader does not recognise *about this
+/// table*, which is what keeps a hand-written or hand-edited lineage from
+/// producing a confident wrong answer.
 fn apply(
     text: &str,
     table: &str,

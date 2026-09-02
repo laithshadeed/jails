@@ -1,50 +1,31 @@
 <!--
-One of six. `docs/00-contracts.md` is the one every reader starts from; it
-carries the contracts, the identifier map and the ownership table that keep
-these six from contradicting each other.
+Workstream D. `docs/00-contracts.md` carries the contracts and the ownership
+rules; nothing here repeats them.
 
-**A closed item is deleted from the file that holds it**, in the commit that
-closes it -- never marked done. `git log -p -- docs/` is the record.
-
-**Item and section numbers are stable and never reused.** A section with no
-open items disappears rather than being renumbered.
-
-Status prose is dated where it is a measurement. Everything else is written in
-the present tense as a rule: a note narrating what a module used to be gives a
-reader nothing to act on and goes stale on its own.
+**A closed item is deleted from this file**, in the commit that closes it.
+Item numbers are stable and never reused.
 -->
 
 # 40 — The gates, the suite, and the CI budget
 
-**Read `docs/00-contracts.md` first.** It carries the five contracts, the
-deletion map, the identifier map and the ownership table; nothing here repeats
-them, and work that contradicts them is wrong however well it reads.
+**Read `docs/00-contracts.md` first.**
 
 ## What you own
 
 `.github/workflows/**`, `.githooks/**`, `mise.toml`, `scripts/**`,
-`tests/common/**`, `tests/architecture/**`, `tests/corpus/**`.
-
-You own **how anything is known to be green**, and the wall clock it costs.
+`tests/common/**`, `tests/architecture/**`, `tests/corpus/**`. You own **how
+anything is known to be green**, and the wall clock it costs.
 
 ## What you do not touch
 
-You do not fix product defects. When a gate you sharpen turns something
-red, the fix belongs to whoever owns the path -- hand it over with the
-reproduction rather than patching across the boundary.
-
-The one exception is a defect *in the harness*: a fixture that lies, a skip
-that reports as a pass, an oracle comparing a binary with itself. Those are
-yours, and P13.11 below is the largest of them.
-
-Three things are shared with the other three workstreams and have resolution
-rules in `docs/00-contracts.md`: `tests/golden/**`, `tests/architecture/board.rs`
-and `LAYERS`. Append to `tests/common/scenarios.rs`; move nothing in it.
+You do not fix product defects. When a gate you sharpen turns something red,
+the fix belongs to whoever owns the path; hand it over with the reproduction.
+The exception is a defect *in the harness*: a fixture that lies, a skip that
+reports as a pass, an oracle comparing a binary with itself.
 
 ## The specification sections this work answers to
 
-§21 conformance test suite. The rest of this workstream answers to the
-gates below rather than to the specification.
+§21 conformance test suite.
 
 ## How you know you are green
 
@@ -54,10 +35,9 @@ JAILS_TEST_PROFILE=1 cargo test --test cli -- --nocapture   # the subprocess pro
 cargo test --test architecture -- --nocapture --test-threads=1   # the board
 ```
 
-**Every measurement needs `JAILS_REQUIRE_TOOLCHAIN=1` and a container engine.**
+**Every measurement needs `JAILS_TOOLCHAIN=1` and a container engine.**
 Without them the container-dependent tests fail in milliseconds and the run
-measures the suite minus a third of its work -- which is how `-DforkCount=0`
-came to look like a 51s win locally while moving CI from 298s to 298s.
+measures the suite minus a third of its work.
 
 ---
 
@@ -65,424 +45,142 @@ came to look like a 51s win locally while moving CI from 298s to 298s.
 
 `mise run verify-rewrite` is the single answer to "is this green".
 `.githooks/pre-push` and `.github/workflows/verify-rewrite.yml` invoke it and
-nothing else, so hook, CI and this file cannot disagree about what passing
-means. It runs `cargo fmt --check`, `cargo clippy -D warnings`,
-`RUSTDOCFLAGS='-D warnings' cargo doc`, and then every test binary
-concurrently under `JAILS_GIT_DIFF_ALGORITHM= JAILS_REQUIRE_TOOLCHAIN=1`.
+nothing else. It runs `cargo fmt --check`, `cargo clippy -D warnings`,
+`RUSTDOCFLAGS='-D warnings' cargo doc`, and `cargo test --workspace` under
+`JAILS_GIT_DIFF_ALGORITHM= JAILS_TOOLCHAIN=1`.
 
-Both environment pins are load-bearing. Without the second, a tier-3 test that
-cannot find its toolchain skips and counts as a pass. Without the first the
-gate is not deterministic: `git merge-file` grew `--diff-algorithm` after 2.43,
-histogram and myers can resolve an ambiguous three-way merge differently, and
-the merged bytes go into the managed tree and the accepted projection -- so a
-gate whose merges depend on the distribution underneath it is two answers
-wearing one name. The empty value pins git's own default, which every git ever
-shipped supports.
+Both pins are load-bearing. Without the second, a tier-3 test that cannot find
+its toolchain skips and counts as a pass. Without the first the gate is not
+deterministic: `git merge-file`'s histogram and myers algorithms can resolve an
+ambiguous three-way merge differently, and the merged bytes go into the managed
+tree. The empty value pins git's own default, which every git supports.
 
-## G0–G5 — where each gate stands
+## G0–G5
 
-- **G0 — mandatory execution and protocol.** Closed. Scenario names and golden
-  directories match exactly; every protocol fixture is read by something; every
-  advertised failpoint is named outside the registry.
-
-- **G1 — differential CLI.** `tests/product_loop.rs`, 38 scenarios plus the
-  corpus. **Read *What "both implementations" currently means* below before
-  trusting this one.**
-
-- **G2 — behavior journeys.** Every advertised command path maps to a test.
-  Held in two places: `every_advertised_command_path_has_a_journey`
+- **G0 — mandatory execution and protocol.** Scenario names and golden
+  directories match exactly; every protocol fixture is read by something;
+  every advertised failpoint is named outside the registry.
+- **G1 — the product loop.** `tests/product_loop.rs`, 38 scenarios plus the
+  corpus, each run against the one binary. See P13.11.
+- **G2 — behavior journeys.** Every advertised command path maps to a test,
+  held in two places: `every_advertised_command_path_has_a_journey`
   (`tests/cli/developer_tools.rs`) walks `jails commands --json` and requires
-  each path to appear in a test's argv, and
-  `every_inventoried_command_path_is_invoked_by_a_test`
-  (`tests/architecture/rules.rs`) holds the inventory half. The gate fails in
-  both directions: coverage may not fall, and an exemption that is no longer
-  needed must come off.
-
-  **What it proves is reachability, not behaviour.** A refusal counts, and the
-  match is textual -- a test that merely mentions `"model", "plan"` in an argv
-  satisfies it. That is the right bar for "no command is completely untested"
-  and the wrong one to read as coverage.
-
+  each path in a test's argv, and `every_inventoried_command_path_is_invoked_by_a_test`
+  (`tests/architecture/rules.rs`) holds `docs/feature-inventory.tsv`'s half.
+  Coverage may not fall, and an exemption no longer needed must come off. It
+  proves reachability, not behaviour: a refusal counts, and the match is
+  textual.
 - **G3 — exact real toolchain.** `tests/common/scenarios.rs` is the
   machine-readable kind/capability map, held by
   `every_kind_and_capability_has_a_golden_scenario` against the binary's own
-  help. `format` is the one documented exemption, listed in `COVERED_ELSEWHERE`
-  with the test that does cover it, and that test's existence is asserted.
-
-- **G4 — crash/recovery.** Closed. `failpoints!` is one declaration: it emits
-  `POINTS`, the list a crash test enumerates, and one constant per point, which
-  is the only thing `trip` accepts. A point nobody trips is an unused constant
-  and `-D dead-code` fails the build; a point tripped but unadvertised cannot
-  be written. `crates/jails-workspace/tests/crash.rs` declares nine points over
-  the canonical publication sequence and asserts convergence rather than
-  roll-forward, because there is no journal.
-
-  **The aborting half earned its cost immediately.** The in-process matrix was
-  green and the child-abort matrix was not: an injected `Err` unwinds, so the
-  staged temporary's guard removes it, and a crash between staging and rename
-  looked survivable. An `abort()` leaves the temporary on disk, where
-  `verify_preconditions` reads it as an unmanaged file inside the managed tree
-  and refuses -- permanently. `execute::sweep_staged` is the fix, and the prefix
-  is `.jails-staged-` rather than `tempfile`'s `.tmp` so the only thing in a
-  project that looks like a reader's file and is not says whose it is.
-
-- **G5 — real-project corpus.** `tests/corpus/` holds five checked-in project
-  trees jails did not write, with `policy.tsv` accounting for every one. The
-  corpus is bytes rather than a Rust table on purpose: it grows by dropping a
-  directory in, and a corpus only a Rust programmer can extend is not one. It
-  found a real defect on its second entry -- `jails adopt` read only the first
-  package segment, so a class in `infra/jdbc` was adopted as
-  `adapters = "infra"`, a directory holding no Java at all.
-
-  One finding is a refusal rather than a defect: `core` is not a synonym for
-  `domain` and should not become one. It means the domain model in one codebase
-  and shared framework glue in the next, so it fails the synonym table's bar on
-  *unambiguous* rather than on *common*. `spring-renamed-layers` pins the
-  refusal so nobody adds it on a guess.
-
-## What "both implementations" currently means
-
-**Only one test compares two binaries, and only under the canary.**
-`subjects_with_fixture` and `adopted_subjects` each return a single canonical
-subject; the legacy half was deleted rather than each case rewritten, and the
-array shape was kept so a case that stops holding still says which subject it
-was about. `every_corpus_project_is_treated_the_same` is the one that takes a
-second binary, from `JAILS_LEGACY_BIN`.
-
-Nothing sets that variable except `scripts/verify-rewrite-g1-canary.sh`, which
-`.github/workflows/verify-rewrite-g1-canary.yml` runs weekly and on demand.
-**The per-commit gate still does not run it** -- `verify-rewrite.yml` runs
-`mise run verify-rewrite` and nothing else, which is the property that keeps
-hook, CI and this file from disagreeing about what passing means. So on every run
-against a commit, G1's differential half is a canonical-only regression suite;
-what the schedule buys is that the differential claim is at worst a week stale
-rather than untested. The canary sets `JAILS_REQUIRE_TOOLCHAIN=1` and the
-empty `JAILS_GIT_DIFF_ALGORITHM` itself, for the two reasons the gate does: a
-comparison that skips reports green having compared nothing, and a merge whose
-algorithm comes from the distribution underneath is not a comparison either.
-
-Two things now stop that from being invisible. The corpus test's legacy subject
-is *absent* rather than a second copy of the binary under test, and a
-`JAILS_LEGACY_BIN` equal to that binary is refused -- previously it fell back
-to `CARGO_BIN_EXE_jails`, so an ordinary run compared the binary with itself
-and every assertion passed meaning nothing. And
-`every_test_target_a_script_names_exists` fails when a cargo test target named
-in `scripts/`, `.githooks/` or `.github/workflows/` does not exist, which is
-how the canary came to be naming a harness that had been renamed months
-earlier. `every_script_and_task_the_automation_names_exists` beside it checks
-the other direction -- the scripts and `mise` tasks those same files name as
-strings. A hook and a scheduled job both reach the suite by name, and a name
-is exactly what a rename does not carry.
-
-**Restoring a real legacy subject across the 38 scenarios is open work**, and
-it is not mechanical: the legacy binary predates JDL v1, seeds a ledger rather
-than `.jails/model.jdl`, and writes its Java to `src/main/java` rather than
-below the managed root, so a subject needs its own seed and its own record
-path. Until that is done, the honest description of G1 is "the canonical
-implementation does not regress", and the cutover claim it was written to
-support -- that the replacement behaves like the thing it replaces -- rests on
-the corpus test under the canary alone.
-
+  help. `format` is the one documented exemption in `COVERED_ELSEWHERE`.
+- **G4 — crash/recovery.** `failpoints!` is one declaration: it emits
+  `POINTS`, the list a crash test enumerates, and one constant per point, the
+  only thing `trip` accepts. A point nobody trips is an unused constant and
+  `-D dead-code` fails the build. `crates/jails-workspace/tests/crash.rs`
+  declares nine points over the publication sequence and asserts convergence,
+  in-process and in an aborting child.
+- **G5 — real-project corpus.** `tests/corpus/` holds five checked-in
+  project trees jails did not write, with `policy.tsv` accounting for every
+  one. It grows by dropping a directory in. `core` is not a synonym for
+  `domain`: it means the domain model in one codebase and shared framework
+  glue in the next, and `spring-renamed-layers` pins the refusal.
 
 ---
 
 # The CI budget
 
-**The whole `verify` job must finish inside five minutes** -- set-up, checkout,
-cargo restore, the gate, and the post steps -- with no test removed and no
-second job added, because the bill is per minute and a parallel job is billed
-twice.
+**The whole `verify` job must finish inside five minutes** -- set-up,
+checkout, cargo restore, the gate, and the post steps -- with no test removed
+and no second job added, because the bill is per minute and a parallel job is
+billed twice.
 
-## The runner is four cores, and that sets everything else
+## The arithmetic
 
-**`scripts/run-tests.py` no longer exists**, and every `run-tests:` summary
-quoted in this file was printed by it. It was deleted on 2026-09-01 after being
-OOM-killed running 16 binaries at once inside a 10 GB cap, where plain
-`cargo test --workspace` completed the same 1991 tests in 275.7s inside 8 GB;
-the concurrency it bought had evaporated once `cli` grew to dominate the run.
-CLAUDE.md's "How the suite stays fast" section carries the measurement.
+The runner is four cores and the test phase is subprocess-bound, so its wall
+clock is total subprocess work over four: **four seconds of work removed buys
+one second of wall.** `scripts/subprocess-summary.sh` prints the total on
+every gate run; when mean concurrency equals the core count the run is packed
+and only removing work can help. Read the current numbers off the run in front
+of you; the noise floor between byte-identical runs is about ±40s, so verify a
+change by the step it targets and only then ask whether the total moved, over
+several runs.
 
-What survives that deletion is everything below about *where the cost is* --
-Maven, JVM starts, Spring contexts, and the four-core arithmetic -- because
-those are properties of the work rather than of how it was launched. What does
-not survive is any wall clock or concurrency figure attributed to the runner.
-Re-measure before quoting one.
+Where the work is: a JVM booting a Spring context inside a generated project's
+`mvn test`. Not Maven's own start, not container starts, not the product
+binary, whose median invocation is tens of milliseconds.
 
-Its width line said, on CI, **`30 binaries, 4 at a time`**.
-Every number below follows from that: the test phase is subprocess-bound, so
-its wall clock is total subprocess work over four, and **four seconds of work
-removed buys one second of wall**.
+## Closed off, with the reason
 
-## Where the five minutes currently go
+Do not re-propose these:
 
-Two runs, because the two shapes cost very different amounts. `33322968191`
-changed no Rust at all against a warm cache, so its compile is zero and the
-save is skipped -- that is the floor. `33506161538` changed sources, which is
-the ordinary commit:
-
-| step | docs-only | code |
-|---|---|---|
-| set up, checkout, rustup cache and install | 11 | 12 |
-| **restore cargo** | **42** | **78** |
-| restore `~/.m2` and `~/.gradle` | 4 | 6 |
-| mise, JDK 21, toolchain banner | 14 | 17 |
-| **`mise run verify-rewrite`** | **217** | **382** |
-| trim | — | 1 |
-| **save cargo** | **21** | **53** |
-| post steps | 2 | 1 |
-| **job** | **314** | **550** |
-
-**Quote the second column.** A gate exists for commits that change code, and
-the first column is what it costs to change a comment.
-
-Inside that 382s gate, the runner reported **325.2s of test phase carrying
-1102.7s of subprocess work at mean concurrency 3.39**, with 41.1s spent
-queueing for a permit. So compilation, `fmt`, `clippy` and `doc` together are
-about 57s, and everything else is the suite.
-
-## Whether five minutes is reachable, and the arithmetic that answers it
-
-A perfect four-core packing of 1102.7s is **276s**, and the observed 325.2s is
-85% of that -- so scheduling is worth at most ~49s and there is no queue worth
-draining. Add the 35s of set-up and toolchain steps that no change removes and
-the floor is **311s before a single byte is compiled or transferred**.
-
-**So the job cannot reach 300s at the current amount of work, whatever is done
-to the cache or the schedule.** Getting there means removing roughly 500s of
-subprocess work -- 46% of it -- with no test removed. The levers, priced
-honestly at 4:1:
-
-| lever | work removed | wall |
-|---|---:|---:|
-| collapse 36 Maven runs toward 10 (the per-run floor, ~24 times) | ~170s | ~42s |
-| keep the container images off the critical path | ~70s | ~18s |
-| everything scheduling can still give | — | ~49s |
-| **together** | | **~109s** |
-
-That is a **~440s job**, not a 300s one. The honest options past it are a
-structural change to the real-toolchain tier -- one Maven run per group of
-tests rather than per test, which trades that tier's isolation -- or a larger
-runner, which halves the wall and doubles the per-minute rate, so it buys time
-rather than money.
-
-**Do not read the earlier "perfect packing, concurrency 4.00, ordering is
-worth zero" measurement as still current.** It was true of run
-`33413442610`; `33506161538` measured 3.39 with 41.1s queued over the same
-total work, so the suite's packing moves with its shape and has to be re-read
-from the run in front of you.
-
-## The permit cap is not the constraint, measured three ways
-
-`JAILS_TEST_MAX_TOOLCHAIN_PROCESSES` at 8, 12 and 16 over the whole suite on
-a sixteen-core developer box: **114.2s, 112.0s and 113.9s**, with queueing
-falling 40.1s -> 0.0s -> 0.0s and mean concurrency reaching **7.08 and staying
-there**. Zero queueing and a flat wall means the suite does not *have* more
-than about seven things to run at once, so raising the cap cannot help and
-lowering it below 8 is the only setting that could hurt.
-
-**One run proves nothing about this job.** Two runs that compiled *nothing* --
-both documentation-only commits against a warm cache -- measured the gate at
-217s and 261s, restore at 42s and 52s, and the job at 316s and 343s. The noise
-floor is about ±40s, or 13%, for byte-identical work. Verify a change by the
-*step it targets* (`Save cargo` going 21s -> `skipped` is unambiguous) and only
-then ask whether the total moved, over several runs.
-
-## What is already closed off, with the number that closed it
-
-Do not re-propose these. Each was measured and each cost an afternoon:
-
-- **The runner was at a perfect four-core packing.** It reported
-  1106.2s of subprocess work in a 276.4s wall at mean concurrency **4.00**,
-  with 33.6s of permit waiting across 217 subprocesses. Ordering, thread
-  counts, a larger permit budget and a cleverer work-stealer are worth
-  **zero**. What follows is arithmetic: **four seconds of subprocess work
-  removed buys one second of wall.**
-- **`CARGO_INCREMENTAL=0`** shrinks the cache from 3.7 GB to 978 MB and the
-  save from 45s to 14s, and made the gate 90-120s *slower* by removing the
-  cross-run compilation reuse. Reverted. GitHub bills wall clock, not work.
-- **Caching workspace `target/` artifacts between commits**: the entry is 1-2 GB
-  compressed and would have to be written every run, putting 30-60s of upload
-  on the critical path against a saving that is only the crates a commit did
-  not touch.
-- **Pruning superseded artifacts out of the cargo cache**: 87% of
-  `target/debug/deps` is superseded, and every keep-rule measured costs more
-  recompilation (24s, 126s, 150s) than the transfer it saves. Trimming
-  superseded *incremental sessions* is the half that pays and is already done:
-  ~24s a run once settled.
-- **`mvnd`**: 2.45s a run faster and **three failures out of four** when four
-  builds start concurrently, which is the only way this suite runs Maven.
-- **`-DforkCount=0`**: 0.55s a run, and it trades away the isolation surefire
-  exists to provide.
-- **lld**: already the default linker since Rust 1.90. Passing it again changes
-  nothing.
-- **The generated-project cache cannot survive a CI run.** The stamp is not the
-  obstacle: the binary is not reproducible (dev-profile codegen units are not
-  deterministically ordered), and a byte-exact tree comparison was implemented,
-  measured at 147s/149s without reuse against 150s/147s with it, and deleted.
-
-## The lever that was supposed to have the size, measured and refused
-
-**Fewer Maven runs.** Maven is the largest bucket -- 563.1s of 1102.7s on the
-runner across 36 runs -- and 6.52s of every Spring run is paid before any test
-does anything:
-
-| | s | share |
-|---|---|---|
-| Maven start (`validate`) | 1.54 | 24% |
-| javac, main and test | 1.45 | 22% |
-| surefire fork | ~1.1 | 17% |
-| Spring context boot | 2.54 | 38% |
-| **total floor, per run** | **6.52** | |
-
-**And the second test class in a run is free**: the same project built with
-one, two, four and eight `@SpringBootTest` classes, one Maven invocation each,
-measured 6.56s, 6.48s, 6.44s and 6.49s. Spring caches a context per
-configuration inside the JVM, so once the floor is paid the rest costs nothing
-measurable. That is the entire case for batching, and it is why this was
-written down as *the* lever: 36 runs collapsed toward a dozen looks like 24
-floors, ~156s of work, 39s of wall.
-
-**The per-run distribution says otherwise, and it is the number that decides
-it.** Profiled with `JAILS_TEST_PROFILE=1` over one warm `tests/cli`:
-
-| band | runs | total | what they are |
-|---|---:|---:|---|
-| under the 6.52s floor | 15 | 53.4s | plain-Java fixtures, which never pay a Spring boot |
-| 6.7s - 12.8s | 7 | 63.4s | the canonical loops |
-| 13.5s - 36.5s | 14 | 311s | the toolboxes, the proof apps, `remaining-kinds` |
-
-The cheap fifteen are cheap because they are *not* Spring, so merging them
-saves a floor they never paid -- about 28s of work, **7s of wall**. The
-expensive fourteen are expensive because they are doing real work, and merging
-them saves one floor each while costing exactly the per-test isolation the
-tier exists for. Everything worth having is around **30s of wall**, against a
-~460s job.
-
-So this is refused, and the estimate above is the trap: **6.52s times the
-number of runs is not the saving unless every run pays it.** The merges that
-exist are worth keeping because merging is the *stronger* check -- it is what
-caught `mail` and `actuator` contradicting each other -- not because they made
-the suite faster.
-
-Two further warnings, both earned. Merging nine capability packs into two
-shared projects measured **471.8s -> 478.0s warm-to-warm: nothing**. And a
-partly cold run reports 730.2s against a warm 471.8s, so **compare warm
-against warm or the number will tell you whatever you hoped**.
+- **Scheduling.** Ordering, thread counts, a larger permit budget and a
+  cleverer work-stealer are worth nothing on a packed four-core runner.
+- **`CARGO_INCREMENTAL=0`** shrinks the cache and makes the gate slower by
+  removing cross-run compilation reuse; GitHub bills wall clock, not bytes.
+- **Caching workspace `target/` artifacts between commits** puts an upload on
+  the critical path of every run for a saving that is only the crates a commit
+  did not touch.
+- **Pruning superseded `target/debug/deps` by any rule short of
+  `cargo-sweep`** costs more recompilation than transfer. Trimming superseded
+  incremental sessions is the half that pays and is done.
+- **`mvnd`** fails under concurrent invocation (`StaleAddressException`),
+  which is the only way this suite runs Maven.
+- **`-DforkCount=0`** trades the isolation surefire exists for.
+- **AppCDS / class-data sharing** over Maven's JVM or the Spring context: the
+  archive cannot match a per-project classpath.
+- **Spring lazy initialization** breaks `contextLoads`.
+- **JUnit class-level parallelism** manufactures contention: generated tests
+  share a database, ports and fixture files.
+- **Batching Maven runs.** The cheap runs are plain-Java fixtures that never
+  pay a Spring boot, and the expensive ones are doing real work; merging saves
+  a floor they never paid or costs the tier's per-test isolation. The merges
+  that exist are kept because merging is the stronger check.
+- **A generated-project cache across CI runs.** The binary is not
+  reproducible under the dev profile, and a byte-exact tree comparison buys
+  nothing because what a run costs is the JVM, not javac.
 
 ## What is left, if five minutes is still the target
 
-Three things, and all three are somebody's decision rather than a tuning pass:
-
-- **A larger runner.** It is the only lever that reaches 300s. It roughly
-  halves the wall and roughly doubles the per-minute rate, so it buys time
-  rather than money -- which is the right trade only if the wall is what
-  hurts.
-- **One Maven run per group of tests**, generating several tests' artifacts
-  into one project. Worth ~30s by the table above, and it costs the tier's
-  per-test isolation.
-- **Fewer JVMs inside `jails` itself.** 428.0s of the 1102.7s is the product
-  binary, and the median invocation is 73.5 ms -- so essentially all of it is
-  the twenty or so invocations that are themselves a JVM (`jails check` is
-  `mvn clean verify`, `jails test`, `app apply`, `jails runner`). A classpath
-  cache for `jails runner` is the one with a clear shape: its four invocations
-  in `runner_reports_a_failing_snippet_...` cost 41s between them, and each
-  resolves the same project's classpath from scratch.
+- **A larger runner.** The only lever that reaches 300s; it buys time rather
+  than money.
+- **One Maven run per group of tests**, at the cost of the tier's isolation.
+- **Fewer JVMs inside `jails` itself.** A classpath cache for `jails runner`
+  has a clear shape: its invocations resolve the same project's classpath from
+  scratch.
 
 ## Open items
 
-**P13.11 G1 has no legacy subject.** *What "both implementations"
-currently means* above measures this. The 38 product-loop scenarios each run
-one canonical subject; only the corpus test takes a second binary. Restoring a
-real legacy subject is not mechanical: the frozen binary predates JDL v1,
-seeds a ledger rather than `.jails/model.jdl`, and writes Java to
-`src/main/java` rather than below the managed root, so `Subject` needs a
-per-subject seed and record path.
-
-The scheduling half is done and the running half is not.
-`.github/workflows/verify-rewrite-g1-canary.yml` runs the canary weekly, and
-the script it runs no longer refuses on a runner: the branch point was asked
-for as `main`, which a checkout has only as `origin/main`, so it resolved on a
-developer box and refused on the one machine a schedule uses. **No scheduled
-run has happened yet**, so the workflow is checked for structure and for the
-resolution it got wrong, and not against a real runner.
-
-**Exit:** a scheduled canary run is green -- and then the 38 scenarios get a
-legacy subject, or the differential claim is withdrawn from this file.
-
+**P13.11 G1 has no second implementation.** The product loop's 38 scenarios
+run one binary, and the corpus test takes a second binary only from
+`JAILS_LEGACY_BIN`, which nothing sets except
+`scripts/verify-rewrite-g1-canary.sh` on a weekly schedule against a frozen
+revision that predates JDL v1. **Exit:** `docs/51-kernel.md` S51.6 withdraws
+the differential claim and deletes the canary; G1 is then the regression suite
+it already is.
 
 **P13.12 The document cross-reference gate stops at `docs/`.**
 `rules::every_cross_reference_in_the_documents_resolves` reads every markdown
 file under `docs/` and fails on a `docs/<name>.md` path, a `Part <n>`, a
-`jails-<crate>` or a claimed `fn` that does not exist. It was written after
-three dangling `Part` references were found by hand -- one of them in
-`docs/00-contracts.md`, which all four workstreams read first, and wrong since
-the six documents were split out of `new.md`. All four rules were verified by
-injection.
+`jails-<crate>` or a claimed `fn` that does not exist. It does not read
+`CLAUDE.md`, `ARCHITECTURE.md` or `README.md`. **Exit:** the scan is widened
+to the three root documents (`docs/51-kernel.md` S51.7).
 
-It does **not** read `CLAUDE.md`, `ARCHITECTURE.md` or `README.md`, and the
-reason is a hand-over rather than a limitation of the gate. Those three carry
-eight references to `jails-engine`, deleted whole in `2e52c964`:
-
-```
-grep -n 'jails-engine' CLAUDE.md ARCHITECTURE.md
-```
-
-`docs/00-contracts.md` says those files are edited by whoever's change makes
-them wrong, and the cutover did; the sections naming the deleted crate are
-workstream C's subject, not this workstream's, and *what you do not touch*
-above is the rule that keeps this gate from patching across the boundary.
-Three more names in the same files -- parse_fields_for_test,
-install_test_container_import and cli::adopt_as_entry_point -- no longer
-resolve to a `fn` either, and README.md's art_cap_fake_ent_note_repository is
-a generated Java path that the fourth rule would read as a Rust name. They are
-written bare here on purpose: backticking them is the claim this item says is
-false.
-
-**Exit:** those references resolve, and the scan is widened to the three root
-documents in the same change.
-
-
-**P13.7 The suite is `tests/cli` and nothing else.** 122.6s of a 122.6s test
-phase locally, 325.2s of 325.2s on the runner: the other twenty-nine binaries
-finish inside it and are free, so nothing that speeds them up can show. Only
-`cli` has a critical path, so only `cli` has a budget.
-
-Profile it with `JAILS_TEST_PROFILE=1` -- it needs `-- --nocapture`, and the
-per-subprocess lines go to **stderr**. What that buys over the four-number
-summary printed on every run is the *distribution*, which is what refutes an
-estimate built on an average: see *the lever that was supposed to have the
-size* above.
-
+**P13.7 The suite is `tests/cli` and nothing else.** The other binaries finish
+inside it, so only `cli` has a critical path and a budget. Profile it with
+`JAILS_TEST_PROFILE=1 -- --nocapture`; the per-subprocess lines go to stderr.
 **Exit:** the job fits its budget, or the budget is restated with the
-measurement that makes it unreachable. It is currently the second of those.
-
+measurement that makes it unreachable. It is currently the second.
 
 **P13.9 A full tmpfs still reports itself as a product bug from one place.**
-The harness half is closed: `temp_dir` names the disk, counts the fixtures
-holding it and carries a `fix:` line, and only for a storage error -- blaming
-the disk for a permission error is the same defect facing the other way.
-`jails_testkit::hold_cwd` closed the half that made the run unreadable: the
-first panic poisoned the working-directory lock, so the two `new-cli` tests
-behind it failed with `PoisonError`, naming neither the panic nor the disk.
-Recovering is sound because that mutex guards no data and every holder sets
-the directory it needs.
+`jails_support::scratch::reserve` leads with *"failed to create a scratch
+directory"*, a sentence about jails, on a storage error. The harness half
+names the disk, counts the fixtures holding it and carries a `fix:` line.
+Reproduction: fill `/tmp`, run `cargo test -p jails`.
 
-What is left is not the harness's: `jails_support::scratch::reserve` leads
-with *"failed to create a scratch directory"*, which is a sentence about
-jails, and it is production prose on workstream C's path. It already names
-the parent and the OS error, so this is a wording handover rather than a
-defect -- with the reproduction: fill `/tmp`, run `cargo test -p jails`.
-
-
----
-
-## The environment a measurement was taken in
-
-Tier-3 tests shell out to Maven and compile against `pom::TARGET_RELEASE`
-(currently 26). A machine whose JDK is older fails every one of them with
-`release version 26 not supported`. Those failures are the machine, not the
-tree -- but note the trap they sit next to: **a skipped tier-3 test is reported
-as passing**, which is why every skip goes through `common::skip()` and
-`JAILS_REQUIRE_TOOLCHAIN=1` turns each into a failure naming what was missing.
-The gate sets it.
-
+**P13.10 `cached_toolchain_dir_with_salt` takes no lock**, so two gates
+running at once race on `target/jails-e2e-cache`: one walks `remove_dir_all`
+while the other creates files underneath it, and `.jails-generated-ready` is
+written before the directory is filled, so the second process reuses a
+half-built toolbox. **Exit:** the fixture takes the same `flock` the Maven
+budget uses, and the ready marker is written last.

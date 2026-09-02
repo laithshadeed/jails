@@ -185,18 +185,10 @@ paragraph saying so. `every_test_target_a_script_names_exists` and
 
 **S51.7 -- The prose.** In order, because each depends on the last:
 
-- `docs/30-cutover.md`: P13.4 closes by deletion; P12.1 (B57) reproduces only
-  on the legacy engine and closes by deletion; the whole *What the cutover
-  cannot start on* section is wrong -- `jails new` is canonical -- and goes.
-  What is left (P13.2 to agent 3, P8.11a, P9.2, P9.6-P9.10) stays or moves to
-  the plan that owns its path; when nothing is left the file is deleted and
-  `docs/00-contracts.md`'s tables lose their row.
-- `CLAUDE.md`: delete the "Legacy workspace during cutover" section and its
-  table (about 190 lines), the `jails-generate` and `add.rs` layout entries
-  that describe deleted modules, every paragraph that says `new` is legacy or
-  that `jails model import` exists, and the eight mentions of the engine
-  deleted in `2e52c964`. `ARCHITECTURE.md` loses its five. Aim for the
-  file `docs/50-simplify.md` describes: under 1,500 lines, present tense.
+- `docs/30-cutover.md`: P13.2 closes with agent 3's S53.3; what is left
+  (P8.11a, P9.2, P9.6-P9.10) is the workspace workstream's and stays.
+- `CLAUDE.md` and `ARCHITECTURE.md`: delete the "scheduled for deletion"
+  paragraphs and every remaining mention of the crates you removed.
 - Then widen `every_cross_reference_in_the_documents_resolves` to
   `CLAUDE.md`, `ARCHITECTURE.md` and `README.md` (P13.12) and fix what it
   reports, which is the check that the prose pass was complete.
@@ -219,10 +211,8 @@ paragraph saying so. `every_test_target_a_script_names_exists` and
 
 ## Items you close elsewhere
 
-`docs/30-cutover.md` P13.4, P12.1; `docs/40-gates-and-ci.md` P13.11 and
-P13.12; `docs/00-contracts.md` A4.1 (rewrite as one sentence: the kernel is
-deleted) and the *Where it stands* answer, which begins "the legacy path
-cannot be deleted yet".
+`docs/40-gates-and-ci.md` P13.11 and P13.12; `docs/00-contracts.md` §1.7's
+kernel row and the "scheduled for deletion" lines in `ARCHITECTURE.md`.
 
 ## Green
 

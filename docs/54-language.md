@@ -72,7 +72,7 @@ tree holds one file that still mentions `.jails/model.toml`. So:
 3. `docs/01-jdl-v1.md` §22 (upgrade from the pre-v1 draft) becomes one
    paragraph naming the tag. The `jdl-sol.md §22` citations in source
    comments resolve to that paragraph, which is why it is not deleted whole.
-4. `docs/00-contracts.md` A4.4 closes.
+4. `docs/00-contracts.md` §1.7's *two compatibility parsers* row closes.
 
 **Check before deleting `jdl/emit`** that nothing but the upgrade renders a
 model back to JDL: `model init` builds its source by hand (`app_node` in
@@ -116,11 +116,8 @@ it does, `BuiltinType::from_alias` is the one alias table and the parser's
 output is a model field, not a `Field` with derived Java and SQL. Delete the
 `builtin_by_java_name` re-export path the moment it is.
 
-**S54.6 -- `docs/10-language.md`.** The registry table's rows for the
-compatibility spellings, the *A3.13* paragraph's claim that the third
-vocabulary is theirs (it is agent 3's and 5's `Result<_, String>` returns;
-leave the exit, delete the narrative), and the §22 reference in *The
-specification sections this work answers to*.
+**S54.6 -- `docs/10-language.md`.** Re-measure the registry table after
+S54.1 and S54.3.
 
 ## Traps
 
@@ -142,9 +139,8 @@ specification sections this work answers to*.
 
 ## Items you close elsewhere
 
-`docs/00-contracts.md` A4.4; `docs/01-jdl-v1.md` §22 (reduced to the tag
-paragraph); `docs/30-cutover.md` *Two editable model sources are never
-permitted* (delete; with one parser there is nothing to permit).
+`docs/00-contracts.md` §1.7's *two compatibility parsers* row;
+`docs/01-jdl-v1.md` §22, which names the tag.
 
 ## Green
 

@@ -1,9 +1,8 @@
 //! What changed on disk since last time.
 //!
-//! Split out of `run.rs` because it is a different secret from "how do I
-//! invoke the build tool": nothing here knows what Maven or Gradle is, and
-//! every rule in it is about filesystem observation. `watch` is the only
-//! caller.
+//! A different secret from "how do I invoke the build tool": nothing here
+//! knows what Maven or Gradle is, and every rule in it is about filesystem
+//! observation. `watch` is the only caller.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -231,7 +230,7 @@ mod tests {
             vec!["changed src/main/resources/application.properties"]
         );
 
-        // A new file, and a deleted one -- which the old high-water mark
+        // A new file, and a deleted one -- which a timestamp high-water mark
         // could not see at all, since removing a file lowers nothing.
         fs::write(java.join("Extra.java"), "x").unwrap();
         fs::remove_file(java.join("App.java")).unwrap();

@@ -1,29 +1,15 @@
-//! `jails bench`: run the load test, and report what it measured.
-//!
-//! `plan.md` §19.6 asks for a p99 for App C "before any performance claim is
-//! made", and §5.4–5.6 records that `add loadtest` already writes the k6 script
-//! that would produce one. What was missing is the step between: a command that
-//! runs it against a profile the reader named, so the number has a load profile
-//! attached and is reproducible.
-//!
-//! ## What this deliberately does not do
+//! `jails bench`: run the k6 script `add loadtest` wrote, against a profile
+//! the reader named, so a latency number has its load profile attached and is
+//! reproducible.
 //!
 //! **It does not parse k6's output.** k6 prints its own summary with p95 and
-//! p99 already in it, and its thresholds already decide pass or fail — the
-//! generated script sets `http_req_failed rate<0.01` and
-//! `http_req_duration p(95)<500, p(99)<1000`. Re-deriving a verdict from a
-//! JSON summary would be a second answer to a question k6 has answered, and
-//! `--summary-export` is there for a reader who wants the raw numbers.
-//!
-//! There is a sharper reason too, and it is this repository's own rule:
-//! **k6 is not installed on this machine**, so any parser written here would be
-//! written against a format nobody had seen. `CLAUDE.md` says every template is
-//! written against `deps/` rather than from memory; the same standard applies
-//! to an output format. Until a real run exists, jails drives k6 and gets out
-//! of the way.
-//!
-//! §19.6 therefore remains **unmeasured**, and that is stated rather than
-//! quietly implied by the existence of the command.
+//! p99 in it, and its thresholds decide pass or fail -- the generated script
+//! sets `http_req_failed rate<0.01` and `http_req_duration p(95)<500,
+//! p(99)<1000`. Re-deriving a verdict from a JSON summary would be a second
+//! answer to a question k6 has answered, and `--summary-export` is there for a
+//! reader who wants the raw numbers. A parser would also be written against an
+//! output format no run here has produced, so jails drives k6 and gets out of
+//! the way.
 
 use crate::process::CommandSpec;
 use jails_support::Result;

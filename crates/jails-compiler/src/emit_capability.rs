@@ -2,8 +2,8 @@
 //!
 //! A capability pack is a model node projected into independently identified
 //! files plus build dependencies. It is deliberately data-shaped: adding a
-//! small adapter or test utility should not require a route, journal protocol,
-//! or bespoke executor. Complex capabilities can still own typed lowering
+//! small adapter or test utility should not require a route or a bespoke
+//! executor. Complex capabilities can still own typed lowering
 //! modules, but the common dependency + Java-files shape lives here once.
 
 use crate::CompileError;
@@ -116,17 +116,14 @@ impl BootCondition {
 ///
 /// **The advice's `DuplicateKeyException` arm is why this exists.** jails puts
 /// `@unique` in the schema and generates an `ApiException.Conflict` documented
-/// "becomes a 409", and nothing joined the two -- so a duplicate insert
-/// answered 500, which is what alerting pages on and what clients retry. The
-/// arm cannot be unconditional: `DuplicateKeyException` is Spring's, from
-/// `spring-tx`, which arrives with the JDBC starter, and `api` does not
-/// require a database.
+/// "becomes a 409", and the arm is what joins the two -- without it a
+/// duplicate insert answers 500, which is what alerting pages on and what
+/// clients retry. The arm cannot be unconditional: `DuplicateKeyException` is
+/// Spring's, from `spring-tx`, which arrives with the JDBC starter, and `api`
+/// does not require a database.
 ///
-/// The legacy engine has the same conditional and a documented ordering trap
-/// with it -- `add api` before `add db` plans against a project that does not
-/// have the starter yet, and only `jails sync` repairs it. The compiler has no
-/// such trap: it compiles the whole model at once, so "does this model declare
-/// `db`" is a question with one answer.
+/// There is no ordering trap: the compiler compiles the whole model at once,
+/// so "does this model declare `db`" is a question with one answer.
 struct Fragment {
     key: &'static str,
     when_capability: &'static str,
@@ -238,9 +235,9 @@ pub(crate) fn lower_and_emit(
 ) -> Result<(), CompileError> {
     let boot_major = boot_major(observed.spring_boot);
     // Every capability the *model* declares, which is a question the compiler
-    // can answer once for the whole tree. The legacy engine asks the project's
-    // pom instead, one capability at a time, which is why `add api` before
-    // `add db` leaves an advice describing a project that no longer exists.
+    // can answer once for the whole tree -- asking the project's pom one
+    // capability at a time would let `add api` before `add db` leave an advice
+    // describing a project that no longer exists.
     let declared = model
         .capabilities
         .values()
@@ -440,9 +437,7 @@ fn emit(
 /// Without it the generated test has no `DataSource` and falls back to
 /// whatever `spring.datasource.url` names -- which on a developer's machine is
 /// a real database on `:5432`, so the test passes or fails against somebody's
-/// local schema instead of its own container. That is how it surfaced: a proof
-/// application's `CorsConfigTest` failed a Flyway checksum against a database
-/// three days older than the run.
+/// local schema instead of its own container.
 fn with_test_container(
     model: &AppModel,
     source_set: SourceSet,
@@ -474,9 +469,8 @@ pub(crate) fn imported_test_container(model: &AppModel, package: &str, body: Str
     let base = model.project.package_for(Package::Base);
     // `extra` is the import *statement*, and only when the config is not in
     // this file's own package. Passing the package name itself puts a bare
-    // `com.example.app` line in the middle of the imports, which is the shape
-    // the first draft produced and javac reported as "class, interface, enum,
-    // or record expected".
+    // `com.example.app` line in the middle of the imports, which javac reports
+    // as "class, interface, enum, or record expected".
     let extra = match package == base {
         true => String::new(),
         false => format!("import {base}.TestcontainersConfig;\n"),

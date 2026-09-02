@@ -5,15 +5,16 @@
 //! one `build-helper-maven-plugin` declaration whose executions cover every
 //! root -- a declaration per root is a duplicate the model builder warns
 //! about -- while Gradle wants a separate source-set block per root, which is
-//! how a Gradle reader expects to meet them. `jdl-sol.md` §9.7 names both
-//! shapes, and neither one generalises to the other.
+//! how a Gradle reader expects to meet them. JDL v1 §9.7 names both shapes,
+//! and neither one generalises to the other.
 
 use super::{
     direct_child_close, indent_block, insert_at_line, insert_indented_block, line_indent,
     owned_block,
 };
 
-/// The legacy per-source-set marker, kept only so its blocks can be absorbed.
+/// The per-source-set marker older poms carry, kept only so its blocks can be
+/// absorbed.
 const MARKER: &str = "jails:generated-source-root";
 /// The one block holding every generated root.
 const ROOTS_MARKER: &str = "jails:generated-source-roots";
@@ -29,11 +30,11 @@ const MANAGED_SOURCE_PREFIX: &str = ".jails/generated/";
 /// `org.codehaus.mojo:build-helper-maven-plugin` twice inside one `<plugins>`.
 /// Maven merges the executions -- checked against a real build, both roots
 /// compile -- but warns `'build.plugins.plugin.(groupId:artifactId)' must be
-/// unique but found duplicate declaration` on every single build. Nothing was
+/// unique but found duplicate declaration` on every single build. Nothing is
 /// broken; a permanent alarming warning is its own cost.
 ///
 /// Blocks written by the older shape are absorbed rather than left beside the
-/// new one, which would have made three declarations out of two. A block is
+/// new one, which would make three declarations out of two. A block is
 /// only jails' to remove if every path it declares is under the managed root:
 /// anything else means a reader put it there, and the refusal below says so
 /// instead of discarding it.
@@ -101,12 +102,12 @@ pub(crate) fn ensure_maven_source_roots(
     plugin.push('\n');
 
     // **Back where it was, when it was already there.** This strips the block
-    // and re-inserts it before `</plugins>`, which is position-stable only
-    // while it is the last thing in there -- and it was, until the
-    // integration-test plugin started landing beside it. After that every plan
-    // wants to move one block past the other, so `jails model check --frozen`
-    // reports a pending operation on a project that has just been
-    // synchronised and the pom churns by a whole block on every run.
+    // and re-inserts it, and inserting before `</plugins>` is position-stable
+    // only while the block is the last thing in there. With the
+    // integration-test plugin beside it, every plan would want to move one
+    // block past the other, so `jails model check --frozen` would report a
+    // pending operation on a project that has just been synchronised and the
+    // pom would churn by a whole block on every run.
     //
     // The offset is taken before the strip, because removing the old block
     // shifts everything after it.
@@ -149,9 +150,9 @@ pub(crate) fn ensure_maven_source_roots(
 /// not jails' to delete, and saying so beats silently dropping it.
 fn strip_source_root_blocks(text: &str) -> Result<String, String> {
     let mut text = text.to_string();
-    // The combined block first, then every legacy per-set one. `owned_block`
+    // The combined block first, then every older per-set one. `owned_block`
     // matches `<!-- {marker} -->` including the trailing ` -->`, so the
-    // singular legacy marker cannot match inside the plural combined one.
+    // singular older marker cannot match inside the plural combined one.
     let mut markers = vec![ROOTS_MARKER.to_string()];
     markers.extend(
         [
@@ -333,12 +334,11 @@ mod tests {
 
     /// Every generated root joins one plugin declaration.
     ///
-    /// `audit.md` A2.1b. A block per source set meant a complete
-    /// `build-helper-maven-plugin` declaration per set, so main plus test
-    /// declared the same plugin twice in one `<plugins>` and Maven warned
-    /// `must be unique but found duplicate declaration` on every build. It
-    /// merges the executions, so nothing was broken -- which is exactly why it
-    /// went unnoticed.
+    /// A block per source set means a complete `build-helper-maven-plugin`
+    /// declaration per set, so main plus test declare the same plugin twice
+    /// in one `<plugins>` and Maven warns `must be unique but found duplicate
+    /// declaration` on every build. It merges the executions, so nothing
+    /// breaks -- which is exactly why it goes unnoticed.
     #[test]
     fn every_generated_root_joins_one_plugin_declaration() {
         let pom = ensure_maven_source_roots(
@@ -366,8 +366,8 @@ mod tests {
 
     /// A pom written by the older shape is absorbed, not added to.
     ///
-    /// Leaving the per-set blocks beside the new one would have turned two
-    /// duplicate declarations into three.
+    /// Leaving the per-set blocks beside the new one would turn two duplicate
+    /// declarations into three.
     #[test]
     fn legacy_per_source_set_blocks_are_absorbed() {
         let legacy = concat!(

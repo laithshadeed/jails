@@ -1,15 +1,11 @@
 //! Lossless edits to the JDL v1 authoring source, shared by the familiar
 //! frontends.
 //!
-//! **There was a second implementation of every one of these**, scanning the
-//! pre-v1 draft line by line for a declaration to rewrite, chosen by an
-//! `is_v1_source` test at each site. `docs/10-language.md` A4.4 is the item
-//! that removed it: the draft no longer accepts edits -- `model_command::
-//! read_source_at` refuses one and names `jails model upgrade --to 1` -- so
-//! every function here is the CST edit and nothing else. The parameters those
-//! scanners needed to find a line by hand (a stable id to match `@id(...)`
-//! against, a keyword prefix, the label a rename had to pin with `@as`) went
-//! with them, because the CST is indexed by declaration rather than searched.
+//! Every function here is a CST edit and nothing else. The pre-v1 draft does
+//! not accept edits -- `model_command::read_source_at` refuses one and names
+//! `jails model upgrade --to 1` -- so there is no line-by-line scanner beside
+//! these, and no parameters for finding a line by hand: the CST is indexed by
+//! declaration rather than searched.
 
 use jails_support::{Failure, Result};
 

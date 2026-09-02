@@ -1,13 +1,10 @@
 use super::*;
 
-/// Retire the stored entity and its table, as a canonical project does.
+/// Retire the stored entity and its table.
 ///
-/// **No `--migrate`, no `--datasource`, and that is the change.** Canonical
-/// retirement is model subtraction plus one appended forward migration: the
+/// Retirement is model subtraction plus one appended forward migration: the
 /// plan says what the schema becomes and `jails migrate` is what runs it
-/// against a database. There is no post-commit effect to fail, and so no
-/// effect ledger to retry from -- which is what the two tests below used to
-/// be about, and what the strangler removed rather than reimplemented.
+/// against a database, so there is no post-commit effect that can fail.
 fn drop_the_table(command: &mut std::process::Command) -> &mut std::process::Command {
     command.args([
         "destroy",
@@ -35,11 +32,9 @@ fn migrations(root: &Path) -> Vec<String> {
 
 /// Retiring a table twice appends one migration, not two.
 ///
-/// **Schema history is append-only, so a second identical retirement has to
-/// be a no-op rather than a second `drop table`.** Flyway would run both, and
-/// the second fails against a table that is already gone -- which turns a
-/// re-run of the same command, the thing convergence is supposed to make
-/// safe, into a broken database.
+/// Schema history is append-only, so a second identical retirement is a
+/// no-op rather than a second `drop table`: Flyway would run both, and the
+/// second fails against a table that is already gone.
 #[test]
 fn rerunning_the_same_retirement_appends_one_forward_migration() {
     let root = temp_dir("task-drop-idempotent");
@@ -117,9 +112,8 @@ fn postgres_17_accepts_the_retirement_jails_wrote() {
         return;
     };
 
-    // Through the shared reservation helper rather than a third copy of
-    // `bind(0)`, `read`, `close`: the copies are how the two-ports-one-number
-    // bug in `AppSuiteServices` went unnoticed. See its docs.
+    // Through the shared reservation helper, so two reservations cannot
+    // return one port number.
     let port = common::reserve_loopback_ports(1)[0];
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -220,12 +214,9 @@ fn postgres_17_accepts_the_retirement_jails_wrote() {
     let tools = temp_dir("task-drop-postgres-17-bin");
     std::os::unix::fs::symlink(&psql, tools.join("psql")).unwrap();
 
-    // **The retirement writes SQL; running it is a separate act.** Canonical
-    // removal is model subtraction plus one appended forward migration -- no
-    // datasource, no post-commit effect, nothing that can half-succeed
-    // against a live database while the plan says it committed. What this
-    // test still answers is the only question a real PostgreSQL can: that the
-    // statement jails wrote is one PostgreSQL 17 actually accepts.
+    // The retirement writes SQL; running it is a separate act. What a real
+    // PostgreSQL answers here is that the statement jails wrote is one it
+    // accepts.
     let dropped = drop_the_table(&mut jails_cmd(&root, Some(&tools)))
         .output()
         .unwrap();
@@ -273,9 +264,8 @@ fn postgres_17_accepts_the_retirement_jails_wrote() {
 
     // The model's own view, with no datasource: the entity is retired and the
     // migration that retires it is in history. Comparing that against a live
-    // catalog is `resource status --datasource`, which the canonical path
-    // does not answer yet -- `plan.md` tracks it, and until then this asserts
-    // the half jails is the authority on.
+    // catalog is `resource status --datasource`, which is not answered yet, so
+    // this asserts the half jails is the authority on.
     let status = jails_cmd(&root, Some(&tools))
         .args(["resource", "status", "Task", "--output", "json"])
         .output()

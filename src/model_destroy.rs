@@ -33,11 +33,11 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
     let label = java_to_label(&request.name);
     let (patch, next_source, patch_bytes) = if request.kind == ArtifactKind::Association {
         // **Retiring a foreign key is a forward migration, not the un-running
-        // of one.** Refusing the verb -- which is where this started -- left
-        // both halves of an association permanently undestroyable, so the
-        // command exists and names the accepted constraint: the compiler drops
-        // exactly `confirmed_name` and refuses a relation that merely stopped
-        // being declared.
+        // of one.** Refusing the verb would leave both halves of an
+        // association permanently undestroyable, so the command exists and
+        // names the accepted constraint: the compiler drops exactly
+        // `confirmed_name` and refuses a relation that merely stopped being
+        // declared.
         if request.storage.is_some() || request.confirm_table.is_some() {
             return Err(Failure::Told(
                 "an association has no table of its own to retire.\n       fix: remove the storage flags"

@@ -1,7 +1,7 @@
 //! JDL v1 — the authoring boundary.
 //!
-//! `.jails/model.jdl` is the file a reader edits, and `jdl-sol.md` is its
-//! specification. This module is the whole language: a lossless lexer, a CST
+//! `.jails/model.jdl` is the file a reader edits, and `docs/01-jdl-v1.md` is
+//! its specification. This module is the whole language: a lossless lexer, a CST
 //! that keeps every input byte, syntax-preserving edits, a formatter, and a
 //! parser that produces the same `source::Document` the TOML input does — so
 //! the linker below is shared and the two dialects cannot diverge about what a

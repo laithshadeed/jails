@@ -8,19 +8,16 @@
 //! unpublished event cannot disagree, at the cost of a table, a worker and
 //! at-least-once delivery a consumer has to deduplicate.
 //!
-//! **The canonical shape is not the legacy one, and the difference is the
-//! whole point.** `spring/outbox.rs` wraps the use case in a second
-//! `Outbox<X>UseCase` bean that delegates to a storing one and stages
-//! afterwards, because the legacy generator had already written a service it
-//! could not reach inside. Here the command *port* is the ABI and
+//! **One bean, one transaction.** The command *port* is the ABI and
 //! `Jdbc<X>Command` is the one implementation of it, so staging goes in the
-//! statement's own method under `@Transactional`. One bean, one transaction,
-//! and no `@Primary` deciding which of two implementations Spring injects.
+//! statement's own method under `@Transactional`. A second `Outbox<X>` bean
+//! delegating to a storing one and staging afterwards would need `@Primary`
+//! deciding which of two implementations Spring injects.
 //!
 //! **The event's identity is minted, never mapped.** Both the command and the
-//! target usually carry an `id` of the same type, and taking the row's made
+//! target usually carry an `id` of the same type, and taking the row's makes
 //! the event id equal the resource id -- so the outbox's
-//! `on conflict (id) do nothing` silently discarded the *second* event about
+//! `on conflict (id) do nothing` silently discards the *second* event about
 //! that resource instead of deduplicating a retried stage. In the model that
 //! identity is a `ParameterSource::Typed` component: a payload field the
 //! target does not carry, which is exactly what this can supply and a direct
@@ -382,7 +379,7 @@ fn rendered(
 
 /// The table, and the partial index the relay claims through.
 ///
-/// **The DDL is `templates/sql/outbox.sql`, shared with the legacy engine.**
+/// **The DDL is `templates/sql/outbox.sql`.**
 /// It is one table and the store's statements are one file, so a second copy
 /// drifts on exactly the column nobody re-reads -- a `select` naming one the
 /// `create table` never had, found by `flyway migrate` in a project that was

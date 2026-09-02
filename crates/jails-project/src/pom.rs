@@ -40,11 +40,10 @@ pub const MIN_RELEASE: u32 = 21;
 
 /// The Spring Boot line jails' own templates are written against.
 ///
-/// One owner, for the same reason `TARGET_RELEASE` has one: it was spelled
-/// only inside `templates/new/offline_pom.xml`, where nothing could read it.
-/// `jails new --gradle` has to *name* the Boot version in the build file it
-/// writes, and a second literal is how the Maven fixture and the Gradle
-/// fixture come to bootstrap different Boot versions with nothing saying so.
+/// One owner, for the same reason `TARGET_RELEASE` has one: `jails new
+/// --gradle` has to *name* the Boot version in the build file it writes, and a
+/// second literal is how the Maven fixture and the Gradle fixture come to
+/// bootstrap different Boot versions with nothing saying so.
 ///
 /// It is a default, not a floor. `--boot` overrides it, and a Boot version
 /// older than this one is the case that flag exists for.
@@ -88,9 +87,8 @@ pub struct Dependency {
 /// Under a Spring Boot parent the BOM owns the version; without one it has to
 /// be pinned, because a `<dependency>` with no `<version>` and no BOM is not
 /// a pom Maven will read at all -- `'dependencies.dependency.version' ... is
-/// missing`, and every goal fails, including `validate`. That is plan.md
-/// §8.1, and it is the reason nothing versionless may be spliced into a plain
-/// project.
+/// missing`, and every goal fails, including `validate`. That is the reason
+/// nothing versionless may be spliced into a plain project.
 impl Dependency {
     /// This dependency as borrowed parts.
     pub fn borrowed(&self) -> DependencyRef<'_> {
@@ -211,9 +209,9 @@ pub fn has_dependency(pom: &str, group_id: &str, artifact_id: &str) -> bool {
 /// **Structural only, and deliberately so.** `doctor` is read-only by
 /// contract, so it cannot run `mvn validate` to find out -- and it should not
 /// need to: every one of these is decidable from the text, and the failure
-/// they cause is total. A pom missing `modelVersion` fails *every* goal, and
-/// `pom::read`'s `unwrap_or_default` meant `doctor` cheerfully reported
-/// fifteen checks over a project Maven could not open at all (plan.md §8.9).
+/// they cause is total. A pom missing `modelVersion` fails *every* goal, and a
+/// `doctor` that reads an unreadable pom as empty cheerfully reports fifteen
+/// checks over a project Maven cannot open at all.
 ///
 /// Each entry is (what is wrong, what to do about it).
 pub fn problems(pom: &str) -> Vec<(String, String)> {
@@ -800,18 +798,13 @@ fn indent_block(body: &str, indent: &str) -> String {
 // Facts the generated Java is shaped by
 // ---------------------------------------------------------------------------
 //
-// These read the pom and nothing else, and they moved here out of `generate`
-// so `model::Project` -- which caches the pom and answers both questions --
-// stops reaching up into the generator layer for them.
+// These read the pom and nothing else, and they sit here so `model::Project`
+// -- which caches the pom once and answers both questions -- never reaches
+// up into the generator layer for them.
 
-/// The Spring Boot major version from the parent pom, defaulting to 3 when it
-/// cannot be read -- the conservative choice, since the pre-4 package names
-/// still exist as deprecated aliases in some builds while the 4 ones simply
-/// do not exist before 4.
-/// The same decision, taken from a pom already in hand.
-///
-/// `Project` caches the pom once; re-reading it per renderer is exactly the
-/// information leakage abstract.md §4.3 names.
+mod retarget;
+pub use retarget::{with_parent_version, with_release_level};
+
 /// The Boot `(major, minor)` this pom's parent declares, when it declares one.
 ///
 /// The major alone is enough to choose an import; it is not enough to choose a
@@ -820,9 +813,6 @@ fn indent_block(body: &str, indent: &str) -> String {
 /// auto-configuration into `spring-boot-flyway` at 4.0 -- three boundaries
 /// inside two majors, and `add db` needs all three. `None` means the parent is
 /// absent or unreadable, which is a different answer from "old".
-mod retarget;
-pub use retarget::{with_parent_version, with_release_level};
-
 pub fn spring_boot_version_of(pom: &str) -> Option<(u32, u32)> {
     let after = &pom[pom.find("spring-boot-starter-parent")?..];
     let start = after.find("<version>")? + "<version>".len();
@@ -833,6 +823,10 @@ pub fn spring_boot_version_of(pom: &str) -> Option<(u32, u32)> {
     Some((major, minor))
 }
 
+/// The Spring Boot major version from the parent pom, defaulting to 3 when it
+/// cannot be read -- the conservative choice, since the pre-4 package names
+/// still exist as deprecated aliases in some builds while the 4 ones simply
+/// do not exist before 4.
 pub fn spring_boot_major_of(pom: &str) -> u32 {
     let Some(idx) = pom.find("spring-boot-starter-parent") else {
         return 3;
@@ -856,9 +850,9 @@ pub fn spring_boot_major_of(pom: &str) -> u32 {
 ///
 /// The Boot 4 spelling is not merely a rename: the class lives in
 /// `spring-boot-webmvc-test`, which `spring-boot-starter-test` does **not**
-/// bring in. A template that hardcoded it produced a test importing a package
-/// that does not exist on Boot 3 and, on Boot 4, one the POM had no dependency
-/// for -- which is why `spring::WEBMVC_TEST_STARTER` is spliced beside it.
+/// bring in. A template that hardcodes it produces a test importing a package
+/// that does not exist on Boot 3 and, on Boot 4, one the POM has no dependency
+/// for -- which is why [`WEBMVC_TEST_STARTER`] is spliced beside it.
 pub(crate) fn webmvc_test_import_for(boot_major: u32) -> &'static str {
     const LEGACY: &str = "org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest";
     const CURRENT: &str = "org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest";
@@ -895,16 +889,6 @@ pub(crate) fn with_main_class(pom: &str, fqcn: &str) -> Option<String> {
     Some(out)
 }
 
-/// The module those two annotations moved *into*.
-///
-/// The rename is the visible half and the smaller one. Boot 4 split the
-/// servlet test slice into `spring-boot-webmvc-test`, and
-/// `spring-boot-starter-test` does not bring it in -- verified in
-/// `deps/spring-boot/starter/spring-boot-starter-test/build.gradle`, which
-/// lists `spring-boot-test-autoconfigure` and not this. A generated
-/// `@WebMvcTest` compiles only when this is declared, so it lives beside the
-/// import it belongs to rather than with the capability that happens to emit
-/// one today.
 /// The module that starts a project's compose services for `spring-boot:run`.
 ///
 /// Optional, because it is a development convenience rather than something the
@@ -921,6 +905,15 @@ pub const SPRING_DOCKER_COMPOSE: Dependency = Dependency {
     optional: true,
 };
 
+/// The module the Boot 4 servlet test slice lives in.
+///
+/// The rename of `@WebMvcTest` is the visible half and the smaller one. Boot 4
+/// split the slice into `spring-boot-webmvc-test`, and
+/// `spring-boot-starter-test` does not bring it in -- verified in
+/// `deps/spring-boot/starter/spring-boot-starter-test/build.gradle`, which
+/// lists `spring-boot-test-autoconfigure` and not this. A generated
+/// `@WebMvcTest` compiles only when this is declared, so it lives beside the
+/// import it belongs to.
 pub const WEBMVC_TEST_STARTER: Dependency = Dependency {
     group_id: "org.springframework.boot",
     artifact_id: "spring-boot-starter-webmvc-test",
@@ -1278,10 +1271,9 @@ mod tests {
         assert_eq!(removed, pom);
     }
 
-    /// The branch the old inverse test never reached: `add_plugin` created
-    /// the whole `<build><plugins>` nest, so removing the plugin has to take
-    /// it back out. Otherwise every `destroy` leaves an empty scaffold in a
-    /// POM the reader owns.
+    /// `add_plugin` creates the whole `<build><plugins>` nest, so removing the
+    /// plugin has to take it back out. Otherwise every `destroy` leaves an
+    /// empty scaffold in a POM the reader owns.
     #[test]
     fn remove_plugin_takes_back_the_nest_add_plugin_created() {
         let pom = "<project>\n    <artifactId>demo</artifactId>\n</project>\n";
@@ -1338,8 +1330,7 @@ mod tests {
 
     #[test]
     fn problems_names_what_stops_maven_reading_the_pom() {
-        // The exact shape `g scaffold` used to leave behind on a plain
-        // project: a Spring starter with no version and no BOM.
+        // A Spring starter with no version and no BOM, on a plain project.
         let broken = "<project>\n<groupId>com.example</groupId>\n<artifactId>demo</artifactId>\n\
              <dependencies><dependency><groupId>org.springframework.boot</groupId>\
              <artifactId>spring-boot-starter-validation</artifactId></dependency></dependencies>\

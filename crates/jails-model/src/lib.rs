@@ -23,9 +23,9 @@ mod layout;
 mod linker;
 mod model;
 mod naming;
-/// Exported for one reason: the legacy ladder has its own copy of §9.7's
-/// pluralization, in `jails-protocol`, which this crate cannot depend on. A
-/// test in `tests/` compares them, and needs to be able to call this one.
+/// Exported so an integration test in `tests/` can compare this crate's
+/// JDL v1 §9.7 pluralization with `jails-protocol`'s copy, which this crate
+/// cannot depend on.
 pub use naming::{lower_camel_case, plural_snake_case};
 mod operation;
 mod patch;

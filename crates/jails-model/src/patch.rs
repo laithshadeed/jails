@@ -52,9 +52,9 @@ pub enum ModelPatch {
     /// v1 the storage kinds are an axis rather than a capability -- `storage
     /// postgres` is what the reader declares and `cap db` is what the linker
     /// materializes from it -- so `add db` edits the app header *and* adds a
-    /// capability. Without this the patch carried only the second half, and
-    /// `add db` on a project that already had entities compiled them against
-    /// `dialect none` and refused: "no SQL type backend".
+    /// capability. A patch carrying only the second half compiles the
+    /// project's existing entities against `dialect none` and refuses: "no
+    /// SQL type backend".
     SetDialect(String),
     AddCapability(Capability),
     RemoveCapability(CapabilityId),
@@ -118,14 +118,13 @@ pub enum ModelPatch {
     AddRelation(crate::Relation),
     /// One entity projection, whole, with whatever arguments it carries.
     ///
-    /// **`AddFacet` cannot express this and the difference was silent.** A
-    /// facet is a bare set member, so `use scaffold(path: "/admin_api/…")` and
-    /// `use search(fields: [title])` reached the model with their arguments
-    /// dropped: the first `jails g` compiled against an entity that had
-    /// `Facet::Http` and no `Projection`, so `emit_resource_http` fell back to
-    /// the table name, and the next unrelated `jails sync` -- which reparses
-    /// the whole source -- quietly moved the route. Two commands, two answers,
-    /// no diagnostic between them.
+    /// **`AddFacet` cannot express this, and the difference is silent.** A
+    /// facet is a bare set member, so `use scaffold(path: "/admin_api/…")` or
+    /// `use search(fields: [title])` added as a facet reaches the model with
+    /// its arguments dropped: the entity has `Facet::Http` and no
+    /// `Projection`, the HTTP emitter falls back to the table name, and the
+    /// next full reparse moves the route. Two commands, two answers, no
+    /// diagnostic between them.
     ///
     /// Whole rather than `{ entity, kind }` for [`Self::AddRelation`]'s
     /// reason: the linker has already resolved a search projection's field
@@ -198,23 +197,20 @@ pub enum FieldAddPolicy {
 /// bytes, and the patched model has to equal what re-parsing those bytes
 /// yields or `model check --frozen` fails on the very next command.
 ///
-/// This replaced a heuristic that read the *existing* order and guessed --
-/// "already sorted by label" was taken to mean "the source states no order",
-/// which is true right up until a JDL entity happens to be declared
-/// alphabetically. Then appending `delta` to `alpha, beta, gamma` put it
-/// third in the model and fourth in the file. Only the frontend can answer
-/// this, so it is asked.
+/// Not inferred from the *existing* order: "already sorted by label" reads as
+/// "the source states no order" right up until a JDL entity happens to be
+/// declared alphabetically, and appending `delta` to `alpha, beta, gamma`
+/// then lands third in the model and fourth in the file. Only the frontend
+/// can answer this, so it is asked.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FieldPlacement {
     /// The source states field order and the edit appended: either JDL
     /// dialect. v1's parser records the order its CST walked, and the pre-v1
     /// renderer carries `field_order` across its TOML hop.
     Last,
-    /// The source states no order, so re-parsing sorts by label:
-    /// a `.jails/model.toml` table. It is the temporary compatibility input
-    /// and keeps this behaviour deliberately -- teaching a format on the
-    /// cutover's deletion list to state an order would be adding surface to
-    /// something being removed.
+    /// The source states no order, so re-parsing sorts by label: a
+    /// `.jails/model.toml` table, the compatibility input, which deliberately
+    /// learns nothing new.
     ByLabel,
 }
 

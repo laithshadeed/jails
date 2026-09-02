@@ -2,8 +2,8 @@
 //!
 //! **Two readers need this answer and must not differ**: the record renderer
 //! builds the components, and the proof renderer builds the request that binds
-//! to them. `bugs.md` B48 is what happens when each works it out for itself,
-//! so it is one module rather than one convention.
+//! to them. Each working it out for itself is how they drift, so it is one
+//! module rather than one convention.
 
 use super::*;
 
@@ -11,12 +11,12 @@ use super::*;
 ///
 /// **One answer, because two readers need it and they must not differ.** The
 /// record renderer builds the components from this, and `emit_http::proof`
-/// builds the request that binds to them from the same list. They disagreed
-/// before it existed: a query's `Input` takes entity fields, so its components
-/// are `java_member` (`userId`), while a command with linked parameters takes
+/// builds the request that binds to them from the same list. Without it they
+/// disagree: a query's `Input` takes entity fields, so its components are
+/// `java_member` (`userId`), while a command with linked parameters takes
 /// those, so its components are parameter labels (`user_id`). A test that
-/// guessed either spelling sent `user_id=1` at a record declaring `userId` and
-/// got a 400 -- `bugs.md` B48 in its second form.
+/// guesses either spelling sends `user_id=1` at a record declaring `userId`
+/// and gets a 400.
 ///
 /// The imports the components need are collected here too, for the same
 /// reason: the branch that decides the component decides which type it names.
@@ -55,9 +55,9 @@ pub(crate) fn input_components<'a>(
         }
         // **The linked parameters, not the flat `filters`.** A `--via` query
         // filters on a column of the *joined* entity, and the target's own
-        // field list cannot hold one -- so reading the flat list emitted an
-        // `Input` missing that component while the adapter bound it, and the
-        // endpoint answered over every row. Same choice the command arm above
+        // field list cannot hold one -- so reading the flat list emits an
+        // `Input` missing that component while the adapter binds it, and the
+        // endpoint answers over every row. Same choice the command arm above
         // already makes, and the same shape `Transition`'s own documentation
         // records for `sets`.
         OperationKind::Query(query) => {
@@ -114,8 +114,8 @@ pub(crate) fn record_shape(
 ///
 /// **`java_type_ref` imports an external type only when it is fully
 /// qualified**, which a model-declared entity never is -- so an operation
-/// `Input` in `application.queries` carrying a `MessageDirection` compiled
-/// against a symbol it never imported. The entity's own record gets away with
+/// `Input` in `application.queries` carrying a `MessageDirection` would
+/// compile against a symbol it never imports. The entity's own record gets away with
 /// it by living in the same package; nothing above the domain does.
 ///
 /// Called from every shape that can carry one rather than from `record_shape`,
@@ -221,8 +221,8 @@ pub(crate) fn parameter_components<'a>(
             import_declared_type(model, ty, imports);
             // **camelCase, like every other record component.** A parameter's
             // name is its stable label, which is snake -- so a command's
-            // `Input` shipped `user_id` and `is_read` while a query's, built
-            // from the field list, shipped `userId`. Two operation kinds
+            // `Input` would ship `user_id` and `is_read` while a query's, built
+            // from the field list, ships `userId`. Two operation kinds
             // disagreeing about the JSON wire format of the same column is not
             // a formatting difference.
             let member = parameter_member(parameter);
@@ -249,19 +249,6 @@ pub(crate) fn parameter_member(parameter: &OperationParameter) -> String {
     jails_model::lower_camel_case(&parameter.name)
 }
 
-/// The name a form field arrives under, where it is not the component's own.
-///
-/// **Spring's data binder has no naming strategy.** Jackson has one and
-/// applies it to JSON without help, so a project whose wire is snake_case
-/// still binds a *form* field called `userId` unless the component says
-/// otherwise -- and a form post at a `@ModelAttribute` endpoint then delivers
-/// `null` for every multi-word component, silently. `@BindParam` is what says
-/// otherwise, and it is emitted only where the two spellings differ: an
-/// annotation restating the default is noise in every one-word component.
-///
-/// Read off the model's own settings rather than a manifest, for the reason
-/// `sql_dialect` reads the driver: `spring.jackson.property-naming-strategy`
-/// is where a project states this, and jails does not need to be told again.
 /// What binds one component of a form-bound request.
 ///
 /// **The declaration outranks the derivation.** `@BindParam` is derived from
@@ -301,6 +288,19 @@ pub(crate) fn wire_name(binder: Binder<'_>, member: &str) -> Option<String> {
     (wire != member).then_some(wire)
 }
 
+/// The name a form field arrives under, where it is not the component's own.
+///
+/// **Spring's data binder has no naming strategy.** Jackson has one and
+/// applies it to JSON without help, so a project whose wire is snake_case
+/// still binds a *form* field called `userId` unless the component says
+/// otherwise -- and a form post at a `@ModelAttribute` endpoint then delivers
+/// `null` for every multi-word component, silently. `@BindParam` is what says
+/// otherwise, and it is emitted only where the two spellings differ: an
+/// annotation restating the default is noise in every one-word component.
+///
+/// Read off the model's own settings rather than a manifest:
+/// `spring.jackson.property-naming-strategy` is where a project states this,
+/// and jails does not need to be told again.
 fn bind_param(
     binder: Binder<'_>,
     form: bool,

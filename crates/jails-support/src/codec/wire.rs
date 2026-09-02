@@ -1,14 +1,11 @@
 //! Rust's own types, on the wire.
 //!
 //! Each impl delegates to the [`Encoder`]/[`Decoder`] method that already
-//! framed that shape, so the bytes are exactly what a hand-written codec wrote
-//! -- which is what lets `#[derive(Codec)]` replace those codecs without moving
-//! a single byte, and the golden ledgers stay valid across the change.
+//! frames that shape, so the bytes are exactly what a hand-written codec
+//! writes and `#[derive(Codec)]` can stand in for one without moving a byte.
 //!
 //! Without these the trait stops at the first `bool`: a record holding one
 //! cannot be written generically, so its codec has to be spelled out by hand.
-//! That is why 101 struct-shaped impls existed across the workspace saying
-//! nothing except "these fields, in this order".
 
 use super::{Codec, Decoder, Encoder};
 use crate::Result;

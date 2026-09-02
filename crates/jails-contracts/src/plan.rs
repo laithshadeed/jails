@@ -1,9 +1,9 @@
 //! The exact reviewed transition: `Plan`, its operations, and the
 //! content-addressed `PlanBundle` that carries their bytes.
 //!
-//! **This is the document confirmation is about.** `simplify-sol.md`'s fifth
-//! contract is that preview, export, confirmation and apply all refer to one
-//! digest and that apply never replans, which means every fact the executor
+//! **This is the document confirmation is about.** Preview, export,
+//! confirmation and apply all refer to one digest and apply never replans,
+//! which means every fact the executor
 //! needs has to be *in here* rather than re-derivable. Hence the shape: a
 //! `Plan` carries preconditions, a semantic summary and a list of typed
 //! operations, and a `PlanBundle` adds the `trees` and `blobs` those
@@ -51,14 +51,12 @@ pub struct ModelFileUpdate {
     /// Authoring sources this update replaces, retired in the same plan.
     ///
     /// **A model source that stops being the model is reader-owned source.**
-    /// The one caller is the upgrade that moves a project off
-    /// `.jails/model.toml`: writing `.jails/model.jdl` without retiring the
-    /// TOML in the *same* exact plan leaves two editable model sources, which
-    /// is the state `docs/00-contracts.md` forbids and the whole reason the
-    /// upgrade exists. It is a `RemoveReaderFile` rather than a new operation
-    /// because that is exactly what it is once it is no longer the model, and
-    /// inventing a seventh operation for one caller would widen the vocabulary
-    /// every executor and verifier has to cover.
+    /// The one caller is `model upgrade`, which writes `.jails/model.jdl` and
+    /// retires `.jails/model.toml` in the *same* exact plan, because two
+    /// editable model sources is the state the contracts forbid. It is a
+    /// `RemoveReaderFile` rather than a new operation because that is exactly
+    /// what a retired source is, and a seventh operation for one caller would
+    /// widen the vocabulary every executor and verifier has to cover.
     pub retire: Vec<ProjectPath>,
 }
 

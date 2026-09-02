@@ -1,13 +1,11 @@
 //! An `AppModel`, written back out as JDL v1.
 //!
-//! **This is what `.jails/model.toml` needs to stop being a second editable
-//! source.** §22 gives the TOML compatibility input one exit -- "legacy TOML
-//! model state is imported into the same v1 AST through a separate one-shot
-//! command" -- and that command needs a model rendered as v1 source. Nothing
-//! rendered one: [`super::render`] goes the other way (parsed JDL down to the
-//! TOML boundary) and [`super::upgrade`] rewrites pre-v1 *text* rather than
-//! taking a model, so a project on TOML could be edited forever and never
-//! move. `docs/00-contracts.md` forbids exactly that state.
+//! **This is the one exit for the `.jails/model.toml` compatibility input.**
+//! JDL v1 §22 has TOML model state "imported into the same v1 AST through a
+//! separate one-shot command", and that command needs a model rendered as v1
+//! source: [`super::render`] goes the other way (parsed JDL down to the TOML
+//! boundary) and [`super::upgrade`] rewrites pre-v1 *text* rather than
+//! taking a model.
 //!
 //! **It is fail-closed twice over, and the second one is the point.** Every
 //! construct it cannot express refuses by name rather than being dropped --
@@ -140,10 +138,8 @@ pub(super) fn refuse(
 /// because a facet carries neither a field list nor an operation set.
 ///
 /// **Typed rather than a label**, so the upgrade can hand the answer straight
-/// to `AddProjection`. Returning the `use` spelling made the caller map it
-/// back, and a match over six strings that only four values can reach needs a
-/// refusal arm for a case that cannot happen -- a message with no next step to
-/// name, about a mistake the reader did not make.
+/// to `AddProjection` instead of mapping a `use` spelling back through a
+/// match that needs a refusal arm for a case that cannot happen.
 pub fn projection_for_facet(facet: crate::Facet) -> Option<crate::ProjectionKind> {
     match facet {
         crate::Facet::Repository => Some(crate::ProjectionKind::Repository),
@@ -163,7 +159,7 @@ pub fn projection_for_facet(facet: crate::Facet) -> Option<crate::ProjectionKind
 /// **One authority, two callers.** JDL v1 reads `storage postgres` as a `db`
 /// capability, so the renderer must not emit a redundant `cap db` -- and the
 /// upgrade off `.jails/model.toml` must *add* one, because the TOML dialect is
-/// not a capability and §22 records that difference as a note the reviewer
+/// not a capability and JDL v1 §22 records that difference as a note the reviewer
 /// reads. Both need the same mapping, and a second copy of it is how a project
 /// upgrades into a model with a JDBC adapter nobody mentioned.
 pub fn storage_capability(dialect: &str) -> Option<&'static str> {
@@ -231,8 +227,8 @@ mod tests {
 
     /// The constructs the golden corpus never exercises.
     ///
-    /// **"Proven over 61 models" is only as strong as what those models
-    /// contain**, and twelve constructs appear in none of them: `dep`,
+    /// **The golden corpus is only as strong as what its models contain**,
+    /// and twelve constructs appear in none of them: `dep`,
     /// `prop`, `eject`, a composite `unique`, `@scope(claim:)`, `@updated`,
     /// `@length`, `@retired`, `@internal`, `partition by`, `use value` and an
     /// enum wire value. The corpus is what the *tool* emits; this is what the
@@ -297,17 +293,9 @@ component service Pricing
         render(&model).expect("every construct the language allows must round trip");
     }
 
-    /// Every model in the golden corpus, rendered and linked back.
-    ///
-    /// **A hand-written case proves the constructs somebody thought of.** The
-    /// goldens are the models the tool actually produces, across every
-    /// generator kind and capability, so they cover the combinations nobody
-    /// would write down -- and [`render`] refuses rather than returns on a
-    /// mismatch, so this asserts the refusal never fires rather than
-    /// re-deriving the comparison here.
     /// The specification's own flagship example, rendered and linked back.
     ///
-    /// §21 makes the §4 example an executable fixture, and it carries
+    /// JDL v1 §21 makes the §4 example an executable fixture, and it carries
     /// constructs the goldens do not: a scoped field, an `if-match` guard, a
     /// `resolve`, and an ejection. If the renderer can reproduce that, it can
     /// reproduce the language as documented rather than as this tool happens
@@ -326,12 +314,11 @@ component service Pricing
             .and_then(|rest| rest.split("```").next())
             .expect("§4 still carries one jdl block");
         // **The one line that does not link, removed rather than skipped.**
-        // §16.4's readable ejection path is a recorded gap -- `tests/cli`'s
+        // JDL v1 §16.4's readable ejection path is a recorded gap --
+        // `tests/cli`'s
         // `the_specification_complete_example_links_except_its_one_recorded_gap`
-        // pins both halves of it -- and the first version of this test bailed
-        // out when the example failed to link, which meant it asserted
-        // nothing at all and reported green. A proof that passes by returning
-        // is the failure this repository names in its own workflow notes.
+        // pins both halves of it -- and a test that bails out when the
+        // example fails to link asserts nothing and reports green.
         let example = example.replace("eject Task.repo.fake\n", "");
         let model =
             super::super::parse(&example).expect("§4 links once its one recorded gap is removed");
@@ -410,6 +397,14 @@ fields = ["title"]
         assert!(rendered.contains("command CreateNote(title)"), "{rendered}");
     }
 
+    /// Every model in the golden corpus, rendered and linked back.
+    ///
+    /// **A hand-written case proves the constructs somebody thought of.** The
+    /// goldens are the models the tool actually produces, across every
+    /// generator kind and capability, so they cover the combinations nobody
+    /// would write down -- and [`render`] refuses rather than returns on a
+    /// mismatch, so this asserts the refusal never fires rather than
+    /// re-deriving the comparison here.
     #[test]
     fn every_golden_model_survives_being_rendered_and_linked_back() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden");

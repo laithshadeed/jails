@@ -11,23 +11,16 @@
 //! # /jails:db
 //! ```
 //!
-//! `remove db` then deletes exactly what `add db` wrote, `add kafka` and
-//! `add db` stack without either knowing about the other, and
-//! `unowned_properties` can diff the block against what jails would write and
-//! *name the lines it did not*, before deleting them. A real project had about
-//! twenty hand-tuned Kafka properties inside jails' own markers.
+//! `remove db` then deletes exactly what `add db` wrote, and `add kafka` and
+//! `add db` stack without either knowing about the other. A caller that wants
+//! to know what the reader added inside a block can diff its body against what
+//! jails would write and name the lines it did not.
 //!
 //! ## Why this is its own crate
 //!
-//! That format had **five owners** — `compose.rs`, `add.rs`,
-//! `add/database.rs`, `add/test_wiring.rs` and `doctor.rs` each built and
-//! parsed it with their own `format!`. Same shape as `process.rs` before it was
-//! extracted, and with the same consequence waiting: a change to the format,
-//! or to the rule about the trailing newline, has to be made in five places and
-//! will be made in four. `plan.md` §11 asks for exactly this collection, and
-//! calls it a prerequisite for §6.2 option F — a data-only kind cannot declare
-//! "and this property block" until the block is a value rather than a string
-//! literal in whoever writes it.
+//! The format has one owner. A change to it, or to the rule about the
+//! trailing newline, is made here and nowhere else; the architecture gate
+//! fails on a `# jails:` literal outside this crate.
 //!
 //! ## Not a general codemod
 //!
@@ -59,10 +52,9 @@ impl Marked<'_> {
     /// What an opening marker begins with, in a `#`-commented file.
     ///
     /// For the callers that ask whether *any* marker is present rather than
-    /// looking one up -- `CanonicalYamlMapping::parse` refuses a compose
-    /// mapping that carries one, because "markers belong to the format
-    /// owner". Without this it spelled the prefix itself, which is a second
-    /// place that has to be edited if the format ever changes and a
+    /// looking one up -- a compose mapping that carries one is refused,
+    /// because markers belong to the format owner. Spelling the prefix at the
+    /// call site is a second place to edit if the format changes and a
     /// validation that silently stops refusing if it is not.
     pub const OPEN_PREFIX: &'static str = "# jails:";
 
@@ -96,11 +88,9 @@ impl<'a> Marked<'a> {
 
     /// The block this project-relative path's format would carry.
     ///
-    /// **One function, so the splice and the unsplice cannot disagree.** Both
-    /// live in `projection/edit.rs` and both used to call `new`, which is fine
-    /// while every marked file is a properties file and silently wrong the
-    /// moment one is not: a block written with `--` markers and stripped by a
-    /// scan for `#` ones is a block `remove` leaves behind.
+    /// One function, so the splice and the unsplice cannot disagree: a block
+    /// written with `--` markers and stripped by a scan for `#` ones is a
+    /// block `remove` leaves behind.
     pub fn for_path(path: &str, marker: &'a str) -> Self {
         Self {
             comment: match path.rsplit('.').next() {
@@ -196,9 +186,9 @@ impl<'a> Marked<'a> {
 
 /// Byte bounds for one whole line whose contents equal `wanted` exactly.
 ///
-/// Marker names are user-derived in a few generators. Substring matching made
-/// `durable-job-email` mistake `durable-job-email-sender` for its own block and
-/// then cut the longer marker in half during destroy. Line equality keeps
+/// Marker names are user-derived in a few generators, so a substring match
+/// lets `durable-job-email` mistake `durable-job-email-sender` for its own
+/// block and cut the longer marker in half on destroy. Line equality keeps
 /// prefix-related blocks independent while retaining the trailing newline.
 fn exact_line(text: &str, wanted: &str, from: usize) -> Option<(usize, usize)> {
     let mut start = from;

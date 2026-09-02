@@ -13,13 +13,10 @@
 //!
 //! # The one diagnostic contract
 //!
-//! §18.3 asks for one. This type is it, and the crates above are meant to
-//! adopt it rather than invent a third vocabulary -- `jails-compiler` and
-//! `jails-workspace` return `Result<_, String>` today, with no code and no
-//! path, so a refusal from the compiler and a refusal from the parser are
-//! different kinds of object and only one of them can be pointed at anything.
-//! `Diagnostic::new` and [`Diagnostics::from_vec`] are public for exactly that
-//! reason: nothing above this crate could construct one before.
+//! JDL v1 §18.3 asks for one. This type is it, and `Diagnostic::new` and
+//! [`Diagnostics::from_vec`] are public so the crates above adopt it rather
+//! than a second vocabulary: a `Result<_, String>` has no code and no path,
+//! so a refusal shaped that way cannot be pointed at anything.
 //!
 //! **The code namespace is closed, one range per phase.** A code says which
 //! pass refused, so the namespace is owned by the crate that owns the pass:
@@ -27,7 +24,7 @@
 //! | prefix | phase | crate |
 //! |---|---|---|
 //! | `JDL####` | lexing and parsing JDL v1 | `jails-model`, `jdl/v1/` |
-//! | `model-*` | linking, §18.2's passes 2-9 | `jails-model` |
+//! | `model-*` | linking (JDL v1 §18.2) | `jails-model` |
 //! | `compile-*` | semantic lowering | `jails-compiler` |
 //! | `workspace-*` | capture, materialization, execution | `jails-workspace` |
 //!
@@ -35,12 +32,10 @@
 //! `tests/architecture/` holds that, so the third vocabulary cannot reappear
 //! under a prefix that already means something else.
 //!
-//! **`plan-*` was the obvious prefix for the workspace and is taken.** The
-//! gate found `plan-refused` on its first run -- a member of `jails-prepare`'s
-//! `label()` table of command *outcomes*, beside `input-invalid` and
-//! `tool-failed`, which is a different vocabulary that happens to share a
-//! word. Two vocabularies under one prefix is the thing this table exists to
-//! prevent, so the workspace gets `workspace-*`.
+//! **The workspace prefix is `workspace-*`, not `plan-*`**: `plan-refused`
+//! already names a command *outcome*, beside `input-invalid` and
+//! `tool-failed`, and two vocabularies under one prefix is the thing this
+//! table exists to prevent.
 //!
 //! **The root binary shares `model-*`, deliberately.** `model-io` and
 //! `model-generated-drift` are emitted by `src/model_command.rs` into the
@@ -67,7 +62,7 @@ use std::fmt::{Display, Formatter};
 
 /// Whether a diagnostic refuses the model or only reports on it.
 ///
-/// §18.3: "Warnings cannot stand in for refused safety checks. A fact that
+/// JDL v1 §18.3: "Warnings cannot stand in for refused safety checks. A fact that
 /// would change generated behavior is either modeled, derived and displayed,
 /// or rejected." So [`Severity::Warning`] is for what a reader may ignore
 /// without changing what jails emits, and nothing else.

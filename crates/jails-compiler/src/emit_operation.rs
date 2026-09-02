@@ -142,10 +142,10 @@ pub(crate) fn lower_and_emit(
 /// **The flat `Query.filters` cannot express a joined filter**, which is the
 /// same shape [`jails_model::Transition`]'s own documentation records for
 /// `sets`: a compatibility projection that emitters read in preference to the
-/// linked semantics beside it. A `--via` query put `user.email` in
-/// `semantics.parameters` and the target's field list could not hold it, so
-/// the filter was dropped without a word -- an endpoint that answered, and
-/// answered over every row.
+/// linked semantics beside it. A `--via` query puts `user.email` in
+/// `semantics.parameters` and the target's field list cannot hold it, so
+/// reading the flat list drops the filter without a word -- an endpoint that
+/// answers, and answers over every row.
 pub(super) struct QueryFilter<'a> {
     /// The entity whose table the column is on -- the query's own target, or
     /// one it joins. Carried rather than re-derived because the answer is
@@ -323,9 +323,8 @@ fn stored_entity<'a>(
 ///
 /// Shared because commands and transitions publish identically and the rule
 /// -- every emitted event, an event of another entity refuses -- must not get
-/// two implementations that can disagree. `emit` is repeatable in
-/// `jdl-sol.md` §12.2 and §12.4; transitions kept only the first and commands
-/// published none at all.
+/// two implementations that can disagree. `emit` is repeatable (JDL v1 §12.2
+/// and §12.4), so every declared event is published, not only the first.
 ///
 /// The arguments are read off `result`, the row the statement returned, so an
 /// event payload always reports what the database actually stored rather than
@@ -400,8 +399,8 @@ pub(super) fn publications(
                 // A component the target row does not carry needs a value
                 // from somewhere, and a *direct* publication has none: the
                 // command's own inputs are gone by the time the row comes
-                // back, and inventing one is how an event's identity silently
-                // became the row's. Staging happens inside the transaction
+                // back, and inventing one would silently make an event's
+                // identity the row's. Staging happens inside the transaction
                 // that made the row, which is where the two values a payload
                 // legitimately mints -- its own id and the moment it happened
                 // -- can be produced honestly.
@@ -440,10 +439,10 @@ pub(super) fn publications(
 
 /// The ordering this query renders, with its direction.
 ///
-/// The direction is why this is not `resolve_fields`. It read a flat
-/// `Vec<FieldId>` that had nowhere to hold one, so `order by [createdAt desc]`
-/// compiled to `order by created_at` and a newest-first query returned
-/// oldest-first with nothing to say so.
+/// The direction is why this is not `resolve_fields`: a flat `Vec<FieldId>`
+/// has nowhere to hold one, so `order by [createdAt desc]` would compile to
+/// `order by created_at` and a newest-first query would return oldest-first
+/// with nothing to say so.
 ///
 /// An ordering qualified by a join alias refuses: the `select` this emitter
 /// builds names one table, so ordering by another one's column would produce

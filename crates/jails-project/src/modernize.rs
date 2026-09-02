@@ -8,9 +8,8 @@
 //! property" before a task runs. A missing `useJUnitPlatform()` reports "the
 //! test task did not discover any tests" rather than "your tests are JUnit 5".
 //! `DATETIME` in `schema.sql` fails as a bean-creation error four `Caused by`
-//! levels above the actual message. Every one of these was hit, in this order,
-//! upgrading one real project -- and the sequence is the whole content of this
-//! module.
+//! levels above the actual message. That sequence is the whole content of
+//! this module.
 //!
 //! **What it will not do.** It changes the build, and it reports what the
 //! upgrade breaks in code the reader owns. A Jackson 2 import is not rewritten
@@ -31,10 +30,9 @@ use jails_support::Result;
 /// One file this upgrade rewrites, and the reasons.
 ///
 /// The bytes travel in `model::Artifact` rather than in a field of their own:
-/// abstract.md §4.1 found four shapes for "a file to write" and settled on
-/// one, and a fifth invented here would be the same mistake with a newer date
-/// on it. `Artifact::path` is **project-relative** here, because every
-/// consumer of this plan wants a `ProjectPath`.
+/// there is one shape for "a file to write", and a second invented here would
+/// be a second one to keep in step. `Artifact::path` is **project-relative**
+/// here, because every consumer of this plan wants a `ProjectPath`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Step {
     pub artifact: crate::model::Artifact,
@@ -276,8 +274,9 @@ fn maven(sources: &Sources, upgrade: &mut Upgrade) {
 
 /// `DATETIME` in a Spring-initialised schema, which H2 2.x does not have.
 ///
-/// Verified the hard way: H2 2.4.240 answers `Unknown data type: "DATETIME"`,
-/// while the H2 that Boot 2.7 manages accepts it. The rewrite is exact rather than a guess
+/// Verified against a real H2 2.4.240, which answers `Unknown data type:
+/// "DATETIME"`, while the H2 that Boot 2.7 manages accepts it. The rewrite is
+/// exact rather than a guess
 /// -- it is gated on H2 actually being this project's driver, and `timestamp`
 /// is the type H2 documents in its place -- which is the same bargain
 /// `Dialect::column_type` takes for `timestamptz`.
@@ -382,10 +381,10 @@ fn source_breaks(sources: &Sources, upgrade: &mut Upgrade) {
         let blanked = jails_java::java::blanked(text);
         if blanked.contains("com.fasterxml.jackson") {
             // Split by whether the rename is the whole migration. Refusing
-            // every file was too blunt: it left a project that jails had just
-            // moved to Boot 4 unable to compile, over three imports whose
-            // types exist in 3.x under the same names -- and the reader was
-            // handed a paragraph instead of a working build.
+            // every file is too blunt: it leaves a project jails has just
+            // moved to Boot 4 unable to compile over imports whose types exist
+            // in 3.x under the same names, and hands the reader a paragraph
+            // instead of a working build.
             match JACKSON_3_CHANGED.iter().any(|name| blanked.contains(name)) {
                 true => jackson.push(path.clone()),
                 false => upgrade.edits.push(Step {

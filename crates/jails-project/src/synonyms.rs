@@ -1,10 +1,9 @@
 //! Which directory name means which layer, and what to do when the answer is
 //! not one.
 //!
-//! `plan.md` §12's classification, at the layer that owns `jails.toml` and
-//! `LAYERS_IN_ORDER` rather than at the binary, because two callers need it:
-//! `jails adopt` and the transaction route that records the same `[layout]`
-//! table as one commit. What stays in the command is the printing.
+//! The classification behind `jails adopt`, at the layer that owns
+//! `jails.toml` and `LAYERS_IN_ORDER` rather than at the binary. What stays in
+//! the command is the printing.
 //!
 //! ## Three rules, and each is the point
 //!
@@ -119,12 +118,11 @@ pub fn readings(names: &[String]) -> Vec<Reading> {
     names
         .into_iter()
         .map(|name| {
-            // **Matched on the last segment, recorded whole.** A name may
-            // now be a dotted path -- `infra.jdbc` -- because a layer can be
-            // nested and `Config::layers()` has always honoured one. What
-            // makes it that layer is its own name; what has to be written down
-            // is where it is. For an undotted name the two are the same
-            // string, so this is a strict generalisation.
+            // **Matched on the last segment, recorded whole.** A name may be
+            // a dotted path -- `infra.jdbc` -- because a layer can be nested
+            // and `Config::layers()` honours one. What makes it that layer is
+            // its own name; what has to be written down is where it is. For
+            // an undotted name the two are the same string.
             let leaf = name
                 .rsplit('.')
                 .next()
@@ -195,15 +193,11 @@ mod tests {
 
     /// A nested directory is classified by its leaf and recorded whole.
     ///
-    /// `jails adopt` used to record the *first* package segment, so a class in
-    /// `infra/jdbc` was adopted as `adapters = "infra"` -- a package holding no
-    /// Java at all, only the subpackage the class is really in. Every later
-    /// command would then have been pointed at an empty tree, and nothing
-    /// would have reported it, because `Config::layers()` honours a nested
-    /// layout perfectly well and had no way to know this one was invented.
-    ///
-    /// The corpus entry `tests/corpus/spring-nested-adapters` is what found
-    /// it.
+    /// Recording only the *first* package segment adopts a class in
+    /// `infra/jdbc` as `adapters = "infra"` -- a package holding no Java at
+    /// all -- and every later command is then pointed at an empty tree with
+    /// nothing to report it, because `Config::layers()` honours a nested
+    /// layout and cannot know this one was invented.
     #[test]
     fn a_nested_directory_is_read_by_its_leaf_and_recorded_whole() {
         let readings = readings(&["infra.persistence".to_string()]);
@@ -263,8 +257,7 @@ mod tests {
     }
 
     /// The classification takes names rather than reading a directory, so
-    /// this needs no filesystem at all -- which is the point of moving it
-    /// down: the route hands it a captured listing.
+    /// this needs no filesystem at all.
     #[test]
     fn a_renamed_directory_becomes_a_layout_entry_and_an_unknown_one_does_not() {
         let readings = readings(&[

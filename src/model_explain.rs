@@ -1,11 +1,11 @@
 //! `jails model explain` — what the convention decided, and why.
 //!
-//! **`jdl-sol.md` §18.4: convention must not mean hidden behaviour.** A
-//! generated project is full of names nobody typed — the package a repository
-//! port lands in, the plural of a table, the suffix a component kind adds, the
+//! **JDL v1 §18.4: convention must not mean hidden behaviour.** A generated
+//! project is full of names nobody typed — the package a repository port
+//! lands in, the plural of a table, the suffix a component kind adds, the
 //! route an operation answers on. Each is a rule the compiler applied, and
-//! until this command the only way to find out which rule, or that a rule had
-//! moved, was to read the emitted tree and infer it.
+//! this command says which rule, so a rule that moves is visible without
+//! reading the emitted tree and inferring it.
 //!
 //! The records themselves live in the model (`jails_model::derived`), which is
 //! what makes them part of the plan digest rather than a report generated
@@ -13,14 +13,14 @@
 //! the packages shown are the ones this project actually gets after its
 //! `jails.toml` renames, and filters by owner, role, rule or value.
 //!
-//! **The `java-package` rows are also `audit.md` A3.11's answer.** Six of the
-//! twenty-three packages sit under a head §9.7 does not close — `repository`,
-//! `application`, `ports` — and a head like that is renamed by nothing, so a
-//! project that renames `adapters` does not rename them. Their `rule_id` says
-//! `convention.facet.*` where a layer's says `convention.layer.*`, so the
-//! divergence is displayed and digested rather than recorded only in an audit
-//! document. Reconciling it moves files in every project generated so far,
-//! which is why it is shown rather than quietly corrected.
+//! **The `java-package` rows carry the §9.7 divergence.** Six of the
+//! twenty-three packages sit under a head JDL v1 §9.7 does not close —
+//! `repository`, `application`, `ports` — and a head like that is renamed by
+//! nothing, so a project that renames `adapters` does not rename them. Their
+//! `rule_id` says `convention.facet.*` where a layer's says
+//! `convention.layer.*`, so the divergence is displayed and digested.
+//! Reconciling it moves files in every generated project, which is why it is
+//! shown rather than quietly corrected.
 
 use crate::{Invocation, Output};
 use jails_model::{DerivedRoleKey, DerivedValue};
@@ -106,7 +106,7 @@ fn owner_column(key: &DerivedRoleKey) -> String {
     }
 }
 
-/// **A substring match over every field, deliberately.** §18.4 says
+/// **A substring match over every field, deliberately.** JDL v1 §18.4 says
 /// `model explain <stable-id-or-boundary>`, and a boundary is not one closed
 /// vocabulary: a reader arrives with an id, a role, a package they saw in a
 /// stack trace, or the suffix of a class they did not expect. Matching all of

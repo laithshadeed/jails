@@ -1,6 +1,6 @@
 //! Has anything jails wrote been changed since it wrote it?
 //!
-//! Compared against the ledger's `current` image — the exact file state the
+//! Compared against the recorded `current` image — the exact file state the
 //! last commit accepted, reader edits included — rather than against a
 //! freshly rendered artifact. The distinction is the whole module: a merge
 //! deliberately preserves hand edits, so re-rendering and diffing would report
@@ -17,7 +17,7 @@ use jails_state::compat::MachineState;
 
 /// Compare every recorded managed output with the live project tree.
 ///
-/// The ledger's `current` image is the exact file state accepted by the last
+/// The recorded `current` image is the exact file state accepted by the last
 /// commit, including reader edits preserved by a merge. Comparing with that
 /// image detects changes made afterwards without mistaking an earlier,
 /// deliberately preserved edit for drift.
@@ -28,9 +28,9 @@ pub(crate) fn managed_output_checks(project: &Project) -> Vec<Check> {
     // An interrupted transaction explains every difference below, and the two
     // explanations are not interchangeable. A write that stopped part-way --
     // an unwritable directory, a full disk, an IDE lock -- leaves jails' own
-    // newer bytes on disk with the ledger still at the older state, which
+    // newer bytes on disk with the record still at the older state, which
     // reads exactly like a developer editing five generated files at once.
-    // Reporting it that way sent people to `resource repair --strategy
+    // Reporting it that way would send people to `resource repair --strategy
     // roll-forward`, which adopts the half-applied state as the recorded
     // truth: `doctor` goes green over a project whose every insert names a
     // column no migration created.
@@ -114,20 +114,17 @@ pub(crate) fn interrupted(project: &Project) -> Option<Check> {
 
 /// Every migration a resource lifecycle has sealed, against the file on disk.
 ///
-/// A different question from the one above, and the one that had no asker. A
-/// migration written by `jails resource field` is not recorded as *managed
-/// output* -- it carries no renderer stamp -- so deleting
-/// `V002__rename_borower_to_borrower.sql` left `doctor` reporting `25 checks,
-/// all clear` while deleting the neighbouring create migration, written by
-/// `g scaffold`, was correctly caught. The command's own migration was outside
-/// the check that existed.
+/// A different question from the one above. A migration written by `jails
+/// resource field` is not recorded as *managed output* -- it carries no
+/// renderer stamp -- so the check above cannot see it deleted, while the
+/// neighbouring create migration written by `g scaffold` is caught.
 ///
 /// The seal is a better authority than the output row anyway: it is the exact
 /// content digest of published append-only schema history, which is the thing
 /// that must not move.
 ///
-/// The two failures need different advice, and conflating them is what closed
-/// a loop once. A **missing** file is restorable from its recorded object. An
+/// The two failures need different advice. A **missing** file is restorable
+/// from its recorded object. An
 /// **edited** one is a deliberate correction the reader made, and
 /// `resource repair` would silently overwrite it -- so this says what changed
 /// and leaves the choice with the person who made it.
@@ -215,15 +212,14 @@ fn owner_action(owners: &std::collections::BTreeSet<ResourceOwner>) -> Option<(S
 
 /// Generated test files that are `@Disabled`, and therefore prove nothing.
 ///
-/// modern.md §13.8. A generator that cannot write a meaningful assertion --
-/// a strategy implementation is `return Optional.empty()` with a TODO, and
-/// asserting that an accessor returns what was passed in only tests that javac
+/// A generator that cannot write a meaningful assertion -- a strategy
+/// implementation is `return Optional.empty()` with a TODO, and asserting
+/// that an accessor returns what was passed in only tests that javac
 /// generated the accessor -- writes an honest `@Disabled` naming what to
-/// prove. Writing it is right; saying nothing about it afterwards is not. One
-/// real project shipped **five of its nine tests disabled**, including both
-/// controller tests, and reported green. `CLAUDE.md` already names this
-/// failure mode for skipped tier-3 tests; a generated `@Disabled` is the same
-/// thing one level down, and the count hides both.
+/// prove. Writing it is right; saying nothing about it afterwards is not: a
+/// project can ship most of its tests disabled and report green, because a
+/// generated `@Disabled` is a skipped test one level down and the count
+/// hides it.
 ///
 /// A `warn`, never a `FAIL`: the file is exactly what jails meant to write,
 /// and the work it names is the reader's. What `doctor` owes them is that the
@@ -277,7 +273,7 @@ pub(crate) fn disabled_generated_tests(project: &Project) -> Vec<Check> {
 
 /// Migrations jails wrote and nobody filled in.
 ///
-/// modern.md §13.7. `jails g migration add_customer_id_index` writes one line
+/// `jails g migration add_customer_id_index` writes one line
 /// -- `-- Forward-only migration. Write explicit SQL below.` -- and that is a
 /// correct thing to write: jails cannot know the SQL, and the value of the
 /// command is a correctly numbered file at the right path. What is not correct

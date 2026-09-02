@@ -1,13 +1,10 @@
 //! A field's name, holding both renderings a field has.
 //!
-//! The type's own doc below carries the defect this exists for; the header is
-//! here so the file has one. The rule in one line: **the column is the normal
-//! form and the Java name is derived from it**, which is what makes `user_id`,
-//! `userId` and `user_ID` one field rather than three.
-//!
-//! Owning the derivation in the type rather than in each caller's `format!` is
-//! the point — three call sites deriving it separately is exactly how the two
-//! spellings came to agree about SQL and disagree about Java.
+//! The rule in one line: **the column is the normal form and the Java name is
+//! derived from it**, which is what makes `user_id`, `userId` and `user_ID`
+//! one field rather than three. Owning the derivation in the type rather than
+//! in each caller's `format!` is the point: call sites deriving it separately
+//! is how two spellings come to agree about SQL and disagree about Java.
 
 use super::{Name, SqlName};
 use crate::Result;
@@ -15,19 +12,15 @@ use crate::codec::{Codec, Decoder, Encoder};
 
 /// A declared field's name, holding **both** renderings a field has.
 ///
-/// plan.md P3.1. One concept had three renderings and none of them was
-/// recorded: the spec string went into the Java record verbatim, `sql.rs`
-/// snake-cased it for the column, and a reader typing the other spelling of
-/// the same field got a second field. `user_id:uuid` produced a record
-/// component called `user_id` -- which is not a Java name -- while
-/// `userId:uuid` produced a column called `user_id` all the same, so the two
-/// declarations disagreed about the Java half and agreed about the SQL half.
-///
-/// So the type owns the derivation rather than each caller owning a `format!`:
+/// The type owns the derivation rather than each caller owning a `format!`:
 /// **the column is the normal form, and the Java name is derived from it.**
 /// That is what makes `user_id`, `userId` and `user_ID` one field rather than
 /// three -- snake-casing is the step that erases the difference, and camelising
-/// the result puts every one of them back as `userId`.
+/// the result puts every one of them back as `userId`. Without it,
+/// `user_id:uuid` would produce a record component called `user_id` -- not a
+/// Java name -- while `userId:uuid` produces a column called `user_id` all the
+/// same, so two declarations of one field would agree about the SQL half and
+/// disagree about the Java half.
 ///
 /// The one error case is a name that cannot produce a Java identifier by
 /// convention: `_id`, `id_` and `a__b` all snake-case to something with an
@@ -121,14 +114,14 @@ impl FieldName {
     }
 
     /// The same column under a new Java name -- the recorded binding
-    /// `--column preserve` is built on. plan.md P3.2.
+    /// `--column preserve` is built on.
     ///
     /// **This is why the pair is recorded rather than derived.** Renaming a
     /// field is a source edit; renaming the column under it is a migration a
     /// live database has to run. Deriving the column from the name forces the
     /// two to happen together, which is what `--column single-cutover` does
     /// and what a table under load cannot afford. Once they are allowed to
-    /// differ, nothing can recompute the pair, so the ledger carries it.
+    /// differ, nothing can recompute the pair, so the model carries it.
     pub fn rebound(&self, java: &Name) -> Result<Self> {
         // The new Java half is held to every rule a declared one is, so a
         // rename cannot install a name `parse` would have refused.
@@ -146,7 +139,7 @@ impl FieldName {
 /// second derivation of the pair, and the one thing this value exists to
 /// record is a pair convention can no longer produce. Each half is validated
 /// on the way in by the constructor that owns it, so a rebound name arriving
-/// through a recovered journal is held to exactly what the CLI holds it to.
+/// through a decoded record is held to exactly what the CLI holds it to.
 impl Codec for FieldName {
     fn encode(&self, encoder: &mut Encoder) -> Result<()> {
         encoder.string(self.java.as_str())?;

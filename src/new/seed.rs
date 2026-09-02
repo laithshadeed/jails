@@ -1,26 +1,21 @@
 //! What every new project gets, whichever path created it.
 //!
 //! `mise.toml`, `AGENTS.md`, the fixtures directory, `.gitignore`, `git init`
-//! — and `--app`, which seeds `.jails/app.toml` and applies it as an ordinary
-//! V2 transition before the tree is published.
+//! — and `--app`, which seeds `.jails/app.toml` and replays it into the model
+//! before the tree is published.
 //!
-//! `pending.md` §8.1's split, and the reason this is its own file rather than
-//! a section of either: neither [`super::spring`] nor [`super::plain`] owns
-//! these, and a helper that both call from a file one of them owns is a helper
-//! that will grow a special case for its owner.
+//! Its own file rather than a section of either: neither [`super::spring`]
+//! nor [`super::plain`] owns these, and a helper that both call from a file
+//! one of them owns is a helper that will grow a special case for its owner.
 
 use super::*;
 
-/// Port of the `spring-init` bash function: wraps start.spring.io's
-/// starter.zip API. baseDir wraps the archive in a `$name/` folder
-/// server-side, so extracting to "." lands the project at `./$name`.
 /// Seed a freshly created project with a manifest and apply it.
 ///
-/// plan.md §18 ends by asking which two commands should have been one, and
-/// answers itself: `new` + `mkdir .jails` + `cp app.toml` + `app apply` is four
-/// steps that only ever appear together. The manifest path is resolved against
-/// the directory the *user* is standing in, not the project just created,
-/// because that is where they are pointing from.
+/// `new` + `mkdir .jails` + `cp app.toml` + `app apply` is four steps that
+/// only ever appear together. The manifest path is resolved against the
+/// directory the *user* is standing in, not the project just created, because
+/// that is where they are pointing from.
 pub fn seed_manifest(
     tree: &publish::Tree<'_>,
     manifest: &Path,
@@ -57,10 +52,9 @@ pub fn seed_manifest(
 /// discards the whole scratch tree -- which is right for a manifest that could
 /// not be applied and wrong for one that *was*. A compose service that will
 /// not start, on a machine where an unrelated container already holds `:5432`,
-/// used to leave the report saying `ledger create` and the destination
-/// directory absent: no `jails:` line, no project, and no way to tell which of
-/// the two had happened. The effect is explicitly post-*commit*; it must not
-/// be able to unmake the commit, still less the project the commit is in.
+/// is a post-*commit* effect; it must not be able to unmake the commit, still
+/// less the project the commit is in, or the reader is left with no project
+/// and no way to tell which of the two happened.
 pub(super) fn reported(applied: crate::app::Applied) -> Result<()> {
     match applied {
         crate::app::Applied::Clean => Ok(()),
@@ -70,11 +64,11 @@ pub(super) fn reported(applied: crate::app::Applied) -> Result<()> {
 /// Apply `--app <manifest>` to the project being created, before it is
 /// published.
 ///
-/// plan.md §R6.5 puts the manifest inside the publication rather than after
-/// it: `new --app` is one command, and a destination holding a project whose
-/// manifest half-applied is exactly the state publication-by-rename exists to
-/// remove. The manifest path is resolved against the directory the *user* is
-/// standing in, which is why it is read before anything is written.
+/// The manifest is inside the publication rather than after it: `new --app`
+/// is one command, and a destination holding a project whose manifest
+/// half-applied is exactly the state publication-by-rename exists to remove.
+/// The manifest path is resolved against the directory the *user* is standing
+/// in, which is why it is read before anything is written.
 pub(super) fn seed(
     publication: &publish::Publication,
     app: Option<&Path>,
@@ -175,9 +169,7 @@ pub(super) fn git_init(tree: &publish::Tree<'_>, debug: bool) {
 /// canonical plan applied to it.
 ///
 /// **This is what makes `jails new` produce a canonical project.**
-/// `model_command::owns` is "does `.jails/model.jdl` exist", so before this
-/// every project jails created took the legacy path and the compiler could
-/// only be reached by a model somebody wrote by hand.
+/// `model_command::owns` is "does `.jails/model.jdl` exist".
 ///
 /// The plan is applied here, inside the scratch tree, rather than left for the
 /// reader's first command. The lock it writes is what records which property

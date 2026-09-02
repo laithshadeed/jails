@@ -9,11 +9,9 @@
 //! it through `SourceUnit` would drop the last two before the emitter ever saw
 //! them.
 //!
-//! **The Java bodies are the templates the legacy generator uses**, pulled in
-//! with `include_str!` from `templates/spring/`. `CLAUDE.md` states the rule
-//! for the project files both engines write, and it is the same rule here: two
-//! copies of a template drift on exactly the details nobody re-reads, and
-//! neither drift is visible where anyone looks. One file, two readers.
+//! **The Java bodies are the templates under `templates/spring/`**, pulled in
+//! with `include_str!`: two copies of a template drift on exactly the details
+//! nobody re-reads, and neither drift is visible where anyone looks.
 
 use crate::CompileError;
 use jails_contracts::{
@@ -109,8 +107,8 @@ pub(crate) fn migrations(
 ///
 /// `model` is the *intended* model, not `snapshot.model.model`: the command
 /// that declares a `cli` is the one whose pre-patch model has none, so reading
-/// the snapshot's meant `jails g cli Admin` never retargeted `<mainClass>` and
-/// some later, unrelated command did it instead. The snapshot is still what
+/// the snapshot's means `jails g cli Admin` never retargets `<mainClass>` and
+/// some later, unrelated command does it instead. The snapshot is still what
 /// says whether jails *may* claim the entry point -- that answer is about the
 /// pom on disk.
 pub(crate) fn entry_point(
@@ -120,13 +118,12 @@ pub(crate) fn entry_point(
     cli::entry_point(snapshot, model)
 }
 
-/// Whether this model has SQL storage, which several components require.
 /// Whether SQL is reachable from this project, however it got there.
 ///
 /// **Not "did jails install the database".** A project can carry the JDBC
-/// starter because the reader declared it -- `minicom`'s Spring application
-/// runs on an H2 file -- and a component that refuses there is refusing over
-/// a database that is present. What the `db` capability additionally supplies
+/// starter because the reader declared it -- a Spring application running on
+/// an H2 file -- and a component that refuses there is refusing over a
+/// database that is present. What the `db` capability additionally supplies
 /// is a `TestcontainersConfig`, which is a separate question with a separate
 /// answer in [`container_support`].
 fn has_database(model: &AppModel) -> bool {

@@ -8,11 +8,10 @@
 //!
 //! **The pattern to expect here is a flag the model already carries.** `--via`,
 //! `--order-by`, `--on-conflict`, `--set`, `--select`, `--if-match`, `--bind`
-//! and `--consumes` were each parsed by the JDL grammar, linked into
-//! `OperationSemantics`, and read by the compiler long before this frontend
-//! would emit them -- so the refusal told the reader to hand-edit
-//! `.jails/model.jdl`, which is true and useless. Before adding an emitter for
-//! the next one, check whether it is only the syntax editor that is missing.
+//! and `--consumes` are each parsed by the JDL grammar, linked into
+//! `OperationSemantics`, and read by the compiler; this module is only the
+//! syntax editor in front of them. Before adding an emitter for the next one,
+//! check whether it is only the syntax editor that is missing.
 
 use super::{MODEL_PATH, java_to_label, java_type_name};
 use crate::ArtifactKind;
@@ -121,11 +120,10 @@ pub(super) fn operation_declaration(
                 .split(',')
                 .map(str::trim)
                 // **`asc`/`desc` pass through.** `operation_order_list`
-                // has parsed a direction since the grammar existed --
-                // `order by [ timeStamp desc ]` -- and this refused to emit
-                // one, so a query whose whole point is "newest first" could
-                // not reach a canonical project. The field still goes through
-                // the checked resolver; only the direction rides beside it.
+                // parses a direction -- `order by [ timeStamp desc ]` -- so a
+                // query whose whole point is "newest first" can state it. The
+                // field still goes through the checked resolver; only the
+                // direction rides beside it.
                 .map(|item| {
                     let (field, direction) = match item.split_once(char::is_whitespace) {
                         Some((field, rest)) => (field, rest.trim()),
@@ -160,24 +158,22 @@ pub(super) fn operation_declaration(
     if args.kind == ArtifactKind::Usecase
         && let Some(yields) = &args.strategy_yields
     {
-        // `--yields` on a use case is the legacy spelling of *staged*
-        // delivery: it is what `g usecase --yields E` has always built an
-        // outbox for. Writing `emit` alone would honour the flag with direct
+        // `--yields` on a use case is the familiar spelling of *staged*
+        // delivery: `g usecase --yields E` builds an outbox. Writing `emit`
+        // alone would honour the flag with direct
         // publication, which is the weaker guarantee and the exact
         // substitution `deliver` exists to make impossible.
         let event = java_to_label(yields);
         output.push_str(&format!("    emit {event}\n    deliver outbox\n"));
     }
     // `--via` is a `join`: `g query --via User` reads `users` alongside
-    // `messages`, on the `userId` the child already declares. The model has
-    // carried `Query.semantics.joins` and the JDL has parsed
-    // `join User as user on userId -> user.id` all along; only this frontend
-    // refused to translate the flag.
+    // `messages`, on the `userId` the child already declares, rendered as
+    // `join User as user on userId -> user.id`.
     //
-    // The column is derived from the two entities rather than recorded, which
-    // is the legacy `join` module's rule: `<parent>Id` on the child, and the
-    // parent's own primary key on the other side. A reference the model does
-    // not declare is named rather than guessed at.
+    // The column is derived from the two entities rather than recorded:
+    // `<parent>Id` on the child, and the parent's own primary key on the
+    // other side. A reference the model does not declare is named rather
+    // than guessed at.
     if args.kind == ArtifactKind::Query
         && let Some(via) = &args.via
     {
@@ -225,10 +221,7 @@ pub(super) fn operation_declaration(
     }
     // `--on-conflict` is `conflict on [field]`: one
     // `insert ... on conflict (col) do nothing returning`, then a read of the
-    // row that was already there. The model has carried `conflict_key` and the
-    // JDL has parsed `conflict on [...]` all along; only this frontend refused
-    // to translate the flag, so `g usecase --on-conflict` could not reach a
-    // canonical project at all.
+    // row that was already there.
     if args.kind == ArtifactKind::Usecase
         && let Some(component) = &args.on_conflict
     {
@@ -236,19 +229,16 @@ pub(super) fn operation_declaration(
         output.push_str(&format!("    conflict on [{label}]\n"));
     }
     // **`set`, `select`, `if-match`, `bind` and `consumes` are grammar and
-    // model already**; only this frontend refused them, which is the same
-    // shape `--via` had. `TransitionSemantics` carries `select`, `assignments`
-    // and `precondition`, every operation carries `bindings`, and the parser
-    // has read `set x = 1`, `select [a]`, `if-match optional`,
-    // `bind p from form "wire"` and `consumes form` all along -- so the
-    // refusal told the reader to hand-edit `.jails/model.jdl`, which is true
-    // and useless.
+    // model.** `TransitionSemantics` carries `select`, `assignments` and
+    // `precondition`, every operation carries `bindings`, and the parser
+    // reads `set x = 1`, `select [a]`, `if-match optional`,
+    // `bind p from form "wire"` and `consumes form`.
     // **`--via` on a command is a key resolution**, not a join: the caller
     // states a natural key of the parent -- an author's email -- and the
     // command resolves the foreign key from it before inserting. The grammar
-    // has read `resolve authorId from Author.id where Author.email = email`
-    // all along, and the parameter form is `Author.email as email` rather than
-    // the query's `author.email`, because a command has no join to alias.
+    // reads `resolve authorId from Author.id where Author.email = email`,
+    // and the parameter form is `Author.email as email` rather than the
+    // query's `author.email`, because a command has no join to alias.
     if args.kind == ArtifactKind::Usecase
         && let Some(via) = &args.via
     {
@@ -282,9 +272,9 @@ pub(super) fn operation_declaration(
             .and_then(|relation| relation.mappings.first())
             .and_then(|mapping| child.and_then(|entity| entity.field(&mapping.local)))
             // **The conventional column when no association is declared.**
-            // `--via Author` on an entity carrying `authorId` is the shape the
-            // legacy recipe read, and refusing it would make the flag usable
-            // only after `g association`, which is not what it is for. A
+            // `--via Author` on an entity carrying `authorId` is the familiar
+            // shape, and refusing it would make the flag usable only after
+            // `g association`, which is not what it is for. A
             // declared relation still wins, because it states the pairing
             // rather than assuming it.
             .or_else(|| {
@@ -302,20 +292,13 @@ pub(super) fn operation_declaration(
                     java_to_label(&parent_type)
                 ))
             })?;
-        // **Which component identifies the parent is the reader's to state,
-        // and jails' to refuse when they have not.** A qualified
-        // `Author.email` says it outright; an unqualified list says it by
-        // naming exactly one component the parent has. Zero and two are both
-        // failures with an answer, and the compiler's own refusal -- "cannot
-        // construct required field `author_id`" -- names a column the reader
-        // never typed.
         // **The caller states which component identifies the parent, and the
-        // field list says so by resolving against it.** A field the child does
-        // not declare is qualified with the parent's alias on the way in --
-        // `author.email` -- so the lookup is whichever fields did that. Zero
-        // and two are both failures with an answer, and the compiler's own
-        // refusals name a column (`author_id`) or a uniqueness rule the reader
-        // never typed.
+        // field list says so by resolving against it.** A qualified
+        // `Author.email` says it outright; a field the child does not declare
+        // is qualified with the parent's alias on the way in -- `author.email`
+        // -- so the lookup is whichever fields did that. Zero and two are
+        // both failures with an answer, and the compiler's own refusals name
+        // a column (`author_id`) or a uniqueness rule the reader never typed.
         let lookups = fields
             .iter()
             .filter_map(|field| field.split_once('.'))
@@ -363,10 +346,9 @@ pub(super) fn operation_declaration(
         // **With no `--select`, the row selector is the primary key.** That is
         // what a transition selects by, and the familiar spelling names it in
         // the field list -- `g transition MarkSeen id:long version:long` --
-        // so without this it arrived as an update and the compiler refused it
-        // as "attempts to rewrite primary key `id`". Legacy inferred the same
-        // thing; this makes the inference explicit in the model rather than
-        // leaving it to be re-derived.
+        // so without this it would arrive as an update and the compiler would
+        // refuse it as "attempts to rewrite primary key `id`". The inference
+        // is explicit in the model rather than left to be re-derived.
         let selector = args.select.as_ref().map_or_else(
             || {
                 model
@@ -616,8 +598,9 @@ pub(super) fn operation_declaration(
             // **A query answers GET, whatever its filters.** The controller
             // binds its criteria with `@ModelAttribute`, which reads request
             // parameters and URI template variables -- never a JSON body -- so
-            // a POST here produced a route that could only be driven by a form
-            // post nobody writes, and a generated proof that had to post one.
+            // a POST here would produce a route that can only be driven by a
+            // form post nobody writes, and a generated proof that has to post
+            // one.
             // `--consumes json` is the one way to ask for a body, and it is
             // the only shape that needs a verb with one.
             ArtifactKind::Query
@@ -644,11 +627,6 @@ pub(super) fn operation_declaration(
     Ok(output)
 }
 
-/// A pinned component's value, as a JDL literal.
-///
-/// `true`, `false` and a number are bare; anything else is a quoted string.
-/// The grammar's `take_literal` draws the same line, and quoting a boolean
-/// would make `set seen = "true"` a text assignment to a boolean column.
 /// Everything a pin can be wrong about, refused before anything is written.
 ///
 /// **The literal is resolved against the component's declared type**, which is
@@ -763,6 +741,11 @@ fn numeric(builtin: jails_model::BuiltinType) -> bool {
     matches!(builtin, Integer | Long | Double | Decimal)
 }
 
+/// A pinned component's value, as a JDL literal.
+///
+/// `true`, `false` and a number are bare; anything else is a quoted string.
+/// The grammar's `take_literal` draws the same line, and quoting a boolean
+/// would make `set seen = "true"` a text assignment to a boolean column.
 fn literal(value: &str) -> String {
     if matches!(value, "true" | "false") || value.parse::<f64>().is_ok() {
         return value.to_string();

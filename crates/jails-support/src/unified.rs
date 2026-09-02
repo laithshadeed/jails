@@ -166,19 +166,12 @@ fn edits<'a>(left: &[&'a str], right: &[&'a str]) -> Vec<Edit<'a>> {
 
 /// The most table `middle` may allocate, in cells.
 ///
-/// **Every guard around this function is on bytes and its cost is quadratic in
-/// lines.** Stripping the common head and tail first makes the usual case
-/// cheap and does nothing for the case that matters: two files that genuinely
+/// Every guard around this function is on bytes and its cost is quadratic in
+/// lines. Stripping the common head and tail first makes the usual case cheap
+/// and does nothing for the case that matters: two files that genuinely
 /// differ throughout. Thirty thousand differing lines a side is 900 million
 /// cells, and at eight bytes -- plus a `Vec` header per row -- that is over
-/// **seven gigabytes** in one command.
-///
-/// Measured rather than reasoned about: a single
-/// `jails resource field add ... --diff` was **6.8 GB resident** and by itself
-/// the entire memory profile of the test suite, where every other module
-/// peaked under 106 MB. It is what an OOM killer took a developer's 30 GB
-/// desktop down over, and the kill left two containers running for four hours
-/// after it.
+/// seven gigabytes in one command, measured.
 ///
 /// Four million cells is ~32 MB of table, which covers every file jails
 /// generates and every reader file it merges into.
@@ -236,9 +229,8 @@ mod tests {
     /// The bound that keeps a diff from taking the machine down with it.
     ///
     /// Thirty thousand differing lines a side sits inside every byte-based
-    /// guard upstream and was over 7 GB of table, which is how one
-    /// `resource field add --diff` came to be the whole test suite's memory
-    /// profile. The assertion is on the shape rather than on resident bytes,
+    /// guard upstream and is over 7 GB of table. The assertion is on the
+    /// shape rather than on resident bytes,
     /// because a test that measures its own RSS measures the allocator:
     /// above the budget every line of both sides is reported and none is lost.
     #[test]

@@ -1,11 +1,9 @@
 //! What jails writes to prove a routed operation's HTTP adapter, as opposed to
 //! what that adapter is.
 //!
-//! Split from `emit_http.rs` by secret, the way the legacy engine's
-//! `spring/query/proof.rs` is split from `query.rs`, and for the same reason
-//! `bugs.md` B48 records: the fact a controller test turns on -- where the
-//! request's values come from -- is one the route renderer already resolved,
-//! and a test renderer that resolves it a second time drifts. A query binds
+//! The fact a controller test turns on -- where the request's values come
+//! from -- is one the route renderer has already resolved, and a test
+//! renderer that resolves it a second time drifts. A query binds
 //! `@ModelAttribute`, so its test sends parameters; a command binds
 //! `@RequestBody`, so its test sends JSON. One `Binding`, decided next to the
 //! controller's own parameter list, is what keeps those two answers the same.
@@ -40,10 +38,9 @@ pub(super) struct ControllerProof<'a> {
     /// The Java type of the transition's key parameter, when there is one.
     pub(super) key_json: Option<String>,
     /// Whether `execute` takes the row's key before its input. **Not derived
-    /// from the binding any more**: a form-bound transition binds
-    /// `@ModelAttribute` like a query and still takes the key, so a stub whose
-    /// arity came from the binding had one parameter too few and the test did
-    /// not compile.
+    /// from the binding**: a form-bound transition binds `@ModelAttribute`
+    /// like a query and still takes the key, so a stub whose arity comes from
+    /// the binding has one parameter too few and does not compile.
     pub(super) keyed: bool,
     /// The row version this route's caller states in `If-Match`, when it has
     /// one, and whether they must.
@@ -51,9 +48,9 @@ pub(super) struct ControllerProof<'a> {
     /// The JWT claims this controller proves the request against, and the
     /// base package its `ScopeAuthorizer` lives in.
     ///
-    /// Read from the same `scope_fields` the controller's own constructor was
+    /// Read from the same `scope_fields` the controller's own constructor is
     /// built from: a scoped controller takes a second argument, and a test
-    /// that passed only the port did not compile.
+    /// that passes only the port does not compile.
     /// What each component is called on the wire, when the record binds it
     /// under another name.
     pub(super) binder: Option<crate::emit_java::Binder<'a>>,

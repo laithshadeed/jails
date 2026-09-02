@@ -11,13 +11,10 @@
 //!
 //! Everything else in `commands.rs` is derived, and this deliberately is not:
 //! a rationale is prose that has to be *written*, and there is nowhere to
-//! derive it from. That makes it a sixth place where "what does kind X mean"
-//! is recorded, which is exactly what `plan.md` §6.1 counts — so it is held to
-//! `why.rs`'s shape, the one `abstract.md` §2 singles out as the only clean
-//! concept in the codebase: **a value in a table, and adding one instance is
-//! one edit**. `every_kind_has_an_explanation` fails when a kind is added
-//! without one, so the table cannot fall behind the enum the way the editor
-//! lists did.
+//! derive it from. That makes it one more place where "what does kind X mean"
+//! is recorded, so it is held to `why.rs`'s shape: **a value in a table, and
+//! adding one instance is one edit**. `every_kind_has_an_explanation` fails
+//! when a kind is added without one, so the table cannot fall behind the enum.
 //!
 //! The rule for content: say what the artifact *is for* and name the trap.
 //! A restatement of the `--help` line earns nothing; `--help` is right there.
@@ -506,9 +503,9 @@ mod tests {
 
     /// One edit per kind, enforced.
     ///
-    /// This is the rule that keeps a hand-written table from becoming the
-    /// editor lists: a kind added to the enum without an explanation fails the
-    /// build rather than silently having none.
+    /// This is the rule that keeps a hand-written table from falling behind
+    /// the enum: a kind added without an explanation fails the build rather
+    /// than silently having none.
     #[test]
     fn every_kind_has_an_explanation() {
         let missing: Vec<String> = ArtifactKind::value_variants()

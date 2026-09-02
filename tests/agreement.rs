@@ -1,26 +1,13 @@
 //! Does `destroy` remove exactly what `generate` wrote?
 //!
-//! `plan.md` §6.1 counts five separate answers to *"what files does kind X
-//! produce?"*, and names the second one -- `generate::destroy`'s `match kind`
-//! with its seventeen hand-written `vec![]` arms -- as the dangerous one: it
-//! is a manual transcription of paths the generator right next door already
-//! computes, and CLAUDE.md's warning that *"a kind added to one and not the
-//! other silently strands files"* was enforced by a single test covering a
-//! single kind (`Record`) out of thirty.
+//! Every kind the scenario table exercises is run forward and back, and the
+//! two path sets are compared. Two directions, both real failures:
 //!
-//! This is that test, generalised over every kind the scenario table
-//! exercises (§6.2 option A). It is deliberately the *evidence* that makes
-//! deriving the path list from the generator (§6.2 option B) a safe change to
-//! attempt: run it before and after and the sets must not move.
-//!
-//! Two directions, both real failures:
-//!
-//! - **destroy names a path generate never wrote.** A stale arm, a suffix
-//!   applied on one side only, a layer renamed in one place. Harmless-looking
-//!   until the path collides with something a human wrote.
+//! - **destroy names a path generate never wrote.** A suffix applied on one
+//!   side only, a layer renamed in one place. Harmless-looking until the path
+//!   collides with something a human wrote.
 //! - **generate wrote a file destroy does not remove.** A stranded file
-//!   implementing a deleted interface stops the project compiling, which is
-//!   exactly the `g strategy` failure the destroy arm reads disk to avoid.
+//!   implementing a deleted interface stops the project compiling.
 //!
 //! Not every leftover is a bug -- a migration is forward-only and a shared
 //! registration file is still needed by the next artifact -- so leftovers are
@@ -38,8 +25,8 @@ use std::process::Command;
 ///
 /// Each entry is (kind or `""` for any, path fragment, why). A leftover
 /// matching none of these is a stranded file, and the test names it. The
-/// `why` is not decoration: an exemption without a reason is how the second
-/// definition of "what kind X produces" drifted in the first place.
+/// `why` is not decoration: an exemption without a reason is a second
+/// definition of what a kind produces, and it drifts.
 const ALLOWED_LEFTOVER: &[(&str, &str, &str)] = &[
     (
         "scaffold",
@@ -134,17 +121,12 @@ const ALLOWED_LEFTOVER: &[(&str, &str, &str)] = &[
 /// Kinds `destroy` refuses, and the refusal is the point.
 ///
 /// Both are forward-only: a migration that has run cannot be unrun by deleting
-/// its file, and a field overlay is undone by another overlay.
-///
-/// **Two kinds were here and are not, for the same reason.** `association`'s
-/// DDL is append-only too, but retiring it *appends* `drop constraint` -- the
-/// next migration, not the un-running of one -- exactly as `--storage drop`
-/// appends `drop table`; refusing the verb left both halves of an association
-/// permanently undestroyable. `cases` was a *ledger* limitation rather than a
-/// semantic one: a one-shot was a receipt over the source's bytes and the
-/// schema had no list for taking one back. On the compiler it is an ordinary
-/// component declaration, so removing it is model subtraction like any other
-/// and the generated test goes with it.
+/// its file, and a field overlay is undone by another overlay. `association`
+/// is not here: retiring one *appends* `drop constraint` -- the next
+/// migration, not the un-running of one -- exactly as `--storage drop`
+/// appends `drop table`. `cases` is an ordinary component declaration, so
+/// removing it is model subtraction like any other and the generated test
+/// goes with it.
 const FORWARD_ONLY: &[&str] = &["migration", "field"];
 
 fn explanation(kind: &str, rel: &str) -> Option<&'static str> {
@@ -158,11 +140,10 @@ fn explanation(kind: &str, rel: &str) -> Option<&'static str> {
 
 /// What `destroy --pretend` says it would delete, read as data.
 ///
-/// `--output json` rather than the human rendering, and that is the point of
-/// having it: a test that scrapes prose pins the prose, so a clearer message
-/// becomes a test failure and the wording ossifies. The JSON is §R3.4's one
-/// projection of the same envelope, so this reads exactly what the commit
-/// would have done.
+/// `--output json` rather than the human rendering: a test that scrapes prose
+/// pins the prose, so a clearer message becomes a test failure and the wording
+/// ossifies. The JSON is one projection of the same envelope the apply reads,
+/// so this sees exactly what the apply would do.
 fn would_remove(
     root: &Path,
     kind: &str,
@@ -226,29 +207,17 @@ fn remove_recorded(
     }
 }
 
-/// The same question, asked of a project that has **no** record of what jails
-/// wrote -- which is every project generated before `.jails/` existed, and
-/// every project whose `.jails/` somebody deleted.
+/// One scenario's worth of the no-record check, so the table can be scheduled.
 ///
-/// The answer changed with the dispatch flip, and the change is the subject.
-/// V1 recomputed the paths: it offered each generator a short list of argument
-/// shapes and kept the paths of the first that accepted, which meant a kind
-/// whose paths depend on an argument nobody could guess went silent -- and a
-/// silent `destroy` prints "nothing to destroy" over files that are right
-/// there. V2 does not guess at all. `destroy` retires a **recorded** entity,
-/// so with no record every kind refuses, and the refusal names the command
-/// that would have recorded it.
-///
-/// That is strictly the better failure, and this test is what says so: not one
-/// kind may quietly succeed at deleting files it cannot know it wrote, and not
-/// one may refuse without saying what would have made it possible.
-/// One scenario's worth of the check below, so the table can be scheduled.
+/// A project whose `.jails/` is gone is one jails cannot know it wrote.
+/// `destroy` retires a **recorded** entity, so with no record every kind
+/// refuses, and the refusal names the command that would have recorded it:
+/// not one kind may quietly delete files it cannot know it wrote, and not one
+/// may refuse without saying what would make it possible.
 ///
 /// Every cell is its own temporary directory and its own `jails` processes,
-/// which is what makes the table parallelisable at all -- and what made
-/// running it on one thread inside one `#[test]` cost eighteen seconds of a
-/// four-core machine's time. Findings are returned rather than asserted so
-/// the report the caller builds stays in table order however the cells ran.
+/// which is what makes the table parallelisable. Findings are returned rather
+/// than asserted so the report stays in table order however the cells ran.
 fn refusals_without_a_record(scenario: &scenarios::Scenario) -> (Vec<String>, usize) {
     let mut findings: Vec<String> = Vec::new();
     let mut refusals = 0usize;
@@ -258,7 +227,7 @@ fn refusals_without_a_record(scenario: &scenarios::Scenario) -> (Vec<String>, us
             scenarios::run_step(&root, scenario.name, step);
         }
 
-        // Erase the ledger: what is left is a project jails has no record of.
+        // Erase `.jails`: what is left is a project jails has no record of.
         let _ = std::fs::remove_dir_all(root.join(".jails"));
 
         for step in scenario.steps {
@@ -385,11 +354,10 @@ fn agreement_for(scenario: &scenarios::Scenario) -> Vec<String> {
                     {
                         // Some forward-only declarations (notably an
                         // association migration) deliberately remain in the
-                        // ledger and therefore continue to protect what they
-                        // reference. Reference safety is covered directly by
-                        // the destroy tests; this test is about path-set
-                        // agreement, which cannot be observed for a refused
-                        // operation.
+                        // model and continue to protect what they reference.
+                        // Reference safety is covered by the destroy tests;
+                        // this test is about path-set agreement, which cannot
+                        // be observed for a refused operation.
                         continue;
                     }
                     findings.push(format!(

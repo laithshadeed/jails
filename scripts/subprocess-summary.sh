@@ -2,11 +2,8 @@
 # **What the suite's toolchain subprocesses cost, printed on every gate run.**
 #
 # `tests/common/mod.rs` records this whatever happens -- one small TSV per test
-# binary under `target/jails-test-profile` -- and CLAUDE.md is explicit about
-# why it is not behind a flag: "it has to be on by default or it is not there
-# on the run that raises the question". For a while the concurrent python
-# runner did the printing, and deleting that runner silently took the report
-# with it, leaving the gate measuring its own cost and showing nobody.
+# binary under `target/jails-test-profile`. It is not behind a flag: it has to
+# be on by default or it is not there on the run that raises the question.
 #
 # The number to read is **mean concurrency against the machine's cores**. Equal
 # to the core count means the run is packed and only removing work can help;

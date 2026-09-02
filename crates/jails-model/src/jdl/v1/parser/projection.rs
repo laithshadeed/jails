@@ -7,7 +7,7 @@
 //! selector would be asking, and accepting both would let one declaration say
 //! two different things.
 //!
-//! A projection is `simplify-sol.md`'s "names are projections" made
+//! A projection is the model's "names are projections" contract made
 //! author-visible: `use repo` does not say which files exist, it says this
 //! entity has a repository, and the compiler decides what that renders to on
 //! this platform and build system.

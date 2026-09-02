@@ -450,8 +450,8 @@ impl Parser<'_> {
                 // field -- they share a label -- and both project to the Java
                 // component `userId`, because a record component named
                 // `user_id` is not Java anybody writes. Recording the written
-                // spelling as a pin made the snake-case half emit
-                // `UUID user_id`, and made a convention that is supposed to
+                // spelling as a pin would make the snake-case half emit
+                // `UUID user_id`, and make a convention that is supposed to
                 // converge depend on which spelling was typed.
                 java_name: (name != derived_member && name != field_label_text)
                     .then(|| name.clone()),

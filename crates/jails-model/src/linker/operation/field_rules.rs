@@ -151,12 +151,10 @@ fn validate_targets(
             );
         }
         OperationKind::Transition(transition) => {
-            // Only `update` names a field the transition writes. This also
-            // extended `transition.sets`, which the JDL frontend filled with
-            // every parameter whenever `update` was omitted -- so a row
-            // selector or an `@version` guard was reported as a managed-field
-            // write, and `jdl-sol.md` §4's `transition Complete(id, version)`
-            // could not link.
+            // Only `update` names a field the transition writes. A flat
+            // `sets` synthesised from every parameter would report a row
+            // selector or an `@version` guard as a managed-field write, and
+            // JDL v1 §4's `transition Complete(id, version)` could not link.
             targets.extend(transition.semantics.update.iter());
             targets.extend(
                 transition

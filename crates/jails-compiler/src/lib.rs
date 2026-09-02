@@ -311,9 +311,9 @@ impl Compiler {
         // parent's default build -- so an `*IT` in a project without the plugin
         // is a test that never runs while `mvn verify` reports success, which
         // is worse than having no test at all. The declaration-derived features
-        // above only see a capability pack's own files, so every `*IT` an
-        // operation or component emitter writes -- a presence adapter's, a
-        // query adapter's -- was written into a project that could not run it.
+        // above only see a capability pack's own files; an `*IT` an operation
+        // or component emitter writes -- a presence adapter's, a query
+        // adapter's -- needs the plugin just as much.
         if generated
             .files
             .keys()
@@ -326,8 +326,8 @@ impl Compiler {
         // a component, an entity facet -- rather than declared, so an artifact
         // the project states for itself answers the requirement and must not
         // be declared a second time. Without this a Gradle project carrying
-        // `spring-boot-starter-web` of its own was refused outright the moment
-        // an entity gained an HTTP facet, over a dependency it already had.
+        // `spring-boot-starter-web` of its own is refused outright the moment
+        // an entity gains an HTTP facet, over a dependency it already has.
         //
         // It does not cover `next_model.dependencies`: those the reader
         // declared *through jails*, so a copy outside the marked block is two
@@ -392,7 +392,7 @@ impl Compiler {
         // **Only when there is a build to declare it in.** A model with no
         // captured pom or Gradle script reaches the `BuildSystem::Unknown` arm
         // below, which refuses the moment any dependency is wanted -- so
-        // adding one unconditionally turned "this project has no build file"
+        // adding one unconditionally turns "this project has no build file"
         // into a compile error for every scaffold.
         if emit_architecture::applies(&next_model)
             && snapshot.project.build_system != BuildSystem::Unknown
@@ -724,14 +724,12 @@ fn property_entries(
 #[cfg(test)]
 mod tests {
     /// Every closed component kind is either emitted or refused, and never
-    /// silently dropped.
+    /// silently dropped (JDL v1 §20.2).
     ///
-    /// `audit.md` A1.2 and `jdl-sol.md` §20.2. Fifteen of the twenty-three
-    /// kinds linked, planned and applied while emitting nothing at all: the
-    /// linker's compatibility bridge ended in `_ => return None`, so an
-    /// unmapped kind produced no unit, no file and no diagnostic. The count
-    /// here is deliberate -- it fails when a kind is added and quietly filed
-    /// as unserved, which is the same silence arriving a different way.
+    /// A kind that links, plans and applies while emitting nothing produces
+    /// no unit, no file and no diagnostic. The count here is deliberate -- it
+    /// fails when a kind is added and quietly filed as unserved, which is the
+    /// same silence arriving a different way.
     #[test]
     fn every_component_kind_is_emitted_or_refused() {
         use jails_model::ComponentKind;
@@ -1064,16 +1062,11 @@ mod tests {
 
     /// A renamed layer is renamed for *every* artifact, not most of them.
     ///
-    /// `audit.md` A3.11b. `jails.toml`'s `[layout]` is the reader saying where
-    /// their code lives, and it reached entities and capabilities but not
-    /// source units: `linker::unit` built a package as `{base}.domain` before
-    /// the layout was on the model at all, and `emit_unit` compared against
-    /// that same spelling. So a project that calls its domain `core` got
-    /// `core` for its records and `domain` for its sealed types -- two
-    /// packages for one layer, in one tree, with nothing to report it.
-    ///
-    /// Nothing in the suite covered a renamed layout in either direction,
-    /// which is why it survived the registry that was built to find it.
+    /// `jails.toml`'s `[layout]` is the reader saying where their code lives,
+    /// and it has to reach entities, capabilities and source units alike: a
+    /// project that calls its domain `core` and gets `core` for its records
+    /// but `domain` for its sealed types has two packages for one layer, in
+    /// one tree, with nothing to report it.
     #[test]
     fn a_renamed_layer_moves_source_units_and_not_only_entities() {
         let model = jails_model::parse_jdl(
@@ -1103,12 +1096,12 @@ mod tests {
                 .cloned()
                 .collect::<Vec<_>>()
         };
-        // The entity already honoured the rename.
+        // The entity honours the rename.
         assert!(
             holding("/core/Note.java").len() == 1,
             "the record did not move to the renamed layer: {paths:?}"
         );
-        // The source units did not, and that is the defect.
+        // So do the source units.
         assert!(
             holding("/core/Outcome.java").len() == 1
                 && holding("/core/OutcomeTest.java").len() == 1,
@@ -1119,7 +1112,7 @@ mod tests {
                 && holding("/usecases/NotifierServiceTest.java").len() == 1,
             "a service and its test did not both move with the rename: {paths:?}"
         );
-        // ... and nothing was left behind under the default names, which is
+        // ... and nothing is left behind under the default names, which is
         // the half that makes the tree incoherent rather than merely oddly
         // placed.
         assert!(
@@ -1329,14 +1322,11 @@ mod tests {
     /// A projection that links must render *its own* artifact, not the
     /// nearest one.
     ///
-    /// `bugs.md` B59: `use seed` linked, validated against its prerequisites
-    /// and emitted `<Name>Factory.java`, because `ProjectionKind::Seed` was
-    /// mapped onto `Facet::Factory` and `Facet` is the emitter's dispatch key.
-    /// The model reported success over a test fixture nobody asked for, which
-    /// is a worse failure than a missing file: there is nothing to notice.
-    ///
-    /// The gap is filled now, and this is what stops it reopening the same
-    /// way -- seed emits three files and a factory is not among them.
+    /// `Facet` is the emitter's dispatch key, so a `ProjectionKind` mapped
+    /// onto the wrong facet emits a file nobody asked for and reports
+    /// success -- a worse failure than a missing file, because there is
+    /// nothing to notice. Seed emits three files and a factory is not among
+    /// them.
     #[test]
     fn a_seed_projection_does_not_emit_a_factory() {
         let model = jails_model::parse_jdl(SEED_MODEL)
@@ -1379,13 +1369,11 @@ mod tests {
     /// A versionless dependency is correct under a Boot parent and fatal
     /// without one.
     ///
-    /// `audit.md` A2.1. These four were written inline with `version: None`
-    /// whatever the project was, so `storage postgres` on a plain Maven
-    /// project produced a pom Maven refuses to *read* -- every goal fails,
-    /// `validate` included. The two version boundaries are Boot's own:
-    /// `flyway-database-postgresql` is managed from 3.3, and
-    /// `spring-boot-flyway` exists only from 4.0, where omitting it means the
-    /// migrations never run and nothing says so.
+    /// `storage postgres` on a plain Maven project with `version: None` is a
+    /// pom Maven refuses to *read* -- every goal fails, `validate` included.
+    /// The two version boundaries are Boot's own: `flyway-database-postgresql`
+    /// is managed from 3.3, and `spring-boot-flyway` exists only from 4.0,
+    /// where omitting it means the migrations never run and nothing says so.
     #[test]
     fn storage_dependencies_follow_the_boot_the_project_actually_has() {
         let boot_4 = super::storage::storage_dependencies(Some("4.0.0"));
@@ -2838,7 +2826,7 @@ route = "PATCH /notes/{id}"
 
     /// **A required primitive component stays primitive on the wire.**
     ///
-    /// `docs/20-generated-java.md` P6.6 §5.4: a `boolean` domain component
+    /// A `boolean` domain component
     /// arriving as a `Boolean` in the request and the response, with
     /// `@NotNull` compensating for the boxing, is three defects wearing one
     /// coat -- a wire type that admits a null the domain record cannot hold,
@@ -2990,8 +2978,8 @@ route = "PATCH /notes/{id}"
         snapshot.project.build_system = BuildSystem::Maven;
         // The adapters this asserts on are `JdbcClient` classes annotated
         // `@Repository`, so the capability needs a Boot project to compile
-        // into. The fixture had none, which is how a versionless dependency
-        // set reached a pom with no parent to manage it.
+        // into; without a parent, a versionless dependency set reaches a pom
+        // nothing manages.
         snapshot.project.spring_boot = Some("4.0.0".to_string());
         let draft = Compiler::compile(&snapshot, None).unwrap();
         assert_eq!(draft.migrations.len(), 1);
@@ -3182,8 +3170,8 @@ entity Metric {
         );
         // `if-match required` binds the version through the optimistic-lock
         // parameter, not through the ordinary `guard_<column>` equality path a
-        // plain version parameter takes. Asserting the guard spelling here read
-        // as correct and pinned the wrong one of the two.
+        // plain version parameter takes; asserting the guard spelling here
+        // would pin the wrong one of the two.
         assert!(
             transition.contains("version = :expected_version"),
             "{transition}"

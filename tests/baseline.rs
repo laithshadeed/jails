@@ -95,8 +95,8 @@ fn record_cli_baseline() {
     }
 }
 
-/// Phase 1's inner-loop publication entry point. This deliberately keeps the
-/// resident warm-test path separate from a fresh direct JVM process.
+/// The `phase1-loop` fixture's publication entry point. It deliberately keeps
+/// the resident warm-test path separate from a fresh direct JVM process.
 #[test]
 #[ignore = "performance baseline; run with --ignored --nocapture"]
 fn record_phase1_loop_baseline() {

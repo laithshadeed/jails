@@ -1,7 +1,7 @@
 //! One immutable reading of a project, taken once.
 //!
-//! plan.md §R2: a request is planned against *"one immutable capture of a
-//! project"*. Everything downstream — projection, preparation, the executor's
+//! A request is planned against one immutable capture of a project.
+//! Everything downstream — projection, preparation, the executor's
 //! precondition check — compares against this value rather than against the
 //! filesystem, which is what makes a plan describe a project that actually
 //! existed at a moment rather than one assembled from readings taken at
@@ -39,9 +39,8 @@ use jails_protocol::snapshot::{CanonicalRoot, ProjectSnapshot, SnapshotFile};
 use jails_support::Result;
 
 use jails_state::listing::list;
-/// Re-exported: the listing itself moved to `jails-state` (`pending.md` §7.3),
-/// because a directory listing is a fact about a filesystem rather than about
-/// a Java project, and `jails-commit` needed it without needing this crate.
+/// Re-exported: the listing lives in `jails-state`, because a directory
+/// listing is a fact about a filesystem rather than about a Java project.
 pub use jails_state::listing::list_directory;
 
 /// What the caller intends to read.

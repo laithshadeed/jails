@@ -25,9 +25,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// One PATH lookup, in `process`. `run.rs`, `compose.rs` and `project.rs`
-/// each had their own copy, which is how the mvnd naming drifted between
-/// them.
 /// The project root, refusing early if Maven is not what builds it.
 ///
 /// Every command in this module shells out to `mvn`, so the check and the
@@ -52,9 +49,8 @@ fn maven_root(command: &str) -> Result<PathBuf> {
 ///
 /// Separate from [`maven_root`] on purpose. A command that shells out to `mvn`
 /// and one that knows both tools are different commands, and collapsing them
-/// is how `jails test` came to run Maven against a Gradle project and fail
-/// with a POM error -- which is worse than the refusal it replaced, because a
-/// refusal says what to do instead.
+/// would run Maven against a Gradle project and fail with a POM error -- which
+/// is worse than a refusal, because a refusal says what to do instead.
 fn either_root(command: &str) -> Result<(PathBuf, crate::build::Build)> {
     let root = find_project_root()?;
     crate::build::require_maven_at(&root, command)?;
@@ -77,11 +73,10 @@ use filter::*;
 /// Run a command with our stdio, failing on a non-zero exit.
 ///
 /// A thin adapter over the one executor: the callers here build a
-/// `std::process::Command` directly, and converting all of them at once would
-/// be a large diff for no behaviour change. What matters is that the printing,
+/// `std::process::Command` directly and it is turned into a spec. Printing,
 /// spawning and exit-status handling happen in one place -- the executor
-/// prints *and then runs*, which is the property that was violated where each
-/// site decided for itself.
+/// prints *and then runs*, a property no call site is trusted to keep on its
+/// own.
 pub(crate) fn run_inherited(mut cmd: Command, debug: bool) -> Result<()> {
     let is_maven = is_maven_program(cmd.get_program());
     if is_maven {
@@ -164,8 +159,8 @@ fn report_maven_failure(log: &str) {
 /// sees a byte. That is fine for `build` and `test`, where Maven's exit code
 /// is the truth. It is not fine for `run`: spring-boot-devtools runs `main`
 /// on its own thread, catches the startup exception there, and lets Maven
-/// print BUILD SUCCESS over a dead application -- so `jails run` reported
-/// success for an app that never came up.
+/// print BUILD SUCCESS over a dead application -- so an unwatched `jails run`
+/// would report success for an app that never came up.
 ///
 /// Piping costs the child its terminal, and a program that cannot see a
 /// terminal turns colour off, so the caller passes `color_args` to force it
@@ -478,13 +473,6 @@ pub fn clean(debug: bool) -> Result<()> {
     run_inherited(cmd, debug)
 }
 
-/// Reformat quietly, for `add format` to call the moment it installs the
-/// plugin. A formatter has an opinion about line wrapping that no amount of
-/// careful templating can predict, so the only way to leave the project
-/// passing its own `verify` is to actually run it once.
-///
-/// Best-effort: a project without Maven on PATH is not a reason to fail the
-/// capability, it just means the first `jails fmt` has work to do.
 /// Everything the build has to say: format check, compile, tests. `verify`
 /// rather than `test` because that is the phase `add format` binds to.
 /// `clean` first: Maven's incremental compile does not delete stale `.class`
@@ -504,23 +492,14 @@ pub fn check(debug: bool) -> Result<()> {
     run_inherited(cmd, debug)
 }
 
-/// Run the project's own formatter, for a project whose model owns its output.
+/// Run the project's own formatter.
 ///
-/// **The legacy route's ceremony protects something a canonical project does
-/// not have.** §R6.4 forbids letting Spotless near the live tree, and it is
-/// right about the project it was written for: the legacy engine generates
-/// into `src/`, so a formatter that fails halfway leaves jails' own output
-/// half-rewritten with nothing to say which files moved. It therefore formats
-/// a scratch tree synthesised from the projection and commits the diff as file
-/// operations.
+/// Reproducible output lives under `.jails/generated`, rendered from the model
+/// and merge-managed. What is left in `src/` is the reader's own code, and
+/// formatting that is what `jails fmt` is for. There is no jails-owned byte in
+/// the formatter's path to protect, so the plain goal is enough.
 ///
-/// A canonical project keeps its reproducible output under `.jails/generated`,
-/// rendered from the model and merge-managed. What is left in `src/` is the
-/// reader's own code, and formatting that is what `jails fmt` is for. There is
-/// no jails-owned byte in the formatter's path to protect, so the transaction
-/// buys nothing and the plain goal is both simpler and more honest.
-///
-/// Gradle is refused by name for the reason canonical `format` is: Spotless
+/// Gradle is refused by name for the reason the `format` capability is: Spotless
 /// needs its plugin inside `plugins { }`, which is only legal as the script's
 /// first statement, so a project that never installed it has no goal to run
 /// and guessing where the top of somebody's build file is produces a script
@@ -735,12 +714,11 @@ pub(super) fn build_tool_run(
     // The POM's `<mainClass>` first, because that is the entry point the
     // packaged jar has, and `jails run` claiming to run the application while
     // starting a *different* class is a defect rather than a convenience: a
-    // project whose manifest generated `LedgerCli` had `reconcile` registered
-    // there, and both `java -jar` and `jails run` started the `App` stub,
-    // which answers only `help`. Searching source is the fallback for a POM
-    // that declares none -- it cannot be the primary, because a project with
-    // two dispatchers has two `main` methods and a walk picks whichever it
-    // reaches first.
+    // project whose commands are registered in `LedgerCli` while `jails run`
+    // starts the `App` stub answers only `help`. Searching source is the
+    // fallback for a POM that declares none -- it cannot be the primary,
+    // because a project with two dispatchers has two `main` methods and a walk
+    // picks whichever it reaches first.
     let fqcn = match crate::pom::main_class(&pom) {
         Some(declared) => declared.to_string(),
         None => {
@@ -1040,7 +1018,7 @@ class ResultTest {
     #[test]
     fn a_fully_qualified_test_annotation_counts() {
         // Jails' own generated ITs carry fully qualified annotations, and
-        // matching `@Test` as a prefix missed every one of them.
+        // matching `@Test` as a prefix would miss every one of them.
         assert_eq!(
             enclosing_test_method(SOURCE, line_of("item.cost()")),
             Some("writtenFullyQualified".to_string())

@@ -1,6 +1,6 @@
 //! `jails model upgrade --to 1`: the pre-v1 draft, translated into v1 source.
 //!
-//! `jdl-sol.md` §22 mandates this bridge and constrains it in one sentence that
+//! JDL v1 §22 mandates this bridge and constrains it in one sentence that
 //! shapes the whole module: the upgrader "preserves comments, source order,
 //! explicit IDs, logical names, physical names, and operation routes", and
 //! where a legacy construct "has no typed v1 equivalent, upgrade aborts with
@@ -116,15 +116,11 @@ pub fn upgrade(source: &str, axes: Axes) -> Result<Upgraded, Diagnostics> {
 /// without one gains a JDBC adapter. A reviewer reading a hundred-line diff
 /// should not have to notice that for themselves.
 ///
-/// **A field-order note is also emitted, and is now unreachable in the
-/// ordinary case.** It existed because the pre-v1 path rendered intermediate
-/// TOML and lost declaration order, so upgrading moved a record's positional
-/// constructor -- an ABI change, silently. `audit.md` A2.2b fixed that at the
-/// source instead: the renderer carries `field_order`, so the two models agree
-/// and there is nothing to report. The note stays because it is the honest
-/// guard for the general case -- if the two frontends ever order an entity
-/// differently again, the upgrade says so rather than moving a constructor
-/// quietly.
+/// **A field-order note is also emitted, and is unreachable in the ordinary
+/// case**: both frontends carry declaration order, so the two models agree.
+/// It stays as the guard for the general case -- if the two frontends ever
+/// order an entity differently, the upgrade says so rather than moving a
+/// record's positional constructor quietly, which is an ABI change.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Upgraded {
     pub source: String,
@@ -454,9 +450,7 @@ const OPERATION_KINDS: [&str; 4] = ["command", "query", "transition", "event"];
 ///
 /// Pre-v1 takes the wire value either way and strips the quotes it finds; v1
 /// requires a string, because `OPEN = open` is otherwise indistinguishable
-/// from a constant named `open`. So an upgraded constant is always quoted --
-/// which is also what `jails model import` needs, since the legacy converter
-/// it adopts spells wire values bare.
+/// from a constant named `open`. So an upgraded constant is always quoted.
 fn enum_value(line: &str) -> String {
     let line = line.trim_end_matches([',', ';']).trim();
     match line.split_once('=') {
@@ -881,8 +875,8 @@ class Clock @id(unit_class_clock)
     ///
     /// **The upgrade moves no constructor, so it reports none.** Both
     /// frontends preserve declaration order, and a note saying the record's
-    /// positional constructor had moved would mean the pre-v1 path had lost
-    /// that order on its way through intermediate TOML (`audit.md` A2.2b).
+    /// positional constructor had moved would mean the pre-v1 path lost that
+    /// order on its way through intermediate TOML.
     /// `title, id` is deliberately reverse-alphabetical: with sorted labels
     /// this assertion would pass either way.
     #[test]
@@ -926,8 +920,7 @@ class Clock @id(unit_class_clock)
 
     /// Pre-v1 takes an enum wire value bare or quoted and v1 requires a
     /// string, so an unquoted one is the difference between a wire name and a
-    /// second constant. `jails model import` writes them bare, which is how
-    /// this was found.
+    /// second constant.
     #[test]
     fn an_enum_wire_value_is_quoted_on_the_way_across() {
         let draft = "application Demo @id(project_demo)\npackage com.example.demo\njava 26\n\
@@ -962,10 +955,9 @@ class Clock @id(unit_class_clock)
     }
 
     /// A dotted group or key is what every real dependency and almost every
-    /// real property has, and pre-v1 refused both until `label` became
-    /// `naming::stable_fragment`. Kept as a regression test on the legacy
-    /// parser, not on the upgrade: the upgrade cannot run on a source that
-    /// does not link.
+    /// real property has, and `label` is `naming::stable_fragment` so that
+    /// both link. A test on the pre-v1 parser rather than on the upgrade: the
+    /// upgrade cannot run on a source that does not link.
     #[test]
     fn a_dotted_dependency_group_and_setting_key_link() {
         let draft = "application Demo @id(project_demo)\npackage com.example.demo\njava 26\n\

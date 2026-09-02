@@ -2,9 +2,9 @@
 //!
 //! **A foreign key is the one thing in a generated project that no unit test
 //! can observe.** The migration says `add constraint`, the golden suite
-//! compares its bytes, and nothing runs it -- so a relation whose columns were
-//! paired the wrong way round, or whose constraint never reached the schema at
-//! all, looked exactly like one that did.
+//! compares its bytes, and nothing runs it -- so a relation whose columns are
+//! paired the wrong way round, or whose constraint never reaches the schema at
+//! all, looks exactly like one that did.
 //!
 //! Two questions, because they fail differently. The catalogue says whether
 //! the constraint is there and which ordered pairs it holds, which is what

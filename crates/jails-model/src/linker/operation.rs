@@ -241,8 +241,7 @@ pub(super) fn link(
                     // `.jails/model.toml` spells only the flat `sets`/`yields`
                     // pair, so it is folded into the rich fields here and the
                     // linked transition keeps one home per fact. A source that
-                    // spells the rich form wins: JDL v1 fills both, and its
-                    // `sets` projection is the one that was wrong.
+                    // spells the rich form wins.
                     if semantics.update.is_empty() {
                         semantics.update = sets;
                     }
@@ -292,11 +291,9 @@ pub(super) fn link(
                 // which the flat form cannot express at all.
                 //
                 // Emitters read the rich form only, so the two cannot disagree
-                // about a payload. This is the last of `audit.md` A3.9: the
-                // same fold transitions and queries already got, and the one
-                // that was still losing data, because an emitter reading
-                // `fields` renders an empty payload for an event declared with
-                // typed components.
+                // about a payload. The same fold transitions and queries get;
+                // without it an emitter reading `fields` renders an empty
+                // payload for an event declared with typed components.
                 if semantics.parameters.is_empty() {
                     semantics.parameters = fields
                         .iter()
@@ -377,8 +374,8 @@ pub(super) fn link(
 /// names a component, and `?` on a parameter already means a presence-
 /// sensitive *filter* and is legal only on a query. So `required` on a
 /// field-sourced parameter is not something an author states -- it is a fact
-/// about the field, and reading it from the declaration made
-/// `displayName:string?` render an `Input` with a plain `String` and a
+/// about the field, and reading it from the declaration renders
+/// `displayName:string?` as an `Input` with a plain `String` and a
 /// `requireNonNull`: a caller forced to supply a value for a column that
 /// permits none. A typed parameter has no field to read and keeps what it was
 /// given.

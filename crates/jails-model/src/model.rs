@@ -1,7 +1,7 @@
 //! `AppModel` — desired-state authority, and the only thing the compiler reads.
 //!
-//! **The first of `simplify-sol.md`'s five contracts lives here**: this value
-//! is what the application *should* be, stable IDs carry identity, and every
+//! **The model is desired-state authority**: this value is what the
+//! application *should* be, stable IDs carry identity, and every
 //! Java type, SQL table, column, route and property name is a projection off
 //! a label. Nothing in this struct describes a file, a path or a build tool —
 //! those are the compiler's answers to what is declared here, and keeping them
@@ -44,11 +44,10 @@ pub struct AppModel {
     /// Which JDL the source was written in, and which convention registry
     /// produced every derived name in it.
     ///
-    /// **Stored separately, per `jdl-sol.md` §7.2**, so a plan cannot compare
-    /// two models produced by different registries and conclude they agree.
+    /// **Stored separately, per JDL v1 §7.2**, so a plan cannot compare two
+    /// models produced by different registries and conclude they agree.
     /// `convention_version` is exactly `1` for JDL v1; `language_version`
-    /// follows the `jdl <n>` header. Both default for a lock written before
-    /// they existed, and the defaults are what that lock in fact used.
+    /// follows the `jdl <n>` header. Both default to `1` when absent.
     #[serde(default = "one")]
     pub language_version: u16,
     #[serde(default = "one")]
@@ -70,11 +69,11 @@ pub struct AppModel {
     pub operations: BTreeMap<OperationId, Operation>,
     /// Every name the convention decided rather than the author writing it.
     ///
-    /// §7.2 puts it in the model and §18.4 makes it inspectable, which is one
-    /// requirement rather than two: being *in* the model is what puts it in
-    /// the accepted-model and plan digest, so a convention that moves cannot
-    /// move silently. See the `derived` module, including which half of §18.4's
-    /// role list belongs here and which belongs to the plan.
+    /// JDL v1 §7.2 puts it in the model and §18.4 makes it inspectable, which
+    /// is one requirement rather than two: being *in* the model is what puts
+    /// it in the accepted-model and plan digest, so a convention that moves
+    /// cannot move silently. See the `derived` module, including which half of
+    /// §18.4's role list belongs here and which belongs to the plan.
     ///
     /// Maintained by [`AppModel::refresh_derived`] and by nothing else.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -219,10 +218,9 @@ pub struct Entity {
     pub enum_constants: Vec<EnumConstant>,
     /// Declaration order, because a Java record's component order is ABI.
     ///
-    /// This was a `BTreeMap<FieldId, Field>`, so a source declaring
-    /// `zulu, id, alpha` emitted `record Task(String alpha, UUID id, String
-    /// zulu)`. `jdl-sol.md` §7.3 lists entity fields first among the orders
-    /// that MUST be retained, and for the reason that a caller compiled
+    /// A keyed map would re-sort `zulu, id, alpha` into `record Task(String
+    /// alpha, UUID id, String zulu)`. JDL v1 §7.3 lists entity fields first
+    /// among the orders that MUST be retained, because a caller compiled
     /// against the old positional constructor keeps compiling against a
     /// re-sorted one and does the wrong thing.
     ///
@@ -336,9 +334,9 @@ pub enum Facet {
     /// Development seed data and the runner that loads it.
     ///
     /// Its own facet rather than sharing the factory's, because `Facet` is the
-    /// emitter's dispatch key: sharing one made `use seed` render a test
-    /// fixture and report success (`bugs.md` B59). The emitter's match is
-    /// exhaustive, so a facet with no arm is a compile error.
+    /// emitter's dispatch key, and sharing one would make `use seed` render a
+    /// test fixture and report success. The emitter's match is exhaustive, so
+    /// a facet with no arm is a compile error.
     Seed,
 }
 
@@ -377,30 +375,27 @@ impl TypeRef {
         // **Case is the rule, and it is what makes an unknown type an
         // error.** A lowercase token names one of jails' own types, so a
         // lowercase token that is not in that table is a misspelling --
-        // `value: nosuchtype` used to pass straight through as a project type
-        // and render `record Broken(nosuchtype value)`, which does not
-        // compile. A capitalised final segment is a type the project owns and
-        // jails is right not to know; the segments before it are its package.
+        // passed through as a project type, `value: nosuchtype` renders
+        // `record Broken(nosuchtype value)`, which does not compile. A
+        // capitalised final segment is a type the project owns and jails is
+        // right not to know; the segments before it are its package.
         //
         // **A package segment is asked the same question, keywords
-        // included.** This clause had a shape-only copy of the identifier
-        // rule beside `naming.rs`'s keyword-aware one, so
-        // `status:enum.PENDING.PAID` linked and rendered
+        // included**, through `naming::valid_java_package_segment`: a
+        // shape-only check lets `status:enum.PENDING.PAID` link and render
         // `import enum.PENDING.PAID;` -- a file that cannot compile, written
-        // with no diagnostic. One authority now: `naming::valid_java_type`
-        // for the type, `naming::valid_java_package_segment` for the rest.
+        // with no diagnostic.
+        //
         // **A Java spelling of a builtin is refused, not resolved as a project
         // type.** `BuiltinSemantics::aliases` records `String`, `UUID`,
-        // `LocalDate` and the rest so the CLI and the pre-v1 importer can
-        // canonicalise them on the way in; `jdl 1` matches the canonical token
-        // alone, so a hand-written `title: String` used to link as an external
-        // type in the base package. Nothing said so: the field rendered as a
-        // component of a type the project does not declare, and an attribute
-        // on it refused one step from the mistake -- `non_blank` is valid only
-        // for builtin `string` fields -- about the attribute rather than the
-        // type. Only a bare spelling is refused; `com.example.Path` is a
-        // project type whose final segment happens to collide, and its package
-        // says so.
+        // `LocalDate` and the rest so the CLI can canonicalise them on the way
+        // in; `jdl 1` matches the canonical token alone. Linked as an external
+        // type, a hand-written `title: String` renders a component of a type
+        // the project does not declare, and the first refusal is one step
+        // from the mistake -- `non_blank` is valid only for builtin `string`
+        // fields -- about the attribute rather than the type. Only a bare
+        // spelling is refused; `com.example.Path` is a project type whose
+        // final segment happens to collide, and its package says so.
         if let Some(builtin) = BuiltinType::from_alias(value) {
             return Err(format!(
                 "`{value}` is the Java spelling of jails' builtin `{}`, and `jdl 1` states the canonical one",
@@ -421,7 +416,7 @@ impl TypeRef {
         // "capitalise it" is not the answer to it -- so it gets its own
         // sentence naming the segment. **No `fix:` line here**: every caller
         // already supplies one, and two `fix:` lines under one diagnostic is
-        // the defect D3 is about, not twice the help.
+        // a defect, not twice the help.
         if let Some(reserved) = segments()
             .chain(std::iter::once(name))
             .find(|segment| crate::naming::is_java_keyword(segment))
@@ -458,12 +453,10 @@ mod tests {
     use super::*;
 
     /// Both halves, because a one-sided test is satisfied by refusing
-    /// everything.
-    ///
-    /// `status:enum.PENDING.PAID` linked before this rule existed, and
-    /// `jails g record` rendered `import enum.PENDING.PAID;` into a file that
-    /// cannot compile -- so the reserved word has to refuse *and* an ordinary
-    /// package has to keep resolving.
+    /// everything: the reserved word has to refuse -- linked,
+    /// `status:enum.PENDING.PAID` renders `import enum.PENDING.PAID;` into a
+    /// file that cannot compile -- *and* an ordinary package has to keep
+    /// resolving.
     #[test]
     fn a_reserved_word_is_never_a_java_type_and_an_ordinary_package_still_is() {
         assert_eq!(

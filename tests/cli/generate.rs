@@ -51,10 +51,9 @@ fn scaffold_refuses_invalid_or_reserved_derived_names_before_projection() {
         ("Bad!Name", "not valid in a Java identifier"),
         ("A", "PostgreSQL table `as`"),
         ("I", "PostgreSQL table `is`"),
-        // `bugs.md` B50. A package member outranks `java.lang`'s implicit
-        // import, so `record String(String value)` types its own component as
-        // itself -- and compiles, as does its generated test, which is why no
-        // tier reported it.
+        // A package member outranks `java.lang`'s implicit import, so `record
+        // String(String value)` types its own component as itself -- and
+        // compiles, as does its generated test, so no tier reports it.
         ("String", "is a type in `java.lang`"),
         ("Record", "is a type in `java.lang`"),
     ] {
@@ -150,9 +149,9 @@ fn machine_output_carries_failures_that_stop_before_an_outcome() {
     assert!(value["error"]["message"].is_string(), "{value}");
 }
 
-/// plan.md P5.2. Once the schema carries the closed set, adding a constant to
-/// the Java enum and stopping leaves a column that refuses a value every
-/// other layer accepts.
+/// Once the schema carries the closed set, adding a constant to the Java enum
+/// and stopping leaves a column that refuses a value every other layer
+/// accepts.
 #[test]
 fn widening_an_enum_migrates_every_table_that_stores_it() {
     let root = temp_dir("enum-closed-set-widening");
@@ -235,10 +234,10 @@ fn widening_an_enum_migrates_every_table_that_stores_it() {
     assert_eq!(snapshot_tree(&root), before, "refusal wrote project files");
 }
 
-/// plan.md P3.2. `--column preserve` is the whole reason a field name is a
-/// recorded pair rather than a derivation: the Java name moves, the column
-/// stays where a live database already has it, and no migration is written
-/// because there is nothing for one to run.
+/// `--column preserve` is the whole reason a field name is a recorded pair
+/// rather than a derivation: the Java name moves, the column stays where a
+/// live database already has it, and no migration is written because there
+/// is nothing for one to run.
 #[test]
 fn preserving_a_column_renames_the_component_and_writes_no_migration() {
     let root = temp_dir("resource-field-column-preserve");
@@ -336,10 +335,9 @@ fn resource_field_uses_scaffold_storage_identity_and_leaves_plain_records_source
     );
 
     // The same command on a resource with no table renames the component and
-    // appends nothing. It used to derive `tags` from the entity name and write
-    // `alter table tags` into a project that has never created that table --
-    // unappliable everywhere, and invisible to `doctor`, because a migration
-    // written this way is not recorded output.
+    // appends nothing: an `alter table tags` against a table nothing created
+    // is unappliable everywhere, and invisible to `doctor`, because a
+    // migration written that way is not recorded output.
     let record = jails_cmd(&root, None)
         .args(["g", "record", "Tag", "id:uuid@pk", "label:string?"])
         .output()
@@ -426,16 +424,11 @@ fn package_overrides_normalize_the_base_and_unique_names_resolve_without_the_fla
 
 /// Adding a field regenerates everything that *constructs* the resource.
 ///
-/// `g field Order memo:string?` used to update `Order`'s own ten surfaces and
-/// silently leave every `--on Order` companion calling the old constructor.
-/// The operation list named none of them, `doctor` reported `all clear`
-/// because each file was byte-identical to what jails wrote, and only `javac`
-/// found it -- the single most common change there is, breaking the build of
-/// any project that had generated a query, transition or use case.
-///
-/// Refusing instead, which is what the first attempt did, is worse in a
-/// different way: one generated query would make "this entity needs one more
-/// column" permanently impossible.
+/// Every `--on Order` companion calls `Order`'s constructor, so one left on
+/// the old list is a build break `doctor` cannot see -- each file is
+/// byte-identical to what jails wrote -- and only `javac` finds. Refusing
+/// instead would make "this entity needs one more column" permanently
+/// impossible once a query exists.
 #[test]
 fn a_field_regenerates_the_companions_that_construct_the_resource() {
     let root = temp_dir("field-stale-strategy-companions");
@@ -511,14 +504,14 @@ fn a_field_regenerates_the_companions_that_construct_the_resource() {
     }
 }
 
-/// The same rule, for the two companions `--on` alone did not reach.
+/// The same rule, for the two companions that name the resource through
+/// `--yields`.
 ///
 /// An `association` names its parent with `--yields` and its child with
 /// `--on`, and a `durable-job` names the resource it produces with
-/// `--yields` -- so a match on `--on` only left both of them planning against
-/// the component list the resource had before the evolution. Both read it off
-/// `<Name>.java`: the association's probe builds a row from the child's
-/// columns, and the job's store maps one back. modern.md §11.1, plan.md P7.1.
+/// `--yields`. Both read the component list off `<Name>.java`: the
+/// association's probe builds a row from the child's columns, and the job's
+/// store maps one back.
 #[test]
 fn a_field_reaches_the_companions_named_by_yields_as_well_as_on() {
     let root = temp_dir("field-stale-yields-companions");
@@ -596,9 +589,7 @@ fn a_field_reaches_the_companions_named_by_yields_as_well_as_on() {
     let plan = String::from_utf8_lossy(&evolved.stdout);
 
     // The association's probe builds a row out of the child's column list, so
-    // it goes stale the moment the child gains one. `--on Item` named it all
-    // along; what was missing is that `association` was not in the set of
-    // recipes a field evolution re-plans.
+    // it goes stale the moment the child gains one.
     let probe =
         ".jails/generated/test/java/com/example/demo/adapters/jdbc/ItemOwnerAssociationIT.java";
     assert!(plan.contains(probe), "{probe} missing from:\n{plan}");
@@ -625,10 +616,8 @@ fn a_field_reaches_the_companions_named_by_yields_as_well_as_on() {
     );
 
     // The parent side, reached through `--yields`. The association re-plans
-    // from a `child=parent` *mapping* rather than a field list, and reading
-    // its arguments as fields refused the whole evolution with "association
-    // ItemOwner needs at least one `childField=parentField` mapping" -- in the
-    // middle of a `g field` that had nothing to do with it.
+    // from a `child=parent` *mapping* rather than a field list, so its
+    // arguments must not be read as fields.
     let parent = jails_cmd(&root, None)
         .args(["g", "field", "Owner", "nickname:string?"])
         .output()
@@ -643,11 +632,9 @@ fn a_field_reaches_the_companions_named_by_yields_as_well_as_on() {
 
 /// An index on a table that already exists.
 ///
-/// `--index` and `@index` are both creation-time and there was nothing
-/// afterwards -- `missing.md` M9, measured against a real project whose third
-/// migration is exactly `addIndex('messages', ['customer_id'])`. `g field` can
-/// already add a *column* to a live table, which is the harder problem: an
-/// index has no data plan to argue about.
+/// `--index` and `@index` are both creation-time; this is the one afterwards.
+/// `g field` can already add a *column* to a live table, which is the harder
+/// problem: an index has no data plan to argue about.
 #[test]
 fn an_index_can_be_added_to_a_table_that_already_exists() {
     let root = temp_dir("resource-index-add");
@@ -734,11 +721,10 @@ fn an_index_can_be_added_to_a_table_that_already_exists() {
 
 /// A route the caller names, because the URLs are somebody else's contract.
 ///
-/// `missing.md` M8: the ported originals answer `/customer_api/ping`,
-/// `/admin_api/issues`, `/api/conversations/`, and none of those is derivable
-/// from any name jails would accept for the class. Derived paths stay the
-/// default -- they are a virtue greenfield -- and `--path` is how a port meets
-/// a fixed contract.
+/// A ported application answers `/customer_api/ping`, `/admin_api/issues`,
+/// `/api/conversations/`, and none of those is derivable from any name jails
+/// would accept for the class. Derived paths stay the default -- they are a
+/// virtue greenfield -- and `--path` is how a port meets a fixed contract.
 #[test]
 fn a_named_route_replaces_the_derived_one_everywhere_it_appears() {
     let root = temp_dir("named-route");
@@ -843,11 +829,9 @@ fn a_named_route_replaces_the_derived_one_everywhere_it_appears() {
 
 /// A transition can update a row keyed by something other than `id`.
 ///
-/// The selector was the literal `"id"` at four sites here and in the SQL
-/// predicate, so a resource whose natural key is `user_id` -- a conversation
-/// per customer, a row a URL addresses by the customer -- could not be updated
-/// at all. Found implementing the minicom feature list, where every PATCH the
-/// frontend sends is addressed by `userId`.
+/// A resource whose natural key is `user_id` -- a conversation per customer, a
+/// row a URL addresses by the customer -- is updated by that key, so the
+/// selector is not the literal `"id"` in the port or the SQL predicate.
 ///
 /// The URL half is `a_transition_can_take_its_key_from_the_url`; what is
 /// refused here is a variable that names something *other* than the selector,
@@ -984,11 +968,11 @@ fn a_transition_can_select_by_a_component_other_than_id() {
     assert!(stderr.contains("`{userId}`"), "{stderr}");
 }
 
-/// `missing.md`: the key in the URL, which is where every admin frontend puts
-/// it -- `PATCH /admin_api/conversations/{userId}/status`.
+/// The key in the URL, which is where every admin frontend puts it -- `PATCH
+/// /admin_api/conversations/{userId}/status`.
 ///
-/// Three things move together or the route is broken in the quiet way
-/// `bugs.md` B48 was: the command record drops the selector (a component bound
+/// Three things move together or the route is quietly broken: the command
+/// record drops the selector (a component bound
 /// from two places can disagree with itself), the port takes the key beside
 /// the command, and the generated proof expands the variable. The port shape
 /// is deliberately the *same* one a body-carried key gets -- `execute(key,
@@ -1109,7 +1093,7 @@ fn a_transition_can_take_its_key_from_the_url() {
         "{transition}"
     );
 
-    // And the proof expands the variable, which is the half B48 dropped.
+    // And the proof expands the variable.
     let test = common::read_generated(
         &root,
         "src/test/java/com/example/demo/adapters/http/SetStatusControllerTest.java",
@@ -1121,19 +1105,10 @@ fn a_transition_can_take_its_key_from_the_url() {
     assert!(!test.contains("\"userId\":"), "{test}");
 }
 
-/// A resource can be dropped, re-created and dropped again, indefinitely.
-///
-/// `bugs.md` B46. Two independent one-way doors sat behind this, and the first
-/// hid the second.
-///
-/// The read set declared only the resource rows the owner currently holds,
-/// while the drop planner reaches the whole sealed lineage -- so the second
-/// drop planned against the superseded `V001__create_x.sql` and refused with
-/// jails' own internal-bug message. Behind that, `migration_file` reused an
-/// existing file whose description matched, and the escape hatch for that
-/// existed only for `create_`: a `drop_books` therefore handed back the
-/// *first* `V00n__drop_books.sql`, the lifecycle found no new drop migration,
-/// and the only command that retires the table was the one that no longer ran.
+/// A resource can be dropped, re-created and dropped again, indefinitely: the
+/// drop planner reaches the whole sealed lineage, and every drop allocates a
+/// new migration rather than reusing an existing `drop_` file whose
+/// description matches.
 #[test]
 fn a_resource_can_be_dropped_and_recreated_more_than_once() {
     let root = temp_dir("drop-recreate-cycle");
@@ -1162,8 +1137,7 @@ fn a_resource_can_be_dropped_and_recreated_more_than_once() {
             .unwrap()
     };
 
-    // Two full cycles: one create/drop pair was always fine, and the second
-    // is what was fatal.
+    // Two full cycles: the second is the one that meets an existing lineage.
     for cycle in 1..=2 {
         let created = scaffold();
         assert!(
@@ -1202,12 +1176,10 @@ fn a_resource_can_be_dropped_and_recreated_more_than_once() {
 
 /// What `jails explain query` says about a filter is what `g query` does.
 ///
-/// `bugs.md` B51: the explanation said "required scalar equality filters only"
-/// long after optional filters shipped, because `every_kind_has_an_explanation`
-/// checks that a kind *has* a row and nothing checks the row is still true.
-/// A rationale cannot be derived -- that is why the table is hand-written --
-/// but a claim about a shape jails emits can be checked against the shape, and
-/// the two claims that drifted are pinned here.
+/// `every_kind_has_an_explanation` checks that a kind *has* a row and nothing
+/// checks the row is still true. A rationale cannot be derived -- that is why
+/// the table is hand-written -- but a claim about a shape jails emits can be
+/// checked against the shape, and two such claims are pinned here.
 #[test]
 fn what_explain_says_about_a_query_is_what_a_query_does() {
     let root = temp_dir("explain-agrees-with-query");
@@ -1298,12 +1270,11 @@ fn what_explain_says_about_a_query_is_what_a_query_does() {
 
 /// A verb a recipe derives is not also a verb a flag can set.
 ///
-/// `bugs.md` B49: `g query X --method post` emitted `@GetMapping` and said
-/// nothing. A query's verb follows its request -- GET when every filter comes
-/// from `--path`, POST when it carries a body -- so `--method` there is not a
+/// A query's verb follows its request -- GET when every filter comes from
+/// `--path`, POST when it carries a body -- so `--method` there is not a
 /// preference jails declines to honour, it is a claim about the request that
-/// contradicts the request. That is `missing.md` M7's shape, which this module
-/// already refuses for `--path`, `--via` and `--consumes`.
+/// contradicts the request, and it is refused the way `--path`, `--via` and
+/// `--consumes` are refused on recipes that cannot carry them.
 #[test]
 fn a_verb_a_recipe_derives_is_not_one_a_flag_can_set() {
     let root = temp_dir("method-derived-not-set");
@@ -1360,12 +1331,11 @@ fn a_verb_a_recipe_derives_is_not_one_a_flag_can_set() {
 
 /// A second client does not take the first one's configuration with it.
 ///
-/// `missing.md` M13: `@ImportHttpServices` carries one group name, and one
-/// shared `HttpClientsConfig` scanned by package meant the newest client
-/// always worked and every older one was broken -- silently at generate time,
-/// and visibly only as the older client's own test calling
-/// `https://example.invalid`. One config class per client, listed by type,
-/// makes it additive by construction.
+/// `@ImportHttpServices` carries one group name, so one shared
+/// `HttpClientsConfig` scanned by package would leave only the newest client
+/// configured -- silently at generate time, and visibly only as the older
+/// client's own test calling `https://example.invalid`. One config class per
+/// client, listed by type, makes it additive by construction.
 #[test]
 fn a_second_client_keeps_the_first_one_registered() {
     let root = temp_dir("clients-are-additive");
@@ -1491,9 +1461,9 @@ fn scaffold_refuses_an_implicit_or_composite_identity_before_writing() {
     }
 }
 
-/// plan.md P3.1. These pairs used to be two fields sharing one column; they
-/// are now one field spelled twice, which is why the refusal names a single
-/// Java component and a single column rather than two of each.
+/// These pairs are one field spelled twice, not two fields sharing one
+/// column, which is why the refusal names a single Java component and a
+/// single column rather than two of each.
 #[test]
 fn field_names_that_collapse_to_one_sql_column_refuse_before_writing() {
     let root = temp_dir("scaffold-column-collision");
@@ -1707,10 +1677,8 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
         .unwrap();
     assert!(debug.status.success(), "{debug:?}");
     let debug = String::from_utf8(debug.stdout).unwrap();
-    // Named for the canonical pipeline, because that is what runs: capture the
-    // workspace, compile the patched model, materialize the exact plan. The
-    // legacy engine's `discover / observe / parse / project / prepare /
-    // verify` named steps this binary no longer has.
+    // Named for the pipeline, because that is what runs: capture the
+    // workspace, compile the patched model, materialize the exact plan.
     for phase in ["capture", "compile", "materialize"] {
         assert!(
             debug.contains(&format!("timing  {phase}")),
@@ -1739,13 +1707,11 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
     assert!(json.status.success(), "{json:?}");
     let json = String::from_utf8(json.stdout).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    // **The exact plan itself, not an envelope describing one.** The legacy
-    // engine wrapped every command in `jails.command-result.v2` and put a
-    // rendered summary inside it; the compiler's answer to `--output json` is
-    // the `PlanBundle` -- the reviewed transition, its digest, its operations
-    // and every blob they name -- because that is the value `--plan-out`
-    // writes and `apply` refers to. A second shape describing it could
-    // disagree with it.
+    // The exact plan itself, not an envelope describing one: the answer to
+    // `--output json` is the `PlanBundle` -- the reviewed transition, its
+    // digest, its operations and every blob they name -- because that is the
+    // value `--plan-out` writes and `apply` refers to. A second shape
+    // describing it could disagree with it.
     assert_eq!(value["schema"], "jails.plan-bundle.v1", "{json}");
     assert!(
         value["plan"]["digest"]
@@ -1798,11 +1764,9 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
         ])
         .output()
         .unwrap();
-    // **`json-v1` is refused rather than answered in a different shape.** It
-    // named the legacy engine's `jails.command-result.v1`; on a canonical
-    // project the flag was simply ignored and the caller got the plan bundle
-    // instead, so a machine consumer found fields it had not asked for and
-    // missed every one it had.
+    // `json-v1` is refused rather than answered in a different shape: a
+    // machine consumer handed the plan bundle instead would find fields it
+    // had not asked for and miss every one it had.
     assert_eq!(compatibility.status.code(), Some(1), "{compatibility:?}");
     // Reported *in* v1, because that is the shape the caller can parse: a
     // refusal rendered in the schema they did not ask for is the same defect
@@ -1899,11 +1863,10 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
     assert!(committed.status.success(), "{committed:?}");
     let committed = String::from_utf8(committed.stdout).unwrap();
     let committed_value: serde_json::Value = serde_json::from_str(&committed).unwrap();
-    // **The plan digest, and it is the same one the preview printed.** The
-    // legacy receipt carried an `operation_digest` and a `prepared_after` of
-    // its own; here `apply` never replans, so what the execution reports is
-    // the digest of the bundle it was handed -- which is what makes "preview,
-    // review, apply" refer to one transition rather than three.
+    // The plan digest, and it is the same one the preview printed: `apply`
+    // never replans, so what the execution reports is the digest of the
+    // bundle it was handed -- which is what makes "preview, review, apply"
+    // refer to one transition rather than three.
     assert_eq!(
         committed_value["schema"], "jails.execution.v1",
         "{committed}"
@@ -2099,14 +2062,8 @@ fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
 }
 
 /// Regenerating a dropped resource revives its lifecycle, so the recovery
-/// commands agree about it.
-///
-/// The recreate appended `V003__create_books.sql` and left the lifecycle at
-/// `drop-pending`, which every recovery command then read and refused on:
-/// `doctor` named `resource repair`, repair said the resource was retired and
-/// named `resource revive`, and revive leaked an instruction meant for whoever
-/// was editing the route. A closed loop from an ordinary
-/// destroy-then-regenerate.
+/// commands agree about it rather than each refusing over a resource that is
+/// present on disk.
 #[test]
 fn regenerating_a_dropped_resource_returns_it_to_a_consistent_lifecycle() {
     let root = temp_dir("recreate-revives-lifecycle");
@@ -2159,7 +2116,7 @@ fn regenerating_a_dropped_resource_returns_it_to_a_consistent_lifecycle() {
     assert!(status.contains("state: consistent"), "{status}");
     assert!(status.contains("table: books"), "{status}");
 
-    // And the entity can be evolved again, which is what the loop prevented.
+    // And the entity can be evolved again.
     let evolved = jails_cmd(&root, None)
         .args(["g", "field", "Book", "pages:int?"])
         .output()
@@ -2212,9 +2169,7 @@ fn renaming_a_storage_backed_resource_keeps_its_table_or_refuses() {
         "{stderr}"
     );
 
-    // The coordinated rename takes a bare name. Demanding `<slice>.<name>`
-    // made it unreachable from every imperative project, so the one path that
-    // carries the storage could not be run at all.
+    // The coordinated rename takes a bare name, not `<slice>.<name>`.
     let renamed = jails_cmd(&root, None)
         .args([
             "rename",
@@ -2569,14 +2524,10 @@ fn a_rolling_rename_is_refused_as_the_campaign_it_is() {
     assert!(generated.status.success(), "{generated:?}");
     let before = snapshot_tree(&root);
 
-    // **A campaign is several reviewed plans, and the compiler plans one.**
-    // The legacy engine staged a rolling rename, waited for an attestation
-    // that every reader had moved, and completed the storage forward -- three
-    // commands, a campaign id, and a state machine living beside the model.
-    // Under the canonical contract each of those steps is an ordinary plan the
-    // reader runs when their readers are ready, so the tool refuses to own the
-    // waiting rather than reimplementing a machine whose whole content is
-    // "not yet".
+    // A campaign is several reviewed plans, and the compiler plans one. Each
+    // step of a rolling rename is an ordinary plan the reader runs when their
+    // readers are ready, so the tool refuses to own the waiting rather than
+    // carrying a state machine whose whole content is "not yet".
     let refused = jails_cmd(&root, None)
         .args([
             "rename",
@@ -2898,16 +2849,10 @@ fn task_drop_keeps_v001_and_appends_an_exact_forward_migration() {
 
 /// A migration whose delivery is somebody else's business.
 ///
-/// **There is no post-commit effect any more, and that is the change.**
-/// Canonical retirement appends one forward migration and stops; running it
-/// against a database is `jails migrate`, a separate command with its own
-/// failure. The receipt this test used to read was the legacy engine's record
-/// of an effect that could fail after the transaction committed -- the exact
-/// half-committed state publication-by-rename exists to remove, and the
-/// strangler removed the mechanism rather than reimplementing it.
-///
-/// What is left worth holding: the retirement is durable whether or not a
-/// database ever sees it, and it does not reach for one.
+/// Retirement appends one forward migration and stops; running it against a
+/// database is `jails migrate`, a separate command with its own failure. The
+/// retirement is durable whether or not a database ever sees it, and it does
+/// not reach for one.
 #[test]
 fn a_retirement_is_durable_without_a_database_to_apply_it_to() {
     let root = temp_dir("task-drop-without-a-database");
@@ -3011,12 +2956,10 @@ fn scaffold_reuses_an_existing_record_and_destroy_preserves_it() {
     );
     assert!(response.contains("createdAt"), "{response}");
 
-    // **Removal is model subtraction, so it takes the declaration with it.**
-    // The engine this replaces recorded which intent wrote each file, so
-    // `destroy scaffold` could take back the projections and leave a record an
-    // earlier `g record` had written. There is one declaration here and the
-    // projections are views of it -- so `destroy scaffold` removes the entity,
-    // and keeping the record means not removing it.
+    // Removal is model subtraction, so it takes the declaration with it.
+    // There is one declaration and the projections are views of it -- so
+    // `destroy scaffold` removes the entity, and keeping the record means not
+    // removing it.
     let destroy = jails_cmd(&root, None)
         .args(["destroy", "scaffold", "Post", "--force"])
         .status()
@@ -3143,11 +3086,9 @@ fn an_association_blocks_a_drop_until_it_is_itself_retired_forward() {
             .exists()
     );
 
-    // And the way out exists. "Remove the dependant first" used to name a
-    // command that refused on principle, so neither half of an association
-    // could ever be destroyed -- a hard deadlock reachable in three commands.
-    // Retiring the association *appends* `drop constraint`, which is the next
-    // migration rather than the un-running of one.
+    // And the way out exists: retiring the association *appends* `drop
+    // constraint`, which is the next migration rather than the un-running of
+    // one, so neither half of an association is stuck behind the other.
     let retired = jails_cmd(&root, None)
         .args(["destroy", "association", "ChildParent", "--force"])
         .output()
@@ -3176,7 +3117,7 @@ fn an_association_blocks_a_drop_until_it_is_itself_retired_forward() {
         "the migration that added the constraint is append-only and stays"
     );
 
-    // The refusal it was blocking is now gone.
+    // The refusal is gone once the dependant is retired.
     let dropped = jails_cmd(&root, None)
         .args([
             "destroy",
@@ -3283,10 +3224,9 @@ fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migra
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     // The plan names the files a new component touches: the record, its test
-    // and the migration that adds the column. V1 printed a per-derivative
-    // `skipped`/`add component` line from a walk of its own.
-    // `write`, not the legacy engine's `replace`: the file is managed, it
-    // exists, and the plan is rewriting jails' own output over it.
+    // and the migration that adds the column. The verb is `write`: the file
+    // is managed, it exists, and the plan is rewriting jails' own output over
+    // it.
     assert!(stdout.contains("write "), "{stdout}");
     assert!(stdout.contains(".sql"), "{stdout}");
 
@@ -3297,10 +3237,9 @@ fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migra
         "src/main/java/com/example/demo/adapters/JdbcNoteRepository.java",
     );
     assert!(jdbc.contains("created_at"), "{jdbc}");
-    // The edited derivative is *merged*, not skipped. V1 left it alone, which
-    // preserved the edit and left the DTOs missing the component the record
-    // had just grown -- a DTO that no longer describes its own domain type.
-    // Both halves survive here: the reader's line and the new field.
+    // The edited derivative is *merged*, not skipped: skipping would preserve
+    // the edit and leave the DTO missing the component the record just grew.
+    // Both halves survive: the reader's line and the new field.
     let merged = fs::read_to_string(&request).unwrap();
     assert!(merged.contains("// user-owned validation"), "{merged}");
     // The new component reaches the *response*, and deliberately not the
@@ -3666,8 +3605,7 @@ fn scaffold_writes_http_requests_and_factory_builds_typed_test_data() {
 /// than conflicts, a reused key is refused, an in-flight key is told to wait --
 /// and none of it is visible to a compile check. The generated unit test
 /// asserts all four outcomes, so the thing to verify here is that Surefire
-/// actually executes it: `plan.md` §18's standing warning is that a skipped
-/// tier-3 test reports as a pass.
+/// actually executes it: a skipped test reports as a pass.
 #[test]
 fn generate_idempotency_produces_tests_that_run_and_pass() {
     if !real_mvn_available() {
@@ -3706,9 +3644,7 @@ fn generate_idempotency_produces_tests_that_run_and_pass() {
 ///
 /// `app plan`, `--pretend` and inspection all reach the store, and a reader
 /// that also tidied up would make asking jails what it would do change what it
-/// had done. It is not a hypothetical: the provenance reader used to fold a
-/// pre-ledger `.jails/` and delete the old files from inside the read, so
-/// asking "is there anything to destroy" consumed the evidence for the answer.
+/// had done.
 #[test]
 fn planning_pretending_and_inspecting_leave_machine_state_byte_for_byte() {
     let root = temp_dir("read-purity");
@@ -3756,10 +3692,8 @@ fn planning_pretending_and_inspecting_leave_machine_state_byte_for_byte() {
         String::from_utf8_lossy(&applied.stdout),
         String::from_utf8_lossy(&applied.stderr)
     );
-    // The committed store of a canonical project is its model and the lock
-    // that seals the projection it was compiled from -- there is no ledger,
-    // and a canonical project growing one would be the cutover running
-    // backwards.
+    // The committed store is the model and the lock that seals the projection
+    // it was compiled from, and nothing else.
     assert!(root.join(".jails/model.jdl").is_file());
     assert!(root.join(".jails/compiler.lock.json").is_file());
     assert!(!root.join(".jails/ledger.toml").exists());
@@ -3778,9 +3712,9 @@ fn planning_pretending_and_inspecting_leave_machine_state_byte_for_byte() {
 #[test]
 fn a_timestamped_scaffold_does_not_ask_the_caller_for_its_audit_columns() {
     // `jails g scaffold --help` promises "the generated create path supplies
-    // both". It did not: they arrived as `@NotNull` wire components, so the
-    // documented POST answered 400 naming two fields the caller has no
-    // business setting -- found by sending it at a running application.
+    // both", so the timestamps must not arrive as `@NotNull` wire components:
+    // the documented POST would answer 400 naming two fields the caller has
+    // no business setting.
     let root = temp_dir("scaffold-timestamps-wire");
     write_spring_fixture(&root);
     assert!(
@@ -3839,9 +3773,8 @@ fn a_timestamped_scaffold_does_not_ask_the_caller_for_its_audit_columns() {
 #[test]
 fn a_scoped_scaffold_documents_only_the_request_its_controller_answers() {
     // A scoped resource is create-only: every read has to carry the tenant, so
-    // it is a `jails g query`. The collection used to end with a `### List`
-    // block regardless, and the generated controller test already asserted
-    // that same GET is a 405 -- the test knew and the collection did not.
+    // it is a `jails g query`, and the collection must not end with a `###
+    // List` block for the GET the generated controller test asserts is a 405.
     let root = temp_dir("scoped-scaffold-requests");
     write_spring_fixture(&root);
     assert!(
@@ -3979,16 +3912,15 @@ fn a_dispatcher_already_in_use_keeps_the_entry_point() {
     );
 }
 
-/// **The confirmation moved to the thing that is irreversible.** Removing a
+/// The confirmation is on the thing that is irreversible. Removing a
 /// generated class is model subtraction: the declaration goes, the next
 /// compilation renders the tree without it, and running the command again puts
-/// it back -- so there is nothing to confirm, and a prompt on every removal was
+/// it back -- so there is nothing to confirm, and a prompt on every removal is
 /// a prompt people learn to answer without reading.
 ///
 /// Dropping a table is not reversible, and that is where the question is
 /// asked: `--storage drop` states the policy and `--confirm-table` names the
-/// table, so the two together are the answer a prompt used to collect. A
-/// retirement with neither is refused rather than assumed.
+/// table. A retirement with neither is refused rather than assumed.
 #[test]
 fn destroying_stored_data_needs_the_policy_and_the_table_named() {
     let root = temp_dir("destroy-confirm");
@@ -4068,11 +4000,11 @@ fn generate_twice_writes_nothing_the_second_time() {
         .args(["generate", "service", "comment"])
         .output()
         .unwrap();
-    // A second identical generate is a **no-op**, not a refusal. V1 refused
-    // because it would otherwise clobber whatever was there; here the file is
-    // owned by the intent that wrote it, so "nothing changed" is the honest
-    // answer -- and an edited file is three-way merged rather than refused,
-    // which `app_manifest_merges_an_edited_intent_over_user_changes` pins.
+    // A second identical generate is a no-op, not a refusal: the file is
+    // owned by the declaration that wrote it, so "nothing changed" is the
+    // honest answer -- and an edited file is three-way merged rather than
+    // refused, which `app_manifest_merges_an_edited_intent_over_user_changes`
+    // pins.
     assert!(
         output.status.success(),
         "{}",
@@ -4206,9 +4138,8 @@ fn generate_scaffold_produces_a_project_that_compiles_and_passes_tests() {
     );
 }
 
-/// Regression coverage for the reported bug (standalone `generate
-/// controller` not producing a test) plus real-compile verification of the
-/// new controller/service/record companion test templates.
+/// A standalone `generate controller` produces a test, and the
+/// controller/service/record companion tests compile on real Maven.
 #[test]
 fn standalone_generators_companion_tests_compile_and_pass() {
     if !real_mvn_available() {
@@ -4243,7 +4174,7 @@ fn standalone_generators_companion_tests_compile_and_pass() {
         "com/example/demo/service/BillingServiceTest.class",
         "com/example/demo/domain/TagTest.class",
         // The socket's two behaviours run here rather than in a container:
-        // both are about the session registry. plan.md P8.4.
+        // both are about the session registry.
         "com/example/demo/web/ChatSocketHandlerTest.class",
     ] {
         assert!(
@@ -4297,10 +4228,9 @@ fn record_and_command_compile_and_pass_in_a_plain_cli_project() {
 
     // `class` is the one kind that lands in the base package rather than a
     // subpackage -- a wrong `place()` here would compile and still be wrong.
-    // Under `.jails/generated`: `new-cli` seeds a model, so the project is
-    // canonical and its reproducible output is merge-managed there, compiled
-    // through an added source root. Only a project created from an
-    // application manifest still writes into `src`, which is what
+    // Under `.jails/generated`: reproducible output is merge-managed there,
+    // compiled through an added source root. A project created from an
+    // application manifest writes into `src`, which is what
     // `verified_plain_toolbox` below is.
     assert!(
         root.join(".jails/generated/main/java/com/example/demo/MoneyMoved.java")
@@ -4311,9 +4241,7 @@ fn record_and_command_compile_and_pass_in_a_plain_cli_project() {
             .exists()
     );
     // And the negatives, which are what a regression actually trips over: the
-    // reader's own tree is untouched, and no legacy ledger appears. A project
-    // that quietly fell back to the legacy engine writes both, and every
-    // positive assertion above still passes when it does.
+    // reader's own tree is untouched, and no `.jails/ledger.toml` appears.
     assert!(
         !root
             .join("src/main/java/com/example/demo/MoneyMoved.java")
@@ -4445,22 +4373,15 @@ fn generators_compose_through_user_owned_field_types() {
 
     // `!` is a text rule; asking for it on a date is a mistake worth naming
     // rather than silently ignoring.
-    //
-    // The wording is the surviving parser's. `pending.md` §6.3 merged the two,
-    // and the one that lives carries a `fix:` line -- which is why this asserts
-    // on the sentence rather than on the older "only applies to text".
     let output = jails_cmd_with_path(&root, &path)
         .args(["generate", "value", "bad", "occurredOn:date!"])
         .output()
         .unwrap();
     assert!(!output.status.success());
     let refusal = String::from_utf8_lossy(&output.stderr);
-    // The wording is the surviving engine's, which is now the compiler's:
-    // `new-cli` seeds a model, so this project is canonical and the refusal
-    // comes from the model's own diagnostics rather than the legacy field
-    // parser. `pending.md` §6.3 moved this assertion once before for the same
-    // reason. What has to hold either way is that the mistake is named and
-    // carries a `fix:` line rather than being silently ignored.
+    // The refusal comes from the model's own diagnostics. What has to hold is
+    // that the mistake is named and carries a `fix:` line rather than being
+    // silently ignored.
     assert!(
         refusal.contains("valid only for builtin `string` fields"),
         "{refusal}"
@@ -4478,17 +4399,11 @@ fn generators_compose_through_user_owned_field_types() {
         .unwrap();
     // The constant by name rather than by position: `values()[0]` starts
     // standing for a different value the moment somebody reorders the enum,
-    // and nothing in the diff says so. plan.md P6.5.
-    // **`Ccy`, not `Currency`, and that is a divergence rather than taste.**
-    // The legacy field parser deliberately keeps `Currency` out of
-    // `builtin_by_java_name` so a project can generate its own currency enum;
-    // the canonical builtin table lists it as an alias of the `currency`
-    // builtin, so `currency:Currency` resolves to `java.util.Currency` there.
-    // Resolving it the legacy way needs the linker to prefer a declared entity
-    // over a builtin alias, which `TypeRef::parse` cannot decide because it
-    // never sees the entity list. Recorded in `simplify-sol.md`; the property
-    // this test is about -- an enum component sampled *by name* -- does not
-    // depend on which enum it is.
+    // and nothing in the diff says so.
+    // `Ccy`, not `Currency`: the builtin table lists `Currency` as an alias of
+    // the `currency` builtin, so `currency:Currency` resolves to
+    // `java.util.Currency`. The property this test is about -- an enum
+    // component sampled *by name* -- does not depend on which enum it is.
     assert!(test.contains("Ccy.GBP"), "{test}");
     assert!(!test.contains("values()[0]"), "{test}");
     assert!(
@@ -4940,8 +4855,8 @@ fn generate_dto_client_and_job_compile_and_pass_against_real_spring() {
     // No base URL in the annotation: it belongs to the group's configuration.
     assert!(!client.contains("@HttpExchange(url"), "{client}");
     // One registration per client, listed by type: a shared one carries a
-    // single group name, so a second client took the first's configuration
-    // with it. missing.md M13.
+    // single group name, so a second client would take the first's
+    // configuration with it.
     let config = common::read_generated(
         &root,
         "src/main/java/com/example/demo/clients/BillingClientConfig.java",
@@ -5010,8 +4925,8 @@ fn generating_an_integration_test_also_configures_something_to_run_it() {
 
 #[test]
 fn generate_help_documents_the_field_syntax_at_the_point_of_typing() {
-    // The field grammar is the thing you need while typing the command, and
-    // it lived only in the README. clap reflows a doc comment into one
+    // The field grammar is the thing you need while typing the command, so it
+    // is in `--help`. clap reflows a doc comment into one
     // paragraph unless told not to, which turns the table and the examples
     // into a run-on -- so the formatting is worth asserting, not just the
     // presence of the words.
@@ -5038,22 +4953,11 @@ fn generate_help_documents_the_field_syntax_at_the_point_of_typing() {
     assert!(help.contains("- sealed:"), "{help}");
 }
 
-/// The tier that answers what the tool is for. A strategy's interface,
-/// implementations and tests have to agree on one method signature across
-/// five files, and a mismatch is a compile error the user did not write.
-///
-/// Both modes are covered in one project because they generate different
-/// signatures: `--yields` returns `Optional<T>`, a bare strategy `boolean`.
 /// A generator whose whole subject is an outbound HTTP call must not leave the
-/// call unbounded.
-///
-/// modern.md §13.6. A real generated client had no base URL, no connect
-/// timeout, no read timeout, no retry and no auth --
-/// `grep timeout application.properties` found only Hikari's. `backend.md` §1
-/// makes this the fourth of five reflexes and admits no exceptions, and this
-/// is the one place it cannot be left to the reader. The prefix and both
-/// timeout keys are `HttpClientProperties extends HttpClientSettingsProperties`
-/// in `spring-boot-http-client`, checked in `deps/spring-boot` at v4.0.0.
+/// call unbounded: a base URL, a connect timeout and a read timeout are the
+/// one place this cannot be left to the reader. The prefix and both timeout
+/// keys are `HttpClientProperties extends HttpClientSettingsProperties` in
+/// `spring-boot-http-client`, checked in `deps/spring-boot`.
 #[test]
 fn generate_client_bounds_the_call_it_generates() {
     let root = temp_dir("client-timeouts");
@@ -5084,26 +4988,17 @@ fn generate_client_bounds_the_call_it_generates() {
     );
 }
 
-/// `add api` installed an error model nothing threw.
+/// `add api`'s error model is reachable from the adapters, not only from the
+/// generated controller.
 ///
-/// modern.md §6.1, §11.7 and §13.10: a sealed `ApiException`, an exhaustive
-/// handler with no `default` arm, RFC 9457 responses and forty lines of
-/// Javadoc explaining the exhaustiveness -- unreachable in **0 of 7** real
-/// projects, while the one operation with real failure modes hand-rolled its
-/// own status mapping with `ResponseStatusException` and bypassed the whole
-/// thing. A reader finds `ApiException`, believes it is the error model, and
-/// is wrong.
-///
-/// **The compiler closes it from the other end, and that is the change.**
-/// The legacy engine had the controller throw `ApiException.NotFound` or
-/// `.Conflict`, which put HTTP status arithmetic in every generated
-/// controller and made the mapping unreachable from any adapter a reader
-/// wrote by hand. Here the *adapter* names the outcome in `spring-dao`'s own
-/// vocabulary -- `OptimisticLockingFailureException` for a stated `If-Match`
-/// that no longer matches, `EmptyResultDataAccessException` for a row that is
-/// not there -- and the error model maps both. Nothing has to declare a type,
-/// the controller keeps only the one status that is genuinely its own, and a
-/// hand-written adapter raising the same pair gets the same answer.
+/// The *adapter* names the outcome in `spring-dao`'s own vocabulary --
+/// `OptimisticLockingFailureException` for a stated `If-Match` that no longer
+/// matches, `EmptyResultDataAccessException` for a row that is not there --
+/// and the error model maps both. Nothing has to declare a type, the
+/// controller keeps only the one status that is genuinely its own, and a
+/// hand-written adapter raising the same pair gets the same answer. An error
+/// model only generated controllers could throw is one a reader finds,
+/// believes in, and is wrong about.
 #[test]
 fn a_transition_names_its_outcome_where_the_error_model_can_read_it() {
     let with_api = temp_dir("transition-api-error-model");
@@ -5150,13 +5045,13 @@ fn a_transition_names_its_outcome_where_the_error_model_can_read_it() {
         .unwrap()
     };
 
-    // **The adapter decides, in Spring's own vocabulary.** Zero rows updated
-    // has two causes and they are different answers -- a stated `If-Match`
-    // that no longer matches is a 412, a row that is not there is a 404 --
-    // and `.single()` cannot tell them apart, so it raised one unclassified
-    // failure that reached the client as a 500. That is what alerting pages
-    // on and what client libraries retry, and the retry can never succeed
-    // because the version has moved on.
+    // The adapter decides, in Spring's own vocabulary. Zero rows updated has
+    // two causes and they are different answers -- a stated `If-Match` that
+    // no longer matches is a 412, a row that is not there is a 404 -- and
+    // `.single()` cannot tell them apart; one unclassified failure would
+    // reach the client as a 500, which is what alerting pages on and what
+    // client libraries retry, and the retry can never succeed because the
+    // version has moved on.
     let adapter = build(&with_api, true);
     assert!(adapter.contains(".optional();"), "{adapter}");
     assert!(
@@ -5192,7 +5087,6 @@ fn a_transition_names_its_outcome_where_the_error_model_can_read_it() {
     // The controller keeps exactly one status of its own, and only that one:
     // a malformed `If-Match` is a 400 because jails could not read the
     // request, while every outcome above is about a request it read.
-    // plan.md P4.5.
     let controller = common::read_generated(
         &with_api,
         "src/main/java/com/example/demo/web/MarkReadController.java",
@@ -5291,7 +5185,7 @@ fn generate_strategy_produces_a_project_that_compiles_and_passes_tests() {
     // The port is framework-free and stays in `domain`; the beans that
     // implement it carry `@Component` on Spring and live a layer up, so the
     // ArchUnit rule `g scaffold` writes and the annotation this pattern needs
-    // no longer contradict each other. The placement is the same on plain
+    // do not contradict each other. The placement is the same on plain
     // Maven, where there is neither -- one layout is easier to explain than
     // one that depends on the build file.
     let verified = verified_plain_toolbox(&path);
@@ -5373,14 +5267,12 @@ fn destroy_strategy_removes_the_implementations_it_did_not_name() {
     assert!(!domain.join("CoffeeRewardRule.java").exists());
 }
 
-/// **A reader's own implementation is theirs, and the removal says so.**
+/// A reader's own implementation is theirs, and the removal says so.
 ///
-/// The engine this replaces swept every main source directory and deleted it,
-/// on the grounds that an implementation of a deleted interface stops the
-/// project compiling. That is true, and it is not jails' file: the port lives
-/// under `.jails/generated` and a class in `src/main/java` implementing it is
-/// the reader's. So the file survives and the removal names it, which is the
-/// half the sweep was actually for.
+/// An implementation of a deleted interface stops the project compiling, and
+/// it is not jails' file: the port lives under `.jails/generated` and a class
+/// in `src/main/java` implementing it is the reader's. So the file survives
+/// and the removal names it.
 #[test]
 fn destroy_names_the_reader_source_a_removal_strands() {
     let root = temp_dir("destroy-strategy-reader");
@@ -5435,14 +5327,10 @@ fn destroy_names_the_reader_source_a_removal_strands() {
     );
 }
 
-/// `--pretend` has to name every write. `package-info.java` was created as a
-/// side effect of writing a class, so the preview listed two files and the
-/// real run wrote three -- on the one command whose entire job is to tell you
-/// what is about to happen.
-///
-/// The fix is that the preview and the apply consume the same list, rather
-/// than the preview learning to predict a side effect: a second piece of code
-/// guessing what the first will do is the drift this costs everywhere else.
+/// `--pretend` has to name every write, `package-info.java` included: the
+/// preview and the apply consume the same list, rather than the preview
+/// predicting a side effect, because a second piece of code guessing what the
+/// first will do is drift.
 #[test]
 fn pretend_names_the_package_info_it_will_write() {
     let root = temp_dir("pkginfo-preview");
@@ -5549,7 +5437,7 @@ fn planned_package_infos_are_one_per_package() {
     );
 }
 
-/// `plan.md` §6.6 tier 2. The want is "change what the generated code *looks
+/// A template override: the want is "change what the generated code *looks
 /// like*" -- not a new generator, just this class shaped differently.
 #[test]
 fn a_project_template_override_replaces_the_built_in_and_doctor_names_it() {
@@ -5646,14 +5534,10 @@ fn a_template_override_missing_a_placeholder_is_refused_by_name() {
     );
 }
 
-/// The generated *code* had a Boot floor the build file does not, and every
-/// generator that hits it now writes the classic `MockMvc` form.
-///
-/// `pending.md` §1.2. Nine companion tests are written against `MockMvcTester`
-/// (Spring Framework 6.2, Boot 3.4); two had a classic variant and seven
-/// refused. The refusal was the right failure and the wrong feature —
-/// `jails new --gradle --boot 2.7.18` exists so that a Boot 2 project can be
-/// worked in — so all nine pick their form by version now.
+/// Every companion test picks its MockMvc form by version: `MockMvcTester` is
+/// Spring Framework 6.2 (Boot 3.4), and `jails new --gradle --boot 2.7.18`
+/// exists so that a Boot 2 project can be worked in, so the classic form is
+/// written there rather than a refusal.
 #[test]
 fn a_boot_2_project_gets_the_classic_mockmvc_for_every_generated_web_test() {
     let parent = temp_dir("gradle-boot2-generators");
@@ -5751,12 +5635,11 @@ fn a_boot_2_project_gets_the_classic_mockmvc_for_every_generated_web_test() {
         "{properties}"
     );
 
-    // `g scaffold` used to refuse and writes the classic form now, and the
-    // whole of what it generates compiles -- proved against real Maven by
+    // `g scaffold` writes the classic form, and the whole of what it
+    // generates compiles -- proved against real Maven by
     // `what_jails_generates_for_boot_2_compiles_and_what_cannot_refuses_by_name`.
-    // `add api` and `add security` still refuse, for a reason that is not
-    // about MockMvc at all: their *main* source set is Boot 3 code, which
-    // `pending.md` §1.2's premise missed.
+    // `add api` and `add security` refuse, for a reason that is not about
+    // MockMvc at all: their *main* source set is Boot 3 code.
     let scaffolded = jails_cmd(&root, None)
         .args([
             "g",
@@ -5798,7 +5681,7 @@ fn a_boot_2_project_gets_the_classic_mockmvc_for_every_generated_web_test() {
     }
 }
 
-/// `plan.md` §13.3's `g auth`. Both claims behind it are behavioural, so a
+/// `g auth`. Both claims behind it are behavioural, so a
 /// compile check would prove nothing: Boot auto-configures no `JwtEncoder`,
 /// and `JwtTimestampValidator` accepts a token with no `exp` unless one line
 /// says otherwise. The second is the reason `a_token_with_no_expiry_is_refused`
@@ -5845,7 +5728,7 @@ fn generate_auth_refuses_without_the_security_capability() {
     assert!(stderr.contains("jails add security"), "{stderr}");
 }
 
-/// `plan.md` §13.3's `g webhook`. Seven tests, and each is one of the ways an
+/// `g webhook`. Seven tests, and each is one of the ways an
 /// inbound webhook is normally trusted when it should not be — or rejected
 /// when it should not be, which is the failure mode nobody predicts.
 #[test]
@@ -5868,7 +5751,7 @@ fn generate_webhook_produces_tests_that_run_and_pass() {
     assert_surefire_test_count(verified, "ProviderVerifierTest", 7);
 }
 
-/// `plan.md` §13.3's `g search`. The generated column is the whole point, and
+/// `g search`. The generated column is the whole point, and
 /// the only thing that can prove the expression is right is PostgreSQL parsing
 /// it — a Rust test on the string proves the string.
 #[test]
@@ -5970,10 +5853,7 @@ fn generate_search_refuses_a_component_it_cannot_index() {
 /// What jails generates for a real Boot 2 project compiles and passes, and
 /// what cannot refuses by naming the type.
 ///
-/// **This is the test `pending.md` §1.2 said the fix was waiting for, and it
-/// contradicted the item.** §1.2 read the Boot floor as living in seven
-/// generated *tests* written against `MockMvcTester`; the first real Boot
-/// 2.7.18 compile said the tests were the smaller half. `add api` writes
+/// The Boot floor is in the generated *code*, not its tests: `add api` writes
 /// `ProblemDetail` (Spring Framework 6), `add security` writes
 /// `requestMatchers` (Spring Security 6), and `g query`/`g transition` write a
 /// `JdbcClient` adapter (Framework 6.1) — all in the *main* source set, where
@@ -6034,13 +5914,13 @@ fn what_jails_generates_for_boot_2_compiles_and_what_cannot_refuses_by_name() {
         );
     }
 
-    // The ones that cannot, and why the item's premise was incomplete: their
-    // *main* source set is Boot 3 code, which no test variant can help. The
-    // refusal names the type the compiler would have named.
+    // The ones that cannot: their *main* source set is Boot 3 code, which no
+    // test variant can help. The refusal names the type the compiler would
+    // have named.
     //
-    // **`g query` and `g transition` are not on this list any more, and the
-    // reason is structural rather than a relaxation.** The `JdbcClient`
-    // adapter behind an operation port arrives with the `db` capability, and
+    // `g query` and `g transition` are not on this list, structurally: the
+    // `JdbcClient` adapter behind an operation port arrives with the `db`
+    // capability, and
     // `db` is itself refused here -- `spring-boot-testcontainers` first
     // appeared in Boot 3.1. So the floor is enforced one step earlier, on the
     // declaration that would bring the Framework 6.1 type in, and the
@@ -6156,18 +6036,12 @@ fn what_jails_generates_for_boot_2_compiles_and_what_cannot_refuses_by_name() {
 
 /// A project whose schema is `schema.sql` is told, not written into.
 ///
-/// **The silence is the bug, and it is closed from the other side.** The
-/// legacy generator spliced a marked `create table` block into
-/// `src/main/resources/schema.sql` when Flyway's directory was absent, and
-/// wrote nothing and said nothing when neither existed -- so `jails g
-/// scaffold` into a Spring project initialised by `spring.sql.init` produced a
-/// repository, a JDBC adapter and an `IT` against a table that did not exist.
-///
-/// The compiler's answer is the opposite one: `schema.sql` is a file jails
-/// does not manage, so it stays the reader's byte for byte, and the resource
-/// says out loud that its rows live in memory. `storage postgres` is the
-/// declaration that makes jails responsible for a schema, and it keeps that
-/// history in forward migrations where a re-applied script cannot exist.
+/// `schema.sql` is a file jails does not manage, so it stays the reader's
+/// byte for byte, and the resource says out loud that its rows live in memory
+/// -- silence would hand the reader a repository, a JDBC adapter and an `IT`
+/// against a table that does not exist. `storage postgres` is the declaration
+/// that makes jails responsible for a schema, and it keeps that history in
+/// forward migrations where a re-applied script cannot exist.
 #[test]
 fn a_scaffold_leaves_an_unmanaged_schema_sql_alone_and_says_where_its_rows_live() {
     let root = temp_dir("schema-sql-ddl");
@@ -6217,16 +6091,11 @@ fn a_scaffold_with_nowhere_to_put_ddl_says_so() {
 
 /// The wire contract, both directions, on the project that needs it.
 ///
-/// `missing.md` M15's other half. Spring's **data binder** has no naming
-/// strategy: `spring.jackson.property-naming-strategy` configures Jackson, so
-/// a project whose JSON is `user_id` still binds a form field called `userId`
-/// unless the record's component says otherwise. Two names for one value on
-/// one wire, and it is silent -- the component simply arrives null.
-///
-/// Verified against a running server before it was written down: a form post
-/// of `user_id=42` at a generated `--consumes form` endpoint comes back as
-/// `{"id":1,"user_id":42,"status":"open"}`, which is the shape
-/// `minicom-15-01-2026`'s two pages read.
+/// Spring's **data binder** has no naming strategy:
+/// `spring.jackson.property-naming-strategy` configures Jackson, so a project
+/// whose JSON is `user_id` still binds a form field called `userId` unless
+/// the record's component says otherwise. Two names for one value on one
+/// wire, and it is silent -- the component simply arrives null.
 #[test]
 fn a_form_bound_record_answers_to_the_names_this_projects_wire_actually_uses() {
     let root = temp_dir("wire-naming");
@@ -6303,17 +6172,14 @@ fn a_form_bound_record_answers_to_the_names_this_projects_wire_actually_uses() {
     assert!(!bound.contains("@BindParam(\"subject\")"), "{bound}");
 }
 
-/// `missing.md` M14: the wire value, in the three shapes one real project
-/// needed and `g enum` could spell none of.
+/// The wire value of an enum, in its three shapes: a JSON body, a form field,
+/// and a path or query parameter.
 ///
 /// The Java name and the wire value are two different things, and treating
 /// them as one fails quietly: an enum whose constants are `OPEN` and
 /// `IN_PROGRESS` serialises as `"OPEN"`, the page reads `"open"`, and the
-/// badge is simply blank.
-///
-/// Proved against a running server before it was written down: a form
-/// carrying `status=open` binds, the response carries `"status":"open"`, and
-/// `status=nope` is a 400 rather than a null.
+/// badge is simply blank. A form carrying `status=open` binds, the response
+/// carries `"status":"open"`, and `status=nope` is a 400 rather than a null.
 #[test]
 fn an_enum_constant_can_be_called_something_else_on_the_wire() {
     let root = temp_dir("enum-wire");
@@ -6401,17 +6267,12 @@ fn an_enum_constant_can_be_called_something_else_on_the_wire() {
     );
 }
 
-/// A path that names its filters, and the two refusals that keep it honest.
+/// A path that names its filters, and the refusal that keeps it honest.
 ///
-/// `--path /admin_api/messages/{userId}` used to be accepted as *text*: the
-/// controller carried the template in `@RequestMapping` and declared no
-/// `@PathVariable`, so Spring matched the URL and then looked for a request
-/// body nobody sent. A path jails cannot honour is a path jails must not
-/// accept.
-///
-/// All-or-none, deliberately. A mix would need the controller to build the
-/// criteria from a partial body plus some path variables, and "which half came
-/// from where" is a rule nobody would remember.
+/// Every variable in `--path /admin_api/messages/{userId}` must bind to a
+/// declared filter: a template Spring matches with nothing bound behind it
+/// makes the controller look for a request body nobody sent, and a path jails
+/// cannot honour is a path jails must not accept.
 #[test]
 fn a_query_path_may_address_its_filters_by_name() {
     let root = temp_dir("query-path");
@@ -6502,11 +6363,8 @@ fn a_query_path_may_address_its_filters_by_name() {
         "{error}"
     );
 
-    // A mix is ordinary rather than refused. The legacy controller built the
-    // criteria from a partial body plus some path variables and could not say
-    // which half came from where, so it insisted on all-or-none; one
-    // `@ModelAttribute` reads both, so `/x/{userId}` with `?subject=x` is one
-    // binding with one rule.
+    // A mix is ordinary rather than refused: one `@ModelAttribute` reads
+    // both, so `/x/{userId}` with `?subject=x` is one binding with one rule.
     let output = jails_cmd(&root, None)
         .args([
             "g",
@@ -6538,18 +6396,13 @@ fn a_query_path_may_address_its_filters_by_name() {
     );
 }
 
-/// `missing.md`: a `GET` whose filters come from the query string.
+/// A `GET` whose filters come from the query string -- the one shape a
+/// browser actually sends, `GET /admin_api/users?status=open&category=Billing`.
+/// `--consumes form` binds `@ModelAttribute`, and Spring fills that from
+/// request *parameters*, which on a GET are the query string.
 ///
-/// `g query` emitted GET only when every filter was a path variable, and POST
-/// otherwise -- so the one shape a browser actually sends,
-/// `GET /admin_api/users?status=open&category=Billing`, was unreachable. The
-/// pieces already existed: `--consumes form` binds `@ModelAttribute`, and
-/// Spring fills that from request *parameters*, which on a GET are the query
-/// string. Only the verb decision was in the way.
-///
-/// The generated test has to move with it -- `bugs.md` B48 is what happens
-/// when the controller renderer and the test renderer decide the wire
-/// separately.
+/// The generated test has to move with it: the controller renderer and the
+/// test renderer must not decide the wire separately.
 #[test]
 fn a_form_bound_query_answers_a_get_and_reads_the_query_string() {
     let root = temp_dir("query-form");
@@ -6640,8 +6493,8 @@ fn a_form_bound_query_answers_a_get_and_reads_the_query_string() {
 
     // An enum filter is sampled by its **wire** value, not its constant. A
     // `g enum Status OPEN=open` renders `@JsonValue`, and the converter jails
-    // generates beside it rejects `OPEN` -- so the generated proof used to
-    // send a value the generated code refuses. Both wires: the JSON body of a
+    // generates beside it rejects `OPEN` -- so a proof sending the constant
+    // would send a value the generated code refuses. Both wires: the JSON body of a
     // POST query reads the same sampler.
     let status = jails_cmd(&root, None)
         .args(["g", "enum", "Stage", "OPEN=open", "SHUT=shut"])
@@ -6688,10 +6541,9 @@ fn a_form_bound_query_answers_a_get_and_reads_the_query_string() {
     assert!(staged.contains(".param(\"stage\", \"open\")"), "{staged}");
     assert!(!staged.contains("\"OPEN\""), "{staged}");
 
-    // A query with no declared wire is a GET too, and that is the change from
-    // the engine this replaces: it sent every filtered query as a JSON body,
-    // so the default query was a POST. `@ModelAttribute` reads the query
-    // string, so there is no body to carry and no reason for a verb with one.
+    // A query with no declared wire is a GET too: `@ModelAttribute` reads the
+    // query string, so there is no body to carry and no reason for a verb
+    // with one.
     let output = jails_cmd(&root, None)
         .args([
             "g",
@@ -6747,18 +6599,13 @@ fn a_form_bound_query_answers_a_get_and_reads_the_query_string() {
     );
 }
 
-/// The dependency reader on a Gradle project, and what its blindness cost.
+/// The dependency reader on a Gradle project.
 ///
-/// `Project::has_dependency` read the cached build file **as XML** whatever
-/// the build tool was, so on Gradle it answered a confident *no* to every
-/// question. The consequence was not small: `repository_wiring` gave the
-/// scaffold the in-memory adapter as its `@Component` while a generated query
-/// kept its JDBC adapter, so one generated project wrote to a HashMap and read
-/// from an empty database. Both halves ran and the list simply came back
-/// empty.
-///
-/// Measured on `minicom-15-01-2026` before it was written down: a POST
-/// returned 201 and the matching GET returned `[]`.
+/// A reader that answers a confident *no* to every question on Gradle gives
+/// the scaffold the in-memory adapter as its `@Component` while a generated
+/// query keeps its JDBC adapter, so one generated project writes to a HashMap
+/// and reads from an empty database: a POST returns 201 and the matching GET
+/// returns `[]`.
 #[test]
 fn a_gradle_projects_dependencies_are_read_from_its_gradle_file() {
     let root = temp_dir("gradle-jdbc-wiring");
@@ -6814,13 +6661,11 @@ fn a_gradle_projects_dependencies_are_read_from_its_gradle_file() {
 /// A generated integration test degrades rather than failing to compile when
 /// the project has a database of its own and no Testcontainers.
 ///
-/// The real one: `minicom`'s Spring app runs on an H2 file, so JDBC is on the
-/// classpath and `TestcontainersConfig` is not. `g usecase --on-conflict` and
-/// `g presence` both wrote `@Import(TestcontainersConfig.class)`
-/// unconditionally, and `./gradlew build` stopped on `cannot find symbol` in a
-/// test jails had written seconds earlier -- exactly the compile error for a
-/// file the reader did not write that `CLAUDE.md` says a generator must not
-/// hand out. `g scaffold`'s JDBC round trip already degraded; these did not.
+/// A Spring app on an H2 file has JDBC on the classpath and no
+/// `TestcontainersConfig`, so an unconditional
+/// `@Import(TestcontainersConfig.class)` is a `cannot find symbol` in a test
+/// jails wrote seconds earlier -- a compile error for a file the reader did
+/// not write.
 #[test]
 fn an_integration_test_is_disabled_rather_than_uncompilable_without_a_container_config() {
     let root = temp_dir("no-container-config");
@@ -6874,13 +6719,10 @@ fn an_integration_test_is_disabled_rather_than_uncompilable_without_a_container_
 /// The documented create body is exactly what the request record accepts.
 ///
 /// One sample, three readers -- `requests/*.http`, the generated controller
-/// test, and the request record itself -- and the third was built from a
-/// different list than the first two. `sampled_request` dropped the audit
-/// pair and nothing else, so a `@pk` scaffold documented the primary key, and
-/// its own generated controller test posted that body and got 400: a
-/// standalone `MockMvcTester` has a plain `ObjectMapper`, which rejects a
-/// property the record has no component for. Found on the real project, where
-/// five of six generated controller tests were red for this one reason.
+/// test, and the request record itself -- built from one list: a standalone
+/// `MockMvcTester` has a plain `ObjectMapper`, which rejects a property the
+/// record has no component for, so a documented body carrying the primary key
+/// would be answered 400 by the test that posts it.
 #[test]
 fn the_documented_body_carries_only_what_the_request_record_declares() {
     let root = temp_dir("documented-body");
@@ -6942,11 +6784,9 @@ fn the_documented_body_carries_only_what_the_request_record_declares() {
 
 /// A resource whose collection URL is given rather than derived.
 ///
-/// `g scaffold User` serves `/users` and the frontend that ships with the
-/// brief calls `/admin_api/users`. Refusing `--path` here was the honest
-/// answer while nothing carried it, and the useless one once the URLs were
-/// the contract: the only remaining repair was hand-editing the controller
-/// jails had just written, which is the plumbing this tool exists to remove.
+/// `g scaffold User` serves `/users` and a frontend that is the contract calls
+/// `/admin_api/users`; the alternative is hand-editing the controller jails
+/// just wrote, which is the plumbing this tool exists to remove.
 ///
 /// The item routes hang off the collection rather than being separately
 /// derived -- `PATH + "/" + id` -- so naming one route names all four.
@@ -7160,7 +7000,7 @@ fn a_pin_that_cannot_be_resolved_is_refused_and_names_what_would_work() {
     assert!(stderr.contains("contains `(`"), "{stderr}");
 
     // And a recipe with no row to pin a component of refuses the flag rather
-    // than accepting and ignoring it -- `missing.md` M7's shape.
+    // than accepting and ignoring it.
     let output = jails_cmd(&root, None)
         .args(["g", "record", "Probe", "a:string", "--set", "a=x"])
         .output()
@@ -7276,8 +7116,7 @@ fn an_optional_precondition_reaches_the_sql_the_port_and_the_route() {
 
     // The proof moves with it. Without this test the unconditional branch is
     // generated, compiles, and is executed by nothing -- removing `coalesce`
-    // would change no test, which is the shape `CLAUDE.md` records for
-    // `g auth` and `add sse`.
+    // would change no test.
     let integration = common::read_generated(
         &root,
         "src/test/java/com/example/demo/adapters/JdbcMarkSeenTransitionIT.java",
@@ -7293,8 +7132,8 @@ fn an_optional_precondition_reaches_the_sql_the_port_and_the_route() {
     );
 
     // The controller test names the answer rather than a status it might
-    // reach for another reason -- it asserted 400 before, and a form-bound
-    // transition sent a JSON body is answered 400 too.
+    // reach for another reason: a form-bound transition sent a JSON body is
+    // answered 400 too.
     let proof = common::read_generated(
         &root,
         "src/test/java/com/example/demo/web/MarkSeenControllerTest.java",
@@ -7425,12 +7264,11 @@ fn a_transition_insists_on_the_precondition_unless_it_was_asked_not_to() {
 
 /// A form-bound endpoint's own generated test passes.
 ///
-/// The tier that answers the question, on a defect the byte goldens were green
-/// over for as long as `--consumes form` has existed: the generated proof
-/// posted a JSON body at an `@ModelAttribute` parameter. Spring's data binder
-/// reads request *parameters*, so every component arrived null and the request
-/// was answered 400 -- and on a transition the second generated test asserted
-/// 400, so it passed for exactly the wrong reason.
+/// Spring's data binder reads request *parameters*, so a proof posting a JSON
+/// body at an `@ModelAttribute` parameter has every component arrive null and
+/// is answered 400 -- and on a transition the second generated test asserts
+/// 400, so it would pass for exactly the wrong reason. Only a real build sees
+/// it; the byte goldens do not.
 ///
 /// The assertion that matters is the shared toolbox's own `mvn test`, which
 /// this fixture runs. What is checked here is that the two files say what a
@@ -7480,9 +7318,9 @@ fn a_form_bound_endpoint_is_proved_by_a_form_post() {
 /// A write that resolves its foreign key from a component of the parent.
 ///
 /// The customer sends the email they logged in with and the row needs a
-/// `user_id`. `g query --via` reads across that reference; nothing wrote
-/// across it, so the only expressible endpoint was one that trusts the caller
-/// for a key that is not theirs to choose -- which is the same class of defect
+/// `user_id`. `g query --via` reads across that reference and `g command
+/// --via` writes across it; the alternative is an endpoint that trusts the
+/// caller for a key that is not theirs to choose -- the same class of defect
 /// `--set` closes on the other side of the same request.
 #[test]
 fn a_use_case_can_resolve_its_key_from_the_parent_the_caller_names() {
@@ -7781,19 +7619,18 @@ fn a_component_can_be_bound_from_a_parameter_of_another_name() {
     );
 }
 
-/// The twelve kinds whose generated Java no real compiler had ever seen.
+/// The kinds with no real-toolchain fixture of their own, compiled in one
+/// project.
 ///
-/// `simplify-sol.md`'s G3: *build the exact generated tree under test.* The
-/// golden suite checks **bytes**, not compilability, so before this any of
-/// these could have emitted Java that does not compile and every test stayed
-/// green. `no_new_generator_kind_escapes_the_real_toolchain` is the ratchet
-/// that names them; this is what removes them from it.
+/// The golden suite checks **bytes**, not compilability, so a kind no real
+/// compiler sees could emit Java that does not compile with every test green.
+/// `no_new_generator_kind_escapes_the_real_toolchain` is the ratchet that
+/// names such kinds; this is what keeps it empty.
 ///
-/// **One project, one `mvn test`.** Twelve separate fixtures would be twelve
-/// Maven invocations against a suite already at 108s (`plan.md` P13.7), and
-/// what needs proving is that each kind's output compiles -- not that it does
-/// so in isolation. Their prerequisites are taken from the scenario table,
-/// which already records the smallest invocation that exercises each.
+/// One project, one `mvn test`: what needs proving is that each kind's output
+/// compiles -- not that it does so in isolation. Their prerequisites are
+/// taken from the scenario table, which already records the smallest
+/// invocation that exercises each.
 #[test]
 fn every_remaining_generator_kind_compiles_in_one_spring_project() {
     if !real_mvn_available() {
@@ -7814,10 +7651,9 @@ fn every_remaining_generator_kind_compiles_in_one_spring_project() {
         &["add", "db", "--no-start"][..],
         // The use case below yields an event, and a durable payload needs it.
         &["add", "json"][..],
-        // `g event` emits `org.springframework.kafka.*` and neither supplies
-        // the dependency nor refuses without it -- bugs.md B58. Until that is
-        // fixed, the capability has to be asked for explicitly or this project
-        // does not compile.
+        // The event's listener, error handler and dead-letter routing belong
+        // to the `kafka` capability, so it is asked for explicitly to compile
+        // the whole slice.
         &["add", "kafka", "--no-start"][..],
         // Records first: the association, use case and durable job below all
         // name them.

@@ -16,8 +16,8 @@
 //! against the declared type of the component it pins, refusing by name when
 //! the two cannot be reconciled.
 //!
-//! The alphabet is `research.md` §4.1's `shell-safe-literal`, and it is
-//! deliberately shell-safe rather than merely Java-safe: every documented
+//! The alphabet is deliberately shell-safe rather than merely Java-safe: every
+//! documented
 //! example has to survive being typed unquoted into Bash, Zsh, Fish and
 //! PowerShell, so no braces, brackets, pipes, glob characters, quotes or
 //! spaces.

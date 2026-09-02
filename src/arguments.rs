@@ -27,13 +27,6 @@ impl DependencyScope {
     }
 }
 
-/// Returns [`std::process::ExitCode`] rather than calling [`std::process::exit`].
-///
-/// `crate::process::exit` terminates without unwinding, so destructors on the
-/// current stack never run. jails holds real resources while a command is in
-/// flight -- `migrate` creates a scratch database it is responsible for
-/// dropping -- and anything staging a file beside its destination would be in
-/// the same position. Returning lets the stack unwind normally first.
 /// `group:artifact`, refused rather than guessed at.
 ///
 /// A coordinate with a third part is almost always a `group:artifact:version`

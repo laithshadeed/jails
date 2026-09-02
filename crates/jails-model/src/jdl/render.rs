@@ -145,21 +145,14 @@ pub(super) fn render(document: DocumentDraft) -> Result<String, Diagnostics> {
             output.push_str(&format!("table = {}\n", quote(&table)));
         }
         // **The order the author declared, carried across the TOML hop.**
-        //
-        // `audit.md` A2.2b: this renderer knows the order -- the draft holds a
-        // `Vec` -- and `parse_toml` reads the fields back into a `BTreeMap`,
-        // so without this line a pre-v1 entity declaring `zulu, id, alpha`
-        // links as `alpha, id, zulu`. A Java record's component order is ABI,
-        // so that is not a presentation difference: a caller compiled against
-        // the positional constructor keeps compiling against a re-sorted one
-        // and silently passes the wrong arguments.
-        //
-        // The entry hesitated because emitting it "makes `.jails/model.toml`
-        // able to state an order it is documented as unable to state". It
-        // already is: `source::Entity::field_order` is `Deserialize` and has
-        // been since v1 needed it, so this adds no surface to the
-        // compatibility input -- it only stops the pre-v1 path throwing away
-        // an answer it had.
+        // The draft holds a `Vec` and `parse_toml` reads the fields back into
+        // a `BTreeMap`, so without this line an entity declaring `zulu, id,
+        // alpha` links as `alpha, id, zulu`. A Java record's component order
+        // is ABI, so that is not a presentation difference: a caller compiled
+        // against the positional constructor keeps compiling against a
+        // re-sorted one and silently passes the wrong arguments.
+        // `source::Entity::field_order` is already `Deserialize`, so this adds
+        // no surface to the compatibility input.
         if !entity.fields.is_empty() {
             output.push_str(&format!(
                 "field_order = [{}]\n",

@@ -7,12 +7,8 @@
 //! record declared. Inferring a primary key from a component called `id` would
 //! put one in a schema nobody asked for.
 //!
-//! This module used to *be* the storage, and then the vocabulary over a
-//! schema-1 storage: `record`, `paths`, `forget`, `record_model` beside this
-//! one, over `.jails/files`, `.jails/version`, `.jails/intents/<hash>.files`
-//! and `.jails/models/<hash>.files`. All of it went with the direct write
-//! path: the transaction store records what an entity owns as part of
-//! committing it, so a second registry maintained beside it could only drift.
+//! It only reads. What an entity owns is recorded when it is committed, and a
+//! second registry maintained beside that record could only drift.
 
 use jails_support::Result;
 use std::path::Path;
@@ -22,9 +18,8 @@ use std::path::Path;
 /// Name always; package only when one was asked for. An entity id records the
 /// *resolved* package (`com.example.demo`), while `--package` is the override
 /// the caller typed (`billing`) and is absent far more often than not.
-/// Comparing the two directly matched nothing, so a scaffold referencing a
-/// generated record was told that record had no primary key -- which it
-/// plainly did.
+/// Comparing the two directly matches nothing, and a scaffold referencing a
+/// generated record is then told that record has no primary key.
 pub fn model_fields(root: &Path, name: &str, package: Option<&str>) -> Result<Option<Vec<String>>> {
     let Ok(source) = std::fs::read_to_string(root.join(".jails/ledger.toml")) else {
         return Ok(None);

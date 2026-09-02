@@ -1,7 +1,6 @@
 //! `component client <Name>`: an outbound HTTP service this application uses.
 //!
-//! Three files from one declaration, and the reason all three exist is the
-//! same as on the legacy side. The interface is what the reader calls; Spring
+//! Three files from one declaration. The interface is what the reader calls; Spring
 //! builds the implementation, so the base URL is configuration rather than
 //! code. The config class registers it in a group of its own -- one class per
 //! client, because `@ImportHttpServices` carries one group name and a shared
@@ -15,7 +14,6 @@
 //! `spring-boot-starter-restclient` -- that half is Framework, not Boot -- so
 //! the project compiles and starts, and the first call dies with `URI with
 //! undefined scheme`, a message that says nothing about a missing module.
-//! `CLAUDE.md` records the hours that cost once.
 
 use super::{Emitted, Package, java, package};
 use crate::CompileError;

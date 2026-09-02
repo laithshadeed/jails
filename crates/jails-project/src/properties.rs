@@ -144,9 +144,9 @@ fn entry(line: &str) -> Option<(&str, &str)> {
 
 #[cfg(test)]
 mod tests {
-    /// `set` was `introduce(text, key, value, &[])` and had no callers left --
-    /// every capability that writes a property writes prose above it the first
-    /// time. The tests are about the splice, which is unchanged.
+    /// The splice with no prose. Every capability writes prose above a key
+    /// the first time, so production has no bare `set`; the tests are about
+    /// the splice.
     fn set(text: &str, key: &str, value: &str) -> String {
         super::introduce(text, key, value, &[])
     }

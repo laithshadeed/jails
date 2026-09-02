@@ -18,12 +18,6 @@ use crate::Diagnostics;
 use std::collections::BTreeSet;
 
 /// Format a valid JDL v1 document without changing declaration ordering.
-///
-/// The formatter owns whole-document layout, unlike ordinary CST edits. It
-/// canonicalizes lexical spellings, line endings, indentation, blank-line
-/// runs, horizontal trailing space, and the final newline while retaining
-/// comment text. Token wrapping and member reordering remain deliberately
-/// separate rules.
 pub fn format(input: &str) -> Result<String, Diagnostics> {
     let reordered = reorder_entity_members(input)?;
     let grouped = separate_top_level_groups(&reordered)?;

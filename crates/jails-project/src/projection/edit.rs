@@ -3,18 +3,14 @@
 //! The two halves of a single table: [`ProjectedProject::apply_edit`] renders
 //! each [`SemanticEdit`] into the projected text, and
 //! [`ProjectedProject::retire`] undoes exactly what the matching
-//! [`ResourceKey`] installed. They are 429 lines of arm list between them,
-//! which is what made `projection.rs` the largest module in the workspace --
-//! `pending.md` §8.1 records that the honest answer to the next rise there was
-//! the split rather than another ceiling, and this is it.
+//! [`ResourceKey`] installed.
 //!
-//! **The seam is real rather than a size cut.** Everything left in the parent
-//! is *state*: the overlay, the facts, the reads, what a path currently says.
-//! Everything here is the per-key rendering, and the two arm lists have to be
-//! read against each other -- an installing arm with a `match self.build` and a
-//! retiring arm without one is the asymmetry that reported a Gradle project's
-//! dependency retired while it stayed in `build.gradle`. Side by side in one
-//! file, that is visible.
+//! Everything in the parent is *state*: the overlay, the facts, the reads,
+//! what a path currently says. Everything here is the per-key rendering, and
+//! the two arm lists have to be read against each other -- an installing arm
+//! with a `match self.build` and a retiring arm without one reports a Gradle
+//! project's dependency retired while it stays in `build.gradle`. Side by
+//! side in one file, that asymmetry is visible.
 
 use super::*;
 
@@ -68,7 +64,7 @@ impl ProjectedProject {
                 };
                 // The key says what the build has to *do*; the value is the
                 // Maven rendering of it. Both sides come off the claim rather
-                // than being inferred from an artifact id -- `pending.md` §3.
+                // than being inferred from an artifact id.
                 let ResourceKey::BuildFeature(feature) = key else {
                     return Err(format!(
                         "a build plugin edit keyed by {key:?}.\n       fix: this is a bug in \
@@ -244,15 +240,6 @@ impl ProjectedProject {
         }
     }
 
-    /// Put bytes at a path, applying the one write-time rule about Java.
-    ///
-    /// Import order is normalised here rather than in the twenty templates
-    /// that would otherwise each have to remember it -- CLAUDE.md's rule, and
-    /// the direct write path has applied it for as long as there has been one.
-    /// Applying it on only one of the two paths is worse than applying it on
-    /// neither: the same recipe would then produce two different files
-    /// depending on which engine ran it, and the difference is invisible until
-    /// `jails add format` fails `mvn verify` on a freshly generated project.
     /// Take one resource back out of the file that holds it.
     ///
     /// Keyed removal, never a byte comparison: the caller asked for the thing
@@ -265,14 +252,11 @@ impl ProjectedProject {
             ResourceKey::MavenDependency(coordinate) => {
                 // The same two-build-files split the `MavenDependency` edit
                 // makes above, and for the same reason: the `Maven` in the
-                // key's name is the *coordinate's*, not the tool's. This arm
-                // used to read `pom_path()` unconditionally, so on a Gradle
-                // project it opened a `pom.xml` that is not there, returned
-                // `Ok(None)`, and left the dependency in `build.gradle` --
-                // `remove` reporting success over a claim it had not retired.
-                // Nothing caught it because `gradle::remove_dependency` was
-                // `pub` and therefore not `dead_code`, which is `pending.md`
-                // §7.2's whole argument.
+                // key's name is the *coordinate's*, not the tool's. An arm
+                // that reads `pom_path()` unconditionally opens a `pom.xml`
+                // that is not there on a Gradle project, returns `Ok(None)`,
+                // and leaves the dependency in `build.gradle` -- `remove`
+                // reporting success over a claim it has not retired.
                 let path = self.build_file_path()?;
                 let Some(text) = self.optional_text(&path)? else {
                     return Ok(None);
@@ -293,10 +277,9 @@ impl ProjectedProject {
                 };
                 let without = match self.build {
                     Build::Gradle => crate::gradle::remove_feature(&text, *feature),
-                    // Maven unsplices by artifact id, which the retiring
-                    // resource's own value carries -- but retirement is keyed,
-                    // and a key that had to be mapped back to a coordinate is
-                    // what §3 was about. The mapping is the feature's own.
+                    // Maven unsplices by artifact id, but retirement is keyed
+                    // by the feature, and the mapping back to a coordinate is
+                    // the feature's own.
                     _ => pom::remove_plugin(&text, feature.maven_artifact_id())?,
                 };
                 self.write_text(&path, without.unwrap_or(text));
@@ -440,8 +423,8 @@ impl ProjectedProject {
                 };
                 let previous = previous.qualified();
                 // Two build files, same as the edit that installed it. Without
-                // this branch `destroy cli` on a Gradle project handed Groovy
-                // to the XML rewriter, changed nothing, and reported the claim
+                // this branch `destroy cli` on a Gradle project hands Groovy
+                // to the XML rewriter, changes nothing, and reports the claim
                 // retired.
                 let restored = match self.build {
                     Build::Gradle => crate::gradle::with_main_class(&text, &previous),

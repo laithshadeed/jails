@@ -9,8 +9,8 @@
 //!
 //! `Field::java_type` always holds the **inner** type, with `Optionality`
 //! carrying the rest; only `component_type` wraps it back into `Optional<..>`.
-//! Two representations of one thing is how `fields_from_record` once
-//! produced uncompilable code for a record read off disk.
+//! Two representations of one thing is a template that compiles for parsed
+//! fields and not for a record read off disk.
 //!
 //! See `sql.rs` for the SQL/JDBC projection of the same spec.
 
@@ -21,13 +21,12 @@ pub struct Field {
     pub name: String,
     /// The physical column this component binds to.
     ///
-    /// **Carried, not recomputed.** plan.md P3.2: a rename with
-    /// `--column preserve` moves the Java name and leaves the column where a
-    /// live database already has it, so the pair stops being derivable and
-    /// the ledger is what remembers it. Every SQL projection reads this;
-    /// `sql::column` used to snake-case `name` again at the point of use,
-    /// which is a second derivation that a preserved binding would silently
-    /// contradict.
+    /// **Carried, not recomputed.** A rename with `--column preserve` moves
+    /// the Java name and leaves the column where a live database already has
+    /// it, so the pair stops being derivable and the model is what remembers
+    /// it. Every SQL projection reads this; snake-casing `name` again at the
+    /// point of use is a second derivation that a preserved binding silently
+    /// contradicts.
     pub column: String,
     pub java_type: String,
     pub imports: Vec<&'static str>,
@@ -48,10 +47,9 @@ pub struct Field {
 ///
 /// A record says a component is a `UUID`; it cannot say that this UUID and
 /// that string are together the primary key, or that an amount must be
-/// positive, or that lookups come in by customer. Those are real constraints
-/// that a generated migration was silently omitting -- so every generated
-/// schema got hand-edited immediately, which defeats the point of generating
-/// it.
+/// positive, or that lookups come in by customer. A generated migration that
+/// omits them is hand-edited immediately, which defeats the point of
+/// generating it.
 ///
 /// Deliberately a **closed set**, not arbitrary SQL. `@positive` is a
 /// constraint jails can check it is emitting against a numeric column;
@@ -92,10 +90,10 @@ impl NumericCheck {
 
 /// What a `!` or `?` suffix on a field type means.
 ///
-/// Hardcoding one policy is what made `value` reject every blank string,
-/// including the description fields where blank is perfectly legal. Every
-/// value type in every project has this distinction, so it belongs in the
-/// syntax rather than in jails' opinion.
+/// One hardcoded policy makes `value` reject every blank string, including
+/// the description fields where blank is perfectly legal. Every value type in
+/// every project has this distinction, so it belongs in the syntax rather
+/// than in jails' opinion.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Optionality {
     /// `name:string` -- must not be null.
@@ -173,11 +171,10 @@ pub(crate) fn resolve_type(token: &str) -> Result<Resolved> {
     // canonical form of an owned type is fully qualified against the project's
     // base package. Reading only the last segment is deliberate: jails puts an
     // owned type in the same package as the record that names it, so the
-    // generated component is `Currency`, not `com.example.demo.domain.Currency`
-    // -- and before this, a qualified name fell through to the builtin table
-    // and was refused as `unknown field type
-    // 'com.example.demo.domain.currency'`, which is a message about a type
-    // nobody typed.
+    // generated component is `Currency`, not `com.example.demo.domain.Currency`.
+    // A qualified name that fell through to the builtin table would be refused
+    // as `unknown field type 'com.example.demo.domain.currency'`, a message
+    // about a type nobody typed.
     let simple = token.rsplit('.').next().unwrap_or(token);
     if simple.starts_with(|c: char| c.is_uppercase()) {
         return Ok(Resolved {
@@ -242,11 +239,10 @@ pub(crate) fn generic_argument<'a>(token: &'a str, name: &str) -> Option<&'a str
 /// error message is a second list, and it goes stale the first time somebody
 /// adds a type and does not scroll far enough.
 ///
-/// `pending.md` §1.3 is the entry about that: *"the JSON sample table and the
-/// field-type vocabulary are two spellings of one set. They were five apart,
-/// which is how a `uri` component came to document a request its own record
-/// refuses."* `every_builtin_type_has_a_json_sample` in `jails-generate` reads
-/// [`builtin_java_types`] and fails when a sample table falls behind this one.
+/// The JSON sample table is a second spelling of this set, and a sample table
+/// that falls behind documents a request its own record refuses;
+/// `every_builtin_type_has_a_json_sample` in `jails-generate` reads
+/// [`builtin_java_types`] and fails when it does.
 pub const BUILTIN_FIELD_TYPES: &[(&str, &str, Option<&str>)] = &[
     ("string", "String", None),
     ("text", "String", None),
@@ -342,11 +338,11 @@ pub fn builtin_by_java_name(ty: &str) -> Option<(&'static str, Option<&'static s
 /// parse a value this program had just printed, with the other of the two
 /// parsers.
 ///
-/// `pending.md` §6.3: *"`java_type` and `imports` are derived facts computed by
-/// a function on `FieldSpec`, not a second parse result."* This is that
-/// function. The cross-checks stay here rather than moving up, because they are
-/// about the *resolved Java type* — `!` needs a `String`, `@positive` needs a
-/// numeric column — and only resolution knows what that is.
+/// `java_type` and `imports` are derived facts computed by this function, not
+/// a second parse result. The cross-checks stay here rather than moving up,
+/// because they are about the *resolved Java type* — `!` needs a `String`,
+/// `@positive` needs a numeric column — and only resolution knows what that
+/// is.
 ///
 /// `arg` is the original token, used only so a refusal can quote what was
 /// typed rather than a normalisation of it.
@@ -581,9 +577,9 @@ pub fn fields_of_record(source: &str) -> Option<Vec<Field>> {
             let builtin = builtin_by_java_name(&java_type);
             Field {
                 name: param.name.clone(),
-                // A record read off disk has no recorded binding to consult
-                // -- there is no ledger row behind it -- so the convention is
-                // all there is, applied through the one function that owns it.
+                // A record read off disk has no recorded binding to consult,
+                // so the convention is all there is, applied through the one
+                // function that owns it.
                 column: jails_java::identifier::snake_case(&param.name),
                 // The *inner* type, exactly as `parse_fields` records it:
                 // optionality lives in `optionality`, and `component_type`

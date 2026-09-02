@@ -4,12 +4,9 @@
 nothing.
 
 **Not `examples/minicom/`.** That one ports the Rails and Django minicom
-*domain* (users, messages, read flags, a direction enum) onto Spring, and is
-about jails' generic intents covering a real application. This one is about the
-skeleton those interviews start from, and about a much narrower question: can
-jails create the project at all? Until `--gradle` it could not — `jails new`
-hardcoded `type=maven-project` in its start.spring.io request, and nothing in
-jails wrote a `build.gradle`.
+*domain* onto Spring and is about jails' generic intents covering a real
+application. This one is about the skeleton those interviews start from: a
+Gradle project with Boot 2.7.18 on JDK 21, created from nothing.
 
 ## One command
 
@@ -26,13 +23,9 @@ against a real Gradle 8.5 and a real JDK 21, with 8 tests collected, 5 executed
 and 0 failures. The other 3 are the `@Disabled` stubs `g controller` emits for a
 handler nobody has written yet.
 
-That verification is the point of this example rather than a footnote. The
-first run of it was green over **zero** tests: the Boot 2 Gradle plugin does not
-configure `useJUnitPlatform()`, so Gradle ran the JUnit 4 provider, found no
-JUnit 5 test, and reported success. Same failure as the Failsafe one in the
-root `README.md` — a green build claiming it passed something it never ran. The
-legacy template writes the `test { useJUnitPlatform() }` block for that reason
-and says so in a comment.
+The generated `build.gradle` writes `test { useJUnitPlatform() }` explicitly:
+the Boot 2 Gradle plugin does not configure it, and without it Gradle runs the
+JUnit 4 provider, finds no JUnit 5 test, and reports success over zero tests.
 
 ## What matches, and what does not
 

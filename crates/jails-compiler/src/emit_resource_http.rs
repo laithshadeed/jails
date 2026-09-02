@@ -1,11 +1,10 @@
 //! The HTTP resource a scaffolded entity serves, and the test that drives it.
 //!
-//! **A scaffold is supposed to produce a *running* resource**, and the `http`
-//! facet emits a one-method `interface <Name>HttpPort` with no implementation,
-//! no route and no caller. Nothing serves the entity, so a canonical scaffold
-//! has no HTTP surface at all while the engine it replaces writes a full CRUD
-//! controller for the same declaration. Compiling proves nothing here: an
-//! unimplemented interface compiles.
+//! **A scaffold is supposed to produce a *running* resource.** The `http`
+//! facet's port alone -- a one-method `interface <Name>HttpPort` with no
+//! implementation, no route and no caller -- serves nothing, and compiling
+//! proves nothing: an unimplemented interface compiles. So the facet emits a
+//! full CRUD controller beside the port.
 //!
 //! **It speaks the domain record, not a request/response pair.** That is the
 //! shape the *operation* controllers already use -- `emit_http` takes
@@ -41,8 +40,8 @@ pub(crate) fn lower(
     // plain Maven build the dependency that would supply it cannot even be
     // spelled -- a versionless `<dependency>` outside `spring-boot-starter-
     // parent` makes Maven refuse to read the pom at all, `validate` included.
-    // So the facet degrades to what it always emitted rather than handing the
-    // reader a build that no longer loads.
+    // So the facet degrades to the port alone rather than handing the reader
+    // a build that no longer loads.
     if spring_boot.is_none() {
         return Ok(units);
     }
@@ -79,8 +78,8 @@ fn requests(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
     // **Only the requests the controller answers.** A scoped resource is
     // create-only -- see `scoped` -- and a collection whose `### List` block
     // returns 405 tells the reader something about this file rather than about
-    // their project. The generated controller test already asserted that same
-    // GET was a 405: the test knew and the collection did not.
+    // their project. The generated controller test asserts that same GET is a
+    // 405, and the collection has to agree with it.
     let reads = if scoped(entity) {
         String::new()
     } else {
@@ -128,10 +127,10 @@ fn requests(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
     })
 }
 
-/// The managed ABI this facet has always published.
+/// The managed ABI this facet publishes.
 ///
-/// Unchanged, and kept for that reason: it is a port, and a port is ABI even
-/// when the thing that now serves the resource does not implement it.
+/// Kept although the controller that serves the resource does not implement
+/// it: it is a port, and a port is ABI.
 fn port(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
     let package = crate::emit_java::entity_package(model, entity, Package::PortsHttp);
     let type_name = format!("{}HttpPort", entity.names.java_type);
@@ -155,19 +154,16 @@ fn port(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
 
 /// The collection path this entity is served at.
 ///
-/// The declared `http /path` wins; otherwise the table name, which is the same
-/// pluralisation the engine this replaces used, so a project moving between
-/// them keeps its URLs. `sql_table` rather than a second pluraliser: a second
-/// one does not stay in step, and the divergence shows up as a route that does
-/// not match the table it reads.
+/// The declared `http /path` wins; otherwise the table name. `sql_table`
+/// rather than a second pluraliser: a second one does not stay in step, and
+/// the divergence shows up as a route that does not match the table it reads.
 fn resource_path(model: &AppModel, entity: &Entity) -> String {
     // **Both halves of the predicate belong in the same closure.** Finding the
     // entity's *first* projection and then asking whether it happens to be the
     // HTTP one reads a pinned route only when nothing else sorts ahead of it --
-    // and `scaffold` expands to repo, service and http, so the answer was
-    // always the repository and the pin was always dropped. The reader saw
-    // `/operators` for a path they had written into the model, with no
-    // diagnostic anywhere.
+    // and `scaffold` expands to repo, service and http, so the answer would
+    // always be the repository and the pin always dropped: `/operators` for a
+    // path the reader wrote into the model, with no diagnostic anywhere.
     model
         .projections
         .values()
@@ -180,21 +176,12 @@ fn resource_path(model: &AppModel, entity: &Entity) -> String {
         .unwrap_or_else(|| format!("/{}", entity.names.sql_table))
 }
 
-/// Whether every read of this resource has to carry a tenant.
-///
-/// **A scoped resource is create-only over its collection**, and the reason is
-/// the whole of what `@scope` is for: the field is proved against a JWT claim
-/// at the request boundary, so a `GET /notes` that returns `findAll()` answers
-/// with every tenant's rows. There is no honest unscoped read, so none is
-/// written -- reading a scoped resource is a `jails g query`, which carries
-/// the claim into its predicate. Spring answers the absent methods with 405,
-/// which is the true answer rather than a leak.
 /// The JSON a caller sends to create one of these, as the `.http` collection
 /// documents it and the companion test posts it.
 ///
 /// One derivation because the two must agree: a documented body the generated
-/// test does not exercise is a body nothing checks, which is how `bugs.md` B48
-/// -- two renderers resolving the same fact separately -- reads in this file.
+/// test does not exercise is a body nothing checks, which is what two
+/// renderers resolving the same fact separately produces.
 ///
 /// A component jails cannot sample is left out rather than guessed at: a wrong
 /// body documents a payload the record refuses, which is worse than a shorter
@@ -203,11 +190,11 @@ fn documented_body(model: &AppModel, entity: &Entity, _key: &jails_model::Field)
     entity
         .fields
         .iter()
-        // **The request record decides, not a second filter beside it.** These
-        // had their own rule -- everything but the key and anything with a
-        // default -- and the two disagreed on a required component carrying a
-        // literal default: the record asked for it, the documented body did
-        // not supply it, and the generated POST failed with `Cannot map null
+        // **The request record decides, not a second filter beside it.** A
+        // rule of this file's own -- everything but the key and anything with
+        // a default -- disagrees with it on a required component carrying a
+        // literal default: the record asks for it, the documented body does
+        // not supply it, and the generated POST fails with `Cannot map null
         // into type boolean`. One predicate, and the body is by construction
         // what the record accepts.
         .filter(|field| crate::emit_dto::caller_supplied(field))
@@ -222,6 +209,15 @@ fn documented_body(model: &AppModel, entity: &Entity, _key: &jails_model::Field)
         .collect()
 }
 
+/// Whether every read of this resource has to carry a tenant.
+///
+/// **A scoped resource is create-only over its collection**, and the reason is
+/// the whole of what `@scope` is for: the field is proved against a JWT claim
+/// at the request boundary, so a `GET /notes` that returns `findAll()` answers
+/// with every tenant's rows. There is no honest unscoped read, so none is
+/// written -- reading a scoped resource is a `jails g query`, which carries
+/// the claim into its predicate. Spring answers the absent methods with 405,
+/// which is the true answer rather than a leak.
 fn scoped(entity: &Entity) -> bool {
     entity
         .fields
@@ -264,7 +260,7 @@ fn controller(
         domain_import(model, entity),
         // **The service, not the repository.** The suite jails generates
         // beside this file forbids a `*Controller` depending on the
-        // repository package, so injecting the port here made a freshly
+        // repository package, so injecting the port here would make a freshly
         // scaffolded project fail its own `ArchitectureTest` on the first
         // `mvn test` -- two of jails' own generators disagreeing about where
         // the boundary is.
@@ -471,8 +467,7 @@ fn controller_test(
     let method = "theDocumentedCreateRequestIsAccepted";
     // **The same JSON the `.http` collection documents**, so what the reader
     // is shown and what the build proves cannot diverge -- a documented body
-    // nothing exercises is a body nothing checks, which is `bugs.md` B48 in
-    // this file.
+    // nothing exercises is a body nothing checks.
     imports.insert("org.springframework.http.MediaType".to_string());
     if !modern {
         imports.insert(

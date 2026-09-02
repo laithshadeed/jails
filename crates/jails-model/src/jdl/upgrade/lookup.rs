@@ -7,9 +7,8 @@
 //! of letting v1 derive a new one.
 //!
 //! Every lookup is by label, and every label comes from `super::label` -- the
-//! same function the pre-v1 parser used to build the model being searched. A
-//! second spelling rule here would be the drift generator this repository has
-//! already paid for twice, so there is not one.
+//! same function the pre-v1 parser uses to build the model being searched. A
+//! second spelling rule here would drift, so there is not one.
 
 use super::{Cursor, label, refuse};
 use crate::{Diagnostics, StableId};

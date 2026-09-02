@@ -7,8 +7,8 @@
 //! which is why `@BindParam` is generated from the project's wire naming at
 //! all.
 //!
-//! Derivation covers the ordinary case and cannot cover this one: the brief's
-//! own customer page reads `message.id` out of the response and posts
+//! Derivation covers the ordinary case and cannot cover this one: a real
+//! contract's customer page reads `message.id` out of the response and posts
 //! `message_id` back. The same value has two names on two wires, and neither
 //! is derivable from the other. So it is a name the reader types.
 //!

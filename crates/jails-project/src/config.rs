@@ -17,10 +17,9 @@
 //! `[[capability]]` is the third table and the same half as the second: a
 //! capability the caller gave a `--name` or a `--package` cannot be written as
 //! one string, because `add csv --name Order` and `add csv --name Invoice` are
-//! two capabilities and `["csv", "csv"]` says nothing about which. plan.md
-//! §R1.1 fixes the shape; [`crate::capability::Declaration`] is the value, and
-//! which of the two shapes a declaration lands in is its own decision rather
-//! than the caller's.
+//! two capabilities and `["csv", "csv"]` says nothing about which.
+//! [`crate::capability::Declaration`] is the value, and which of the two
+//! shapes a declaration lands in is its own decision rather than the caller's.
 //!
 //! Still deliberately not a general config file -- no template overrides, no
 //! plugin hooks, no per-kind paths. All three tables are **closed sets**: the
@@ -62,21 +61,18 @@ use crate::spec::layout;
 /// The file, at the project root next to `pom.xml`.
 pub const FILE: &str = "jails.toml";
 
-/// Every layer name a project may rename, and the default it replaces.
+/// Every layer, in the order a reader wants them -- domain first, adapters
+/// last -- with the heading `stats` prints for it.
 ///
 /// Kept as a list rather than derived from the `layout` module so that adding
 /// a constant there without deciding whether it is configurable is a
 /// compile-time-visible omission rather than a silent one.
-/// Every layer, in the order a reader wants them -- domain first, adapters
-/// last -- with the heading `stats` prints for it.
 ///
-/// **One list, not two.** `inspect.rs` used to keep its own copy of this and
-/// its own labels, which meant `jails stats` reported against jails' default
-/// package names: a project with `adapters = "persistence"` had its adapters
-/// counted as "Other", and the two layers this list has that the copy did not
-/// (`cli`, `messaging`) were never counted at all. A second list of the same
-/// thing is how that happens, so the validation list below is derived from
-/// this one rather than written out again.
+/// **One list, not two.** A second copy reports against jails' *default*
+/// package names: a project with `adapters = "persistence"` has its adapters
+/// counted as "Other", and a layer the copy lacks is never counted at all. The
+/// validation list below is derived from this one rather than written out
+/// again.
 pub(crate) const LAYERS_IN_ORDER: &[(&str, &str)] = &[
     (layout::DOMAIN, "Domain"),
     (layout::APP, "Ports"),
@@ -122,7 +118,7 @@ const LAYOUT_TABLE: &str = "layout";
 const PROJECT_TABLE: &str = "project";
 /// The one key in it.
 const CAPABILITIES_KEY: &str = "capabilities";
-/// The repeated table a parameterised capability uses, per plan.md §R1.1.
+/// The repeated table a parameterised capability uses.
 /// `[project] capabilities` keeps the conventional singleton and default
 /// instances; anything carrying a `--name` or a `--package` needs somewhere to
 /// put it, and a string array has nowhere.
@@ -135,8 +131,8 @@ const CAPABILITY_KEYS: [&str; 3] = ["kind", "name", "package"];
 /// A project's layout overrides: default layer name -> the name to use.
 ///
 /// An absent file is an empty map, not an error -- the overwhelming majority
-/// of projects never have one, and `Config::default()` behaving exactly like
-/// today's hardcoded layout is what keeps this change from touching them.
+/// of projects never have one, and `Config::default()` is the built-in
+/// layout.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Config {
     layout: HashMap<String, String>,
@@ -838,7 +834,7 @@ mod capability_table_tests {
         Config::parse(text).unwrap().declarations().to_vec()
     }
 
-    /// The shape plan.md §R1.1 prints, read back with both parameters.
+    /// The repeated-table shape, read back with both parameters.
     #[test]
     fn a_repeated_table_declares_a_parameterised_capability() {
         let text = "[project]\ncapabilities = [\"db\"]\n\n\
@@ -860,9 +856,9 @@ mod capability_table_tests {
         assert_eq!(Config::parse(text).unwrap().capabilities(), ["db", "csv"]);
     }
 
-    /// The failure this module exists to prevent, in the new grammar: a
-    /// `[[capability]]` whose keys fell through to the ignored-table branch
-    /// would declare a capability jails then never installs.
+    /// The failure this module exists to prevent: a `[[capability]]` whose
+    /// keys fell through to the ignored-table branch would declare a
+    /// capability jails then never installs.
     #[test]
     fn a_table_is_not_read_as_an_ordinary_one_of_the_same_name() {
         let text = "[[capability]]\nkind = \"json\"\nname = \"Order\"\n";
@@ -1216,15 +1212,8 @@ mod tests {
         assert!(capability_named("postgres", 1).is_err());
     }
 
-    /// The capability edit, reached the way the V2 projection reaches it.
-    ///
-    /// These tests were written against `record_capability(root, label)` and
-    /// `forget_capability(root, label)`, a pair of V1 entry points that read
-    /// the file, spliced it and wrote it back. Nothing called them once the
-    /// projection started splicing text it already holds, but `pub` kept
-    /// `dead_code` from saying so. The splice they wrapped is still the
-    /// shipped one, so the tests keep it -- through the text-in/text-out half,
-    /// which is what the projection calls.
+    /// The capability edit, through the text-in/text-out splice the shipped
+    /// path calls, with the file read and write wrapped around it here.
     fn record_capability(root: &std::path::Path, label: &str) -> Result<()> {
         edit_manifest(root, |labels| {
             if labels.iter().any(|l| l == label) {

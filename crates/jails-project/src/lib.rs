@@ -6,8 +6,8 @@
 //!
 //! The files jails writes *about* a project live here too, and they divide by
 //! who owns them. [`config`] and [`compose`] are the reader's, edited by
-//! byte-preserving splice. `ledger` and [`generated_files`] are jails' own
-//! bookkeeping and are never hand-edited.
+//! byte-preserving splice. [`generated_files`] reads jails' own bookkeeping,
+//! which is never hand-edited.
 //!
 //! [`maven`] is how to invoke this project's Maven, deliberately separate from
 //! `jails_spec::build`, which recognises a build file and never runs one.
@@ -20,14 +20,9 @@
 pub mod application_manifest;
 pub mod capability;
 pub mod capture;
-/// The marked-block splice, from its own crate.
-///
-/// It moved out on 2026-08-29 because three more implementations of the same
-/// format had appeared in `jails-compiler` and `jails-workspace` -- not
-/// carelessly, but because neither depends on this crate and reuse was not
-/// available. A format with four owners is four answers to what `remove db`
-/// deletes, so it now lives where every tree can reach it. Module code keeps
-/// saying `crate::codemod`.
+/// The marked-block splice, from its own dependency-free crate so that every
+/// tree can reach one implementation: a format with several owners is several
+/// answers to what `remove db` deletes. Module code says `crate::codemod`.
 pub use jails_codemod as codemod;
 pub mod compose;
 pub mod config;
@@ -54,6 +49,6 @@ pub use jails_java::{java, template};
 pub use jails_spec::{build, spec};
 pub(crate) use jails_support::{json, process};
 
-// `.jails/` reading lives one layer down now (`pending.md` §7.3). Re-exported
-// so `crate::compat` keeps meaning what it always did.
+// `.jails/` classification lives one layer down; re-exported so module code
+// says `crate::compat`.
 pub use jails_state::compat;

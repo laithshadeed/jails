@@ -1,15 +1,12 @@
 //! Entity-facet mutation policy.
 //!
-//! **A facet and a projection are one fact recorded twice**, and linking says
-//! which way round: `projection::link` derives `entity.facets` from the
-//! projections it built, so the projection is the authority and the facet set
-//! is the compatibility view the emitters read. A patch that maintained only
-//! the facet therefore left the two disagreeing until the next `jails sync`
-//! reparsed the whole source and rebuilt both -- so `g repo Note` produced a
-//! repository the *emitters* could see and `resource status`, prerequisite
-//! validation and `emit_resource_http`'s route lookup could not, and the
-//! disagreement healed itself on an unrelated later command. Both are
-//! maintained here, together, for that reason.
+//! **A facet and a projection are one fact recorded twice**, and the
+//! projection is the authority: `projection::link` derives `entity.facets`
+//! from the projections it built, and the facet set is the compatibility view
+//! the emitters read. A patch that maintains only the facet leaves the two
+//! disagreeing until the next full reparse rebuilds both -- a repository the
+//! emitters can see and prerequisite validation cannot -- so both are
+//! maintained here, together.
 
 use crate::projection::{Projection, ProjectionKind};
 use crate::{AppModel, EntityId, Facet, StableId};
